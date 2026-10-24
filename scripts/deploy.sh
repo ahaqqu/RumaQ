@@ -306,7 +306,7 @@ build_frontend() {
 # Check Cloudflare login
 # ------------------------------------------------------------------
 check_login() {
-  if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+  if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
     ok "Authenticated via CLOUDFLARE_API_TOKEN."
     return 0
   fi
