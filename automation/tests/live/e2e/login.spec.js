@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 
-const APP = 'https://rumaq.pages.dev'
+const APP = 'https://api.rumaq.workers.dev'
 const API = 'https://api.rumaq.workers.dev'
 const EMAIL = 'alice@rumaq.dev'
 const PASSWORD = 'password123'

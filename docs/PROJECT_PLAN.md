@@ -143,7 +143,7 @@ This plan lists every known work item for RumaQ, its current status, and its pri
 | API integration tests       | Done        | P1       | `automation/tests/local/api/` — Vitest BDD + fetch against Docker Miniflare; `vp run test:api` |
 | End-to-end tests            | Partial     | P2       | Playwright BDD smoke test in `automation/tests/local/e2e/`; `vp run test:e2e`                  |
 | Docker test automation      | Done        | P1       | `docker compose -f automation/docker-compose.yml` runs all tests; CI workflow                  |
-| Production smoke tests      | Done        | P1       | Scheduled GitHub Actions check `rumaq.pages.dev` every 6 hours                                 |
+| Production smoke tests      | Done        | P1       | Scheduled GitHub Actions check `api.rumaq.workers.dev` every 6 hours                           |
 | Accessibility audit         | Not started | P1       | Keyboard navigation, contrast, labels                                                          |
 | Performance budget          | Not started | P2       | Bundle size, First Contentful Paint                                                            |
 

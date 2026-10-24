@@ -173,9 +173,11 @@ find_d1_database() {
     let raw = ""
     process.stdin.on("data", (c) => (raw += c))
     process.stdin.on("end", () => {
-      const start = raw.indexOf("{")
-      const end = raw.lastIndexOf("}")
-      if (start === -1 || end === -1) process.exit(0)
+      // cf prints either a bare JSON array or an object wrapper, possibly
+      // with log noise around it — slice from the first bracket to the last.
+      const start = raw.search(/[\[{]/)
+      const end = Math.max(raw.lastIndexOf("}"), raw.lastIndexOf("]"))
+      if (start === -1 || end === -1 || end <= start) process.exit(0)
       let parsed
       try {
         parsed = JSON.parse(raw.slice(start, end + 1))
@@ -203,7 +205,15 @@ setup_database_remote() {
   fi
 
   if [[ -z $db_id ]]; then
-    run_when_live "D1 database create" cf_cmd d1 create --name "$DB_NAME"
+    local create_output
+    if ! create_output=$(run_when_live "D1 database create" cf_cmd d1 create --name "$DB_NAME"); then
+      if grep -qi 'already exists' <<<"$create_output"; then
+        ok "D1 database ${DB_NAME} already exists — reusing it."
+      else
+        echo "$create_output"
+        exit 1
+      fi
+    fi
     db_id=$(find_d1_database "$DB_NAME")
   fi
 
