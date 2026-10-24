@@ -14,21 +14,36 @@ fi
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SANITIZED=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g')
 WORKER_NAME="rumaq-api-${SANITIZED}"
+CF="$ROOT_DIR/node_modules/cf/bin/cf"
+
+# Fork PRs get no Actions secrets; skip instead of failing on auth.
+if [[ -z ${CLOUDFLARE_API_TOKEN:-} ]]; then
+  echo "==> CLOUDFLARE_API_TOKEN not set — skipping cleanup (fork PR or missing secret)"
+  exit 0
+fi
 
 echo "==> Cleaning up branch: ${BRANCH_NAME}"
 echo "    Worker: ${WORKER_NAME}"
 
-# Delete the branch-specific Worker. Worker name/bindings live in
-# backend/cloudflare.config.ts; pass the name explicitly for deletion.
-if node "$ROOT_DIR/node_modules/cf/bin/cf" workers delete "$WORKER_NAME" 2> /dev/null; then
-  echo "  ok  Deleted Worker: ${WORKER_NAME}"
-else
-  echo "  -   Worker ${WORKER_NAME} not found or already deleted"
+list_workers() {
+  node "$CF" workers list | node -e '
+    let d = "";
+    process.stdin.on("data", c => (d += c)).on("end", () => {
+      for (const w of JSON.parse(d)) console.log(w.name);
+    });
+  '
+}
+
+# Worker name/bindings live in backend/cloudflare.config.ts; pass the name
+# explicitly for deletion.
+if ! list_workers | grep -qxF "$WORKER_NAME"; then
+  echo "  -   No preview Worker deployed for this branch"
+  echo "==> Cleanup complete"
+  exit 0
 fi
 
-# Cloudflare Pages preview branches are not deleted here because the
-# Pages project retains preview deployments per branch; removing the branch
-# Worker is sufficient to make the preview frontend non-functional.
-# If preview storage becomes a concern, add pages deployment deletion later.
+# --force skips the interactive confirmation, which would fail in CI.
+node "$CF" workers delete "$WORKER_NAME" --force > /dev/null
+echo "  ok  Deleted Worker: ${WORKER_NAME}"
 
 echo "==> Cleanup complete"

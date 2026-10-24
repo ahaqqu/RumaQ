@@ -254,13 +254,13 @@ Daily usage is tracked in `ai_usage` so the app can show the meter and cap reque
 
 ### Branch deployments
 
-When not on `main`, `./scripts/deploy.sh cloudflare` deploys to a **branch-specific Worker** (`rumaq-api-{sanitized-branch}`) that serves both the SPA (static assets) and the API. This means every PR gets its own real preview environment at a single URL, backed by a real Worker, rather than pointing the preview frontend at the production Worker.
+When not on `main`, `./scripts/deploy.sh cloudflare` deploys to a **branch-specific Worker** (`rumaq-api-{sanitized-branch}`) that serves both the SPA (static assets) and the API. This gives a branch its own real preview environment at a single URL, backed by a real Worker, rather than pointing the preview frontend at the production Worker. Previews are deployed **on demand** via `workflow_dispatch` — not every PR gets one automatically.
 
 Pull request previews use a dedicated **staging D1 database** (`rumaq-preview`) so preview data never touches production. The preview database is created once and shared across all PR previews. Production deploys continue to use the `rumaq` database configured by `CLOUDFLARE_DATABASE_ID`.
 
-Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branch.yml` when the PR is closed.
+Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branch.yml` when the PR is closed. `scripts/cleanup-preview-workers.sh` deletes all `rumaq-api-*` preview Workers at once if orphans ever accumulate.
 
-`.github/workflows/preview.yml` runs when a non-draft PR to `main` is opened. It deploys the branch Worker + Pages preview and comments the preview URL on the PR. Subsequent pushes must be redeployed manually via `workflow_dispatch` to stay within the Cloudflare Pages free build quota.
+`.github/workflows/preview.yml` runs only on `workflow_dispatch`. It deploys the branch Worker and comments the preview URL on the PR when one is open for the branch.
 
 ### One-time setup
 
