@@ -55,10 +55,8 @@ rumaq/
 │   │   │   └── api.ts      # Single Hono app for cached routes (/api/*)
 │   │   └── __tests__/      # Backend tests
 │   ├── migrations/         # D1 schema migrations
-│   ├── wrangler.local.toml # Local dev config
-│   ├── wrangler.cloudflare.toml # Production config (cache + exports)
-│   ├── wrangler.test.toml  # Test config
-│   └── wrangler.toml.example # Template
+│   └── cloudflare.config.ts # Single Worker config (env-driven; used by the
+│                            #   Cloudflare Vite plugin and the cf CLI)
 ├── scripts/                # Setup, deployment, and smoke-trigger scripts
 │   ├── build.sh            # Worker + frontend build
 │   ├── deploy/             # Deploy helper scripts
@@ -188,7 +186,7 @@ Google OAuth 2.0 is implemented inside the Worker using the [Authorization Code 
    - The **gateway** (`backend/src/gateway.ts`) routes `/api/*` non-auth requests to the `CachedApi` entrypoint (which wraps `apiApp`).
    - Inside `apiApp` (`backend/src/apps/api.ts`), the `propsAuthMiddleware` first checks `c.env.props` (fast path when props are provided), then falls back to reading the `rumaq_session` cookie, verifying the JWT, and looking up the active household from `user_settings.active_household_id`. It sets Hono `Variables` (`userId`, `householdId`) for downstream route handlers. Routes that require authentication register this middleware; public routes skip it entirely.
 
-**Why not Cloudflare Access?** Access is simpler, but in-app OAuth keeps the API self-contained, lets us store the user record in D1 for personalization, and makes local development straightforward with wrangler.
+**Why not Cloudflare Access?** Access is simpler, but in-app OAuth keeps the API self-contained, lets us store the user record in D1 for personalization, and makes local development straightforward with the Cloudflare Vite plugin.
 
 ### Email/password auth (testing mode)
 
@@ -251,7 +249,7 @@ Daily usage is tracked in `ai_usage` so the app can show the meter and cap reque
 - Node.js 20+
 - A Cloudflare account
 - A Google Cloud project with OAuth 2.0 credentials
-- Wrangler CLI authenticated (`wrangler login` or `export CLOUDFLARE_API_TOKEN=...`)
+- cf CLI authenticated (`cf login` or `export CLOUDFLARE_API_TOKEN=...`; installed via devDependencies)
 
 ### Branch deployments
 
@@ -285,18 +283,20 @@ Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branc
    export CLOUDFLARE_DATABASE_ID=the-returned-uuid
    ```
 
-   Do **not** hard-code it in `backend/wrangler.cloudflare.toml`. The committed file uses placeholders; the deploy script resolves them from environment variables at runtime.
+   `backend/cloudflare.config.ts` reads `CLOUDFLARE_DATABASE_ID` from the environment at deploy time; never commit a real database ID.
 
    **Where to find the ID later:**
    - Cloudflare dashboard: Workers & Pages > D1 > `rumaq` > Database ID
-   - Wrangler CLI: `wrangler d1 list`
+   - cf CLI: `cf d1 list`
    - API: `GET /client/v4/accounts/{account_id}/d1/database`
 
 3. Create the R2 bucket:
 
    ```bash
-   node scripts/deploy/deploy-cf.js r2-ensure
+   ./scripts/deploy.sh cloudflare
    ```
+
+   The deploy script creates the bucket if missing.
 
    The bucket is private by default. Verify privacy in the Cloudflare dashboard under R2 > `rumaq-receipts` > Settings: "Object access" should be "Private".
 
@@ -317,8 +317,8 @@ Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branc
 | `WORKER_JWT_SECRET`      | Worker secret | HMAC key for session JWT                                                                                 |
 | `WORKER_ENCRYPTION_KEY`  | Worker secret | AES-GCM key for AI keys                                                                                  |
 | `CLOUDFLARE_ACCOUNT_ID`  | Build/deploy  | Cloudflare account ID; used by Wrangler and the deploy script                                            |
-| `CLOUDFLARE_DATABASE_ID` | Build/deploy  | D1 database UUID; supplied to `wrangler.cloudflare.toml` at deploy time instead of being committed       |
-| `CLOUDFLARE_API_TOKEN`   | Build/deploy  | Optional API token for CI/automated deploys. If absent, `wrangler login` is used interactively           |
+| `CLOUDFLARE_DATABASE_ID` | Build/deploy  | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed               |
+| `CLOUDFLARE_API_TOKEN`   | Build/deploy  | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                 |
 | `EMAIL_AUTH_ENABLED`     | Worker var    | Set to `"true"` or `"false"` to enable or disable email/password testing auth                            |
 | `RUN_SECRETS_CHECK`      | Worker var    | Set to `"true"` to enable missing-secrets check on startup (recommended for production); off by default  |
 | `WORKER_URL`             | Build env     | URL of the deployed Worker (e.g. `https://api.rumaq.workers.dev`); used at build time as `VITE_API_BASE` |
@@ -341,7 +341,7 @@ To set or rotate a secret in production:
 
 ```bash
 # interactive
-wrangler secret put WORKER_JWT_SECRET --name api --config backend/wrangler.cloudflare.toml
+cf workers secrets update WORKER_JWT_SECRET --worker api --text <value> --type secret_text
 
 # or use the deploy script, which reads secrets from the environment
 export WORKER_JWT_SECRET=...
@@ -408,11 +408,11 @@ Two automated mechanisms keep dependencies secure:
 
 The following items are acknowledged as tech debt and left out of the current deployment scope:
 
-| Item                       | Reason                                                                                                               | Tracking                           |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| AI streaming               | `sendChatMessage` uses `completeText` (non-streaming). Streaming would require SSE from Worker → Hono → client.      | `backend/src/lib/chat.ts`          |
-| Persona locale             | `buildSystemPrompt` is EN-only. Multi-locale persona prompt requires i18n-aware prompt templates.                    | `backend/src/lib/persona.ts`       |
-| KV for rate-limit counters | Usage limits live in D1 (`ai_usage` table). KV would be more appropriate for per-second TTL counters.                | Left out of deployment scope       |
-| Cache routes config        | `exports.CachedApi` and cache directives are set up but route-level cache profiles are not finalised.                | `backend/wrangler.cloudflare.toml` |
-| R2 presigned URLs          | Receipts are served through the Worker proxy (`GET /api/purchases/:id/receipt`) instead of time-limited signed URLs. | `backend/src/apps/api.ts:1277`     |
-| Bulk run-out recalibration | `computeRunOutDays` extends in-place; no admin endpoint for full recalibration.                                      | `backend/src/lib/stock.ts`         |
+| Item                       | Reason                                                                                                               | Tracking                       |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| AI streaming               | `sendChatMessage` uses `completeText` (non-streaming). Streaming would require SSE from Worker → Hono → client.      | `backend/src/lib/chat.ts`      |
+| Persona locale             | `buildSystemPrompt` is EN-only. Multi-locale persona prompt requires i18n-aware prompt templates.                    | `backend/src/lib/persona.ts`   |
+| KV for rate-limit counters | Usage limits live in D1 (`ai_usage` table). KV would be more appropriate for per-second TTL counters.                | Left out of deployment scope   |
+| Cache routes config        | `exports.CachedApi` and cache directives are set up but route-level cache profiles are not finalised.                | `backend/cloudflare.config.ts` |
+| R2 presigned URLs          | Receipts are served through the Worker proxy (`GET /api/purchases/:id/receipt`) instead of time-limited signed URLs. | `backend/src/apps/api.ts:1277` |
+| Bulk run-out recalibration | `computeRunOutDays` extends in-place; no admin endpoint for full recalibration.                                      | `backend/src/lib/stock.ts`     |

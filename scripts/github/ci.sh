@@ -22,17 +22,16 @@ bun audit --audit-level=critical
 echo "=== CI: build ==="
 bash "$ROOT_DIR/scripts/build.sh"
 
-echo "=== CI: validate Wrangler config ==="
+echo "=== CI: validate Worker config ==="
 if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+  # Builds the Worker with backend/cloudflare.config.ts and runs cf's checks
+  # without uploading (worker name/bindings are computed by the config).
+  # cf deploy must run next to cloudflare.config.ts so it finds the project.
   cd "$ROOT_DIR/backend"
-  bunx wrangler deploy \
-    --config wrangler.cloudflare.toml \
-    --name "api-ci-validation" \
-    --var PAGES_ORIGIN:"https://rumaq.pages.dev" \
-    --dry-run
+  node "$ROOT_DIR/node_modules/cf/bin/cf" deploy --dry-run
   cd "$ROOT_DIR"
 else
-  echo "  skip  CLOUDFLARE_API_TOKEN not set — Wrangler config validation skipped."
+  echo "  skip  CLOUDFLARE_API_TOKEN not set — Worker config validation skipped."
 fi
 
 echo "=== CI: passed ==="

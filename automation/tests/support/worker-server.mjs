@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '../../..')
 const BACKEND_DIR = resolve(ROOT, 'backend')
-const DIST_DIR = resolve(BACKEND_DIR, 'dist/api')
+// Vite build output (Workers Build Output Specification): the plugin writes
+// the bundled worker to workers/default/bundle under the versioned output root.
+const DIST_DIR = resolve(BACKEND_DIR, '.cloudflare/output/v0/workers/default/bundle')
 
 // --- Dynamically build modules array from dist output ---
 function collectJsFiles(dir) {
@@ -62,7 +64,7 @@ const { Miniflare } = await import('miniflare')
 
 const mf = new Miniflare({
   modules: MODULES,
-  modulesRoot: BACKEND_DIR,
+  modulesRoot: DIST_DIR,
   d1Databases: { DB: 'rumaq-test' },
   r2Buckets: { RECEIPTS: 'rumaq-receipts-test' },
   compatibilityDate: '2026-07-10',
