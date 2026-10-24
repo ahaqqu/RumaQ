@@ -1,4 +1,13 @@
+FROM node:22-slim AS node-dist
+
 FROM oven/bun:1.4.0-slim AS api
+
+# cloudflare.config.ts (the Worker build config) can only be loaded by real
+# Node.js >= 22.18 — the bun image's `node` is a Bun shim that the config
+# loader rejects, and shadowing it breaks bun's lifecycle-script execution.
+# Install the real binary under a distinct name and use it only for the
+# Worker build step below.
+COPY --from=node-dist /usr/local/bin/node /usr/local/bin/node-real
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
@@ -15,6 +24,7 @@ RUN --mount=type=cache,target=/root/.bun \
 COPY vite.config.ts ./
 COPY backend/vite.config.ts ./backend/
 COPY backend/tsconfig.json ./backend/
+COPY backend/cloudflare.config.ts ./backend/
 
 # Layer 3: build source (changes most frequently). Keep migrations and test
 # support files out of this layer so backend-only edits don't invalidate them.
@@ -22,7 +32,8 @@ COPY backend/src/ ./backend/src/
 COPY backend/migrations/ ./backend/migrations/
 # The backend build packs frontend/dist as Worker static assets; the API test
 # harness serves the SPA via nginx instead, so an empty dist is sufficient.
-RUN mkdir -p frontend/dist && bunx vp build backend
+# Run vp with Node (not bunx) so cloudflare.config.ts can load.
+RUN mkdir -p frontend/dist && node-real node_modules/.bin/vp build backend
 
 # Layer 4: test support files (change independently of backend source)
 COPY automation/tests/ ./automation/tests/

@@ -62,6 +62,8 @@ const mf = new Miniflare({
     GOOGLE_CLIENT_SECRET: 'test-secret',
     WORKER_JWT_SECRET: 'test-jwt-secret',
     WORKER_ENCRYPTION_KEY: 'a'.repeat(32),
+    // Bearer secret for the internal price ingest endpoint (haqita PR1).
+    HAQITA_INGEST_SECRET: 'test-ingest-secret',
     TEST_MODE: 'true',
     EMAIL_AUTH_ENABLED: 'true',
     // Rate-limit overrides are optional; newer Miniflare rejects undefined
@@ -155,10 +157,14 @@ const server = createServer(async (req, res) => {
       headers.set('X-Forwarded-Port', '3000')
     }
 
+    // redirect: 'manual' — dispatchFetch otherwise follows 3xx responses and
+    // returns the redirect target's body (e.g. Google's login page instead of
+    // the expected 302), breaking redirect-asserting scenarios.
     const workerResponse = await mf.dispatchFetch(url.toString(), {
       method: req.method,
       headers,
       body,
+      redirect: 'manual',
     })
     const responseBody = await workerResponse.text()
 

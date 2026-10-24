@@ -37,7 +37,13 @@ const authPaths = Object.fromEntries(
 const spec = {
   openapi: apiSpec.openapi ?? '3.1.0',
   info: { title: 'RumaQ API', version: '0.1.0' },
-  paths: { ...apiSpec.paths, ...authPaths },
+  // Internal service routes (bearer-secret ingest) are not part of the
+  // browser client contract.
+  paths: Object.fromEntries(
+    Object.entries({ ...apiSpec.paths, ...authPaths }).filter(
+      ([path]) => !path.startsWith('/api/internal/')
+    )
+  ),
   components: { ...apiSpec.components, ...authSpec.components },
 }
 

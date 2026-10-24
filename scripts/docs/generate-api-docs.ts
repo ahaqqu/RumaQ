@@ -26,6 +26,8 @@ const AUTH_PATH_REMAP: Record<string, string> = {
 }
 
 const EXCLUDE_PATHS = new Set(['/api/openapi.json', '/openapi.json'])
+// Internal service routes (bearer-secret ingest) stay out of the public docs.
+const EXCLUDE_PATH_PREFIXES = ['/api/internal/']
 
 type PathEntry = {
   method: string
@@ -69,7 +71,7 @@ function getBodyInfo(operation: OperationLike): string {
 function extractEntries(paths: Record<string, any>): PathEntry[] {
   const entries: PathEntry[] = []
   for (let [path, methods] of Object.entries(paths)) {
-    if (EXCLUDE_PATHS.has(path)) continue
+    if (EXCLUDE_PATHS.has(path) || EXCLUDE_PATH_PREFIXES.some((p) => path.startsWith(p))) continue
     path = AUTH_PATH_REMAP[path] || path
     for (const [method, op] of Object.entries(methods as Record<string, OperationLike>)) {
       const isAuth = !!(op.security && op.security.length > 0)

@@ -1,3 +1,21 @@
+// Constant-time string comparison for bearer-token checks. Compares SHA-256
+// digests so the loop length is fixed regardless of input lengths, and works
+// on both the Workers runtime and Node (test) WebCrypto.
+export async function timingSafeEqualStrings(a: string, b: string): Promise<boolean> {
+  const encoder = new TextEncoder()
+  const [digestA, digestB] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(a)),
+    crypto.subtle.digest('SHA-256', encoder.encode(b)),
+  ])
+  const bytesA = new Uint8Array(digestA)
+  const bytesB = new Uint8Array(digestB)
+  let diff = 0
+  for (let i = 0; i < bytesA.length; i++) {
+    diff |= bytesA[i]! ^ bytesB[i]!
+  }
+  return diff === 0
+}
+
 export function base64UrlEncode(buffer: ArrayBuffer | Uint8Array): string {
   const bytes = new Uint8Array(buffer)
   let binary = ''
