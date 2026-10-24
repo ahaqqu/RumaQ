@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect } from 'vite-plus/test'
 import { safeParse } from 'valibot'
 import { settingsPatchSchema, locationSchema, storeSchema } from '../schemas.js'
 

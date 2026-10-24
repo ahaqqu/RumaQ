@@ -1,4 +1,4 @@
-import { describe, test as it, beforeEach } from 'vitest'
+import { describe, test as it, beforeEach } from 'vite-plus/test'
 import { setJestCucumberConfiguration, loadFeature, defineFeature } from 'jest-cucumber'
 import { ApiContext } from './helpers.js'
 

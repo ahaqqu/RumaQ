@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect } from 'vite-plus/test'
 import { encryptAiKey, decryptAiKey, base64UrlEncode, base64UrlDecode } from '../lib/crypto.js'
 
 const TEST_KEY = 'abcdefghijklmnopqrstuvwxyz123456'
