@@ -395,13 +395,14 @@ See [`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md) for the full testing strategy, i
 
 Two automated mechanisms keep dependencies secure:
 
-| Mechanism                                          | Trigger         | Action                                                                                                            |
-| -------------------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **Dependabot** (`.github/dependabot.yml`)          | Daily 06:00 JKT | Opens PRs for available version bumps, grouped by minor/patch                                                     |
-| **Audit workflow** (`.github/workflows/audit.yml`) | Daily 07:00 JKT | Runs `bun audit`, attempts `bun update`, creates PR with fixes or opens an issue if manual intervention is needed |
+| Mechanism                                          | Trigger         | Action                                                                                                                                                                             |
+| -------------------------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Dependabot** (`.github/dependabot.yml`)          | Daily 06:00 JKT | Opens PRs for available version bumps, grouped by minor/patch                                                                                                                      |
+| **Audit workflow** (`.github/workflows/audit.yml`) | Daily 07:00 JKT | Runs `bun audit`, attempts `bun update`, creates PR with fixes or opens an issue if manual intervention is needed; closes previous `security` issues when the audit is fully clean |
 
 - Production dependencies (`bun audit --omit=dev`) are checked separately and treated as urgent.
-- Vulnerabilities that require breaking changes create a GitHub issue (labelled `security`) instead of an auto-PR.
+- Vulnerabilities that require breaking changes create a GitHub issue (labelled `security`) instead of an auto-PR; the issue is auto-closed once a later audit run passes.
+- Transitive packages pinned to vulnerable exact versions by upstreams (`sharp`, `undici`, `zod` under miniflare / `@cloudflare/config`) are held at fixed versions via `overrides` in the root `package.json`.
 - Test tooling (`@cucumber/*`, `jest-cucumber`) is kept in `devDependencies` so transitive vulns in those packages never affect production audits.
 
 ## 13. Tech debt & deferred scope
