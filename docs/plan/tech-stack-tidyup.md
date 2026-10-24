@@ -1,6 +1,11 @@
 # RumaQ Tech Stack Tidy-Up — Vite+ Everywhere, wrangler → cf CLI, Dependency Refresh
 
-> Status: **Approved direction, not yet implemented.** Written 2026-10-24.
+> Status: **Implemented 2026-10-25** — PR A #241 (deps + Vite+ consolidation),
+> PR B #242 (wrangler → cf CLI + cloudflare.config.ts), PR C #243 (single Worker +
+> static assets, Pages retired), PR D #244 (migrations glob + typed API client).
+> Follow-ups: production deploy via `./scripts/deploy.sh cloudflare`, then
+> `./scripts/deploy/pages-redirect.sh`; smoke tests still target rumaq.pages.dev
+> until then. Originally written 2026-10-24.
 > Self-contained: includes the full tooling audit (file:line) so a fresh session can
 > implement without re-auditing. Follow the `guided-implementation` skill.
 > Land these PRs **before** the haqita integration PRs
