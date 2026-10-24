@@ -3,7 +3,7 @@ import { render, waitFor } from '@testing-library/react'
 import React from 'react'
 import { App } from './App.jsx'
 
-vi.mock('./lib/api.js', () => ({
+vi.mock('./lib/api', () => ({
   getMe: vi.fn().mockResolvedValue({
     user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: null },
   }),

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { BrandMark } from '../components/icons.jsx'
-import { login, emailAuthStatus, emailLogin } from '../lib/api.js'
+import { login, emailAuthStatus, emailLogin } from '../lib/api'
 import { Button } from '../components/Button.jsx'
 
 export function Login() {

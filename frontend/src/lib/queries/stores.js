@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getStores, createStore, deleteStore } from '../api.js'
+import { getStores, createStore, deleteStore } from '../api'
 
 export function useStores() {
   return useQuery({

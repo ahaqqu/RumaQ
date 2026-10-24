@@ -239,16 +239,6 @@ ensure_r2_bucket() {
 }
 
 # ------------------------------------------------------------------
-# Validate required deploy variables
-# ------------------------------------------------------------------
-validate_deploy_env() {
-  if [[ -z "${WORKER_URL:-}" ]]; then
-    echo "Error: WORKER_URL is empty. Cannot build frontend with an empty API base."
-    exit 1
-  fi
-}
-
-# ------------------------------------------------------------------
 # Put secrets on the Worker
 # ------------------------------------------------------------------
 put_worker_secrets() {
@@ -306,9 +296,9 @@ deploy_worker() {
 # Build frontend (no deploy)
 # ------------------------------------------------------------------
 build_frontend() {
-  log "Building frontend with Worker URL: ${WORKER_URL}..."
+  log "Building frontend..."
   bun install --frozen-lockfile
-  VITE_API_BASE="$WORKER_URL" bunx vp build frontend
+  bunx vp build frontend
   ok "Frontend build succeeded."
 }
 
@@ -379,7 +369,6 @@ do_cloudflare() {
   check_prereqs
   check_login
   install_deps
-  validate_deploy_env
   setup_database_remote
   ensure_r2_bucket
   # The frontend build is deployed as Worker static assets, so it must exist

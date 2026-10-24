@@ -62,6 +62,17 @@ export default defineConfig({
       ),
     },
   },
+  run: {
+    tasks: {
+      // Regenerates the typed API client inputs. Never cached: CI diffs the
+      // committed artifacts to fail on backend route drift.
+      'api:codegen': {
+        command:
+          'bunx tsx scripts/api/generate-openapi-spec.ts && node node_modules/openapi-typescript/bin/cli.js frontend/openapi.json -o frontend/src/lib/api-schema.d.ts',
+        cache: false,
+      },
+    },
+  },
   test: {
     projects: [
       {

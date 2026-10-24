@@ -5,7 +5,7 @@ import { usePersona } from '../context/PersonaContext.jsx'
 import { personaText } from '../lib/persona.js'
 import { IconSpark } from '../components/icons.jsx'
 import { useHistory, usePurchasePatterns, useStores } from '../lib/queries/index.js'
-import { getReceiptUrl } from '../lib/api.js'
+import { getReceiptUrl } from '../lib/api'
 import { Button } from '../components/Button.jsx'
 import { Panel } from '../components/Panel.jsx'
 

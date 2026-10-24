@@ -248,6 +248,21 @@ authApp.all(
 authApp.post(
   '/email-login',
   describeRoute({
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['email', 'password'],
+            properties: {
+              email: { type: 'string' },
+              password: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
     description: 'Validates credentials and sets rumaq_session.',
     responses: {
       200: {

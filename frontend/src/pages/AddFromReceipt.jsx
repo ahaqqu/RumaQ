@@ -4,7 +4,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { formatRp } from '../data/mock.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { personaText } from '../lib/persona.js'
-import { scanReceipt, createPurchase, getStores, getItems } from '../lib/api.js'
+import { scanReceipt, createPurchase, getStores, getItems } from '../lib/api'
 import {
   IconCamera,
   IconUpload,

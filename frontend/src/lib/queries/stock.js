@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getStock, patchStock } from '../api.js'
+import { getStock, patchStock } from '../api'
 
 export function useStock({ location, q } = {}) {
   return useQuery({

@@ -219,6 +219,10 @@ apiApp.get(
   describeRoute({
     description: 'Current inventory for the active household.',
     security: [{ cookieAuth: [] }],
+    parameters: [
+      { in: 'query', name: 'location', required: false, schema: { type: 'string' } },
+      { in: 'query', name: 'q', required: false, schema: { type: 'string' } },
+    ],
     responses: {
       200: {
         description: 'OK',
@@ -275,6 +279,24 @@ apiApp.patch(
   describeRoute({
     description: 'Updates a stock item.',
     security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: false,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              qty: { type: 'number', minimum: 0 },
+              unit: { type: 'string' },
+              location_id: { type: 'string' },
+              expiry_date: { type: 'string' },
+              name: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
     responses: {
       200: { description: 'OK' },
       400: { description: 'Validation error' },
@@ -515,6 +537,27 @@ apiApp.patch(
   describeRoute({
     description: 'Updates the current user settings.',
     security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: false,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              ai_provider: { type: 'string', enum: ['opencode', 'openai', 'anthropic', 'gemini'] },
+              ai_key: { type: 'string', minLength: 1 },
+              persona_user_role: { type: 'string' },
+              persona_ai_role: { type: 'string' },
+              persona_enabled: { type: 'boolean' },
+              motion_preference: { type: 'string', enum: ['none', 'reduced', 'standard'] },
+              language: { type: 'string', enum: ['id', 'en'] },
+              theme_hue: { type: 'number' },
+            },
+          },
+        },
+      },
+    },
     responses: {
       200: { description: 'OK' },
       400: { description: 'Validation error' },
@@ -613,6 +656,21 @@ apiApp.post(
   describeRoute({
     description: 'Validates an AI provider API key.',
     security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['provider'],
+            properties: {
+              provider: { type: 'string', enum: ['opencode', 'openai', 'anthropic', 'gemini'] },
+              key: { type: 'string', minLength: 1 },
+            },
+          },
+        },
+      },
+    },
     responses: {
       200: { description: 'OK - key is valid' },
       400: { description: 'Validation error' },
@@ -750,6 +808,32 @@ apiApp.post(
   describeRoute({
     description: 'Send a message to the household-scoped assistant and receive a reply.',
     security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['message'],
+            properties: {
+              message: { type: 'string', minLength: 1, maxLength: 4000 },
+              history: {
+                type: 'array',
+                maxItems: 10,
+                items: {
+                  type: 'object',
+                  required: ['role', 'content'],
+                  properties: {
+                    role: { type: 'string', enum: ['user', 'assistant'] },
+                    content: { type: 'string', minLength: 1, maxLength: 4000 },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     responses: {
       200: { description: 'Reply' },
       400: { description: 'Validation error' },
@@ -1081,6 +1165,37 @@ apiApp.post(
   describeRoute({
     description: 'Create a purchase with items, updating stock and purchase history.',
     security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['date', 'items'],
+            properties: {
+              store_id: { type: 'string' },
+              date: { type: 'string', minLength: 1 },
+              receipt_image_key: { type: 'string' },
+              items: {
+                type: 'array',
+                minItems: 1,
+                items: {
+                  type: 'object',
+                  required: ['name', 'qty', 'unit', 'price'],
+                  properties: {
+                    name: { type: 'string', minLength: 1 },
+                    qty: { type: 'number', minimum: 0 },
+                    unit: { type: 'string' },
+                    price: { type: 'integer', minimum: 0 },
+                    item_id: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     responses: {
       201: { description: 'Purchase created' },
       400: { description: 'Validation error' },
@@ -1301,6 +1416,25 @@ apiApp.get(
   describeRoute({
     description: 'List purchase history for the active household with filters and pagination.',
     security: [{ cookieAuth: [] }],
+    parameters: [
+      { in: 'query', name: 'store', required: false, schema: { type: 'string' } },
+      { in: 'query', name: 'from', required: false, schema: { type: 'string' } },
+      { in: 'query', name: 'to', required: false, schema: { type: 'string' } },
+      { in: 'query', name: 'q', required: false, schema: { type: 'string' } },
+      {
+        in: 'query',
+        name: 'group_by',
+        required: false,
+        schema: { type: 'string', enum: ['month', 'store'] },
+      },
+      {
+        in: 'query',
+        name: 'limit',
+        required: false,
+        schema: { type: 'integer', minimum: 1 },
+      },
+      { in: 'query', name: 'cursor', required: false, schema: { type: 'string' } },
+    ],
     responses: {
       200: { description: 'OK' },
       401: { description: 'Unauthorized' },
@@ -1552,6 +1686,18 @@ apiApp.post(
   describeRoute({
     description: 'Creates a new location for the active household.',
     security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['label'],
+            properties: { label: { type: 'string', minLength: 1, maxLength: 100 } },
+          },
+        },
+      },
+    },
     responses: {
       201: { description: 'Created' },
       400: { description: 'Validation error' },
@@ -1677,6 +1823,18 @@ apiApp.post(
   describeRoute({
     description: 'Creates a new store for the active household.',
     security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['label'],
+            properties: { label: { type: 'string', minLength: 1, maxLength: 100 } },
+          },
+        },
+      },
+    },
     responses: {
       201: { description: 'Created' },
       400: { description: 'Validation error' },
@@ -2077,6 +2235,34 @@ apiApp.post(
   describeRoute({
     description: 'Save a generated plan as active.',
     security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['items'],
+            properties: {
+              items: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['name', 'qty', 'unit'],
+                  properties: {
+                    name: { type: 'string', minLength: 1 },
+                    qty: { type: 'number', minimum: 0 },
+                    unit: { type: 'string' },
+                    store_id: { type: 'string' },
+                    price_estimate: { type: 'number' },
+                    why: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     responses: {
       201: { description: 'Plan created' },
       400: { description: 'Validation error' },
@@ -2227,6 +2413,18 @@ apiApp.patch(
   describeRoute({
     description: 'Mark a plan item as bought or skipped.',
     security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['status'],
+            properties: { status: { type: 'string', enum: ['bought', 'skipped'] } },
+          },
+        },
+      },
+    },
     responses: {
       200: { description: 'Updated' },
       400: { description: 'Validation error' },

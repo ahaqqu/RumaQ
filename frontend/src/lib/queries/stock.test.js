@@ -3,9 +3,9 @@ import { renderHook, act, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { useUpdateStock } from './stock.js'
-import { patchStock } from '../api.js'
+import { patchStock } from '../api'
 
-vi.mock('../api.js', () => ({
+vi.mock('../api', () => ({
   getStock: vi.fn(),
   patchStock: vi.fn(),
 }))

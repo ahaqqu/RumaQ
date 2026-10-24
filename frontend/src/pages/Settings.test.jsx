@@ -36,7 +36,7 @@ vi.mock('../lib/persona.js', () => ({
   deriveHue: vi.fn(() => 230),
 }))
 
-vi.mock('../lib/api.js', () => ({
+vi.mock('../lib/api', () => ({
   testAiKey: vi.fn(),
 }))
 

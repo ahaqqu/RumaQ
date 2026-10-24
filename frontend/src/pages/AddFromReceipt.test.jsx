@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, fireEvent, waitFor } from '@testing-library/react'
 import React from 'react'
 import { AddFromReceipt } from './AddFromReceipt.jsx'
-import * as api from '../lib/api.js'
+import * as api from '../lib/api'
 
-vi.mock('../lib/api.js', () => ({
+vi.mock('../lib/api', () => ({
   scanReceipt: vi.fn(),
   createPurchase: vi.fn(),
   getReceiptUrl: vi.fn(() => '/api/purchases/123/receipt'),

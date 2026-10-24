@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getPlans, generatePlan, savePlan, updatePlanItem } from '../api.js'
+import { getPlans, generatePlan, savePlan, updatePlanItem } from '../api'
 
 export function usePlans(status = 'active') {
   return useQuery({

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { getAiUsage } from '../api.js'
+import { getAiUsage } from '../api'
 
 export function useUsage() {
   return useQuery({
