@@ -63,10 +63,10 @@ This project defines no dedicated reviewer role agents — use the harness's gen
 
 **Recommendation:** <approve | request-changes | escalate>
 
-| ID | Priority | File | Finding |
-| --- | --- | --- | --- |
-| A1 | High | `backend/src/apps/api.ts:1277` | <short title> |
-| B1 | Medium | `frontend/src/components/Assistant.jsx:118` | <short title> |
+| ID  | Priority | File                                        | Finding       |
+| --- | -------- | ------------------------------------------- | ------------- |
+| A1  | High     | `backend/src/apps/api.ts:1277`              | <short title> |
+| B1  | Medium   | `frontend/src/components/Assistant.jsx:118` | <short title> |
 
 ### Per-item recommendations
 
