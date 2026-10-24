@@ -20,9 +20,6 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Install Wrangler
-        run: bun add -g wrangler
-
       - name: Clean up branch Worker
         run: bash ./scripts/github/cleanup-branch.sh "${{ github.head_ref }}"
         env:

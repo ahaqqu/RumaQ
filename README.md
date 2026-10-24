@@ -54,7 +54,7 @@ export CLOUDFLARE_DATABASE_ID=...
 ./scripts/deploy.sh cloudflare
 ```
 
-Creates D1 database and R2 bucket if missing, deploys Worker and Pages. Idempotent. The first time, set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_DATABASE_ID` as environment variables instead of editing `backend/wrangler.cloudflare.toml`.
+Creates D1 database and R2 bucket if missing, deploys Worker and Pages. Idempotent. Worker configuration lives in `backend/cloudflare.config.ts` and reads `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_DATABASE_ID` from the environment directly.
 
 ### Pull request previews
 
@@ -78,8 +78,8 @@ A scheduled GitHub Actions workflow (`.github/workflows/smoke.yml`) verifies `ru
 | ------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `scripts/build.sh`  | Before deployment or to verify the frontend compiles                         | `./scripts/build.sh`                                                                              | Builds the frontend (Vite)                                                                                                     |
 | `scripts/deploy.sh` | Setting up local dev, deploying to Cloudflare, or dry-running a build        | `./scripts/deploy.sh` for local dev, `./scripts/deploy.sh cloudflare` for production              | Idempotent — prepares config, deps, database; starts dev servers or deploys Worker + Pages                                     |
-| `scripts/docs.sh`   | After adding/changing API endpoints to regenerate docs/API.md                | `./scripts/docs.sh`                                                                               | Generates REST API docs from Hono route definitions and formats with Prettier                                                  |
-| `scripts/style.sh`  | Before committing to check or fix formatting and lint                        | `./scripts/style.sh` to fix, `./scripts/style.sh --check` to verify                               | Runs Prettier and ESLint across the repo                                                                                       |
+| `scripts/docs.sh`   | After adding/changing API endpoints to regenerate docs/API.md                | `./scripts/docs.sh`                                                                               | Generates REST API docs from Hono route definitions and formats with oxfmt                                                     |
+| `scripts/style.sh`  | Before committing to check or fix formatting and lint                        | `./scripts/style.sh` to fix, `./scripts/style.sh --check` to verify                               | Runs `vp check` (Oxfmt + Oxlint + type-check) across the repo                                                                  |
 | `scripts/test.sh`   | Running any test suite — unit, automation-local (Docker), or automation-live | `./scripts/test.sh unit`, `./scripts/test.sh unit frontend`, `./scripts/test.sh automation-local` | Dispatches to the appropriate test runner (Vitest, Playwright, Cucumber). See [`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md) |
 
 ## Agent skills

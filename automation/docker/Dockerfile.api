@@ -15,7 +15,6 @@ RUN --mount=type=cache,target=/root/.bun \
 COPY vite.config.ts ./
 COPY backend/vite.config.ts ./backend/
 COPY backend/tsconfig.json ./backend/
-COPY backend/wrangler.test.toml ./backend/
 
 # Layer 3: build source (changes most frequently). Keep migrations and test
 # support files out of this layer so backend-only edits don't invalidate them.

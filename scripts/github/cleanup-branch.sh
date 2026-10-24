@@ -11,14 +11,16 @@ if [[ -z $BRANCH_NAME ]]; then
   exit 1
 fi
 
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SANITIZED=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g')
 WORKER_NAME="rumaq-api-${SANITIZED}"
 
 echo "==> Cleaning up branch: ${BRANCH_NAME}"
 echo "    Worker: ${WORKER_NAME}"
 
-# Delete the branch-specific Worker
-if bunx wrangler delete --name "$WORKER_NAME" 2> /dev/null; then
+# Delete the branch-specific Worker. Worker name/bindings live in
+# backend/cloudflare.config.ts; pass the name explicitly for deletion.
+if node "$ROOT_DIR/node_modules/cf/bin/cf" workers delete "$WORKER_NAME" 2> /dev/null; then
   echo "  ok  Deleted Worker: ${WORKER_NAME}"
 else
   echo "  -   Worker ${WORKER_NAME} not found or already deleted"
@@ -27,7 +29,6 @@ fi
 # Cloudflare Pages preview branches are not deleted here because the
 # Pages project retains preview deployments per branch; removing the branch
 # Worker is sufficient to make the preview frontend non-functional.
-# If preview storage becomes a concern, add wrangler pages deployment
-# deletion later.
+# If preview storage becomes a concern, add pages deployment deletion later.
 
 echo "==> Cleanup complete"

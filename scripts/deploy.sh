@@ -56,6 +56,12 @@ DB_NAME="${D1_DATABASE_NAME:-rumaq}"
 PAGES_PROJECT="${PAGES_PROJECT_NAME:-rumaq}"
 R2_BUCKET_NAME="${R2_BUCKET_NAME:-rumaq-receipts}"
 
+# Local placeholder that keys the local D1 state (mirrors cloudflare.config.ts).
+LOCAL_DATABASE_ID="00000000-0000-4000-8000-000000000000"
+# The Vite plugin persists local worker state (D1/R2) here; cf CLI local
+# commands must target the same directory to see the same data.
+LOCAL_STATE_DIR="$BACKEND_DIR/.cloudflare/state"
+
 cd "$ROOT_DIR"
 
 # ------------------------------------------------------------------
@@ -84,34 +90,10 @@ run_when_live() {
   "$@"
 }
 
-wrangler_cmd() {
-  local config=$1
-  shift
-  local db=$1
-  shift
-  wrangler d1 migrations apply "$db" --config "$config" "$@"
-}
-
-# Prepare a resolved wrangler config for deploy. If CLOUDFLARE_ACCOUNT_ID or
-# CLOUDFLARE_DATABASE_ID are set, their values override the placeholders in the
-# committed wrangler.cloudflare.toml. The original file is never modified.
-resolve_wrangler_config() {
-  local src="$BACKEND_DIR/wrangler.cloudflare.toml"
-  local tmp="$BACKEND_DIR/wrangler.cloudflare.resolved.toml"
-
-  cp "$src" "$tmp"
-
-  if [[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-    sed -i "s|^account_id = \"YOUR_ACCOUNT_ID\"|account_id = \"$CLOUDFLARE_ACCOUNT_ID\"|" "$tmp"
-  fi
-
-  if [[ -n "${CLOUDFLARE_DATABASE_ID:-}" ]]; then
-    sed -i "s|^database_id = \"YOUR_DATABASE_ID\"|database_id = \"$CLOUDFLARE_DATABASE_ID\"|" "$tmp"
-  fi
-
-  sed -i "s|^database_name = \"[^\"]*\"|database_name = \"$DB_NAME\"|" "$tmp"
-
-  printf '%s' "$tmp"
+# cf CLI from the repo's devDependencies. Invoked through Node because loading
+# cloudflare.config.ts is not supported when cf itself runs on Bun.
+cf_cmd() {
+  node "$ROOT_DIR/node_modules/cf/bin/cf" "$@"
 }
 
 # Detect branch for branch-specific deployments
@@ -139,52 +121,9 @@ fi
 check_prereqs() {
   require_cmd node "Install Node.js (https://nodejs.org)."
   require_cmd bun "Install Bun (https://bun.sh)."
-  require_cmd wrangler "Install Wrangler: bun add -g wrangler"
-}
-
-# ------------------------------------------------------------------
-# wrangler.toml – create from example if missing
-# ------------------------------------------------------------------
-ensure_wrangler_toml() {
-  local mode=$1
-
-  if [[ ! -f $BACKEND_DIR/wrangler.toml.example ]]; then
-    echo "Error: backend/wrangler.toml.example not found."
+  if [[ ! -x "$ROOT_DIR/node_modules/cf/bin/cf" ]]; then
+    echo "Error: cf CLI not found. Run 'bun install' to install devDependencies."
     exit 1
-  fi
-
-  if [[ $mode == local ]]; then
-    if [[ -f $BACKEND_DIR/wrangler.local.toml ]]; then
-      ok "backend/wrangler.local.toml already exists."
-      return
-    fi
-
-    log "Creating backend/wrangler.local.toml from example..."
-    cp "$BACKEND_DIR/wrangler.toml.example" "$BACKEND_DIR/wrangler.local.toml"
-    sed -i \
-      -e 's/YOUR_ACCOUNT_ID/LOCAL/' \
-      -e 's/YOUR_DATABASE_ID/00000000-0000-0000-0000-000000000000/' \
-      "$BACKEND_DIR/wrangler.local.toml"
-    ok "Created backend/wrangler.local.toml with local defaults."
-  else
-    local config_file="$BACKEND_DIR/wrangler.cloudflare.toml"
-
-    if [[ -f $config_file ]]; then
-      ok "backend/wrangler.cloudflare.toml already exists."
-      return
-    fi
-
-    log "Creating backend/wrangler.cloudflare.toml from example..."
-
-    cp "$BACKEND_DIR/wrangler.toml.example" "$config_file"
-
-    local account_id="${CLOUDFLARE_ACCOUNT_ID:-}"
-    if [[ -z $account_id ]]; then
-      read -r -p "Cloudflare account ID: " account_id
-    fi
-    sed -i "s|YOUR_ACCOUNT_ID|$account_id|" "$config_file"
-
-    ok "Created backend/wrangler.cloudflare.toml (account_id set)."
   fi
 }
 
@@ -216,13 +155,16 @@ install_deps() {
 }
 
 # ------------------------------------------------------------------
-# Database – local (via Miniflare / --local)
+# Database – local (via cf CLI local simulation)
 # ------------------------------------------------------------------
 setup_database_local() {
   log "Setting up local D1 database (${DB_NAME})..."
 
   cd "$BACKEND_DIR"
-  wrangler_cmd "wrangler.local.toml" "$DB_NAME" --local
+  cf_cmd d1 migrations apply "$LOCAL_DATABASE_ID" \
+    --local \
+    --dir migrations \
+    --persist-to "$LOCAL_STATE_DIR"
   cd "$ROOT_DIR"
 
   ok "Local database ready."
@@ -231,40 +173,60 @@ setup_database_local() {
 # ------------------------------------------------------------------
 # Database – remote (Cloudflare D1)
 # ------------------------------------------------------------------
+# Print the UUID of an existing D1 database by name, or nothing when absent.
+find_d1_database() {
+  local name=$1
+  cf_cmd d1 list 2>/dev/null | node -e '
+    let raw = ""
+    process.stdin.on("data", (c) => (raw += c))
+    process.stdin.on("end", () => {
+      const start = raw.indexOf("{")
+      const end = raw.lastIndexOf("}")
+      if (start === -1 || end === -1) process.exit(0)
+      let parsed
+      try {
+        parsed = JSON.parse(raw.slice(start, end + 1))
+      } catch {
+        process.exit(0)
+      }
+      const dbs = Array.isArray(parsed) ? parsed : (parsed.result ?? [])
+      const db = dbs.find((d) => d.name === process.argv[1])
+      if (db?.uuid) console.log(db.uuid)
+    })
+  ' "$name"
+}
+
 setup_database_remote() {
   log "Setting up remote D1 database (${DB_NAME})..."
 
-  local config_file
-  config_file=$(resolve_wrangler_config)
-  cd "$BACKEND_DIR"
-
   local db_id="${CLOUDFLARE_DATABASE_ID:-}"
 
+  if [[ $db_id == "YOUR_DATABASE_ID" ]]; then
+    db_id=""
+  fi
+
   if [[ -z $db_id ]]; then
-    db_id=$(grep -oP 'database_id\s*=\s*"\K[^"]+' "$config_file" 2> /dev/null || true)
+    db_id=$(find_d1_database "$DB_NAME")
   fi
 
-  if [[ $db_id == "YOUR_DATABASE_ID" || -z $db_id ]]; then
-    db_id=$(bun --no-deprecation "$ROOT_DIR/scripts/deploy/deploy-cf.js" d1-setup)
-    if [[ -n $db_id ]]; then
-      warn "Set CLOUDFLARE_DATABASE_ID=$db_id in your environment or .env to avoid recreating it."
-    else
-      warn "Could not determine database_id."
-      warn "Set CLOUDFLARE_DATABASE_ID or manually copy the database_id into backend/wrangler.cloudflare.toml."
-    fi
+  if [[ -z $db_id ]]; then
+    run_when_live "D1 database create" cf_cmd d1 create --name "$DB_NAME"
+    db_id=$(find_d1_database "$DB_NAME")
   fi
 
-  if [[ -n $db_id && $db_id != "YOUR_DATABASE_ID" ]]; then
-    sed -i "s|^database_id = \"YOUR_DATABASE_ID\"|database_id = \"$db_id\"|" "$config_file"
-    # Make the discovered ID available to the rest of the deploy pipeline
-    # (especially deploy_worker) without requiring manual .env updates.
-    CLOUDFLARE_DATABASE_ID="$db_id"
-    export CLOUDFLARE_DATABASE_ID
+  if [[ -z $db_id ]]; then
+    warn "Could not determine database_id."
+    warn "Set CLOUDFLARE_DATABASE_ID in your environment or .env."
+    exit 1
   fi
 
-  run_when_live "remote D1 migration" wrangler_cmd "$config_file" "$DB_NAME" --remote
-  rm -f "$config_file"
-  cd "$ROOT_DIR"
+  # Make the discovered ID available to the rest of the deploy pipeline
+  # (especially cloudflare.config.ts when cf deploy evaluates it).
+  CLOUDFLARE_DATABASE_ID="$db_id"
+  export CLOUDFLARE_DATABASE_ID
+
+  run_when_live "remote D1 migration" \
+    cf_cmd d1 migrations apply "$db_id" --dir backend/migrations
 }
 
 # ------------------------------------------------------------------
@@ -274,12 +236,11 @@ ensure_r2_bucket() {
   local bucket_name="${R2_BUCKET_NAME:-rumaq-receipts}"
 
   run_when_live "R2 bucket check" bash -c "
-    cd '$BACKEND_DIR'
-    result=\$(bun --no-deprecation '$ROOT_DIR/scripts/deploy/deploy-cf.js' r2-ensure)
-    if [[ \$result == 'EXISTS' ]]; then
+    if node '$ROOT_DIR/node_modules/cf/bin/cf' r2 buckets list 2>/dev/null | grep -q '\"$bucket_name\"'; then
       echo '  ok  R2 bucket \"$bucket_name\" already exists.'
     else
-      echo '  ok  Created R2 bucket \"$bucket_name\".'
+      node '$ROOT_DIR/node_modules/cf/bin/cf' r2 buckets create --name '$bucket_name' \
+        && echo '  ok  Created R2 bucket \"$bucket_name\".'
     fi
   "
 }
@@ -295,7 +256,7 @@ validate_deploy_env() {
 }
 
 # ------------------------------------------------------------------
-# Put secrets on the Worker (standalone Worker, not Pages)
+# Put secrets on the Worker
 # ------------------------------------------------------------------
 put_worker_secrets() {
   log "Setting Worker secrets for ${WORKER_NAME}..."
@@ -305,10 +266,19 @@ put_worker_secrets() {
     return
   fi
 
-  local script_name="$WORKER_NAME"
-  local results
-  results=$(bun --no-deprecation "$ROOT_DIR/scripts/deploy/deploy-cf.js" put-secrets --name "$script_name")
-  echo "$results"
+  local secrets=(GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY)
+  for name in "${secrets[@]}"; do
+    local val="${!name:-}"
+    if [[ -z $val ]]; then
+      echo "  -  ${name} (skipped — not set)"
+      continue
+    fi
+    cf_cmd workers secrets update "$name" \
+      --worker "$WORKER_NAME" \
+      --type secret_text \
+      --text "$val"
+    echo "  ok  ${name}"
+  done
 
   ok "Worker secrets set."
 }
@@ -319,32 +289,18 @@ put_worker_secrets() {
 deploy_worker() {
   log "Deploying Worker (name: ${WORKER_NAME})..."
 
-  if [[ ! -f $BACKEND_DIR/wrangler.cloudflare.toml ]]; then
-    echo "Error: backend/wrangler.cloudflare.toml not found."
-    echo "Run \`./scripts/deploy.sh cloudflare\` first to create it."
-    exit 1
-  fi
-
-  local config_file
-  config_file=$(resolve_wrangler_config)
-
-  # shellcheck disable=SC2064
-  trap "rm -f '$config_file'" EXIT INT TERM
-
+  # Worker name, vars (PAGES_ORIGIN) and bindings are computed by
+  # backend/cloudflare.config.ts from BRANCH_NAME / CLOUDFLARE_* env vars.
   local dry_run_flag=""
   if $DRY_RUN; then
     dry_run_flag="--dry-run"
   fi
 
   # shellcheck disable=SC2086
-  bunx wrangler deploy \
-    --config "$config_file" \
-    --name "$WORKER_NAME" \
-    --var PAGES_ORIGIN:"$PAGES_ORIGIN" \
-    ${dry_run_flag}
-
-  rm -f "$config_file"
-  trap - EXIT INT TERM
+  # cf deploy must run next to cloudflare.config.ts so it finds the project.
+  cd "$BACKEND_DIR"
+  cf_cmd deploy ${dry_run_flag}
+  cd "$ROOT_DIR"
 
   if $DRY_RUN; then
     ok "Worker dry-run build succeeded."
@@ -365,6 +321,9 @@ build_frontend() {
 
 # ------------------------------------------------------------------
 # Deploy built frontend to Cloudflare Pages (static only)
+# NOTE: cf CLI has no Pages asset-upload parity yet, so this stays on
+# wrangler until Pages is retired in favour of Worker static assets
+# (docs/plan/tech-stack-tidyup.md PR C).
 # ------------------------------------------------------------------
 pages_deploy() {
   log "Deploying static assets to Cloudflare Pages (project: ${PAGES_PROJECT}, branch: ${PAGES_BRANCH})..."
@@ -391,9 +350,9 @@ check_login() {
     ok "Authenticated via CLOUDFLARE_API_TOKEN."
     return 0
   fi
-  if ! wrangler whoami &> /dev/null; then
+  if ! cf_cmd d1 list &> /dev/null; then
     echo "Error: not logged in to Cloudflare."
-    echo "Set CLOUDFLARE_API_TOKEN or run: wrangler login"
+    echo "Set CLOUDFLARE_API_TOKEN or run: cf login"
     exit 1
   fi
   ok "Logged in to Cloudflare."
@@ -436,7 +395,6 @@ summary_cloudflare() {
 # ------------------------------------------------------------------
 prepare_local() {
   check_prereqs
-  ensure_wrangler_toml local
   ensure_dev_vars
   install_deps
   setup_database_local
@@ -451,7 +409,6 @@ do_cloudflare() {
   echo "=== RumaQ: Cloudflare deployment ==="
   check_prereqs
   check_login
-  ensure_wrangler_toml cloudflare
   install_deps
   validate_deploy_env
   setup_database_remote

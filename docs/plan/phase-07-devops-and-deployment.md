@@ -1,5 +1,10 @@
 # Phase 07 — DevOps & Deployment
 
+> **Historic planning document (kept as history).** The deployment stack has since
+> migrated from Wrangler TOML configs to `cf` CLI with `backend/cloudflare.config.ts`
+> — see `docs/plan/tech-stack-tidyup.md`. Tool references below reflect the stack
+> at the time of writing.
+
 **Status:** Partial (preview deployments done — branch-specific Workers + Pages previews with auto-cleanup; environment-specific configs exist; R2 bucket automation exists; PR preview comment, Wrangler config validation, and secrets rotation docs remain)
 **Priority:** P0/P1
 **Source sections:** Sections 3, 7 of `docs/PROJECT_PLAN.md`

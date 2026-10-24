@@ -30,9 +30,6 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Install Wrangler
-        run: bun add -g wrangler
-
       - name: Verify Cloudflare secrets
         run: |
           missing=""

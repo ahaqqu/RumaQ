@@ -4,13 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --config wrangler.local.toml",
+    "dev": "vp dev",
     "build": "vp build",
     "preview": "vp preview",
-    "deploy": "wrangler deploy --config wrangler.cloudflare.toml",
-    "deploy:prod": "wrangler deploy --config wrangler.cloudflare.toml --env production",
+    "deploy": "cf deploy",
     "db:create": "bun ../scripts/deploy/setup-db.js",
-    "db:migrate": "wrangler d1 migrations apply rumaq"
+    "db:migrate": "cf d1 migrations apply \"${CLOUDFLARE_DATABASE_ID:?set CLOUDFLARE_DATABASE_ID}\" --dir migrations"
   },
   "dependencies": {
     "@hono/standard-validator": "^0.4.0",
@@ -19,13 +18,12 @@
     "valibot": "^1.5.0"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.65.0",
+    "@cloudflare/vite-plugin": "2.0.0-beta.v.4",
     "@cloudflare/workers-types": "^5.20261024.1",
     "@vitest/coverage-v8": "^5.0.5",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
-    "vitest": "^5.0.5",
-    "wrangler": "^4.152.0"
+    "vitest": "^5.0.5"
   }
 }

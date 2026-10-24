@@ -121,17 +121,17 @@ This plan lists every known work item for RumaQ, its current status, and its pri
 
 ## 7. DevOps & deployment
 
-| Item                                | Status      | Priority | Notes                                                                                |
-| ----------------------------------- | ----------- | -------- | ------------------------------------------------------------------------------------ |
-| Cloudflare Pages deployment config  | Partial     | P0       | Vite build ready; need `wrangler pages deploy`                                       |
-| Cloudflare Worker deployment config | Partial     | P0       | `backend/wrangler.toml.example`; user must copy and fill                             |
-| D1 database creation guide          | Done        | P0       | `scripts/deploy/setup-db.js` + README                                                |
-| R2 bucket creation guide            | Not started | P0       | Add to README or script                                                              |
-| GitHub Actions CI                   | Done        | P1       | Unit tests + build on push/PR to main                                                |
-| Test automation CI                  | Done        | P1       | Docker-based integration/E2E tests on push/PR to main                                |
-| Preview deployments for PRs         | Done        | P1       | Branch-specific Worker + Pages preview; auto-cleanup                                 |
-| Secrets management documentation    | Done        | P0       | `docs/ARCHITECTURE.md` §8 env vars table; `RUN_SECRETS_CHECK` guards missing secrets |
-| Environment-specific configs        | Not started | P1       | `.dev.vars` for local, secrets for prod                                              |
+| Item                                | Status      | Priority | Notes                                                                                              |
+| ----------------------------------- | ----------- | -------- | -------------------------------------------------------------------------------------------------- |
+| Cloudflare Pages deployment config  | Done        | P0       | `wrangler pages deploy` in deploy.sh (retiring Pages for Worker assets per tech-stack-tidyup plan) |
+| Cloudflare Worker deployment config | Done        | P0       | `backend/cloudflare.config.ts` (env-driven single config)                                          |
+| D1 database creation guide          | Done        | P0       | `scripts/deploy/setup-db.js` + README                                                              |
+| R2 bucket creation guide            | Not started | P0       | Add to README or script                                                                            |
+| GitHub Actions CI                   | Done        | P1       | Unit tests + build on push/PR to main                                                              |
+| Test automation CI                  | Done        | P1       | Docker-based integration/E2E tests on push/PR to main                                              |
+| Preview deployments for PRs         | Done        | P1       | Branch-specific Worker + Pages preview; auto-cleanup                                               |
+| Secrets management documentation    | Done        | P0       | `docs/ARCHITECTURE.md` §8 env vars table; `RUN_SECRETS_CHECK` guards missing secrets               |
+| Environment-specific configs        | Not started | P1       | `.dev.vars` for local, secrets for prod                                                            |
 
 ## 8. Quality assurance
 
@@ -238,7 +238,7 @@ _User impact: review past purchases and spending patterns; app goes live._
 
 Phase 04 (AI Shopping Plans) and Phase 05 (Purchase History & Ship) are complete. Remaining P0 items:
 
-1. Enable email auth in production (`EMAIL_AUTH_ENABLED = "true"` in `wrangler.cloudflare.toml`) after verifying the login flow live.
+1. Enable email auth in production (`EMAIL_AUTH_ENABLED` binding in `backend/cloudflare.config.ts`) after verifying the login flow live.
 2. Deploy to Cloudflare via `./scripts/deploy.sh cloudflare` and run end-to-end smoke verification.
 3. Run automation-local and production smoke tests.
 4. Address tech debt items listed in `docs/ARCHITECTURE.md` §13.
