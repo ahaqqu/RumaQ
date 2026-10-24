@@ -1,20 +1,20 @@
 ---
 name: thermos-with-comments
-description: Thermos depth of the `code-review` skill — runs the two thermo-nuclear review passes (security/correctness + code quality) and posts each finding as an itemized GitHub review comment (A1, A2…, B1, B2…, C1, C2…) with a summary comment and recommendation. Loaded by `code-review` (mandatory for code-touching PRs) and the manager's `reviewer` role — never dispatched directly.
+description: Thermos depth of the `code-review` skill — runs the two thermo-nuclear review passes (security/correctness + code quality) and posts each finding as an itemized GitHub review comment (A1, A2…, B1, B2…, C1, C2…) with a summary comment and recommendation. Loaded by `code-review` (mandatory for code-touching PRs) — never dispatched directly.
 disable-model-invocation: true
 ---
 
 # Thermos With Comments
 
-> **Library skill** — not an entry point. Reached only through the `code-review` skill (its thermos depth) and the manager's `reviewer` role.
+> **Library skill** — not an entry point. Reached only through the `code-review` skill (its thermos depth).
 
-Use this skill when a review's findings must land on the PR as individually-referencable, itemized comments — the manager-orchestrated implement → review → fix loop, and the only thermos arm `code-review` ever calls. It runs the two thermo passes and posts the itemized report to the PR instead of synthesizing in chat, returning the same itemized report to the caller.
+Use this skill when a review's findings must land on the PR as individually-referencable, itemized comments — the implement → review → fix loop, and the only thermos arm `code-review` ever calls. It runs the two thermo passes and posts the itemized report to the PR instead of synthesizing in chat, returning the same itemized report to the caller.
 
 The review standards are inherited from `thermo-nuclear-review/SKILL.md` (security/correctness) and `thermo-nuclear-code-quality-review/SKILL.md` (maintainability). Load both into the dispatched subagents.
 
-## Reviewer subagent types
+## Reviewer subagents
 
-The manager's `reviewer` role (`.zcode/agents/reviewer.md`) applies this skill and dispatches two sub-reviewers in parallel: `subagent_type: "thermo-nuclear-review-subagent"` for security/correctness and `subagent_type: "thermo-nuclear-code-quality-review-subagent"` for maintainability. All three are defined as role agents in `.zcode/agents/` with per-role pinned models (see `.zcode/agents/README.md`); delete a sub-reviewer's `model:` field to make it inherit the `reviewer` coordinator's model. If a harness lacks these types, fall back to its generic subagent and inline the prompts from the two sibling skills.
+This project defines no dedicated reviewer role agents — use the harness's generic subagent type and inline the prompts from the sibling skills. Dispatch two sub-reviewers in parallel (same message, `run_in_background: true`): one for security/correctness with the prompt from `thermo-nuclear-review/SKILL.md`, and one for maintainability with the prompt from `thermo-nuclear-code-quality-review/SKILL.md`.
 
 ## Workflow
 
@@ -42,12 +42,12 @@ The manager's `reviewer` role (`.zcode/agents/reviewer.md`) applies this skill a
    - An overall recommendation: `approve`, `request-changes`, or `escalate` (when evidence is inconclusive or the fix requires the author's judgment).
    - Per-item fix recommendations (the same text as each comment, in one place for triage).
    - A line stating that items can be addressed individually by ID, e.g. "Reply to individual comments with **accept** or **reject** plus reasoning. If you only want a subset fixed, instruct by ID, e.g. 'fix A1–A3, reject B2'."
-9. Return to the caller (the manager): the PR URL, the full itemized report (all IDs, priorities, files, one-line summaries, and each item's posted review-comment ID so dispositions can thread on the original comment), and the posted-comment verification result.
+9. Return to the caller: the PR URL, the full itemized report (all IDs, priorities, files, one-line summaries, and each item's posted review-comment ID so dispositions can thread on the original comment), and the posted-comment verification result.
 
 ## Comment body template (per item)
 
 ```markdown
-**[A1]** (High) `apps/api/src/routes/notes.ts:42`
+**[A1]** (High) `backend/src/apps/api.ts:1277`
 
 <One-sentence finding statement.>
 
@@ -65,8 +65,8 @@ The manager's `reviewer` role (`.zcode/agents/reviewer.md`) applies this skill a
 
 | ID | Priority | File | Finding |
 | --- | --- | --- | --- |
-| A1 | High | `apps/api/src/routes/notes.ts:42` | <short title> |
-| B1 | Medium | `apps/web/src/components/NoteList.tsx:118` | <short title> |
+| A1 | High | `backend/src/apps/api.ts:1277` | <short title> |
+| B1 | Medium | `frontend/src/components/Assistant.jsx:118` | <short title> |
 
 ### Per-item recommendations
 

@@ -90,6 +90,7 @@ This project uses agent skills to keep complex workflows consistent. Invoke them
 | ----------------------- | ------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | `pr-creation`           | Creating or opening a pull request                            | Mention or invoke `pr-creation`                        | Ensures a green gate, proper description, and review rules before submitting       |
 | `guided-implementation` | Implementing a difficult or unclear plan from a markdown file | Invoke `guided-implementation` with the plan file path | Confirms the high-level approach before coding and protects architecture decisions |
+| `code-review`           | Reviewing a PR after it is created                            | Mention or invoke `code-review`                        | Sets review depth, checks philosophy and guardrails, posts itemized PR comments    |
 
 ### `/pr-creation`
 
@@ -98,6 +99,10 @@ Use whenever creating a PR. It creates a branch, analyzes security and performan
 ### `/guided-implementation`
 
 Use when asked to implement a plan that may be ambiguous, cross-cutting, or architectural. It reads the plan, `docs/ARCHITECTURE.md`, and `docs/TEST_STRATEGY.md`; analyzes the plan critically; proposes a step-by-step implementation; and waits for your confirmation before deviating from the plan or making architecture changes. See [`.agents/skills/guided-implementation/SKILL.md`](.agents/skills/guided-implementation/SKILL.md).
+
+### `/code-review`
+
+Use whenever a PR needs review. It sets the review depth — normal for docs/skill-only changes, thermos (via `thermos-with-comments` and the two thermo-nuclear passes) mandatory for anything touching code — checks the PR against `docs/ARCHITECTURE.md` goals and the `AGENTS.md`/conventions guardrails, and posts each finding as an individual line-anchored review comment. See [`.agents/skills/code-review/SKILL.md`](.agents/skills/code-review/SKILL.md).
 
 ---
 
