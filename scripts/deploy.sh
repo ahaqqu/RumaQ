@@ -53,7 +53,6 @@ if [[ -f $ROOT_DIR/.env ]]; then
 fi
 
 DB_NAME="${D1_DATABASE_NAME:-rumaq}"
-PAGES_PROJECT="${PAGES_PROJECT_NAME:-rumaq}"
 R2_BUCKET_NAME="${R2_BUCKET_NAME:-rumaq-receipts}"
 
 # Local placeholder that keys the local D1 state (mirrors cloudflare.config.ts).
@@ -102,17 +101,11 @@ SANITIZED_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g')
 
 if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "HEAD" ]]; then
   WORKER_NAME="${WORKER_NAME:-api}"
-  PAGES_ORIGIN="${PAGES_ORIGIN:-https://rumaq.pages.dev}"
   WORKER_URL="${WORKER_URL:-https://api.rumaq.workers.dev}"
-  PAGES_BRANCH="main"
 else
   WORKER_NAME="${WORKER_NAME:-rumaq-api-${SANITIZED_BRANCH}}"
-  PAGES_ORIGIN="${PAGES_ORIGIN:-https://${SANITIZED_BRANCH}.rumaq.pages.dev}"
   WORKER_URL="${WORKER_URL:-https://${WORKER_NAME}.rumaq.workers.dev}"
-  # Use the sanitized branch name for the Pages preview branch so the deployed
-  # branch name matches the preview URL documented in README/ARCHITECTURE.
-  PAGES_BRANCH="${PAGES_BRANCH:-$SANITIZED_BRANCH}"
-  log "Branch: ${BRANCH_NAME} -> Worker: ${WORKER_NAME}, Frontend preview: ${PAGES_BRANCH}"
+  log "Branch: ${BRANCH_NAME} -> Worker: ${WORKER_NAME}"
 fi
 
 # ------------------------------------------------------------------
@@ -289,7 +282,7 @@ put_worker_secrets() {
 deploy_worker() {
   log "Deploying Worker (name: ${WORKER_NAME})..."
 
-  # Worker name, vars (PAGES_ORIGIN) and bindings are computed by
+  # Worker name, static assets and bindings are computed by
   # backend/cloudflare.config.ts from BRANCH_NAME / CLOUDFLARE_* env vars.
   local dry_run_flag=""
   if $DRY_RUN; then
@@ -317,29 +310,6 @@ build_frontend() {
   bun install --frozen-lockfile
   VITE_API_BASE="$WORKER_URL" bunx vp build frontend
   ok "Frontend build succeeded."
-}
-
-# ------------------------------------------------------------------
-# Deploy built frontend to Cloudflare Pages (static only)
-# NOTE: cf CLI has no Pages asset-upload parity yet, so this stays on
-# wrangler until Pages is retired in favour of Worker static assets
-# (docs/plan/tech-stack-tidyup.md PR C).
-# ------------------------------------------------------------------
-pages_deploy() {
-  log "Deploying static assets to Cloudflare Pages (project: ${PAGES_PROJECT}, branch: ${PAGES_BRANCH})..."
-  bunx wrangler pages deploy frontend/dist \
-    --project-name "$PAGES_PROJECT" \
-    --branch "$PAGES_BRANCH" \
-    --no-bundle
-  ok "Frontend deployed to ${PAGES_ORIGIN}."
-}
-
-# ------------------------------------------------------------------
-# Build & deploy frontend to Cloudflare Pages (static only)
-# ------------------------------------------------------------------
-deploy_frontend() {
-  build_frontend
-  pages_deploy
 }
 
 # ------------------------------------------------------------------
@@ -383,8 +353,7 @@ summary_cloudflare() {
   echo "  Cloudflare deployment complete!"
   echo "============================================"
   echo ""
-  echo "  API Worker: ${WORKER_URL}"
-  echo "  Frontend:   ${PAGES_ORIGIN}"
+  echo "  App + API (single Worker): ${WORKER_URL}"
   echo ""
   echo "  Verify health: curl -I ${WORKER_URL}/api/health"
   echo "============================================"
@@ -413,12 +382,11 @@ do_cloudflare() {
   validate_deploy_env
   setup_database_remote
   ensure_r2_bucket
+  # The frontend build is deployed as Worker static assets, so it must exist
+  # before `cf deploy` runs.
+  build_frontend
   deploy_worker
   put_worker_secrets
-  build_frontend
-  if ! $DRY_RUN; then
-    pages_deploy
-  fi
   summary_cloudflare
 }
 
@@ -475,7 +443,7 @@ case "$MODE" in
   frontend)
     build_frontend
     if ! $DRY_RUN; then
-      pages_deploy
+      deploy_worker
     fi
     ;;
   *)

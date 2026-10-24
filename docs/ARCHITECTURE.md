@@ -9,21 +9,21 @@ This document describes the production architecture for RumaQ on Cloudflare's fr
 ## 1. Goals & constraints
 
 - **Low friction.** Users photograph receipts; the system infers stock. Manual logging is a fallback, never the default.
-- **Cheap to run.** Everything sits on Cloudflare's free tier (Pages, Workers, D1, R2).
+- **Cheap to run.** Everything sits on Cloudflare's free tier (Workers with static assets, D1, R2).
 - **Privacy first.** Users bring their own AI key. The backend stores it encrypted and only uses it on their behalf.
 - **Fast and local-feeling.** The API edge is close to users; the UI stays optimistic and shows loading states that name the work.
 
 ## 2. High-level stack
 
-| Layer          | Service                                | Role                                          | Free-tier limit                     |
-| -------------- | -------------------------------------- | --------------------------------------------- | ----------------------------------- |
-| Frontend       | Cloudflare Pages                       | Hosts the React + Vite SPA                    | Unlimited requests, 500 builds/mo   |
-| API            | Cloudflare Workers                     | Hono HTTP API, auth, AI proxy                 | 100,000 requests/day                |
-| Database       | Cloudflare D1                          | Relational SQLite database                    | 500 MB storage, 100,000 queries/day |
-| Files          | Cloudflare R2                          | Receipt image storage                         | 10 GB storage, 10 M reads/mo        |
-| Cache/metadata | Cloudflare KV (optional)               | Rate-limit counters, AI usage windows         | 1 GB, 100,000 reads/day             |
-| Auth           | Google OAuth 2.0                       | SSO login, managed inside the Worker          | Free                                |
-| AI             | OpenAI / Gemini / Anthropic / OpenCode | External LLM calls proxied through the Worker | User's own billing                  |
+| Layer          | Service                                | Role                                            | Free-tier limit                     |
+| -------------- | -------------------------------------- | ----------------------------------------------- | ----------------------------------- |
+| Frontend       | Cloudflare Worker (static assets)      | Hosts the React + Vite SPA on the Worker origin | Bundled with the Worker deploy      |
+| API            | Cloudflare Workers                     | Hono HTTP API, auth, AI proxy                   | 100,000 requests/day                |
+| Database       | Cloudflare D1                          | Relational SQLite database                      | 500 MB storage, 100,000 queries/day |
+| Files          | Cloudflare R2                          | Receipt image storage                           | 10 GB storage, 10 M reads/mo        |
+| Cache/metadata | Cloudflare KV (optional)               | Rate-limit counters, AI usage windows           | 1 GB, 100,000 reads/day             |
+| Auth           | Google OAuth 2.0                       | SSO login, managed inside the Worker            | Free                                |
+| AI             | OpenAI / Gemini / Anthropic / OpenCode | External LLM calls proxied through the Worker   | User's own billing                  |
 
 ## 3. Repository layout
 
@@ -124,9 +124,10 @@ rumaq/
 User browser
     │
     ▼
-Cloudflare Pages (rumaq.pages.dev or {branch}.rumaq.pages.dev) — static SPA assets only
+App + API on one origin — Cloudflare Worker with static assets
+(api.rumaq.workers.dev or rumaq-api-{branch}.rumaq.workers.dev)
     │
-    └── API calls ──► Cloudflare Worker (api.rumaq.workers.dev or rumaq-api-{branch}.rumaq.workers.dev)
+    ├── /api/* ──► gateway (same origin, no CORS)
                             │
                             ▼
                     [default entrypoint — gateway]
@@ -253,11 +254,11 @@ Daily usage is tracked in `ai_usage` so the app can show the meter and cap reque
 
 ### Branch deployments
 
-When not on `main`, `./scripts/deploy.sh cloudflare` deploys to a **branch-specific Worker** (`rumaq-api-{sanitized-branch}`) and a matching **Cloudflare Pages preview branch**. This means every PR gets its own real preview environment backed by a real Worker, rather than pointing the preview frontend at the production Worker.
+When not on `main`, `./scripts/deploy.sh cloudflare` deploys to a **branch-specific Worker** (`rumaq-api-{sanitized-branch}`) that serves both the SPA (static assets) and the API. This means every PR gets its own real preview environment at a single URL, backed by a real Worker, rather than pointing the preview frontend at the production Worker.
 
 Pull request previews use a dedicated **staging D1 database** (`rumaq-preview`) so preview data never touches production. The preview database is created once and shared across all PR previews. Production deploys continue to use the `rumaq` database configured by `CLOUDFLARE_DATABASE_ID`.
 
-Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branch.yml` when the PR is closed. Cloudflare Pages preview branches are retained by the project.
+Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branch.yml` when the PR is closed.
 
 `.github/workflows/preview.yml` runs when a non-draft PR to `main` is opened. It deploys the branch Worker + Pages preview and comments the preview URL on the PR. Subsequent pushes must be redeployed manually via `workflow_dispatch` to stay within the Cloudflare Pages free build quota.
 
@@ -322,7 +323,6 @@ Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branc
 | `EMAIL_AUTH_ENABLED`     | Worker var    | Set to `"true"` or `"false"` to enable or disable email/password testing auth                            |
 | `RUN_SECRETS_CHECK`      | Worker var    | Set to `"true"` to enable missing-secrets check on startup (recommended for production); off by default  |
 | `WORKER_URL`             | Build env     | URL of the deployed Worker (e.g. `https://api.rumaq.workers.dev`); used at build time as `VITE_API_BASE` |
-| `PAGES_PROJECT_NAME`     | Deploy        | Cloudflare Pages project name (default: `rumaq`)                                                         |
 | `D1_DATABASE_NAME`       | Deploy        | D1 database name (default: `rumaq`)                                                                      |
 | `R2_BUCKET_NAME`         | Deploy        | R2 bucket name for receipt images (default: `rumaq-receipts`)                                            |
 
@@ -377,7 +377,7 @@ If usage grows, the first upgrade is Workers Paid ($5/mo) for higher request and
 - [x] R2 objects are private; frontend receives receipt images through `GET /api/purchases/:id/receipt` (proxy stream). R2 signed URLs are out of current scope (open security item).
 - [x] D1 queries are parameterized; no string concatenation.
 - [x] Every D1 query that reads or writes household-scoped data filters by `household_id` or `user_id`.
-- [ ] CORS allows only the configured Pages origin, localhost, and branch previews; unknown origins are rejected in production.
+- [x] Same-origin app + API: no cross-origin API calls in production. CORS keeps localhost dev origins and the legacy `rumaq.pages.dev` origins (transition window for stale clients) allowed; unknown origins are rejected.
 - [ ] AI prompts never expose another user's data and avoid internal DB IDs where possible.
 - [x] General API rate limiting returns 429 with `Retry-After`.
 
@@ -388,7 +388,7 @@ See [`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md) for the full testing strategy, i
 - **Unit tests** (Vitest) for frontend and backend
 - **API integration tests** (Vitest BDD via Miniflare in Docker)
 - **Web E2E tests** (Playwright BDD in Docker)
-- **Production smoke tests** (scheduled GitHub Actions workflow hitting `rumaq.pages.dev`)
+- **Production smoke tests** (scheduled GitHub Actions workflow hitting the app origin)
 - **Acceptance criteria** for new features
 
 ## 12. Vulnerability management

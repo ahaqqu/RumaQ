@@ -37,12 +37,17 @@ export default defineConfig({
     compatibilityDate: '2026-07-10',
     compatibilityFlags: ['nodejs_compat'],
     entrypoint: 'src/index.ts',
+    // Single-deploy topology: the Worker serves both the SPA (frontend build,
+    // wired in via publicDir in vite.config.ts) and the API. API requests must
+    // always reach the user worker; unknown paths fall back to index.html.
+    assets: {
+      notFoundHandling: 'single-page-application',
+      runWorkerFirst: ['/api/*'],
+    },
     env: {
       DB: bindings.d1({ name: databaseName, id: databaseId }),
       RECEIPTS: bindings.r2({ name: bucketName }),
-      PAGES_ORIGIN: bindings.text(
-        isProduction ? 'https://rumaq.pages.dev' : `https://${sanitizedBranch}.rumaq.pages.dev`
-      ),
+      ASSETS: bindings.assets(),
       EMAIL_AUTH_ENABLED: bindings.text('true'),
       // Startup secrets check only makes sense against a real account; local
       // dev runs on placeholder secrets from .dev.vars.

@@ -70,7 +70,6 @@ const mf = new Miniflare({
   compatibilityDate: '2026-07-10',
   compatibilityFlags: ['nodejs_compat'],
   bindings: {
-    PAGES_ORIGIN: 'http://localhost:3000',
     GOOGLE_CLIENT_ID: 'test-client-id',
     GOOGLE_CLIENT_SECRET: 'test-secret',
     WORKER_JWT_SECRET: 'test-jwt-secret',

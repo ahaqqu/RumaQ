@@ -23,14 +23,14 @@ Household shopping & inventory assistant. Snap a receipt — stock updates. Know
 
 ## For developers
 
-| Layer    | Technology                                                                              |
-| -------- | --------------------------------------------------------------------------------------- |
-| Frontend | React + Vite + TanStack Router + TanStack Query + Cloudflare Kumo UI → Cloudflare Pages |
-| Backend  | Cloudflare Workers + Hono                                                               |
-| Database | Cloudflare D1 (SQLite)                                                                  |
-| Files    | Cloudflare R2                                                                           |
-| Auth     | Google OAuth 2.0 + JWT                                                                  |
-| AI       | BYO key proxied through the Worker                                                      |
+| Layer    | Technology                                                                                             |
+| -------- | ------------------------------------------------------------------------------------------------------ |
+| Frontend | React + Vite + TanStack Router + TanStack Query + Cloudflare Kumo UI → Cloudflare Worker static assets |
+| Backend  | Cloudflare Workers + Hono                                                                              |
+| Database | Cloudflare D1 (SQLite)                                                                                 |
+| Files    | Cloudflare R2                                                                                          |
+| Auth     | Google OAuth 2.0 + JWT                                                                                 |
+| AI       | BYO key proxied through the Worker                                                                     |
 
 ### Quick start
 
@@ -54,17 +54,16 @@ export CLOUDFLARE_DATABASE_ID=...
 ./scripts/deploy.sh cloudflare
 ```
 
-Creates D1 database and R2 bucket if missing, deploys Worker and Pages. Idempotent. Worker configuration lives in `backend/cloudflare.config.ts` and reads `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_DATABASE_ID` from the environment directly.
+Creates D1 database and R2 bucket if missing, then deploys a single Worker that serves both the app (static assets) and the API. Idempotent. Worker configuration lives in `backend/cloudflare.config.ts` and reads `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_DATABASE_ID` from the environment directly.
 
 ### Pull request previews
 
 Every PR to `main` gets a dedicated preview environment:
 
-- Branch Worker: `https://rumaq-api-{sanitized-branch}.rumaq.workers.dev`
-- Pages preview: `https://{sanitized-branch}.rumaq.pages.dev`
+- Single preview URL: `https://rumaq-api-{sanitized-branch}.rumaq.workers.dev` (serves both the app and the API)
 - Database: dedicated staging D1 database (`rumaq-preview`), separate from production
 
-`.github/workflows/preview.yml` deploys both and comments the URLs on the PR when a non-draft PR is opened. The branch-specific Worker is deleted automatically when the PR is closed; Cloudflare Pages preview branches are retained by the project.
+`.github/workflows/preview.yml` deploys the branch Worker and comments the URL on the PR when a non-draft PR is opened. The branch-specific Worker is deleted automatically when the PR is closed.
 
 ### Production smoke tests
 
@@ -77,7 +76,7 @@ A scheduled GitHub Actions workflow (`.github/workflows/smoke.yml`) verifies `ru
 | Script              | When to use                                                                  | How to use                                                                                        | What it does                                                                                                                   |
 | ------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `scripts/build.sh`  | Before deployment or to verify the frontend compiles                         | `./scripts/build.sh`                                                                              | Builds the frontend (Vite)                                                                                                     |
-| `scripts/deploy.sh` | Setting up local dev, deploying to Cloudflare, or dry-running a build        | `./scripts/deploy.sh` for local dev, `./scripts/deploy.sh cloudflare` for production              | Idempotent — prepares config, deps, database; starts dev servers or deploys Worker + Pages                                     |
+| `scripts/deploy.sh` | Setting up local dev, deploying to Cloudflare, or dry-running a build        | `./scripts/deploy.sh` for local dev, `./scripts/deploy.sh cloudflare` for production              | Idempotent — prepares config, deps, database; starts dev servers or deploys the app + API Worker                               |
 | `scripts/docs.sh`   | After adding/changing API endpoints to regenerate docs/API.md                | `./scripts/docs.sh`                                                                               | Generates REST API docs from Hono route definitions and formats with oxfmt                                                     |
 | `scripts/style.sh`  | Before committing to check or fix formatting and lint                        | `./scripts/style.sh` to fix, `./scripts/style.sh --check` to verify                               | Runs `vp check` (Oxfmt + Oxlint + type-check) across the repo                                                                  |
 | `scripts/test.sh`   | Running any test suite — unit, automation-local (Docker), or automation-live | `./scripts/test.sh unit`, `./scripts/test.sh unit frontend`, `./scripts/test.sh automation-local` | Dispatches to the appropriate test runner (Vitest, Playwright, Cucumber). See [`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md) |

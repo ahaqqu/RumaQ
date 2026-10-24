@@ -46,8 +46,7 @@
     "tsx": "^4.23.15",
     "vite": "^8.3.5",
     "vite-plus": "^1.4.0",
-    "vitest": "^5.0.5",
-    "wrangler": "^4.152.0"
+    "vitest": "^5.0.5"
   },
   "overrides": {
     "shell-quote": "^1.11.0",
