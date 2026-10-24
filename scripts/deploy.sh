@@ -327,7 +327,7 @@ build_frontend() {
 # ------------------------------------------------------------------
 pages_deploy() {
   log "Deploying static assets to Cloudflare Pages (project: ${PAGES_PROJECT}, branch: ${PAGES_BRANCH})..."
-  wrangler pages deploy frontend/dist \
+  bunx wrangler pages deploy frontend/dist \
     --project-name "$PAGES_PROJECT" \
     --branch "$PAGES_BRANCH" \
     --no-bundle
