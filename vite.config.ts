@@ -68,7 +68,7 @@ export default defineConfig({
       // committed artifacts to fail on backend route drift.
       'api:codegen': {
         command:
-          'bunx tsx scripts/api/generate-openapi-spec.ts && node node_modules/openapi-typescript/bin/cli.js frontend/openapi.json -o frontend/src/lib/api-schema.d.ts',
+          'bunx tsx scripts/api/generate-openapi-spec.ts && node node_modules/openapi-typescript/bin/cli.js frontend/openapi.json -o frontend/src/lib/api-schema.d.ts && bunx vp fmt --write frontend/openapi.json frontend/src/lib/api-schema.d.ts',
         cache: false,
       },
     },
