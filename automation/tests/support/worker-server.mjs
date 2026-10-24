@@ -75,8 +75,14 @@ const mf = new Miniflare({
     WORKER_ENCRYPTION_KEY: 'a'.repeat(32),
     TEST_MODE: 'true',
     EMAIL_AUTH_ENABLED: 'true',
-    RATE_LIMIT_WINDOW_MS: process.env.RATE_LIMIT_WINDOW_MS,
-    RATE_LIMIT_MAX_REQUESTS: process.env.RATE_LIMIT_MAX_REQUESTS,
+    // Rate-limit overrides are optional; newer Miniflare rejects undefined
+    // binding values, so only pass them when actually set.
+    ...(process.env.RATE_LIMIT_WINDOW_MS && {
+      RATE_LIMIT_WINDOW_MS: process.env.RATE_LIMIT_WINDOW_MS,
+    }),
+    ...(process.env.RATE_LIMIT_MAX_REQUESTS && {
+      RATE_LIMIT_MAX_REQUESTS: process.env.RATE_LIMIT_MAX_REQUESTS,
+    }),
   },
 })
 

@@ -90,6 +90,7 @@ export default defineConfig({
         test: {
           name: 'integration',
           environment: 'node',
+          globals: true,
           include: ['automation/tests/local/api/steps/**/*.steps.js'],
           envDir: 'automation/tests',
           testTimeout: 30_000,

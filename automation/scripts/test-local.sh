@@ -140,6 +140,9 @@ fi
 ensure_stack() {
   local build_flag=""
   if [[ "$BUILD_MODE" == "force" ]]; then
+    # `up --build` only covers services started by `up`; the test-runner runs
+    # via `compose run`, so rebuild it explicitly.
+    docker compose -f "$COMPOSE_FILE" build test-runner
     build_flag="--build"
   elif [[ "$BUILD_MODE" == "never" ]]; then
     build_flag=""

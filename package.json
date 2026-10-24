@@ -48,7 +48,9 @@
   "overrides": {
     "shell-quote": "^1.11.0",
     "tinypool": "^2.1.2",
-    "uuid": "^11.1.1"
+    "uuid": "^11.1.1",
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",
+    "vitest": "5.0.5"
   },
   "devEngines": {
     "packageManager": "bun",
