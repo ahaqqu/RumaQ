@@ -200,7 +200,7 @@ authApp.get(
       c.env.WORKER_JWT_SECRET
     )
 
-    const isHttps = String(c.env.PAGES_ORIGIN || '').startsWith('https://')
+    const isHttps = new URL(c.req.url).protocol === 'https:'
     setCookie(c, COOKIE_NAME, jwt, {
       path: '/',
       httpOnly: true,
@@ -209,7 +209,7 @@ authApp.get(
       maxAge: 60 * 60 * 24 * 30,
     })
 
-    return c.redirect(c.env.PAGES_ORIGIN || '/')
+    return c.redirect('/')
   }
 )
 
@@ -230,7 +230,7 @@ authApp.all(
     },
   }),
   (c) => {
-    const isHttps = String(c.env.PAGES_ORIGIN || '').startsWith('https://')
+    const isHttps = new URL(c.req.url).protocol === 'https:'
     setCookie(c, COOKIE_NAME, '', {
       path: '/',
       httpOnly: true,
@@ -239,7 +239,7 @@ authApp.all(
       maxAge: 0,
     })
     if (c.req.method === 'GET') {
-      return c.redirect(c.env.PAGES_ORIGIN || '/')
+      return c.redirect('/')
     }
     return c.json({ ok: true })
   }
@@ -354,7 +354,7 @@ authApp.post(
       c.env.WORKER_JWT_SECRET
     )
 
-    const isHttps = String(c.env.PAGES_ORIGIN || '').startsWith('https://')
+    const isHttps = new URL(c.req.url).protocol === 'https:'
     setCookie(c, COOKIE_NAME, jwt, {
       path: '/',
       httpOnly: true,

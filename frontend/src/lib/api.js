@@ -1,12 +1,12 @@
 /**
  * RumaQ API client — talks to the Cloudflare Worker backend.
  * All protected endpoints use the rumaq_session cookie (HttpOnly).
+ * The Worker serves both the SPA and the API on the same origin, so all
+ * paths are relative.
  */
 
-const BASE = import.meta.env.VITE_API_BASE || ''
-
 async function request(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(path, {
     credentials: 'include',
     ...options,
     headers: {
@@ -40,11 +40,11 @@ export function getHealth() {
 }
 
 export function login() {
-  window.location.href = `${BASE}/api/auth/login`
+  window.location.href = '/api/auth/login'
 }
 
 export function logout() {
-  window.location.href = `${BASE}/api/auth/logout`
+  window.location.href = '/api/auth/logout'
 }
 
 export async function emailAuthStatus() {
@@ -145,7 +145,7 @@ export function getHome(signal) {
 export function scanReceipt(file) {
   const formData = new FormData()
   formData.append('image', file)
-  return fetch(`${BASE}/api/purchases/scan`, {
+  return fetch('/api/purchases/scan', {
     method: 'POST',
     credentials: 'include',
     body: formData,
@@ -166,7 +166,7 @@ export function createPurchase(payload) {
 }
 
 export function getReceiptUrl(purchaseId) {
-  return `${BASE}/api/purchases/${purchaseId}/receipt`
+  return `/api/purchases/${purchaseId}/receipt`
 }
 
 export function getPurchases({ store, from, to, q, groupBy, limit, cursor } = {}) {

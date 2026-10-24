@@ -16,7 +16,7 @@ export type Env = {
     GOOGLE_CLIENT_SECRET: string
     WORKER_JWT_SECRET: string
     WORKER_ENCRYPTION_KEY: string
-    PAGES_ORIGIN: string
+    PAGES_ORIGIN?: string
     EMAIL_AUTH_ENABLED: string
     ASSETS: Fetcher
     TEST_MODE?: string

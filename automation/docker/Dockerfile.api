@@ -20,7 +20,9 @@ COPY backend/tsconfig.json ./backend/
 # support files out of this layer so backend-only edits don't invalidate them.
 COPY backend/src/ ./backend/src/
 COPY backend/migrations/ ./backend/migrations/
-RUN bunx vp build backend
+# The backend build packs frontend/dist as Worker static assets; the API test
+# harness serves the SPA via nginx instead, so an empty dist is sufficient.
+RUN mkdir -p frontend/dist && bunx vp build backend
 
 # Layer 4: test support files (change independently of backend source)
 COPY automation/tests/ ./automation/tests/
