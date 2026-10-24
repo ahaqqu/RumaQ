@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach } from 'vite-plus/test'
 import { render, fireEvent } from '@testing-library/react'
 import React from 'react'
 import { OfflineBanner } from './OfflineBanner.jsx'

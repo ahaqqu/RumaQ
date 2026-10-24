@@ -1,4 +1,4 @@
-import { expect } from 'vitest'
+import { expect } from 'vite-plus/test'
 import { resetDb, seedDb } from '../../../support/db.js'
 import { signTestCookie } from '../../../support/auth.js'
 

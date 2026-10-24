@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect } from 'vite-plus/test'
 import { planItemPatchSchema, planCreateSchema, planGenerateResponseSchema } from '../lib/plans.js'
 import { safeParse } from 'valibot'
 

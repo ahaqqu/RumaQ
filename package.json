@@ -41,8 +41,7 @@
     "playwright-bdd": "^9.2.1",
     "tsx": "^4.23.15",
     "typescript": "5.9.3",
-    "vite-plus": "^1.4.0",
-    "vitest": "^5.0.5"
+    "vite-plus": "^1.4.0"
   },
   "overrides": {
     "sharp": "0.35.5",

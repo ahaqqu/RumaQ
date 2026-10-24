@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vite-plus/test'
 import { render } from '@testing-library/react'
 import React, { useEffect } from 'react'
 import { useOnlineStatus } from './useOnlineStatus.js'
