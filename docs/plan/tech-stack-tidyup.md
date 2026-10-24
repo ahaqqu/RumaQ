@@ -3,9 +3,11 @@
 > Status: **Implemented 2026-10-25** — PR A #241 (deps + Vite+ consolidation),
 > PR B #242 (wrangler → cf CLI + cloudflare.config.ts), PR C #243 (single Worker +
 > static assets, Pages retired), PR D #244 (migrations glob + typed API client).
-> Follow-ups: production deploy via `./scripts/deploy.sh cloudflare`, then
-> `./scripts/deploy/pages-redirect.sh`; smoke tests still target rumaq.pages.dev
-> until then. Originally written 2026-10-24.
+> Follow-ups: **completed 2026-10-25** — production deployed via
+> `./scripts/deploy.sh cloudflare` (single Worker `api` serves SPA + API at
+> `api.rumaq.workers.dev`), `rumaq.pages.dev` 301-redirects to it via
+> `./scripts/deploy/pages-redirect.sh`, and the live smoke tests target the
+> Worker URL. Originally written 2026-10-24.
 > Self-contained: includes the full tooling audit (file:line) so a fresh session can
 > implement without re-auditing. Follow the `guided-implementation` skill.
 > Land these PRs **before** the haqita integration PRs
