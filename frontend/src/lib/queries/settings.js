@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getSettings, patchSettings } from '../api.js'
+import { getSettings, patchSettings } from '../api'
 
 export function useSettings() {
   return useQuery({

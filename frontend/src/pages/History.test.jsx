@@ -58,7 +58,7 @@ const baseHistoryData = {
   avg_per_month: 42750,
 }
 
-vi.mock('../lib/api.js', () => ({
+vi.mock('../lib/api', () => ({
   getReceiptUrl: (id) => `/api/purchases/${id}/receipt`,
 }))
 

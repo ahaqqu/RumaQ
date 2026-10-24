@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { getPurchases, getPurchasePatterns, sendChatMessage } from '../api.js'
+import { getPurchases, getPurchasePatterns, sendChatMessage } from '../api'
 
 export function useHistory(filters = {}) {
   return useQuery({

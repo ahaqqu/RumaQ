@@ -17,7 +17,7 @@ import {
   useDeleteStore,
   useUsage,
 } from '../lib/queries/index.js'
-import { testAiKey } from '../lib/api.js'
+import { testAiKey } from '../lib/api'
 import { Button } from '../components/Button.jsx'
 import { Panel } from '../components/Panel.jsx'
 import { useOnlineStatus } from '../lib/useOnlineStatus.js'

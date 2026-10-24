@@ -3,9 +3,9 @@ import { render, fireEvent, waitFor } from '@testing-library/react'
 import React from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Login } from './Login.jsx'
-import * as api from '../lib/api.js'
+import * as api from '../lib/api'
 
-vi.mock('../lib/api.js', () => ({
+vi.mock('../lib/api', () => ({
   login: vi.fn(),
   emailAuthStatus: vi.fn(),
   emailLogin: vi.fn(),

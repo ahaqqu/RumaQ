@@ -38,24 +38,12 @@ if (entryIdx > 0) {
 }
 
 // --- Read SQL files ---
-const migrationSql = readFileSync(resolve(BACKEND_DIR, 'migrations/0001_schema.sql'), 'utf-8')
-const emailAuthColumnSql = 'ALTER TABLE users ADD COLUMN password_hash TEXT;'
-const stockIndexesSql = readFileSync(
-  resolve(BACKEND_DIR, 'migrations/0003_stock_indexes.sql'),
-  'utf-8'
-)
-const planIndexesSql = readFileSync(
-  resolve(BACKEND_DIR, 'migrations/0004_plan_indexes.sql'),
-  'utf-8'
-)
-const purchaseIndexesSql = readFileSync(
-  resolve(BACKEND_DIR, 'migrations/0005_purchase_history_indexes.sql'),
-  'utf-8'
-)
-const languageSql = readFileSync(
-  resolve(BACKEND_DIR, 'migrations/0006_user_settings_language.sql'),
-  'utf-8'
-)
+// All D1 migrations are applied in filename order, so new migrations
+// (e.g. haqita's 0007) exist in the Docker stack without edits here.
+const migrationSql = readdirSync(resolve(BACKEND_DIR, 'migrations'))
+  .filter((file) => file.endsWith('.sql'))
+  .sort()
+  .map((file) => readFileSync(resolve(BACKEND_DIR, 'migrations', file), 'utf-8'))
 const seedSql = readFileSync(resolve(ROOT, 'automation/tests/fixtures/seed.sql'), 'utf-8')
 const resetSql = readFileSync(resolve(ROOT, 'automation/tests/fixtures/reset.sql'), 'utf-8')
 
@@ -99,12 +87,13 @@ function flattenSql(sql) {
     .trim()
 }
 
-await db.exec(flattenSql(migrationSql))
-await db.exec(flattenSql(emailAuthColumnSql))
-await db.exec(flattenSql(stockIndexesSql))
-await db.exec(flattenSql(planIndexesSql))
-await db.exec(flattenSql(purchaseIndexesSql))
-await db.exec(flattenSql(languageSql))
+for (const sql of migrationSql) {
+  await db.exec(flattenSql(sql))
+}
+// Some migrations seed their own test users (e.g. 0002 with INSERT OR IGNORE).
+// Reset before the fixture seed so startup always lands on a clean, fully
+// seeded state, exactly like the /api/__test/reset + seed flow tests use.
+await db.exec(flattenSql(resetSql))
 await db.exec(flattenSql(seedSql))
 
 console.log('✓ D1 migrations applied and database seeded')

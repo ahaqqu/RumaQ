@@ -32,85 +32,78 @@ import {
   generatePlan,
   savePlan,
   updatePlanItem,
-} from './api.js'
+} from './api'
+
+// The client is mocked at the openapi-fetch boundary: these tests cover the
+// wrapper contract (paths, params, error mapping), while openapi-fetch itself
+// owns URL building and response parsing.
+const { clientMock } = vi.hoisted(() => ({
+  clientMock: {
+    GET: vi.fn(),
+    POST: vi.fn(),
+    PATCH: vi.fn(),
+    DELETE: vi.fn(),
+  },
+}))
+
+vi.mock('openapi-fetch', () => ({
+  default: () => clientMock,
+}))
+
+const ok = (data) => ({ data, error: undefined, response: { ok: true, status: 200 } })
+const fail = (error, status = 500) => ({
+  data: undefined,
+  error,
+  response: { ok: false, status },
+})
 
 beforeEach(() => {
-  globalThis.fetch = vi.fn()
+  clientMock.GET.mockReset()
+  clientMock.POST.mockReset()
+  clientMock.PATCH.mockReset()
+  clientMock.DELETE.mockReset()
 })
 
 describe('api', () => {
   it('getMe calls /api/me', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ user: { id: '1', email: 'a@b.com' } }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ user: { id: '1', email: 'a@b.com' } }))
     const result = await getMe()
     expect(result).toEqual({ user: { id: '1', email: 'a@b.com' } })
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      '/api/me',
-      expect.objectContaining({
-        credentials: 'include',
-      })
-    )
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/me')
   })
 
   it('getStock without params', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ stock: [] }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ stock: [] }))
     const result = await getStock()
     expect(result).toEqual({ stock: [] })
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/stock', expect.anything())
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/stock', {
+      params: { query: { location: undefined, q: undefined } },
+      signal: undefined,
+    })
   })
 
   it('getStock with location and q params', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ stock: [] }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ stock: [] }))
     await getStock({ location: 'kulkas', q: 'susu' })
-    const url = globalThis.fetch.mock.calls[0][0]
-    expect(url).toContain('location=kulkas')
-    expect(url).toContain('q=susu')
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/stock', {
+      params: { query: { location: 'kulkas', q: 'susu' } },
+      signal: undefined,
+    })
   })
 
   it('getHealth calls /api/health', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ ok: true }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ ok: true }))
     const result = await getHealth()
     expect(result).toEqual({ ok: true })
   })
 
   it('throws on failed request', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: false,
-      status: 500,
-      statusText: 'Internal Server Error',
-      json: () => Promise.resolve({ error: 'Server error' }),
-    })
+    clientMock.GET.mockResolvedValueOnce(fail({ error: 'Server error' }, 500))
     await expect(getMe()).rejects.toThrow('Server error')
   })
 
-  it('throws with status text when json fails', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: false,
-      status: 500,
-      statusText: 'Internal Server Error',
-      json: () => Promise.reject(new Error('parse error')),
-    })
-    await expect(getMe()).rejects.toThrow('Internal Server Error')
-  })
-
-  it('throws fallback error when body has no error property', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: false,
-      status: 504,
-      statusText: 'Gateway Timeout',
-      json: () => Promise.resolve({}),
-    })
+  it('throws fallback message when body has no error property', async () => {
+    clientMock.GET.mockResolvedValueOnce(fail({}, 504))
     await expect(getMe()).rejects.toThrow('Request failed: 504')
   })
 
@@ -153,196 +146,143 @@ describe('api', () => {
   })
 
   it('isAuthenticated returns true when getMe succeeds', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ user: { id: '1' } }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ user: { id: '1' } }))
     expect(await isAuthenticated()).toBe(true)
   })
 
   it('isAuthenticated returns false when getMe fails', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: false,
-      status: 401,
-      json: () => Promise.resolve({ error: 'Unauthorized' }),
-    })
+    clientMock.GET.mockResolvedValueOnce(fail({ error: 'Unauthorized' }, 401))
     expect(await isAuthenticated()).toBe(false)
   })
 
   it('emailAuthStatus calls /api/auth/email-status', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ enabled: true }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ enabled: true }))
     const result = await emailAuthStatus()
     expect(result).toEqual({ enabled: true })
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/api/auth/email-status'),
-      expect.anything()
-    )
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/auth/email-status')
   })
 
   it('emailAuthStatus returns disabled on error', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: () => Promise.resolve({ error: 'fail' }),
-    })
+    clientMock.GET.mockResolvedValueOnce(fail({ error: 'fail' }, 500))
     const result = await emailAuthStatus()
     expect(result).toEqual({ enabled: false })
   })
 
   it('emailLogin posts credentials to /api/auth/email-login', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ ok: true }),
-    })
+    clientMock.POST.mockResolvedValueOnce(ok({ ok: true }))
     const result = await emailLogin('test@rumaq.dev', 'password123')
     expect(result).toEqual({ ok: true })
-    const [url, opts] = globalThis.fetch.mock.calls[0]
-    expect(url).toContain('/api/auth/email-login')
-    expect(opts.method).toBe('POST')
-    expect(opts.body).toBe(JSON.stringify({ email: 'test@rumaq.dev', password: 'password123' }))
+    expect(clientMock.POST).toHaveBeenCalledWith('/api/auth/email-login', {
+      body: { email: 'test@rumaq.dev', password: 'password123' },
+    })
   })
 
   it('getSettings calls /api/settings', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ motion_preference: 'standard' }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ motion_preference: 'standard' }))
     const result = await getSettings()
     expect(result).toEqual({ motion_preference: 'standard' })
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/settings', expect.anything())
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/settings')
   })
 
   it('patchSettings sends PATCH payload', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ ok: true }),
-    })
+    clientMock.PATCH.mockResolvedValueOnce(ok({ ok: true }))
     const result = await patchSettings({ language: 'id' })
     expect(result).toEqual({ ok: true })
-    const [, opts] = globalThis.fetch.mock.calls[0]
-    expect(opts.method).toBe('PATCH')
-    expect(opts.body).toBe(JSON.stringify({ language: 'id' }))
+    expect(clientMock.PATCH).toHaveBeenCalledWith('/api/settings', {
+      body: { language: 'id' },
+    })
   })
 
   it('getLocations calls /api/locations', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ locations: [] }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ locations: [] }))
     const result = await getLocations()
     expect(result).toEqual({ locations: [] })
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/locations', expect.anything())
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/locations')
   })
 
   it('createLocation posts label', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ location: { id: 'l1', label: 'Kulkas' } }),
-    })
+    clientMock.POST.mockResolvedValueOnce(ok({ location: { id: 'l1', label: 'Kulkas' } }))
     const result = await createLocation('Kulkas')
     expect(result.location.label).toBe('Kulkas')
-    const [, opts] = globalThis.fetch.mock.calls[0]
-    expect(opts.method).toBe('POST')
-    expect(opts.body).toBe(JSON.stringify({ label: 'Kulkas' }))
+    expect(clientMock.POST).toHaveBeenCalledWith('/api/locations', {
+      body: { label: 'Kulkas' },
+    })
   })
 
   it('deleteLocation calls DELETE endpoint', async () => {
-    globalThis.fetch.mockResolvedValue({ ok: true, status: 204 })
+    clientMock.DELETE.mockResolvedValueOnce(ok(null))
     await deleteLocation('l1')
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/locations/l1', expect.anything())
-    const [, opts] = globalThis.fetch.mock.calls[0]
-    expect(opts.method).toBe('DELETE')
+    expect(clientMock.DELETE).toHaveBeenCalledWith('/api/locations/{id}', {
+      params: { path: { id: 'l1' } },
+    })
   })
 
   it('getItems calls /api/items', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ items: [] }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ items: [] }))
     const result = await getItems()
     expect(result).toEqual({ items: [] })
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/items', expect.anything())
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/items')
   })
 
   it('getStores calls /api/stores', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ stores: [] }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ stores: [] }))
     const result = await getStores()
     expect(result).toEqual({ stores: [] })
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/stores', expect.anything())
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/stores')
   })
 
   it('createStore posts label', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ store: { id: 's1', label: 'Indomaret' } }),
-    })
+    clientMock.POST.mockResolvedValueOnce(ok({ store: { id: 's1', label: 'Indomaret' } }))
     const result = await createStore('Indomaret')
     expect(result.store.label).toBe('Indomaret')
-    const [, opts] = globalThis.fetch.mock.calls[0]
-    expect(opts.method).toBe('POST')
+    expect(clientMock.POST).toHaveBeenCalledWith('/api/stores', {
+      body: { label: 'Indomaret' },
+    })
   })
 
   it('deleteStore calls DELETE endpoint', async () => {
-    globalThis.fetch.mockResolvedValue({ ok: true, status: 204 })
+    clientMock.DELETE.mockResolvedValueOnce(ok(null))
     await deleteStore('s1')
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/stores/s1', expect.anything())
-    const [, opts] = globalThis.fetch.mock.calls[0]
-    expect(opts.method).toBe('DELETE')
+    expect(clientMock.DELETE).toHaveBeenCalledWith('/api/stores/{id}', {
+      params: { path: { id: 's1' } },
+    })
   })
 
   it('getAiUsage calls /api/ai/usage', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ used: 5, daily_limit: 20 }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ used: 5, daily_limit: 20 }))
     const result = await getAiUsage()
     expect(result).toEqual({ used: 5, daily_limit: 20 })
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/ai/usage', expect.anything())
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/ai/usage', { signal: undefined })
   })
 
   it('testAiKey posts provider and key', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ ok: true }),
-    })
+    clientMock.POST.mockResolvedValueOnce(ok({ ok: true }))
     const result = await testAiKey('openai', 'sk-test')
     expect(result).toEqual({ ok: true })
-    const [url, opts] = globalThis.fetch.mock.calls[0]
-    expect(url).toContain('/api/ai-key/test')
-    expect(opts.method).toBe('POST')
-    expect(opts.body).toBe(JSON.stringify({ provider: 'openai', key: 'sk-test' }))
+    expect(clientMock.POST).toHaveBeenCalledWith('/api/ai-key/test', {
+      body: { provider: 'openai', key: 'sk-test' },
+    })
   })
 
   it('patchStock calls PATCH endpoint', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ stock: { id: 'x' } }),
-    })
+    clientMock.PATCH.mockResolvedValueOnce(ok({ stock: { id: 'x' } }))
     const result = await patchStock('x', { qty: 5 })
     expect(result.stock.id).toBe('x')
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/stock/x', expect.anything())
-    const [, opts] = globalThis.fetch.mock.calls[0]
-    expect(opts.method).toBe('PATCH')
+    expect(clientMock.PATCH).toHaveBeenCalledWith('/api/stock/{id}', {
+      params: { path: { id: 'x' } },
+      body: { qty: 5 },
+    })
   })
 
   it('getHome calls /api/home', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ total_items: 3 }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ total_items: 3 }))
     const result = await getHome()
     expect(result.total_items).toBe(3)
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/home', expect.anything())
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/home', { signal: undefined })
   })
 
   it('scanReceipt posts FormData', async () => {
-    globalThis.fetch.mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ items: [] }),
     })
@@ -357,7 +297,7 @@ describe('api', () => {
   })
 
   it('scanReceipt throws on error', async () => {
-    globalThis.fetch.mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 400,
       statusText: 'Bad Request',
@@ -368,127 +308,108 @@ describe('api', () => {
   })
 
   it('createPurchase posts payload', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ purchase: { id: 'p1' } }),
-    })
+    clientMock.POST.mockResolvedValueOnce(ok({ purchase: { id: 'p1' } }))
     const result = await createPurchase({ items: [{ name: 'A', qty: 1, unit: 'pcs', price: 0 }] })
     expect(result.purchase.id).toBe('p1')
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/purchases', expect.anything())
-    const [, opts] = globalThis.fetch.mock.calls[0]
-    expect(opts.method).toBe('POST')
+    expect(clientMock.POST).toHaveBeenCalledWith('/api/purchases', {
+      body: { items: [{ name: 'A', qty: 1, unit: 'pcs', price: 0 }] },
+    })
   })
 
   it('getReceiptUrl returns URL', () => {
     expect(getReceiptUrl('p1')).toContain('/api/purchases/p1/receipt')
   })
 
-  it('getPurchases builds query string', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ purchases: [] }),
-    })
+  it('getPurchases builds query params', async () => {
+    clientMock.GET.mockResolvedValueOnce(ok({ purchases: [] }))
     await getPurchases({
       store: 's1',
       from: '2026-01-01',
       to: '2026-12-31',
       q: 'milk',
+      groupBy: 'month',
+      limit: 10,
       cursor: 'c1',
     })
-    const url = globalThis.fetch.mock.calls[0][0]
-    expect(url).toContain('store=s1')
-    expect(url).toContain('from=2026-01-01')
-    expect(url).toContain('to=2026-12-31')
-    expect(url).toContain('q=milk')
-    expect(url).toContain('cursor=c1')
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/purchases', {
+      params: {
+        query: {
+          store: 's1',
+          from: '2026-01-01',
+          to: '2026-12-31',
+          q: 'milk',
+          group_by: 'month',
+          limit: 10,
+          cursor: 'c1',
+        },
+      },
+      signal: undefined,
+    })
   })
 
   it('getPurchasePatterns calls /api/purchases/patterns', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ patterns: [] }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ patterns: [] }))
     const result = await getPurchasePatterns()
     expect(result).toEqual({ patterns: [] })
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/purchases/patterns', expect.anything())
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/purchases/patterns')
   })
 
   it('getPurchase calls /api/purchases/:id', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ purchase: { id: 'p1' } }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ purchase: { id: 'p1' } }))
     const result = await getPurchase('p1')
     expect(result.purchase.id).toBe('p1')
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/purchases/p1', expect.anything())
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/purchases/{id}', {
+      params: { path: { id: 'p1' } },
+    })
   })
 
   it('sendChatMessage posts message without history', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ reply: 'hello' }),
-    })
+    clientMock.POST.mockResolvedValueOnce(ok({ reply: 'hello' }))
     const result = await sendChatMessage('hi')
     expect(result.reply).toBe('hello')
-    const [, opts] = globalThis.fetch.mock.calls[0]
-    expect(opts.body).toBe(JSON.stringify({ message: 'hi' }))
+    expect(clientMock.POST).toHaveBeenCalledWith('/api/ai/chat', { body: { message: 'hi' } })
   })
 
   it('sendChatMessage includes history when provided', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ reply: 'ok' }),
-    })
+    clientMock.POST.mockResolvedValueOnce(ok({ reply: 'ok' }))
     await sendChatMessage('hi', [{ role: 'user', content: 'previous' }])
-    const [, opts] = globalThis.fetch.mock.calls[0]
-    expect(opts.body).toBe(
-      JSON.stringify({ message: 'hi', history: [{ role: 'user', content: 'previous' }] })
-    )
+    expect(clientMock.POST).toHaveBeenCalledWith('/api/ai/chat', {
+      body: { message: 'hi', history: [{ role: 'user', content: 'previous' }] },
+    })
   })
 
   it('getPlans defaults to active', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ plans: [] }),
-    })
+    clientMock.GET.mockResolvedValueOnce(ok({ plans: [] }))
     await getPlans()
-    expect(globalThis.fetch.mock.calls[0][0]).toContain('/api/plans?status=active')
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/plans', {
+      params: { query: { status: 'active' } },
+      signal: undefined,
+    })
   })
 
   it('generatePlan posts to /api/plans/generate', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ items: [] }),
-    })
+    clientMock.POST.mockResolvedValueOnce(ok({ items: [] }))
     const result = await generatePlan()
     expect(result).toEqual({ items: [] })
-    const [url, opts] = globalThis.fetch.mock.calls[0]
-    expect(url).toContain('/api/plans/generate')
-    expect(opts.method).toBe('POST')
+    expect(clientMock.POST).toHaveBeenCalledWith('/api/plans/generate', {})
   })
 
   it('savePlan posts items', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ plan: { id: 'pl1' } }),
-    })
+    clientMock.POST.mockResolvedValueOnce(ok({ plan: { id: 'pl1' } }))
     const result = await savePlan([{ name: 'A' }])
     expect(result.plan.id).toBe('pl1')
-    const [, opts] = globalThis.fetch.mock.calls[0]
-    expect(opts.method).toBe('POST')
-    expect(opts.body).toBe(JSON.stringify({ items: [{ name: 'A' }] }))
+    expect(clientMock.POST).toHaveBeenCalledWith('/api/plans', {
+      body: { items: [{ name: 'A' }] },
+    })
   })
 
   it('updatePlanItem calls PATCH endpoint', async () => {
-    globalThis.fetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ item: { id: 'i1' } }),
-    })
+    clientMock.PATCH.mockResolvedValueOnce(ok({ item: { id: 'i1' } }))
     const result = await updatePlanItem('pl1', 'i1', 'bought')
     expect(result.item.id).toBe('i1')
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/plans/pl1/items/i1', expect.anything())
-    const [, opts] = globalThis.fetch.mock.calls[0]
-    expect(opts.method).toBe('PATCH')
-    expect(opts.body).toBe(JSON.stringify({ status: 'bought' }))
+    expect(clientMock.PATCH).toHaveBeenCalledWith('/api/plans/{id}/items/{itemId}', {
+      params: { path: { id: 'pl1', itemId: 'i1' } },
+      body: { status: 'bought' },
+    })
   })
 })

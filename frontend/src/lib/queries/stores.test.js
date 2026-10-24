@@ -3,9 +3,9 @@ import { renderHook, act, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { useCreateStore, useDeleteStore } from './stores.js'
-import { createStore, deleteStore } from '../api.js'
+import { createStore, deleteStore } from '../api'
 
-vi.mock('../api.js', () => ({
+vi.mock('../api', () => ({
   getStores: vi.fn(),
   createStore: vi.fn(),
   deleteStore: vi.fn(),
