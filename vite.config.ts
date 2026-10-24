@@ -25,9 +25,10 @@ export default defineConfig({
   },
   lint: {
     options: {
-      // Keep linting close to the previous ESLint setup while we migrate.
+      // typeAware + typeCheck make `vp check` the single static-check pass:
+      // format + lint + full type-check (tsgolint / TypeScript Go).
       typeAware: true,
-      typeCheck: false,
+      typeCheck: true,
     },
     plugins: ['import'],
     rules: {
@@ -82,6 +83,22 @@ export default defineConfig({
           environment: 'node',
           include: ['src/**/*.test.ts'],
           testTimeout: 15000,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'integration',
+          environment: 'node',
+          globals: true,
+          include: ['automation/tests/local/api/steps/**/*.steps.js'],
+          envDir: 'automation/tests',
+          testTimeout: 30_000,
+          fileParallelism: false,
+          reporters: [
+            ['default', { verbose: true }],
+            ['json', { outputFile: 'vitest-report/api-results.json' }],
+          ],
         },
       },
     ],

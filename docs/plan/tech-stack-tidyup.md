@@ -65,7 +65,7 @@ Playwright base image `1.61.1` vs `@playwright/test ^1.62.0`.
    `vite-plus` notably. Keep `packageManager: bun@…` consistent: bump workflows'
    `bun-version` and `oven/bun:` Docker tags together. Fix the Playwright mismatch:
    either match the base image tag to `@playwright/test` or `bunx playwright install
---with-deps chromium` in the image (prefer the latter — kills the tag-chase).
+   --with-deps chromium` in the image (prefer the latter — kills the tag-chase).
 2. `frontend/vite.config.js` and `backend/vite.config.ts`: switch `defineConfig`
    import to `vite-plus` (keep the vite plugins — they work through Vite+); delete the
    duplicated `test`/`coverage` blocks in the frontend config — root vp config is the

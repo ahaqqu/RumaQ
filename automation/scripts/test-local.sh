@@ -140,6 +140,9 @@ fi
 ensure_stack() {
   local build_flag=""
   if [[ "$BUILD_MODE" == "force" ]]; then
+    # `up --build` only covers services started by `up`; the test-runner runs
+    # via `compose run`, so rebuild it explicitly.
+    docker compose -f "$COMPOSE_FILE" build test-runner
     build_flag="--build"
   elif [[ "$BUILD_MODE" == "never" ]]; then
     build_flag=""
@@ -225,7 +228,7 @@ case "$MODE" in
     ensure_stack
 
     docker compose -f "$COMPOSE_FILE" run --rm test-runner \
-      sh -c "bun x vitest run --config automation/vitest.config.integration.mjs && sync"
+      sh -c "bunx vp test --project integration && sync"
     EXIT_CODE=$?
     TEAR_DOWN="1" cleanup
     exit $EXIT_CODE
