@@ -58,12 +58,12 @@ Creates D1 database and R2 bucket if missing, then deploys a single Worker that 
 
 ### Pull request previews
 
-Every PR to `main` gets a dedicated preview environment:
+Previews are deployed **on demand** — run `Preview deployment` from the GitHub Actions tab and select the branch. Docs-only or trivial PRs need no preview environment.
 
 - Single preview URL: `https://rumaq-api-{sanitized-branch}.rumaq.workers.dev` (serves both the app and the API)
 - Database: dedicated staging D1 database (`rumaq-preview`), separate from production
 
-`.github/workflows/preview.yml` deploys the branch Worker and comments the URL on the PR when a non-draft PR is opened. The branch-specific Worker is deleted automatically when the PR is closed.
+`.github/workflows/preview.yml` deploys the branch Worker and comments the URL on the PR (when one is open for the branch). The branch-specific Worker is deleted automatically when the PR is closed. To purge all preview Workers at once, run `scripts/cleanup-preview-workers.sh`.
 
 ### Production smoke tests
 

@@ -1,12 +1,10 @@
 name: Preview deployment
 
 on:
-  pull_request:
-    branches: [main]
-    # Only run on PR open. Redeploys after new pushes must be triggered
-    # manually via workflow_dispatch to stay within the Cloudflare Pages free
-    # build quota.
-    types: [opened]
+  # Deployed on demand only: run from Actions > Preview deployment > Run
+  # workflow, selecting the branch to preview. Docs-only or trivial PRs need
+  # no preview environment. The branch Worker is still deleted automatically
+  # when the PR is closed (cleanup-branch.yml).
   workflow_dispatch:
 
 concurrency:
@@ -15,8 +13,6 @@ concurrency:
 
 jobs:
   preview:
-    # Skip draft PRs to avoid deploying incomplete work.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -56,7 +52,7 @@ jobs:
       - name: Deploy branch Worker (app + API)
         id: deploy
         run: |
-          BRANCH_NAME="${{ github.head_ref }}" \
+          BRANCH_NAME="${{ github.head_ref || github.ref_name }}" \
           CLOUDFLARE_ACCOUNT_ID="${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" \
           CLOUDFLARE_DATABASE_ID="${{ secrets.CLOUDFLARE_PREVIEW_DATABASE_ID }}" \
           CLOUDFLARE_API_TOKEN="${{ secrets.CLOUDFLARE_API_TOKEN }}" \
@@ -73,10 +69,23 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            const branch = context.payload.pull_request.head.ref
-            const sanitized = branch.replace(/[^a-zA-Z0-9-]/g, '-')
-            const workerName = `rumaq-api-${sanitized}`
+            const branch = context.ref.replace('refs/heads/', '')
+            const owner = context.repo.owner
+            const repo = context.repo.repo
+            const workerName = `rumaq-api-${branch.replace(/[^a-zA-Z0-9-]/g, '-')}`
             const previewUrl = `https://${workerName}.rumaq.workers.dev`
+
+            const { data: prs } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              headers: { 'X-GitHub-Api-Version': '2022-11-28' },
+            })
+            const pr = prs.find(p => p.head.ref === branch)
+            if (!pr) {
+              console.log(`No open PR found for branch "${branch}"; skipping preview comment.`)
+              return
+            }
 
             const body = `## Preview deployment ready\n\n` +
               `- **App + API (single Worker):** ${previewUrl}\n` +
@@ -84,9 +93,9 @@ jobs:
               `_This preview environment is automatically deleted when the PR is closed._`
 
             const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
+              owner,
+              repo,
+              issue_number: pr.number,
               headers: { 'X-GitHub-Api-Version': '2022-11-28' },
             })
 
@@ -96,17 +105,17 @@ jobs:
 
             if (existing) {
               await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
+                owner,
+                repo,
                 comment_id: existing.id,
                 body,
                 headers: { 'X-GitHub-Api-Version': '2022-11-28' },
               })
             } else {
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
+                owner,
+                repo,
+                issue_number: pr.number,
                 body,
                 headers: { 'X-GitHub-Api-Version': '2022-11-28' },
               })
