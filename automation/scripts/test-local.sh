@@ -225,7 +225,7 @@ case "$MODE" in
     ensure_stack
 
     docker compose -f "$COMPOSE_FILE" run --rm test-runner \
-      sh -c "bun x vitest run --config automation/vitest.config.integration.mjs && sync"
+      sh -c "bunx vp test --project integration && sync"
     EXIT_CODE=$?
     TEAR_DOWN="1" cleanup
     exit $EXIT_CODE

@@ -1,14 +1,8 @@
-ARG PLAYWRIGHT_VERSION=1.61.1
-FROM mcr.microsoft.com/playwright:v1.61.1-jammy
+FROM oven/bun:1.4.0-slim
 
 WORKDIR /app
 
-# Install Bun on top of the Playwright Node image
-RUN apt-get update && apt-get install -y --no-install-recommends curl unzip \
-  && curl -fsSL https://bun.sh/install | bash \
-  && ln -s /root/.bun/bin/bun /usr/local/bin/bun \
-  && apt-get purge -y curl unzip \
-  && rm -rf /var/lib/apt/lists/*
+USER root
 
 # Layer 1: dependencies (cached until lockfiles change)
 COPY bun.lock package.json ./
@@ -17,13 +11,20 @@ COPY backend/package.json ./backend/
 RUN --mount=type=cache,target=/root/.bun/install/cache \
   bun install --frozen-lockfile
 
-# Layer 2: stable configs & migrations (rarely change)
+# Install the Chromium build matching @playwright/test from package.json so the
+# browser version can never drift from the driver. --with-deps pulls the OS
+# libraries via apt, which removes the need for a version-pinned base image.
+RUN bunx playwright install --with-deps chromium
+
+# Layer 2: stable configs & migrations (rarely change). Workspace vite configs
+# are copied because the root vp config resolves each project's own config.
 COPY vite.config.ts ./
+COPY frontend/vite.config.js ./frontend/
 COPY backend/vite.config.ts ./backend/
 COPY backend/tsconfig.json ./backend/
+COPY backend/wrangler.test.toml ./backend/
 COPY backend/migrations/ ./backend/migrations/
 COPY automation/playwright.config.js ./automation/playwright.config.js
-COPY automation/vitest.config.integration.mjs ./automation/vitest.config.integration.mjs
 
 # Layer 3: app source (changes moderately)
 COPY backend/src/ ./backend/src/
@@ -39,4 +40,4 @@ ENV TEST_BASE_URL=http://proxy:3000
 # discover tests immediately.
 RUN bunx bddgen test --config automation/playwright.config.js
 
-CMD ["sh", "-c", "bun x vitest run --config automation/vitest.config.integration.mjs && bun x playwright test --config automation/playwright.config.js && sync"]
+CMD ["sh", "-c", "bunx vp test --project integration && bun x playwright test --config automation/playwright.config.js && sync"]

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vite-plus'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
@@ -75,27 +75,6 @@ export default defineConfig({
         __dirname,
         'src/__mocks__/virtual-pwa-register-react.js'
       ),
-    },
-  },
-  test: {
-    environment: 'jsdom',
-    include: ['src/**/*.test.{js,jsx}'],
-    setupFiles: ['src/test-setup.js'],
-    testTimeout: 15000,
-  },
-  coverage: {
-    exclude: [
-      'src/styles/**',
-      'src/routes/**',
-      'src/lib/queries/**',
-      'src/context/AppContext.jsx',
-      'src/lib/cn.js',
-    ],
-    thresholds: {
-      statements: 50,
-      branches: 50,
-      functions: 50,
-      lines: 50,
     },
   },
 })

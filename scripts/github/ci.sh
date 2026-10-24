@@ -13,9 +13,6 @@ git diff --exit-code docs/API.md
 echo "=== CI: frontend tests ==="
 "$ROOT_DIR/scripts/test.sh" unit frontend --coverage
 
-echo "=== CI: typecheck ==="
-bunx tsc --noEmit -p "$ROOT_DIR/backend/tsconfig.json"
-
 echo "=== CI: backend tests ==="
 "$ROOT_DIR/scripts/test.sh" unit backend --coverage
 

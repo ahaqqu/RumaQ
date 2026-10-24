@@ -36,17 +36,26 @@ type PathEntry = {
   description: string
 }
 
-function getQueryParams(operation: any): string {
+type OperationLike = {
+  security?: unknown[]
+  description?: string
+  parameters?: { name: string; required?: boolean }[]
+  requestBody?: {
+    content?: Record<string, { schema?: { properties?: Record<string, unknown> } }>
+  }
+}
+
+function getQueryParams(operation: OperationLike): string {
   if (!operation.parameters || operation.parameters.length === 0) return '\u2014'
   return operation.parameters
-    .map((p: any) => {
+    .map((p) => {
       const suffix = p.required ? '' : '?'
       return `\`${p.name}${suffix}\``
     })
     .join(', ')
 }
 
-function getBodyInfo(operation: any): string {
+function getBodyInfo(operation: OperationLike): string {
   if (!operation.requestBody) return '\u2014'
   const content = operation.requestBody.content
   if (!content || !content['application/json']) return '`{ ... }`'
@@ -62,7 +71,7 @@ function extractEntries(paths: Record<string, any>): PathEntry[] {
   for (let [path, methods] of Object.entries(paths)) {
     if (EXCLUDE_PATHS.has(path)) continue
     path = AUTH_PATH_REMAP[path] || path
-    for (const [method, op] of Object.entries(methods as any)) {
+    for (const [method, op] of Object.entries(methods as Record<string, OperationLike>)) {
       const isAuth = !!(op.security && op.security.length > 0)
       entries.push({
         method: method.toUpperCase(),
