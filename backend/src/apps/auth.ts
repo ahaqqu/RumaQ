@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import { openAPIRouteHandler, describeRoute } from 'hono-openapi'
 import type { Env } from '../types.js'
@@ -10,7 +10,14 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
 const COOKIE_NAME = 'rumaq_session'
+const OAUTH_STATE_COOKIE = 'rumaq_oauth_state'
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000
+
+// The authorize-time and token-exchange redirect_uri must match exactly — Google
+// rejects the exchange otherwise — so both routes build it here, derived from the
+// request origin: Google returns the browser to the authorize-time redirect_uri,
+// so the callback's own origin is always the value Google validated.
+const oauthRedirectUri = (c: Context<Env>) => `${getRequestOrigin(c)}/api/auth/callback`
 
 const authApp = new Hono<Env>()
 
@@ -36,16 +43,14 @@ authApp.get(
   async (c) => {
     const state = randomState()
     const verifier = randomState()
-    const origin = getRequestOrigin(c)
-    const redirectUri = `${origin}/api/auth/callback`
+    const redirectUri = oauthRedirectUri(c)
     const sha256 = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
     const challenge = base64UrlEncode(sha256)
 
-    // The cookie must stay colon-free beyond state/verifier: the origin contains
-    // ':' (https://…) and would be truncated by split(':') in the callback.
-    // The callback re-derives the redirect_uri from its own request origin —
-    // Google returns the browser to exactly that origin, so they always match.
-    setCookie(c, 'rumaq_oauth_state', `${state}:${verifier}`, {
+    // Only state:verifier may live in this cookie — both are base64url
+    // (colon-free); a delimited origin would be truncated by the callback's
+    // split(':'), which re-derives the redirect_uri from its own request origin.
+    setCookie(c, OAUTH_STATE_COOKIE, `${state}:${verifier}`, {
       path: '/',
       httpOnly: true,
       secure: true,
@@ -78,15 +83,15 @@ authApp.get(
   }),
   async (c) => {
     const { code, state } = c.req.query()
-    const cookie = getCookie(c, 'rumaq_oauth_state') || ''
-    deleteCookie(c, 'rumaq_oauth_state')
+    const cookie = getCookie(c, OAUTH_STATE_COOKIE) || ''
+    deleteCookie(c, OAUTH_STATE_COOKIE)
     const [expectedState, verifier] = cookie.split(':')
 
     if (!code || !state || state !== expectedState) {
       return c.json({ error: 'Invalid OAuth state' }, 400)
     }
 
-    const redirectUri = `${getRequestOrigin(c)}/api/auth/callback`
+    const redirectUri = oauthRedirectUri(c)
     const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
