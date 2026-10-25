@@ -5,7 +5,7 @@ import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vite-plus/test'
 
 import { FatalPublishError, publishPayload } from '../../src/publish/client.js'
 import type { IngestPayload } from '../../src/publish/payload.js'

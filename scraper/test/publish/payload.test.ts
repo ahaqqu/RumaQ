@@ -1,7 +1,7 @@
 // Payload builder tests — product keys (haqita convention), period parsing,
 // and schema round-trip through the shared Valibot schema from PR1.
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vite-plus/test'
 import * as v from 'valibot'
 
 import { loadConfig, storeBySlug } from '../../src/config.js'

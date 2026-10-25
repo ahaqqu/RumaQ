@@ -1,6 +1,6 @@
 // Port of haqita tests/ocr/test_price_parser.py + test_ocr_validation.py.
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vite-plus/test'
 
 import {
   cleanPrice,

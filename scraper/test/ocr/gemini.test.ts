@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vite-plus/test'
 
 import { createOcr, getPrompt, type GeminiClient } from '../../src/ocr/gemini.js'
 import type { RawOcrItem } from '../../src/ocr/parse.js'

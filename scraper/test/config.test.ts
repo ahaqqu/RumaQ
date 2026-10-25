@@ -1,6 +1,6 @@
 // Config port tests — haqita thresholds and the per-store strategy table.
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vite-plus/test'
 
 import { loadConfig, storeBySlug } from '../src/config.js'
 

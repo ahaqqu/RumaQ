@@ -1,7 +1,7 @@
 // Tier-1 fetch ladder tests: default headers, retries, cookie jar, and the
 // browser-tier guard (port of the behavior in haqita base_scraper.py).
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vite-plus/test'
 
 import {
   BrowserTierRequiredError,

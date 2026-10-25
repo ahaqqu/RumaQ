@@ -1,7 +1,7 @@
 // Port of haqita tests/ocr/test_gemini_quota.py — quota vs rate-limit
 // classification and retry semantics (with an injected no-op sleep).
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vite-plus/test'
 
 import { QuotaExhaustedError, parseRetryDelay, retryCall } from '../../src/util/retry.js'
 

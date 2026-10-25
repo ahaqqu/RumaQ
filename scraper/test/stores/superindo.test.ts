@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vite-plus/test'
 
 import { createSuperindoPlugin, dedupeUrls, parseSwiperImages } from '../../src/stores/superindo.js'
 import { loadConfig, storeBySlug } from '../../src/config.js'
