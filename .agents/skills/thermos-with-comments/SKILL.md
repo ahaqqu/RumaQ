@@ -10,20 +10,23 @@ disable-model-invocation: true
 
 Use this skill when a review's findings must land on the PR as individually-referencable, itemized comments — the implement → review → fix loop, and the only thermos arm `code-review` ever calls. It runs the two thermo passes and posts the itemized report to the PR instead of synthesizing in chat, returning the same itemized report to the caller.
 
-The review standards are inherited from `thermo-nuclear-review/SKILL.md` (security/correctness) and `thermo-nuclear-code-quality-review/SKILL.md` (maintainability). Load both into the dispatched subagents.
+The review standards are inherited from `thermo-nuclear-review/SKILL.md` (security/correctness) and `thermo-nuclear-code-quality-review/SKILL.md` (maintainability). Load both and run them yourself in this session.
 
-## Reviewer subagents
+## Review passes (single session, no subagents)
 
-This project defines no dedicated reviewer role agents — use the harness's generic subagent type and inline the prompts from the sibling skills. Dispatch two sub-reviewers in parallel (same message, `run_in_background: true`): one for security/correctness with the prompt from `thermo-nuclear-review/SKILL.md`, and one for maintainability with the prompt from `thermo-nuclear-code-quality-review/SKILL.md`.
+Do **not** dispatch subagents or launch any background agents — the entire review runs in the one session agent. Run the two passes sequentially against the same scoped diff + PR context:
+
+1. **Security/correctness pass** — follow the prompt in `thermo-nuclear-review/SKILL.md`; produce a prioritized, numbered list of findings.
+2. **Maintainability pass** — follow the prompt in `thermo-nuclear-code-quality-review/SKILL.md` on the same diff; produce a prioritized, numbered list of findings.
 
 ## Workflow
 
 1. Resolve the PR: `gh pr view` for the current branch (or a PR number the caller hands you). Record the PR number and head SHA.
-2. Launch both reviewer subagents in the same message, `run_in_background: true`, passing them the same scoped diff + PR context. Ask each to return a prioritized, numbered list of findings.
-3. Synthesize: merge the two reviews. Deduplicate overlapping findings, weight overlaps more heavily, resolve disagreements with your own judgment. Do not restate each reviewer wholesale — the deliverable is one unified, itemized report.
+2. Run both review passes sequentially yourself as described above (all in this session — no subagents). Each pass returns a prioritized, numbered list of findings.
+3. Synthesize: merge the two passes. Deduplicate overlapping findings, weight overlaps more heavily, resolve disagreements with your own judgment. Do not restate each pass wholesale — the deliverable is one unified, itemized report.
 4. Assign each finding a **stable item ID**:
-   - `A1, A2, …` — security / correctness findings (from the security reviewer).
-   - `B1, B2, …` — code-quality / maintainability findings (from the quality reviewer).
+   - `A1, A2, …` — security / correctness findings (from the security/correctness pass).
+   - `B1, B2, …` — code-quality / maintainability findings (from the maintainability pass).
    - `C1, C2, …` — post-synthesis / cross-cutting findings (from your own merge: conflicts, systemic issues, or findings neither reviewer caught alone).
    - Never renumber after publication. If a finding is withdrawn later, mark it `withdrawn — <reason>`; do not reuse its ID.
 5. Build each item's payload. Every item has:
