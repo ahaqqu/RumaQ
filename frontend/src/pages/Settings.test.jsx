@@ -240,14 +240,15 @@ describe('Settings', () => {
     const select = container.querySelector('select')
     fireEvent.change(select, { target: { value: 'custom' } })
     const baseUrlInput = container.querySelector('input[aria-label="settings.customBaseUrl"]')
-    const modelInput = container.querySelector('input[aria-label="settings.customModel"]')
+    const modelInput = container.querySelector('input[aria-label="settings.model"]')
     expect(baseUrlInput).toBeTruthy()
     expect(modelInput).toBeTruthy()
   })
 
-  it('hides base URL and model inputs for preset providers', () => {
+  it('shows the model input for preset providers while hiding the base URL', () => {
     const { container } = renderWithQuery(React.createElement(Settings, baseProps))
     expect(container.querySelector('input[aria-label="settings.customBaseUrl"]')).toBeNull()
+    expect(container.querySelector('input[aria-label="settings.model"]')).toBeTruthy()
   })
 
   it('adds location with Enter key', () => {

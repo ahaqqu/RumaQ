@@ -152,6 +152,76 @@ describe('api routes', () => {
     expect(bound).toContain('https://api.example.com/v1')
   })
 
+  it('/api/settings stores the thinking level and clears it with an empty string', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    const res = await apiApp.request(
+      '/api/settings',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ ai_thinking_level: 'high' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(200)
+    expect(env.DB.bind.mock.calls.flat()).toContain('high')
+
+    const clear = await apiApp.request(
+      '/api/settings',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ ai_thinking_level: '' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(clear.status).toBe(200)
+    expect(env.DB.bind.mock.calls.flat()).toContain(null)
+  })
+
+  it('/api/settings rejects a thinking level outside the enum', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    const res = await apiApp.request(
+      '/api/settings',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ ai_thinking_level: 'extreme' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('/api/settings rejects a model name outside the safe charset', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    const res = await apiApp.request(
+      '/api/settings',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ ai_model: 'gemini-flash?tool=code_execution' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('/api/settings accepts ollama-style model names', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    const res = await apiApp.request(
+      '/api/settings',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ ai_model: 'qwen3-vl:235b-instruct' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(200)
+    expect(env.DB.bind.mock.calls.flat()).toContain('qwen3-vl:235b-instruct')
+  })
+
   it('/api/settings stores encrypted ai_key', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.first = vi.fn().mockResolvedValue({
@@ -262,11 +332,28 @@ describe('api routes', () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.first = vi
       .fn()
+      .mockResolvedValueOnce({ ai_provider: 'gemini', encrypted_ai_key: null })
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ ai_provider: 'gemini' })
-    env.DB.run = vi.fn().mockResolvedValue(undefined)
     const res = await apiApp.request('/api/ai/usage', {}, env)
-    expect(((await res.json()) as any).used).toBe(0)
+    const body = (await res.json()) as any
+    expect(body.used).toBe(0)
+    expect(body.key_source).toBe('user')
+  })
+
+  it('/api/ai/usage reports server key source when user has no own key', async () => {
+    const env = createMockEnv({
+      props: { userId: 'u1', householdId: 'h1' },
+      RUMAQ_SERVER_AI_PROVIDER: 'gemini',
+      RUMAQ_SERVER_AI_KEY: 'sk-server',
+    })
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ ai_provider: null, encrypted_ai_key: null })
+      .mockResolvedValueOnce(null)
+    const res = await apiApp.request('/api/ai/usage', {}, env)
+    const body = (await res.json()) as any
+    expect(body.key_source).toBe('server')
+    expect(body.provider).toBe('gemini')
   })
 
   it('/api/ai-key/test validates key from settings', async () => {
@@ -341,14 +428,20 @@ describe('api routes', () => {
     expect(res.status).toBe(402)
   })
 
-  it('/api/ai/chat returns 429 when usage limit reached', async () => {
-    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+  it('/api/ai/chat returns 429 when server-key usage limit reached', async () => {
+    const env = createMockEnv({
+      props: { userId: 'u1', householdId: 'h1' },
+      RUMAQ_SERVER_AI_PROVIDER: 'gemini',
+      RUMAQ_SERVER_AI_KEY: 'sk-server',
+    })
     env.DB.first = vi
       .fn()
       .mockResolvedValueOnce({
-        ai_provider: 'gemini',
-        encrypted_ai_key: ENCRYPTED_KEY,
+        ai_provider: null,
+        encrypted_ai_key: null,
         persona_enabled: 0,
+        persona_user_role: null,
+        persona_ai_role: null,
       })
       .mockResolvedValueOnce({ id: 'u1', used: 20, daily_limit: 20 })
     const res = await apiApp.request(
@@ -361,6 +454,34 @@ describe('api routes', () => {
       env
     )
     expect(res.status).toBe(429)
+  })
+
+  it('/api/ai/chat lets own-key users continue past the daily limit', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ai_provider: 'gemini',
+        ai_base_url: null,
+        ai_model: null,
+        ai_thinking_level: null,
+        encrypted_ai_key: ENCRYPTED_KEY,
+        persona_enabled: 0,
+        persona_user_role: null,
+        persona_ai_role: null,
+      })
+      .mockResolvedValueOnce({ id: 'u1', used: 20, daily_limit: 20 })
+    const res = await apiApp.request(
+      '/api/ai/chat',
+      {
+        method: 'POST',
+        body: JSON.stringify({ message: 'hi' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as any).reply).toContain('test')
   })
 
   it('/api/purchases/scan uses TEST_MODE fallback', async () => {

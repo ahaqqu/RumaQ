@@ -18,6 +18,7 @@ import {
   useUsage,
 } from '../lib/queries/index.js'
 import { testAiKey } from '../lib/api'
+import { AI_PROVIDER_DEFAULTS } from '../lib/aiProviders.js'
 import { Button } from '../components/Button.jsx'
 import { Panel } from '../components/Panel.jsx'
 import { useOnlineStatus } from '../lib/useOnlineStatus.js'
@@ -110,6 +111,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
   const [provider, setProvider] = useState('gemini')
   const [customBaseUrl, setCustomBaseUrl] = useState('')
   const [customModel, setCustomModel] = useState('')
+  const [thinkingLevel, setThinkingLevel] = useState('')
   const [saved, setSaved] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testOk, setTestOk] = useState(null)
@@ -157,6 +159,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
     if (settingsData.ai_model) {
       setCustomModel(settingsData.ai_model)
     }
+    setThinkingLevel(settingsData.ai_thinking_level || '')
     if (settingsData.has_ai_key) {
       setDraft('')
     }
@@ -229,6 +232,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
       ai_provider: provider,
       ai_base_url: customBaseUrl.trim(),
       ai_model: customModel.trim(),
+      ai_thinking_level: thinkingLevel,
     }
     setAiKey(draft.trim() || null)
     setTestOk(null)
@@ -331,35 +335,50 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
               </Setting>
 
               {provider === 'custom' && (
-                <>
-                  <Setting
-                    title={t('settings.customBaseUrl')}
-                    desc={t('settings.customBaseUrlDesc')}
-                    className="flex-wrap"
-                  >
-                    <InlineInput
-                      value={customBaseUrl}
-                      onChange={setCustomBaseUrl}
-                      onSubmit={save}
-                      placeholder="https://api.example.com/v1"
-                      ariaLabel={t('settings.customBaseUrl')}
-                    />
-                  </Setting>
-                  <Setting
-                    title={t('settings.customModel')}
-                    desc={t('settings.customModelDesc')}
-                    className="flex-wrap"
-                  >
-                    <InlineInput
-                      value={customModel}
-                      onChange={setCustomModel}
-                      onSubmit={save}
-                      placeholder="llama3.3:70b"
-                      ariaLabel={t('settings.customModel')}
-                    />
-                  </Setting>
-                </>
+                <Setting
+                  title={t('settings.customBaseUrl')}
+                  desc={t('settings.customBaseUrlDesc')}
+                  className="flex-wrap"
+                >
+                  <InlineInput
+                    value={customBaseUrl}
+                    onChange={setCustomBaseUrl}
+                    onSubmit={save}
+                    placeholder="https://api.example.com/v1"
+                    ariaLabel={t('settings.customBaseUrl')}
+                  />
+                </Setting>
               )}
+
+              <Setting
+                title={t('settings.model')}
+                desc={
+                  provider === 'custom' ? t('settings.customModelDesc') : t('settings.modelDesc')
+                }
+                className="flex-wrap"
+              >
+                <InlineInput
+                  value={customModel}
+                  onChange={setCustomModel}
+                  onSubmit={save}
+                  placeholder={AI_PROVIDER_DEFAULTS[provider]}
+                  ariaLabel={t('settings.model')}
+                />
+              </Setting>
+
+              <Setting title={t('settings.thinking')} desc={t('settings.thinkingDesc')}>
+                <select
+                  value={thinkingLevel}
+                  onChange={(e) => setThinkingLevel(e.target.value)}
+                  className="w-auto"
+                  aria-label={t('settings.thinking')}
+                >
+                  <option value="">{t('settings.thinkingDefault')}</option>
+                  <option value="low">{t('settings.thinkingLow')}</option>
+                  <option value="medium">{t('settings.thinkingMedium')}</option>
+                  <option value="high">{t('settings.thinkingHigh')}</option>
+                </select>
+              </Setting>
 
               <Setting
                 title={t('settings.apiKey')}
@@ -413,7 +432,13 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
 
               <Setting
                 title={t('settings.status')}
-                desc={settingsData?.has_ai_key ? t('settings.active') : t('settings.inactive')}
+                desc={
+                  settingsData?.has_ai_key
+                    ? t('settings.active')
+                    : settingsData?.server_ai_available
+                      ? t('settings.inactiveServer')
+                      : t('settings.inactive')
+                }
               >
                 <Button
                   size="sm"
