@@ -14,6 +14,12 @@ WORKER_JWT_SECRET=change-me-to-a-random-64-char-hex-string
 # Generate with: openssl rand -hex 32
 WORKER_ENCRYPTION_KEY=change-me-to-a-random-64-char-hex-string
 
+# Bearer secret for the internal price ingest endpoint
+# (POST /api/internal/ingest/prices, pushed by the rumaq-scraper VPS job).
+# Generate with: openssl rand -hex 32. Optional: when unset the endpoint
+# returns 503 and everything else keeps working.
+HAQITA_INGEST_SECRET=change-me-to-a-random-64-char-hex-string
+
 # Allow the local Vite dev server origin.
 PAGES_ORIGIN=http://localhost:5173
 

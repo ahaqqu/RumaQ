@@ -311,20 +311,21 @@ Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branc
 
 ### Environment variables
 
-| Variable                 | Where         | Purpose                                                                                                  |
-| ------------------------ | ------------- | -------------------------------------------------------------------------------------------------------- |
-| `GOOGLE_CLIENT_ID`       | Worker secret | Google OAuth client ID                                                                                   |
-| `GOOGLE_CLIENT_SECRET`   | Worker secret | Google OAuth client secret                                                                               |
-| `WORKER_JWT_SECRET`      | Worker secret | HMAC key for session JWT                                                                                 |
-| `WORKER_ENCRYPTION_KEY`  | Worker secret | AES-GCM key for AI keys                                                                                  |
-| `CLOUDFLARE_ACCOUNT_ID`  | Build/deploy  | Cloudflare account ID; used by Wrangler and the deploy script                                            |
-| `CLOUDFLARE_DATABASE_ID` | Build/deploy  | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed               |
-| `CLOUDFLARE_API_TOKEN`   | Build/deploy  | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                 |
-| `EMAIL_AUTH_ENABLED`     | Worker var    | Set to `"true"` or `"false"` to enable or disable email/password testing auth                            |
-| `RUN_SECRETS_CHECK`      | Worker var    | Set to `"true"` to enable missing-secrets check on startup (recommended for production); off by default  |
-| `WORKER_URL`             | Build env     | URL of the deployed Worker (e.g. `https://api.rumaq.workers.dev`); used at build time as `VITE_API_BASE` |
-| `D1_DATABASE_NAME`       | Deploy        | D1 database name (default: `rumaq`)                                                                      |
-| `R2_BUCKET_NAME`         | Deploy        | R2 bucket name for receipt images (default: `rumaq-receipts`)                                            |
+| Variable                 | Where         | Purpose                                                                                                                                                                             |
+| ------------------------ | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_CLIENT_ID`       | Worker secret | Google OAuth client ID                                                                                                                                                              |
+| `GOOGLE_CLIENT_SECRET`   | Worker secret | Google OAuth client secret                                                                                                                                                          |
+| `WORKER_JWT_SECRET`      | Worker secret | HMAC key for session JWT                                                                                                                                                            |
+| `WORKER_ENCRYPTION_KEY`  | Worker secret | AES-GCM key for AI keys                                                                                                                                                             |
+| `HAQITA_INGEST_SECRET`   | Worker secret | Bearer secret for the internal price ingest endpoint (`POST /api/internal/ingest/prices`, pushed daily by the rumaq-scraper VPS job). Optional: when unset the endpoint returns 503 |
+| `CLOUDFLARE_ACCOUNT_ID`  | Build/deploy  | Cloudflare account ID; used by Wrangler and the deploy script                                                                                                                       |
+| `CLOUDFLARE_DATABASE_ID` | Build/deploy  | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed                                                                                          |
+| `CLOUDFLARE_API_TOKEN`   | Build/deploy  | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                                                                                            |
+| `EMAIL_AUTH_ENABLED`     | Worker var    | Set to `"true"` or `"false"` to enable or disable email/password testing auth                                                                                                       |
+| `RUN_SECRETS_CHECK`      | Worker var    | Set to `"true"` to enable missing-secrets check on startup (recommended for production); off by default                                                                             |
+| `WORKER_URL`             | Build env     | URL of the deployed Worker (e.g. `https://api.rumaq.workers.dev`); used at build time as `VITE_API_BASE`                                                                            |
+| `D1_DATABASE_NAME`       | Deploy        | D1 database name (default: `rumaq`)                                                                                                                                                 |
+| `R2_BUCKET_NAME`         | Deploy        | R2 bucket name for receipt images (default: `rumaq-receipts`)                                                                                                                       |
 
 ### Secrets management
 
@@ -333,6 +334,7 @@ Generate strong secrets locally:
 ```bash
 openssl rand -hex 32   # WORKER_JWT_SECRET
 openssl rand -hex 32   # WORKER_ENCRYPTION_KEY
+openssl rand -hex 32   # HAQITA_INGEST_SECRET
 ```
 
 For local development, copy `backend/.dev.vars.example` to `backend/.dev.vars` and fill in all values. `backend/.dev.vars` is gitignored and must never be committed.
@@ -351,12 +353,13 @@ export WORKER_ENCRYPTION_KEY=...
 
 **Important:** Rotating `WORKER_ENCRYPTION_KEY` invalidates every stored AI API key because they are encrypted with the old key. After rotation, all users must re-enter their AI key in Settings. Rotating `WORKER_JWT_SECRET` only invalidates active sessions; users simply log in again.
 
-| Secret                  | Local | Test | Production | Rotation impact                   |
-| ----------------------- | ----- | ---- | ---------- | --------------------------------- |
-| `GOOGLE_CLIENT_ID`      | yes   | no   | yes        | OAuth login only                  |
-| `GOOGLE_CLIENT_SECRET`  | yes   | no   | yes        | OAuth login only                  |
-| `WORKER_JWT_SECRET`     | yes   | yes  | yes        | Active sessions invalidated       |
-| `WORKER_ENCRYPTION_KEY` | yes   | yes  | yes        | Stored AI keys must be re-entered |
+| Secret                  | Local | Test | Production | Rotation impact                                  |
+| ----------------------- | ----- | ---- | ---------- | ------------------------------------------------ |
+| `GOOGLE_CLIENT_ID`      | yes   | no   | yes        | OAuth login only                                 |
+| `GOOGLE_CLIENT_SECRET`  | yes   | no   | yes        | OAuth login only                                 |
+| `WORKER_JWT_SECRET`     | yes   | yes  | yes        | Active sessions invalidated                      |
+| `WORKER_ENCRYPTION_KEY` | yes   | yes  | yes        | Stored AI keys must be re-entered                |
+| `HAQITA_INGEST_SECRET`  | yes   | yes  | yes        | Scraper pushes rejected until its env is rotated |
 
 ## 9. Free-tier headroom
 

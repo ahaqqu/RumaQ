@@ -348,6 +348,40 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/prices': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Search observed store prices (latest observation per product per store). */
+    get: operations['getApiPrices']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/prices/{productKey}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Price detail for one product: per-store current prices and full history. */
+    get: operations['getApiPricesByProductKey']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/plans': {
     parameters: {
       query?: never
@@ -1282,6 +1316,68 @@ export interface operations {
       }
       /** @description Conflict - store in use */
       409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiPrices: {
+    parameters: {
+      query?: {
+        q?: string
+        source?: string
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiPricesByProductKey: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        productKey: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Product not found */
+      404: {
         headers: {
           [name: string]: unknown
         }

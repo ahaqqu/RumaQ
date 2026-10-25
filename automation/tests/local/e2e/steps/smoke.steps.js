@@ -2,7 +2,12 @@ import pkg from 'playwright-bdd'
 import { expect } from '@playwright/test'
 const { createBdd, test } = pkg
 
-const { Given, Then } = createBdd(test)
+const { Given, When, Then } = createBdd(test)
+
+// Seeded by migration 0002 / automation/tests/fixtures/seed.sql; the local
+// test stack runs with EMAIL_AUTH_ENABLED=true.
+const EMAIL = 'test@rumaq.dev'
+const PASSWORD = 'password123'
 
 Given('I visit the app', async ({ page }) => {
   await page.goto('/')
@@ -18,8 +23,23 @@ Then('the root element should be mounted', async ({ page }) => {
   await expect(root).toBeAttached()
 })
 
+Then('the login form should be visible', async ({ page }) => {
+  // The email form renders after the email-auth status check resolves.
+  await page.waitForSelector('input#email', { timeout: 15_000 })
+  await page.waitForSelector('input#password', { timeout: 5_000 })
+})
+
+When('I log in with the seeded test user', async ({ page }) => {
+  await page.fill('input#email', EMAIL)
+  await page.fill('input#password', PASSWORD)
+  await page.click('button[type="submit"]')
+  await page.waitForURL((url) => url.pathname === '/', { timeout: 15_000 })
+})
+
 Then('the topbar should be visible', async ({ page }) => {
-  await expect(page.locator('header.topbar')).toBeVisible({ timeout: 5_000 })
+  // AppShell renders a sticky <header> without a class hook since the
+  // Tailwind migration; the first header on the page is the top bar.
+  await expect(page.locator('header').first()).toBeVisible({ timeout: 5_000 })
 })
 
 Then('a heading should be visible', async ({ page }) => {

@@ -7,7 +7,8 @@ import { object, string, optional, picklist, number, integer, minValue, pipe } f
 import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
-import { encryptAiKey, decryptAiKey } from '../lib/crypto.js'
+import { encryptAiKey, decryptAiKey, timingSafeEqualStrings } from '../lib/crypto.js'
+import { ingestPayloadSchema, ingestPrices } from '../lib/ingest.js'
 import { getRateLimitConfig, isRateLimited } from '../lib/rate-limit.js'
 import { computeRunOutDays } from '../lib/stock.js'
 import { computePatterns } from '../lib/patterns.js'
@@ -41,6 +42,11 @@ const stockQuery = object({
   q: optional(string()),
 })
 
+const pricesQuery = object({
+  q: optional(string()),
+  source: optional(string()),
+})
+
 const plansQuery = object({
   status: optional(picklist(['active', 'archived', 'completed', 'all'])),
 })
@@ -64,6 +70,12 @@ apiApp.use('*', createCors())
 // so that unauthenticated bursts are also throttled. Keys are in-memory only;
 // move to KV for multi-instance deployments.
 apiApp.use('*', async (c, next) => {
+  // Service-to-service ingest authenticates with a bearer secret and runs
+  // once daily — exempt it from the per-IP limiter.
+  if (c.req.path.startsWith('/api/internal/')) {
+    await next()
+    return
+  }
   // Rate-limit by client IP. In production, Cloudflare sets CF-Connecting-IP,
   // which is authoritative. The X-Forwarded-For fallback is only for the
   // local Docker test stack, where the reverse proxy supplies a synthetic IP
@@ -105,6 +117,32 @@ apiApp.get(
       },
     },
   })
+)
+
+// Internal ingest endpoint for the rumaq-scraper pipeline
+// (docs/plan/haqita-integration.md §5.2). Service-to-service: bearer-secret
+// auth instead of a session, exempt from the per-IP rate limiter above, and
+// excluded from the generated OpenAPI/docs surface.
+apiApp.post(
+  '/api/internal/ingest/prices',
+  async (c, next) => {
+    if (!c.env.HAQITA_INGEST_SECRET) {
+      return c.json({ error: 'Ingest endpoint not configured' }, 503)
+    }
+    const header = c.req.header('Authorization') || ''
+    const token = header.startsWith('Bearer ') ? header.slice(7) : ''
+    if (!token || !(await timingSafeEqualStrings(token, c.env.HAQITA_INGEST_SECRET))) {
+      return c.json({ error: 'Unauthorized' }, 401, {
+        'WWW-Authenticate': 'Bearer realm="rumaq-ingest"',
+      })
+    }
+    await next()
+  },
+  sValidator('json', ingestPayloadSchema),
+  async (c) => {
+    const result = await ingestPrices(c.env.DB, c.req.valid('json'))
+    return c.json(result)
+  }
 )
 
 apiApp.get(
@@ -172,6 +210,8 @@ apiApp.use('/api/ai/chat', propsAuthMiddleware)
 apiApp.use('/api/plans', propsAuthMiddleware)
 apiApp.use('/api/plans/generate', propsAuthMiddleware)
 apiApp.use('/api/plans/:id/items/:itemId', propsAuthMiddleware)
+apiApp.use('/api/prices', propsAuthMiddleware)
+apiApp.use('/api/prices/:productKey', propsAuthMiddleware)
 apiApp.use('/api/ai-key/*', propsAuthMiddleware)
 
 apiApp.get(
@@ -1908,6 +1948,195 @@ apiApp.delete(
       .run()
 
     return c.newResponse(null, 204)
+  }
+)
+
+// Price explorer over the scraper-fed global price tables
+// (docs/plan/haqita-integration.md §5.3). Observations below the ingest
+// confidence floor are hidden; 0.55–0.85 rows are returned flagged.
+const PRICE_MIN_CONFIDENCE = 0.55
+const PRICE_LOW_CONFIDENCE_FLAG = 0.85
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+}
+
+apiApp.get(
+  '/api/prices',
+  describeRoute({
+    description: 'Search observed store prices (latest observation per product per store).',
+    security: [{ cookieAuth: [] }],
+    parameters: [
+      { in: 'query', name: 'q', required: false, schema: { type: 'string' } },
+      { in: 'query', name: 'source', required: false, schema: { type: 'string' } },
+    ],
+    responses: {
+      200: { description: 'OK' },
+      401: { description: 'Unauthorized' },
+    },
+  }),
+  sValidator('query', pricesQuery),
+  async (c) => {
+    const { q, source } = c.req.valid('query')
+
+    let sql = `SELECT p.product_key, p.name, p.brand, p.unit, p.category,
+                      s.slug AS source_slug, s.name AS source_name,
+                      o.observed_date, o.price, o.effective_unit_price,
+                      o.promo_type, o.promo_label, o.valid_from, o.valid_until,
+                      o.match_method, o.match_confidence, o.brochure_url
+               FROM price_observations o
+               JOIN price_products p ON p.id = o.product_id
+               JOIN price_sources s ON s.id = o.source_id
+               WHERE o.id = (
+                 SELECT o2.id FROM price_observations o2
+                 WHERE o2.product_id = o.product_id AND o2.source_id = o.source_id
+                 ORDER BY o2.observed_date DESC, o2.scraped_at DESC
+                 LIMIT 1
+               )
+               AND o.match_confidence >= ${PRICE_MIN_CONFIDENCE}`
+    const params: unknown[] = []
+
+    if (q) {
+      sql += ` AND (p.name LIKE ? ESCAPE '\\' OR p.brand LIKE ? ESCAPE '\\' OR p.product_key LIKE ? ESCAPE '\\')`
+      const pattern = `%${escapeLike(q)}%`
+      params.push(pattern, pattern, pattern)
+    }
+    if (source) {
+      sql += ' AND s.slug = ?'
+      params.push(source)
+    }
+    sql += ' ORDER BY p.name COLLATE NOCASE, s.name COLLATE NOCASE LIMIT 200'
+
+    const { results } = await c.env.DB.prepare(sql)
+      .bind(...params)
+      .all<{
+        product_key: string
+        name: string
+        brand: string | null
+        unit: string | null
+        category: string | null
+        source_slug: string
+        source_name: string
+        observed_date: string
+        price: number
+        effective_unit_price: number | null
+        promo_type: string | null
+        promo_label: string | null
+        valid_from: string | null
+        valid_until: string | null
+        match_method: string | null
+        match_confidence: number
+        brochure_url: string | null
+      }>()
+
+    const items = (results ?? []).map((row) => ({
+      ...row,
+      low_confidence: row.match_confidence < PRICE_LOW_CONFIDENCE_FLAG,
+    }))
+
+    const res = c.json({ items, total: items.length })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+apiApp.get(
+  '/api/prices/:productKey',
+  describeRoute({
+    description: 'Price detail for one product: per-store current prices and full history.',
+    security: [{ cookieAuth: [] }],
+    parameters: [{ in: 'path', name: 'productKey', required: true, schema: { type: 'string' } }],
+    responses: {
+      200: { description: 'OK' },
+      401: { description: 'Unauthorized' },
+      404: { description: 'Product not found' },
+    },
+  }),
+  async (c) => {
+    const productKey = c.req.param('productKey')
+
+    const product = await c.env.DB.prepare(
+      `SELECT product_key, name, brand, unit, category, first_seen_at, last_seen_at
+       FROM price_products WHERE product_key = ?`
+    )
+      .bind(productKey)
+      .first<{
+        product_key: string
+        name: string
+        brand: string | null
+        unit: string | null
+        category: string | null
+        first_seen_at: string | null
+        last_seen_at: string | null
+      }>()
+
+    if (!product) {
+      return c.json({ error: 'Product not found' }, 404)
+    }
+
+    const { results: current } = await c.env.DB.prepare(
+      `SELECT s.slug AS source_slug, s.name AS source_name,
+              o.observed_date, o.price, o.effective_unit_price,
+              o.promo_type, o.promo_label, o.valid_from, o.valid_until,
+              o.match_method, o.match_confidence, o.brochure_url
+       FROM price_observations o
+       JOIN price_sources s ON s.id = o.source_id
+       WHERE o.product_id = (SELECT id FROM price_products WHERE product_key = ?)
+         AND o.id = (
+           SELECT o2.id FROM price_observations o2
+           WHERE o2.product_id = o.product_id AND o2.source_id = o.source_id
+           ORDER BY o2.observed_date DESC, o2.scraped_at DESC
+           LIMIT 1
+         )
+       ORDER BY o.price ASC`
+    )
+      .bind(productKey)
+      .all<{
+        source_slug: string
+        source_name: string
+        observed_date: string
+        price: number
+        effective_unit_price: number | null
+        promo_type: string | null
+        promo_label: string | null
+        valid_from: string | null
+        valid_until: string | null
+        match_method: string | null
+        match_confidence: number
+        brochure_url: string | null
+      }>()
+
+    const { results: history } = await c.env.DB.prepare(
+      `SELECT s.slug AS source_slug, o.observed_date, o.price, o.promo_type,
+              o.promo_label, o.valid_from, o.valid_until, o.match_method, o.match_confidence
+       FROM price_observations o
+       JOIN price_sources s ON s.id = o.source_id
+       WHERE o.product_id = (SELECT id FROM price_products WHERE product_key = ?)
+       ORDER BY o.observed_date ASC, o.scraped_at ASC`
+    )
+      .bind(productKey)
+      .all<{
+        source_slug: string
+        observed_date: string
+        price: number
+        promo_type: string | null
+        promo_label: string | null
+        valid_from: string | null
+        valid_until: string | null
+        match_method: string | null
+        match_confidence: number
+      }>()
+
+    const res = c.json({
+      product,
+      current: (current ?? []).map((row) => ({
+        ...row,
+        low_confidence: row.match_confidence < PRICE_LOW_CONFIDENCE_FLAG,
+      })),
+      history: history ?? [],
+    })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
   }
 )
 

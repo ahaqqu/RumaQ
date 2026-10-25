@@ -901,6 +901,75 @@
         ]
       }
     },
+    "/api/prices": {
+      "get": {
+        "operationId": "getApiPrices",
+        "description": "Search observed store prices (latest observation per product per store).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/prices/{productKey}": {
+      "get": {
+        "operationId": "getApiPricesByProductKey",
+        "description": "Price detail for one product: per-store current prices and full history.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "productKey",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Product not found"
+          }
+        }
+      }
+    },
     "/api/plans": {
       "get": {
         "operationId": "getApiPlans",

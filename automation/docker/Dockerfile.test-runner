@@ -22,7 +22,6 @@ COPY vite.config.ts ./
 COPY frontend/vite.config.js ./frontend/
 COPY backend/vite.config.ts ./backend/
 COPY backend/tsconfig.json ./backend/
-COPY backend/wrangler.test.toml ./backend/
 COPY backend/migrations/ ./backend/migrations/
 COPY automation/playwright.config.js ./automation/playwright.config.js
 
