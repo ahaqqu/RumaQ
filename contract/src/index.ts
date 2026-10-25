@@ -17,11 +17,12 @@ import {
 } from 'valibot'
 
 // Shared ingest contract between the rumaq-scraper (VPS) and the Worker
-// (docs/plan/haqita-integration.md §5.2). Additive changes only; bump
-// schemaVersion for breaking ones. This module is intentionally free of any
-// runtime-specific types (no D1/workers-types) so the scraper package — a
-// plain Bun/Node workspace — can import it directly and both sides share a
-// single definition.
+// (docs/plan/haqita-integration.md §5.2), exposed as a workspace package so
+// both sides depend on it explicitly instead of reaching into each other's
+// source tree. Additive changes only; bump schemaVersion for breaking ones.
+// This module is intentionally free of any runtime-specific types (no
+// D1/workers-types) so both a plain Bun/Node workspace and the Worker can
+// import it directly and share a single definition.
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 

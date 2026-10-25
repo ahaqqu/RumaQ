@@ -28,6 +28,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@hono/standard-validator": "^0.4.0",
+        "@rumaq/contract": "workspace:*",
         "hono": "^4.13.13",
         "hono-openapi": "^1.5.0",
         "valibot": "^1.5.0",
@@ -35,6 +36,13 @@
       "devDependencies": {
         "@cloudflare/vite-plugin": "2.0.0-beta.v.4",
         "@cloudflare/workers-types": "^5.20261024.1",
+      },
+    },
+    "contract": {
+      "name": "@rumaq/contract",
+      "version": "0.1.0",
+      "dependencies": {
+        "valibot": "^1.5.0",
       },
     },
     "frontend": {
@@ -72,6 +80,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@google/genai": "^1.6.0",
+        "@rumaq/contract": "workspace:*",
         "cheerio": "^1.1.2",
         "valibot": "^1.5.0",
       },
@@ -690,6 +699,8 @@
     "@rollup/rollup-win32-x64-gnu": ["@rollup/rollup-win32-x64-gnu@4.65.0", "", { "os": "win32", "cpu": "x64" }, "sha512-XfKYFWHIPs4HPODIMsGF1IKlS3H1e3WokUZIgpmn4+uNnZBlnRDDHEylNyazbQXwhMKZre68OjtRYbKqb5+j8w=="],
 
     "@rollup/rollup-win32-x64-msvc": ["@rollup/rollup-win32-x64-msvc@4.65.0", "", { "os": "win32", "cpu": "x64" }, "sha512-wPWi++K4Bs1VR4XihOhfGi4IGX6Cub7FlerTf8X2v+2BtDHddgSqWCXwGD+h2yAe4/niIhNDwAltioOC+wEogQ=="],
+
+    "@rumaq/contract": ["@rumaq/contract@workspace:contract"],
 
     "@shikijs/core": ["@shikijs/core@4.5.0", "", { "dependencies": { "@shikijs/primitive": "4.5.0", "@shikijs/types": "4.5.0", "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5", "hast-util-to-html": "^9.0.5" } }, "sha512-6CIgwq+bt2JZ3OSjb/nBkkwEf/CfpHcbam+Mg5Pllco7HAGRQ2/EFhZrrJtbyNTgKwknfVS+llsXGygiDGwJWw=="],
 

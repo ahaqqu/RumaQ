@@ -1,5 +1,6 @@
-// The payload schema lives in ingest-schema.ts (runtime-agnostic) so the
-// scraper workspace can import it; re-exported here for existing callers.
+// The payload schema lives in the @rumaq/contract workspace package
+// (runtime-agnostic) so the scraper imports it as a real dependency;
+// re-exported here for existing callers.
 export {
   ingestStoreSchema,
   ingestItemSchema,
@@ -7,8 +8,8 @@ export {
   type IngestPayload,
   type IngestStore,
   type IngestItem,
-} from './ingest-schema.js'
-import type { IngestPayload } from './ingest-schema.js'
+} from '@rumaq/contract'
+import type { IngestPayload } from '@rumaq/contract'
 
 export type IngestResult = {
   accepted: number

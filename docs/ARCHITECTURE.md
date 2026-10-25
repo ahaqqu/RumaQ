@@ -265,7 +265,7 @@ Grocery price data is produced by the `scraper/` workspace — a headless TypeSc
 - Superindo brochure pages are scraped with plain fetch (realistic Chrome headers, cookie jar, retry ladder), filtered for novelty by URL+MD5 state so unchanged pages are never re-downloaded or re-OCR'd.
 - New pages go through Gemini vision OCR (prompt ported verbatim from haqita) with a quota-aware retry policy; invalid items land in `rejected-items.log` in the state dir.
 - Extracted items are published to `POST /api/internal/ingest/prices` (bearer `HAQITA_INGEST_SECRET`). Until the matcher lands (PR3), items are published as `matchMethod: 'solo'` with `matchConfidence: 1.0` and the pipeline defaults to dry-run.
-- The ingest contract is the single shared Valibot schema in `backend/src/lib/ingest-schema.ts`, imported by both sides.
+- The ingest contract is the single shared Valibot schema in the `@rumaq/contract` workspace package (`contract/src/index.ts`), a declared dependency of both the backend and the scraper.
 - Lotte Mart sits behind Imperva Incapsula; `scraper/scripts/check-lotte.ts` is the reachability gate for the Tier-2 (Playwright) decision — run it from the VPS egress.
 
 Scraper environment (VPS, root-only `/etc/rumaq-scraper/env`): `GEMINI_API_KEY` (OCR), `RUMAQ_INGEST_URL` + `RUMAQ_INGEST_SECRET` (publish), optional `RUMAQ_SCRAPER_STATE_DIR` (defaults `./state`; `/var/lib/rumaq-scraper` on the VPS) and per-store `*_PROXY_URL` (Tier 3). Local/manual runs: `./scraper/scripts/run.sh` (dry-run) or `--publish`.

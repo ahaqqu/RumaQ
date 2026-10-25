@@ -1,7 +1,6 @@
-// The ingest payload builder. The schema itself lives in
-// backend/src/lib/ingest-schema.ts (single shared definition — PR1) and is
-// re-exported here as the scraper-side import point
-// (docs/plan/haqita-integration.md §5.2/§6).
+// The ingest payload builder. The schema itself lives in the @rumaq/contract
+// workspace package (single shared definition — PR1) and is re-exported here
+// as the scraper-side import point (docs/plan/haqita-integration.md §5.2/§6).
 
 export {
   ingestPayloadSchema,
@@ -10,9 +9,9 @@ export {
   type IngestPayload,
   type IngestStore,
   type IngestItem,
-} from '../../../backend/src/lib/ingest-schema.js'
+} from '@rumaq/contract'
 
-import type { IngestItem, IngestPayload } from '../../../backend/src/lib/ingest-schema.js'
+import type { IngestItem, IngestPayload } from '@rumaq/contract'
 import type { StoreConfig } from '../config.js'
 import type { ValidatedProduct } from '../ocr/parse.js'
 

@@ -5,7 +5,8 @@
   "workspaces": [
     "frontend",
     "backend",
-    "scraper"
+    "scraper",
+    "contract"
   ],
   "type": "module",
   "scripts": {
