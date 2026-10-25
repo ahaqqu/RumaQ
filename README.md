@@ -64,7 +64,7 @@ Merges to `main` deploy production automatically: `.github/workflows/deploy.yml`
 ./scripts/deploy.sh vps   # build → rsync → chromium → self-check → doctor
 ```
 
-Ships the `scraper/` bundle to the box behind the ingest endpoint. The same `deploy.yml` commit-based flow runs this job when the change touches the scraper's world (`scraper/`, `contract/`, deploy plumbing) — it stays **skipped until `vars.VPS_HOST` is set**, i.e. until the box is provisioned with `sudo scraper/provision/vps/apply.sh` (system user, systemd timer, scoped sudoers, root-only `/etc/rumaq-scraper/env`). One-time setup after the first deploy: `apply.sh --install-deps` (chromium's apt libraries). The nightly timer itself is enabled at go-live with `apply.sh --enable-timer`.
+Ships the `scraper/` bundle to the box behind the ingest endpoint. The same `deploy.yml` commit-based flow runs this job when the change touches the scraper's world (`scraper/`, `contract/`, deploy plumbing) — it stays **skipped until `vars.VPS_HOST` is set**, i.e. until the box is provisioned. One-time box bootstrap from a local checkout: `./scripts/provision-vps.sh` — it runs `scraper/provision/vps/apply.sh` (system user, systemd timer, scoped sudoers, root-only `/etc/rumaq-scraper/env`), fills the env, ships a pre-built tree, installs chromium and its apt libraries, and proves the setup with the self-check, all through one `ssh -t` sudo. The nightly timer itself is enabled at go-live with `apply.sh --enable-timer`.
 
 ### Pull request previews
 

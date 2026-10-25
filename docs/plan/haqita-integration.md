@@ -1,13 +1,12 @@
 # Haqita → RumaQ Integration — Architecture & Implementation Plan
 
-> Status: **PR1 and PR2 merged; PR3 in flight.** Written 2026-10-24, updated 2026-10-25.
+> Status: **PR1–PR3 merged; box provisioning + monitoring next.** Written 2026-10-24, updated 2026-10-26.
 > PR1 (contract & backend) merged as #252, PR2 (scraper scaffold + Superindo + Gemini OCR +
-> dry-run publish) merged as #255. PR3 = the matcher port + Lotte Tier-2 below, **plus** the
-> VPS deploy scope from milestone 4 (provision/vps, `deploy.sh vps`, commit-based CI deploy) —
-> folded in by owner decision so the box deploy rides the same commit-based
-> flow that Cloudflare got in #258. Milestone 4 keeps backfill, the homepage
-> MACHINE.md/doctor PR, and first live ingest (go-live). PR5 (frontend explorer + plan
-> grounding) and PR6 (haqita cleanup) remain.
+> dry-run publish) merged as #255, PR3 (Lotte Tier-2 + matcher + commit-based VPS deploy,
+> VPS scope folded from milestone 4) merged as #262. Box bootstrap is
+> `scripts/provision-vps.sh` (§7). 2026-10-26 owner decision: a scraping **monitoring
+> admin screen** is wanted — folded into milestones 4 (staleness alert) and 5
+> (`price_runs` + admin screen, §7.1). PR6 (haqita cleanup) remains after that.
 > This document is self-contained: a fresh session should be able to implement from it
 > without re-exploring the haqita repo. Source references to `/home/ahaqqu/Projects/haqita`
 > are included below; that repo still exists locally at time of writing.
@@ -303,6 +302,30 @@ dir). Images pruned 7 days after successful publish (disk-scarce box).
   shell script to `.gitattributes` with `mode=755`** (CI requirement).
 - `scripts/test.sh unit scraper` → new vitest project in root `vite.config.ts`.
 - homepage repo PR: MACHINE.md app-table row + card; doctor.sh awareness (timer unit).
+- **Operator bootstrap**: `scripts/provision-vps.sh` — one local run does the whole
+  box setup through a single `ssh -t` sudo (root SSH is disabled on the box): apply.sh,
+  env fill, pre-built tree ship, `--install-deps`, chromium, self-check. Idempotent.
+
+### 7.1 Monitoring (owner decision 2026-10-26: admin screen wanted)
+
+Today (PR3): the only monitoring surfaces are on the box — journald per-run logs and
+exit codes (0/1/2), `status.json` in the state dir (structured last-run summary incl.
+per-store errors), `rejected-items.log`, pending outbox files as the publish-failure
+tell, and the post-deploy self-check. Nothing notifies anyone when the nightly run
+fails, and the app has no visibility into runs.
+
+Planned, in two parts:
+
+- **Staleness alert (go-live, milestone 4)**: the existing 6-hourly smoke workflow
+  additionally checks price-data freshness — latest `price_observation` newer than
+  ~26h — reusing its auto-created `smoke-failure` issue on failure. Catches every
+  failure mode end-to-end (box down, timer off, scrape error, publish error).
+- **Scraping monitor screen (milestone 5, folded into the frontend PR)**:
+  the pipeline reports each run to the backend (`price_runs` table via an
+  internal ingest endpoint: started/finished, exit code, per-store pages/items/errors,
+  match stats, publish result), and the frontend gains an admin-only scraping
+  monitor — run history with success/failure state, per-run detail, last-success age.
+  Logs themselves stay in journald (linked from the run detail as instructions).
 
 ## 8. Milestones → PRs
 
@@ -323,12 +346,17 @@ green before merge. Suggested sequence:
    sudoers, env example), `scripts/deploy.sh vps` → `scripts/deploy/vps.sh` (bundle → rsync →
    chromium → self-check → doctor), commit-based `deploy-vps` CI job gated on `vars.VPS_HOST`,
    `--self-check` CLI. Timer ships installed-but-disabled; enabling is go-live (milestone 4).
+   Box bootstrap is `scripts/provision-vps.sh` (§7).
 4. **PR4 — Backfill + go-live**: backfill from haqita-database history, homepage MACHINE.md/doctor
-   PR, `apply.sh --enable-timer` + `RUMAQ_PUBLISH=true`, first successful live ingest into prod D1.
-5. **PR5 — Frontend**: `/prices` explorer (TanStack Router file route, page in
+   PR, `apply.sh --enable-timer` + `RUMAQ_PUBLISH=true`, first successful live ingest into prod D1,
+   **smoke staleness check** (§7.1 — alert when data stops arriving).
+5. **PR5 — Frontend + scraping monitor**: `/prices` explorer (TanStack Router file route, page in
    `frontend/src/pages/`, api fns in `lib/api.js`, TanStack Query hooks in
    `lib/queries/`, i18n id/en); plan grounding logic + `price_observation_id` join;
    grounded-estimate badge on plan items; tests per FRONTEND_CONVENTIONS.md.
+   **Plus the monitoring screen (§7.1, owner decision 2026-10-26)**: `price_runs`
+   table + run-report endpoint (contract + scraper + backend), admin-only scraping
+   monitor page (run history, per-run detail, last-success age).
 6. **PR6 — Cleanup**: archive github.com/ahaqqu/haqita + haqita-database (after
    backfill verified); delete Cloudflare haqita Pages project / D1 `haqita-db` /
    R2 `haqita-images`; update RumaQ docs (PROJECT_PLAN, phase-10 references).
