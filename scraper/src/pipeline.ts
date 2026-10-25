@@ -6,7 +6,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { loadConfig, type ScraperConfig, type StoreConfig } from './config.js'
+import { loadConfig, type ScraperConfig } from './config.js'
 import { classifyImages, loadState, saveState, type ScraperState } from './fetch/state.js'
 import { createFetcher, type FetchLike } from './fetch/strategy.js'
 import { createOcr, type GeminiClient, type Ocr } from './ocr/gemini.js'
@@ -14,7 +14,7 @@ import { validateProduct, type ValidatedProduct } from './ocr/parse.js'
 import { buildPayload, type ImageProducts } from './publish/payload.js'
 import { publishPayload, type FetchLike as PublishFetch } from './publish/client.js'
 import { activePlugins } from './stores/index.js'
-import { isBrochurePlugin } from './stores/types.js'
+import { isBrochurePlugin, type BrochureStorePlugin } from './stores/types.js'
 import { createLog, logRejectedItem, type LogFn } from './util/log.js'
 import { QuotaExhaustedError } from './util/retry.js'
 
@@ -68,14 +68,14 @@ async function writeStatus(stateDir: string, status: PipelineStatus): Promise<vo
 }
 
 async function processStore(
-  store: StoreConfig,
+  plugin: BrochureStorePlugin,
   config: ScraperConfig,
   options: PipelineOptions,
   scrapedAt: string,
-  status: PipelineStatus,
+  entry: PipelineStatus['stores'][string],
   log: LogFn
 ): Promise<ImageProducts[]> {
-  const entry = status.stores[store.slug]!
+  const store = plugin.config
   const stateFile = path.join(options.stateDir, store.slug, 'state.json')
   const imagesDir = path.join(
     options.stateDir,
@@ -83,11 +83,6 @@ async function processStore(
     'images',
     scrapedAt.slice(0, 10).replace(/-/g, '')
   )
-
-  const plugin = activePlugins(config).find((p) => p.config.slug === store.slug)
-  if (!plugin || !isBrochurePlugin(plugin)) {
-    throw new PipelineError(`No brochure plugin for ${store.slug}`, 1)
-  }
 
   const fetcher = createFetcher(store, { fetch: options.fetch, log })
   const pages = await plugin.listBrochurePages({
@@ -154,30 +149,32 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
   const log = options.log ?? createLog('pipeline')
   const config = loadConfig()
   const scrapedAt = (options.now ?? (() => new Date()))().toISOString()
+  // activePlugins is the single source of truth for which stores run: both
+  // the work list and the status map come from it, so they cannot drift.
+  const runs = activePlugins(config).map((plugin) => ({
+    plugin,
+    entry: {
+      pagesFound: 0,
+      newImages: 0,
+      existingImages: 0,
+      skipped: 0,
+      itemsExtracted: 0,
+      itemsRejected: 0,
+    },
+  }))
   const status: PipelineStatus = {
     runStartedAt: scrapedAt,
     stage: 'scrape',
-    stores: Object.fromEntries(
-      config.stores
-        .filter((store) => store.slug === 'superindo')
-        .map((store) => [
-          store.slug,
-          {
-            pagesFound: 0,
-            newImages: 0,
-            existingImages: 0,
-            skipped: 0,
-            itemsExtracted: 0,
-            itemsRejected: 0,
-          },
-        ])
-    ),
+    stores: Object.fromEntries(runs.map(({ plugin, entry }) => [plugin.config.slug, entry])),
   }
 
   try {
     const allImageProducts: ImageProducts[] = []
-    for (const store of config.stores.filter((s) => s.slug === 'superindo')) {
-      const imageProducts = await processStore(store, config, options, scrapedAt, status, log)
+    for (const { plugin, entry } of runs) {
+      if (!isBrochurePlugin(plugin)) {
+        throw new PipelineError(`No brochure plugin for ${plugin.config.slug}`, 1)
+      }
+      const imageProducts = await processStore(plugin, config, options, scrapedAt, entry, log)
       allImageProducts.push(...imageProducts)
     }
 
