@@ -24,6 +24,9 @@ export type Env = {
     RUN_SECRETS_CHECK?: string
     RATE_LIMIT_WINDOW_MS?: string
     RATE_LIMIT_MAX_REQUESTS?: string
+    RUMAQ_SERVER_AI_PROVIDER?: string
+    RUMAQ_SERVER_AI_KEY?: string
+    RUMAQ_SERVER_AI_MODEL?: string
     props?: AuthProps
   }
   Variables: {

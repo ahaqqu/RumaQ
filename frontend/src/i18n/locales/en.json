@@ -146,8 +146,16 @@
     "customProvider": "Custom (OpenAI-compatible)",
     "customBaseUrl": "Base URL",
     "customBaseUrlDesc": "OpenAI-compatible endpoint, e.g. https://ollama.com/v1",
-    "customModel": "Model",
     "customModelDesc": "Model name the provider should call, e.g. qwen3-vl:235b-instruct. Receipt scanning requires a vision-capable model.",
+    "model": "Model",
+    "modelDesc": "Model the provider should call. Leave empty to use its default. Receipt scanning requires a vision-capable model.",
+    "thinking": "Thinking level",
+    "thinkingDesc": "Higher levels trade speed for deeper reasoning on models that support it. Unsupported models will surface a provider error.",
+    "thinkingDefault": "Default",
+    "thinkingLow": "Low",
+    "thinkingMedium": "Medium",
+    "thinkingHigh": "High",
+    "inactiveServer": "No key set. AI answers via RumaQ's shared key (20 requests/day). Add your own key for unlimited use.",
     "apiKey": "API Key",
     "apiKeyDesc": "Stored on your device, used only to call your chosen AI.",
     "apiKeyPlaceholder": "sk-… / paste your key here",
@@ -236,7 +244,8 @@
     "sendAriaLabel": "Send message",
     "error": "Assistant error: {{message}}",
     "usageLimit": "Daily AI usage limit reached. Try again tomorrow.",
-    "keyMissing": "AI key not configured. Add a key in Settings."
+    "keyMissing": "AI key not configured. Add a key in Settings.",
+    "readyOwnKey": "ready to help · your key · {{used}} today"
   },
   "ui": {
     "expiringTomorrow": "expiring tomorrow",
@@ -249,7 +258,9 @@
     "dailyLimitReachedDesc": "Daily limit reached. AI will be available again tomorrow.",
     "closeToLimit": "Close to daily limit.",
     "closeToLimitDesc": "Close to daily limit. {{remaining}} requests left.",
-    "remainingRequests": "{{remaining}} requests left today."
+    "remainingRequests": "{{remaining}} requests left today.",
+    "ownKeyRequestsToday": "{{used}} requests today · your own key",
+    "ownKeyUnlimited": "Unlimited — your own API key covers the usage."
   },
   "offline": {
     "banner": "You're offline — changes will sync when you reconnect",

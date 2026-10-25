@@ -20,6 +20,7 @@ import {
   extFromType,
 } from '../lib/receipts.js'
 import { extractReceiptItems } from '../lib/ai.js'
+import { resolveAiAccess, getOrCreateAiUsage, isAiUsageLimited } from '../lib/ai-access.js'
 import { sendChatMessage } from '../lib/chat.js'
 import {
   settingsPatchSchema,
@@ -532,8 +533,8 @@ apiApp.get(
   async (c) => {
     const settings = await c.env.DB.prepare(
       `SELECT motion_preference, language, ai_provider, ai_base_url, ai_model,
-               persona_user_role, persona_ai_role, persona_enabled, theme_hue,
-               active_household_id, encrypted_ai_key
+               ai_thinking_level, persona_user_role, persona_ai_role, persona_enabled,
+               theme_hue, active_household_id, encrypted_ai_key
         FROM user_settings WHERE user_id = ?`
     )
       .bind(c.get('userId'))
@@ -543,6 +544,7 @@ apiApp.get(
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_thinking_level: string | null
         persona_user_role: string | null
         persona_ai_role: string | null
         persona_enabled: number
@@ -563,6 +565,7 @@ apiApp.get(
       ai_provider: settings?.ai_provider ?? null,
       ai_base_url: settings?.ai_base_url ?? null,
       ai_model: settings?.ai_model ?? null,
+      ai_thinking_level: settings?.ai_thinking_level ?? null,
       persona_user_role: settings?.persona_user_role ?? null,
       persona_ai_role: settings?.persona_ai_role ?? null,
       persona_enabled: settings?.persona_enabled === 1,
@@ -570,6 +573,7 @@ apiApp.get(
       active_household_id: settings?.active_household_id ?? null,
       active_household_name: household?.name ?? null,
       has_ai_key: settings?.encrypted_ai_key != null && settings.encrypted_ai_key !== '',
+      server_ai_available: Boolean(c.env.RUMAQ_SERVER_AI_PROVIDER && c.env.RUMAQ_SERVER_AI_KEY),
     })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
@@ -596,6 +600,7 @@ apiApp.patch(
               ai_key: { type: 'string', minLength: 1 },
               ai_base_url: { type: 'string', maxLength: 500 },
               ai_model: { type: 'string', maxLength: 200 },
+              ai_thinking_level: { type: 'string', enum: ['low', 'medium', 'high', ''] },
               persona_user_role: { type: 'string' },
               persona_ai_role: { type: 'string' },
               persona_enabled: { type: 'boolean' },
@@ -658,6 +663,10 @@ apiApp.patch(
       updates.push('ai_model = ?')
       params.push(trimmed === '' ? null : trimmed)
     }
+    if (fields.ai_thinking_level !== undefined) {
+      updates.push('ai_thinking_level = ?')
+      params.push(fields.ai_thinking_level === '' ? null : fields.ai_thinking_level)
+    }
     if (fields.persona_user_role !== undefined) {
       updates.push('persona_user_role = ?')
       params.push(fields.persona_user_role)
@@ -694,8 +703,8 @@ apiApp.patch(
 
     const settings = await c.env.DB.prepare(
       `SELECT motion_preference, language, ai_provider, ai_base_url, ai_model,
-              persona_user_role, persona_ai_role, persona_enabled, theme_hue,
-              encrypted_ai_key
+              ai_thinking_level, persona_user_role, persona_ai_role, persona_enabled,
+              theme_hue, encrypted_ai_key
         FROM user_settings WHERE user_id = ?`
     )
       .bind(c.get('userId'))
@@ -705,6 +714,7 @@ apiApp.patch(
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_thinking_level: string | null
         persona_user_role: string | null
         persona_ai_role: string | null
         persona_enabled: number
@@ -718,6 +728,7 @@ apiApp.patch(
       ai_provider: settings?.ai_provider ?? null,
       ai_base_url: settings?.ai_base_url ?? null,
       ai_model: settings?.ai_model ?? null,
+      ai_thinking_level: settings?.ai_thinking_level ?? null,
       persona_user_role: settings?.persona_user_role ?? null,
       persona_ai_role: settings?.persona_ai_role ?? null,
       persona_enabled: settings?.persona_enabled === 1,
@@ -865,6 +876,23 @@ apiApp.get(
     const userId = c.get('userId')
     const today = new Date().toISOString().slice(0, 10)
 
+    const settings = await c.env.DB.prepare(
+      'SELECT ai_provider, encrypted_ai_key FROM user_settings WHERE user_id = ?'
+    )
+      .bind(userId)
+      .first<{ ai_provider: string | null; encrypted_ai_key: string | null }>()
+
+    // Key source is computed fresh so it always reflects the user's current
+    // configuration, not the state when today's counter row was created.
+    const hasOwnKey = Boolean(settings?.ai_provider && settings?.encrypted_ai_key)
+    const serverAvailable = Boolean(c.env.RUMAQ_SERVER_AI_PROVIDER && c.env.RUMAQ_SERVER_AI_KEY)
+    const keySource = hasOwnKey || !serverAvailable ? 'user' : 'server'
+    const provider = hasOwnKey
+      ? settings!.ai_provider
+      : keySource === 'server'
+        ? c.env.RUMAQ_SERVER_AI_PROVIDER!
+        : settings?.ai_provider || null
+
     const existing = await c.env.DB.prepare(
       'SELECT id, used, daily_limit, provider FROM ai_usage WHERE user_id = ? AND date = ?'
     )
@@ -877,23 +905,18 @@ apiApp.get(
       }>()
 
     if (!existing) {
-      const settings = await c.env.DB.prepare(
-        'SELECT ai_provider FROM user_settings WHERE user_id = ?'
-      )
-        .bind(userId)
-        .first<{ ai_provider: string | null }>()
-
       const id = crypto.randomUUID()
       await c.env.DB.prepare(
         'INSERT INTO ai_usage (id, user_id, date, provider, used, daily_limit) VALUES (?, ?, ?, ?, 0, 20)'
       )
-        .bind(id, userId, today, settings?.ai_provider || null)
+        .bind(id, userId, today, provider)
         .run()
 
       const res = c.json({
         used: 0,
         daily_limit: 20,
-        provider: settings?.ai_provider || null,
+        provider,
+        key_source: keySource,
       })
       res.headers.set('Cache-Control', 'private, no-cache')
       return res
@@ -902,7 +925,8 @@ apiApp.get(
     const res = c.json({
       used: existing.used,
       daily_limit: existing.daily_limit,
-      provider: existing.provider,
+      provider: existing.provider ?? provider,
+      key_source: keySource,
     })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
@@ -956,7 +980,7 @@ apiApp.post(
     const { message, history } = c.req.valid('json')
 
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, ai_base_url, ai_model, encrypted_ai_key,
+      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key,
               persona_enabled, persona_user_role, persona_ai_role
          FROM user_settings WHERE user_id = ?`
     )
@@ -965,13 +989,15 @@ apiApp.post(
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_thinking_level: string | null
         encrypted_ai_key: string | null
         persona_enabled: number | null
         persona_user_role: string | null
         persona_ai_role: string | null
       }>()
 
-    if (!settings?.ai_provider || !settings?.encrypted_ai_key) {
+    const access = await resolveAiAccess(c.env, settings)
+    if (!access) {
       return c.json(
         {
           error: 'AI provider not configured. Go to Settings to set up your AI key.',
@@ -980,26 +1006,9 @@ apiApp.post(
       )
     }
 
-    const aiKey = await decryptAiKey(settings.encrypted_ai_key, c.env.WORKER_ENCRYPTION_KEY)
+    const usageRow = await getOrCreateAiUsage(c.env, userId, access.provider)
 
-    const today = new Date().toISOString().slice(0, 10)
-    let usageRow = await c.env.DB.prepare(
-      'SELECT id, used, daily_limit FROM ai_usage WHERE user_id = ? AND date = ?'
-    )
-      .bind(userId, today)
-      .first<{ id: string; used: number; daily_limit: number }>()
-
-    if (!usageRow) {
-      const id = crypto.randomUUID()
-      await c.env.DB.prepare(
-        'INSERT INTO ai_usage (id, user_id, date, provider, used, daily_limit) VALUES (?, ?, ?, ?, 0, 20)'
-      )
-        .bind(id, userId, today, settings.ai_provider)
-        .run()
-      usageRow = { id, used: 0, daily_limit: 20 }
-    }
-
-    if (usageRow.used >= usageRow.daily_limit) {
+    if (isAiUsageLimited(access, usageRow)) {
       return c.json(
         {
           error: 'AI usage limit reached for today. Upgrade or wait until tomorrow.',
@@ -1077,14 +1086,16 @@ apiApp.post(
 
       try {
         reply = await sendChatMessage(
-          settings.ai_provider,
-          aiKey,
+          access.provider,
+          access.apiKey,
           {
-            persona: {
-              persona_enabled: settings.persona_enabled,
-              persona_user_role: settings.persona_user_role,
-              persona_ai_role: settings.persona_ai_role,
-            },
+            persona: settings
+              ? {
+                  persona_enabled: settings.persona_enabled,
+                  persona_user_role: settings.persona_user_role,
+                  persona_ai_role: settings.persona_ai_role,
+                }
+              : null,
             lowStock: lowStock.results || [],
             expiring: expiring.results || [],
             activePlan: activePlan.results || [],
@@ -1092,7 +1103,11 @@ apiApp.post(
           },
           message,
           history || [],
-          { baseUrl: settings.ai_base_url, model: settings.ai_model }
+          {
+            baseUrl: access.baseUrl,
+            model: access.model,
+            thinkingLevel: access.thinkingLevel,
+          }
         )
       } catch (err) {
         return c.json(
@@ -1162,17 +1177,20 @@ apiApp.post(
     }
 
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, ai_base_url, ai_model, encrypted_ai_key FROM user_settings WHERE user_id = ?`
+      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key
+        FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
       .first<{
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_thinking_level: string | null
         encrypted_ai_key: string | null
       }>()
 
-    if (!settings?.ai_provider || !settings?.encrypted_ai_key) {
+    const access = await resolveAiAccess(c.env, settings)
+    if (!access) {
       return c.json(
         {
           error: 'AI provider not configured. Go to Settings to set up your AI key.',
@@ -1181,26 +1199,9 @@ apiApp.post(
       )
     }
 
-    const aiKey = await decryptAiKey(settings.encrypted_ai_key, c.env.WORKER_ENCRYPTION_KEY)
+    const usageRow = await getOrCreateAiUsage(c.env, userId, access.provider)
 
-    const today = new Date().toISOString().slice(0, 10)
-    let usageRow = await c.env.DB.prepare(
-      'SELECT id, used, daily_limit FROM ai_usage WHERE user_id = ? AND date = ?'
-    )
-      .bind(userId, today)
-      .first<{ id: string; used: number; daily_limit: number }>()
-
-    if (!usageRow) {
-      const id = crypto.randomUUID()
-      await c.env.DB.prepare(
-        'INSERT INTO ai_usage (id, user_id, date, provider, used, daily_limit) VALUES (?, ?, ?, ?, 0, 20)'
-      )
-        .bind(id, userId, today, settings.ai_provider)
-        .run()
-      usageRow = { id, used: 0, daily_limit: 20 }
-    }
-
-    if (usageRow.used >= usageRow.daily_limit) {
+    if (isAiUsageLimited(access, usageRow)) {
       return c.json(
         {
           error: 'AI usage limit reached for today. Upgrade or wait until tomorrow.',
@@ -1232,10 +1233,17 @@ apiApp.post(
       }
     } else {
       try {
-        scanResult = await extractReceiptItems(file.data, file.type, settings.ai_provider, aiKey, {
-          baseUrl: settings.ai_base_url,
-          model: settings.ai_model,
-        })
+        scanResult = await extractReceiptItems(
+          file.data,
+          file.type,
+          access.provider,
+          access.apiKey,
+          {
+            baseUrl: access.baseUrl,
+            model: access.model,
+            thinkingLevel: access.thinkingLevel,
+          }
+        )
       } catch (err) {
         return c.json(
           {
@@ -2335,18 +2343,21 @@ apiApp.post(
     const householdId = c.get('householdId')
 
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, ai_base_url, ai_model, encrypted_ai_key, currency FROM user_settings WHERE user_id = ?`
+      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key, currency
+        FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
       .first<{
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_thinking_level: string | null
         encrypted_ai_key: string | null
         currency: string | null
       }>()
 
-    if (!settings?.ai_provider || !settings?.encrypted_ai_key) {
+    const access = await resolveAiAccess(c.env, settings)
+    if (!access) {
       return c.json(
         {
           error: 'AI provider not configured. Go to Settings to set up your AI key.',
@@ -2355,26 +2366,9 @@ apiApp.post(
       )
     }
 
-    const aiKey = await decryptAiKey(settings.encrypted_ai_key, c.env.WORKER_ENCRYPTION_KEY)
+    const usageRow = await getOrCreateAiUsage(c.env, userId, access.provider)
 
-    const today = new Date().toISOString().slice(0, 10)
-    let usageRow = await c.env.DB.prepare(
-      'SELECT id, used, daily_limit FROM ai_usage WHERE user_id = ? AND date = ?'
-    )
-      .bind(userId, today)
-      .first<{ id: string; used: number; daily_limit: number }>()
-
-    if (!usageRow) {
-      const id = crypto.randomUUID()
-      await c.env.DB.prepare(
-        'INSERT INTO ai_usage (id, user_id, date, provider, used, daily_limit) VALUES (?, ?, ?, ?, 0, 20)'
-      )
-        .bind(id, userId, today, settings.ai_provider)
-        .run()
-      usageRow = { id, used: 0, daily_limit: 20 }
-    }
-
-    if (usageRow.used >= usageRow.daily_limit) {
+    if (isAiUsageLimited(access, usageRow)) {
       return c.json(
         {
           error: 'AI usage limit reached for today. Upgrade or wait until tomorrow.',
@@ -2480,14 +2474,18 @@ apiApp.post(
     } else {
       try {
         generatedItems = await generateAiPlan(
-          settings.ai_provider,
-          aiKey,
+          access.provider,
+          access.apiKey,
           lowStock.results || [],
           expiring.results || [],
           recentPurchases.results || [],
           stores || [],
-          settings.currency || 'IDR',
-          { baseUrl: settings.ai_base_url, model: settings.ai_model }
+          settings?.currency || 'IDR',
+          {
+            baseUrl: access.baseUrl,
+            model: access.model,
+            thinkingLevel: access.thinkingLevel,
+          }
         )
       } catch (err) {
         return c.json(

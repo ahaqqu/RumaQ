@@ -217,7 +217,7 @@ async function callGemini(prompt, aiKey, model) {
   return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
 }
 
-async function callAnthropic(prompt, aiKey) {
+async function callAnthropic(prompt, aiKey, model = 'claude-3-haiku-20240307') {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -226,7 +226,7 @@ async function callAnthropic(prompt, aiKey) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-3-haiku-20240307',
+      model,
       max_tokens: 2048,
       messages: [{ role: 'user', content: prompt }],
     }),
@@ -240,20 +240,23 @@ const OLLAMA_BASE_URL = 'https://ollama.com/v1'
 const OLLAMA_DEFAULT_MODEL = 'qwen3-vl:235b-instruct'
 
 async function callAI(prompt, aiKey, provider, opts = {}) {
+  const model = (opts.model || '').trim()
   switch (provider) {
     case 'gemini':
-      return callGemini(prompt, aiKey, 'gemini-1.5-flash')
+      return callGemini(prompt, aiKey, model || 'gemini-1.5-flash')
     case 'anthropic':
-      return callAnthropic(prompt, aiKey)
+      return callAnthropic(prompt, aiKey, model)
     case 'openai':
-      return callOpenAICompatible(prompt, aiKey, 'https://api.openai.com/v1', 'gpt-4o-mini')
+      return callOpenAICompatible(
+        prompt,
+        aiKey,
+        'https://api.openai.com/v1',
+        model || 'gpt-4o-mini'
+      )
     case 'ollama':
-      // Fixed preset, matching the backend: a stale custom model must not
-      // silently override the Ollama default.
-      return callOpenAICompatible(prompt, aiKey, OLLAMA_BASE_URL, OLLAMA_DEFAULT_MODEL)
+      return callOpenAICompatible(prompt, aiKey, OLLAMA_BASE_URL, model || OLLAMA_DEFAULT_MODEL)
     case 'custom': {
       const baseUrl = (opts.baseUrl || '').trim()
-      const model = (opts.model || '').trim()
       if (!baseUrl || !model) {
         throw new Error('Custom provider requires a base URL and model in Settings')
       }
@@ -261,7 +264,12 @@ async function callAI(prompt, aiKey, provider, opts = {}) {
     }
     case 'opencode':
     default:
-      return callOpenAICompatible(prompt, aiKey, 'https://api.opencode.ai/v1', 'opencode-mini')
+      return callOpenAICompatible(
+        prompt,
+        aiKey,
+        'https://api.opencode.ai/v1',
+        model || 'opencode-mini'
+      )
   }
 }
 

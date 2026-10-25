@@ -133,6 +133,17 @@ describe('UsageMeter', () => {
     )
     expect(container.querySelector('.text-text-muted')).toBeTruthy()
   })
+
+  it('shows unlimited usage for own-key users', () => {
+    const { container } = render(
+      React.createElement(UsageMeter, {
+        usage: { provider: 'Gemini', used: 20, daily_limit: 20, key_source: 'user' },
+      })
+    )
+    expect(container.querySelector('.text-danger')).toBeNull()
+    expect(container.querySelector('.h-2')).toBeNull()
+    expect(container.textContent).toContain('20')
+  })
 })
 
 describe('MetaItem', () => {

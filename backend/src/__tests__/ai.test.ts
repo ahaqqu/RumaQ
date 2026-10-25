@@ -92,7 +92,7 @@ describe('completeText', () => {
     expect(body.model).toBe('qwen3-vl:235b-instruct')
   })
 
-  it('keeps the Ollama preset model even when a model option is passed', async () => {
+  it('uses the selected model for Ollama when a model option is passed', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -102,7 +102,72 @@ describe('completeText', () => {
     globalThis.fetch = fetchMock
     await completeText('ollama', 'sk-test', 'system', 'user', { model: 'llama3.3:70b' })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
-    expect(body.model).toBe('qwen3-vl:235b-instruct')
+    expect(body.model).toBe('llama3.3:70b')
+  })
+
+  it('passes reasoning_effort to OpenAI-compatible providers when a thinking level is set', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Hello' } }],
+      }),
+    })
+    globalThis.fetch = fetchMock
+    await completeText('openai', 'sk-test', 'system', 'user', { thinkingLevel: 'high' })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.reasoning_effort).toBe('high')
+  })
+
+  it('omits reasoning_effort when no thinking level is set', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Hello' } }],
+      }),
+    })
+    globalThis.fetch = fetchMock
+    await completeText('openai', 'sk-test', 'system', 'user')
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.reasoning_effort).toBeUndefined()
+  })
+
+  it('maps the thinking level to a Gemini thinking budget', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: 'Hello' }] } }],
+      }),
+    })
+    globalThis.fetch = fetchMock
+    await completeText('gemini', 'sk-test', 'system', 'user', { thinkingLevel: 'medium' })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.generationConfig.thinkingConfig.thinkingBudget).toBe(8192)
+  })
+
+  it('maps the thinking level to an Anthropic thinking budget and raises max_tokens', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        content: [{ text: 'Hello' }],
+      }),
+    })
+    globalThis.fetch = fetchMock
+    await completeText('anthropic', 'sk-test', 'system', 'user', { thinkingLevel: 'high' })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 16384 })
+    expect(body.max_tokens).toBeGreaterThan(16384)
+  })
+
+  it('uses the selected model for Gemini in the request URL', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: 'Hello' }] } }],
+      }),
+    })
+    globalThis.fetch = fetchMock
+    await completeText('gemini', 'sk-test', 'system', 'user', { model: 'gemini-3.6-pro' })
+    expect(fetchMock.mock.calls[0][0]).toContain('/models/gemini-3.6-pro:generateContent')
   })
 
   it('calls a custom OpenAI-compatible provider with base URL and model', async () => {
