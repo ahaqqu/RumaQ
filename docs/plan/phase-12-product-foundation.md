@@ -1,6 +1,6 @@
 # Phase 12 — Product Foundation
 
-**Status:** Not started (Contribution & coding guidelines)  
+**Status:** Done (PR #260 — CONTRIBUTING.md, onboarding, GitHub templates, conventions checklists, AGENTS.md review)  
 **Priority:** P2  
 **Source sections:** Section 1 of `docs/PROJECT_PLAN.md`  
 **Estimated effort:** Low
