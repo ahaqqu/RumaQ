@@ -107,6 +107,15 @@ describe('api', () => {
     await expect(getMe()).rejects.toThrow('Request failed: 504')
   })
 
+  it('throws ApiError carrying the response status', async () => {
+    clientMock.GET.mockResolvedValueOnce(fail({ error: 'Unauthorized' }, 401))
+    await expect(getMe()).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 401,
+      message: 'Unauthorized',
+    })
+  })
+
   it('login constructs correct redirect URL', () => {
     const origLocation = window.location
     const setter = vi.fn()
