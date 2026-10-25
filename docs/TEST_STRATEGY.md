@@ -22,7 +22,7 @@ All services behind `nginx` proxy at `localhost:3000`. Worker exposes `TEST_MODE
 
 ## Live production automation test
 
-Runs every 6 hours via `.github/workflows/smoke.yml`. Base URLs: `api.rumaq.workers.dev` (app + API, same origin) with `rumaq.pages.dev` redirecting to it. Run by Cucumber-js (API health) and Playwright (E2E login/logout). On failure → auto-creates issue with `smoke-failure` label.
+Runs every 6 hours via `.github/workflows/smoke.yml`. Base URL: `rumaq.ahaqqu.com` (app + API, same origin; the Worker Custom Domain). Run by Cucumber-js (API health) and Playwright (E2E login/logout). On failure → auto-creates issue with `smoke-failure` label.
 
 ```
 ./scripts/test.sh automation-live

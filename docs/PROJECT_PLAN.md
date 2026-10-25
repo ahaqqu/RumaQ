@@ -143,7 +143,7 @@ This plan lists every known work item for RumaQ, its current status, and its pri
 | API integration tests       | Done        | P1       | `automation/tests/local/api/` — Vitest BDD + fetch against Docker Miniflare; `vp run test:api` |
 | End-to-end tests            | Partial     | P2       | Playwright BDD smoke test in `automation/tests/local/e2e/`; `vp run test:e2e`                  |
 | Docker test automation      | Done        | P1       | `docker compose -f automation/docker-compose.yml` runs all tests; CI workflow                  |
-| Production smoke tests      | Done        | P1       | Scheduled GitHub Actions check `api.rumaq.workers.dev` every 6 hours                           |
+| Production smoke tests      | Done        | P1       | Scheduled GitHub Actions check `rumaq.ahaqqu.com` every 6 hours                                |
 | Accessibility audit         | Not started | P1       | Keyboard navigation, contrast, labels                                                          |
 | Performance budget          | Not started | P2       | Bundle size, First Contentful Paint                                                            |
 
@@ -236,7 +236,7 @@ _User impact: review past purchases and spending patterns; app goes live._
 
 ## Immediate next steps
 
-The MVP is shipped: production runs as a single Worker (`api.rumaq.workers.dev`, deployed on merge to `main`), scheduled smoke tests run every 6 hours, and all P0 phases (01–05) plus phase 06 security hardening (one manual live-OAuth check outstanding) are done. Active work and remaining items:
+The MVP is shipped: production runs as a single Worker (`rumaq.ahaqqu.com`, deployed on merge to `main`), scheduled smoke tests run every 6 hours, and all P0 phases (01–05) plus phase 06 security hardening (one manual live-OAuth check outstanding) are done. Active work and remaining items:
 
 1. **Haqita integration** (`docs/plan/haqita-integration.md`) — PR1 #252 and PR2 #255 merged; PR3 (Lotte + matcher) in flight; PR4 (VPS ops + backfill), PR5 (frontend `/prices` + plan grounding) and PR6 (cleanup) remain.
 2. **Phase 08** — route loader/Query alignment, PWA manifest extras, offline E2E (mostly-finished modernization).

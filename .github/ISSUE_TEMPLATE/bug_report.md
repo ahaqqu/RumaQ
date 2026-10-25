@@ -15,7 +15,7 @@ labels: bug
 
 ## Environment
 
-- Production (`api.rumaq.workers.dev`) / preview / local dev
+- Production (`rumaq.ahaqqu.com`) / preview / local dev
 - Browser + OS (if frontend)
 - Relevant user/plan/stock context (no personal data or screenshots with private info)
 

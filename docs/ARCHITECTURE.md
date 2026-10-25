@@ -138,7 +138,7 @@ User browser
     │
     ▼
 App + API on one origin — Cloudflare Worker with static assets
-(api.rumaq.workers.dev or rumaq-api-{branch}.rumaq.workers.dev)
+(rumaq.ahaqqu.com or rumaq-api-{branch}.rumaq.workers.dev)
     │
     ├── /api/* ──► gateway (same origin, no CORS)
                             │
@@ -298,6 +298,18 @@ Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branc
 
 `.github/workflows/preview.yml` runs only on `workflow_dispatch`. It deploys the branch Worker and comments the preview URL on the PR when one is open for the branch.
 
+### Custom domain
+
+The canonical production URL is `https://rumaq.ahaqqu.com`, attached as a **Worker Custom Domain** on the `api` Worker (declared via `worker.domains` in `backend/cloudflare.config.ts`; `cf deploy` creates the DNS record and certificate automatically on production deploys). The old `api.rumaq.workers.dev` URL keeps working — Cloudflare serves `*.workers.dev` alongside custom domains — but it is no longer referenced in docs, smoke tests, or the scraper ingest config.
+
+One-time cutover steps (already performed):
+
+1. **Cloudflare dashboard**: detach `rumaq.ahaqqu.com` from the legacy Pages project `rumaq` (Custom domains → remove). A hostname claimed by another project makes the Worker Custom Domain attach fail with a DNS overlap error.
+2. **Deploy `main`**: `./scripts/deploy.sh cloudflare` attaches the domain to the `api` Worker.
+3. **Google Cloud Console**: add `https://rumaq.ahaqqu.com/api/auth/callback` to the OAuth client's authorized redirect URIs — the callback `redirect_uri` is derived from the request origin, so Google sign-in only works for hosts registered there.
+
+The legacy Pages project (`rumaq.pages.dev`, custom domain now detached) still 301-redirects to the canonical URL via `scripts/deploy/pages-redirect.sh`.
+
 ### One-time setup
 
 1. Set the Cloudflare account ID:
@@ -359,7 +371,7 @@ Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branc
 | `CLOUDFLARE_API_TOKEN`   | Build/deploy  | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                                                                                            |
 | `EMAIL_AUTH_ENABLED`     | Worker var    | Set to `"true"` or `"false"` to enable or disable email/password testing auth                                                                                                       |
 | `RUN_SECRETS_CHECK`      | Worker var    | Set to `"true"` to enable missing-secrets check on startup (recommended for production); off by default                                                                             |
-| `WORKER_URL`             | Build env     | URL of the deployed Worker (e.g. `https://api.rumaq.workers.dev`); used at build time as `VITE_API_BASE`                                                                            |
+| `WORKER_URL`             | Build env     | URL of the deployed Worker (e.g. `https://rumaq.ahaqqu.com`); used at build time as `VITE_API_BASE`                                                                                 |
 | `D1_DATABASE_NAME`       | Deploy        | D1 database name (default: `rumaq`)                                                                                                                                                 |
 | `R2_BUCKET_NAME`         | Deploy        | R2 bucket name for receipt images (default: `rumaq-receipts`)                                                                                                                       |
 

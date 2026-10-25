@@ -94,7 +94,7 @@ function buildMarkdown(paths: Record<string, any>): string {
 
   let md = `# RumaQ \u2014 REST API Contract
 
-Base URL: \`https://api.rumaq.workers.dev/api\`
+Base URL: \`https://rumaq.ahaqqu.com/api\`
 
 All paths are relative to this base. The Worker mounts routes under \`/api/*\`.
 Protected endpoints require the \`rumaq_session\` cookie. Responses are JSON.

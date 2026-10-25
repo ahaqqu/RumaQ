@@ -77,7 +77,7 @@ Previews are deployed **on demand** — run `Preview deployment` from the GitHub
 
 ### Production smoke tests
 
-A scheduled GitHub Actions workflow (`.github/workflows/smoke.yml`) verifies `rumaq.pages.dev` and `api.rumaq.workers.dev` every 6 hours — includes API health checks and a Playwright login/logout test via email form. On failure, a `smoke-failure` issue is auto-created.
+A scheduled GitHub Actions workflow (`.github/workflows/smoke.yml`) verifies `rumaq.ahaqqu.com` every 6 hours — includes API health checks and a Playwright login/logout test via email form. On failure, a `smoke-failure` issue is auto-created.
 
 ---
 
