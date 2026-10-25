@@ -111,7 +111,9 @@ async function processStore(
   const ocr: Ocr = await createOcr({
     model: config.ocr.model,
     storeSlug: store.slug,
-    maxRetries: config.ocr.maxRetries + 1,
+    // config.ocr.maxRetries counts retries (extra attempts), matching the
+    // retry engine's naming — no total-vs-extra conversion needed.
+    retries: config.ocr.maxRetries,
     client: options.ocrClient,
     log,
   })

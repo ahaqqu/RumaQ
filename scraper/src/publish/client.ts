@@ -6,6 +6,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { withRetries } from '../util/retry.js'
 import type { IngestPayload } from './payload.js'
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
@@ -55,9 +56,8 @@ async function postPayload(
   const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
   const log = options.log ?? (() => {})
 
-  let lastError: unknown
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
+  return withRetries(
+    async () => {
       const response = await fetchFn(url, {
         method: 'POST',
         headers: {
@@ -76,16 +76,16 @@ async function postPayload(
         throw new Error(`Ingest endpoint returned HTTP ${response.status}`)
       }
       return (await response.json()) as PublishResult['response']
-    } catch (error) {
-      lastError = error
-      if (error instanceof FatalPublishError) throw error
-      if (attempt === retries) break
-      const wait = backoffMs * 2 ** attempt
-      log(`[publish] Attempt ${attempt + 1} failed (${String(error)}). Retrying in ${wait}ms...`)
-      await sleep(wait)
+    },
+    {
+      retries,
+      backoffMs,
+      sleep,
+      log,
+      context: 'publish',
+      isFatal: (error) => error instanceof FatalPublishError,
     }
-  }
-  throw lastError
+  )
 }
 
 export async function publishPayload(

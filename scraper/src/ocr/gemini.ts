@@ -52,7 +52,8 @@ export interface OcrOptions {
   apiKey?: string
   model: string
   storeSlug: string
-  maxRetries?: number
+  /** Extra attempts after the first (retryCall policy). */
+  retries?: number
   client?: GeminiClient
   sleep?: (ms: number) => Promise<void>
   log?: (message: string) => void
@@ -85,7 +86,7 @@ export async function createOcr(options: OcrOptions): Promise<Ocr> {
             contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
           }),
         {
-          maxRetries: options.maxRetries ?? 3,
+          retries: options.retries ?? 2,
           context: 'gemini_ocr',
           sleep: options.sleep,
           log: options.log,

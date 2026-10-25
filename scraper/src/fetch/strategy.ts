@@ -6,6 +6,7 @@
 // Port of haqita base_scraper.py DEFAULT_HEADERS + _request_with_retries.
 
 import type { StoreConfig } from '../config.js'
+import { withRetries } from '../util/retry.js'
 
 export const DEFAULT_HEADERS: Record<string, string> = {
   'User-Agent':
@@ -80,23 +81,22 @@ async function requestWithRetries(
     log: (message: string) => void
   }
 ): Promise<Response> {
-  let lastError: unknown
-  for (let attempt = 0; attempt <= opts.retries; attempt++) {
-    try {
+  return withRetries(
+    async () => {
       const response = await fetchFn(url, init)
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} ${response.statusText} for ${url}`)
       }
       return response
-    } catch (error) {
-      lastError = error
-      if (attempt === opts.retries) break
-      const wait = opts.backoffMs * 2 ** attempt
-      opts.log(`[fetch] ${url} failed (${String(error)}). Retrying in ${wait}ms...`)
-      await opts.sleep(wait)
+    },
+    {
+      retries: opts.retries,
+      backoffMs: opts.backoffMs,
+      sleep: opts.sleep,
+      log: opts.log,
+      context: `fetch ${url}`,
     }
-  }
-  throw lastError
+  )
 }
 
 export interface CreateFetcherOptions {
