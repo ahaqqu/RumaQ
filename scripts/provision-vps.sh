@@ -85,19 +85,36 @@ log "preflight: ssh identities"
 "${ADMIN_SSH[@]}" "$ADMIN_USER@$HOST" 'test -x /usr/bin/bun' || die "/usr/bin/bun missing on the box"
 
 # --- 2. the Gemini key --------------------------------------------------------
+# Discovery order: --gemini-key-file > $GEMINI_API_KEY > the sibling KajianQ
+# checkout's .env — but ONLY when that value is a genuine AI Studio key
+# (`AIza…`; other Google credential formats live in .env files and must not
+# be reused here silently) > interactive prompt with retries. The value is
+# never echoed anywhere.
+KAJIANQ_ENV="$HOME/Projects/KajianQ/.env"
+GEMINI_API_KEY=""
 if [ -n "$GEMINI_KEY_FILE" ]; then
   GEMINI_API_KEY="$(tr -d '[:space:]' < "$GEMINI_KEY_FILE")"
 elif [ -n "${GEMINI_API_KEY:-}" ]; then
   GEMINI_API_KEY="${GEMINI_API_KEY// /}"
+elif [ -f "$KAJIANQ_ENV" ] && grep -q '^GEMINI_API_KEY=AIza' "$KAJIANQ_ENV"; then
+  GEMINI_API_KEY="$(sed -n 's/^GEMINI_API_KEY=//p' "$KAJIANQ_ENV" | head -1 | tr -d '[:space:]')"
+  log "Gemini key: found in $KAJIANQ_ENV"
 else
-  printf 'Gemini API key (https://aistudio.google.com/apikey), input hidden: '
-  IFS= read -rs GEMINI_API_KEY </dev/tty
-  printf '\n'
+  [ -f "$KAJIANQ_ENV" ] && grep -q '^GEMINI_API_KEY=..' "$KAJIANQ_ENV" \
+    && log "Gemini key: $KAJIANQ_ENV has one, but it is not an AI Studio key (AIza…) — ignoring it"
+  for attempt in 1 2 3; do
+    printf 'Gemini API key (https://aistudio.google.com/apikey), input hidden: '
+    IFS= read -rs GEMINI_API_KEY </dev/tty
+    printf '\n'
+    [[ $GEMINI_API_KEY =~ ^[A-Za-z0-9._-]+$ ]] && break
+    GEMINI_API_KEY=""
+    echo "provision-vps: key was empty or has unexpected characters (attempt $attempt of 3)" >&2
+  done
 fi
 # The env file is sourced by the units and re-read by the root
 # run's sed — keep every value inside a boring charset and fail
 # fast here rather than mysteriously on the box.
-[[ $GEMINI_API_KEY =~ ^[A-Za-z0-9_-]+$ ]] || die "Gemini key is empty or has unexpected characters"
+[[ $GEMINI_API_KEY =~ ^[A-Za-z0-9._-]+$ ]] || die "no usable Gemini key — re-run with --gemini-key-file FILE, export GEMINI_API_KEY, or paste one at the prompt (https://aistudio.google.com/apikey)"
 INGEST_SECRET="$(tr -d '[:space:]' < "$INGEST_SECRET_FILE")"
 [[ $INGEST_SECRET =~ ^[A-Za-z0-9_-]+$ ]] || die "ingest secret in $INGEST_SECRET_FILE has unexpected characters"
 
