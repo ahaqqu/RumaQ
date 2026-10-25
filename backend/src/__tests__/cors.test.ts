@@ -1,18 +1,18 @@
 import { Hono } from 'hono'
 import { describe, it, expect } from 'vite-plus/test'
 import { createCors } from '../cors.js'
-
-type CorsEnv = { PAGES_ORIGIN?: string }
+import { createMockEnv, type MockEnv } from './support/env.js'
 
 function makeApp() {
-  const app = new Hono<{ Bindings: CorsEnv }>()
+  const app = new Hono<{ Bindings: MockEnv }>()
   app.use('*', createCors())
   app.get('/ping', (c) => c.text('pong'))
   return app
 }
 
-function makeEnv(pagesOrigin?: string): CorsEnv {
-  return pagesOrigin === undefined ? {} : { PAGES_ORIGIN: pagesOrigin }
+function makeEnv(pagesOrigin?: string) {
+  // Explicit undefined override keeps the "PAGES_ORIGIN unset" fallback path testable.
+  return createMockEnv({ PAGES_ORIGIN: pagesOrigin })
 }
 
 describe('createCors', () => {

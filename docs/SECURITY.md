@@ -12,7 +12,7 @@ How RumaQ protects household data and credentials. The full system design lives 
 ## Session & cookies
 
 - Google OAuth 2.0 with `state` + PKCE (email/password auth exists for local testing behind `EMAIL_AUTH_ENABLED`).
-- Session is a signed JWT (HMAC-SHA256, 30-day expiry) in a `rumaq_session` cookie that is `HttpOnly`, `Secure`, `SameSite=None`.
+- Session is a signed JWT (HMAC-SHA256, 30-day expiry) in a `rumaq_session` cookie that is `HttpOnly`, and on HTTPS `Secure` + `SameSite=None` (`Lax` on local plain-HTTP dev).
 - Logout clears the cookie with matching attributes.
 - Rotate `WORKER_JWT_SECRET` to invalidate all sessions (users just sign in again).
 
@@ -28,7 +28,7 @@ Defined in `backend/src/cors.ts`, unit-tested in `backend/src/__tests__/cors.tes
 ## Rate limiting
 
 - AI endpoints (`/api/purchases/scan`, `/api/plans/generate`, `/api/ai/chat`) are limited per user per day via the `ai_usage` D1 table (default 20/day); 429 responses include `Retry-After`.
-- A general per-IP sliding-window limiter guards the whole API with `Retry-After` on 429.
+- A general per-IP fixed-window limiter (60 s / 100 requests by default, env-tunable via `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS`) guards the whole API with `Retry-After` on 429.
 - Known limitation: the general limiter is in-memory (per-isolate); the ingest endpoint (`POST /api/internal/ingest/prices`) is exempt because it authenticates with a bearer secret, not a session.
 
 ## Secrets & key material

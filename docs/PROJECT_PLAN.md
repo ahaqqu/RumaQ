@@ -236,7 +236,7 @@ _User impact: review past purchases and spending patterns; app goes live._
 
 ## Immediate next steps
 
-The MVP is shipped: production runs as a single Worker (`api.rumaq.workers.dev`, deployed on merge to `main`), scheduled smoke tests run every 6 hours, and all P0 phases (01–05) plus phase 06 security hardening are complete. Active work and remaining items:
+The MVP is shipped: production runs as a single Worker (`api.rumaq.workers.dev`, deployed on merge to `main`), scheduled smoke tests run every 6 hours, and all P0 phases (01–05) plus phase 06 security hardening (one manual live-OAuth check outstanding) are done. Active work and remaining items:
 
 1. **Haqita integration** (`docs/plan/haqita-integration.md`) — PR1 #252 and PR2 #255 merged; PR3 (Lotte + matcher) in flight; PR4 (VPS ops + backfill), PR5 (frontend `/prices` + plan grounding) and PR6 (cleanup) remain.
 2. **Phase 08** — route loader/Query alignment, PWA manifest extras, offline E2E (mostly-finished modernization).

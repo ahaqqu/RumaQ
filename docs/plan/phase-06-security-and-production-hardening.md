@@ -1,6 +1,6 @@
 # Phase 06 — Security & Production Hardening
 
-**Status:** Done (PR #260 — dedicated CORS unit tests + docs/SECURITY.md + checklist sync; live OAuth verification with real credentials remains a one-off manual step)  
+**Status:** Mostly done (PR #260 — dedicated CORS unit tests + docs/SECURITY.md + checklist sync; one manual step outstanding: live OAuth verification with real credentials on the deployed domain)  
 **Priority:** P0/P1  
 **Source sections:** Sections 3, 5, 7 of `docs/PROJECT_PLAN.md`  
 **Estimated effort:** Small–Medium
