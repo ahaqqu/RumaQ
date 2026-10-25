@@ -1,7 +1,7 @@
 // Port of haqita tests/scrapers/test_state_persistence.py — state
 // round-trip, MD5 novelty, dedupe, filenames, size/dimension gates.
 
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -12,6 +12,7 @@ import {
   filenameFromUrl,
   loadState,
   md5Hash,
+  pruneImages,
   probeImageDimensions,
   saveState,
 } from '../../src/fetch/state.js'
@@ -224,5 +225,68 @@ describe('classifyImages', () => {
     const written = await readFile(entry.filePath)
     expect(md5Hash(new Uint8Array(written))).toBe(entry.md5)
     expect(entry.brochureUrl).toBe('https://example.com/katalog')
+  })
+
+  it('does not re-write already-processed images to disk', async () => {
+    const { imagesDir, fetcher, big } = await setup()
+    const result = await classifyImages(
+      [{ imageUrl: 'https://example.com/known.jpg', brochureUrl: 'https://example.com/katalog' }],
+      {
+        lastRun: null,
+        processed: [
+          {
+            filename: 'known.jpg',
+            md5: md5Hash(big),
+            imageUrl: 'https://example.com/known.jpg',
+            brochureUrl: 'https://example.com',
+            downloadedAt: '2026-01-01T00:00:00',
+          },
+        ],
+      },
+      { ...opts, imagesDir, fetcher }
+    )
+    expect(result.existingImages).toHaveLength(1)
+    expect(result.newImages).toHaveLength(0)
+    // Classified as existing, but nothing was written — the disk copy from
+    // the original run stays the only one.
+    expect(await readdir(imagesDir)).toEqual([])
+  })
+})
+
+describe('pruneImages', () => {
+  async function seed(root: string) {
+    for (const dir of ['20260101', '20261024', 'not-a-date']) {
+      await mkdir(path.join(root, dir), { recursive: true })
+      await writeFile(path.join(root, dir, 'img.jpg'), 'x')
+    }
+    await writeFile(path.join(root, 'loose-file.jpg'), 'x')
+  }
+
+  it('removes date dirs older than the retention window and keeps the rest', async () => {
+    const root = await tempDir()
+    await seed(root)
+    // 20261024 is exactly 7 days old here — kept (pruned only when older).
+    const pruned = await pruneImages(root, { now: new Date('2026-10-31T00:00:00Z') })
+    expect(pruned).toEqual(['20260101'])
+    await expect(stat(path.join(root, '20260101'))).rejects.toThrow()
+    // Recent dir, non-date entries, and loose files are untouched.
+    expect((await stat(path.join(root, '20261024'))).isDirectory()).toBe(true)
+    expect(await readdir(path.join(root, 'not-a-date'))).toEqual(['img.jpg'])
+    expect(await readdir(root)).toContain('loose-file.jpg')
+  })
+
+  it('honors a custom maxAgeDays', async () => {
+    const root = await tempDir()
+    await seed(root)
+    const pruned = await pruneImages(root, { now: new Date('2026-11-01T00:00:00Z'), maxAgeDays: 3 })
+    expect(pruned).toEqual(['20260101', '20261024'])
+    expect(await readdir(root)).toEqual(['loose-file.jpg', 'not-a-date'])
+  })
+
+  it('returns [] when the images root does not exist', async () => {
+    const pruned = await pruneImages(path.join(await tempDir(), 'nope', 'images'), {
+      now: new Date('2026-11-01T00:00:00Z'),
+    })
+    expect(pruned).toEqual([])
   })
 })

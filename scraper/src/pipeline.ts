@@ -7,7 +7,13 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { loadConfig, type ScraperConfig } from './config.js'
-import { classifyImages, loadState, saveState, type ScraperState } from './fetch/state.js'
+import {
+  classifyImages,
+  loadState,
+  pruneImages,
+  saveState,
+  type ScraperState,
+} from './fetch/state.js'
 import { createFetcher, type FetchLike } from './fetch/strategy.js'
 import { createOcr, type GeminiClient, type Ocr } from './ocr/gemini.js'
 import { validateProduct, type ValidatedProduct } from './ocr/parse.js'
@@ -221,6 +227,15 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
         ? `[publish] Dry-run — payload written to ${result.payloadFile}`
         : `[publish] Accepted ${result.response?.accepted ?? 0} items`
     )
+    // Plan §6: image files are pruned 7 days after the run that published
+    // them — the disk-scarce VPS must not accumulate dated image dirs. A
+    // prune failure never fails an already-published run.
+    for (const { plugin } of runs) {
+      await pruneImages(path.join(options.stateDir, plugin.config.slug, 'images'), {
+        now: (options.now ?? (() => new Date()))(),
+        log,
+      }).catch((error) => log(`[prune] ${plugin.config.slug}: ${String(error)}`))
+    }
     status.stage = 'done'
     return status
   } catch (error) {

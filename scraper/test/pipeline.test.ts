@@ -2,6 +2,7 @@
 // with every IO boundary injected (fixture HTML, fake JPEG bytes, stub
 // Gemini client, dry-run publish).
 
+import { existsSync } from 'node:fs'
 import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -116,13 +117,17 @@ describe('runPipeline', () => {
       dryRun: true,
       fetch: fetchMock,
       ocrClient,
-      now: () => new Date('2026-10-25T23:00:05Z'),
+      now: () => new Date('2026-11-05T23:00:05Z'),
       log: () => {},
     })
     const entry2 = status2.stores['superindo']!
     expect(entry2.newImages).toBe(0)
     expect(entry2.existingImages).toBeGreaterThanOrEqual(1)
     expect(entry2.itemsExtracted).toBe(0)
+
+    // Post-publish prune: the first run's image dir is 12 days old → removed
+    // (plan §6 keeps images 7 days after the run that published them).
+    expect(existsSync(path.join(stateDir, 'superindo', 'images', '20261024'))).toBe(false)
 
     // State file persisted the processed hashes.
     const stateJson = JSON.parse(

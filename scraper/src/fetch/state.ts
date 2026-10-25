@@ -1,9 +1,10 @@
 // Novelty detection (port of haqita base_scraper.py state + classify loop):
-// URL+MD5 state.json so unchanged brochure pages are never re-downloaded or
-// re-OCR'd (Gemini quota guard, docs/plan/haqita-integration.md §9).
+// URL+MD5 state.json so unchanged brochure pages are never re-OCR'd or
+// re-published — bytes are still downloaded once per run to compute the MD5
+// (Gemini quota guard, docs/plan/haqita-integration.md §9).
 
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { BrochurePage } from '../stores/types.js'
@@ -105,7 +106,10 @@ export interface ClassifyOptions {
 }
 
 export interface ClassifiedImage extends ProcessedImage {
-  /** Absolute path of the downloaded file (present for new + existing). */
+  /**
+   * Absolute path the file is written to. Only NEW images are written to
+   * disk — existing entries are classified without re-writing their bytes.
+   */
   filePath: string
 }
 
@@ -173,7 +177,6 @@ export async function classifyImages(
 
     const filename = filenameFromUrl(page.imageUrl, hash)
     const filePath = path.join(options.imagesDir, filename)
-    await writeFile(filePath, data)
     const entry: ClassifiedImage = {
       filename,
       md5: hash,
@@ -186,10 +189,70 @@ export async function classifyImages(
       result.existingImages.push(entry)
       log(`[SKIP] ${filename} — already processed (MD5 match)`)
     } else {
+      await writeFile(filePath, data)
       result.newImages.push(entry)
       log(`[NEW] ${filename}`)
     }
   }
 
   return result
+}
+
+/** Brochure images are kept this many days after the run that published them (plan §6). */
+export const IMAGE_RETENTION_DAYS = 7
+
+function parseDateDir(name: string): Date | null {
+  const year = Number(name.slice(0, 4))
+  const month = Number(name.slice(4, 6))
+  const day = Number(name.slice(6, 8))
+  if (!year || !month || !day) return null
+  // Dated dirs are scrapedAt UTC prefixes — validate via UTC round-trip.
+  const date = new Date(Date.UTC(year, month - 1, day))
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? date
+    : null
+}
+
+export interface PruneImagesOptions {
+  /** Injectable clock so tests are deterministic. */
+  now?: Date
+  maxAgeDays?: number
+  log?: (message: string) => void
+}
+
+/**
+ * Delete dated image directories under `imagesRoot` older than
+ * `maxAgeDays` (plan §6: images are pruned 7 days after the run that
+ * published them — the VPS state dir must not grow without bound). Only
+ * `YYYYMMDD` directories are considered, so state.json and the run items
+ * files elsewhere in the state dir are never touched.
+ */
+export async function pruneImages(
+  imagesRoot: string,
+  options: PruneImagesOptions = {}
+): Promise<string[]> {
+  const nowMs = (options.now ?? new Date()).getTime()
+  const maxAgeMs = (options.maxAgeDays ?? IMAGE_RETENTION_DAYS) * 24 * 60 * 60 * 1000
+  const log = options.log ?? (() => {})
+
+  let entries
+  try {
+    entries = await readdir(imagesRoot, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+
+  const pruned: string[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^\d{8}$/.test(entry.name)) continue
+    const dirDate = parseDateDir(entry.name)
+    if (!dirDate || nowMs - dirDate.getTime() <= maxAgeMs) continue
+    await rm(path.join(imagesRoot, entry.name), { recursive: true, force: true })
+    pruned.push(entry.name)
+    log(`[prune] removed images/${entry.name}`)
+  }
+  return pruned
 }
