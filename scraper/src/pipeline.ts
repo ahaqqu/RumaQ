@@ -3,7 +3,7 @@
 // to status.json so a failed run can be inspected without digging through
 // logs; novelty state makes re-runs cheap.
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { loadConfig, type ScraperConfig } from './config.js'
@@ -114,6 +114,16 @@ async function processStore(
   })
 
   const imageProducts: ImageProducts[] = []
+  // Per-run items file: each image's validated items are appended as one
+  // JSON line as soon as the image is OCR'd, so a crashed run leaves the
+  // publishable payload on disk.
+  const runItemsFile = path.join(
+    options.stateDir,
+    store.slug,
+    `run-${scrapedAt.replace(/[:.]/g, '-')}.jsonl`
+  )
+  await mkdir(path.dirname(runItemsFile), { recursive: true })
+
   for (const image of classified.newImages) {
     const bytes = new Uint8Array(await readFile(image.filePath))
     const rawItems = await ocr.ocrImage(bytes)
@@ -134,11 +144,27 @@ async function processStore(
     }
     entry.itemsExtracted += products.length
     imageProducts.push({ storeSlug: store.slug, brochureUrl: image.brochureUrl, products })
+
+    // Checkpoint per image, only after its items are safely extracted: a
+    // mid-run quota kill keeps every image already paid for, so the next
+    // run resumes where this one stopped instead of re-spending Gemini
+    // calls on the same prefix.
+    state.processed.push({
+      filename: image.filename,
+      md5: image.md5,
+      imageUrl: image.imageUrl,
+      brochureUrl: image.brochureUrl,
+      downloadedAt: image.downloadedAt,
+    })
+    state.lastRun = scrapedAt
+    await saveState(state, stateFile)
+    await appendFile(
+      runItemsFile,
+      JSON.stringify({ storeSlug: store.slug, brochureUrl: image.brochureUrl, products }) + '\n',
+      'utf8'
+    )
   }
 
-  // Only mark images processed after their items are safely extracted, so a
-  // crashed OCR pass re-processes them on the next run.
-  state.processed.push(...classified.newImages)
   state.lastRun = scrapedAt
   await saveState(state, stateFile)
 

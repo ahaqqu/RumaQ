@@ -130,5 +130,106 @@ describe('runPipeline', () => {
     )
     expect(stateJson.processed.length).toBeGreaterThanOrEqual(1)
     expect(stateJson.processed[0]!.md5).toBe(md5Hash(jpeg))
+
+    // Run items file: one JSON line per OCR'd image.
+    const runItems = await readFile(
+      path.join(stateDir, 'superindo', 'run-2026-10-24T23-00-05-000Z.jsonl'),
+      'utf8'
+    )
+    const lines = runItems
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(lines).toHaveLength(entry.itemsExtracted > 0 ? stateJson.processed.length : 0)
+    expect(lines[0]!.storeSlug).toBe('superindo')
+    expect(lines[0]!.products[0]!.name).toBe('Gula Pasir')
+  })
+
+  it('checkpoints novelty state per image when the quota dies mid-run', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    // Two distinct brochure pages so the run has two NEW images.
+    const jpegA = fakeJpegBytes()
+    const jpegB = (() => {
+      const bytes = fakeJpegBytes()
+      bytes.fill(0xdd, 29)
+      return bytes
+    })()
+    const seenUrls = new Map<string, Uint8Array<ArrayBuffer>>()
+    const fetchMock = async (
+      url: string,
+      init?: RequestInit & { proxy?: string }
+    ): Promise<Response> => {
+      expect(init?.headers).toBeDefined()
+      if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
+      if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
+      // First distinct image URL → page A, second → page B, rest repeat.
+      if (!seenUrls.has(url)) {
+        seenUrls.set(url, seenUrls.size === 0 ? jpegA : jpegB)
+      }
+      return new Response(seenUrls.get(url)!, { status: 200 })
+    }
+
+    const items = [
+      { name: 'Gula Pasir', brand: null, unit: '1 kg', price: 17000, promo: null, period: null },
+    ]
+    let ocrCalls = 0
+    const ocrClient: GeminiClient = {
+      models: {
+        generateContent: async () => {
+          ocrCalls++
+          if (ocrCalls > 1) {
+            throw new Error('429 Quota exceeded for quota metric GenerateRequests per day')
+          }
+          return { text: JSON.stringify(items) }
+        },
+      },
+    }
+
+    const now = () => new Date('2026-10-24T23:00:05Z')
+    let failure: unknown
+    try {
+      await runPipeline({
+        stateDir,
+        dryRun: true,
+        fetch: fetchMock,
+        ocrClient,
+        now,
+        log: () => {},
+      })
+    } catch (error) {
+      failure = error
+    }
+
+    // Quota kill → exit code 2.
+    expect(String(failure)).toMatch(/Daily quota exhausted/)
+    expect((failure as { exitCode?: number }).exitCode).toBe(2)
+    expect(ocrCalls).toBe(2)
+
+    // The first image's progress survived: its hash is in state.json and its
+    // items are on disk, so the next run does not re-OCR (re-pay) it.
+    const stateJson = JSON.parse(
+      await readFile(path.join(stateDir, 'superindo', 'state.json'), 'utf8')
+    )
+    expect(stateJson.processed).toHaveLength(1)
+    expect(stateJson.processed[0]!.md5).toBe(md5Hash(jpegA))
+
+    const runItems = await readFile(
+      path.join(stateDir, 'superindo', 'run-2026-10-24T23-00-05-000Z.jsonl'),
+      'utf8'
+    )
+    const lines = runItems
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(lines).toHaveLength(1)
+    expect(lines[0]!.products[0]!.name).toBe('Gula Pasir')
   })
 })
