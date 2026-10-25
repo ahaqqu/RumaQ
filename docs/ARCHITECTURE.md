@@ -252,6 +252,10 @@ Daily usage is tracked in `ai_usage` so the app can show the meter and cap reque
 - A Google Cloud project with OAuth 2.0 credentials
 - cf CLI authenticated (`cf login` or `export CLOUDFLARE_API_TOKEN=...`; installed via devDependencies)
 
+### Production deployments
+
+Production deploys to `main` are **commit-based**: `.github/workflows/ci.yml` runs a `deploy` job after CI passes on every push to `main`, invoking the same `./scripts/deploy.sh cloudflare` used locally. Rapid merges queue on the `deploy-main` concurrency group and deploy sequentially (the last push's diff wins for skip decisions). When a push only touches deploy-irrelevant files (Markdown, `docs/`, `.github/`, license/attribute files), `scripts/github/needs-deploy.sh` skips the deploy; anything else deploys. Production deploys always use the `rumaq` D1 database configured by `CLOUDFLARE_DATABASE_ID`.
+
 ### Branch deployments
 
 When not on `main`, `./scripts/deploy.sh cloudflare` deploys to a **branch-specific Worker** (`rumaq-api-{sanitized-branch}`) that serves both the SPA (static assets) and the API. This gives a branch its own real preview environment at a single URL, backed by a real Worker, rather than pointing the preview frontend at the production Worker. Previews are deployed **on demand** via `workflow_dispatch` — not every PR gets one automatically.
