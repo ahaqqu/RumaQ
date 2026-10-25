@@ -37,11 +37,13 @@ export default defineConfig({
     compatibilityDate: '2026-07-10',
     compatibilityFlags: ['nodejs_compat'],
     entrypoint: 'src/index.ts',
-    // Canonical production hostname, attached as a Worker Custom Domain at
-    // deploy time (branch deploys keep their *.workers.dev URL only). The
-    // hostname must not be claimed by another project (e.g. the legacy Pages
-    // redirect site) or the deploy will fail on the DNS overlap.
-    domains: isProduction ? ['rumaq.ahaqqu.com'] : undefined,
+    // NOTE: a config-driven Worker Custom Domain for rumaq.ahaqqu.com was
+    // reverted here: Worker Custom Domains require the hostname's zone to be
+    // a Cloudflare zone in this account, but ahaqqu.com's DNS is hosted at
+    // the registrar (mysrsx), so every deploy failed on zone inference and
+    // the failed attach left the Worker without any serving hostname.
+    // Re-add `domains: ['rumaq.ahaqqu.com']` only after the ahaqqu.com zone
+    // has been added to this Cloudflare account and its nameservers switched.
     // Single-deploy topology: the Worker serves both the SPA (frontend build,
     // wired in via publicDir in vite.config.ts) and the API. API requests must
     // always reach the user worker; unknown paths fall back to index.html.
