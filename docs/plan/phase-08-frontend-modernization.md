@@ -1,6 +1,6 @@
 # Phase 08 — Frontend Modernization
 
-**Status:** Partial (Tailwind v4 + Kumo, TanStack Router/Query, PWA shell, and optimistic mutations for stock/plans/settings are already in place; remaining work is legacy-CSS cleanup, error boundaries, offline fallback, runtime API caching, and deferred push/native decisions)  
+**Status:** Mostly done (Tailwind v4 + Kumo, TanStack Router/Query, PWA shell, optimistic mutations, route-level pending/error components, legacy-CSS removal, offline fallback + SW runtime caching, and push/native decision docs are all in place; remaining work is route loader/Query-options alignment, PWA manifest categories/screenshots, offline/installability E2E, and cache-TTL validation)  
 **Priority:** P1/P2  
 **Source sections:** Section 2 of `docs/PROJECT_PLAN.md`  
 **Estimated effort:** Medium-High (mostly finish-work now that the big migration is in place)

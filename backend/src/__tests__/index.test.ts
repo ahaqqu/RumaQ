@@ -1,27 +1,6 @@
-import type { AuthProps } from '../types.js'
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { apiApp } from '../apps/api.js'
-
-function createMockEnv() {
-  return {
-    DB: {
-      prepare: vi.fn().mockReturnThis(),
-      bind: vi.fn().mockReturnThis(),
-      first: vi.fn().mockResolvedValue(null),
-      all: vi.fn().mockResolvedValue({ results: [] }),
-      batch: vi.fn().mockResolvedValue([]),
-    },
-    RECEIPTS: {},
-    GOOGLE_CLIENT_ID: 'test-client-id',
-    GOOGLE_CLIENT_SECRET: 'test-client-secret',
-    WORKER_JWT_SECRET: 'test-secret',
-    WORKER_ENCRYPTION_KEY: 'test-enc-key',
-    PAGES_ORIGIN: 'http://localhost:5173' as string,
-    EMAIL_AUTH_ENABLED: 'false' as string,
-    ASSETS: undefined as unknown as Fetcher,
-    props: undefined as AuthProps | undefined,
-  }
-}
+import { createMockEnv } from './support/env.js'
 
 describe('apiApp (cached routes)', () => {
   it('/api/health returns ok with public cache headers', async () => {
@@ -98,67 +77,23 @@ describe('apiApp (cached routes)', () => {
     expect(res.status).toBe(200)
   })
 
-  it('cors allows localhost origin', async () => {
-    const res = await apiApp.request(
+  // Behavior matrix lives in cors.test.ts (unit level, against createCors
+  // directly); this single test proves the middleware is wired into apiApp.
+  it('cors middleware is wired into apiApp', async () => {
+    const allowed = await apiApp.request(
       '/api/health',
-      {
-        headers: { Origin: 'http://localhost:5173' },
-      },
+      { headers: { Origin: 'http://localhost:5173' } },
       createMockEnv()
     )
-    expect(res.headers.get('access-control-allow-origin')).toBe('http://localhost:5173')
-  })
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('http://localhost:5173')
 
-  it('cors rejects unknown origins in production', async () => {
-    const env = createMockEnv()
-    env.PAGES_ORIGIN = 'https://custom.pages.dev'
-    const res = await apiApp.request(
+    const env = createMockEnv({ PAGES_ORIGIN: 'https://custom.pages.dev' })
+    const rejected = await apiApp.request(
       '/api/health',
-      {
-        headers: { Origin: 'https://evil.com' },
-      },
+      { headers: { Origin: 'https://evil.com' } },
       env
     )
-    expect(res.headers.get('access-control-allow-origin')).toBe('null')
-  })
-
-  it('cors rejects unknown origins when PAGES_ORIGIN is not set', async () => {
-    const env = createMockEnv()
-    env.PAGES_ORIGIN = ''
-    const res = await apiApp.request(
-      '/api/health',
-      {
-        headers: { Origin: 'https://test.com' },
-      },
-      env
-    )
-    expect(res.headers.get('access-control-allow-origin')).toBe('null')
-  })
-
-  it('cors allows branch previews under the configured Pages hostname', async () => {
-    const env = createMockEnv()
-    env.PAGES_ORIGIN = 'https://custom.pages.dev'
-    const res = await apiApp.request(
-      '/api/health',
-      {
-        headers: { Origin: 'https://branch.custom.pages.dev' },
-      },
-      env
-    )
-    expect(res.headers.get('access-control-allow-origin')).toBe('https://branch.custom.pages.dev')
-  })
-
-  it('cors rejects unrelated pages.dev origins', async () => {
-    const env = createMockEnv()
-    env.PAGES_ORIGIN = 'https://custom.pages.dev'
-    const res = await apiApp.request(
-      '/api/health',
-      {
-        headers: { Origin: 'https://other-project.pages.dev' },
-      },
-      env
-    )
-    expect(res.headers.get('access-control-allow-origin')).toBe('null')
+    expect(rejected.headers.get('access-control-allow-origin')).toBe('null')
   })
 
   it('error responses have private no-cache Cache-Control', async () => {

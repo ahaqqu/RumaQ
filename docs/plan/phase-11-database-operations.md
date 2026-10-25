@@ -1,6 +1,6 @@
 # Phase 11 — Database Operations & Maintenance
 
-**Status:** Not started / Partial (run-out estimate not started, index tuning partial, multi-household isolation partial, backup not started)  
+**Status:** Partial (run-out estimates done with recalibration tests, index tuning done via migrations 0003–0005, household isolation enforced and covered by integration tests; remaining work is an isolation unit test, backup/export strategy, migration-convention docs, and query-performance monitoring)  
 **Priority:** P0/P2  
 **Source sections:** Section 4 of `docs/PROJECT_PLAN.md`  
 **Estimated effort:** Medium

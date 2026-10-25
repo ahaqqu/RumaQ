@@ -1,6 +1,6 @@
 # Phase 04 — AI Shopping Plans
 
-**Status:** Not started  
+**Status:** Done (PR #77 — AI shopping plans generation, CRUD, check-off, and plan page; follow-ups in #108)  
 **Priority:** P0 (MVP blocker)  
 **Source PR:** PR 5 — AI Shopping Plans (from `docs/PROJECT_PLAN.md`)  
 **Estimated effort:** Medium-High (AI prompt engineering + plan state machine)

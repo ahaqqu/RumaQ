@@ -417,8 +417,10 @@ If usage grows, the first upgrade is Workers Paid ($5/mo) for higher request and
 - [x] D1 queries are parameterized; no string concatenation.
 - [x] Every D1 query that reads or writes household-scoped data filters by `household_id` or `user_id`.
 - [x] Same-origin app + API: no cross-origin API calls in production. CORS keeps localhost dev origins and the legacy `rumaq.pages.dev` origins (transition window for stale clients) allowed; unknown origins are rejected.
-- [ ] AI prompts never expose another user's data and avoid internal DB IDs where possible.
+- [x] AI prompts never expose another user's data and avoid internal DB IDs where possible (`backend/src/__tests__/prompt-isolation.test.ts`).
 - [x] General API rate limiting returns 429 with `Retry-After`.
+
+Security summary and runbook: [`docs/SECURITY.md`](SECURITY.md). CORS origin behavior is unit-tested in `backend/src/__tests__/cors.test.ts`.
 
 ## 11. Testing
 

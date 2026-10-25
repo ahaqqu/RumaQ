@@ -1,6 +1,6 @@
 # Phase 05 — Purchase History & Ship
 
-**Status:** Not started  
+**Status:** Done (PR #81 — purchase history, patterns, AI chat, and ship readiness)  
 **Priority:** P0 (MVP blocker)  
 **Source PR:** PR 6 — Purchase History + Ship (from `docs/PROJECT_PLAN.md`)  
 **Estimated effort:** Medium (history UI + deployment polish)

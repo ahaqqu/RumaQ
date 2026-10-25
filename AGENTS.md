@@ -4,7 +4,7 @@
 - Never ask user to run CLI commands, except shell scripts under `scripts/`.
 - Do not read or display the contents of `.env` files.
 - `scripts/deploy.sh` is the single entrypoint for all deployments. Deploy to Cloudflare via `./scripts/deploy.sh cloudflare`.
-  - When on a non-main branch, it deploys a branch-specific Worker (`rumaq-api-{branch}`) and Pages preview — production is never touched.
+  - Preview deployments for PR branches are run on demand from the GitHub Actions "Preview deployment" workflow — they deploy a branch-specific Worker (`rumaq-api-{branch}`) serving both app and API. Production is never touched.
   - Branch Workers are cleaned up automatically via `scripts/github/cleanup-branch.sh` when the PR is closed.
 - `scripts/test.sh` is the single entrypoint for all tests (unit, automation-local, automation-live). Run `./scripts/test.sh unit frontend` etc.
 - `scripts/docs.sh` generates API documentation.
@@ -14,6 +14,7 @@
 - Never commit and push directly to main branch, always use PR, except I asked it explicitly.
 - Before creating a PR, follow the `pr-creation` skill.
 - When implementing a complex or unclear plan from a file, follow the `guided-implementation` skill.
+- When asked to implement a phase or feature, read the matching `docs/plan/*.md` first and check `docs/PROJECT_PLAN.md` for current status.
 - Before merging a PR, ensure the GitHub Action succeeds.
 - When creating new shell scripts, add them to `.gitattributes` with `mode=755` — otherwise CI will fail with `Permission denied`.
 - When asked to update this file, use format: "When <condition>, <action>", keep it concise and clear.

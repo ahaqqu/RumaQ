@@ -1,11 +1,13 @@
 # Haqita → RumaQ Integration — Architecture & Implementation Plan
 
 > Status: **PR1 and PR2 merged; PR3 in flight.** Written 2026-10-24, updated 2026-10-25.
-> PR3 = the matcher port + Lotte Tier-2 below, **plus** the VPS deploy scope
-> from milestone 4 (provision/vps, `deploy.sh vps`, commit-based CI deploy) —
+> PR1 (contract & backend) merged as #252, PR2 (scraper scaffold + Superindo + Gemini OCR +
+> dry-run publish) merged as #255. PR3 = the matcher port + Lotte Tier-2 below, **plus** the
+> VPS deploy scope from milestone 4 (provision/vps, `deploy.sh vps`, commit-based CI deploy) —
 > folded in by owner decision so the box deploy rides the same commit-based
 > flow that Cloudflare got in #258. Milestone 4 keeps backfill, the homepage
-> MACHINE.md/doctor PR, and first live ingest (go-live).
+> MACHINE.md/doctor PR, and first live ingest (go-live). PR5 (frontend explorer + plan
+> grounding) and PR6 (haqita cleanup) remain.
 > This document is self-contained: a fresh session should be able to implement from it
 > without re-exploring the haqita repo. Source references to `/home/ahaqqu/Projects/haqita`
 > are included below; that repo still exists locally at time of writing.

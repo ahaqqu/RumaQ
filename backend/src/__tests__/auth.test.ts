@@ -202,7 +202,7 @@ describe('authApp Hono routes', () => {
       '/callback?code=abc&state=wrong',
       {
         headers: {
-          Cookie: 'rumaq_oauth_state=expected:verifier:http://localhost:5173',
+          Cookie: 'rumaq_oauth_state=expected:verifier',
         },
       },
       env as any
@@ -224,12 +224,50 @@ describe('authApp Hono routes', () => {
       '/callback?code=abc&state=test-state',
       {
         headers: {
-          Cookie: 'rumaq_oauth_state=test-state:verifier:http://localhost:5173',
+          Cookie: 'rumaq_oauth_state=test-state:verifier',
         },
       },
       env as any
     )
     expect(res.status).toBe(400)
+  })
+
+  // Regression: the state cookie used to embed the origin after a ':' delimiter,
+  // so split(':') truncated `https://…` to `https` and the token exchange sent
+  // redirect_uri=https/api/auth/callback, which Google rejects (prod SSO 400).
+  it('/callback sends the request-origin redirect_uri to the token endpoint', async () => {
+    let tokenBody = ''
+    let callCount = 0
+    globalThis.fetch = async (_input: any, init?: any) => {
+      callCount++
+      if (callCount === 1) {
+        tokenBody = String(init?.body || '')
+        return new Response(JSON.stringify({ access_token: 'tok' }), { status: 200 }) as any
+      }
+      return new Response('{}', { status: 400 }) as any
+    }
+    const env = {
+      GOOGLE_CLIENT_ID: 'test-client-id',
+      GOOGLE_CLIENT_SECRET: 'test-secret',
+      WORKER_JWT_SECRET: SECRET,
+      WORKER_ENCRYPTION_KEY: 'test-enc-key',
+      DB: {},
+      PAGES_ORIGIN: 'http://localhost:5173',
+    }
+    const res = await authApp.request(
+      '/callback?code=abc&state=test-state',
+      {
+        headers: {
+          Cookie: 'rumaq_oauth_state=test-state:verifier',
+        },
+      },
+      env as any
+    )
+    // User info fetch fails (400) — the token-exchange body is what we assert on.
+    expect(res.status).toBe(400)
+    expect(tokenBody).toContain(
+      `redirect_uri=${encodeURIComponent('http://localhost/api/auth/callback')}`
+    )
   })
 
   it('/callback returns 400 when user info fetch fails', async () => {
@@ -254,7 +292,7 @@ describe('authApp Hono routes', () => {
       '/callback?code=abc&state=test-state',
       {
         headers: {
-          Cookie: 'rumaq_oauth_state=test-state:verifier:http://localhost:5173',
+          Cookie: 'rumaq_oauth_state=test-state:verifier',
         },
       },
       env as any
@@ -309,7 +347,7 @@ describe('authApp Hono routes', () => {
       '/callback?code=abc&state=test-state',
       {
         headers: {
-          Cookie: 'rumaq_oauth_state=test-state:verifier:http://localhost:5173',
+          Cookie: 'rumaq_oauth_state=test-state:verifier',
         },
       },
       env as any
@@ -352,7 +390,7 @@ describe('authApp Hono routes', () => {
       '/callback?code=abc&state=test-state',
       {
         headers: {
-          Cookie: 'rumaq_oauth_state=test-state:verifier:http://localhost:5173',
+          Cookie: 'rumaq_oauth_state=test-state:verifier',
         },
       },
       env as any
