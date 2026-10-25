@@ -254,7 +254,7 @@ Daily usage is tracked in `ai_usage` so the app can show the meter and cap reque
 
 ### Production deployments
 
-Production deploys to `main` are **commit-based**: `.github/workflows/ci.yml` runs a `deploy` job after CI passes on every push to `main`, invoking the same `./scripts/deploy.sh cloudflare` used locally. Rapid merges queue on the `deploy-main` concurrency group and deploy sequentially (the last push's diff wins for skip decisions). When a push only touches deploy-irrelevant files (Markdown, `docs/`, `.github/`, license/attribute files), `scripts/github/needs-deploy.sh` skips the deploy; anything else deploys. Production deploys always use the `rumaq` D1 database configured by `CLOUDFLARE_DATABASE_ID`.
+Production deploys to `main` are **commit-based**: `.github/workflows/deploy.yml` runs whenever the CI workflow succeeds on a push to `main` (`workflow_run` trigger), invoking the same `./scripts/deploy.sh cloudflare` used locally. It can also be run manually from the Actions tab for redeploys. Rapid merges queue on the `deploy-main` concurrency group and deploy sequentially. When the changes since the **last successful deploy** only touch deploy-irrelevant files (Markdown, `docs/`, `.github/`, license/attribute files), `scripts/github/needs-deploy.sh` skips the deploy; anything else deploys. Basing the skip decision on the last deployed commit (queried via the GitHub API) rather than the previous push means docs-only pushes and dropped queued runs can never hide a pending code change. Production deploys always use the `rumaq` D1 database configured by `CLOUDFLARE_DATABASE_ID`.
 
 ### Branch deployments
 

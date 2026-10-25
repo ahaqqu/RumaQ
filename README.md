@@ -56,7 +56,7 @@ export CLOUDFLARE_DATABASE_ID=...
 
 Creates D1 database and R2 bucket if missing, then deploys a single Worker that serves both the app (static assets) and the API. Idempotent. Worker configuration lives in `backend/cloudflare.config.ts` and reads `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_DATABASE_ID` from the environment directly.
 
-Merges to `main` deploy production automatically: CI runs first, then a `deploy` job calls the same `./scripts/deploy.sh cloudflare`. Docs-only merges skip the deploy automatically (`scripts/github/needs-deploy.sh`).
+Merges to `main` deploy production automatically: CI runs first, then `.github/workflows/deploy.yml` calls the same `./scripts/deploy.sh cloudflare`. Docs-only merges skip the deploy automatically (`scripts/github/needs-deploy.sh`), and the workflow can be run manually from the Actions tab to redeploy.
 
 ### Pull request previews
 

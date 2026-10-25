@@ -4,7 +4,7 @@ set -euo pipefail
 # ============================================================
 # needs-deploy.sh — decide whether a production deploy is needed
 # ============================================================
-# Used by CI (ci.yml deploy job) to skip the deploy when a push to
+# Used by CI (.github/workflows/deploy.yml) to skip the deploy when a push to
 # main only touches deploy-irrelevant files (docs, workflows, ...).
 #
 # Usage:
