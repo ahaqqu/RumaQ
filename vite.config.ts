@@ -16,6 +16,8 @@ export default defineConfig({
     semi: false,
     singleQuote: true,
     trailingComma: 'es5',
+    // Verbatim scraped-site fixtures are test data, not source to format.
+    ignorePatterns: ['scraper/test/fixtures/**'],
     overrides: [
       {
         files: ['**/*.sh'],
@@ -93,6 +95,16 @@ export default defineConfig({
           root: 'backend',
           environment: 'node',
           include: ['src/**/*.test.ts'],
+          testTimeout: 15000,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'scraper',
+          root: 'scraper',
+          environment: 'node',
+          include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
           testTimeout: 15000,
         },
       },

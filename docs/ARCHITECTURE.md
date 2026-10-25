@@ -57,6 +57,19 @@ rumaq/
 │   ├── migrations/         # D1 schema migrations
 │   └── cloudflare.config.ts # Single Worker config (env-driven; used by the
 │                            #   Cloudflare Vite plugin and the cf CLI)
+├── scraper/                # Headless price-data scraper (VPS, Bun/TypeScript)
+│   ├── src/
+│   │   ├── main.ts         # CLI entry — exit codes 0 ok / 1 failure / 2 quota
+│   │   ├── pipeline.ts     # scrape → novelty → OCR → publish orchestration
+│   │   ├── config.ts       # Ported haqita thresholds + per-store strategy table
+│   │   ├── stores/         # StorePlugin registry (superindo; lotte in PR3)
+│   │   ├── fetch/          # Tier-1 fetch ladder + URL/MD5 novelty state
+│   │   ├── ocr/            # Gemini vision client (ported prompt) + pure parsing
+│   │   └── publish/        # Shared ingest contract (Valibot) + POST/dry-run client
+│   ├── scripts/
+│   │   ├── run.sh          # Single-shot pipeline (systemd timer + manual use)
+│   │   └── check-lotte.ts  # Incapsula reachability gate (Tier-1 vs Tier-2 decision)
+│   └── test/               # Vitest suite + verbatim haqita scraped-page fixtures
 ├── scripts/                # Setup, deployment, and smoke-trigger scripts
 │   ├── build.sh            # Worker + frontend build
 │   ├── deploy/             # Deploy helper scripts
@@ -244,6 +257,18 @@ AI lanes (MVP):
 Daily usage is tracked in `ai_usage` so the app can show the meter and cap requests at 20/day per user by default.
 
 ## 8. Deployment
+
+### Price data pipeline (rumaq-scraper)
+
+Grocery price data is produced by the `scraper/` workspace — a headless TypeScript/Bun port of the retired haqita pipeline (full plan: [`docs/plan/haqita-integration.md`](plan/haqita-integration.md)):
+
+- Superindo brochure pages are scraped with plain fetch (realistic Chrome headers, cookie jar, retry ladder), filtered for novelty by URL+MD5 state so unchanged pages are never re-downloaded or re-OCR'd.
+- New pages go through Gemini vision OCR (prompt ported verbatim from haqita) with a quota-aware retry policy; invalid items land in `rejected-items.log` in the state dir.
+- Extracted items are published to `POST /api/internal/ingest/prices` (bearer `HAQITA_INGEST_SECRET`). Until the matcher lands (PR3), items are published as `matchMethod: 'solo'` with `matchConfidence: 1.0` and the pipeline defaults to dry-run.
+- The ingest contract is the single shared Valibot schema in `backend/src/lib/ingest-schema.ts`, imported by both sides.
+- Lotte Mart sits behind Imperva Incapsula; `scraper/scripts/check-lotte.ts` is the reachability gate for the Tier-2 (Playwright) decision — run it from the VPS egress.
+
+Scraper environment (VPS, root-only `/etc/rumaq-scraper/env`): `GEMINI_API_KEY` (OCR), `RUMAQ_INGEST_URL` + `RUMAQ_INGEST_SECRET` (publish), optional `RUMAQ_SCRAPER_STATE_DIR` (defaults `./state`; `/var/lib/rumaq-scraper` on the VPS) and per-store `*_PROXY_URL` (Tier 3). Local/manual runs: `./scraper/scripts/run.sh` (dry-run) or `--publish`.
 
 ### Prerequisites
 

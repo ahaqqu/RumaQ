@@ -13,12 +13,16 @@ case "$WORKSPACE" in
   backend)
     cd "$ROOT_DIR" && bunx vp test --project backend "$@"
     ;;
+  scraper)
+    cd "$ROOT_DIR" && bunx vp test --project scraper "$@"
+    ;;
   all)
     cd "$ROOT_DIR" && bunx vp test --project frontend "$@"
     cd "$ROOT_DIR" && bunx vp test --project backend "$@"
+    cd "$ROOT_DIR" && bunx vp test --project scraper "$@"
     ;;
   *)
-    echo "Usage: $0 [frontend|backend|all] [vitest args...]"
+    echo "Usage: $0 [frontend|backend|scraper|all] [vitest args...]"
     exit 1
     ;;
 esac

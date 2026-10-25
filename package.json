@@ -4,7 +4,8 @@
   "private": true,
   "workspaces": [
     "frontend",
-    "backend"
+    "backend",
+    "scraper"
   ],
   "type": "module",
   "scripts": {
