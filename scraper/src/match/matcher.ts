@@ -222,6 +222,22 @@ export function runMatch(
     const outcomes: MatchOutcome[] = []
     const held: HeldForVerify[] = []
 
+    // Found a new canonical entry — unless an entry with the same product
+    // key already exists (two items with identical name/brand/unit in one
+    // sweep, e.g. the same product on both stores): replacing it would reset
+    // its accumulated history (appearanceCount/storesFound/firstSeenAt), so
+    // the sighting attaches to the existing entry instead.
+    const foundOrAttach = (item: MatchInputItem): { productKey: string; isNew: boolean } => {
+      const entry = foundEntry(item, now)
+      const existing = catalog.entries[entry.productKey]
+      if (existing) {
+        attach(existing, item, now)
+        return { productKey: existing.productKey, isNew: false }
+      }
+      catalog.entries[entry.productKey] = entry
+      return { productKey: entry.productKey, isNew: true }
+    }
+
     const sweep = (item: MatchInputItem): MatchOutcome => {
       const { product } = item
       const itemEffective = parsePromo(product.promo, product.price).effectiveUnitPrice
@@ -262,14 +278,13 @@ export function runMatch(
         // No candidate: this sighting founds a new canonical entry, visible
         // to later items in the same run (that is how first-day cross-store
         // matching happens — mirrors haqita's single pairwise pass).
-        const entry = foundEntry(item, now)
-        catalog.entries[entry.productKey] = entry
+        const founded = foundOrAttach(item)
         stats.solo++
         return {
-          productKey: entry.productKey,
+          productKey: founded.productKey,
           matchMethod: 'solo',
           matchConfidence: 1.0,
-          isNew: true,
+          isNew: founded.isNew,
         }
       }
 
@@ -350,14 +365,15 @@ export function runMatch(
         const answer = verdict.answers[i]
         const outcome = outcomes[outcomeIndex]!
         if (answer === 'NO') {
-          // Not the same product: this sighting founds its own entry.
-          const entry = foundEntry(item, now)
-          catalog.entries[entry.productKey] = entry
+          // Not the same product: this sighting founds its own entry (or, if
+          // a same-key entry was already founded in this sweep, attaches to
+          // it — never resets an existing entry's history).
+          const founded = foundOrAttach(item)
           stats.solo++
-          outcome.productKey = entry.productKey
+          outcome.productKey = founded.productKey
           outcome.matchMethod = 'solo'
           outcome.matchConfidence = 1.0
-          outcome.isNew = true
+          outcome.isNew = founded.isNew
           return
         }
         // YES, or unparseable/quota null: keep the match (haqita kept

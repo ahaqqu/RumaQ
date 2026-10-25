@@ -3,7 +3,7 @@
 // consumed by the matcher (match/); the strategy table drives the fetch
 // ladder.
 
-import type { GateFlags } from './match/gates.js'
+import { allGates, type GateFlags } from './match/gates.js'
 
 export type FetchStrategy = 'plain' | 'browser'
 export type StoreKind = 'brochure' | 'catalog'
@@ -67,15 +67,9 @@ export function loadConfig(): ScraperConfig {
       priceRatioMax: 3.0,
       embeddingModel: env('GEMINI_EMBEDDING_MODEL', 'gemini-embedding-001'),
       verifierRetries: 3,
-      gates: {
-        gate0UnitType: true,
-        gate1Brand: true,
-        gate2TokenJaccard: true,
-        gate3ExactMatch: true,
-        gate4Embedding: true,
-        gate5PricePlausibility: true,
-        gate6AiVerifier: true,
-      },
+      // allGates() is the single all-on source — a new gate flag must never
+      // be remembered here AND in gates.ts separately.
+      gates: allGates(),
     },
     novelty: {
       minImageSizeKb: 50,

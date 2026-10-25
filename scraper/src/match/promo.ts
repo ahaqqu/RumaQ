@@ -1,7 +1,12 @@
 // Port of haqita scripts/matching/promo_parser.py — Indonesian promo text
-// parsing (effective unit price math), promo normalization/categorization,
-// and OCR period parsing. Ported faithfully; the only deliberate change is
-// in toIsoDate (RumaQ rejects impossible OCR dates like "45 Mei").
+// parsing (effective unit price math) and OCR period parsing. Ported
+// faithfully; the only deliberate change is in toIsoDate (RumaQ rejects
+// impossible OCR dates like "45 Mei").
+//
+// Trimmed vs haqita: the display-layer helpers (title-casing,
+// normalization, categorization — promo_parser's `__main__` block) are NOT
+// ported; nothing in src/ consumed them. They return with their future
+// consumer (the /prices UI) and remain readable in haqita history.
 //
 // Effective unit price math:
 // - bundle_buy / get_free / multi_price: division (per-piece price from total bundle)
@@ -19,10 +24,6 @@ export type PromoKind =
 
 export interface PromoResult {
   promoType: PromoKind
-  /** Original promo text (all entries joined when a list was given). */
-  display: string
-  /** Effective units received. */
-  unitCount: number
   effectiveUnitPrice: number
 }
 
@@ -53,8 +54,6 @@ function parseSinglePromo(promoText: string, basePrice: number): PromoResult {
       const total = Number.parseInt(m[1]!, 10) + Number.parseInt(m[2]!, 10)
       return {
         promoType: 'get_free',
-        display: promoText,
-        unitCount: total,
         effectiveUnitPrice: Math.max(1, Math.floor(basePrice / total)),
       }
     }
@@ -62,8 +61,6 @@ function parseSinglePromo(promoText: string, basePrice: number): PromoResult {
       const count = Number.parseInt(m[1]!, 10)
       return {
         promoType: 'bundle_buy',
-        display: promoText,
-        unitCount: count,
         effectiveUnitPrice: Math.max(1, Math.floor(basePrice / count)),
       }
     }
@@ -72,24 +69,20 @@ function parseSinglePromo(promoText: string, basePrice: number): PromoResult {
       const price = parsePrice(m[2]!)
       return {
         promoType: 'multi_price',
-        display: promoText,
-        unitCount: count,
         effectiveUnitPrice: Math.max(1, Math.floor(price / count)),
       }
     }
     if (kind === 'discount_pct' || kind === 'discount_fixed') {
       // OCR already captured the post-discount price — no further math.
-      return { promoType: kind, display: promoText, unitCount: 1, effectiveUnitPrice: basePrice }
+      return { promoType: kind, effectiveUnitPrice: basePrice }
     }
   }
 
-  return { promoType: 'single', display: promoText, unitCount: 1, effectiveUnitPrice: basePrice }
+  return { promoType: 'single', effectiveUnitPrice: basePrice }
 }
 
 const singleResult = (basePrice: number): PromoResult => ({
   promoType: 'single',
-  display: '',
-  unitCount: 1,
   effectiveUnitPrice: basePrice,
 })
 
@@ -119,244 +112,7 @@ export function parsePromo(
       ? matched.reduce((a, b) => (b.effectiveUnitPrice < a.effectiveUnitPrice ? b : a))
       : results[0]!
 
-  return {
-    promoType: best.promoType,
-    display: promoList.join(', '),
-    unitCount: best.unitCount,
-    effectiveUnitPrice: best.effectiveUnitPrice,
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Promo normalization and categorization
-// ---------------------------------------------------------------------------
-
-const TITLE_CASE: Record<string, string> = {
-  diskon: 'Diskon',
-  ekstra: 'Ekstra',
-  stiker: 'Stiker',
-  gratis: 'Gratis',
-  hemat: 'Hemat',
-  lebih: 'Lebih',
-  seharga: 'Seharga',
-  harga: 'Harga',
-  spesial: 'Spesial',
-  'spesial!': 'Spesial!',
-  promo: 'Promo',
-  super: 'Super',
-  mulai: 'Mulai',
-  beli: 'Beli',
-  satuan: 'Satuan',
-  anggota: 'Anggota',
-  khusus: 'Khusus',
-  member: 'Member',
-  special: 'Special',
-  price: 'Price',
-  baru: 'Baru',
-  pilihan: 'Pilihan',
-  segar: 'Segar',
-  minggu: 'Minggu',
-  ini: 'Ini',
-  fresh: 'Fresh',
-  deals: 'Deals!',
-  'deals!': 'Deals!',
-  pwp: 'PWP',
-  maks: 'Maks.',
-  'maks.': 'Maks.',
-  max: 'Maks.',
-  extra: 'Ekstra',
-  anti: 'Anti',
-  bocor: 'Bocor',
-  serap: 'Serap',
-  semua: 'Semua',
-  rasa: 'Rasa',
-  karton: 'Karton',
-  isi: 'Isi',
-  tpk: 'Tpk',
-  produk: 'Produk',
-  alami: 'Alami',
-  naturally: 'Naturally',
-  apel: 'Apel',
-  fuji: 'Fuji',
-  deal: 'Deal',
-}
-
-function capitalize(word: string): string {
-  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-}
-
-/** Apply title casing to known promo words while preserving numbers/prices. */
-export function titleCasePromo(text: string): string {
-  return text
-    .split(/\s+/)
-    .map((w) => {
-      if (/^[\d.,]+$/.test(w)) return w
-      if (/^\d+%$/.test(w)) return w
-      if (/^\d/.test(w)) return w
-      const lower = w.toLowerCase()
-      const mapped = TITLE_CASE[lower]
-      if (mapped) return mapped
-      if (w.length > 1 && w === w.toUpperCase()) return capitalize(w)
-      return w
-    })
-    .join(' ')
-}
-
-/**
- * Normalize a promo string into clean, title-cased segment(s). Splits
- * composite promos like 'DISKON 20% EKSTRA STIKER' into separate entries.
- */
-export function normalizePromoText(text: string | null | undefined): string[] {
-  if (!text || !text.trim()) return []
-
-  const trimmed = text.trim()
-
-  // Split composite promos: "DISKON X% EKSTRA STIKER" → ["Diskon X%", "Ekstra Stiker"]
-  const diskon = /(DISKON\s+\d+%)\s+(EKSTRA\s+STIKER)/i.exec(trimmed)
-  if (diskon) return [titleCasePromo(diskon[1]!), titleCasePromo(diskon[2]!)]
-
-  const spesial = /(HARGA\s+SPESIAL)\s+(EKSTRA\s+STIKER)/i.exec(trimmed)
-  if (spesial) return [titleCasePromo(spesial[1]!), titleCasePromo(spesial[2]!)]
-
-  return [titleCasePromo(trimmed)]
-}
-
-export type PromoCategory =
-  | 'discount_pct'
-  | 'discount_fixed'
-  | 'bogo'
-  | 'bundle'
-  | 'member_price'
-  | 'promo_price'
-  | 'freebie'
-  | 'quantity_limit'
-  | 'special'
-
-/** Categorize a single normalized promo string. */
-export function categorizePromo(text: string): PromoCategory {
-  const lower = text.toLowerCase().trim()
-
-  if (/^diskon\s+\d+%/.test(lower)) return 'discount_pct'
-  if (/^hemat\s+\d+%/.test(lower)) return 'discount_pct'
-
-  if (/^\d+\s+gratis\s+\d+/.test(lower)) return 'bogo'
-  if (/beli\s+\d+\s+gratis\s+\d+/.test(lower)) return 'bogo'
-  if (/gratis\s+\d+\s*\(/.test(lower)) return 'bogo'
-  if (lower === 'gratis') return 'bogo'
-
-  if (lower.includes('khusus member')) return 'member_price'
-  if (lower.includes('member special price')) return 'member_price'
-  if (lower.includes('ekstra diskon member')) return 'member_price'
-  if (lower === 'pwp' || lower.startsWith('pwp ')) return 'member_price'
-
-  if (lower.startsWith('gratis jasa')) return 'freebie'
-  if (lower.startsWith('gratis es')) return 'freebie'
-  if (lower.startsWith('disertai pembelian')) return 'freebie'
-
-  if (/^maks\.?\s+\d+\s+[a-z]/.test(lower)) return 'quantity_limit'
-  if (text.trim().startsWith('MAX')) return 'quantity_limit'
-
-  if (/^hemat\s+rp/.test(lower)) return 'discount_fixed'
-  if (/^beli\s+\d+\s+rp/.test(lower)) return 'discount_fixed'
-  if (/^\d+\s*&\s*\d+\s+\w+/.test(lower)) return 'discount_fixed'
-  if (lower.startsWith('harga promo ')) return 'discount_fixed'
-
-  if (lower.includes('harga spesial')) return 'promo_price'
-  if (lower.includes('harga mulai')) return 'promo_price'
-  if (lower.includes('super promo')) return 'promo_price'
-  if (lower.includes('promo 1 hari')) return 'promo_price'
-  if (lower.includes('super deal')) return 'promo_price'
-  if (lower.includes('fresh deals')) return 'promo_price'
-  if (lower.includes('pilihan segar')) return 'promo_price'
-
-  if (/^\d+\s+lebih\s+hemat/.test(lower)) return 'bundle'
-  if (/^\d+\s+seharga/.test(lower)) return 'bundle'
-  if (/beli\s+\d+\s+harga\s+satuan/.test(lower)) return 'bundle'
-  if (/beli\s+\d+\s+lebih\s*!?$/.test(lower)) return 'bundle'
-  if (lower.includes('beli banyak lebih hemat')) return 'bundle'
-  if (lower === 'lebih hemat' || lower === 'lebih hemat!') return 'bundle'
-  if (/^ekstra stiker/.test(lower)) return 'bundle'
-  if (/^extra stiker/.test(lower)) return 'bundle'
-  if (/^extra \+?\d+\s+pcs/.test(lower)) return 'bundle'
-  if (lower.includes('ekstra serap')) return 'bundle'
-  if (/^ekstra \+?\d+\s+pcs/.test(lower)) return 'bundle'
-  if (lower.includes('karton isi')) return 'bundle'
-  if (lower === 'ekstra diskon') return 'promo_price'
-
-  return 'special'
-}
-
-export interface StandardizedPromo {
-  normalized: string[]
-  types: PromoCategory[]
-  bestType: PromoCategory
-  discountPct: number | null
-  maxQty: number | null
-  displaySummary: string
-}
-
-/**
- * Standardize a list of promo strings into a structured summary. Returns
- * null for empty input.
- */
-export function standardizePromoList(promos: string[] | null): StandardizedPromo | null {
-  if (!promos || promos.length === 0) return null
-
-  const promoList = promos.filter((p) => p && String(p).trim().length > 0)
-  if (promoList.length === 0) return null
-
-  const allNormalized: string[] = []
-  const allTypes: PromoCategory[] = []
-  let discountPct: number | null = null
-  let maxQty: number | null = null
-
-  for (const raw of promoList) {
-    for (const seg of normalizePromoText(raw)) {
-      allNormalized.push(seg)
-      const cat = categorizePromo(seg)
-      allTypes.push(cat)
-
-      if (cat === 'discount_pct') {
-        const m = /(\d+)%/.exec(seg)
-        if (m) {
-          const val = Number.parseInt(m[1]!, 10)
-          if (discountPct === null || val > discountPct) discountPct = val
-        }
-      }
-
-      if (cat === 'quantity_limit') {
-        const m = /maks\.?\s*(\d+)/i.exec(seg)
-        if (m) {
-          const val = Number.parseInt(m[1]!, 10)
-          if (maxQty === null || val > maxQty) maxQty = val
-        }
-      }
-    }
-  }
-
-  if (allNormalized.length === 0) return null
-
-  const typePriority: Record<PromoCategory, number> = {
-    discount_pct: 0,
-    member_price: 1,
-    bogo: 2,
-    promo_price: 3,
-    discount_fixed: 4,
-    bundle: 5,
-    freebie: 6,
-    quantity_limit: 7,
-    special: 8,
-  }
-  const bestType = allTypes.reduce((a, b) => (typePriority[b] < typePriority[a] ? b : a))
-
-  return {
-    normalized: allNormalized,
-    types: allTypes,
-    bestType,
-    discountPct,
-    maxQty,
-    displaySummary: allNormalized[0]!,
-  }
+  return { promoType: best.promoType, effectiveUnitPrice: best.effectiveUnitPrice }
 }
 
 // ---------------------------------------------------------------------------

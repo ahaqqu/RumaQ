@@ -7,7 +7,7 @@ import * as cheerio from 'cheerio'
 import { Effect } from 'effect'
 
 import type { StoreConfig } from '../config.js'
-import type { FetchError } from '../fetch/strategy.js'
+import type { FetchError } from '../fetch/errors.js'
 import type { BrochurePage, BrochureStorePlugin, FetchContext } from './types.js'
 
 const LOTTE_URL = process.env.LOTTE_URL ?? 'https://www.lottemart.co.id/all-promo-mart'

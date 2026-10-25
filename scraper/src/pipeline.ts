@@ -35,7 +35,8 @@ import {
   type ScraperState,
 } from './fetch/state.js'
 import type { BrowserLauncher } from './fetch/browser.js'
-import { createStoreFetcher, type FetchError, type FetchLike } from './fetch/strategy.js'
+import type { FetchError } from './fetch/errors.js'
+import { createStoreFetcher, type FetchLike } from './fetch/strategy.js'
 import { createOcr, type GeminiClient, type Ocr, type OcrError } from './ocr/gemini.js'
 import { validateProduct, type ValidatedProduct } from './ocr/parse.js'
 import { assertPayloadValid, buildPayload, type ImageProducts } from './publish/payload.js'
@@ -46,7 +47,7 @@ import {
   type PublishFailure,
 } from './publish/client.js'
 import { activePlugins } from './stores/index.js'
-import { isBrochurePlugin, type BrochureStorePlugin } from './stores/types.js'
+import { isBrochurePlugin, type BrochureStorePlugin, type StorePlugin } from './stores/types.js'
 import { wrapIo } from './util/io.js'
 import { createLog, logRejectedItem, type LogFn } from './util/log.js'
 import { QuotaExhausted } from './util/retry.js'
@@ -71,6 +72,8 @@ export interface PipelineStatus {
       skipped: number
       itemsExtracted: number
       itemsRejected: number
+      /** Set when this store's run failed — the run still publishes the rest. */
+      error?: string
     }
   >
 }
@@ -268,7 +271,9 @@ export function runPipeline(
   const scrapedAt = (options.now ?? (() => new Date()))().toISOString()
   // activePlugins is the single source of truth for which stores run: both
   // the work list and the status map come from it, so they cannot drift.
-  const runs = activePlugins(config).map((plugin) => ({
+  const runs: { plugin: StorePlugin; entry: PipelineStatus['stores'][string] }[] = activePlugins(
+    config
+  ).map((plugin) => ({
     plugin,
     entry: {
       pagesFound: 0,
@@ -308,7 +313,33 @@ export function runPipeline(
             exitCode: 1,
           })
         }
-        const imageProducts = yield* processStore(plugin, config, options, scrapedAt, entry, log)
+        // Per-store isolation: one store's fatal failure (a persistent
+        // Incapsula challenge, a dead listing route, a missing chromium)
+        // must not block the other stores' nightly publish — the healthy
+        // store's paid-for OCR rides the outbox and would otherwise replay
+        // (and fail again) for as long as the broken store stays broken.
+        // QuotaExhausted deliberately propagates: the Gemini quota is shared
+        // by every store, so there is nothing left to isolate.
+        const imageProducts = yield* processStore(
+          plugin,
+          config,
+          options,
+          scrapedAt,
+          entry,
+          log
+        ).pipe(
+          Effect.catchIf(
+            (error) => !(error instanceof QuotaExhausted),
+            (error) =>
+              Effect.sync(() => {
+                log(
+                  `[pipeline] store ${plugin.config.slug} failed — continuing with the remaining stores: ${String(error)}`
+                )
+                entry.error = String(error)
+                return [] as ImageProducts[]
+              })
+          )
+        )
         allImageProducts.push(...imageProducts)
       }
 
@@ -423,6 +454,19 @@ export function runPipeline(
               })
           )
         )
+      }
+      // A failed store must fail the run (red timer, non-zero exit) — but
+      // only AFTER publish and outbox handling, so the healthy stores'
+      // snapshot went out and the failed store's already-OCR'd items stay in
+      // the outbox for the next run's replay.
+      const failed = runs.filter(({ entry }) => entry.error !== undefined)
+      if (failed.length > 0) {
+        return yield* new PipelineFailure({
+          message: `Store failure(s): ${failed
+            .map(({ plugin, entry }) => `${plugin.config.slug}: ${entry.error}`)
+            .join('; ')}`,
+          exitCode: 1,
+        })
       }
       status.stage = 'done'
       return status

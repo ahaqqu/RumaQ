@@ -1,14 +1,16 @@
 // Catalog + embedding-cache persistence — the matcher's durable state in
 // the state dir (catalog.json, embeddings.json), mirroring the novelty
 // state's load/save idiom: typed IO errors, ENOENT is a fresh start, junk
-// entries are dropped rather than crashing the daily run.
+// entries (and corrupt JSON) are dropped rather than crashing the daily
+// run. Saves are atomic (temp file + rename) so an interrupted write can
+// never leave a truncated file behind.
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { Data, Effect } from 'effect'
 
-import { wrapIo } from '../util/io.js'
+import { writeFileAtomic, wrapIo } from '../util/io.js'
 import { emptyCache, type EmbeddingCache } from './embedding.js'
 import { emptyCatalog, type Catalog, type CatalogEntry } from './matcher.js'
 
@@ -29,7 +31,17 @@ function isEntry(value: unknown): value is CatalogEntry {
 
 export function loadCatalog(catalogFile: string): Effect.Effect<Catalog, CatalogIo> {
   return io('read', catalogFile, async () => {
-    const parsed = JSON.parse(await readFile(catalogFile, 'utf8')) as { entries?: unknown }
+    let parsed: { entries?: unknown }
+    try {
+      parsed = JSON.parse(await readFile(catalogFile, 'utf8')) as { entries?: unknown }
+    } catch (cause) {
+      // Real IO errors (unreadable file) keep their typed mapping; a corrupt
+      // file — e.g. truncated by a crash before saves were atomic — starts
+      // fresh instead of bricking every subsequent run (same philosophy as
+      // junk-entry dropping below).
+      if ((cause as NodeJS.ErrnoException)?.code) throw cause
+      return emptyCatalog()
+    }
     const entries: Record<string, CatalogEntry> = {}
     if (parsed.entries && typeof parsed.entries === 'object') {
       for (const [key, value] of Object.entries(parsed.entries)) {
@@ -50,8 +62,10 @@ export function saveCatalog(catalog: Catalog, catalogFile: string): Effect.Effec
     mkdir(path.dirname(catalogFile), { recursive: true })
   ).pipe(
     Effect.flatMap(() =>
+      // Temp file + rename: a kill mid-save (OOM under MemoryMax=1G,
+      // disk-full) must never leave a truncated catalog behind.
       io('write', catalogFile, () =>
-        writeFile(catalogFile, JSON.stringify(catalog, null, 2) + '\n', 'utf8')
+        writeFileAtomic(catalogFile, JSON.stringify(catalog, null, 2) + '\n')
       )
     )
   )
@@ -67,9 +81,17 @@ export function loadEmbeddingCache(
   model: string
 ): Effect.Effect<EmbeddingCache, CatalogIo> {
   return io('read', cacheFile, async () => {
-    const parsed = JSON.parse(await readFile(cacheFile, 'utf8')) as {
-      model?: unknown
-      vectors?: unknown
+    let parsed: { model?: unknown; vectors?: unknown }
+    try {
+      parsed = JSON.parse(await readFile(cacheFile, 'utf8')) as {
+        model?: unknown
+        vectors?: unknown
+      }
+    } catch (cause) {
+      // Corrupt file (pre-atomic-write truncation): pay the re-embed cost,
+      // never brick the run. Real IO errors keep their typed mapping.
+      if ((cause as NodeJS.ErrnoException)?.code) throw cause
+      return emptyCache(model)
     }
     if (parsed.model !== model || !parsed.vectors || typeof parsed.vectors !== 'object') {
       return emptyCache(model)
@@ -95,7 +117,7 @@ export function saveEmbeddingCache(
     mkdir(path.dirname(cacheFile), { recursive: true })
   ).pipe(
     Effect.flatMap(() =>
-      io('write', cacheFile, () => writeFile(cacheFile, JSON.stringify(cache) + '\n', 'utf8'))
+      io('write', cacheFile, () => writeFileAtomic(cacheFile, JSON.stringify(cache) + '\n'))
     )
   )
 }

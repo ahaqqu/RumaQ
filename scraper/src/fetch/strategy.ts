@@ -11,11 +11,12 @@
 // All failures are typed tagged errors; transport and HTTP-status failures
 // are retried by the shared engine, content-type and tier errors are fatal.
 
-import { Data, Effect } from 'effect'
+import { Effect } from 'effect'
 
 import type { StoreConfig } from '../config.js'
 import { isPermanentClientStatus, withRetries } from '../util/retry.js'
 import { createBrowserFetcher, type BrowserLauncher } from './browser.js'
+import { type FetchError, FetchHttpStatus, FetchTransport, NonImageContent } from './errors.js'
 
 export const DEFAULT_HEADERS: Record<string, string> = {
   'User-Agent':
@@ -23,32 +24,6 @@ export const DEFAULT_HEADERS: Record<string, string> = {
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
 }
-
-export class BrowserTierRequired extends Data.TaggedError('BrowserTierRequired')<{
-  url: string
-  message: string
-}> {}
-
-export class FetchTransport extends Data.TaggedError('FetchTransport')<{
-  url: string
-  cause: unknown
-  message: string
-}> {}
-
-export class FetchHttpStatus extends Data.TaggedError('FetchHttpStatus')<{
-  url: string
-  status: number
-  statusText: string
-  message: string
-}> {}
-
-export class NonImageContent extends Data.TaggedError('NonImageContent')<{
-  url: string
-  contentType: string
-  message: string
-}> {}
-
-export type FetchError = BrowserTierRequired | FetchTransport | FetchHttpStatus | NonImageContent
 
 export type FetchLike = (url: string, init?: RequestInit & { proxy?: string }) => Promise<Response>
 

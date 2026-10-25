@@ -9,7 +9,7 @@ import { Effect } from 'effect'
 
 import type { StoreConfig } from '../config.js'
 import { isPermanentClientStatus, withRetries } from '../util/retry.js'
-import { BrowserTierRequired, FetchError, FetchHttpStatus, FetchTransport } from './strategy.js'
+import { BrowserTierRequired, FetchError, FetchHttpStatus, FetchTransport } from './errors.js'
 
 /** One browser tab: navigate, read rendered content. */
 export interface BrowserPage {
@@ -33,6 +33,12 @@ export interface BrowserFetcherOptions {
   backoffMs?: number
   /** Per-navigation timeout; a stalled challenge becomes a retryable error. */
   timeoutMs?: number
+  /**
+   * Bounded window an Incapsula interstitial gets to self-resolve (its JS
+   * sets the incap cookies and reloads after domcontentloaded) before the
+   * verdict escalates to BrowserTierRequired. Injectable for tests.
+   */
+  challengeSettleMs?: number
   launcher?: BrowserLauncher
   sleep?: (ms: number) => Promise<void>
   log?: (message: string) => void
@@ -42,8 +48,12 @@ export interface BrowserFetcherOptions {
 // size gate: real Lotte pages carry the protection script too, so marker
 // presence alone would flag every healthy page. The interstitial challenge
 // is tiny; a rendered listing page is hundreds of KB. If the browser tier
-// still gets the challenge, no retry helps — the store needs Tier 3.
+// still gets the challenge after the settle window below, no retry helps —
+// the store needs Tier 3.
 const CHALLENGE_MAX_HTML_BYTES = 10_000
+
+/** How often the settle window re-reads the page while waiting. */
+const CHALLENGE_POLL_INTERVAL_MS = 1_000
 
 function looksLikeIncapsulaChallenge(html: string): boolean {
   if (html.length >= CHALLENGE_MAX_HTML_BYTES) return false
@@ -120,6 +130,7 @@ export function createBrowserFetcher(
   const retries = options.retries ?? 2
   const backoffMs = options.backoffMs ?? 2000
   const timeoutMs = options.timeoutMs ?? 30_000
+  const challengeSettleMs = options.challengeSettleMs ?? 8_000
   const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
   const log = options.log ?? (() => {})
   const launcher =
@@ -156,6 +167,32 @@ export function createBrowserFetcher(
               message: `New page failed for ${url}: ${String(cause)}`,
             }),
         })
+        const readContent = (): Effect.Effect<string, FetchTransport> =>
+          Effect.tryPromise({
+            try: () => page.content(),
+            catch: (cause: unknown) =>
+              new FetchTransport({
+                url,
+                cause,
+                message: `Content read failed for ${url}: ${String(cause)}`,
+              }),
+          })
+        // Wait out an Incapsula interstitial that is still resolving: the
+        // challenge's own JS sets the incap cookies and triggers a reload
+        // AFTER domcontentloaded, so the first content() read can race it.
+        // Poll until the markers clear or the settle window closes — the
+        // caller then re-checks and escalates to Tier 3 only if the
+        // challenge persists.
+        const settleChallenge = (initial: string): Effect.Effect<string, FetchTransport> =>
+          Effect.gen(function* () {
+            let html = initial
+            for (let waited = 0; waited < challengeSettleMs; waited += CHALLENGE_POLL_INTERVAL_MS) {
+              yield* Effect.promise(() => sleep(CHALLENGE_POLL_INTERVAL_MS))
+              html = yield* readContent()
+              if (!looksLikeIncapsulaChallenge(html)) return html
+            }
+            return html
+          })
         const html = yield* withRetries(
           Effect.gen(function* () {
             yield* Effect.tryPromise({
@@ -167,20 +204,20 @@ export function createBrowserFetcher(
                   message: `Navigation failed for ${url}: ${String(cause)}`,
                 }),
             })
-            const response = yield* Effect.tryPromise({
-              try: () => page.content(),
-              catch: (cause: unknown) =>
-                new FetchTransport({
-                  url,
-                  cause,
-                  message: `Content read failed for ${url}: ${String(cause)}`,
-                }),
-            })
+            let response = yield* readContent()
+            if (looksLikeIncapsulaChallenge(response)) {
+              log(
+                `[browser ${url}] Incapsula interstitial — waiting up to ` +
+                  `${challengeSettleMs}ms for the challenge to self-resolve`
+              )
+              response = yield* settleChallenge(response)
+            }
             if (looksLikeIncapsulaChallenge(response)) {
               return yield* new BrowserTierRequired({
                 url,
                 message:
-                  `Browser tier still served an Incapsula challenge for ${url} — ` +
+                  `Browser tier still served an Incapsula challenge for ${url} ` +
+                  `(waited ${challengeSettleMs}ms for self-resolution) — ` +
                   'Tier 3 (per-store proxy) is required for this egress IP',
               })
             }
@@ -196,11 +233,12 @@ export function createBrowserFetcher(
               error instanceof BrowserTierRequired ||
               (error instanceof FetchHttpStatus && isPermanentClientStatus(error.status)),
           }
+        ).pipe(
+          // The tab's lifecycle is local to this request: close it whatever
+          // the outcome (success, retries exhausted, or the fatal challenge
+          // verdict) — the session close at store end stays as the backstop.
+          Effect.onExit(() => Effect.promise(() => page.close().catch(() => undefined)))
         )
-        yield* Effect.tryPromise({
-          try: () => page.close(),
-          catch: () => undefined,
-        }).pipe(Effect.ignore)
         return html
       })
     },

@@ -1,6 +1,6 @@
 // Tier-2 browser ladder tests — fake launcher, no chromium needed.
 
-import { describe, expect, it, vi } from 'vite-plus/test'
+import { describe, expect, it } from 'vite-plus/test'
 import { Effect } from 'effect'
 
 import {
@@ -9,7 +9,7 @@ import {
   type BrowserPage,
   type BrowserSession,
 } from '../../src/fetch/browser.js'
-import { FetchTransport } from '../../src/fetch/strategy.js'
+import { FetchTransport } from '../../src/fetch/errors.js'
 import { exitError } from '../helpers.js'
 import type { StoreConfig } from '../../src/config.js'
 
@@ -26,8 +26,12 @@ const browserStore: StoreConfig = {
 function scriptedLauncher(script: (string | Error)[]): {
   launcher: BrowserLauncher
   sessions: () => number
+  gotos: () => number
+  closes: () => number
 } {
   let sessions = 0
+  let gotoCalls = 0
+  let pageCloses = 0
   return {
     launcher: {
       async launch(): Promise<BrowserSession> {
@@ -37,6 +41,7 @@ function scriptedLauncher(script: (string | Error)[]): {
           async newPage(): Promise<BrowserPage> {
             return {
               async goto() {
+                gotoCalls++
                 const step = script[Math.min(call, script.length - 1)]
                 call++
                 if (step instanceof Error) throw step
@@ -45,7 +50,9 @@ function scriptedLauncher(script: (string | Error)[]): {
                 const step = script[Math.min(call - 1, script.length - 1)]
                 return step instanceof Error ? '<html></html>' : step
               },
-              async close() {},
+              async close() {
+                pageCloses++
+              },
             }
           },
           async close() {},
@@ -53,6 +60,8 @@ function scriptedLauncher(script: (string | Error)[]): {
       },
     },
     sessions: () => sessions,
+    gotos: () => gotoCalls,
+    closes: () => pageCloses,
   }
 }
 
@@ -92,22 +101,53 @@ describe('createBrowserFetcher', () => {
     await fetcher.close()
   })
 
-  it('fails fast (no retry) when the browser tier itself is served the challenge', async () => {
-    const { launcher } = scriptedLauncher([
+  it('escalates to Tier 3 when the challenge persists through the settle window', async () => {
+    const { launcher, gotos } = scriptedLauncher([
       '<html><script src="/_Incapsula_Resource?SWHDLEDF"></script></html>',
     ])
-    const sleep = vi.fn(async () => {})
     const fetcher = createBrowserFetcher(browserStore, {
       launcher,
       retries: 3,
       backoffMs: 1,
-      sleep,
+      challengeSettleMs: 2_000,
+      sleep: async () => {},
     })
     const failure = await Effect.runPromiseExit(fetcher.fetchHtml('https://www.lottemart.co.id/'))
     expect(failure._tag).toBe('Failure')
     expect(exitError(failure)).toMatchObject({ _tag: 'BrowserTierRequired' })
-    // The challenge verdict is a Tier-3 decision, not a retry.
-    expect(sleep).not.toHaveBeenCalled()
+    // The challenge verdict is a Tier-3 decision, not a retry: one navigation
+    // even though the settle window polled the page several times.
+    expect(gotos()).toBe(1)
+    await fetcher.close()
+  })
+
+  it('passes an interstitial that self-resolves within the settle window', async () => {
+    // The Incapsula challenge JS sets the incap cookies and reloads AFTER
+    // domcontentloaded — the first content() read races it. A page that
+    // clears by a later poll must be served, not escalated to Tier 3.
+    const interstitial = '<html><script src="/_Incapsula_Resource?SWHDLEDF"></script></html>'
+    const real = '<html><body>promo listing</body></html>'
+    let reads = 0
+    const launcher: BrowserLauncher = {
+      launch: async () => ({
+        newPage: async () => ({
+          goto: async () => {},
+          content: async () => {
+            reads++
+            return reads <= 2 ? interstitial : real
+          },
+          close: async () => {},
+        }),
+        close: async () => {},
+      }),
+    }
+    const fetcher = createBrowserFetcher(browserStore, {
+      launcher,
+      challengeSettleMs: 3_000,
+      sleep: async () => {},
+    })
+    const html = await Effect.runPromise(fetcher.fetchHtml('https://www.lottemart.co.id/'))
+    expect(html).toContain('promo listing')
     await fetcher.close()
   })
 
@@ -127,7 +167,7 @@ describe('createBrowserFetcher', () => {
   })
 
   it('fails typed after exhausting navigation retries', async () => {
-    const { launcher } = scriptedLauncher([new Error('net::ERR_TIMED_OUT')])
+    const { launcher, closes } = scriptedLauncher([new Error('net::ERR_TIMED_OUT')])
     const fetcher = createBrowserFetcher(browserStore, {
       launcher,
       retries: 2,
@@ -137,6 +177,9 @@ describe('createBrowserFetcher', () => {
     const failure = await Effect.runPromiseExit(fetcher.fetchHtml('https://www.lottemart.co.id/'))
     expect(failure._tag).toBe('Failure')
     expect(exitError(failure)).toMatchObject({ _tag: 'FetchTransport' })
+    // The tab is closed on the failure path too — its lifecycle is local to
+    // the request that opened it, not the store-end session close.
+    expect(closes()).toBe(1)
     await fetcher.close()
   })
 

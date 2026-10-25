@@ -48,7 +48,9 @@ const emptyLotte = fakeBrowserLauncher('<html><body></body></html>')
 // Deterministic Gemini stubs — a dev machine with GEMINI_API_KEY in the
 // environment must never make the test suite call the real API.
 const stubEmbedClient: EmbeddingClient = {
-  models: { embedContent: async () => ({ embeddings: [{ values: [1, 0] }] }) },
+  models: {
+    batchEmbedContents: async () => ({ embeddings: [{ values: [1, 0] }] }),
+  },
 }
 const stubVerifyClient: GeminiClient = {
   models: { generateContent: async () => ({ text: 'YES' }) },
@@ -522,8 +524,64 @@ describe('runPipeline', () => {
       })
     )
     const statusFile = JSON.parse(await readFile(path.join(stateDir, 'status.json'), 'utf8'))
-    expect(statusFile.stage).toBe('scrape')
+    // Superindo's listing fetch 500s — the store is recorded failed (per-store
+    // isolation), the run still walked publish before failing at the end.
+    expect(statusFile.stage).toBe('publish')
     expect(statusFile.stores['superindo'].pagesFound).toBe(0)
+    expect(statusFile.stores['superindo'].error).toContain('HTTP 500')
+    expect(statusFile.stores['lotte-mart'].error).toBeUndefined()
+  })
+
+  it("isolates stores — one store failing never blocks the other stores' publish", async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    const jpeg = fakeJpegBytes()
+    const fetchMock = makeFetchMock(katalogHtml, koranHtml, jpeg)
+    const ocrClient: GeminiClient = {
+      models: { generateContent: async () => ({ text: JSON.stringify(ocrItems) }) },
+    }
+    // Lotte is served a persistent Incapsula challenge on the browser tier —
+    // a fatal BrowserTierRequired for that store alone.
+    const challengedLotte = fakeBrowserLauncher(
+      '<html><script src="/_Incapsula_Resource?SWHDLEDF"></script></html>'
+    )
+
+    const failure = await Effect.runPromiseExit(
+      runPipeline({
+        launcher: challengedLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
+        stateDir,
+        dryRun: true,
+        fetch: fetchMock,
+        ocrClient,
+        sleep: noSleep,
+        now: () => new Date('2026-10-24T23:00:05Z'),
+        log: () => {},
+      })
+    )
+
+    // Superindo's snapshot still published (dry-run payload written with its
+    // items) even though lotte's store run died…
+    const payload: IngestPayload = JSON.parse(
+      await readFile(path.join(stateDir, 'payload-2026-10-24T23-00-05-000Z.json'), 'utf8')
+    )
+    expect(payload.items.map((item) => item.productKey)).toContain('gula-pasir----1-kg')
+
+    // …and the run itself fails non-zero AFTER publishing, naming the store.
+    expect(failure._tag).toBe('Failure')
+    const error = exitError(failure) as Error & { exitCode?: number }
+    expect(error.message).toContain('lotte-mart')
+    expect(error.message).toContain('BrowserTierRequired')
+    expect(error.exitCode).toBe(1)
+    expect(challengedLotte.state.closed).toBe(true)
   })
 })
 

@@ -7,7 +7,7 @@
 // errors (FetchError from the strategy ladder) instead of exceptions.
 
 import type { StoreConfig } from '../config.js'
-import type { FetchError } from '../fetch/strategy.js'
+import type { FetchError } from '../fetch/errors.js'
 import type { Effect } from 'effect'
 
 /** A single brochure page image to download and OCR. */

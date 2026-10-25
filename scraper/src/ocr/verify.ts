@@ -8,6 +8,7 @@
 import { Data, Effect } from 'effect'
 
 import type { GeminiClient } from './gemini.js'
+import { lazyGeminiClient } from '../util/gemini.js'
 import { classifyQuotaError, withQuotaPolicy, QuotaExhausted } from '../util/retry.js'
 
 // Ported verbatim from haqita matcher.py — the prompt is load-bearing for
@@ -89,28 +90,20 @@ export function verifyPairs(
 ): Effect.Effect<VerifyOutcome, VerifierError> {
   // The client (and its API key requirement) is resolved lazily: a run with
   // no ambiguous pairs makes no verifier calls.
-  let client: GeminiClient | undefined = options.client
-  const resolveClient = (): Effect.Effect<GeminiClient, VerifierError> =>
-    Effect.suspend(() =>
-      client
-        ? Effect.succeed(client)
-        : Effect.tryPromise({
-            try: async () => {
-              const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY
-              if (!apiKey) throw new Error('GEMINI_API_KEY not set (or pass options.apiKey)')
-              const { GoogleGenAI } = await import('@google/genai')
-              client = new GoogleGenAI({ apiKey })
-              return client
-            },
-            catch: (cause: unknown) => new VerifierError({ message: String(cause) }),
-          })
-    )
+  const resolveClient = lazyGeminiClient({
+    client: options.client,
+    apiKey: options.apiKey,
+    tag: VerifierError,
+  })
 
-  const verifyOne = (pair: VerifyPair): Effect.Effect<'YES' | 'NO' | null, QuotaExhausted> =>
+  const verifyOne = (
+    pair: VerifyPair,
+    client: GeminiClient
+  ): Effect.Effect<'YES' | 'NO' | null, QuotaExhausted> =>
     withQuotaPolicy(
       Effect.tryPromise({
         try: () =>
-          (client as GeminiClient).models.generateContent({
+          client.models.generateContent({
             model: options.model,
             contents: [{ parts: [{ text: buildVerifyPrompt(pair) }] }],
           }),
@@ -141,11 +134,11 @@ export function verifyPairs(
 
   return Effect.gen(function* () {
     if (pairs.length === 0) return { answers: [], quotaExhausted: false }
-    yield* resolveClient()
+    const activeClient = yield* resolveClient()
 
     const answers: ('YES' | 'NO' | null)[] = []
     for (const pair of pairs) {
-      const answer = yield* verifyOne(pair)
+      const answer = yield* verifyOne(pair, activeClient)
       answers.push(answer)
     }
     return { answers, quotaExhausted: false }

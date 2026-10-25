@@ -9,7 +9,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vite-plus/test'
 import { Data, Effect } from 'effect'
 
-import { FetchTransport } from '../../src/fetch/strategy.js'
+import { FetchTransport } from '../../src/fetch/errors.js'
 import {
   classifyImages,
   filenameFromUrl,
@@ -112,11 +112,17 @@ describe('state persistence', () => {
     expect(state.processed.at(-1)).toBe(`hash-${MAX_PROCESSED_HASHES + 9}`)
   })
 
-  it('tolerates malformed JSON by failing loudly', async () => {
+  it('treats malformed JSON as a fresh start — never a dead nightly job', async () => {
     const dir = await tempDir()
     const stateFile = path.join(dir, 'state.json')
+    // E.g. a state.json truncated by a crash before saves became atomic:
+    // rejecting here would exit-1 every timer tick until a human repairs
+    // the file; a fresh start costs one re-download/OCR pass instead.
     await writeFile(stateFile, 'not valid json', 'utf8')
-    await expect(Effect.runPromise(loadState(stateFile))).rejects.toThrow()
+    await expect(Effect.runPromise(loadState(stateFile))).resolves.toEqual({
+      lastRun: null,
+      processed: [],
+    })
   })
 })
 

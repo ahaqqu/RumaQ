@@ -11,19 +11,9 @@ import {
   saveEmbeddingCache,
 } from '../../src/match/catalog-store.js'
 import { emptyCatalog, type Catalog, type CatalogEntry } from '../../src/match/matcher.js'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, writeFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-
-function client(vectors: Record<string, number[]>): EmbeddingClient {
-  return {
-    models: {
-      embedContent: async ({ contents }: { contents: string }) => ({
-        embeddings: [{ values: vectors[contents] }],
-      }),
-    },
-  }
-}
 
 describe('embedNames', () => {
   it('fills cache misses through the client and skips cached texts', async () => {
@@ -32,7 +22,7 @@ describe('embedNames', () => {
     let calls = 0
     const c: EmbeddingClient = {
       models: {
-        embedContent: async (_args: { contents: string }) => {
+        batchEmbedContents: async (_args: { requests: { contents: string }[] }) => {
           calls++
           return { embeddings: [{ values: [calls] }] }
         },
@@ -46,8 +36,29 @@ describe('embedNames', () => {
     expect(vectors['Cached']).toEqual([1]) // untouched
   })
 
+  it('batches misses — a cold cache pays one call per 100 texts, not per text', async () => {
+    const cache = emptyCache('m')
+    const texts = Array.from({ length: 150 }, (_, i) => `Name ${i}`)
+    const batchSizes: number[] = []
+    const c: EmbeddingClient = {
+      models: {
+        batchEmbedContents: async ({ requests }: { requests: { contents: string }[] }) => {
+          batchSizes.push(requests.length)
+          return { embeddings: requests.map(() => ({ values: [1, 2] })) }
+        },
+      },
+    }
+    const vectors = await Effect.runPromise(embedNames(texts, cache, { model: 'm', client: c }))
+    expect(batchSizes).toEqual([100, 50])
+    expect(Object.keys(vectors)).toHaveLength(150)
+  })
+
   it('fails typed on empty vectors', async () => {
-    const c = client({ X: [] })
+    const c: EmbeddingClient = {
+      models: {
+        batchEmbedContents: async () => ({ embeddings: [{ values: [] }] }),
+      },
+    }
     const exit = await Effect.runPromiseExit(
       embedNames(['X'], emptyCache('m'), { model: 'm', client: c })
     )
@@ -85,6 +96,26 @@ describe('catalog-store', () => {
         loadEmbeddingCache(path.join(dir, 'embeddings.json'), 'm')
       )
       expect(loadedCache).toEqual(cache)
+
+      // Atomic saves leave no temp files behind — only the target remains.
+      expect(await readdir(dir)).toEqual(['catalog.json', 'embeddings.json'])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a corrupt file is a fresh start, not a dead nightly job', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'rumaq-match-'))
+    try {
+      // E.g. a catalog truncated by a crash before saves became atomic.
+      await writeFile(path.join(dir, 'catalog.json'), '{"entries": {"indomie')
+      await writeFile(path.join(dir, 'embeddings.json'), '{"model": "m", "vect')
+      expect(await Effect.runPromise(loadCatalog(path.join(dir, 'catalog.json')))).toEqual(
+        emptyCatalog()
+      )
+      expect(
+        await Effect.runPromise(loadEmbeddingCache(path.join(dir, 'embeddings.json'), 'm'))
+      ).toEqual(emptyCache('m'))
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

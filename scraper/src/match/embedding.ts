@@ -6,14 +6,15 @@
 
 import { Data, Effect } from 'effect'
 
+import { lazyGeminiClient } from '../util/gemini.js'
 import { classifyQuotaError, withQuotaPolicy, type QuotaExhausted } from '../util/retry.js'
 
 /** Structural slice of @google/genai's client — the real thing satisfies it. */
 export interface EmbeddingClient {
   models: {
-    embedContent(args: {
+    batchEmbedContents(args: {
       model: string
-      contents: string
+      requests: { model: string; contents: string }[]
     }): Promise<{ embeddings?: { values?: number[] }[] }>
   }
 }
@@ -57,11 +58,16 @@ export interface EmbedOptions {
   log?: (message: string) => void
 }
 
+/** Texts per batchEmbedContents call — the API's per-request batch ceiling. */
+const BATCH_SIZE = 100
+
 /**
- * Embed `texts`, filling cache misses through the Gemini embedding API.
- * Cached texts are never re-requested. Failures are typed errors the caller
- * degrades from (exact-only matching) — embedding trouble must not kill a
- * run whose OCR is already paid for.
+ * Embed `texts`, filling cache misses through the Gemini batch embedding
+ * API. Cached texts are never re-requested; misses ride batched calls (a
+ * cold cache — model bump or fresh box — costs O(catalog/100) round trips,
+ * not O(catalog)). Failures are typed errors the caller degrades from
+ * (exact-only matching) — embedding trouble must not kill a run whose OCR
+ * is already paid for.
  */
 export function embedNames(
   texts: string[],
@@ -73,33 +79,27 @@ export function embedNames(
 
   // The client (and its API key requirement) is resolved lazily: a run whose
   // items all hit the cache needs no GEMINI_API_KEY.
-  let client: EmbeddingClient | undefined = options.client
-  const resolveClient = (): Effect.Effect<EmbeddingClient, EmbeddingError> =>
-    Effect.suspend(() =>
-      client
-        ? Effect.succeed(client)
-        : Effect.tryPromise({
-            try: async () => {
-              const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY
-              if (!apiKey) throw new Error('GEMINI_API_KEY not set (or pass options.apiKey)')
-              const { GoogleGenAI } = await import('@google/genai')
-              client = new GoogleGenAI({ apiKey })
-              return client as unknown as EmbeddingClient
-            },
-            catch: (cause: unknown) => new EmbeddingError({ message: String(cause) }),
-          })
-    )
+  const resolveClient = lazyGeminiClient({
+    client: options.client,
+    apiKey: options.apiKey,
+    tag: EmbeddingError,
+  })
 
   return Effect.gen(function* () {
     const activeClient = yield* resolveClient()
-    for (const text of misses) {
+    for (let start = 0; start < misses.length; start += BATCH_SIZE) {
+      const batch = misses.slice(start, start + BATCH_SIZE)
       const response = yield* withQuotaPolicy(
         Effect.tryPromise({
-          try: () => activeClient.models.embedContent({ model: options.model, contents: text }),
+          try: () =>
+            activeClient.models.batchEmbedContents({
+              model: options.model,
+              requests: batch.map((text) => ({ model: options.model, contents: text })),
+            }),
           catch: (cause: unknown) =>
             classifyQuotaError(cause) ??
             new EmbeddingError({
-              message: `Embedding failed for "${text.slice(0, 60)}": ${
+              message: `Embedding batch failed (${batch.length} texts, first "${batch[0]!.slice(0, 60)}"): ${
                 cause instanceof Error ? cause.message : String(cause)
               }`,
             }),
@@ -111,13 +111,25 @@ export function embedNames(
           log: options.log,
         }
       )
-      const values = response.embeddings?.[0]?.values
-      if (!values || values.length === 0) {
+      const vectors = response.embeddings ?? []
+      if (vectors.length !== batch.length) {
         return yield* Effect.fail(
-          new EmbeddingError({ message: `Empty embedding vector for "${text.slice(0, 60)}"` })
+          new EmbeddingError({
+            message: `Embedding batch returned ${vectors.length} vectors for ${batch.length} texts`,
+          })
         )
       }
-      cache.vectors[text] = values
+      for (let i = 0; i < vectors.length; i++) {
+        const values = vectors[i]!.values
+        if (!values || values.length === 0) {
+          return yield* Effect.fail(
+            new EmbeddingError({
+              message: `Empty embedding vector for "${batch[i]!.slice(0, 60)}"`,
+            })
+          )
+        }
+        cache.vectors[batch[i]!] = values
+      }
     }
     return cache.vectors
   })

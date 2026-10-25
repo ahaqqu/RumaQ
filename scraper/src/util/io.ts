@@ -5,6 +5,8 @@
 // `wrapIo(ErrorClass)` builds that wrapper for one tagged error class, so a
 // module keeps its own error tag without re-copying the mapping body.
 
+import { rename, rm, writeFile } from 'node:fs/promises'
+
 import { Effect } from 'effect'
 
 /** Fields every wrapIo-produced tagged error carries. */
@@ -13,6 +15,25 @@ export interface IoErrorArgs {
   path: string
   cause: unknown
   message: string
+}
+
+/**
+ * Atomic file replace: write `data` to a temp file in the same directory,
+ * then rename() it over `file` (atomic on POSIX). A crash or OOM-kill
+ * mid-save leaves the temp file behind — never a truncated target — so the
+ * pipeline's durable state (catalog, embeddings, novelty state) cannot be
+ * bricked by an interrupted write. The temp file is best-effort removed if
+ * the rename fails.
+ */
+export async function writeFileAtomic(file: string, data: string): Promise<void> {
+  const temp = `${file}.tmp-${process.pid}-${Date.now()}`
+  try {
+    await writeFile(temp, data, 'utf8')
+    await rename(temp, file)
+  } catch (cause) {
+    await rm(temp, { force: true }).catch(() => undefined)
+    throw cause
+  }
 }
 
 /** Constructor of a tagged error class whose fields are exactly IoErrorArgs. */

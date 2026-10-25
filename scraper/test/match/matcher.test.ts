@@ -44,8 +44,8 @@ const CFG: MatchGateConfig = {
 function embedClient(vectors: Record<string, number[]>): EmbeddingClient {
   return {
     models: {
-      embedContent: async ({ contents }: { contents: string }) => ({
-        embeddings: [{ values: vectors[contents] ?? [1, 0] }],
+      batchEmbedContents: async ({ requests }: { requests: { contents: string }[] }) => ({
+        embeddings: requests.map(({ contents }) => ({ values: vectors[contents] ?? [1, 0] })),
       }),
     },
   }
@@ -141,7 +141,7 @@ describe('runMatch — embedding tier', () => {
   it('degrades to exact-only when embeddings are unavailable', async () => {
     const embedFails: EmbeddingClient = {
       models: {
-        embedContent: async () => {
+        batchEmbedContents: async () => {
           throw new Error('no network')
         },
       },
@@ -205,6 +205,37 @@ describe('runMatch — AI verifier (gate 6)', () => {
     expect(outcomes[0]!.matchMethod).toBe('solo')
     expect(outcomes[0]!.isNew).toBe(true)
     expect(stats.ai).toBe(0)
+    expect(Object.keys(catalog.entries)).toHaveLength(2)
+  })
+
+  it('two identical NO-verdict sightings share one entry — the second attaches, never resets history', async () => {
+    const seeded = await seedCatalog()
+    const verifier = verifyClient(['NO', 'NO'])
+    const a: MatchInputItem = {
+      storeSlug: 'superindo',
+      product: product({ name: 'Indomie Goreng Kuah' }),
+    }
+    const b: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ name: 'Indomie Goreng Kuah' }),
+    }
+    const { outcomes, catalog } = await run(
+      [a, b],
+      deps({ embedClient: embedClient(vectors), verifyClient: verifier }),
+      seeded
+    )
+    expect(verifier.calls).toBe(2)
+    // Both sightings solo-resolve onto the SAME canonical entry (same
+    // name/brand/unit → same product key). The second must attach to the
+    // entry the first founded — overwriting it would reset appearanceCount
+    // back to 1 and drop the first sighting's store.
+    expect(outcomes[0]).toMatchObject({ matchMethod: 'solo', isNew: true })
+    expect(outcomes[1]).toMatchObject({ matchMethod: 'solo', isNew: false })
+    expect(outcomes[1]!.productKey).toBe(outcomes[0]!.productKey)
+    const founded = catalog.entries[outcomes[0]!.productKey]!
+    expect(founded.appearanceCount).toBe(2)
+    expect(founded.storesFound).toEqual(['superindo', 'lotte-mart'])
+    // The seeded entry plus the one founded entry — nothing duplicated.
     expect(Object.keys(catalog.entries)).toHaveLength(2)
   })
 
