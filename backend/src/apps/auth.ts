@@ -41,7 +41,11 @@ authApp.get(
     const sha256 = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
     const challenge = base64UrlEncode(sha256)
 
-    setCookie(c, 'rumaq_oauth_state', `${state}:${verifier}:${origin}`, {
+    // The cookie must stay colon-free beyond state/verifier: the origin contains
+    // ':' (https://…) and would be truncated by split(':') in the callback.
+    // The callback re-derives the redirect_uri from its own request origin —
+    // Google returns the browser to exactly that origin, so they always match.
+    setCookie(c, 'rumaq_oauth_state', `${state}:${verifier}`, {
       path: '/',
       httpOnly: true,
       secure: true,
@@ -76,13 +80,13 @@ authApp.get(
     const { code, state } = c.req.query()
     const cookie = getCookie(c, 'rumaq_oauth_state') || ''
     deleteCookie(c, 'rumaq_oauth_state')
-    const [expectedState, verifier, origin] = cookie.split(':')
+    const [expectedState, verifier] = cookie.split(':')
 
     if (!code || !state || state !== expectedState) {
       return c.json({ error: 'Invalid OAuth state' }, 400)
     }
 
-    const redirectUri = `${origin}/api/auth/callback`
+    const redirectUri = `${getRequestOrigin(c)}/api/auth/callback`
     const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -97,6 +101,11 @@ authApp.get(
     })
 
     if (!tokenRes.ok) {
+      console.error(
+        'OAuth token exchange failed:',
+        tokenRes.status,
+        await tokenRes.text().catch(() => '')
+      )
       return c.json({ error: 'Failed to exchange OAuth code' }, 400)
     }
 
