@@ -1,5 +1,5 @@
 import type { PlanItem } from './ai.js'
-import { completeText } from './ai.js'
+import { completeText, type AiCallOpts } from './ai.js'
 import {
   object,
   strictObject,
@@ -136,13 +136,14 @@ export async function generateAiPlan(
   }>,
   recentPurchases: Array<{ name: string; store_label: string | null }>,
   stores: Array<{ id: string; label: string }>,
-  currency: string
+  currency: string,
+  opts?: AiCallOpts
 ): Promise<PlanItem[]> {
   const promptStores = stores.map((s) => ({ label: s.label }))
   const prompt = buildPlanPrompt(lowStock, expiring, recentPurchases, promptStores, currency)
   const systemPrompt = `You are a helpful shopping plan assistant. Generate concise, practical shopping plans in JSON format.`
 
-  const content = await completeText(provider, apiKey, systemPrompt, prompt)
+  const content = await completeText(provider, apiKey, systemPrompt, prompt, opts)
 
   const parsed = JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] || '{}') as Record<string, unknown>
   const items = (parsed.items || []) as Record<string, unknown>[]

@@ -39,6 +39,26 @@ describe('settingsPatchSchema', () => {
     expect(result.success).toBe(true)
   })
 
+  it('accepts ollama and custom providers with base URL and model', () => {
+    const result = safeParse(settingsPatchSchema, {
+      ai_provider: 'ollama',
+      ai_key: 'sk-ollama',
+    })
+    expect(result.success).toBe(true)
+
+    const custom = safeParse(settingsPatchSchema, {
+      ai_provider: 'custom',
+      ai_key: 'sk-custom',
+      ai_base_url: 'https://api.example.com/v1',
+      ai_model: 'llama3.3:70b',
+    })
+    expect(custom.success).toBe(true)
+    if (custom.success) {
+      expect(custom.output.ai_base_url).toBe('https://api.example.com/v1')
+      expect(custom.output.ai_model).toBe('llama3.3:70b')
+    }
+  })
+
   it('rejects invalid ai_provider', () => {
     const result = safeParse(settingsPatchSchema, {
       ai_provider: 'invalid-ai',

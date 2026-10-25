@@ -719,8 +719,10 @@ export interface operations {
       content: {
         'application/json': {
           /** @enum {string} */
-          ai_provider?: 'opencode' | 'openai' | 'anthropic' | 'gemini'
+          ai_provider?: 'opencode' | 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'custom'
           ai_key?: string
+          ai_base_url?: string
+          ai_model?: string
           persona_user_role?: string
           persona_ai_role?: string
           persona_enabled?: boolean
@@ -767,8 +769,9 @@ export interface operations {
       content: {
         'application/json': {
           /** @enum {string} */
-          provider: 'opencode' | 'openai' | 'anthropic' | 'gemini'
+          provider: 'opencode' | 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'custom'
           key?: string
+          base_url?: string
         }
       }
     }

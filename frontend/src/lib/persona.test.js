@@ -205,10 +205,9 @@ describe('generatePersonaCopy', () => {
     expect(result).toBeNull()
   })
 
-  it('returns null when AI call fails', async () => {
+  it('rejects when the AI call fails so the caller can surface the error', async () => {
     const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit' }
-    const result = await generatePersonaCopy(p, 'sk-invalid', 'opencode', idT)
-    expect(result).toBeNull()
+    await expect(generatePersonaCopy(p, 'sk-invalid', 'opencode', idT)).rejects.toThrow()
   })
 
   it('returns null when AI returns non-JSON', async () => {
@@ -299,6 +298,66 @@ describe('generatePersonaCopy', () => {
     const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
     const result = await generatePersonaCopy(p, 'sk-valid', 'opencode', idT)
     expect(result).not.toBeNull()
+  })
+
+  it('generates with ollama provider', async () => {
+    let calledUrl = ''
+    globalThis.fetch = async (url) => {
+      calledUrl = url
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"homeLead":"AI"}' } }],
+        }),
+      }
+    }
+    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
+    const result = await generatePersonaCopy(p, 'sk-valid', 'ollama', idT)
+    expect(result).not.toBeNull()
+    expect(calledUrl).toContain('https://ollama.com/v1/chat/completions')
+  })
+
+  it('generates with custom provider using base URL and model', async () => {
+    let calledUrl = ''
+    globalThis.fetch = async (url) => {
+      calledUrl = url
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"homeLead":"AI"}' } }],
+        }),
+      }
+    }
+    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
+    const result = await generatePersonaCopy(p, 'sk-valid', 'custom', idT, {
+      baseUrl: 'https://api.example.com/v1',
+      model: 'llama3.3:70b',
+    })
+    expect(result).not.toBeNull()
+    expect(calledUrl).toContain('https://api.example.com/v1/chat/completions')
+  })
+
+  it('keeps the Ollama preset model even when a model option is passed', async () => {
+    let calledBody = null
+    globalThis.fetch = async (url, init) => {
+      calledBody = JSON.parse(init.body)
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"homeLead":"AI"}' } }],
+        }),
+      }
+    }
+    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
+    await generatePersonaCopy(p, 'sk-valid', 'ollama', idT, { model: 'llama3.3:70b' })
+    expect(calledBody.model).toBe('qwen3-vl:235b-instruct')
+  })
+
+  it('throws for custom provider without base URL or model', async () => {
+    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
+    await expect(generatePersonaCopy(p, 'sk-valid', 'custom', idT)).rejects.toThrow(
+      'requires a base URL and model'
+    )
   })
 
   it('returns null when AI response is empty', async () => {

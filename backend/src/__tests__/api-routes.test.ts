@@ -108,6 +108,50 @@ describe('api routes', () => {
     expect(res.status).toBe(200)
   })
 
+  it('/api/settings rejects a non-HTTPS custom base URL', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    const res = await apiApp.request(
+      '/api/settings',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ ai_base_url: 'http://api.example.com/v1' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('/api/settings rejects an unparseable custom base URL', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    const res = await apiApp.request(
+      '/api/settings',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ ai_base_url: 'not a url' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('/api/settings strips trailing slashes from the custom base URL', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    const res = await apiApp.request(
+      '/api/settings',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ ai_base_url: 'https://api.example.com/v1/' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(200)
+    const bound = env.DB.bind.mock.calls.flat()
+    expect(bound).toContain('https://api.example.com/v1')
+  })
+
   it('/api/settings stores encrypted ai_key', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.first = vi.fn().mockResolvedValue({
