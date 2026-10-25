@@ -10,9 +10,18 @@ import {
   minLength,
   maxLength,
   minValue,
+  regex,
+  union,
+  literal,
   array,
   integer,
 } from 'valibot'
+
+// Model names go into provider request bodies and (for Gemini) the URL path,
+// so restrict them to the characters real model ids use. Allowlist, not
+// blocklist: anything unusual is rejected rather than smuggled through.
+// The empty string is allowed and means "use the provider default".
+const AI_MODEL_REGEX = /^(?:[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199})?$/
 
 export const settingsPatchSchema = strictObject({
   ai_provider: optional(
@@ -20,7 +29,8 @@ export const settingsPatchSchema = strictObject({
   ),
   ai_key: optional(pipe(string(), minLength(1))),
   ai_base_url: optional(pipe(string(), maxLength(500))),
-  ai_model: optional(pipe(string(), maxLength(200))),
+  ai_model: optional(pipe(string(), maxLength(200), regex(AI_MODEL_REGEX))),
+  ai_thinking_level: optional(union([picklist(['low', 'medium', 'high']), literal('')])),
   persona_user_role: optional(string()),
   persona_ai_role: optional(string()),
   persona_enabled: optional(boolean()),

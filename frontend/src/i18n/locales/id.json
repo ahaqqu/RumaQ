@@ -146,8 +146,16 @@
     "customProvider": "Kustom (format OpenAI)",
     "customBaseUrl": "Base URL",
     "customBaseUrlDesc": "Endpoint kompatibel OpenAI, contoh: https://ollama.com/v1",
-    "customModel": "Model",
     "customModelDesc": "Nama model yang dipanggil, contoh: qwen3-vl:235b-instruct. Pemindaian struk memerlukan model yang mendukung gambar (vision).",
+    "model": "Model",
+    "modelDesc": "Model yang dipanggil dari penyedia. Biarkan kosong untuk memakai bawaan penyedia. Pemindaian struk memerlukan model yang mendukung gambar (vision).",
+    "thinking": "Tingkat berpikir",
+    "thinkingDesc": "Tingkat lebih tinggi menukar kecepatan dengan penalaran lebih dalam pada model yang mendukung. Model yang tidak mendukung akan menampilkan error dari penyedia.",
+    "thinkingDefault": "Bawaan",
+    "thinkingLow": "Rendah",
+    "thinkingMedium": "Sedang",
+    "thinkingHigh": "Tinggi",
+    "inactiveServer": "Kunci belum diisi. AI dijawab lewat kunci bersama RumaQ (20 permintaan/hari). Tambahkan kunci sendiri untuk pemakaian tanpa batas.",
     "apiKey": "Kunci API",
     "apiKeyDesc": "Disimpan di perangkatmu, hanya dipakai untuk memanggil AI pilihanmu.",
     "apiKeyPlaceholder": "sk-… / tempel kunci di sini",
@@ -236,7 +244,8 @@
     "sendAriaLabel": "Kirim pesan",
     "error": "Kesalahan asisten: {{message}}",
     "usageLimit": "Batas penggunaan AI harian tercapai. Coba lagi besok.",
-    "keyMissing": "Kunci AI belum dikonfigurasi. Tambahkan kunci di Pengaturan."
+    "keyMissing": "Kunci AI belum dikonfigurasi. Tambahkan kunci di Pengaturan.",
+    "readyOwnKey": "siap membantu · kunci sendiri · {{used}} hari ini"
   },
   "ui": {
     "expiringTomorrow": "kedaluwarsa besok",
@@ -249,7 +258,9 @@
     "dailyLimitReachedDesc": "Batas harian tercapai. AI tersedia lagi besok.",
     "closeToLimit": "Hampir mencapai batas harian.",
     "closeToLimitDesc": "Hampir mencapai batas harian. Sisa {{remaining}} permintaan.",
-    "remainingRequests": "Sisa {{remaining}} permintaan hari ini."
+    "remainingRequests": "Sisa {{remaining}} permintaan hari ini.",
+    "ownKeyRequestsToday": "{{used}} permintaan hari ini · kunci sendiri",
+    "ownKeyUnlimited": "Tanpa batas — pemakaian ditanggung kunci API milikmu."
   },
   "offline": {
     "banner": "Kamu sedang offline — perubahan akan disinkronkan saat kembali online",

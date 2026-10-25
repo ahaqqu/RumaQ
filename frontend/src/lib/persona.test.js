@@ -288,6 +288,20 @@ describe('generatePersonaCopy', () => {
     expect(result).not.toBeNull()
   })
 
+  it('falls back to the default Anthropic model when none is selected', async () => {
+    let calledBody = null
+    globalThis.fetch = async (url, init) => {
+      calledBody = JSON.parse(init.body)
+      return {
+        ok: true,
+        json: async () => ({ content: [{ text: '{"homeLead":"AI"}' }] }),
+      }
+    }
+    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
+    await generatePersonaCopy(p, 'sk-valid', 'anthropic', idT)
+    expect(calledBody.model).toBe('claude-3-haiku-20240307')
+  })
+
   it('generates with opencode provider (default)', async () => {
     globalThis.fetch = async () => ({
       ok: true,
@@ -337,7 +351,7 @@ describe('generatePersonaCopy', () => {
     expect(calledUrl).toContain('https://api.example.com/v1/chat/completions')
   })
 
-  it('keeps the Ollama preset model even when a model option is passed', async () => {
+  it('uses the selected model for Ollama when a model option is passed', async () => {
     let calledBody = null
     globalThis.fetch = async (url, init) => {
       calledBody = JSON.parse(init.body)
@@ -350,7 +364,7 @@ describe('generatePersonaCopy', () => {
     }
     const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
     await generatePersonaCopy(p, 'sk-valid', 'ollama', idT, { model: 'llama3.3:70b' })
-    expect(calledBody.model).toBe('qwen3-vl:235b-instruct')
+    expect(calledBody.model).toBe('llama3.3:70b')
   })
 
   it('throws for custom provider without base URL or model', async () => {

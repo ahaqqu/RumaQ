@@ -80,32 +80,57 @@ type AnthropicResponse = {
   }>
 }
 
+export type ThinkingLevel = 'low' | 'medium' | 'high'
+
 export type AiCallOpts = {
   baseUrl?: string | null
   model?: string | null
+  thinkingLevel?: ThinkingLevel | null
 }
 
 const OLLAMA_BASE_URL = 'https://ollama.com/v1'
 const OLLAMA_DEFAULT_MODEL = 'qwen3-vl:235b-instruct'
+
+// Gemini exposes thinking as a token budget on thinking-capable models.
+const GEMINI_THINKING_BUDGET: Record<ThinkingLevel, number> = {
+  low: 1024,
+  medium: 8192,
+  high: 24576,
+}
+
+// Anthropic requires budget_tokens >= 1024 and max_tokens > budget_tokens.
+const ANTHROPIC_THINKING_BUDGET: Record<ThinkingLevel, number> = {
+  low: 2048,
+  medium: 8192,
+  high: 16384,
+}
 
 async function callOpenAICompatible(
   providerLabel: string,
   baseUrl: string,
   model: string,
   apiKey: string,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  thinkingLevel?: ThinkingLevel | null,
+  maxTokensField: 'max_tokens' | 'max_completion_tokens' = 'max_tokens'
 ): Promise<string> {
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+  }
+  body[maxTokensField] = 2000
+  // Only accepted by reasoning-capable models; incompatible models surface a
+  // provider 400 to the user via the usual 502 error path.
+  if (thinkingLevel) {
+    body.reasoning_effort = thinkingLevel
+  }
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      messages,
-      max_tokens: 2000,
-    }),
+    body: JSON.stringify(body),
   })
 
   if (!res.ok) {
@@ -120,17 +145,29 @@ async function callOpenAICompatible(
   return content
 }
 
-async function callOpenAI(apiKey: string, messages: ChatMessage[]): Promise<string> {
+async function callOpenAI(
+  apiKey: string,
+  messages: ChatMessage[],
+  opts?: AiCallOpts
+): Promise<string> {
   return callOpenAICompatible(
     'OpenAI',
     'https://api.openai.com/v1',
-    'gpt-4o-mini',
+    opts?.model?.trim() || 'gpt-4o-mini',
     apiKey,
-    messages
+    messages,
+    opts?.thinkingLevel,
+    // Reasoning models reject max_tokens; max_completion_tokens is accepted
+    // across OpenAI's chat models.
+    'max_completion_tokens'
   )
 }
 
-async function callGemini(apiKey: string, messages: ChatMessage[]): Promise<string> {
+async function callGemini(
+  apiKey: string,
+  messages: ChatMessage[],
+  opts?: AiCallOpts
+): Promise<string> {
   const systemMsg = messages.find((m) => m.role === 'system')
   const userMsg = messages.find((m) => m.role === 'user')
 
@@ -163,12 +200,23 @@ async function callGemini(apiKey: string, messages: ChatMessage[]): Promise<stri
     }
   }
 
+  const body: Record<string, unknown> = { contents: [{ parts }] }
+  if (opts?.thinkingLevel) {
+    body.generationConfig = {
+      thinkingConfig: { thinkingBudget: GEMINI_THINKING_BUDGET[opts.thinkingLevel] },
+    }
+  }
+
+  // Model is interpolated into the URL path; save-time validation already
+  // restricts its charset, and encoding here keeps that true even for values
+  // written by older clients.
+  const model = encodeURIComponent(opts?.model?.trim() || 'gemini-3.6-flash')
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts }] }),
+      body: JSON.stringify(body),
     }
   )
 
@@ -184,13 +232,22 @@ async function callGemini(apiKey: string, messages: ChatMessage[]): Promise<stri
   return content
 }
 
-async function callAnthropic(apiKey: string, messages: ChatMessage[]): Promise<string> {
+async function callAnthropic(
+  apiKey: string,
+  messages: ChatMessage[],
+  opts?: AiCallOpts
+): Promise<string> {
   const systemMsg = messages.find((m) => m.role === 'system')
   const chatMessages = messages.filter((m) => m.role !== 'system')
 
+  const thinkingLevel = opts?.thinkingLevel
+  const thinkingBudget = thinkingLevel ? ANTHROPIC_THINKING_BUDGET[thinkingLevel] : null
+
   const body: Record<string, unknown> = {
-    model: 'claude-3-haiku-20240307',
-    max_tokens: 2000,
+    model: opts?.model?.trim() || 'claude-3-haiku-20240307',
+    // Extended thinking requires max_tokens > budget_tokens and temperature 1
+    // (the default when unset, which it is here).
+    max_tokens: thinkingBudget ? Math.max(2000, thinkingBudget + 2000) : 2000,
     messages: chatMessages.map((m) => ({
       role: m.role,
       content:
@@ -216,6 +273,9 @@ async function callAnthropic(apiKey: string, messages: ChatMessage[]): Promise<s
   if (systemMsg) {
     body.system = typeof systemMsg.content === 'string' ? systemMsg.content : ''
   }
+  if (thinkingBudget) {
+    body.thinking = { type: 'enabled', budget_tokens: thinkingBudget }
+  }
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -239,13 +299,18 @@ async function callAnthropic(apiKey: string, messages: ChatMessage[]): Promise<s
   return content
 }
 
-async function callOpenCode(apiKey: string, messages: ChatMessage[]): Promise<string> {
+async function callOpenCode(
+  apiKey: string,
+  messages: ChatMessage[],
+  opts?: AiCallOpts
+): Promise<string> {
   return callOpenAICompatible(
     'OpenCode',
     'https://api.opencode.ai/v1',
-    'opencode-vision',
+    opts?.model?.trim() || 'opencode-vision',
     apiKey,
-    messages
+    messages,
+    opts?.thinkingLevel
   )
 }
 
@@ -284,22 +349,21 @@ async function callProvider(
 ): Promise<string> {
   switch (provider) {
     case 'openai':
-      return callOpenAI(apiKey, messages)
+      return callOpenAI(apiKey, messages, opts)
     case 'gemini':
-      return callGemini(apiKey, messages)
+      return callGemini(apiKey, messages, opts)
     case 'anthropic':
-      return callAnthropic(apiKey, messages)
+      return callAnthropic(apiKey, messages, opts)
     case 'opencode':
-      return callOpenCode(apiKey, messages)
+      return callOpenCode(apiKey, messages, opts)
     case 'ollama':
-      // Fixed preset: a stale ai_model saved for the custom provider must not
-      // silently swap in a text-only model and break vision calls.
       return callOpenAICompatible(
         'Ollama Cloud',
         OLLAMA_BASE_URL,
-        OLLAMA_DEFAULT_MODEL,
+        opts?.model?.trim() || OLLAMA_DEFAULT_MODEL,
         apiKey,
-        messages
+        messages,
+        opts?.thinkingLevel
       )
     case 'custom': {
       const baseUrl = opts?.baseUrl?.trim()
@@ -307,7 +371,14 @@ async function callProvider(
       if (!baseUrl || !model) {
         throw new Error('Custom provider requires a base URL and model in Settings')
       }
-      return callOpenAICompatible('Custom provider', baseUrl, model, apiKey, messages)
+      return callOpenAICompatible(
+        'Custom provider',
+        baseUrl,
+        model,
+        apiKey,
+        messages,
+        opts?.thinkingLevel
+      )
     }
     default:
       throw new Error(`Unsupported AI provider: ${provider}`)

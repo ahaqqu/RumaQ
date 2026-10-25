@@ -60,12 +60,17 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
   const chat = useSendChatMessage()
 
   const hasBackendKey = settings?.has_ai_key === true
-  const isConnected = Boolean(aiKey) || hasBackendKey
+  // A server-provided key also counts as connected: the backend serves chat
+  // with RumaQ's shared key when the user has none of their own.
+  const isConnected = Boolean(aiKey) || hasBackendKey || settings?.server_ai_available === true
 
   const used = usage?.used ?? 0
   const limit = usage?.daily_limit ?? 20
-  const warn = used >= limit - 4
-  const danger = used >= limit
+  // The daily cap only applies to RumaQ's shared server key; a user's own key
+  // is unmetered.
+  const ownKey = usage?.key_source === 'user'
+  const warn = !ownKey && used >= limit - 4
+  const danger = !ownKey && used >= limit
 
   const send = async (text) => {
     if (!text.trim() || chat.isPending) return
@@ -148,7 +153,9 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
                       />
                       {danger
                         ? t('assistant.dailyLimitReached')
-                        : t('assistant.ready', { used, limit })}
+                        : ownKey
+                          ? t('assistant.readyOwnKey', { used })
+                          : t('assistant.ready', { used, limit })}
                     </>
                   ) : (
                     t('assistant.notConnected')

@@ -78,6 +78,14 @@ describe('Assistant', () => {
     expect(container.querySelector('button[class*="border border-border bg-surface"]')).toBeTruthy()
   })
 
+  it('renders chat input when only the server key is available', () => {
+    mockUseSettings.mockReturnValue({ data: { has_ai_key: false, server_ai_available: true } })
+    const { container } = renderWithProviders(
+      React.createElement(Assistant, baseProps({ open: true }))
+    )
+    expect(container.querySelector('input[type="text"]')).toBeTruthy()
+  })
+
   it('renders chat input when aiKey present', () => {
     const { container } = renderWithProviders(
       React.createElement(Assistant, baseProps({ open: true, aiKey: 'sk-test' }))

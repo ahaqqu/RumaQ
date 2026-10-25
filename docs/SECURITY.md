@@ -27,7 +27,7 @@ Defined in `backend/src/cors.ts`, unit-tested in `backend/src/__tests__/cors.tes
 
 ## Rate limiting
 
-- AI endpoints (`/api/purchases/scan`, `/api/plans/generate`, `/api/ai/chat`) are limited per user per day via the `ai_usage` D1 table (default 20/day); 429 responses include `Retry-After`.
+- AI endpoints (`/api/purchases/scan`, `/api/plans/generate`, `/api/ai/chat`) are limited per user per day via the `ai_usage` D1 table (default 20/day) — but only when the request is served with RumaQ's shared server key (`RUMAQ_SERVER_AI_PROVIDER`/`RUMAQ_SERVER_AI_KEY`). Users who configure their own provider key are unmetered; usage is still counted for the meter. 429 responses include `Retry-After`.
 - A general per-IP fixed-window limiter (60 s / 100 requests by default, env-tunable via `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS`) guards the whole API with `Retry-After` on 429.
 - Known limitation: the general limiter is in-memory (per-isolate); the ingest endpoint (`POST /api/internal/ingest/prices`) is exempt because it authenticates with a bearer secret, not a session.
 

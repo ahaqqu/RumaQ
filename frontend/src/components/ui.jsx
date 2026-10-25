@@ -67,9 +67,12 @@ export { EmptyState, SkeletonRows }
 
 export function UsageMeter({ usage }) {
   const { t } = useTranslation()
+  // The daily cap only applies to RumaQ's shared server key; a user's own
+  // key is unmetered.
+  const ownKey = usage?.key_source === 'user'
   const normalized = usage ? { ...usage, limit: usage.limit ?? usage.daily_limit ?? 20 } : AI_USAGE
   const { pct, remaining, warn, danger } = usageState(normalized)
-  const tone = danger ? 'danger' : warn ? 'warn' : 'muted'
+  const tone = !ownKey && danger ? 'danger' : !ownKey && warn ? 'warn' : 'muted'
 
   return (
     <div className="flex flex-col gap-3 p-5">
@@ -77,10 +80,12 @@ export function UsageMeter({ usage }) {
         <div>
           <div className="font-semibold text-base">{normalized.provider}</div>
           <div className="text-sm text-text-muted mt-0.5">
-            {t('ui.requestsToday', {
-              used: normalized.used,
-              limit: normalized.limit,
-            })}
+            {ownKey
+              ? t('ui.ownKeyRequestsToday', { used: normalized.used })
+              : t('ui.requestsToday', {
+                  used: normalized.used,
+                  limit: normalized.limit,
+                })}
           </div>
         </div>
         <div
@@ -90,28 +95,35 @@ export function UsageMeter({ usage }) {
             tone === 'warn' && 'text-warn'
           )}
         >
-          {normalized.used}/{normalized.limit}
+          {ownKey ? normalized.used : `${normalized.used}/${normalized.limit}`}
         </div>
       </div>
-      <div className="h-2 rounded-pill bg-surface-inset overflow-hidden">
-        <div
-          className={cn(
-            'h-full rounded-pill bg-accent transition-[width] duration-300 ease-out',
-            tone === 'warn' && 'bg-warn',
-            tone === 'danger' && 'bg-danger'
+      {!ownKey && (
+        <>
+          <div className="h-2 rounded-pill bg-surface-inset overflow-hidden">
+            <div
+              className={cn(
+                'h-full rounded-pill bg-accent transition-[width] duration-300 ease-out',
+                tone === 'warn' && 'bg-warn',
+                tone === 'danger' && 'bg-danger'
+              )}
+              style={{ width: pct + '%' }}
+            />
+          </div>
+          {danger ? (
+            <div className="text-sm text-danger">{t('ui.dailyLimitReachedDesc')}</div>
+          ) : warn ? (
+            <div className="text-sm text-warn font-medium">
+              {t('ui.closeToLimitDesc', { remaining })}
+            </div>
+          ) : (
+            <div className="text-sm text-text-muted">
+              {t('ui.remainingRequests', { remaining })}
+            </div>
           )}
-          style={{ width: pct + '%' }}
-        />
-      </div>
-      {danger ? (
-        <div className="text-sm text-danger">{t('ui.dailyLimitReachedDesc')}</div>
-      ) : warn ? (
-        <div className="text-sm text-warn font-medium">
-          {t('ui.closeToLimitDesc', { remaining })}
-        </div>
-      ) : (
-        <div className="text-sm text-text-muted">{t('ui.remainingRequests', { remaining })}</div>
+        </>
       )}
+      {ownKey && <div className="text-sm text-text-muted">{t('ui.ownKeyUnlimited')}</div>}
     </div>
   )
 }
