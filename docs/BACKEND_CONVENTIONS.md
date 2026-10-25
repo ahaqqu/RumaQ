@@ -63,3 +63,11 @@ High-level objectives and defaults for backend work. Prefer these over one-off c
 
 - Prefer public, trusted libraries for external integrations and common logic (e.g., JWT, SQL type safety).
 - Avoid introducing heavy dependencies on the Workers runtime where a small helper or built-in Web API suffices.
+
+## Quick-start checklist for new backend changes
+
+1. Schema changes: add `backend/migrations/NNNN_description.sql` (next free number); never edit applied migrations.
+2. Declare new bindings/env vars in `backend/src/types.ts` and `backend/cloudflare.config.ts`.
+3. Add routes in the domain app under `backend/src/apps/`, annotate with `describeRoute`, validate inputs with Valibot, keep every D1 query household-scoped.
+4. Extract logic into `backend/src/lib/`; write route-level tests in `backend/src/__tests__/` and an automation scenario in `automation/tests/local/api/`.
+5. Run `./scripts/docs.sh` and commit the regenerated `docs/API.md`; then `./scripts/style.sh --check` and `./scripts/test.sh unit backend`.

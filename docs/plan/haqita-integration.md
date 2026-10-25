@@ -1,6 +1,9 @@
 # Haqita → RumaQ Integration — Architecture & Implementation Plan
 
-> Status: **Approved plan, not yet implemented.** Written 2026-10-24.
+> Status: **In progress.** Written 2026-10-24; updated 2026-10-25.
+> PR1 (contract & backend) merged as #252, PR2 (scraper scaffold + Superindo + Gemini OCR +
+> dry-run publish) merged as #255. PR3 (Lotte + matcher) in flight; PR4 (VPS ops + backfill +
+> go-live), PR5 (frontend explorer + plan grounding) and PR6 (haqita cleanup) remain.
 > This document is self-contained: a fresh session should be able to implement from it
 > without re-exploring the haqita repo. Source references to `/home/ahaqqu/Projects/haqita`
 > are included below; that repo still exists locally at time of writing.

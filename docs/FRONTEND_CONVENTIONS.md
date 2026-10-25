@@ -41,3 +41,11 @@ High-level objectives and defaults for frontend work. Prefer these over one-off 
 
 - Use the project's provider wrapper for component tests.
 - Keep tests close to the code they test.
+
+## Quick-start checklist for new frontend changes
+
+1. Add the route file under `frontend/src/routes/` and the page under `frontend/src/pages/` (file-based routing).
+2. Add API functions to `frontend/src/lib/api.ts` and TanStack Query hooks under `frontend/src/lib/queries/`; add user-facing strings to `frontend/src/i18n/` (id + en).
+3. Follow the styling/state conventions above; use existing UI components and icons.
+4. Add unit tests next to the code; for new UI flows add an E2E scenario in `automation/tests/local/e2e/`.
+5. Run `./scripts/style.sh --check` and `./scripts/test.sh unit frontend`.

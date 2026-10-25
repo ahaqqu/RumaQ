@@ -107,11 +107,21 @@ Use whenever a PR needs review. It sets the review depth — normal for docs/ski
 
 ---
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, testing, and PR process, and [`docs/ONBOARDING.md`](docs/ONBOARDING.md) for a first-time setup walkthrough. Agent instructions live in [`AGENTS.md`](AGENTS.md).
+
+---
+
 ## Further docs
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — full-stack architecture
 - [`docs/API.md`](docs/API.md) — REST API contract
 - [`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md) — testing strategy
+- [`docs/SECURITY.md`](docs/SECURITY.md) — security model, secrets, rotation
+- [`docs/ONBOARDING.md`](docs/ONBOARDING.md) — first-time setup
+- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — work items and status
+- [`docs/plan/`](docs/plan/) — per-phase implementation plans
 - [`docs/features/persona.md`](docs/features/persona.md) — persona personalisation
 - [`docs/features/internationalisation.md`](docs/features/internationalisation.md) — i18n
 - [`backend/migrations/0001_schema.sql`](backend/migrations/0001_schema.sql) — D1 schema

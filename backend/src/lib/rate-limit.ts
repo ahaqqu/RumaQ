@@ -3,9 +3,10 @@ type WindowEntry = {
   resetAt: number
 }
 
-// In-memory sliding-window rate limiter. This is acceptable for an MVP running
-// on a single Worker instance. For multi-instance production deployments, move
-// this state to Cloudflare KV.
+// In-memory fixed-window rate limiter: one counter per key, reset when the
+// window expires. This is acceptable for an MVP running on a single Worker
+// instance. For multi-instance production deployments, move this state to
+// Cloudflare KV.
 const windows = new Map<string, WindowEntry>()
 
 export function getRateLimitConfig(env: {

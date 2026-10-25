@@ -1,6 +1,6 @@
 # Phase 10 — AI Feature Expansion
 
-**Status:** Not started  
+**Status:** Not started (none of the six features have endpoints yet; price-data groundwork — migration 0007, ingest + `/api/prices` — has landed via `docs/plan/haqita-integration.md`)  
 **Priority:** P1/P2  
 **Source sections:** Section 6 of `docs/PROJECT_PLAN.md`  
 **Estimated effort:** Medium-High (multiple AI-powered features)
