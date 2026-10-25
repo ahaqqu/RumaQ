@@ -33,18 +33,35 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:
+      # Sequential, not cancel-in-progress: a cancelled deploy followed by a
+      # docs-only push would skip its own deploy and the earlier code change
+      # would never ship. Queued runs make the changed-files check safe.
       group: deploy-main
-      cancel-in-progress: true
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
+        # Full history so git can diff against github.event.before.
+        with:
+          fetch-depth: 0
+
+      - id: changes
+        name: Check if deploy is needed
+        run: |
+          needs=$(bash ./scripts/github/needs-deploy.sh \
+            "${{ github.event.before }}" "${{ github.sha }}")
+          echo "needs=$needs" >> "$GITHUB_OUTPUT"
+          echo "Deploy needed: $needs"
 
       - uses: oven-sh/setup-bun@v2
+        if: steps.changes.outputs.needs == 'true'
         with:
           bun-version: 1.4.0
 
       - run: bun install --frozen-lockfile
+        if: steps.changes.outputs.needs == 'true'
 
       - name: Deploy production
+        if: steps.changes.outputs.needs == 'true'
         run: bash ./scripts/deploy.sh cloudflare
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
