@@ -16,3 +16,7 @@ test-results
 vitest-report
 backend/.cloudflare
 .zcode/
+
+# rumaq-scraper local state (novelty, images, dry-run payloads)
+scraper/state/
+/state/

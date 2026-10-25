@@ -22,6 +22,9 @@ echo "=== CI: frontend tests ==="
 echo "=== CI: backend tests ==="
 "$ROOT_DIR/scripts/test.sh" unit backend --coverage
 
+echo "=== CI: scraper tests ==="
+"$ROOT_DIR/scripts/test.sh" unit scraper
+
 echo "=== CI: audit ==="
 bun audit --audit-level=critical
 

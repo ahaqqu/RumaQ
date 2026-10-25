@@ -3,3 +3,4 @@
 scripts/*.sh text eol=lf mode=755
 scripts/**/*.sh text eol=lf mode=755
 scripts/deploy/*.js text eol=lf mode=755
+scraper/scripts/*.sh text eol=lf mode=755
