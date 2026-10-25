@@ -159,22 +159,23 @@ export function generatePersonaCopy(persona, aiKey, provider, t, opts = {}) {
 
   const prompt = `${intro}\n\nBerikut teks dasar yang perlu ditulis ulang:\n${copyBlock}\n\n${task}\n\n${example}`
 
-  return callAI(prompt, aiKey, provider, opts)
-    .then((raw) => {
-      const json = stripJsonMarkdown(raw)
-      let parsed
-      try {
-        parsed = JSON.parse(json)
-      } catch {
-        return null
-      }
-      const result = {}
-      for (const key of copyEntries) {
-        result[key] = typeof parsed[key] === 'string' ? parsed[key] : translate(`persona.${key}`)
-      }
-      return result
-    })
-    .catch(() => null)
+  return callAI(prompt, aiKey, provider, opts).then((raw) => {
+    const json = stripJsonMarkdown(raw)
+    let parsed
+    try {
+      parsed = JSON.parse(json)
+    } catch {
+      return null
+    }
+    const result = {}
+    for (const key of copyEntries) {
+      result[key] = typeof parsed[key] === 'string' ? parsed[key] : translate(`persona.${key}`)
+    }
+    return result
+  })
+  // No catch: failures (missing custom config, network, non-OK responses)
+  // must reach the caller so Settings can show them instead of silently
+  // keeping the fallback copy.
 }
 
 function stripJsonMarkdown(text) {
@@ -247,16 +248,15 @@ async function callAI(prompt, aiKey, provider, opts = {}) {
     case 'openai':
       return callOpenAICompatible(prompt, aiKey, 'https://api.openai.com/v1', 'gpt-4o-mini')
     case 'ollama':
-      return callOpenAICompatible(
-        prompt,
-        aiKey,
-        OLLAMA_BASE_URL,
-        opts.model || OLLAMA_DEFAULT_MODEL
-      )
+      // Fixed preset, matching the backend: a stale custom model must not
+      // silently override the Ollama default.
+      return callOpenAICompatible(prompt, aiKey, OLLAMA_BASE_URL, OLLAMA_DEFAULT_MODEL)
     case 'custom': {
       const baseUrl = (opts.baseUrl || '').trim()
       const model = (opts.model || '').trim()
-      if (!baseUrl || !model) return ''
+      if (!baseUrl || !model) {
+        throw new Error('Custom provider requires a base URL and model in Settings')
+      }
       return callOpenAICompatible(prompt, aiKey, baseUrl, model)
     }
     case 'opencode':

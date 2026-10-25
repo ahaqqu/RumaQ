@@ -92,6 +92,19 @@ describe('completeText', () => {
     expect(body.model).toBe('qwen3-vl:235b-instruct')
   })
 
+  it('keeps the Ollama preset model even when a model option is passed', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Hello from Ollama' } }],
+      }),
+    })
+    globalThis.fetch = fetchMock
+    await completeText('ollama', 'sk-test', 'system', 'user', { model: 'llama3.3:70b' })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.model).toBe('qwen3-vl:235b-instruct')
+  })
+
   it('calls a custom OpenAI-compatible provider with base URL and model', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

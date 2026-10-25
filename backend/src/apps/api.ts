@@ -636,8 +636,22 @@ apiApp.patch(
     }
     if (fields.ai_base_url !== undefined) {
       const trimmed = fields.ai_base_url.trim()
-      updates.push('ai_base_url = ?')
-      params.push(trimmed === '' ? null : trimmed)
+      if (trimmed === '') {
+        updates.push('ai_base_url = ?')
+        params.push(null)
+      } else {
+        let parsed: URL
+        try {
+          parsed = new URL(trimmed)
+        } catch {
+          return c.json({ error: 'Invalid AI base URL' }, 400)
+        }
+        if (parsed.protocol !== 'https:') {
+          return c.json({ error: 'AI base URL must use HTTPS' }, 400)
+        }
+        updates.push('ai_base_url = ?')
+        params.push(trimmed.replace(/\/+$/, ''))
+      }
     }
     if (fields.ai_model !== undefined) {
       const trimmed = fields.ai_model.trim()

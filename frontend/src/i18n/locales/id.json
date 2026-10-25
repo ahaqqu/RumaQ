@@ -147,7 +147,7 @@
     "customBaseUrl": "Base URL",
     "customBaseUrlDesc": "Endpoint kompatibel OpenAI, contoh: https://ollama.com/v1",
     "customModel": "Model",
-    "customModelDesc": "Nama model yang dipanggil, contoh: qwen3-vl:235b-instruct",
+    "customModelDesc": "Nama model yang dipanggil, contoh: qwen3-vl:235b-instruct. Pemindaian struk memerlukan model yang mendukung gambar (vision).",
     "apiKey": "Kunci API",
     "apiKeyDesc": "Disimpan di perangkatmu, hanya dipakai untuk memanggil AI pilihanmu.",
     "apiKeyPlaceholder": "sk-… / tempel kunci di sini",

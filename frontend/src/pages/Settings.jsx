@@ -222,10 +222,13 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
   }
 
   const save = async () => {
-    const payload = { ai_key: draft.trim(), ai_provider: provider }
-    if (provider === 'custom') {
-      payload.ai_base_url = customBaseUrl.trim()
-      payload.ai_model = customModel.trim()
+    // Always persist both fields so switching away from Custom resets them —
+    // stale values would otherwise leak into later provider calls.
+    const payload = {
+      ai_key: draft.trim(),
+      ai_provider: provider,
+      ai_base_url: customBaseUrl.trim(),
+      ai_model: customModel.trim(),
     }
     setAiKey(draft.trim() || null)
     setTestOk(null)

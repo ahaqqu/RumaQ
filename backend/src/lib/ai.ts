@@ -292,10 +292,12 @@ async function callProvider(
     case 'opencode':
       return callOpenCode(apiKey, messages)
     case 'ollama':
+      // Fixed preset: a stale ai_model saved for the custom provider must not
+      // silently swap in a text-only model and break vision calls.
       return callOpenAICompatible(
         'Ollama Cloud',
         OLLAMA_BASE_URL,
-        opts?.model || OLLAMA_DEFAULT_MODEL,
+        OLLAMA_DEFAULT_MODEL,
         apiKey,
         messages
       )
