@@ -1,8 +1,8 @@
 name: CI
 
+# Pull-request gate. Pushes to main are checked and deployed by
+# .github/workflows/deploy.yml instead, so PRs never show a deploy job.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
