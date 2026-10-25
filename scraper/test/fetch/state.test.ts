@@ -169,14 +169,14 @@ describe('probeImageDimensions', () => {
 })
 
 describe('imageMimeType', () => {
-  it('trusts an image/* content-type header over everything else', () => {
+  it('magic bytes win over a lying header for the sniffable pair', () => {
     expect(
       imageMimeType({
         contentTypeHeader: 'image/webp; charset=binary',
         bytes: fakePng(10, 10),
         url: 'https://example.com/a.jpg',
       })
-    ).toBe('image/webp')
+    ).toBe('image/png')
   })
 
   it('sniffs PNG magic when the header is generic octet-stream', () => {
@@ -192,10 +192,35 @@ describe('imageMimeType', () => {
     expect(imageMimeType({ contentTypeHeader: null, bytes: fakeJpeg(10, 10) })).toBe('image/jpeg')
   })
 
+  it('trusts a supported header type when the magic bytes say nothing', () => {
+    expect(
+      imageMimeType({
+        contentTypeHeader: 'image/webp; charset=binary',
+        bytes: new Uint8Array(8),
+      })
+    ).toBe('image/webp')
+  })
+
+  it('clamps header subtypes Gemini rejects (gif/svg/avif) to the jpeg fallback', () => {
+    expect(imageMimeType({ contentTypeHeader: 'image/gif', bytes: new Uint8Array(8) })).toBe(
+      'image/jpeg'
+    )
+    expect(imageMimeType({ contentTypeHeader: 'image/svg+xml', bytes: new Uint8Array(8) })).toBe(
+      'image/jpeg'
+    )
+  })
+
   it('falls back to the URL extension when header and magic bytes say nothing', () => {
     expect(
       imageMimeType({ bytes: new Uint8Array(8), url: 'https://example.com/pages/001.PNG?w=800' })
     ).toBe('image/png')
+    expect(
+      imageMimeType({ bytes: new Uint8Array(8), url: 'https://example.com/pages/001.heic' })
+    ).toBe('image/heic')
+    // gif is not a type Gemini accepts — the extension guess is clamped too
+    expect(
+      imageMimeType({ bytes: new Uint8Array(8), url: 'https://example.com/pages/001.gif' })
+    ).toBe('image/jpeg')
   })
 
   it('defaults to jpeg when nothing identifies the bytes', () => {

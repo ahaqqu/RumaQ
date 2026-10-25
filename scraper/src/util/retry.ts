@@ -53,6 +53,16 @@ export function classifyQuotaError(cause: unknown): QuotaExhausted | null {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
+/**
+ * A 4xx that can never succeed on retry. 429 (backoff signal), 408
+ * (request timeout) and 425 (too early) are semantically transient client
+ * statuses and stay retryable; everything else in 400–499 fails fast so a
+ * dead route never burns the ladder's attempts and backoff waits.
+ */
+export function isPermanentClientStatus(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 429 && status !== 408 && status !== 425
+}
+
 export interface RetryOptions {
   /** Extra attempts after the first (default 3). */
   retries?: number

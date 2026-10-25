@@ -191,10 +191,12 @@ function processStore(
 
       // Outbox BEFORE novelty state, per image: if the run dies (or the
       // append fails) between the two, the worst case is one duplicate OCR
-      // of this image on the next run — the same-observedDate upsert dedupes
-      // the double outbox line — never paid-for items stranded outside every
-      // run-*.jsonl. The line carries this run's scrapedAt so a later replay
-      // keeps the original observed date.
+      // of this image on the next run — never paid-for items stranded
+      // outside every run-*.jsonl. A same-UTC-day recovery dedupes through
+      // the (product_id, source_id, observed_date) upsert; a cross-day
+      // recovery costs one extra re-observation row — bounded, and
+      // preferable to stranding. The line carries this run's scrapedAt so a
+      // later replay keeps the original observed date.
       yield* ioTry('append', runItemsFile, () =>
         appendFile(
           runItemsFile,

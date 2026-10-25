@@ -9,7 +9,7 @@ import path from 'node:path'
 
 import { Data, Effect } from 'effect'
 
-import { withRetries } from '../util/retry.js'
+import { isPermanentClientStatus, withRetries } from '../util/retry.js'
 import type { IngestPayload } from './payload.js'
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
@@ -24,14 +24,18 @@ export class PublishRejected extends Data.TaggedError('PublishRejected')<{
   message: string
 }> {}
 
-/** Retryable publish failure (server error, transport, bad response body). */
-export class PublishError extends Data.TaggedError('PublishError')<{
-  /** HTTP status when the failure came from a non-ok ingest response. */
-  status?: number
+/** Non-ok ingest response; `status` decides fatal 4xx vs retryable 5xx. */
+export class PublishHttpStatus extends Data.TaggedError('PublishHttpStatus')<{
+  status: number
   message: string
 }> {}
 
-export type PublishFailure = PublishConfigError | PublishRejected | PublishError
+/** Retryable publish failure (transport, bad response body). */
+export class PublishError extends Data.TaggedError('PublishError')<{
+  message: string
+}> {}
+
+export type PublishFailure = PublishConfigError | PublishRejected | PublishHttpStatus | PublishError
 
 export interface PublishOptions {
   ingestUrl?: string
@@ -114,7 +118,10 @@ function postPayload(
           Effect.flatMap(
             (
               response
-            ): Effect.Effect<PublishResult['response'], PublishRejected | PublishError> => {
+            ): Effect.Effect<
+              PublishResult['response'],
+              PublishRejected | PublishHttpStatus | PublishError
+            > => {
               if (response.status === 401 || response.status === 403) {
                 return Effect.fail(
                   new PublishRejected({
@@ -125,7 +132,7 @@ function postPayload(
               }
               if (!response.ok) {
                 return Effect.fail(
-                  new PublishError({
+                  new PublishHttpStatus({
                     status: response.status,
                     message: `Ingest endpoint returned HTTP ${response.status}`,
                   })
@@ -147,14 +154,10 @@ function postPayload(
           context: 'publish',
           // 401/403 are PublishRejected; every other permanent 4xx (400 bad
           // payload, 404 wrong URL, 410, …) can never succeed on retry and
-          // fails fast too. 429 stays retryable — it is a backoff signal.
+          // fails fast too. 429 (backoff signal), 408 and 425 stay retryable.
           isFatal: (error) =>
             error instanceof PublishRejected ||
-            (error instanceof PublishError &&
-              error.status !== undefined &&
-              error.status >= 400 &&
-              error.status < 500 &&
-              error.status !== 429),
+            (error instanceof PublishHttpStatus && isPermanentClientStatus(error.status)),
         }
       )
     )

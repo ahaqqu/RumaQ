@@ -94,6 +94,20 @@ describe('createFetcher', () => {
     expect(sleep).toHaveBeenCalledTimes(1)
   })
 
+  it('still retries 408 — a request timeout is transient, not permanent', async () => {
+    let calls = 0
+    const fetchMock = vi.fn(async () => {
+      calls++
+      return calls < 2 ? new Response('timeout', { status: 408 }) : htmlResponse('<html>ok</html>')
+    })
+    const sleep = vi.fn(async () => {})
+    const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep, retries: 3, backoffMs: 1 })
+    const html = await Effect.runPromise(fetcher.fetchHtml('https://example.com/'))
+    expect(html).toBe('<html>ok</html>')
+    expect(fetchMock).toHaveBeenCalledTimes(2) // one transient 408 must not kill the store's run
+    expect(sleep).toHaveBeenCalledTimes(1)
+  })
+
   it('times out stalled peers as a retryable transport error', async () => {
     const fetchMock = vi.fn(
       (_url: string, init?: RequestInit) =>

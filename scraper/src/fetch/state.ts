@@ -152,23 +152,33 @@ const EXTENSION_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
-  '.gif': 'image/gif',
+  '.heic': 'image/heic',
+  '.heif': 'image/heif',
 }
+
+/** Inline-image types Gemini's vision API accepts — anything else is clamped. */
+const GEMINI_IMAGE_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+])
 
 /**
  * Best-effort content type of downloaded brochure bytes — Gemini's
  * inlineData needs the true type, and a wrong declaration risks an API 400
- * or degraded extraction. Trust the server's image/* declaration first,
- * then magic bytes, then the URL extension; fall back to jpeg (the only
- * format stores have served so far). Dependency-free by design.
+ * or degraded extraction. Magic bytes win for the sniffable pair (a lying
+ * header must not override the actual bytes), then the server's image/*
+ * declaration, then the URL extension; every guess is clamped to the types
+ * Gemini actually accepts, falling back to jpeg (the only format stores
+ * have served so far). Dependency-free by design.
  */
 export function imageMimeType(input: {
   contentTypeHeader?: string | null
   bytes: Uint8Array
   url?: string
 }): string {
-  const header = input.contentTypeHeader?.split(';')[0]?.trim().toLowerCase()
-  if (header?.startsWith('image/')) return header
   if (
     input.bytes.length > 4 &&
     input.bytes[0] === 0x89 &&
@@ -181,9 +191,12 @@ export function imageMimeType(input: {
   if (input.bytes.length > 2 && input.bytes[0] === 0xff && input.bytes[1] === 0xd8) {
     return 'image/jpeg'
   }
+  const header = input.contentTypeHeader?.split(';')[0]?.trim().toLowerCase()
+  if (header && GEMINI_IMAGE_TYPES.has(header)) return header
   if (input.url) {
     try {
-      return EXTENSION_MIME[path.extname(new URL(input.url).pathname).toLowerCase()] ?? 'image/jpeg'
+      const byExtension = EXTENSION_MIME[path.extname(new URL(input.url).pathname).toLowerCase()]
+      if (byExtension) return byExtension
     } catch {
       // Malformed URL — fall through to the default.
     }
@@ -207,9 +220,9 @@ export interface ClassifiedImage {
   brochureUrl: string
   downloadedAt: string
   /**
-   * Content type derived at download time (server declaration, magic bytes,
-   * then URL extension) — threaded to Gemini so inlineData never misdeclares
-   * a PNG page as jpeg.
+   * Content type derived at download time (magic bytes, then server
+   * declaration, then URL extension — clamped to Gemini's supported types)
+   * — threaded to Gemini so inlineData never misdeclares a PNG page as jpeg.
    */
   contentType: string
   /**

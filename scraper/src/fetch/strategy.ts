@@ -10,7 +10,7 @@
 import { Data, Effect } from 'effect'
 
 import type { StoreConfig } from '../config.js'
-import { withRetries } from '../util/retry.js'
+import { isPermanentClientStatus, withRetries } from '../util/retry.js'
 
 export const DEFAULT_HEADERS: Record<string, string> = {
   'User-Agent':
@@ -166,14 +166,11 @@ export function createFetcher(
           sleep,
           log,
           context: `fetch ${url}`,
-          // Permanent client errors never succeed on retry: every 4xx except
-          // 429 (a backoff signal) fails fast, without burning the ladder's
-          // attempts and backoff waits. Transport errors stay retryable.
+          // Permanent client errors never succeed on retry; transient ones
+          // (429 backoff signal, 408 request timeout, 425 too early) stay
+          // retryable. Transport errors stay retryable.
           isFatal: (error) =>
-            error instanceof FetchHttpStatus &&
-            error.status >= 400 &&
-            error.status < 500 &&
-            error.status !== 429,
+            error instanceof FetchHttpStatus && isPermanentClientStatus(error.status),
         }),
       Effect.tap((response) => Effect.sync(() => storeCookies(jar, url, response)))
     )

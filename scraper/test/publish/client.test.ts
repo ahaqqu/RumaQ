@@ -11,7 +11,7 @@ import { Effect } from 'effect'
 
 import { exitError } from '../helpers.js'
 
-import { publishPayload, PublishRejected } from '../../src/publish/client.js'
+import { publishPayload, PublishHttpStatus, PublishRejected } from '../../src/publish/client.js'
 import type { IngestPayload } from '../../src/publish/payload.js'
 
 const payload: IngestPayload = {
@@ -135,20 +135,22 @@ describe('publishPayload — POST', () => {
   it('fails fast on other permanent 4xx (404) without retrying', async () => {
     const fetchMock = vi.fn(async () => new Response('no such route', { status: 404 }))
     const sleep = vi.fn(async () => {})
-    await expect(
-      Effect.runPromise(
-        publishPayload(payload, {
-          stateDir: await tempStateDir(),
-          dryRun: false,
-          ingestUrl: 'https://api.example.com/wrong-ingest-route',
-          ingestSecret: 's3cret',
-          fetch: fetchMock,
-          sleep,
-          retries: 3,
-          backoffMs: 1,
-        })
-      )
-    ).rejects.toThrow('HTTP 404')
+    const failure = await Effect.runPromiseExit(
+      publishPayload(payload, {
+        stateDir: await tempStateDir(),
+        dryRun: false,
+        ingestUrl: 'https://api.example.com/wrong-ingest-route',
+        ingestSecret: 's3cret',
+        fetch: fetchMock,
+        sleep,
+        retries: 3,
+        backoffMs: 1,
+      })
+    )
+    expect(failure._tag).toBe('Failure')
+    const error = exitError(failure)
+    expect(error).toBeInstanceOf(PublishHttpStatus) // HTTP status failures are their own type
+    expect(error?.message).toContain('HTTP 404')
     expect(fetchMock).toHaveBeenCalledTimes(1) // a dead route never succeeds on retry
     expect(sleep).not.toHaveBeenCalled()
   })
@@ -184,6 +186,40 @@ describe('publishPayload — POST', () => {
     )
     expect(result.mode).toBe('published')
     expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(sleep).toHaveBeenCalledTimes(1)
+  })
+
+  it('still retries 408 — a request timeout is transient, not permanent', async () => {
+    let calls = 0
+    const fetchMock = vi.fn(async () => {
+      calls++
+      return calls < 2
+        ? new Response('request timeout', { status: 408 })
+        : new Response(
+            JSON.stringify({
+              accepted: 1,
+              productsCreated: 1,
+              observationsUpserted: 1,
+              skipped: 0,
+            }),
+            { status: 200 }
+          )
+    })
+    const sleep = vi.fn(async () => {})
+    const result = await Effect.runPromise(
+      publishPayload(payload, {
+        stateDir: await tempStateDir(),
+        dryRun: false,
+        ingestUrl: 'https://api.example.com/ingest',
+        ingestSecret: 's3cret',
+        fetch: fetchMock,
+        sleep,
+        retries: 3,
+        backoffMs: 1,
+      })
+    )
+    expect(result.mode).toBe('published')
+    expect(fetchMock).toHaveBeenCalledTimes(2) // one transient 408 must not drop the publish
     expect(sleep).toHaveBeenCalledTimes(1)
   })
 
