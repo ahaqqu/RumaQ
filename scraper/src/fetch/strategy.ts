@@ -1,16 +1,22 @@
 // Fetch strategy ladder (docs/plan/haqita-integration.md §2):
 //   Tier 1 — plain fetch with realistic Chrome headers + cookie jar (this file)
-//   Tier 2 — headless Chromium via Playwright (PR3, for Lotte/Incapsula)
-//   Tier 3 — per-store proxy via env (plumbed here through the `proxy` option)
+//   Tier 2 — headless Chromium via Playwright (browser.ts, for Lotte/Incapsula)
+//   Tier 3 — per-store proxy via env (plumbed through the `proxy` option)
+//
+// `createStoreFetcher` at the bottom of this file is the ladder's dispatch:
+// plain stores get the Tier-1 fetcher, browser stores get Tier-2 HTML with
+// Tier-1 image downloads (the brochure CDN is not challenge-protected).
 //
 // Port of haqita base_scraper.py DEFAULT_HEADERS + _request_with_retries.
 // All failures are typed tagged errors; transport and HTTP-status failures
 // are retried by the shared engine, content-type and tier errors are fatal.
 
-import { Data, Effect } from 'effect'
+import { Effect } from 'effect'
 
 import type { StoreConfig } from '../config.js'
 import { isPermanentClientStatus, withRetries } from '../util/retry.js'
+import { createBrowserFetcher, type BrowserLauncher } from './browser.js'
+import { type FetchError, FetchHttpStatus, FetchTransport, NonImageContent } from './errors.js'
 
 export const DEFAULT_HEADERS: Record<string, string> = {
   'User-Agent':
@@ -18,32 +24,6 @@ export const DEFAULT_HEADERS: Record<string, string> = {
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
 }
-
-export class BrowserTierRequired extends Data.TaggedError('BrowserTierRequired')<{
-  url: string
-  message: string
-}> {}
-
-export class FetchTransport extends Data.TaggedError('FetchTransport')<{
-  url: string
-  cause: unknown
-  message: string
-}> {}
-
-export class FetchHttpStatus extends Data.TaggedError('FetchHttpStatus')<{
-  url: string
-  status: number
-  statusText: string
-  message: string
-}> {}
-
-export class NonImageContent extends Data.TaggedError('NonImageContent')<{
-  url: string
-  contentType: string
-  message: string
-}> {}
-
-export type FetchError = BrowserTierRequired | FetchTransport | FetchHttpStatus | NonImageContent
 
 export type FetchLike = (url: string, init?: RequestInit & { proxy?: string }) => Promise<Response>
 
@@ -56,6 +36,8 @@ export interface DownloadedImage {
 export interface StoreFetcher {
   fetchHtml(url: string): Effect.Effect<string, FetchError>
   fetchBytes(url: string): Effect.Effect<DownloadedImage, FetchError>
+  /** Releases tier resources (closes the browser session); never throws. */
+  close(): Promise<void>
 }
 
 interface CookieJar {
@@ -128,7 +110,6 @@ export function createFetcher(
   const log = options.log ?? (() => {})
   const proxyUrl = options.proxyUrl ?? (store.proxyEnv ? process.env[store.proxyEnv] : undefined)
   const jar: CookieJar = { jars: new Map() }
-
   const request = (
     url: string,
     accept: string
@@ -178,17 +159,6 @@ export function createFetcher(
 
   return {
     fetchHtml(url: string): Effect.Effect<string, FetchError> {
-      // A store pinned to the browser tier never wastes plain-fetch attempts.
-      if (store.strategy === 'browser') {
-        return Effect.fail(
-          new BrowserTierRequired({
-            url,
-            message:
-              `Plain fetch is not enough for ${url} — Tier-2 (headless browser) lands in PR3 ` +
-              '(run scripts/check-lotte.ts from the VPS to confirm the tier decision).',
-          })
-        )
-      }
       return request(url, DEFAULT_HEADERS.Accept).pipe(
         Effect.flatMap((response) =>
           Effect.tryPromise({
@@ -238,5 +208,47 @@ export function createFetcher(
         )
       )
     },
+    async close(): Promise<void> {
+      // The plain tier holds no resources.
+    },
   }
+}
+
+export interface CreateStoreFetcherOptions extends CreateFetcherOptions {
+  /** Tier-2 launcher; defaults to real Playwright (lazy import inside). */
+  launcher?: BrowserLauncher
+}
+
+/**
+ * The fetch ladder's dispatch (§2): a plain store gets Tier 1 for everything;
+ * a browser store gets Tier-2 HTML (the challenge-protected listing page)
+ * with Tier-1 image downloads — the brochure CDN is not protected. Callers
+ * MUST `close()` the returned fetcher when the store's run ends so the
+ * browser session never outlives the pipeline.
+ */
+export function createStoreFetcher(
+  store: StoreConfig,
+  options: CreateStoreFetcherOptions = {}
+): StoreFetcher {
+  if (store.strategy === 'browser') {
+    const browser = createBrowserFetcher(store, {
+      retries: options.retries,
+      backoffMs: options.backoffMs,
+      timeoutMs: options.timeoutMs,
+      launcher: options.launcher,
+      sleep: options.sleep,
+      log: options.log,
+    })
+    // Image bytes ride the plain tier with the store's own cookie jar.
+    const plain = createFetcher(store, options)
+    return {
+      fetchHtml: (url) => browser.fetchHtml(url),
+      fetchBytes: (url) => plain.fetchBytes(url),
+      close: async () => {
+        await browser.close()
+        await plain.close()
+      },
+    }
+  }
+  return createFetcher(store, options)
 }

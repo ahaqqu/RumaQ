@@ -1,0 +1,21 @@
+# provision/vps/sudoers/rumaq-scraper-deploy — the deploy identity's entire
+# root grant for the RumaQ scraper, installed by provision/vps/apply.sh at
+# /etc/sudoers.d/rumaq-scraper-deploy (root:root 0440, only after the
+# candidate passes `visudo -cf`).
+#
+# The deploy identity is the box-wide shared `kajianq-deploy` account
+# (homepage MACHINE.md); its powers are scoped per app by fragments like
+# this one. The RumaQ VPS deploy needs exactly ONE privileged operation:
+# start the post-deploy self-check unit, which runs as the service user and
+# reads the root-only env file through systemd — the deploy itself never
+# reads /etc/rumaq-scraper/env.
+#
+# Code deploys need no grant at all: the deploy identity owns
+# /srv/rumaq-scraper (code + browser cache), and the nightly job is a
+# timer-driven oneshot that picks up new code at its next start — there is
+# nothing to restart. Exact command, absolute path, no wildcards: wildcard
+# arguments in sudoers are the classic privilege-escalation footgun.
+
+Defaults:kajianq-deploy !requiretty
+
+kajianq-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start rumaq-scraper-selfcheck.service

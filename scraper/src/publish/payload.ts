@@ -16,6 +16,8 @@ import { safeParse } from 'valibot'
 import { ingestPayloadSchema, type IngestItem, type IngestPayload } from '@rumaq/contract'
 import type { StoreConfig } from '../config.js'
 import type { ValidatedProduct } from '../ocr/parse.js'
+import { parsePeriod, parsePromo } from '../match/promo.js'
+import type { MatchOutcome } from '../match/matcher.js'
 
 /** Stable, URL-safe product key — port of haqita make_product_key. */
 export function makeProductKey(name: string, brand: string | null, unit: string | null): string {
@@ -28,70 +30,7 @@ export function makeProductKey(name: string, brand: string | null, unit: string 
   return `${slug(name)}--${slug(brand)}--${slug(unit)}`
 }
 
-const MONTHS: Record<string, string> = {
-  jan: '01',
-  feb: '02',
-  mar: '03',
-  apr: '04',
-  mei: '05',
-  jun: '06',
-  jul: '07',
-  agu: '08',
-  sep: '09',
-  okt: '10',
-  nov: '11',
-  des: '12',
-  may: '05',
-  aug: '08',
-  oct: '10',
-  dec: '12',
-}
-
-function toIsoDate(day: number, monthStr: string, year: string): string | null {
-  const month = MONTHS[monthStr.toLowerCase().slice(0, 3)]
-  if (!month) return null
-  // OCR digits can be impossible ("45 Mei", "30 Feb"): round-trip through
-  // Date UTC so only dates that actually exist are emitted — the schema's
-  // regex checks the YYYY-MM-DD shape only.
-  const date = new Date(Date.UTC(Number(year), Number(month) - 1, day))
-  const exists =
-    date.getUTCFullYear() === Number(year) &&
-    date.getUTCMonth() === Number(month) - 1 &&
-    date.getUTCDate() === day
-  return exists ? `${year}-${month}-${String(day).padStart(2, '0')}` : null
-}
-
-/**
- * Parse an OCR'd period string into (validFrom, validUntil) ISO dates.
- * Port of haqita promo_parser.parse_period — full promo typing lands with
- * the matcher port in PR3.
- */
-export function parsePeriod(period: string | null | undefined): [string | null, string | null] {
-  if (!period) return [null, null]
-
-  // Range: "7 - 20 Mei 2026", "14-17 Mei 2026", "Berlaku 1-15 Mei 2026"
-  const range = /(\d{1,2})\s*[-–—]\s*(\d{1,2})\s+(\w+)\s+(\d{4})/.exec(period)
-  if (range) {
-    return [
-      toIsoDate(Number(range[1]), range[3]!, range[4]!),
-      toIsoDate(Number(range[2]), range[3]!, range[4]!),
-    ]
-  }
-
-  // Single end date: "s/d 20 Mei 2026", "sd. 20 Mei 2026", "sampai/until ..."
-  const until = /(?:s[/.]?d|sampai|until)\s+(\d{1,2})\s+(\w+)\s+(\d{4})/i.exec(period)
-  if (until) {
-    return [null, toIsoDate(Number(until[1]), until[2]!, until[3]!)]
-  }
-
-  // Bare single date: "20 Mei 2026"
-  const single = /(\d{1,2})\s+(\w+)\s+(\d{4})/.exec(period)
-  if (single) {
-    return [null, toIsoDate(Number(single[1]), single[2]!, single[3]!)]
-  }
-
-  return [null, null]
-}
+export { parsePeriod }
 
 export interface ImageProducts {
   storeSlug: string
@@ -110,14 +49,18 @@ export interface ImageProducts {
 }
 
 /**
- * Build the ingest payload. Until the canonical-catalog matcher lands
- * (PR3), every item is published with matchMethod 'solo' and confidence 1.0
- * — the auto-publish quality gate (§1): RumaQ filters by threshold.
+ * Build the ingest payload. Promo math (effectiveUnitPrice/promoType) is
+ * the ported promo parser; identity fields come from the matcher's outcome
+ * for each product — the canonical catalog key when matched, the item's own
+ * key when it founded an entry (matchMethod 'solo': no cross-store identity
+ * claim is being made, so its confidence is trivially 1.0).
  */
 export function buildPayload(input: {
   stores: StoreConfig[]
   images: ImageProducts[]
   scrapedAt: string
+  /** Matcher outcome per product object (identity-keyed). */
+  outcomes?: Map<ValidatedProduct, MatchOutcome>
 }): IngestPayload {
   const items: IngestItem[] = []
   for (const image of input.images) {
@@ -127,22 +70,25 @@ export function buildPayload(input: {
     const observedDate = (image.scrapedAt ?? input.scrapedAt).slice(0, 10)
     for (const product of image.products) {
       const [validFrom, validUntil] = parsePeriod(product.period)
+      const promo = parsePromo(product.promo, product.price)
+      const outcome = input.outcomes?.get(product)
       items.push({
-        productKey: makeProductKey(product.name, product.brand, product.unit),
+        productKey:
+          outcome?.productKey ?? makeProductKey(product.name, product.brand, product.unit),
         name: product.name,
         brand: product.brand ?? null,
         unit: product.unit ?? null,
         category: null,
         storeSlug: image.storeSlug,
         price: product.price,
-        effectiveUnitPrice: null,
-        promoType: null,
+        effectiveUnitPrice: promo.promoType === 'single' ? null : promo.effectiveUnitPrice,
+        promoType: promo.promoType === 'single' ? null : promo.promoType,
         promoLabel: product.promo ? product.promo.join('; ') : null,
         validFrom,
         validUntil,
         observedDate,
-        matchMethod: 'solo',
-        matchConfidence: 1.0,
+        matchMethod: outcome?.matchMethod ?? 'solo',
+        matchConfidence: outcome?.matchConfidence ?? 1.0,
         brochureUrl: image.brochureUrl,
       })
     }

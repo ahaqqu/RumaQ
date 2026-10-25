@@ -1,9 +1,13 @@
 # Haqita → RumaQ Integration — Architecture & Implementation Plan
 
-> Status: **In progress.** Written 2026-10-24; updated 2026-10-25.
+> Status: **PR1 and PR2 merged; PR3 in flight.** Written 2026-10-24, updated 2026-10-25.
 > PR1 (contract & backend) merged as #252, PR2 (scraper scaffold + Superindo + Gemini OCR +
-> dry-run publish) merged as #255. PR3 (Lotte + matcher) in flight; PR4 (VPS ops + backfill +
-> go-live), PR5 (frontend explorer + plan grounding) and PR6 (haqita cleanup) remain.
+> dry-run publish) merged as #255. PR3 = the matcher port + Lotte Tier-2 below, **plus** the
+> VPS deploy scope from milestone 4 (provision/vps, `deploy.sh vps`, commit-based CI deploy) —
+> folded in by owner decision so the box deploy rides the same commit-based
+> flow that Cloudflare got in #258. Milestone 4 keeps backfill, the homepage
+> MACHINE.md/doctor PR, and first live ingest (go-live). PR5 (frontend explorer + plan
+> grounding) and PR6 (haqita cleanup) remain.
 > This document is self-contained: a fresh session should be able to implement from it
 > without re-exploring the haqita repo. Source references to `/home/ahaqqu/Projects/haqita`
 > are included below; that repo still exists locally at time of writing.
@@ -312,12 +316,15 @@ green before merge. Suggested sequence:
    superindo plugin, novelty state, Gemini OCR client + ported prompt, publish client
    (dry-run), tests + fixtures. **Includes first VPS reachability check for Lotte**
    (fail-fast gate for Tier 2 decision).
-3. **PR3 — Lotte + matcher**: Playwright Tier-2 strategy, lotte plugin, full matcher
+3. **PR3 — Lotte + matcher + VPS deploy**: Playwright Tier-2 strategy, lotte plugin, full matcher
    port (canonical catalog, Gemini embeddings, verifier). Port pytest fixtures
    verbatim; diff-test old Python outputs vs new TS on the same inputs before cutover.
-4. **PR4 — VPS ops + backfill + go-live**: provision/vps, timer, `deploy.sh vps`,
-   CI deploy path, backfill from haqita-database history, homepage MACHINE.md/doctor
-   PR, first successful live ingest into prod D1.
+   Plus (folded from milestone 4, 2026-10-25): `scraper/provision/vps/` (apply.sh, units,
+   sudoers, env example), `scripts/deploy.sh vps` → `scripts/deploy/vps.sh` (bundle → rsync →
+   chromium → self-check → doctor), commit-based `deploy-vps` CI job gated on `vars.VPS_HOST`,
+   `--self-check` CLI. Timer ships installed-but-disabled; enabling is go-live (milestone 4).
+4. **PR4 — Backfill + go-live**: backfill from haqita-database history, homepage MACHINE.md/doctor
+   PR, `apply.sh --enable-timer` + `RUMAQ_PUBLISH=true`, first successful live ingest into prod D1.
 5. **PR5 — Frontend**: `/prices` explorer (TanStack Router file route, page in
    `frontend/src/pages/`, api fns in `lib/api.js`, TanStack Query hooks in
    `lib/queries/`, i18n id/en); plan grounding logic + `price_observation_id` join;
