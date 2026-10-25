@@ -1,38 +1,51 @@
 name: Deploy production
 
-# Commit-based production deploy. Runs after CI succeeds on a push to main,
-# and on demand (Actions > Deploy production > Run) for manual redeploys.
-# Kept in its own workflow without a pull_request trigger so PR checks never
-# show a skipped deploy job.
+# Commit-based production deploy for pushes to main, plus manual redeploys
+# (Actions > Deploy production > Run). CI runs as the first job of this
+# workflow so the deploy is natively gated (`needs: ci`) and both checks show
+# on the commit. Pull requests never run this workflow — they use ci.yml —
+# so no deploy check appears there at all.
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
   workflow_dispatch:
 
 concurrency:
-  # Sequential, not cancel-in-progress: a cancelled deploy followed by a
-  # docs-only push would skip its own deploy and the earlier code change
-  # would never ship. Queued runs make the changed-files check safe.
+  # Sequential, not cancel-in-progress: a deploy cancelled mid-flight could
+  # leave partial secret updates. Queued runs are safe, and a run dropped
+  # beyond GitHub's one-pending limit self-heals because the docs-skip check
+  # diffs against the last successful deploy's commit.
   group: deploy-main
   cancel-in-progress: false
 
 jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - run: bun install --frozen-lockfile
+
+      - run: bash ./scripts/github/ci.sh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
+
   deploy:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+    needs: ci
     runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
     steps:
       - uses: actions/checkout@v7
+        # Full history so git can diff against the last deployed commit.
         with:
-          # For workflow_run events github.sha is not the triggering commit.
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          # Full history so git can diff against the last deployed commit.
           fetch-depth: 0
 
       - id: changes
