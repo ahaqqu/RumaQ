@@ -111,13 +111,14 @@ async function callOpenAICompatible(
   model: string,
   apiKey: string,
   messages: ChatMessage[],
-  thinkingLevel?: ThinkingLevel | null
+  thinkingLevel?: ThinkingLevel | null,
+  maxTokensField: 'max_tokens' | 'max_completion_tokens' = 'max_tokens'
 ): Promise<string> {
   const body: Record<string, unknown> = {
     model,
     messages,
-    max_tokens: 2000,
   }
+  body[maxTokensField] = 2000
   // Only accepted by reasoning-capable models; incompatible models surface a
   // provider 400 to the user via the usual 502 error path.
   if (thinkingLevel) {
@@ -155,7 +156,10 @@ async function callOpenAI(
     opts?.model?.trim() || 'gpt-4o-mini',
     apiKey,
     messages,
-    opts?.thinkingLevel
+    opts?.thinkingLevel,
+    // Reasoning models reject max_tokens; max_completion_tokens is accepted
+    // across OpenAI's chat models.
+    'max_completion_tokens'
   )
 }
 

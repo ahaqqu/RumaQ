@@ -1,4 +1,5 @@
 import { i18n } from '../i18n/index.js'
+import { AI_PROVIDER_DEFAULTS } from './aiProviders.js'
 
 export const PERSONA_KEY = 'rumaq:persona'
 
@@ -237,24 +238,28 @@ async function callAnthropic(prompt, aiKey, model = 'claude-3-haiku-20240307') {
 }
 
 const OLLAMA_BASE_URL = 'https://ollama.com/v1'
-const OLLAMA_DEFAULT_MODEL = 'qwen3-vl:235b-instruct'
 
 async function callAI(prompt, aiKey, provider, opts = {}) {
   const model = (opts.model || '').trim()
   switch (provider) {
     case 'gemini':
-      return callGemini(prompt, aiKey, model || 'gemini-1.5-flash')
+      return callGemini(prompt, aiKey, model || AI_PROVIDER_DEFAULTS.gemini)
     case 'anthropic':
-      return callAnthropic(prompt, aiKey, model)
+      return callAnthropic(prompt, aiKey, model || AI_PROVIDER_DEFAULTS.anthropic)
     case 'openai':
       return callOpenAICompatible(
         prompt,
         aiKey,
         'https://api.openai.com/v1',
-        model || 'gpt-4o-mini'
+        model || AI_PROVIDER_DEFAULTS.openai
       )
     case 'ollama':
-      return callOpenAICompatible(prompt, aiKey, OLLAMA_BASE_URL, model || OLLAMA_DEFAULT_MODEL)
+      return callOpenAICompatible(
+        prompt,
+        aiKey,
+        OLLAMA_BASE_URL,
+        model || AI_PROVIDER_DEFAULTS.ollama
+      )
     case 'custom': {
       const baseUrl = (opts.baseUrl || '').trim()
       if (!baseUrl || !model) {
@@ -268,7 +273,7 @@ async function callAI(prompt, aiKey, provider, opts = {}) {
         prompt,
         aiKey,
         'https://api.opencode.ai/v1',
-        model || 'opencode-mini'
+        model || AI_PROVIDER_DEFAULTS.opencode
       )
   }
 }

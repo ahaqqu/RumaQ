@@ -18,6 +18,7 @@ import {
   useUsage,
 } from '../lib/queries/index.js'
 import { testAiKey } from '../lib/api'
+import { AI_PROVIDER_DEFAULTS } from '../lib/aiProviders.js'
 import { Button } from '../components/Button.jsx'
 import { Panel } from '../components/Panel.jsx'
 import { useOnlineStatus } from '../lib/useOnlineStatus.js'
@@ -102,15 +103,6 @@ function InlineInput({
       </Button>
     </div>
   )
-}
-
-const MODEL_PLACEHOLDERS = {
-  opencode: 'opencode-vision',
-  openai: 'gpt-4o-mini',
-  anthropic: 'claude-3-haiku-20240307',
-  gemini: 'gemini-3.6-flash',
-  ollama: 'qwen3-vl:235b-instruct',
-  custom: 'llama3.3:70b',
 }
 
 export function Settings({ aiKey, setAiKey, motion, setMotion }) {
@@ -369,7 +361,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                   value={customModel}
                   onChange={setCustomModel}
                   onSubmit={save}
-                  placeholder={MODEL_PLACEHOLDERS[provider]}
+                  placeholder={AI_PROVIDER_DEFAULTS[provider]}
                   ariaLabel={t('settings.model')}
                 />
               </Setting>

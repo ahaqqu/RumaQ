@@ -118,6 +118,20 @@ describe('completeText', () => {
     expect(body.reasoning_effort).toBe('high')
   })
 
+  it('sends max_completion_tokens to OpenAI, which reasoning models require', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Hello' } }],
+      }),
+    })
+    globalThis.fetch = fetchMock
+    await completeText('openai', 'sk-test', 'system', 'user', { thinkingLevel: 'low' })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.max_completion_tokens).toBe(2000)
+    expect(body.max_tokens).toBeUndefined()
+  })
+
   it('omits reasoning_effort when no thinking level is set', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

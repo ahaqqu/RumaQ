@@ -20,7 +20,12 @@ import {
   extFromType,
 } from '../lib/receipts.js'
 import { extractReceiptItems } from '../lib/ai.js'
-import { resolveAiAccess, getOrCreateAiUsage, isAiUsageLimited } from '../lib/ai-access.js'
+import {
+  resolveAiAccess,
+  getOrCreateAiUsage,
+  isAiUsageLimited,
+  type UserAiSettings,
+} from '../lib/ai-access.js'
 import { sendChatMessage } from '../lib/chat.js'
 import {
   settingsPatchSchema,
@@ -877,21 +882,17 @@ apiApp.get(
     const today = new Date().toISOString().slice(0, 10)
 
     const settings = await c.env.DB.prepare(
-      'SELECT ai_provider, encrypted_ai_key FROM user_settings WHERE user_id = ?'
+      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key
+        FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
-      .first<{ ai_provider: string | null; encrypted_ai_key: string | null }>()
+      .first<UserAiSettings>()
 
-    // Key source is computed fresh so it always reflects the user's current
-    // configuration, not the state when today's counter row was created.
-    const hasOwnKey = Boolean(settings?.ai_provider && settings?.encrypted_ai_key)
-    const serverAvailable = Boolean(c.env.RUMAQ_SERVER_AI_PROVIDER && c.env.RUMAQ_SERVER_AI_KEY)
-    const keySource = hasOwnKey || !serverAvailable ? 'user' : 'server'
-    const provider = hasOwnKey
-      ? settings!.ai_provider
-      : keySource === 'server'
-        ? c.env.RUMAQ_SERVER_AI_PROVIDER!
-        : settings?.ai_provider || null
+    // Resolved fresh so it always reflects the user's current configuration,
+    // not the state when today's counter row was created.
+    const access = await resolveAiAccess(c.env, settings)
+    const keySource = access?.keySource ?? 'user'
+    const provider = access?.provider ?? settings?.ai_provider ?? null
 
     const existing = await c.env.DB.prepare(
       'SELECT id, used, daily_limit, provider FROM ai_usage WHERE user_id = ? AND date = ?'

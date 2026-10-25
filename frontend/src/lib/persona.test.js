@@ -288,6 +288,20 @@ describe('generatePersonaCopy', () => {
     expect(result).not.toBeNull()
   })
 
+  it('falls back to the default Anthropic model when none is selected', async () => {
+    let calledBody = null
+    globalThis.fetch = async (url, init) => {
+      calledBody = JSON.parse(init.body)
+      return {
+        ok: true,
+        json: async () => ({ content: [{ text: '{"homeLead":"AI"}' }] }),
+      }
+    }
+    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
+    await generatePersonaCopy(p, 'sk-valid', 'anthropic', idT)
+    expect(calledBody.model).toBe('claude-3-haiku-20240307')
+  })
+
   it('generates with opencode provider (default)', async () => {
     globalThis.fetch = async () => ({
       ok: true,

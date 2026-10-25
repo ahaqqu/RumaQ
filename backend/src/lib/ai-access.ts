@@ -21,6 +21,22 @@ export type AiAccess = {
   keySource: 'user' | 'server'
 }
 
+// Providers the server key can serve. 'custom' is excluded: it requires a
+// user-supplied base URL the server key path never has.
+const SERVER_PROVIDER_PRESETS: ReadonlySet<string> = new Set([
+  'opencode',
+  'openai',
+  'anthropic',
+  'gemini',
+  'ollama',
+])
+
+const THINKING_LEVELS: ReadonlySet<string> = new Set(['low', 'medium', 'high'])
+
+function normalizeThinkingLevel(value: string | null): ThinkingLevel | null {
+  return value && THINKING_LEVELS.has(value) ? (value as ThinkingLevel) : null
+}
+
 // Resolve which provider credentials serve this request. The user's own
 // stored key always wins; the server-provided key is a limited fallback for
 // users who have not configured one.
@@ -34,14 +50,16 @@ export async function resolveAiAccess(
       apiKey: await decryptAiKey(settings.encrypted_ai_key, env.WORKER_ENCRYPTION_KEY),
       baseUrl: settings.ai_base_url ?? null,
       model: settings.ai_model ?? null,
-      thinkingLevel: (settings.ai_thinking_level as ThinkingLevel | null) ?? null,
+      thinkingLevel: normalizeThinkingLevel(settings.ai_thinking_level),
       keySource: 'user',
     }
   }
 
   const serverProvider = env.RUMAQ_SERVER_AI_PROVIDER
   const serverKey = env.RUMAQ_SERVER_AI_KEY
-  if (serverProvider && serverKey) {
+  // An invalid provider (typo, or 'custom' with no base URL) must degrade to
+  // 'not configured' (402), not throw at call time (502) on every AI route.
+  if (serverProvider && serverKey && SERVER_PROVIDER_PRESETS.has(serverProvider)) {
     return {
       provider: serverProvider,
       apiKey: serverKey,
