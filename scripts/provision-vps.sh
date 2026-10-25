@@ -48,7 +48,7 @@ DEPLOY_USER="kajianq-deploy"
 REMOTE_STAGE="rumaq-provision" # under the admin user's home
 DEPLOY_ROOT="/srv/rumaq-scraper"
 BROWSERS_PATH="$DEPLOY_ROOT/browsers"
-INGEST_URL="https://api.rumaq.workers.dev/api/internal/ingest/prices"
+INGEST_URL="https://rumaq.ahaqqu.com/api/internal/ingest/prices"
 # Generated once during provisioning prep; the same value is the
 # GitHub secret HAQITA_INGEST_SECRET (the Worker side of the pair).
 INGEST_SECRET_FILE="$HOME/.config/rumaq/ingest-secret"

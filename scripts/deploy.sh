@@ -106,7 +106,7 @@ SANITIZED_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g')
 
 if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "HEAD" ]]; then
   WORKER_NAME="${WORKER_NAME:-api}"
-  WORKER_URL="${WORKER_URL:-https://api.rumaq.workers.dev}"
+  WORKER_URL="${WORKER_URL:-https://rumaq.ahaqqu.com}"
 else
   WORKER_NAME="${WORKER_NAME:-rumaq-api-${SANITIZED_BRANCH}}"
   WORKER_URL="${WORKER_URL:-https://${WORKER_NAME}.rumaq.workers.dev}"

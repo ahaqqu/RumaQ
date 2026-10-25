@@ -22,7 +22,7 @@ if [[ -f $ROOT_DIR/.env ]]; then
   set +a
 fi
 
-WORKER_URL="${WORKER_URL:-https://api.rumaq.workers.dev}"
+WORKER_URL="${WORKER_URL:-https://rumaq.ahaqqu.com}"
 PAGES_PROJECT="${PAGES_PROJECT_NAME:-rumaq}"
 
 if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
