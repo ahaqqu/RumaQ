@@ -107,7 +107,12 @@ log "shipping to ${SSH_TARGET}:${RUMAQ_VPS_ROOT}"
 run ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" "mkdir -p '${RUMAQ_VPS_ROOT}/dist' '${RUMAQ_VPS_ROOT}/node_modules'"
 # --delete with a filter that keeps browsers/ (revision-managed in stage 3,
 # not part of the code tree) and the state dir never lives here.
+# --chmod=go+rX: the stage is a mktemp dir (0700) and rsync -a would copy
+# that onto the tree root — after which the service user (rumaq-scraper)
+# can no longer traverse its own code and the self-check dies with
+# "Module not found". The service user only ever needs read/traverse.
 run rsync -az --delete \
+  --chmod=go+rX \
   --filter='protect /browsers/' \
   -e "ssh ${SSH_OPTS[*]}" \
   "$STAGE/" "${SSH_TARGET}:${RUMAQ_VPS_ROOT}/"
@@ -116,6 +121,11 @@ run rsync -az --delete \
 log "ensuring the chromium revision for the shipped playwright-core"
 run ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
   "PLAYWRIGHT_BROWSERS_PATH='${BROWSERS_PATH}' /usr/bin/bun '${RUMAQ_VPS_ROOT}/node_modules/playwright-core/cli.js' install chromium"
+# The browser install manages its own directories and may tighten them
+# (0700), which locks the service user out of its chromium. Heal the
+# modes explicitly — cheap, idempotent, and the nightly job depends on it.
+run ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
+  "chmod 755 '${RUMAQ_VPS_ROOT}' '${BROWSERS_PATH}' && chmod -R go+rX '${BROWSERS_PATH}'"
 
 # --- 4. self-check ---------------------------------------------------------------
 # The one privileged call in the whole deploy (scoped sudoers grant). For a
