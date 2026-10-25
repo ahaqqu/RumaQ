@@ -99,6 +99,11 @@ async function requestWithRetries(
   )
 }
 
+function isImageContentType(contentType: string): boolean {
+  const mimeType = contentType.split(';')[0]!.trim().toLowerCase()
+  return mimeType.startsWith('image/') || mimeType === 'application/octet-stream'
+}
+
 export interface CreateFetcherOptions {
   fetch?: FetchLike
   retries?: number
@@ -144,6 +149,14 @@ export function createFetcher(
     },
     async fetchBytes(url: string): Promise<Uint8Array> {
       const response = await request(url, '*/*')
+      // Scraped image hrefs are external input: a body served as HTML (or
+      // anything clearly not an image) must never reach the OCR bytes. An
+      // absent header or a generic octet-stream passes — CDNs often omit it.
+      // Thrown outside the retry ladder: wrong content never succeeds on retry.
+      const contentType = response.headers.get('content-type')
+      if (contentType && !isImageContentType(contentType)) {
+        throw new Error(`Non-image content-type "${contentType}" for ${url}`)
+      }
       return new Uint8Array(await response.arrayBuffer())
     },
   }

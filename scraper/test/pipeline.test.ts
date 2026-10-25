@@ -59,7 +59,7 @@ describe('runPipeline', () => {
         return new Response(koranHtml, { status: 200 })
       }
       // Any image URL → the same fake brochure page.
-      return new Response(jpeg, { status: 200 })
+      return new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
     }
 
     const ocrItems = [
@@ -179,7 +179,10 @@ describe('runPipeline', () => {
       if (!seenUrls.has(url)) {
         seenUrls.set(url, seenUrls.size === 0 ? jpegA : jpegB)
       }
-      return new Response(seenUrls.get(url)!, { status: 200 })
+      return new Response(seenUrls.get(url)!, {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      })
     }
 
     const items = [

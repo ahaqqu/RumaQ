@@ -7,7 +7,12 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vite-plus/test'
 
-import { createSuperindoPlugin, dedupeUrls, parseSwiperImages } from '../../src/stores/superindo.js'
+import {
+  createSuperindoPlugin,
+  dedupeUrls,
+  isAllowedImageUrl,
+  parseSwiperImages,
+} from '../../src/stores/superindo.js'
 import { loadConfig, storeBySlug } from '../../src/config.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -99,6 +104,35 @@ describe('parseSwiperImages — malformed input', () => {
       </div>
     `
     expect(parseSwiperImages(html, 'jabodetabek-palembang')).toEqual([])
+  })
+
+  it('drops fancybox hrefs pointing off the superindo domain', () => {
+    const html = `
+      <div class="swiper-slide">
+        <a class="fancybox" data-fancybox="jabodetabek-palembang" href="https://evil.com/img.jpg">
+          <img src="https://evil.com/img.jpg">
+        </a>
+        <a class="fancybox" data-fancybox="jabodetabek-palembang" href="https://superindo.co.id.evil.com/img.jpg">
+          <img src="https://superindo.co.id.evil.com/img.jpg">
+        </a>
+      </div>
+    `
+    expect(parseSwiperImages(html, 'jabodetabek-palembang')).toEqual([])
+  })
+})
+
+describe('isAllowedImageUrl', () => {
+  it('allows superindo.co.id and its subdomains', () => {
+    expect(isAllowedImageUrl('https://superindo.co.id/img.jpg')).toBe(true)
+    expect(isAllowedImageUrl('https://www.superindo.co.id/img.jpg')).toBe(true)
+    expect(isAllowedImageUrl('https://cdn.assets.superindo.co.id/img.jpg')).toBe(true)
+  })
+
+  it('rejects other hosts, lookalike suffixes, and non-URLs', () => {
+    expect(isAllowedImageUrl('https://evil.com/img.jpg')).toBe(false)
+    expect(isAllowedImageUrl('https://notsuperindo.co.id/img.jpg')).toBe(false)
+    expect(isAllowedImageUrl('https://superindo.co.id.evil.com/img.jpg')).toBe(false)
+    expect(isAllowedImageUrl('/relative/img.jpg')).toBe(false)
   })
 })
 

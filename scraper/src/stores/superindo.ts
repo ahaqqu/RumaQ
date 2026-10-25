@@ -13,6 +13,20 @@ const KORAN_URL = 'https://www.superindo.co.id/promosi/promo-koran/'
 const REGION_FILTER = 'jabodetabek-palembang'
 const KORAN_FILTER = 'promo-koran'
 
+// Scraped hrefs are external input: a modified gallery must not aim the VPS
+// job (and Gemini OCR) at arbitrary hosts, so only superindo.co.id or a
+// subdomain of it is fetched.
+const IMAGE_HOST_SUFFIX = 'superindo.co.id'
+
+export function isAllowedImageUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return host === IMAGE_HOST_SUFFIX || host.endsWith(`.${IMAGE_HOST_SUFFIX}`)
+  } catch {
+    return false
+  }
+}
+
 /** Parse swiper-slide fancybox links filtered by data-fancybox value. */
 export function parseSwiperImages(html: string, fancyboxFilter: string): string[] {
   const $ = cheerio.load(html)
@@ -22,7 +36,7 @@ export function parseSwiperImages(html: string, fancyboxFilter: string): string[
     if (link.length === 0) return
     if (link.attr('data-fancybox') !== fancyboxFilter) return
     const href = link.attr('href')
-    if (href) urls.push(href)
+    if (href && isAllowedImageUrl(href)) urls.push(href)
   })
   return urls
 }

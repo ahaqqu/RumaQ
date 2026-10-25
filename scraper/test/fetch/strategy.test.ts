@@ -95,10 +95,45 @@ describe('createFetcher', () => {
   })
 
   it('still allows image downloads for browser stores (images are usually unblocked CDNs)', async () => {
-    const fetchMock = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 }))
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(new Uint8Array([1, 2, 3]), {
+          status: 200,
+          headers: { 'content-type': 'image/jpeg' },
+        })
+    )
     const fetcher = createFetcher(browserStore, { fetch: fetchMock, sleep: async () => {} })
     const bytes = await fetcher.fetchBytes('https://cdn.example.com/img.jpg')
     expect(Array.from(bytes)).toEqual([1, 2, 3])
+  })
+
+  it('fetchBytes rejects a non-image content-type without retrying', async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response('<html>blocked</html>', {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        })
+    )
+    const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep: async () => {} })
+    await expect(fetcher.fetchBytes('https://example.com/img.jpg')).rejects.toThrow(
+      'Non-image content-type "text/html"'
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('fetchBytes accepts image, octet-stream, and missing content-types', async () => {
+    for (const contentType of ['image/jpeg', 'application/octet-stream', null]) {
+      const headers: Record<string, string> = {}
+      if (contentType) headers['content-type'] = contentType
+      const fetchMock = vi.fn(
+        async (_url: string, _init?: RequestInit) =>
+          new Response(new Uint8Array([9]), { status: 200, headers })
+      )
+      const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep: async () => {} })
+      const bytes = await fetcher.fetchBytes('https://cdn.example.com/img.jpg')
+      expect(Array.from(bytes)).toEqual([9])
+    }
   })
 
   it('routes through the store proxy when the env var is set', async () => {
