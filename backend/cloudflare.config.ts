@@ -39,9 +39,15 @@ export default defineConfig({
     entrypoint: 'src/index.ts',
     // Canonical production hostname, attached as a Worker Custom Domain at
     // deploy time (branch deploys keep their *.workers.dev URL only). The
-    // hostname must not be claimed by another project (e.g. the legacy Pages
-    // redirect site) or the deploy will fail on the DNS overlap.
-    domains: isProduction ? ['rumaq.ahaqqu.com'] : undefined,
+    // attach REQUIRES the ahaqqu.com zone in the deploying Cloudflare
+    // account — without it wrangler fails "Can't infer zone" (code 10082)
+    // and, because domains are configured, the *.workers.dev route is not
+    // enabled either: production ends up with no reachable URL (outage,
+    // 2026-10-26). Opt-in until the zone is in the account: deploy with
+    // ATTACH_CUSTOM_DOMAIN=1 to attach it, then flip the URL defaults
+    // (pages-redirect, live tests, docs) back to the canonical domain.
+    domains:
+      isProduction && process.env.ATTACH_CUSTOM_DOMAIN === '1' ? ['rumaq.ahaqqu.com'] : undefined,
     // Single-deploy topology: the Worker serves both the SPA (frontend build,
     // wired in via publicDir in vite.config.ts) and the API. API requests must
     // always reach the user worker; unknown paths fall back to index.html.
