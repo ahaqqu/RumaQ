@@ -237,4 +237,34 @@ describe('runPipeline', () => {
     expect(lines).toHaveLength(1)
     expect(lines[0]!.products[0]!.name).toBe('Gula Pasir')
   })
+
+  it('completes a dry-run with zero new images and no GEMINI_API_KEY', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const fetchMock = async (
+      url: string,
+      init?: RequestInit & { proxy?: string }
+    ): Promise<Response> => {
+      expect(init?.headers).toBeDefined()
+      // Neither listing page has a matching gallery → zero pages, zero OCR.
+      return new Response('<html><body>No promos here</body></html>', { status: 200 })
+    }
+    const previous = process.env.GEMINI_API_KEY
+    delete process.env.GEMINI_API_KEY
+    try {
+      const status = await runPipeline({
+        stateDir,
+        dryRun: true,
+        fetch: fetchMock,
+        now: () => new Date('2026-10-24T23:00:05Z'),
+        log: () => {},
+      })
+      expect(status.stage).toBe('done')
+      const entry = status.stores['superindo']!
+      expect(entry.pagesFound).toBe(0)
+      expect(entry.newImages).toBe(0)
+      expect(entry.itemsExtracted).toBe(0)
+    } finally {
+      if (previous !== undefined) process.env.GEMINI_API_KEY = previous
+    }
+  })
 })

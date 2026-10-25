@@ -123,13 +123,13 @@ describe('createOcr', () => {
     await expect(ocr.ocrImage(new Uint8Array(4))).rejects.toThrow('empty response')
   })
 
-  it('requires an API key when no client is injected', async () => {
+  it('constructs without an API key and only requires it on the first OCR call', async () => {
     const previous = process.env.GEMINI_API_KEY
     delete process.env.GEMINI_API_KEY
     try {
-      await expect(createOcr({ model: 'm', storeSlug: 'superindo' })).rejects.toThrow(
-        'GEMINI_API_KEY not set'
-      )
+      // No throw yet — a run with zero new images never makes an OCR call.
+      const ocr = await createOcr({ model: 'm', storeSlug: 'superindo' })
+      await expect(ocr.ocrImage(new Uint8Array(4))).rejects.toThrow('GEMINI_API_KEY not set')
     } finally {
       if (previous !== undefined) process.env.GEMINI_API_KEY = previous
     }

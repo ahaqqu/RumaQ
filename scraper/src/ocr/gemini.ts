@@ -65,23 +65,28 @@ export interface Ocr {
 }
 
 export async function createOcr(options: OcrOptions): Promise<Ocr> {
-  const client =
-    options.client ??
-    (await (async () => {
-      const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY
-      if (!apiKey) throw new Error('GEMINI_API_KEY not set (or pass options.apiKey)')
-      const { GoogleGenAI } = await import('@google/genai')
-      return new GoogleGenAI({ apiKey })
-    })())
-
   const prompt = getPrompt(options.storeSlug)
+
+  // The client (and its API key requirement) is resolved lazily on the first
+  // ocrImage call: a run with zero new images makes no OCR calls and must
+  // work without GEMINI_API_KEY.
+  let client: GeminiClient | undefined = options.client
+  const resolveClient = async (): Promise<GeminiClient> => {
+    if (client) return client
+    const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY
+    if (!apiKey) throw new Error('GEMINI_API_KEY not set (or pass options.apiKey)')
+    const { GoogleGenAI } = await import('@google/genai')
+    client = new GoogleGenAI({ apiKey })
+    return client
+  }
 
   return {
     async ocrImage(imageBytes: Uint8Array, mimeType = 'image/jpeg'): Promise<RawOcrItem[]> {
+      const activeClient = await resolveClient()
       const base64 = Buffer.from(imageBytes).toString('base64')
       const response = await retryCall(
         () =>
-          client.models.generateContent({
+          activeClient.models.generateContent({
             model: options.model,
             contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
           }),
