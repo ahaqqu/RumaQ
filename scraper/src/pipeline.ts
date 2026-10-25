@@ -17,7 +17,7 @@ import {
 import { createFetcher, type FetchLike } from './fetch/strategy.js'
 import { createOcr, type GeminiClient, type Ocr } from './ocr/gemini.js'
 import { validateProduct, type ValidatedProduct } from './ocr/parse.js'
-import { buildPayload, type ImageProducts } from './publish/payload.js'
+import { assertPayloadValid, buildPayload, type ImageProducts } from './publish/payload.js'
 import { publishPayload, type FetchLike as PublishFetch } from './publish/client.js'
 import { activePlugins } from './stores/index.js'
 import { isBrochurePlugin, type BrochureStorePlugin } from './stores/types.js'
@@ -216,6 +216,10 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineSta
       images: allImageProducts,
       scrapedAt,
     })
+    // Producer-side contract check: a schema violation is a pipeline bug and
+    // exits 1 before the payload leaves the VPS (belt-and-braces for the
+    // per-item date checks in buildPayload).
+    assertPayloadValid(payload)
     const result = await publishPayload(payload, {
       stateDir: options.stateDir,
       dryRun: options.dryRun,

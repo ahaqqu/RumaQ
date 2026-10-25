@@ -7,6 +7,7 @@ import * as v from 'valibot'
 import { loadConfig, storeBySlug } from '../../src/config.js'
 import { validateProduct } from '../../src/ocr/parse.js'
 import {
+  assertPayloadValid,
   buildPayload,
   ingestPayloadSchema,
   makeProductKey,
@@ -50,6 +51,21 @@ describe('parsePeriod', () => {
     expect(parsePeriod(null)).toEqual([null, null])
     expect(parsePeriod('Promo minggu ini')).toEqual([null, null])
     expect(parsePeriod('13 Xenos 2026')).toEqual([null, null])
+  })
+
+  it('returns null for impossible days', () => {
+    expect(parsePeriod('45 Mei 2026')).toEqual([null, null])
+    expect(parsePeriod('0 Mei 2026')).toEqual([null, null])
+  })
+
+  it('returns null for dates that do not exist in the month', () => {
+    expect(parsePeriod('31 Apr 2026')).toEqual([null, null])
+    expect(parsePeriod('30 Feb 2026')).toEqual([null, null]) // 2026 is not a leap year
+    expect(parsePeriod('29 Feb 2028')).toEqual([null, '2028-02-29']) // 2028 is
+  })
+
+  it('nulls only the impossible end of a range', () => {
+    expect(parsePeriod('30 - 45 Mei 2026')).toEqual(['2026-05-30', null])
   })
 })
 
@@ -119,5 +135,32 @@ describe('buildPayload', () => {
     expect(payload.items).toEqual([])
     expect(payload.stores).toEqual([])
     expect(() => v.parse(ingestPayloadSchema, payload)).not.toThrow()
+  })
+
+  it('assertPayloadValid passes what buildPayload produced', () => {
+    const payload = buildPayload({
+      stores: [superindo],
+      images: [{ storeSlug: 'superindo', brochureUrl: null, products: [product!] }],
+      scrapedAt: '2026-10-24T23:00:05Z',
+    })
+    expect(() => assertPayloadValid(payload)).not.toThrow()
+  })
+
+  it('assertPayloadValid rejects violations the type system cannot catch', () => {
+    const payload = buildPayload({
+      stores: [superindo],
+      images: [{ storeSlug: 'superindo', brochureUrl: null, products: [product!] }],
+      scrapedAt: '2026-10-24T23:00:05Z',
+    })
+    expect(() =>
+      assertPayloadValid({ ...payload, items: [{ ...payload.items[0]!, price: -1 }] })
+    ).toThrow(/failed schema validation/)
+    // Out-of-range confidence — still a number, so the type system is silent.
+    expect(() =>
+      assertPayloadValid({
+        ...payload,
+        items: [{ ...payload.items[0]!, matchConfidence: 1.5 }],
+      })
+    ).toThrow(/failed schema validation/)
   })
 })

@@ -11,7 +11,9 @@ export {
   type IngestItem,
 } from '@rumaq/contract'
 
-import type { IngestItem, IngestPayload } from '@rumaq/contract'
+import { safeParse } from 'valibot'
+
+import { ingestPayloadSchema, type IngestItem, type IngestPayload } from '@rumaq/contract'
 import type { StoreConfig } from '../config.js'
 import type { ValidatedProduct } from '../ocr/parse.js'
 
@@ -47,7 +49,16 @@ const MONTHS: Record<string, string> = {
 
 function toIsoDate(day: number, monthStr: string, year: string): string | null {
   const month = MONTHS[monthStr.toLowerCase().slice(0, 3)]
-  return month ? `${year}-${month}-${String(day).padStart(2, '0')}` : null
+  if (!month) return null
+  // OCR digits can be impossible ("45 Mei", "30 Feb"): round-trip through
+  // Date UTC so only dates that actually exist are emitted — the schema's
+  // regex checks the YYYY-MM-DD shape only.
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, day))
+  const exists =
+    date.getUTCFullYear() === Number(year) &&
+    date.getUTCMonth() === Number(month) - 1 &&
+    date.getUTCDate() === day
+  return exists ? `${year}-${month}-${String(day).padStart(2, '0')}` : null
 }
 
 /**
@@ -137,5 +148,21 @@ export function buildPayload(input: {
         website: store.website ?? null,
       })),
     items,
+  }
+}
+
+/**
+ * Validate a built payload against the shared schema before it leaves the
+ * producer: a contract violation is a pipeline bug and must fail the run
+ * here, not surface as an ingest rejection (or bad D1 data) in the Worker.
+ */
+export function assertPayloadValid(payload: IngestPayload): void {
+  const result = safeParse(ingestPayloadSchema, payload)
+  if (!result.success) {
+    throw new Error(
+      `Ingest payload failed schema validation: ${result.issues
+        .map((issue) => `${issue.path?.map((p) => String(p.key)).join('.')}: ${issue.message}`)
+        .join('; ')}`
+    )
   }
 }
