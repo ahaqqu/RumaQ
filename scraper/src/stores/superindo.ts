@@ -3,7 +3,10 @@
 // via the fancybox gallery attribute.
 
 import * as cheerio from 'cheerio'
+import { Effect } from 'effect'
+
 import type { StoreConfig } from '../config.js'
+import type { FetchError } from '../fetch/strategy.js'
 import type { BrochurePage, BrochureStorePlugin, FetchContext } from './types.js'
 
 const KATALOG_URL = 'https://www.superindo.co.id/promosi/katalog-super-hemat/'
@@ -49,17 +52,19 @@ export function dedupeUrls(urls: string[]): string[] {
 export function createSuperindoPlugin(config: StoreConfig): BrochureStorePlugin {
   return {
     config,
-    async listBrochurePages(ctx: FetchContext): Promise<BrochurePage[]> {
-      const pages: BrochurePage[] = []
-      for (const url of [KATALOG_URL, KORAN_URL]) {
-        const html = await ctx.fetchHtml(url)
-        const filter = url.toLowerCase().includes('promo-koran') ? KORAN_FILTER : REGION_FILTER
-        const urls = dedupeUrls(parseSwiperImages(html, filter))
-        for (const imageUrl of urls) {
-          pages.push({ imageUrl, brochureUrl: url })
+    listBrochurePages(ctx: FetchContext): Effect.Effect<BrochurePage[], FetchError> {
+      return Effect.gen(function* () {
+        const pages: BrochurePage[] = []
+        for (const url of [KATALOG_URL, KORAN_URL]) {
+          const html = yield* ctx.fetchHtml(url)
+          const filter = url.toLowerCase().includes('promo-koran') ? KORAN_FILTER : REGION_FILTER
+          const urls = dedupeUrls(parseSwiperImages(html, filter))
+          for (const imageUrl of urls) {
+            pages.push({ imageUrl, brochureUrl: url })
+          }
         }
-      }
-      return pages.slice(0, config.maxPages)
+        return pages.slice(0, config.maxPages)
+      })
     },
   }
 }

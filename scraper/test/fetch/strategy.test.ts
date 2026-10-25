@@ -1,13 +1,13 @@
 // Tier-1 fetch ladder tests: default headers, retries, cookie jar, and the
 // browser-tier guard (port of the behavior in haqita base_scraper.py).
+// Fetcher methods are Effects — driven through Effect.runPromise.
 
 import { describe, expect, it, vi } from 'vite-plus/test'
+import { Effect } from 'effect'
 
-import {
-  BrowserTierRequiredError,
-  createFetcher,
-  DEFAULT_HEADERS,
-} from '../../src/fetch/strategy.js'
+import { exitError } from '../helpers.js'
+
+import { createFetcher, DEFAULT_HEADERS } from '../../src/fetch/strategy.js'
 import type { StoreConfig } from '../../src/config.js'
 
 const plainStore: StoreConfig = {
@@ -32,7 +32,7 @@ describe('createFetcher', () => {
       htmlResponse('<html></html>')
     )
     const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep: async () => {} })
-    await fetcher.fetchHtml('https://www.superindo.co.id/promosi/')
+    await Effect.runPromise(fetcher.fetchHtml('https://www.superindo.co.id/promosi/'))
     const headers = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<string, string>
     expect(headers['User-Agent']).toBe(DEFAULT_HEADERS['User-Agent'])
     expect(headers['Accept-Language']).toBe('id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7')
@@ -47,13 +47,13 @@ describe('createFetcher', () => {
     })
     const sleep = vi.fn(async () => {})
     const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep, retries: 3, backoffMs: 1 })
-    const html = await fetcher.fetchHtml('https://example.com/')
+    const html = await Effect.runPromise(fetcher.fetchHtml('https://example.com/'))
     expect(html).toBe('<html>ok</html>')
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(sleep).toHaveBeenCalledTimes(2)
   })
 
-  it('gives up after retries and throws the last error', async () => {
+  it('gives up after retries and fails with the last HTTP error', async () => {
     const fetchMock = vi.fn(async () => new Response('nope', { status: 503 }))
     const fetcher = createFetcher(plainStore, {
       fetch: fetchMock,
@@ -61,7 +61,9 @@ describe('createFetcher', () => {
       retries: 2,
       backoffMs: 1,
     })
-    await expect(fetcher.fetchHtml('https://example.com/')).rejects.toThrow('HTTP 503')
+    await expect(Effect.runPromise(fetcher.fetchHtml('https://example.com/'))).rejects.toThrow(
+      'HTTP 503'
+    )
     expect(fetchMock).toHaveBeenCalledTimes(3) // 1 initial + 2 retries
   })
 
@@ -76,8 +78,8 @@ describe('createFetcher', () => {
       return htmlResponse('<html></html>')
     })
     const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep: async () => {} })
-    await fetcher.fetchHtml('https://example.com/first')
-    await fetcher.fetchHtml('https://example.com/second')
+    await Effect.runPromise(fetcher.fetchHtml('https://example.com/first'))
+    await Effect.runPromise(fetcher.fetchHtml('https://example.com/second'))
     const secondHeaders = (fetchMock.mock.calls[1]![1] as RequestInit).headers as Record<
       string,
       string
@@ -85,12 +87,12 @@ describe('createFetcher', () => {
     expect(secondHeaders.Cookie).toBe('session=abc123')
   })
 
-  it('throws BrowserTierRequiredError for browser-strategy stores instead of wasting plain fetches', async () => {
+  it('fails with BrowserTierRequired for browser stores instead of wasting plain fetches', async () => {
     const fetchMock = vi.fn(async () => htmlResponse('<html></html>'))
     const fetcher = createFetcher(browserStore, { fetch: fetchMock, sleep: async () => {} })
-    await expect(fetcher.fetchHtml('https://www.lottemart.co.id/')).rejects.toBeInstanceOf(
-      BrowserTierRequiredError
-    )
+    const failure = await Effect.runPromiseExit(fetcher.fetchHtml('https://www.lottemart.co.id/'))
+    expect(failure._tag).toBe('Failure')
+    expect(exitError(failure)).toMatchObject({ _tag: 'BrowserTierRequired' })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -103,7 +105,7 @@ describe('createFetcher', () => {
         })
     )
     const fetcher = createFetcher(browserStore, { fetch: fetchMock, sleep: async () => {} })
-    const bytes = await fetcher.fetchBytes('https://cdn.example.com/img.jpg')
+    const bytes = await Effect.runPromise(fetcher.fetchBytes('https://cdn.example.com/img.jpg'))
     expect(Array.from(bytes)).toEqual([1, 2, 3])
   })
 
@@ -116,9 +118,9 @@ describe('createFetcher', () => {
         })
     )
     const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep: async () => {} })
-    await expect(fetcher.fetchBytes('https://example.com/img.jpg')).rejects.toThrow(
-      'Non-image content-type "text/html"'
-    )
+    await expect(
+      Effect.runPromise(fetcher.fetchBytes('https://example.com/img.jpg'))
+    ).rejects.toThrow('Non-image content-type "text/html"')
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
@@ -131,7 +133,7 @@ describe('createFetcher', () => {
           new Response(new Uint8Array([9]), { status: 200, headers })
       )
       const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep: async () => {} })
-      const bytes = await fetcher.fetchBytes('https://cdn.example.com/img.jpg')
+      const bytes = await Effect.runPromise(fetcher.fetchBytes('https://cdn.example.com/img.jpg'))
       expect(Array.from(bytes)).toEqual([9])
     }
   })
@@ -143,7 +145,7 @@ describe('createFetcher', () => {
         htmlResponse('<html></html>')
       )
       const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep: async () => {} })
-      await fetcher.fetchHtml('https://example.com/')
+      await Effect.runPromise(fetcher.fetchHtml('https://example.com/'))
       const init = fetchMock.mock.calls[0]![1] as RequestInit & { proxy?: string }
       expect(init.proxy).toBe('http://proxy:8080')
     } finally {

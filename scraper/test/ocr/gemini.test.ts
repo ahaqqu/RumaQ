@@ -1,10 +1,12 @@
 // Gemini OCR client tests — the SDK client is injected, so no network.
+// ocrImage is an Effect — driven through Effect.runPromise.
 
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it, vi } from 'vite-plus/test'
+import { Effect } from 'effect'
 
 import { createOcr, getPrompt, type GeminiClient } from '../../src/ocr/gemini.js'
 import type { RawOcrItem } from '../../src/ocr/parse.js'
@@ -64,9 +66,9 @@ describe('createOcr', () => {
     const { client, calls, lastArgs } = stubClient(
       '```json\n' + JSON.stringify(sampleItems) + '\n```'
     )
-    const ocr = await createOcr({ model: 'gemini-3.5-flash', storeSlug: 'superindo', client })
+    const ocr = createOcr({ model: 'gemini-3.5-flash', storeSlug: 'superindo', client })
     const imageBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
-    const items = await ocr.ocrImage(imageBytes)
+    const items = await Effect.runPromise(ocr.ocrImage(imageBytes))
 
     expect(calls()).toBe(1)
     expect(lastArgs()!.model).toBe('gemini-3.5-flash')
@@ -85,13 +87,13 @@ describe('createOcr', () => {
       }
       return null
     })
-    const ocr = await createOcr({
+    const ocr = createOcr({
       model: 'gemini-3.5-flash',
       storeSlug: 'superindo',
       client,
       sleep: async () => {},
     })
-    const items = await ocr.ocrImage(new Uint8Array(4))
+    const items = await Effect.runPromise(ocr.ocrImage(new Uint8Array(4)))
     expect(failures).toBe(1)
     expect(calls()).toBe(2)
     expect(items).toEqual(sampleItems)
@@ -102,34 +104,40 @@ describe('createOcr', () => {
       '[]',
       () => new Error('429 Quota exceeded for GenerateRequests per day')
     )
-    const ocr = await createOcr({
+    const ocr = createOcr({
       model: 'gemini-3.5-flash',
       storeSlug: 'superindo',
       client,
       sleep: async () => {},
     })
-    await expect(ocr.ocrImage(new Uint8Array(4))).rejects.toThrow(/Daily quota exhausted/)
+    await expect(Effect.runPromise(ocr.ocrImage(new Uint8Array(4)))).rejects.toThrow(
+      /Daily quota exhausted/
+    )
     expect(calls()).toBe(1)
   })
 
   it('fails on empty responses', async () => {
     const { client } = stubClient('')
-    const ocr = await createOcr({
+    const ocr = createOcr({
       model: 'm',
       storeSlug: 'superindo',
       client,
       sleep: async () => {},
     })
-    await expect(ocr.ocrImage(new Uint8Array(4))).rejects.toThrow('empty response')
+    await expect(Effect.runPromise(ocr.ocrImage(new Uint8Array(4)))).rejects.toThrow(
+      'empty response'
+    )
   })
 
   it('constructs without an API key and only requires it on the first OCR call', async () => {
     const previous = process.env.GEMINI_API_KEY
     delete process.env.GEMINI_API_KEY
     try {
-      // No throw yet — a run with zero new images never makes an OCR call.
-      const ocr = await createOcr({ model: 'm', storeSlug: 'superindo' })
-      await expect(ocr.ocrImage(new Uint8Array(4))).rejects.toThrow('GEMINI_API_KEY not set')
+      // No failure yet — a run with zero new images never makes an OCR call.
+      const ocr = createOcr({ model: 'm', storeSlug: 'superindo' })
+      await expect(Effect.runPromise(ocr.ocrImage(new Uint8Array(4)))).rejects.toThrow(
+        'GEMINI_API_KEY not set'
+      )
     } finally {
       if (previous !== undefined) process.env.GEMINI_API_KEY = previous
     }
@@ -147,14 +155,14 @@ describe('createOcr', () => {
         },
       },
     }
-    const ocr = await createOcr({
+    const ocr = createOcr({
       model: 'm',
       storeSlug: 'superindo',
       client,
       sleep: async () => {},
       log,
     })
-    await ocr.ocrImage(new Uint8Array(4))
+    await Effect.runPromise(ocr.ocrImage(new Uint8Array(4)))
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Rate limit hit'))
   })
 })

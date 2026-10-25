@@ -260,11 +260,12 @@ Daily usage is tracked in `ai_usage` so the app can show the meter and cap reque
 
 ### Price data pipeline (rumaq-scraper)
 
-Grocery price data is produced by the `scraper/` workspace — a headless TypeScript/Bun port of the retired haqita pipeline (full plan: [`docs/plan/haqita-integration.md`](plan/haqita-integration.md)):
+Grocery price data is produced by the `scraper/` workspace — a headless TypeScript/Bun port of the retired haqita pipeline (full plan: [`docs/plan/haqita-integration.md`](plan/haqita-integration.md)). The package runs on [Effect-TS](https://effect.website) (`effect` v4): modules compose `Effect` values with typed tagged errors (`Data.TaggedError`), the pipeline is `Effect.gen`, and the CLI seam maps failures to exit codes (0 ok / 1 failure / 2 quota):
 
 - Superindo brochure pages are scraped with plain fetch (realistic Chrome headers, cookie jar, retry ladder), filtered for novelty by URL+MD5 state so unchanged pages are downloaded once per run (the bytes are needed to compute the MD5) but never re-OCR'd or re-published.
 - New pages go through Gemini vision OCR (prompt ported verbatim from haqita) with a quota-aware retry policy; invalid items land in `rejected-items.log` in the state dir.
 - Extracted items are published to `POST /api/internal/ingest/prices` (bearer `HAQITA_INGEST_SECRET`). Until the matcher lands (PR3), items are published as `matchMethod: 'solo'` with `matchConfidence: 1.0` and the pipeline defaults to dry-run.
+- Delivery is at-least-once via a publish outbox: each OCR'd image appends its items to `run-<scrapedAt>.jsonl` (checkpointed per image), the next run replays any pending files into its payload, and the files are retired only after a successful real publish — a crash between OCR and publish never re-spends Gemini or strands paid-for items (the ingest endpoint upserts idempotently, so replay is safe).
 - The ingest contract is the single shared Valibot schema in the `@rumaq/contract` workspace package (`contract/src/index.ts`), a declared dependency of both the backend and the scraper.
 - Lotte Mart sits behind Imperva Incapsula; `scraper/scripts/check-lotte.ts` is the reachability gate for the Tier-2 (Playwright) decision — run it from the VPS egress.
 

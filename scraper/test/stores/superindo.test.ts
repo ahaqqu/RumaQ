@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vite-plus/test'
+import { Effect } from 'effect'
 
 import {
   createSuperindoPlugin,
@@ -159,10 +160,12 @@ describe('superindo plugin', () => {
       ),
       'https://www.superindo.co.id/promosi/promo-koran/': loadFixture('promo-koran.html'),
     }
-    const pages = await plugin.listBrochurePages({
-      fetchHtml: (url) => Promise.resolve(htmls[url] ?? ''),
-      runStartedAt: '2026-10-25T00:00:00Z',
-    })
+    const pages = await Effect.runPromise(
+      plugin.listBrochurePages({
+        fetchHtml: (url) => Effect.succeed(htmls[url] ?? ''),
+        runStartedAt: '2026-10-25T00:00:00Z',
+      })
+    )
     expect(pages.length).toBeGreaterThanOrEqual(2)
     const brochureUrls = new Set(pages.map((page) => page.brochureUrl))
     expect(brochureUrls).toEqual(
@@ -176,10 +179,12 @@ describe('superindo plugin', () => {
   it('caps pages at maxPages', async () => {
     const config = { ...storeBySlug(loadConfig(), 'superindo')!, maxPages: 1 }
     const plugin = createSuperindoPlugin(config)
-    const pages = await plugin.listBrochurePages({
-      fetchHtml: () => Promise.resolve(loadFixture('katalog-super-hemat.html')),
-      runStartedAt: '2026-10-25T00:00:00Z',
-    })
+    const pages = await Effect.runPromise(
+      plugin.listBrochurePages({
+        fetchHtml: () => Effect.succeed(loadFixture('katalog-super-hemat.html')),
+        runStartedAt: '2026-10-25T00:00:00Z',
+      })
+    )
     expect(pages.length).toBe(1)
   })
 })

@@ -1,13 +1,15 @@
 // Port of haqita tests/ocr/test_gemini_quota.py — quota vs rate-limit
-// classification and retry semantics (with an injected no-op sleep), plus
-// the generic withRetries engine shared by the fetch ladder and publisher.
+// classification and retry semantics for the Effect-based engine (with an
+// injected no-op sleep).
 
 import { describe, expect, it, vi } from 'vite-plus/test'
+import { Data, Effect } from 'effect'
 
 import {
-  QuotaExhaustedError,
+  classifyQuotaError,
   parseRetryDelay,
-  retryCall,
+  QuotaExhausted,
+  withQuotaPolicy,
   withRetries,
 } from '../../src/util/retry.js'
 
@@ -35,124 +37,153 @@ describe('parseRetryDelay', () => {
   })
 })
 
-describe('retryCall quota detection', () => {
-  it.each(DAILY_QUOTA_ERRORS)('raises QuotaExhaustedError for daily quota: %s', async (message) => {
-    const fn = async () => {
-      throw new Error(message)
-    }
-    await expect(retryCall(fn, { sleep: async () => {}, retries: 2 })).rejects.toThrow(
-      QuotaExhaustedError
-    )
+describe('classifyQuotaError', () => {
+  it.each(DAILY_QUOTA_ERRORS)('classifies daily quota messages: %s', (message) => {
+    const error = classifyQuotaError(new Error(message))
+    expect(error).toBeInstanceOf(QuotaExhausted)
+    expect(error!.message).toContain('Daily quota exhausted')
   })
 
-  it.each(RATE_LIMIT_ERRORS)('retries (not fatal) for per-minute limits: %s', async (message) => {
-    const sleep = vi.fn(async () => {})
-    let attempts = 0
-    const fn = async () => {
-      attempts++
-      if (attempts === 1) throw new Error(message)
-      return 'ok'
-    }
-    await expect(retryCall(fn, { sleep, retries: 2 })).resolves.toBe('ok')
-    expect(attempts).toBe(2)
-    expect(sleep).toHaveBeenCalledTimes(1)
+  it.each(RATE_LIMIT_ERRORS)('does not classify per-minute limits as fatal: %s', (message) => {
+    expect(classifyQuotaError(new Error(message))).toBeNull()
   })
 
-  it('rejects with the original error when a per-minute limit exhausts all retries', async () => {
-    const message = '429 Quota exceeded for quota metric GenerateRequests per minute'
-    const sleep = vi.fn(async () => {})
-    let attempts = 0
-    const fn = async () => {
-      attempts++
-      throw new Error(message)
-    }
-    // Not a QuotaExhaustedError (that stays daily-only) and not a masked
-    // generic failure — the real 429 surfaces after the final attempt.
-    await expect(retryCall(fn, { sleep, retries: 2 })).rejects.toThrow(message)
-    expect(attempts).toBe(3)
-    // Sleeps between attempts only — never after the final one.
-    expect(sleep).toHaveBeenCalledTimes(2)
+  it('returns null for non-quota errors', () => {
+    expect(classifyQuotaError(new Error('Some other error'))).toBeNull()
   })
+})
 
-  it('retries generic transient errors with backoff, then re-raises', async () => {
-    const sleep = vi.fn(async () => {})
-    let attempts = 0
-    const fn = async () => {
-      attempts++
-      throw new Error('Some other error')
-    }
-    await expect(retryCall(fn, { sleep, retries: 1 })).rejects.toThrow('Some other error')
-    expect(attempts).toBe(2)
-    expect(sleep).toHaveBeenCalledTimes(1)
-  })
+class Transient extends Data.TaggedError('Transient')<{ message: string }> {}
 
+describe('withRetries', () => {
   it('returns the value on success without sleeping', async () => {
     const sleep = vi.fn(async () => {})
-    await expect(retryCall(async () => 42, { sleep })).resolves.toBe(42)
+    const result = await Effect.runPromise(withRetries(Effect.succeed(42), { sleep }))
+    expect(result).toBe(42)
     expect(sleep).not.toHaveBeenCalled()
   })
 
-  it('propagates QuotaExhaustedError without retrying', async () => {
+  it('retries generic errors with backoff, then succeeds', async () => {
     const sleep = vi.fn(async () => {})
     let attempts = 0
-    const fn = async () => {
+    const effect = Effect.suspend(() => {
       attempts++
-      throw new QuotaExhaustedError('already exhausted')
-    }
-    await expect(retryCall(fn, { sleep, retries: 2 })).rejects.toThrow('already exhausted')
+      return attempts < 3 ? Effect.fail(new Transient({ message: 'nope' })) : Effect.succeed('ok')
+    })
+    await expect(
+      Effect.runPromise(withRetries(effect, { retries: 3, sleep, backoffMs: 1 }))
+    ).resolves.toBe('ok')
+    expect(attempts).toBe(3)
+    expect(sleep).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-fails with the last error after exhausting retries', async () => {
+    const sleep = vi.fn(async () => {})
+    let attempts = 0
+    const effect = Effect.suspend(() => {
+      attempts++
+      return Effect.fail(new Transient({ message: 'still broken' }))
+    })
+    await expect(
+      Effect.runPromise(withRetries(effect, { retries: 2, sleep, backoffMs: 1 }))
+    ).rejects.toThrow('still broken')
+    expect(attempts).toBe(3) // 1 initial + 2 retries
+  })
+
+  it('fails immediately on fatal errors without sleeping', async () => {
+    const sleep = vi.fn(async () => {})
+    class Fatal extends Data.TaggedError('Fatal')<{ message: string }> {}
+    let attempts = 0
+    const effect = Effect.suspend(() => {
+      attempts++
+      return Effect.fail(new Fatal({ message: 'credentials rejected' }))
+    })
+    await expect(
+      Effect.runPromise(
+        withRetries(effect, {
+          retries: 3,
+          sleep,
+          backoffMs: 1,
+          isFatal: (error) => (error as { _tag?: string })._tag === 'Fatal',
+        })
+      )
+    ).rejects.toThrow('credentials rejected')
     expect(attempts).toBe(1)
     expect(sleep).not.toHaveBeenCalled()
   })
 })
 
-describe('withRetries', () => {
-  it('retries with exponential backoff and succeeds', async () => {
-    const sleep = vi.fn(async (_ms: number) => {})
-    let attempts = 0
-    const fn = async () => {
-      attempts++
-      if (attempts < 3) throw new Error('boom')
-      return 'ok'
-    }
-    await expect(withRetries(fn, { retries: 3, backoffMs: 5, sleep })).resolves.toBe('ok')
-    expect(attempts).toBe(3)
-    expect(sleep).toHaveBeenCalledTimes(2)
-    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([5, 10])
-  })
-
-  it('rethrows the last error after exhausting retries', async () => {
+describe('withQuotaPolicy', () => {
+  it('propagates QuotaExhausted immediately without retrying', async () => {
     const sleep = vi.fn(async () => {})
     let attempts = 0
-    const fn = async () => {
+    const effect = Effect.suspend(() => {
       attempts++
-      throw new Error(`failure ${attempts}`)
-    }
-    await expect(withRetries(fn, { retries: 2, backoffMs: 1, sleep })).rejects.toThrow('failure 3')
-    expect(attempts).toBe(3)
-    expect(sleep).toHaveBeenCalledTimes(2)
-  })
-
-  it('short-circuits fatal errors without sleeping', async () => {
-    const sleep = vi.fn(async () => {})
-    let attempts = 0
-    const fn = async () => {
-      attempts++
-      throw new Error('fatal!')
-    }
-    await expect(
-      withRetries(fn, {
-        retries: 3,
-        sleep,
-        isFatal: (error) => String(error).includes('fatal'),
-      })
-    ).rejects.toThrow('fatal!')
+      return Effect.fail(
+        classifyQuotaError(new Error(DAILY_QUOTA_ERRORS[0]!)) ??
+          new Transient({ message: 'unreachable' })
+      )
+    })
+    await expect(Effect.runPromise(withQuotaPolicy(effect, { retries: 3, sleep }))).rejects.toThrow(
+      /Daily quota exhausted/
+    )
     expect(attempts).toBe(1)
     expect(sleep).not.toHaveBeenCalled()
   })
 
-  it('succeeds without sleeping when the first attempt works', async () => {
+  it.each(RATE_LIMIT_ERRORS)('retries (not fatal) per-minute limits: %s', async (message) => {
     const sleep = vi.fn(async () => {})
-    await expect(withRetries(async () => 7, { retries: 2, sleep })).resolves.toBe(7)
-    expect(sleep).not.toHaveBeenCalled()
+    const effect = Effect.fail(new Transient({ message }))
+    try {
+      await Effect.runPromise(withQuotaPolicy(effect, { retries: 1, sleep }))
+      throw new Error('should have rejected')
+    } catch (error) {
+      expect(error).not.toBeInstanceOf(QuotaExhausted)
+      expect(sleep).toHaveBeenCalled()
+    }
+  })
+
+  it('rejects with the original error when a per-minute limit exhausts all retries', async () => {
+    const sleep = vi.fn(async () => {})
+    const message = '429 RESOURCE_EXHAUSTED: retry in 30s'
+    const effect = Effect.fail(new Transient({ message }))
+    await expect(Effect.runPromise(withQuotaPolicy(effect, { retries: 1, sleep }))).rejects.toThrow(
+      message
+    )
+    // attempt 0 sleeps the parsed delay; attempt 1 is final → no second sleep.
+    expect(sleep).toHaveBeenCalledTimes(1)
+    expect(sleep).toHaveBeenCalledWith(45_000)
+  })
+
+  it('retries transient errors with exponential backoff, then re-fails', async () => {
+    const sleep = vi.fn(async () => {})
+    let attempts = 0
+    const effect = Effect.suspend(() => {
+      attempts++
+      return Effect.fail(new Transient({ message: 'Some other error' }))
+    })
+    await expect(Effect.runPromise(withQuotaPolicy(effect, { retries: 2, sleep }))).rejects.toThrow(
+      'Some other error'
+    )
+    expect(attempts).toBe(3)
+    expect(sleep).toHaveBeenNthCalledWith(1, 1000)
+    expect(sleep).toHaveBeenNthCalledWith(2, 2000)
+  })
+
+  it('logs retry waits when a logger is provided', async () => {
+    const log = vi.fn()
+    const sleep = vi.fn(async () => {})
+    let attempt = 0
+    const effect = Effect.suspend(() => {
+      attempt++
+      return attempt === 1
+        ? Effect.fail(new Transient({ message: '429 RESOURCE_EXHAUSTED: retry in 30s' }))
+        : Effect.succeed(1)
+    })
+    await Effect.runPromise(
+      withQuotaPolicy(effect, { retries: 2, sleep, log, context: 'gemini_ocr' })
+    )
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Rate limit hit'))
+    expect(sleep).toHaveBeenCalledWith(45_000)
   })
 })

@@ -4,6 +4,10 @@
 //   Tier 3 — per-store proxy via env (plumbed here through the `proxy` option)
 //
 // Port of haqita base_scraper.py DEFAULT_HEADERS + _request_with_retries.
+// All failures are typed tagged errors; transport and HTTP-status failures
+// are retried by the shared engine, content-type and tier errors are fatal.
+
+import { Data, Effect } from 'effect'
 
 import type { StoreConfig } from '../config.js'
 import { withRetries } from '../util/retry.js'
@@ -15,21 +19,37 @@ export const DEFAULT_HEADERS: Record<string, string> = {
   'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
 }
 
-export class BrowserTierRequiredError extends Error {
-  constructor(url: string) {
-    super(
-      `Plain fetch is not enough for ${url} — Tier-2 (headless browser) lands in PR3 ` +
-        '(run scripts/check-lotte.ts from the VPS to confirm the tier decision).'
-    )
-    this.name = 'BrowserTierRequiredError'
-  }
-}
+export class BrowserTierRequired extends Data.TaggedError('BrowserTierRequired')<{
+  url: string
+  message: string
+}> {}
+
+export class FetchTransport extends Data.TaggedError('FetchTransport')<{
+  url: string
+  cause: unknown
+  message: string
+}> {}
+
+export class FetchHttpStatus extends Data.TaggedError('FetchHttpStatus')<{
+  url: string
+  status: number
+  statusText: string
+  message: string
+}> {}
+
+export class NonImageContent extends Data.TaggedError('NonImageContent')<{
+  url: string
+  contentType: string
+  message: string
+}> {}
+
+export type FetchError = BrowserTierRequired | FetchTransport | FetchHttpStatus | NonImageContent
 
 export type FetchLike = (url: string, init?: RequestInit & { proxy?: string }) => Promise<Response>
 
 export interface StoreFetcher {
-  fetchHtml(url: string): Promise<string>
-  fetchBytes(url: string): Promise<Uint8Array>
+  fetchHtml(url: string): Effect.Effect<string, FetchError>
+  fetchBytes(url: string): Effect.Effect<Uint8Array, FetchError>
 }
 
 interface CookieJar {
@@ -70,35 +90,6 @@ function storeCookies(jar: CookieJar, url: string, response: Response): void {
   }
 }
 
-async function requestWithRetries(
-  fetchFn: FetchLike,
-  url: string,
-  init: RequestInit & { proxy?: string },
-  opts: {
-    retries: number
-    backoffMs: number
-    sleep: (ms: number) => Promise<void>
-    log: (message: string) => void
-  }
-): Promise<Response> {
-  return withRetries(
-    async () => {
-      const response = await fetchFn(url, init)
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText} for ${url}`)
-      }
-      return response
-    },
-    {
-      retries: opts.retries,
-      backoffMs: opts.backoffMs,
-      sleep: opts.sleep,
-      log: opts.log,
-      context: `fetch ${url}`,
-    }
-  )
-}
-
 function isImageContentType(contentType: string): boolean {
   const mimeType = contentType.split(';')[0]!.trim().toLowerCase()
   return mimeType.startsWith('image/') || mimeType === 'application/octet-stream'
@@ -126,38 +117,93 @@ export function createFetcher(
   const proxyUrl = options.proxyUrl ?? (store.proxyEnv ? process.env[store.proxyEnv] : undefined)
   const jar: CookieJar = { jars: new Map() }
 
-  const request = (url: string, accept: string) => {
+  const request = (
+    url: string,
+    accept: string
+  ): Effect.Effect<Response, FetchTransport | FetchHttpStatus> => {
     const headers: Record<string, string> = { ...DEFAULT_HEADERS, Accept: accept }
     const cookie = jarCookieHeader(jar, url)
     if (cookie) headers.Cookie = cookie
     const init: RequestInit & { proxy?: string } = { headers, redirect: 'follow' }
     if (proxyUrl) init.proxy = proxyUrl
-    return requestWithRetries(fetchFn, url, init, { retries, backoffMs, sleep, log }).then(
-      (response) => {
-        storeCookies(jar, url, response)
-        return response
-      }
+    return Effect.tryPromise({
+      try: () => fetchFn(url, init),
+      catch: (cause) =>
+        new FetchTransport({ url, cause, message: `Fetch failed for ${url}: ${String(cause)}` }),
+    }).pipe(
+      Effect.flatMap((response) =>
+        response.ok
+          ? Effect.succeed(response)
+          : Effect.fail(
+              new FetchHttpStatus({
+                url,
+                status: response.status,
+                statusText: response.statusText,
+                message: `HTTP ${response.status} ${response.statusText} for ${url}`,
+              })
+            )
+      ),
+      (effect) => withRetries(effect, { retries, backoffMs, sleep, log, context: `fetch ${url}` }),
+      Effect.tap((response) => Effect.sync(() => storeCookies(jar, url, response)))
     )
   }
 
   return {
-    async fetchHtml(url: string): Promise<string> {
+    fetchHtml(url: string): Effect.Effect<string, FetchError> {
       // A store pinned to the browser tier never wastes plain-fetch attempts.
-      if (store.strategy === 'browser') throw new BrowserTierRequiredError(url)
-      const response = await request(url, DEFAULT_HEADERS.Accept)
-      return response.text()
-    },
-    async fetchBytes(url: string): Promise<Uint8Array> {
-      const response = await request(url, '*/*')
-      // Scraped image hrefs are external input: a body served as HTML (or
-      // anything clearly not an image) must never reach the OCR bytes. An
-      // absent header or a generic octet-stream passes — CDNs often omit it.
-      // Thrown outside the retry ladder: wrong content never succeeds on retry.
-      const contentType = response.headers.get('content-type')
-      if (contentType && !isImageContentType(contentType)) {
-        throw new Error(`Non-image content-type "${contentType}" for ${url}`)
+      if (store.strategy === 'browser') {
+        return Effect.fail(
+          new BrowserTierRequired({
+            url,
+            message:
+              `Plain fetch is not enough for ${url} — Tier-2 (headless browser) lands in PR3 ` +
+              '(run scripts/check-lotte.ts from the VPS to confirm the tier decision).',
+          })
+        )
       }
-      return new Uint8Array(await response.arrayBuffer())
+      return request(url, DEFAULT_HEADERS.Accept).pipe(
+        Effect.flatMap((response) =>
+          Effect.tryPromise({
+            try: () => response.text(),
+            catch: (cause: unknown) =>
+              new FetchTransport({
+                url,
+                cause,
+                message: `Body read failed for ${url}: ${String(cause)}`,
+              }),
+          })
+        )
+      )
+    },
+    fetchBytes(url: string): Effect.Effect<Uint8Array, FetchError> {
+      return request(url, '*/*').pipe(
+        Effect.flatMap((response): Effect.Effect<Uint8Array, NonImageContent | FetchTransport> => {
+          // Scraped image hrefs are external input: a body served as HTML
+          // (or anything clearly not an image) must never reach the OCR
+          // bytes. An absent header or a generic octet-stream passes — CDNs
+          // often omit it. Fatal by construction: wrong content never
+          // succeeds on retry.
+          const contentType = response.headers.get('content-type')
+          if (contentType && !isImageContentType(contentType)) {
+            return Effect.fail(
+              new NonImageContent({
+                url,
+                contentType,
+                message: `Non-image content-type "${contentType}" for ${url}`,
+              })
+            )
+          }
+          return Effect.tryPromise({
+            try: async () => new Uint8Array(await response.arrayBuffer()),
+            catch: (cause: unknown) =>
+              new FetchTransport({
+                url,
+                cause,
+                message: `Body read failed for ${url}: ${String(cause)}`,
+              }),
+          })
+        })
+      )
     },
   }
 }

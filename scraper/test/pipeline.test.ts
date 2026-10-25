@@ -1,18 +1,21 @@
 // Pipeline orchestration test — full scrape → novelty → OCR → publish flow
 // with every IO boundary injected (fixture HTML, fake JPEG bytes, stub
-// Gemini client, dry-run publish).
+// Gemini client, mocked publish). runPipeline is an Effect.
 
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vite-plus/test'
+import { Effect } from 'effect'
 
 import { runPipeline } from '../src/pipeline.js'
+import { exitError } from './helpers.js'
 import type { GeminiClient } from '../src/ocr/gemini.js'
 import { md5Hash } from '../src/fetch/state.js'
+import type { IngestPayload } from '@rumaq/contract'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -34,6 +37,29 @@ function fakeJpegBytes(): Uint8Array<ArrayBuffer> {
   return bytes
 }
 
+const noSleep = async () => {}
+
+function makeFetchMock(katalogHtml: string, koranHtml: string, jpeg: Uint8Array<ArrayBuffer>) {
+  return async (url: string, init?: RequestInit & { proxy?: string }): Promise<Response> => {
+    expect(init?.headers).toBeDefined()
+    if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
+    if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
+    return new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
+  }
+}
+
+const ocrItems = [
+  {
+    name: 'Gula Pasir',
+    brand: null,
+    unit: '1 kg',
+    price: 17000,
+    promo: null,
+    period: '22 - 28 Okt 2026',
+  },
+  { name: 'B', brand: null, unit: null, price: 5000, promo: null, period: null }, // name_too_short
+]
+
 describe('runPipeline', () => {
   it('runs the superindo flow end to end in dry-run mode', async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
@@ -46,47 +72,25 @@ describe('runPipeline', () => {
       'utf8'
     )
     const jpeg = fakeJpegBytes()
+    const fetchMock = makeFetchMock(katalogHtml, koranHtml, jpeg)
 
-    const fetchMock = async (
-      url: string,
-      init?: RequestInit & { proxy?: string }
-    ): Promise<Response> => {
-      expect(init?.headers).toBeDefined()
-      if (url.includes('katalog-super-hemat')) {
-        return new Response(katalogHtml, { status: 200 })
-      }
-      if (url.includes('promo-koran')) {
-        return new Response(koranHtml, { status: 200 })
-      }
-      // Any image URL → the same fake brochure page.
-      return new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
-    }
-
-    const ocrItems = [
-      {
-        name: 'Gula Pasir',
-        brand: null,
-        unit: '1 kg',
-        price: 17000,
-        promo: null,
-        period: '22 - 28 Okt 2026',
-      },
-      { name: 'B', brand: null, unit: null, price: 5000, promo: null, period: null }, // name_too_short
-    ]
     const ocrClient: GeminiClient = {
       models: {
         generateContent: async () => ({ text: JSON.stringify(ocrItems) }),
       },
     }
 
-    const status = await runPipeline({
-      stateDir,
-      dryRun: true,
-      fetch: fetchMock,
-      ocrClient,
-      now: () => new Date('2026-10-24T23:00:05Z'),
-      log: () => {},
-    })
+    const status = await Effect.runPromise(
+      runPipeline({
+        stateDir,
+        dryRun: true,
+        fetch: fetchMock,
+        ocrClient,
+        sleep: noSleep,
+        now: () => new Date('2026-10-24T23:00:05Z'),
+        log: () => {},
+      })
+    )
 
     expect(status.stage).toBe('done')
     const entry = status.stores['superindo']!
@@ -111,19 +115,29 @@ describe('runPipeline', () => {
     const statusFile = JSON.parse(await readFile(path.join(stateDir, 'status.json'), 'utf8'))
     expect(statusFile.stage).toBe('done')
 
-    // Second run: novelty state marks the same bytes as existing → no new OCR.
-    const status2 = await runPipeline({
-      stateDir,
-      dryRun: true,
-      fetch: fetchMock,
-      ocrClient,
-      now: () => new Date('2026-11-05T23:00:05Z'),
-      log: () => {},
-    })
+    // Second run: novelty state marks the same bytes as existing → no new OCR…
+    const status2 = await Effect.runPromise(
+      runPipeline({
+        stateDir,
+        dryRun: true,
+        fetch: fetchMock,
+        ocrClient,
+        sleep: noSleep,
+        now: () => new Date('2026-11-05T23:00:05Z'),
+        log: () => {},
+      })
+    )
     const entry2 = status2.stores['superindo']!
     expect(entry2.newImages).toBe(0)
     expect(entry2.existingImages).toBeGreaterThanOrEqual(1)
     expect(entry2.itemsExtracted).toBe(0)
+
+    // …but the dry-run never consumed the outbox, so run 2's payload still
+    // replays run 1's extracted items (nothing stranded, nothing re-OCR'd).
+    const payload2: IngestPayload = JSON.parse(
+      await readFile(path.join(stateDir, 'payload-2026-11-05T23-00-05-000Z.json'), 'utf8')
+    )
+    expect(payload2.items.map((item) => item.productKey)).toContain('gula-pasir----1-kg')
 
     // Post-publish prune: the first run's image dir is 12 days old → removed
     // (plan §6 keeps images 7 days after the run that published them).
@@ -148,6 +162,84 @@ describe('runPipeline', () => {
     expect(lines).toHaveLength(entry.itemsExtracted > 0 ? stateJson.processed.length : 0)
     expect(lines[0]!.storeSlug).toBe('superindo')
     expect(lines[0]!.products[0]!.name).toBe('Gula Pasir')
+  })
+
+  it('replays and retires the outbox across a failed then successful publish', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    const jpeg = fakeJpegBytes()
+    const fetchMock = makeFetchMock(katalogHtml, koranHtml, jpeg)
+    const ocrClient: GeminiClient = {
+      models: { generateContent: async () => ({ text: JSON.stringify(ocrItems) }) },
+    }
+
+    // Run 1: OCR succeeds, the ingest POST always 500s → run fails, but the
+    // extracted items are checkpointed in the outbox (and novelty state).
+    const failingPublish = async () => new Response('boom', { status: 500 })
+    const failure = await Effect.runPromiseExit(
+      runPipeline({
+        stateDir,
+        dryRun: false,
+        fetch: fetchMock,
+        ocrClient,
+        publishFetch: failingPublish,
+        ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+        ingestSecret: 's3cret',
+        sleep: noSleep,
+        now: () => new Date('2026-10-24T23:00:05Z'),
+        log: () => {},
+      })
+    )
+    expect(failure._tag).toBe('Failure')
+    const error = exitError(failure) as Error & { exitCode?: number }
+    expect(error.message).toContain('HTTP 500')
+    expect(error.exitCode).toBe(1)
+
+    const runFiles = (await readdir(path.join(stateDir, 'superindo'))).filter((name) =>
+      name.startsWith('run-')
+    )
+    expect(runFiles).toHaveLength(1)
+
+    // Run 2: pages unchanged (zero new OCR), ingest succeeds — the POST body
+    // replays run 1's stranded items, then the outbox is retired.
+    const posted: IngestPayload[] = []
+    const okPublish = async (_url: string, init?: RequestInit) => {
+      posted.push(JSON.parse(init!.body as string))
+      return new Response(
+        JSON.stringify({ accepted: 1, productsCreated: 1, observationsUpserted: 1, skipped: 0 }),
+        { status: 200 }
+      )
+    }
+    const status2 = await Effect.runPromise(
+      runPipeline({
+        stateDir,
+        dryRun: false,
+        fetch: fetchMock,
+        ocrClient: ocrClient,
+        publishFetch: okPublish,
+        ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+        ingestSecret: 's3cret',
+        sleep: noSleep,
+        now: () => new Date('2026-10-25T23:00:05Z'),
+        log: () => {},
+      })
+    )
+    expect(status2.stage).toBe('done')
+    expect(status2.stores['superindo']!.itemsExtracted).toBe(0) // no re-OCR
+    expect(posted).toHaveLength(1)
+    expect(posted[0]!.items.map((item) => item.productKey)).toContain('gula-pasir----1-kg')
+
+    // Outbox consumed only now.
+    expect(
+      (await readdir(path.join(stateDir, 'superindo'))).filter((name) => name.startsWith('run-'))
+    ).toEqual([])
   })
 
   it('checkpoints novelty state per image when the quota dies mid-run', async () => {
@@ -202,23 +294,23 @@ describe('runPipeline', () => {
     }
 
     const now = () => new Date('2026-10-24T23:00:05Z')
-    let failure: unknown
-    try {
-      await runPipeline({
+    const failure = await Effect.runPromiseExit(
+      runPipeline({
         stateDir,
         dryRun: true,
         fetch: fetchMock,
         ocrClient,
+        sleep: noSleep,
         now,
         log: () => {},
       })
-    } catch (error) {
-      failure = error
-    }
+    )
 
     // Quota kill → exit code 2.
-    expect(String(failure)).toMatch(/Daily quota exhausted/)
-    expect((failure as { exitCode?: number }).exitCode).toBe(2)
+    expect(failure._tag).toBe('Failure')
+    const error = exitError(failure) as Error & { exitCode?: number }
+    expect(error.message).toMatch(/Daily quota exhausted/)
+    expect(error.exitCode).toBe(2)
     expect(ocrCalls).toBe(2)
 
     // The first image's progress survived: its hash is in state.json and its
@@ -254,13 +346,16 @@ describe('runPipeline', () => {
     const previous = process.env.GEMINI_API_KEY
     delete process.env.GEMINI_API_KEY
     try {
-      const status = await runPipeline({
-        stateDir,
-        dryRun: true,
-        fetch: fetchMock,
-        now: () => new Date('2026-10-24T23:00:05Z'),
-        log: () => {},
-      })
+      const status = await Effect.runPromise(
+        runPipeline({
+          stateDir,
+          dryRun: true,
+          fetch: fetchMock,
+          sleep: noSleep,
+          now: () => new Date('2026-10-24T23:00:05Z'),
+          log: () => {},
+        })
+      )
       expect(status.stage).toBe('done')
       const entry = status.stores['superindo']!
       expect(entry.pagesFound).toBe(0)
@@ -269,5 +364,23 @@ describe('runPipeline', () => {
     } finally {
       if (previous !== undefined) process.env.GEMINI_API_KEY = previous
     }
+  })
+
+  it('writes status.json even when the run fails', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const failingFetch = async () => new Response('nope', { status: 500 })
+    await Effect.runPromiseExit(
+      runPipeline({
+        stateDir,
+        dryRun: true,
+        fetch: failingFetch,
+        sleep: noSleep,
+        now: () => new Date('2026-10-24T23:00:05Z'),
+        log: () => {},
+      })
+    )
+    const statusFile = JSON.parse(await readFile(path.join(stateDir, 'status.json'), 'utf8'))
+    expect(statusFile.stage).toBe('scrape')
+    expect(statusFile.stores['superindo'].pagesFound).toBe(0)
   })
 })

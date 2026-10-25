@@ -1,9 +1,13 @@
 // Gemini vision OCR — port of haqita scripts/ocr/gemini_client.py + prompts.
-// The SDK client is injected so tests never touch the network.
+// The SDK client is injected so tests never touch the network. Failures are
+// typed: `QuotaExhausted` aborts the run (exit 2), everything else is an
+// `OcrError` retried by the quota-aware policy.
+
+import { Data, Effect } from 'effect'
 
 import type { RawOcrItem } from './parse.js'
 import { parseOcrJson } from './parse.js'
-import { retryCall } from '../util/retry.js'
+import { classifyQuotaError, QuotaExhausted, withQuotaPolicy } from '../util/retry.js'
 
 // Ported verbatim from haqita scripts/ocr/prompts/gemini.py — the prompt is
 // load-bearing for extraction quality; change it deliberately, not casually.
@@ -52,11 +56,15 @@ export interface GeminiClient {
   }
 }
 
+export class OcrError extends Data.TaggedError('OcrError')<{
+  message: string
+}> {}
+
 export interface OcrOptions {
   apiKey?: string
   model: string
   storeSlug: string
-  /** Extra attempts after the first (retryCall policy). */
+  /** Extra attempts after the first (quota-aware policy). */
   retries?: number
   client?: GeminiClient
   sleep?: (ms: number) => Promise<void>
@@ -65,45 +73,72 @@ export interface OcrOptions {
 
 export interface Ocr {
   /** OCR one brochure page; returns raw items (validate separately). */
-  ocrImage(imageBytes: Uint8Array, mimeType?: string): Promise<RawOcrItem[]>
+  ocrImage(
+    imageBytes: Uint8Array,
+    mimeType?: string
+  ): Effect.Effect<RawOcrItem[], OcrError | QuotaExhausted>
 }
 
-export async function createOcr(options: OcrOptions): Promise<Ocr> {
+export function createOcr(options: OcrOptions): Ocr {
   const prompt = getPrompt(options.storeSlug)
 
   // The client (and its API key requirement) is resolved lazily on the first
   // ocrImage call: a run with zero new images makes no OCR calls and must
   // work without GEMINI_API_KEY.
   let client: GeminiClient | undefined = options.client
-  const resolveClient = async (): Promise<GeminiClient> => {
-    if (client) return client
-    const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY
-    if (!apiKey) throw new Error('GEMINI_API_KEY not set (or pass options.apiKey)')
-    const { GoogleGenAI } = await import('@google/genai')
-    client = new GoogleGenAI({ apiKey })
-    return client
-  }
+  const resolveClient = (): Effect.Effect<GeminiClient, OcrError> =>
+    Effect.suspend(() =>
+      client
+        ? Effect.succeed(client)
+        : Effect.tryPromise({
+            try: async () => {
+              const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY
+              if (!apiKey) throw new Error('GEMINI_API_KEY not set (or pass options.apiKey)')
+              const { GoogleGenAI } = await import('@google/genai')
+              client = new GoogleGenAI({ apiKey })
+              return client
+            },
+            catch: (cause: unknown) => new OcrError({ message: String(cause) }),
+          })
+    )
 
   return {
-    async ocrImage(imageBytes: Uint8Array, mimeType = 'image/jpeg'): Promise<RawOcrItem[]> {
-      const activeClient = await resolveClient()
-      const base64 = Buffer.from(imageBytes).toString('base64')
-      const response = await retryCall(
-        () =>
-          activeClient.models.generateContent({
-            model: options.model,
-            contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
+    ocrImage(
+      imageBytes: Uint8Array,
+      mimeType = 'image/jpeg'
+    ): Effect.Effect<RawOcrItem[], OcrError | QuotaExhausted> {
+      return Effect.gen(function* () {
+        const activeClient = yield* resolveClient()
+        const base64 = Buffer.from(imageBytes).toString('base64')
+        const response = yield* withQuotaPolicy(
+          Effect.tryPromise({
+            try: () =>
+              activeClient.models.generateContent({
+                model: options.model,
+                contents: [
+                  { parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] },
+                ],
+              }),
+            catch: (cause: unknown) =>
+              classifyQuotaError(cause) ??
+              new OcrError({ message: cause instanceof Error ? cause.message : String(cause) }),
           }),
-        {
-          retries: options.retries ?? 2,
-          context: 'gemini_ocr',
-          sleep: options.sleep,
-          log: options.log,
-        }
-      )
-      const text = response.text
-      if (!text) throw new Error('Gemini OCR returned empty response')
-      return parseOcrJson(text)
+          {
+            retries: options.retries ?? 2,
+            context: 'gemini_ocr',
+            sleep: options.sleep,
+            log: options.log,
+          }
+        )
+        const text = (response as { text?: string }).text
+        if (!text) return yield* new OcrError({ message: 'Gemini OCR returned empty response' })
+        return yield* Effect.try({
+          try: () => parseOcrJson(text),
+          catch: (cause: unknown) =>
+            classifyQuotaError(cause) ??
+            new OcrError({ message: cause instanceof Error ? cause.message : String(cause) }),
+        })
+      })
     },
   }
 }

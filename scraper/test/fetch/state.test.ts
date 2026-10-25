@@ -1,12 +1,15 @@
 // Port of haqita tests/scrapers/test_state_persistence.py — state
-// round-trip, MD5 novelty, dedupe, filenames, size/dimension gates.
+// round-trip, MD5 novelty, dedupe, filenames, size/dimension gates. The
+// fs-back functions are Effects — driven through Effect.runPromise.
 
 import { mkdtemp, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { describe, expect, it } from 'vite-plus/test'
+import { Data, Effect } from 'effect'
 
+import { FetchTransport } from '../../src/fetch/strategy.js'
 import {
   classifyImages,
   filenameFromUrl,
@@ -16,6 +19,8 @@ import {
   probeImageDimensions,
   saveState,
 } from '../../src/fetch/state.js'
+
+class Boom extends Data.TaggedError('Boom')<{ message: string }> {}
 
 async function tempDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'rumaq-scraper-'))
@@ -54,29 +59,31 @@ function fakePng(width: number, height: number, padding = 0): Uint8Array {
 describe('state persistence', () => {
   it('loads empty state when no file exists', async () => {
     const dir = await tempDir()
-    const state = await loadState(path.join(dir, 'state.json'))
+    const state = await Effect.runPromise(loadState(path.join(dir, 'state.json')))
     expect(state).toEqual({ lastRun: null, processed: [] })
   })
 
   it('saves and reloads state', async () => {
     const dir = await tempDir()
     const stateFile = path.join(dir, 'state.json')
-    await saveState(
-      {
-        lastRun: '2026-05-14T12:00:00',
-        processed: [
-          {
-            filename: 'img1.jpg',
-            md5: 'abc123',
-            imageUrl: 'https://example.com/1.jpg',
-            brochureUrl: 'https://example.com',
-            downloadedAt: '2026-05-14T12:00:00',
-          },
-        ],
-      },
-      stateFile
+    await Effect.runPromise(
+      saveState(
+        {
+          lastRun: '2026-05-14T12:00:00',
+          processed: [
+            {
+              filename: 'img1.jpg',
+              md5: 'abc123',
+              imageUrl: 'https://example.com/1.jpg',
+              brochureUrl: 'https://example.com',
+              downloadedAt: '2026-05-14T12:00:00',
+            },
+          ],
+        },
+        stateFile
+      )
     )
-    const loaded = await loadState(stateFile)
+    const loaded = await Effect.runPromise(loadState(stateFile))
     expect(loaded.lastRun).toBe('2026-05-14T12:00:00')
     expect(loaded.processed).toHaveLength(1)
     expect(loaded.processed[0]!.md5).toBe('abc123')
@@ -86,7 +93,7 @@ describe('state persistence', () => {
     const dir = await tempDir()
     const stateFile = path.join(dir, 'state.json')
     await writeFile(stateFile, 'not valid json', 'utf8')
-    await expect(loadState(stateFile)).rejects.toThrow()
+    await expect(Effect.runPromise(loadState(stateFile))).rejects.toThrow()
   })
 })
 
@@ -144,11 +151,13 @@ describe('classifyImages', () => {
     const big = fakeJpeg(640, 480, 60 * 1024) // passes size + dimension gates
     const fetcher = {
       fetchBytes: (url: string) => {
-        if (url.includes('small-file')) return Promise.resolve(new Uint8Array(100))
-        if (url.includes('small-dim')) return Promise.resolve(fakeJpeg(100, 100, 60 * 1024))
-        if (url.includes('same-a') || url.includes('same-b')) return Promise.resolve(big)
-        if (url.includes('broken')) return Promise.reject(new Error('boom'))
-        return Promise.resolve(big)
+        if (url.includes('small-file')) return Effect.succeed(new Uint8Array(100))
+        if (url.includes('small-dim')) return Effect.succeed(fakeJpeg(100, 100, 60 * 1024))
+        if (url.includes('broken'))
+          return Effect.fail(
+            new FetchTransport({ url, cause: new Boom({ message: 'boom' }), message: 'boom' })
+          )
+        return Effect.succeed(big)
       },
     }
     return { imagesDir, fetcher, big }
@@ -170,23 +179,34 @@ describe('classifyImages', () => {
         },
       ],
     }
-    const result = await classifyImages(
-      [
-        { imageUrl: 'https://example.com/new.jpg', brochureUrl: 'https://example.com/katalog' },
-        { imageUrl: 'https://example.com/same-a.jpg', brochureUrl: 'https://example.com/katalog' },
-        { imageUrl: 'https://example.com/same-b.jpg', brochureUrl: 'https://example.com/katalog' },
-        {
-          imageUrl: 'https://example.com/small-file.jpg',
-          brochureUrl: 'https://example.com/katalog',
-        },
-        {
-          imageUrl: 'https://example.com/small-dim.jpg',
-          brochureUrl: 'https://example.com/katalog',
-        },
-        { imageUrl: 'https://example.com/broken.jpg', brochureUrl: 'https://example.com/katalog' },
-      ],
-      state,
-      { ...opts, imagesDir, fetcher }
+    const result = await Effect.runPromise(
+      classifyImages(
+        [
+          { imageUrl: 'https://example.com/new.jpg', brochureUrl: 'https://example.com/katalog' },
+          {
+            imageUrl: 'https://example.com/same-a.jpg',
+            brochureUrl: 'https://example.com/katalog',
+          },
+          {
+            imageUrl: 'https://example.com/same-b.jpg',
+            brochureUrl: 'https://example.com/katalog',
+          },
+          {
+            imageUrl: 'https://example.com/small-file.jpg',
+            brochureUrl: 'https://example.com/katalog',
+          },
+          {
+            imageUrl: 'https://example.com/small-dim.jpg',
+            brochureUrl: 'https://example.com/katalog',
+          },
+          {
+            imageUrl: 'https://example.com/broken.jpg',
+            brochureUrl: 'https://example.com/katalog',
+          },
+        ],
+        state,
+        { ...opts, imagesDir, fetcher }
+      )
     )
 
     expect(result.existingImages).toHaveLength(1) // MD5 already known
@@ -213,11 +233,13 @@ describe('classifyImages', () => {
   it('marks unseen content as new and writes files', async () => {
     const { imagesDir } = await setup()
     const alt = fakeJpeg(1024, 768, 70 * 1024)
-    const fetcherAlt = { fetchBytes: () => Promise.resolve(alt) }
-    const result = await classifyImages(
-      [{ imageUrl: 'https://example.com/alt.jpg', brochureUrl: 'https://example.com/katalog' }],
-      { lastRun: null, processed: [] },
-      { ...opts, imagesDir, fetcher: fetcherAlt }
+    const fetcherAlt = { fetchBytes: () => Effect.succeed(alt) }
+    const result = await Effect.runPromise(
+      classifyImages(
+        [{ imageUrl: 'https://example.com/alt.jpg', brochureUrl: 'https://example.com/katalog' }],
+        { lastRun: null, processed: [] },
+        { ...opts, imagesDir, fetcher: fetcherAlt }
+      )
     )
     expect(result.newImages).toHaveLength(1)
     const entry = result.newImages[0]!
@@ -229,21 +251,23 @@ describe('classifyImages', () => {
 
   it('does not re-write already-processed images to disk', async () => {
     const { imagesDir, fetcher, big } = await setup()
-    const result = await classifyImages(
-      [{ imageUrl: 'https://example.com/known.jpg', brochureUrl: 'https://example.com/katalog' }],
-      {
-        lastRun: null,
-        processed: [
-          {
-            filename: 'known.jpg',
-            md5: md5Hash(big),
-            imageUrl: 'https://example.com/known.jpg',
-            brochureUrl: 'https://example.com',
-            downloadedAt: '2026-01-01T00:00:00',
-          },
-        ],
-      },
-      { ...opts, imagesDir, fetcher }
+    const result = await Effect.runPromise(
+      classifyImages(
+        [{ imageUrl: 'https://example.com/known.jpg', brochureUrl: 'https://example.com/katalog' }],
+        {
+          lastRun: null,
+          processed: [
+            {
+              filename: 'known.jpg',
+              md5: md5Hash(big),
+              imageUrl: 'https://example.com/known.jpg',
+              brochureUrl: 'https://example.com',
+              downloadedAt: '2026-01-01T00:00:00',
+            },
+          ],
+        },
+        { ...opts, imagesDir, fetcher }
+      )
     )
     expect(result.existingImages).toHaveLength(1)
     expect(result.newImages).toHaveLength(0)
@@ -266,7 +290,9 @@ describe('pruneImages', () => {
     const root = await tempDir()
     await seed(root)
     // 20261024 is exactly 7 days old here — kept (pruned only when older).
-    const pruned = await pruneImages(root, { now: new Date('2026-10-31T00:00:00Z') })
+    const pruned = await Effect.runPromise(
+      pruneImages(root, { now: new Date('2026-10-31T00:00:00Z') })
+    )
     expect(pruned).toEqual(['20260101'])
     await expect(stat(path.join(root, '20260101'))).rejects.toThrow()
     // Recent dir, non-date entries, and loose files are untouched.
@@ -278,15 +304,19 @@ describe('pruneImages', () => {
   it('honors a custom maxAgeDays', async () => {
     const root = await tempDir()
     await seed(root)
-    const pruned = await pruneImages(root, { now: new Date('2026-11-01T00:00:00Z'), maxAgeDays: 3 })
+    const pruned = await Effect.runPromise(
+      pruneImages(root, { now: new Date('2026-11-01T00:00:00Z'), maxAgeDays: 3 })
+    )
     expect(pruned).toEqual(['20260101', '20261024'])
     expect(await readdir(root)).toEqual(['loose-file.jpg', 'not-a-date'])
   })
 
   it('returns [] when the images root does not exist', async () => {
-    const pruned = await pruneImages(path.join(await tempDir(), 'nope', 'images'), {
-      now: new Date('2026-11-01T00:00:00Z'),
-    })
+    const pruned = await Effect.runPromise(
+      pruneImages(path.join(await tempDir(), 'nope', 'images'), {
+        now: new Date('2026-11-01T00:00:00Z'),
+      })
+    )
     expect(pruned).toEqual([])
   })
 })

@@ -7,8 +7,24 @@ import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { Cause, Data, Effect } from 'effect'
+
 import type { BrochurePage } from '../stores/types.js'
 import type { StoreFetcher } from './strategy.js'
+
+export class StateIo extends Data.TaggedError('StateIo')<{
+  op: string
+  path: string
+  cause: unknown
+  message: string
+}> {}
+
+const io = <A>(op: string, file: string, run: () => Promise<A>): Effect.Effect<A, StateIo> =>
+  Effect.tryPromise({
+    try: run,
+    catch: (cause) =>
+      new StateIo({ op, path: file, cause, message: `${op} ${file} failed: ${String(cause)}` }),
+  })
 
 export interface ProcessedImage {
   filename: string
@@ -27,21 +43,29 @@ export function md5Hash(data: Uint8Array): string {
   return createHash('md5').update(data).digest('hex')
 }
 
-export async function loadState(stateFile: string): Promise<ScraperState> {
-  try {
+export function loadState(stateFile: string): Effect.Effect<ScraperState, StateIo> {
+  return io('read', stateFile, async () => {
     const raw = await readFile(stateFile, 'utf8')
     const parsed = JSON.parse(raw) as Partial<ScraperState>
     return { lastRun: parsed.lastRun ?? null, processed: parsed.processed ?? [] }
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ENOENT') return { lastRun: null, processed: [] }
-    throw error
-  }
+  }).pipe(
+    Effect.catchIf(
+      (error) => (error.cause as NodeJS.ErrnoException)?.code === 'ENOENT',
+      () => Effect.succeed<ScraperState>({ lastRun: null, processed: [] })
+    )
+  )
 }
 
-export async function saveState(state: ScraperState, stateFile: string): Promise<void> {
-  await mkdir(path.dirname(stateFile), { recursive: true })
-  await writeFile(stateFile, JSON.stringify(state, null, 2) + '\n', 'utf8')
+export function saveState(state: ScraperState, stateFile: string): Effect.Effect<void, StateIo> {
+  return io('ensure-dir', path.dirname(stateFile), () =>
+    mkdir(path.dirname(stateFile), { recursive: true })
+  ).pipe(
+    Effect.flatMap(() =>
+      io('write', stateFile, () =>
+        writeFile(stateFile, JSON.stringify(state, null, 2) + '\n', 'utf8')
+      )
+    )
+  )
 }
 
 /**
@@ -124,78 +148,101 @@ export interface ClassifyResult {
  * Download brochure pages, filter by size/dimension/novelty, and classify
  * against known MD5s. Mirrors haqita download_and_classify: an image is
  * "existing" when its content hash was already processed, so re-runs are
- * cheap and OCR only ever sees new pages.
+ * cheap and OCR only ever sees new pages. Download failures are skipped,
+ * never fatal — one bad image must not block the daily snapshot.
  */
-export async function classifyImages(
+export function classifyImages(
   pages: BrochurePage[],
   state: ScraperState,
   options: ClassifyOptions
-): Promise<ClassifyResult> {
+): Effect.Effect<ClassifyResult, StateIo> {
   const knownHashes = new Set(state.processed.map((entry) => entry.md5))
   const seenThisRun = new Set<string>()
   const result: ClassifyResult = { newImages: [], existingImages: [], skipped: [] }
   const minSize = options.minImageSizeKb * 1024
   const log = options.log ?? (() => {})
 
-  await mkdir(options.imagesDir, { recursive: true })
+  const download = (page: BrochurePage): Effect.Effect<Uint8Array | null> =>
+    options.fetcher.fetchBytes(page.imageUrl).pipe(
+      // Total recovery: a failed download is a skip, never a run failure —
+      // one bad image must not block the daily snapshot.
+      Effect.catchCause((cause) =>
+        Effect.sync(() => {
+          const error = Cause.squash(cause)
+          result.skipped.push({
+            imageUrl: page.imageUrl,
+            reason: `download_failed: ${error instanceof Error ? error.message : String(error)}`,
+          })
+          return null
+        })
+      )
+    )
 
-  for (const page of pages) {
-    let data: Uint8Array
-    try {
-      data = await options.fetcher.fetchBytes(page.imageUrl)
-    } catch (error) {
-      result.skipped.push({ imageUrl: page.imageUrl, reason: `download_failed: ${String(error)}` })
-      continue
-    }
+  const classifyBytes = (page: BrochurePage, data: Uint8Array): Effect.Effect<void, StateIo> =>
+    Effect.suspend(() => {
+      if (data.byteLength < minSize) {
+        const reason = `too_small_file: ${data.byteLength} bytes`
+        log(`[SKIP] ${path.basename(page.imageUrl)} — ${reason}`)
+        result.skipped.push({ imageUrl: page.imageUrl, reason })
+        return Effect.succeed(undefined)
+      }
 
-    if (data.byteLength < minSize) {
-      const reason = `too_small_file: ${data.byteLength} bytes`
-      log(`[SKIP] ${path.basename(page.imageUrl)} — ${reason}`)
-      result.skipped.push({ imageUrl: page.imageUrl, reason })
-      continue
-    }
+      // Unparseable images pass the dimension check, like haqita's PIL fallback.
+      const dimensions = probeImageDimensions(data)
+      if (
+        dimensions &&
+        dimensions.width < options.minDimensionPx &&
+        dimensions.height < options.minDimensionPx
+      ) {
+        const reason = `too_small_image: ${dimensions.width}x${dimensions.height}`
+        log(`[SKIP] ${path.basename(page.imageUrl)} — ${reason}`)
+        result.skipped.push({ imageUrl: page.imageUrl, reason })
+        return Effect.succeed(undefined)
+      }
 
-    // Unparseable images pass the dimension check, like haqita's PIL fallback.
-    const dimensions = probeImageDimensions(data)
-    if (
-      dimensions &&
-      dimensions.width < options.minDimensionPx &&
-      dimensions.height < options.minDimensionPx
-    ) {
-      const reason = `too_small_image: ${dimensions.width}x${dimensions.height}`
-      log(`[SKIP] ${path.basename(page.imageUrl)} — ${reason}`)
-      result.skipped.push({ imageUrl: page.imageUrl, reason })
-      continue
-    }
+      const hash = md5Hash(data)
+      if (seenThisRun.has(hash)) {
+        result.skipped.push({ imageUrl: page.imageUrl, reason: 'duplicate_content' })
+        return Effect.succeed(undefined)
+      }
+      seenThisRun.add(hash)
 
-    const hash = md5Hash(data)
-    if (seenThisRun.has(hash)) {
-      result.skipped.push({ imageUrl: page.imageUrl, reason: 'duplicate_content' })
-      continue
-    }
-    seenThisRun.add(hash)
+      const filename = filenameFromUrl(page.imageUrl, hash)
+      const filePath = path.join(options.imagesDir, filename)
+      const entry: ClassifiedImage = {
+        filename,
+        md5: hash,
+        imageUrl: page.imageUrl,
+        brochureUrl: page.brochureUrl,
+        downloadedAt: new Date().toISOString(),
+        filePath,
+      }
+      if (knownHashes.has(hash)) {
+        result.existingImages.push(entry)
+        log(`[SKIP] ${filename} — already processed (MD5 match)`)
+        return Effect.succeed(undefined)
+      }
+      return io('write', filePath, () => writeFile(filePath, data)).pipe(
+        Effect.map(() => {
+          result.newImages.push(entry)
+          log(`[NEW] ${filename}`)
+        })
+      )
+    })
 
-    const filename = filenameFromUrl(page.imageUrl, hash)
-    const filePath = path.join(options.imagesDir, filename)
-    const entry: ClassifiedImage = {
-      filename,
-      md5: hash,
-      imageUrl: page.imageUrl,
-      brochureUrl: page.brochureUrl,
-      downloadedAt: new Date().toISOString(),
-      filePath,
-    }
-    if (knownHashes.has(hash)) {
-      result.existingImages.push(entry)
-      log(`[SKIP] ${filename} — already processed (MD5 match)`)
-    } else {
-      await writeFile(filePath, data)
-      result.newImages.push(entry)
-      log(`[NEW] ${filename}`)
-    }
-  }
+  const classifyPage = (page: BrochurePage): Effect.Effect<void, StateIo> =>
+    download(page).pipe(
+      Effect.flatMap((data) =>
+        data === null ? Effect.succeed(undefined) : classifyBytes(page, data)
+      )
+    )
 
-  return result
+  return io('ensure-dir', options.imagesDir, () =>
+    mkdir(options.imagesDir, { recursive: true })
+  ).pipe(
+    Effect.flatMap(() => Effect.forEach(pages, (page) => classifyPage(page))),
+    Effect.flatMap(() => Effect.succeed(result))
+  )
 }
 
 /** Brochure images are kept this many days after the run that published them (plan §6). */
@@ -229,30 +276,37 @@ export interface PruneImagesOptions {
  * `YYYYMMDD` directories are considered, so state.json and the run items
  * files elsewhere in the state dir are never touched.
  */
-export async function pruneImages(
+export function pruneImages(
   imagesRoot: string,
   options: PruneImagesOptions = {}
-): Promise<string[]> {
+): Effect.Effect<string[], StateIo> {
   const nowMs = (options.now ?? new Date()).getTime()
   const maxAgeMs = (options.maxAgeDays ?? IMAGE_RETENTION_DAYS) * 24 * 60 * 60 * 1000
   const log = options.log ?? (() => {})
 
-  let entries
-  try {
-    entries = await readdir(imagesRoot, { withFileTypes: true })
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-    throw error
-  }
-
-  const pruned: string[] = []
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !/^\d{8}$/.test(entry.name)) continue
-    const dirDate = parseDateDir(entry.name)
-    if (!dirDate || nowMs - dirDate.getTime() <= maxAgeMs) continue
-    await rm(path.join(imagesRoot, entry.name), { recursive: true, force: true })
-    pruned.push(entry.name)
-    log(`[prune] removed images/${entry.name}`)
-  }
-  return pruned
+  return Effect.suspend(() =>
+    io('readdir', imagesRoot, () => readdir(imagesRoot, { withFileTypes: true })).pipe(
+      Effect.catchIf(
+        (error) => (error.cause as NodeJS.ErrnoException)?.code === 'ENOENT',
+        () => Effect.succeed([])
+      ),
+      Effect.flatMap((entries) =>
+        Effect.forEach(entries, (entry) =>
+          Effect.suspend(() => {
+            if (!entry.isDirectory() || !/^\d{8}$/.test(entry.name)) return Effect.succeed(null)
+            const dirDate = parseDateDir(entry.name)
+            if (!dirDate || nowMs - dirDate.getTime() <= maxAgeMs) return Effect.succeed(null)
+            return io('rm', path.join(imagesRoot, entry.name), () =>
+              rm(path.join(imagesRoot, entry.name), { recursive: true, force: true })
+            ).pipe(
+              Effect.map(() => {
+                log(`[prune] removed images/${entry.name}`)
+                return entry.name
+              })
+            )
+          })
+        ).pipe(Effect.map((names) => names.filter((name): name is string => name !== null)))
+      )
+    )
+  )
 }

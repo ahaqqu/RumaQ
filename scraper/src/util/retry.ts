@@ -1,17 +1,19 @@
-// Retry engine — port of haqita scripts/common/http_client.py retry_call +
-// QuotaExhaustedError. `withRetries` is the canonical generic engine (used by
-// the fetch ladder and the publish client); `retryCall` is the Gemini-specific
-// wrapper whose default policy understands SDK quota errors (429 /
-// RESOURCE_EXHAUSTED, daily quota vs per-minute rate limit, retry-delay
-// hints). Everywhere in this package `retries` counts EXTRA attempts after
-// the first (so `retries: 2` makes at most 3 calls).
+// Retry engine (Effect) — port of haqita scripts/common/http_client.py
+// retry_call + QuotaExhaustedError. `withRetries` is the canonical generic
+// engine (used by the fetch ladder and the publish client);
+// `withQuotaPolicy` is the Gemini-specific policy that understands SDK quota
+// errors (429 / RESOURCE_EXHAUSTED, daily quota vs per-minute rate limit,
+// retry-delay hints from the error payload — which is why this is not a
+// `Schedule`: schedules cannot read the failed error to pick a delay).
+// Everywhere in this package `retries` counts EXTRA attempts after the first
+// (so `retries: 2` makes at most 3 calls). Sleep stays injectable so tests
+// are fast and deterministic.
 
-export class QuotaExhaustedError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'QuotaExhaustedError'
-  }
-}
+import { Data, Effect } from 'effect'
+
+export class QuotaExhausted extends Data.TaggedError('QuotaExhausted')<{
+  message: string
+}> {}
 
 export function parseRetryDelay(errorMessage: string): number | null {
   const patterns = [
@@ -24,47 +26,6 @@ export function parseRetryDelay(errorMessage: string): number | null {
     if (match?.[1]) return Math.round(parseFloat(match[1])) + 15
   }
   return null
-}
-
-export interface WithRetriesOptions {
-  /** Extra attempts after the first (default 3). */
-  retries?: number
-  backoffMs?: number
-  /** Errors that never succeed on retry — rethrown immediately. */
-  isFatal?: (error: unknown) => boolean
-  /** Label used in retry log lines. */
-  context?: string
-  /** Injectable for tests; defaults to real sleeping. */
-  sleep?: (ms: number) => Promise<void>
-  log?: (message: string) => void
-}
-
-/**
- * Generic retry with exponential backoff: `backoffMs * 2 ** attempt`. The
- * last error is always rethrown as-is (never masked), and fatal errors short
- * -circuit the loop without sleeping.
- */
-export async function withRetries<T>(
-  fn: () => Promise<T>,
-  options: WithRetriesOptions = {}
-): Promise<T> {
-  const retries = options.retries ?? 3
-  const backoffMs = options.backoffMs ?? 1000
-  const context = options.context ?? 'call'
-  const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
-  const log = options.log ?? (() => {})
-
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await fn()
-    } catch (error) {
-      if (options.isFatal?.(error)) throw error
-      if (attempt >= retries) throw error
-      const wait = backoffMs * 2 ** attempt
-      log(`[${context}] Attempt ${attempt + 1} failed (${String(error)}). Retrying in ${wait}ms...`)
-      await sleep(wait)
-    }
-  }
 }
 
 function isQuotaSignal(err: string, errLower: string): boolean {
@@ -80,45 +41,112 @@ function isDailyQuota(err: string, errLower: string): boolean {
   )
 }
 
+/** Maps a thrown SDK error to its typed retry classification. */
+export function classifyQuotaError(cause: unknown): QuotaExhausted | null {
+  const errStr = String(cause)
+  const errLower = errStr.toLowerCase()
+  if (isQuotaSignal(errStr, errLower) && isDailyQuota(errStr, errLower)) {
+    return new QuotaExhausted({ message: `Daily quota exhausted: ${errStr.slice(0, 200)}` })
+  }
+  return null
+}
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
 export interface RetryOptions {
-  /** Extra attempts after the first (default 2, i.e. 3 total calls). */
+  /** Extra attempts after the first (default 3). */
   retries?: number
+  backoffMs?: number
+  /** Errors that never succeed on retry — failed immediately, no sleep. */
+  isFatal?: (error: unknown) => boolean
+  /** Label used in retry log lines. */
   context?: string
   /** Injectable for tests; defaults to real sleeping. */
   sleep?: (ms: number) => Promise<void>
   log?: (message: string) => void
 }
 
-export async function retryCall<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
-  const retries = options.retries ?? 2
+/**
+ * Generic retry with exponential backoff: `backoffMs * 2 ** attempt`. The
+ * last error is always re-failed as-is (never masked), and fatal errors
+ * short-circuit without sleeping.
+ */
+export function withRetries<A, E>(
+  effect: Effect.Effect<A, E>,
+  options: RetryOptions = {}
+): Effect.Effect<A, E> {
+  const retries = options.retries ?? 3
+  const backoffMs = options.backoffMs ?? 1000
   const context = options.context ?? 'call'
-  const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
+  const sleep = options.sleep ?? defaultSleep
   const log = options.log ?? (() => {})
 
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await fn()
-    } catch (error) {
-      if (error instanceof QuotaExhaustedError) throw error
-      const errStr = String(error)
-      const errLower = errStr.toLowerCase()
-      if (isQuotaSignal(errStr, errLower) && isDailyQuota(errStr, errLower)) {
-        throw new QuotaExhaustedError(`Daily quota exhausted: ${errStr.slice(0, 200)}`)
-      }
-      // Final attempt: re-throw the real error — a persistent per-minute
-      // rate limit must surface as itself, not as a masked generic failure.
-      if (attempt >= retries) throw error
-      if (isQuotaSignal(errStr, errLower)) {
-        const waitTime = parseRetryDelay(errStr) ?? 60_000
-        log(
-          `[${context}] Rate limit hit. Sleeping ${waitTime}ms (attempt ${attempt + 1}/${retries + 1})...`
-        )
-        await sleep(waitTime)
-      } else {
-        const waitTime = 2 ** attempt * 1000
-        log(`[${context}] Transient error: ${errStr}. Retrying in ${waitTime}ms...`)
-        await sleep(waitTime)
-      }
-    }
-  }
+  const attempt = (n: number): Effect.Effect<A, E> =>
+    Effect.suspend(() => effect).pipe(
+      Effect.catchIf(
+        () => true,
+        (error) => {
+          if (options.isFatal?.(error) || n >= retries) return Effect.fail(error)
+          const wait = backoffMs * 2 ** n
+          return Effect.sync(() => {
+            log(
+              `[${context}] Attempt ${n + 1} failed (${errorText(error)}). Retrying in ${wait}ms...`
+            )
+          }).pipe(
+            Effect.flatMap(() => Effect.promise(() => sleep(wait))),
+            Effect.flatMap(() => attempt(n + 1))
+          )
+        }
+      )
+    )
+  return attempt(0)
+}
+
+/**
+ * Quota-aware retry for Gemini SDK calls: `QuotaExhausted` propagates
+ * immediately (the caller aborts the run — exit code 2), per-minute rate
+ * limits sleep the delay parsed from the error payload (60s fallback),
+ * everything else backs off exponentially. On the final attempt the real
+ * error is re-failed — a persistent rate limit surfaces as itself.
+ */
+export function withQuotaPolicy<A, E>(
+  effect: Effect.Effect<A, E>,
+  options: Omit<RetryOptions, 'isFatal'> = {}
+): Effect.Effect<A, E> {
+  const retries = options.retries ?? 2
+  const context = options.context ?? 'call'
+  const sleep = options.sleep ?? defaultSleep
+  const log = options.log ?? (() => {})
+
+  const attempt = (n: number): Effect.Effect<A, E> =>
+    Effect.suspend(() => effect).pipe(
+      Effect.catchIf(
+        () => true,
+        (error) => {
+          if (error instanceof QuotaExhausted) return Effect.fail(error)
+          if (n >= retries) return Effect.fail(error)
+          const errStr = errorText(error)
+          const isRateLimit = isQuotaSignal(errStr, errStr.toLowerCase())
+          // parseRetryDelay speaks seconds (haqita convention); sleep speaks ms.
+          const waitTime = isRateLimit ? (parseRetryDelay(errStr) ?? 60) * 1000 : 2 ** n * 1000
+          return Effect.sync(() => {
+            if (isRateLimit) {
+              log(
+                `[${context}] Rate limit hit. Sleeping ${waitTime}ms (attempt ${n + 1}/${retries + 1})...`
+              )
+            } else {
+              log(`[${context}] Transient error: ${errStr}. Retrying in ${waitTime}ms...`)
+            }
+          }).pipe(
+            Effect.flatMap(() => Effect.promise(() => sleep(waitTime))),
+            Effect.flatMap(() => attempt(n + 1))
+          )
+        }
+      )
+    )
+  return attempt(0)
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
