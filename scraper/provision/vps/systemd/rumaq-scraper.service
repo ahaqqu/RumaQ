@@ -1,0 +1,46 @@
+# provision/vps/systemd/rumaq-scraper.service — the nightly price scrape
+# (docs/plan/haqita-integration.md §7). Type=oneshot: systemd runs the
+# pipeline to completion and records the result; the timer owns the schedule.
+#
+# Publish mode comes from the env file (RUMAQ_PUBLISH=true at go-live, PR4)
+# so enabling live ingest is a one-line root edit, never a unit change.
+# Dry-run is the shipped default — the timer is NOT enabled by apply.sh
+# until go-live, so no quota is spent on dry runs in between.
+#
+# Chromium hardening notes: MemoryDenyWriteExecute is deliberately absent
+# (V8 JIT needs executable memory), and MemoryMax=1G / CPUQuota=100% follow
+# the plan's 2-vCPU box budget (§9). Logs go to the journal; journald's
+# global caps bound disk use.
+
+[Unit]
+Description=RumaQ price scraper (scrape -> OCR -> match -> publish)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=rumaq-scraper
+Group=rumaq-scraper
+WorkingDirectory=/var/lib/rumaq-scraper
+EnvironmentFile=/etc/rumaq-scraper/env
+# Browser revision ships with the deploy tree, not with the OS package set.
+Environment=PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers
+ExecStart=/usr/bin/bun /srv/rumaq-scraper/dist/index.js --state-dir=/var/lib/rumaq-scraper
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/rumaq-scraper
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryMax=1G
+CPUQuota=100%
+
+StandardOutput=journal
+StandardError=journal

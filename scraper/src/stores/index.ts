@@ -1,13 +1,14 @@
 // Store registry — plugins are keyed by slug from config.
 
 import type { ScraperConfig, StoreConfig } from '../config.js'
+import { createLottePlugin } from './lotte.js'
 import { createSuperindoPlugin } from './superindo.js'
 import type { StorePlugin } from './types.js'
 
 export function createPlugin(config: StoreConfig): StorePlugin {
   if (config.slug === 'superindo') return createSuperindoPlugin(config)
-  // lotte-mart joins in PR3 (Playwright Tier-2 fetch); anything else is a
-  // config/registry mismatch — one guard for both.
+  if (config.slug === 'lotte-mart') return createLottePlugin(config)
+  // A config/registry mismatch — one guard for both.
   throw new Error(`No plugin registered for store "${config.slug}".`)
 }
 
@@ -16,6 +17,5 @@ export function createPlugin(config: StoreConfig): StorePlugin {
  * derives both its work list and its status map from this list.
  */
 export function activePlugins(config: ScraperConfig): StorePlugin[] {
-  // PR2 runs the Superindo pipeline only; lotte-mart joins in PR3.
-  return config.stores.filter((store) => store.slug === 'superindo').map(createPlugin)
+  return config.stores.map(createPlugin)
 }

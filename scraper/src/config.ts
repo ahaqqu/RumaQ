@@ -1,6 +1,9 @@
 // Port of haqita config.yaml + per-store strategy table
-// (docs/plan/haqita-integration.md §6). Thresholds are consumed by the
-// matcher (PR3) but land here now so the port has a single home.
+// (docs/plan/haqita-integration.md §6). Thresholds and gate flags are
+// consumed by the matcher (match/); the strategy table drives the fetch
+// ladder.
+
+import type { GateFlags } from './match/gates.js'
 
 export type FetchStrategy = 'plain' | 'browser'
 export type StoreKind = 'brochure' | 'catalog'
@@ -31,6 +34,12 @@ export interface ScraperConfig {
     embeddingAmbiguousLow: number
     unitTolerancePct: number
     priceRatioMax: number
+    /** Gemini embedding model replacing haqita's sentence-transformers (§6). */
+    embeddingModel: string
+    /** AI-verifier retries (config.yaml ai_verifier.max_retries). */
+    verifierRetries: number
+    /** Per-gate feature flags — port of config.yaml `consolidation.gates`. */
+    gates: GateFlags
   }
   novelty: {
     minImageSizeKb: number
@@ -56,6 +65,17 @@ export function loadConfig(): ScraperConfig {
       embeddingAmbiguousLow: 0.55,
       unitTolerancePct: 15,
       priceRatioMax: 3.0,
+      embeddingModel: env('GEMINI_EMBEDDING_MODEL', 'gemini-embedding-001'),
+      verifierRetries: 3,
+      gates: {
+        gate0UnitType: true,
+        gate1Brand: true,
+        gate2TokenJaccard: true,
+        gate3ExactMatch: true,
+        gate4Embedding: true,
+        gate5PricePlausibility: true,
+        gate6AiVerifier: true,
+      },
     },
     novelty: {
       minImageSizeKb: 50,

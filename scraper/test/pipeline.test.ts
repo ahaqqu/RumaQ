@@ -12,8 +12,9 @@ import { describe, expect, it } from 'vite-plus/test'
 import { Effect } from 'effect'
 
 import { runPipeline } from '../src/pipeline.js'
-import { exitError } from './helpers.js'
+import { exitError, fakeBrowserLauncher } from './helpers.js'
 import type { GeminiClient } from '../src/ocr/gemini.js'
+import type { EmbeddingClient } from '../src/match/embedding.js'
 import { md5Hash } from '../src/fetch/state.js'
 import type { IngestPayload } from '@rumaq/contract'
 
@@ -38,6 +39,20 @@ function fakeJpegBytes(): Uint8Array<ArrayBuffer> {
 }
 
 const noSleep = async () => {}
+
+// Lotte rides the Tier-2 ladder in every pipeline run now; by default its
+// listing page yields no promo images so the Superindo scenarios stay
+// focused.
+const emptyLotte = fakeBrowserLauncher('<html><body></body></html>')
+
+// Deterministic Gemini stubs — a dev machine with GEMINI_API_KEY in the
+// environment must never make the test suite call the real API.
+const stubEmbedClient: EmbeddingClient = {
+  models: { embedContent: async () => ({ embeddings: [{ values: [1, 0] }] }) },
+}
+const stubVerifyClient: GeminiClient = {
+  models: { generateContent: async () => ({ text: 'YES' }) },
+}
 
 function makeFetchMock(katalogHtml: string, koranHtml: string, jpeg: Uint8Array<ArrayBuffer>) {
   return async (url: string, init?: RequestInit & { proxy?: string }): Promise<Response> => {
@@ -88,6 +103,9 @@ describe('runPipeline', () => {
 
     const status = await Effect.runPromise(
       runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
         stateDir,
         dryRun: true,
         fetch: fetchMock,
@@ -124,6 +142,9 @@ describe('runPipeline', () => {
     // Second run: novelty state marks the same bytes as existing → no new OCR…
     const status2 = await Effect.runPromise(
       runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
         stateDir,
         dryRun: true,
         fetch: fetchMock,
@@ -197,6 +218,9 @@ describe('runPipeline', () => {
     const failingPublish = async () => new Response('boom', { status: 500 })
     const failure = await Effect.runPromiseExit(
       runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
         stateDir,
         dryRun: false,
         fetch: fetchMock,
@@ -231,6 +255,9 @@ describe('runPipeline', () => {
     }
     const status2 = await Effect.runPromise(
       runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
         stateDir,
         dryRun: false,
         fetch: fetchMock,
@@ -313,6 +340,9 @@ describe('runPipeline', () => {
     const now = () => new Date('2026-10-24T23:00:05Z')
     const failure = await Effect.runPromiseExit(
       runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
         stateDir,
         dryRun: true,
         fetch: fetchMock,
@@ -394,6 +424,9 @@ describe('runPipeline', () => {
 
     const failure = await Effect.runPromiseExit(
       runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
         stateDir,
         dryRun: true,
         fetch: fetchMock,
@@ -418,6 +451,9 @@ describe('runPipeline', () => {
     await rm(runItemsFile, { force: true })
     const status2 = await Effect.runPromise(
       runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
         stateDir,
         dryRun: true,
         fetch: fetchMock,
@@ -448,6 +484,9 @@ describe('runPipeline', () => {
     try {
       const status = await Effect.runPromise(
         runPipeline({
+          launcher: emptyLotte.launcher,
+          embedClient: stubEmbedClient,
+          verifyClient: stubVerifyClient,
           stateDir,
           dryRun: true,
           fetch: fetchMock,
@@ -471,6 +510,9 @@ describe('runPipeline', () => {
     const failingFetch = async () => new Response('nope', { status: 500 })
     await Effect.runPromiseExit(
       runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
         stateDir,
         dryRun: true,
         fetch: failingFetch,
@@ -483,4 +525,84 @@ describe('runPipeline', () => {
     expect(statusFile.stage).toBe('scrape')
     expect(statusFile.stores['superindo'].pagesFound).toBe(0)
   })
+})
+
+it('runs the lotte flow through the Tier-2 browser ladder and cross-matches with superindo', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+  const katalogHtml = await readFile(
+    path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+    'utf8'
+  )
+  const koranHtml = await readFile(
+    path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+    'utf8'
+  )
+  // The page was saved from a browser, so asset srcs point at the local
+  // save folder — rewrite them to the site-absolute form the live page
+  // serves before parsing.
+  const lotteHtml = (
+    await readFile(path.join(__dirname, 'fixtures/lotte/all-promo-mart.html'), 'utf8')
+  ).replaceAll('./All Promo Mart_files/', 'https://www.lottemart.co.id/assets/')
+  const jpeg = fakeJpegBytes()
+  // The listing pages come from their own tiers (superindo plain, lotte
+  // browser); every image URL — either store's — serves the same fake
+  // JPEG, so both stores OCR the same item and the catalog matcher joins
+  // them onto one canonical product.
+  const fetchMock = async (
+    url: string,
+    init?: RequestInit & { proxy?: string }
+  ): Promise<Response> => {
+    expect(init?.headers).toBeDefined()
+    if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
+    if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
+    return new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
+  }
+  const lotteBrowser = fakeBrowserLauncher(lotteHtml)
+  const ocrClient: GeminiClient = {
+    models: { generateContent: async () => ({ text: JSON.stringify(ocrItems) }) },
+  }
+
+  const status = await Effect.runPromise(
+    runPipeline({
+      stateDir,
+      dryRun: true,
+      launcher: lotteBrowser.launcher,
+      embedClient: stubEmbedClient,
+      verifyClient: stubVerifyClient,
+      fetch: fetchMock,
+      ocrClient,
+      sleep: noSleep,
+      now: () => new Date('2026-10-24T23:00:05Z'),
+      log: () => {},
+    })
+  )
+
+  expect(status.stage).toBe('done')
+  const lotte = status.stores['lotte-mart']!
+  expect(lotte.pagesFound).toBeGreaterThan(0)
+  expect(lotte.itemsExtracted).toBeGreaterThanOrEqual(1)
+  expect(lotteBrowser.state.pages).toBe(1) // one listing page per run
+  expect(lotteBrowser.state.closed).toBe(true) // session released at store end
+
+  // The catalog matcher joined both stores' "Gula Pasir 1 kg" onto one
+  // canonical product: one catalog entry, two stores, second sighting
+  // matched exact (the ★ PR3 redesign — plan §6).
+  const catalog = JSON.parse(await readFile(path.join(stateDir, 'catalog.json'), 'utf8'))
+  const entries = Object.values(catalog.entries) as {
+    storesFound: string[]
+    appearanceCount: number
+  }[]
+  const gula = entries.find((e) => e.storesFound.length === 2)
+  expect(gula).toBeDefined()
+  expect(gula!.storesFound).toEqual(['superindo', 'lotte-mart'])
+  expect(gula!.appearanceCount).toBe(2)
+  expect(status.match).toMatchObject({ exact: 1, solo: 1 })
+
+  const payload: IngestPayload = JSON.parse(
+    await readFile(path.join(stateDir, 'payload-2026-10-24T23-00-05-000Z.json'), 'utf8')
+  )
+  const gulaItems = payload.items.filter((item) => item.name === 'Gula Pasir')
+  expect(gulaItems).toHaveLength(2)
+  expect(new Set(gulaItems.map((item) => item.productKey)).size).toBe(1)
+  expect(gulaItems.map((item) => item.matchMethod).sort()).toEqual(['exact', 'solo'])
 })

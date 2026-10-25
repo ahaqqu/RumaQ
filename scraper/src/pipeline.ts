@@ -12,6 +12,20 @@ import { Data, Effect } from 'effect'
 
 import { loadConfig, type ScraperConfig } from './config.js'
 import {
+  loadCatalog,
+  loadEmbeddingCache,
+  saveCatalog,
+  saveEmbeddingCache,
+  type CatalogIo,
+} from './match/catalog-store.js'
+import type { EmbeddingClient } from './match/embedding.js'
+import {
+  runMatch,
+  type MatchInputItem,
+  type MatchOutcome,
+  type MatchStats,
+} from './match/matcher.js'
+import {
   classifyImages,
   loadState,
   pruneImages,
@@ -20,7 +34,8 @@ import {
   StateIo,
   type ScraperState,
 } from './fetch/state.js'
-import { createFetcher, type FetchError, type FetchLike } from './fetch/strategy.js'
+import type { BrowserLauncher } from './fetch/browser.js'
+import { createStoreFetcher, type FetchError, type FetchLike } from './fetch/strategy.js'
 import { createOcr, type GeminiClient, type Ocr, type OcrError } from './ocr/gemini.js'
 import { validateProduct, type ValidatedProduct } from './ocr/parse.js'
 import { assertPayloadValid, buildPayload, type ImageProducts } from './publish/payload.js'
@@ -41,11 +56,12 @@ export class PipelineFailure extends Data.TaggedError('PipelineFailure')<{
   exitCode: number
 }> {}
 
-export type PipelineStage = 'scrape' | 'ocr' | 'publish' | 'done'
+export type PipelineStage = 'scrape' | 'ocr' | 'match' | 'publish' | 'done'
 
 export interface PipelineStatus {
   runStartedAt: string
   stage: PipelineStage
+  match?: MatchStats
   stores: Record<
     string,
     {
@@ -61,10 +77,16 @@ export interface PipelineStatus {
 
 export interface PipelineOptions {
   stateDir: string
-  /** Default true in PR2 — the ingest URL goes live with PR4. */
+  /** Default true until go-live (PR4) flips the timer to --publish. */
   dryRun: boolean
   fetch?: FetchLike
+  /** Tier-2 browser launcher override (tests inject a fake). */
+  launcher?: BrowserLauncher
   ocrClient?: GeminiClient
+  embedClient?: EmbeddingClient
+  verifyClient?: GeminiClient
+  /** Gemini API key override; defaults to GEMINI_API_KEY. */
+  geminiApiKey?: string
   publishFetch?: PublishFetch
   /** Ingest endpoint overrides; default to the RUMAQ_INGEST_* env vars. */
   ingestUrl?: string
@@ -101,7 +123,7 @@ function writeStatus(stateDir: string, status: PipelineStatus): Effect.Effect<vo
   }).pipe(Effect.ignore)
 }
 
-type StoreRunError = FetchError | StateIo | OcrError | QuotaExhausted | OutboxIo
+type StoreRunError = FetchError | StateIo | OcrError | QuotaExhausted | OutboxIo | CatalogIo
 
 function processStore(
   plugin: BrochureStorePlugin,
@@ -120,7 +142,12 @@ function processStore(
     scrapedAt.slice(0, 10).replace(/-/g, '')
   )
 
-  const fetcher = createFetcher(store, { fetch: options.fetch, log, sleep: options.sleep })
+  const fetcher = createStoreFetcher(store, {
+    fetch: options.fetch,
+    log,
+    sleep: options.sleep,
+    launcher: options.launcher,
+  })
   const ocr: Ocr = createOcr({
     model: config.ocr.model,
     storeSlug: store.slug,
@@ -218,7 +245,11 @@ function processStore(
     yield* saveState(state, stateFile)
 
     return imageProducts
-  })
+  }).pipe(
+    // The browser session (Tier-2 stores) must never outlive the store's
+    // run, whatever exit it takes; close() itself never throws.
+    Effect.onExit(() => Effect.promise(() => fetcher.close()))
+  )
 }
 
 function toPipelineFailure(error: unknown): PipelineFailure {
@@ -281,11 +312,63 @@ export function runPipeline(
         allImageProducts.push(...imageProducts)
       }
 
+      // Match stage: every item (replayed outbox batches included — they were
+      // never published, so they were never matched) resolves against the
+      // persistent canonical catalog. Identity-keyed outcomes feed the
+      // payload; the catalog and embedding cache checkpoint after the sweep.
+      status.stage = 'match'
+      const catalogFile = path.join(options.stateDir, 'catalog.json')
+      const embeddingsFile = path.join(options.stateDir, 'embeddings.json')
+      const matchInput: MatchInputItem[] = []
+      for (const batch of allImageProducts) {
+        for (const product of batch.products) {
+          matchInput.push({ storeSlug: batch.storeSlug, product })
+        }
+      }
+      const outcomeByProduct = new Map<ValidatedProduct, MatchOutcome>()
+      if (matchInput.length > 0) {
+        const catalog = yield* loadCatalog(catalogFile)
+        const cache = yield* loadEmbeddingCache(embeddingsFile, config.consolidation.embeddingModel)
+        const matched = yield* runMatch(
+          matchInput,
+          catalog,
+          cache,
+          {
+            cfg: config.consolidation,
+            embeddingModel: config.consolidation.embeddingModel,
+            verifierModel: config.ocr.verifierModel,
+            verifierRetries: config.consolidation.verifierRetries,
+            storeNames: Object.fromEntries(config.stores.map((store) => [store.slug, store.name])),
+            apiKey: options.geminiApiKey,
+            embedClient: options.embedClient,
+            verifyClient: options.verifyClient,
+            sleep: options.sleep,
+            log,
+          },
+          scrapedAt
+        )
+        status.match = matched.stats
+        log(
+          `[match] ${matched.stats.exact} exact, ${matched.stats.embedding} embedding, ` +
+            `${matched.stats.ai} ai-verified, ${matched.stats.solo} new — ` +
+            `${matched.stats.reviewItems} flagged for review` +
+            (matched.stats.embeddingsDegraded ? ' (embeddings degraded: exact-only)' : '')
+        )
+        yield* saveCatalog(matched.catalog, catalogFile)
+        // The cache is only mutated on embedding success; a failed sweep
+        // persists whatever earlier runs accrued.
+        yield* saveEmbeddingCache(matched.cache, embeddingsFile)
+        matchInput.forEach((input, i) => {
+          outcomeByProduct.set(input.product, matched.outcomes[i]!)
+        })
+      }
+
       status.stage = 'publish'
       const payload = buildPayload({
         stores: config.stores,
         images: allImageProducts,
         scrapedAt,
+        outcomes: outcomeByProduct,
       })
       // Producer-side contract check: a schema violation is a pipeline bug and
       // exits 1 before the payload leaves the VPS (belt-and-braces for the

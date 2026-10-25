@@ -1,0 +1,32 @@
+# provision/vps/systemd/rumaq-scraper-selfcheck.service — the post-deploy
+# gate. scripts/deploy/vps.sh ships a new tree, then starts this unit (the
+# deploy identity's single sudo grant): the self-check runs AS THE SERVICE
+# USER with the real env file, so a deploy that cannot prove the nightly job
+# would run (missing key, unwritable state, absent chromium revision) turns
+# the deploy red instead of surfacing at 06:00 WIB.
+
+[Unit]
+Description=RumaQ scraper post-deploy self-check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=rumaq-scraper
+Group=rumaq-scraper
+WorkingDirectory=/var/lib/rumaq-scraper
+EnvironmentFile=/etc/rumaq-scraper/env
+Environment=PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers
+ExecStart=/usr/bin/bun /srv/rumaq-scraper/dist/index.js --self-check --state-dir=/var/lib/rumaq-scraper
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/rumaq-scraper
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=1G
+
+StandardOutput=journal
+StandardError=journal

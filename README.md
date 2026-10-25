@@ -58,6 +58,14 @@ Creates D1 database and R2 bucket if missing, then deploys a single Worker that 
 
 Merges to `main` deploy production automatically: `.github/workflows/deploy.yml` runs CI first, then calls the same `./scripts/deploy.sh cloudflare` — both checks visible on the commit. Docs-only merges skip the deploy automatically (`scripts/github/needs-deploy.sh`), and the workflow can be run manually from the Actions tab to redeploy. Pull requests are gated by `ci.yml`, which has no deploy job.
 
+### Scraper (VPS) deploy
+
+```bash
+./scripts/deploy.sh vps   # build → rsync → chromium → self-check → doctor
+```
+
+Ships the `scraper/` bundle to the box behind the ingest endpoint. The same `deploy.yml` commit-based flow runs this job when the change touches the scraper's world (`scraper/`, `contract/`, deploy plumbing) — it stays **skipped until `vars.VPS_HOST` is set**, i.e. until the box is provisioned with `sudo scraper/provision/vps/apply.sh` (system user, systemd timer, scoped sudoers, root-only `/etc/rumaq-scraper/env`). One-time setup after the first deploy: `apply.sh --install-deps` (chromium's apt libraries). The nightly timer itself is enabled at go-live with `apply.sh --enable-timer`.
+
 ### Pull request previews
 
 Previews are deployed **on demand** — run `Preview deployment` from the GitHub Actions tab and select the branch. Docs-only or trivial PRs need no preview environment.
