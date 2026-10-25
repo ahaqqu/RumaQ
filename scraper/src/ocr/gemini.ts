@@ -35,7 +35,11 @@ const PROMPTS: Record<string, string> = {
 }
 
 export function getPrompt(storeSlug: string): string {
-  return PROMPTS[storeSlug] ?? PROMPTS['superindo']!
+  const prompt = PROMPTS[storeSlug]
+  // The prompt table and the store registry live in the same package — a
+  // missing prompt is a programming error, not a runtime condition.
+  if (!prompt) throw new Error(`No OCR prompt registered for store "${storeSlug}"`)
+  return prompt
 }
 
 /** Structural slice of @google/genai's client — the real thing satisfies it. */

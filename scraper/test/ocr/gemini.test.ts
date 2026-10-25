@@ -23,8 +23,8 @@ describe('getPrompt', () => {
     expect(getPrompt('lotte-mart')).toContain('Lotte Mart supermarket brochure image')
   })
 
-  it('falls back to superindo for unknown stores', () => {
-    expect(getPrompt('unknown-store')).toBe(getPrompt('superindo'))
+  it('throws for stores without a registered prompt instead of falling back', () => {
+    expect(() => getPrompt('unknown-store')).toThrow('No OCR prompt registered')
   })
 
   it('carries the load-bearing JSON rules verbatim', () => {
