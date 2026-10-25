@@ -74,6 +74,51 @@ describe('completeText', () => {
     )
   })
 
+  it('calls Ollama Cloud with the default vision model', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Hello from Ollama' } }],
+      }),
+    })
+    globalThis.fetch = fetchMock
+    const result = await completeText('ollama', 'sk-test', 'system', 'user')
+    expect(result).toBe('Hello from Ollama')
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://ollama.com/v1/chat/completions',
+      expect.objectContaining({ method: 'POST' })
+    )
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.model).toBe('qwen3-vl:235b-instruct')
+  })
+
+  it('calls a custom OpenAI-compatible provider with base URL and model', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Hello from custom' } }],
+      }),
+    })
+    globalThis.fetch = fetchMock
+    const result = await completeText('custom', 'sk-test', 'system', 'user', {
+      baseUrl: 'https://api.example.com/v1',
+      model: 'llama3.3:70b',
+    })
+    expect(result).toBe('Hello from custom')
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.com/v1/chat/completions',
+      expect.objectContaining({ method: 'POST' })
+    )
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.model).toBe('llama3.3:70b')
+  })
+
+  it('throws when custom provider has no base URL or model', async () => {
+    await expect(completeText('custom', 'sk-test', 'system', 'user')).rejects.toThrow(
+      'requires a base URL and model'
+    )
+  })
+
   it('throws on unsupported provider', async () => {
     await expect(completeText('unknown', 'sk-test', 'system', 'user')).rejects.toThrow(
       'Unsupported AI provider'

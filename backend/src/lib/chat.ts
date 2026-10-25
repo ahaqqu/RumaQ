@@ -1,4 +1,4 @@
-import { completeText } from './ai.js'
+import { completeText, type AiCallOpts } from './ai.js'
 import { buildSystemPrompt } from './persona.js'
 
 type LowStockItem = {
@@ -92,7 +92,8 @@ export async function sendChatMessage(
   apiKey: string,
   ctx: ChatContext,
   message: string,
-  history: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+  opts?: AiCallOpts
 ): Promise<string> {
   const systemPrompt = buildChatSystemPrompt(ctx)
   const conversation = history
@@ -100,5 +101,5 @@ export async function sendChatMessage(
     .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
     .join('\n')
   const userPrompt = conversation ? `${conversation}\nUser: ${message}` : message
-  return completeText(provider, apiKey, systemPrompt, userPrompt)
+  return completeText(provider, apiKey, systemPrompt, userPrompt, opts)
 }

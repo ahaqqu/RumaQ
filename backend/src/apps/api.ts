@@ -531,9 +531,9 @@ apiApp.get(
   }),
   async (c) => {
     const settings = await c.env.DB.prepare(
-      `SELECT motion_preference, language, ai_provider, persona_user_role,
-               persona_ai_role, persona_enabled, theme_hue, active_household_id,
-               encrypted_ai_key
+      `SELECT motion_preference, language, ai_provider, ai_base_url, ai_model,
+               persona_user_role, persona_ai_role, persona_enabled, theme_hue,
+               active_household_id, encrypted_ai_key
         FROM user_settings WHERE user_id = ?`
     )
       .bind(c.get('userId'))
@@ -541,6 +541,8 @@ apiApp.get(
         motion_preference: string
         language: string | null
         ai_provider: string | null
+        ai_base_url: string | null
+        ai_model: string | null
         persona_user_role: string | null
         persona_ai_role: string | null
         persona_enabled: number
@@ -559,6 +561,8 @@ apiApp.get(
       motion_preference: settings?.motion_preference ?? 'standard',
       language: settings?.language ?? null,
       ai_provider: settings?.ai_provider ?? null,
+      ai_base_url: settings?.ai_base_url ?? null,
+      ai_model: settings?.ai_model ?? null,
       persona_user_role: settings?.persona_user_role ?? null,
       persona_ai_role: settings?.persona_ai_role ?? null,
       persona_enabled: settings?.persona_enabled === 1,
@@ -585,8 +589,13 @@ apiApp.patch(
             type: 'object',
             additionalProperties: false,
             properties: {
-              ai_provider: { type: 'string', enum: ['opencode', 'openai', 'anthropic', 'gemini'] },
+              ai_provider: {
+                type: 'string',
+                enum: ['opencode', 'openai', 'anthropic', 'gemini', 'ollama', 'custom'],
+              },
               ai_key: { type: 'string', minLength: 1 },
+              ai_base_url: { type: 'string', maxLength: 500 },
+              ai_model: { type: 'string', maxLength: 200 },
               persona_user_role: { type: 'string' },
               persona_ai_role: { type: 'string' },
               persona_enabled: { type: 'boolean' },
@@ -625,6 +634,16 @@ apiApp.patch(
       updates.push('ai_provider = ?')
       params.push(fields.ai_provider)
     }
+    if (fields.ai_base_url !== undefined) {
+      const trimmed = fields.ai_base_url.trim()
+      updates.push('ai_base_url = ?')
+      params.push(trimmed === '' ? null : trimmed)
+    }
+    if (fields.ai_model !== undefined) {
+      const trimmed = fields.ai_model.trim()
+      updates.push('ai_model = ?')
+      params.push(trimmed === '' ? null : trimmed)
+    }
     if (fields.persona_user_role !== undefined) {
       updates.push('persona_user_role = ?')
       params.push(fields.persona_user_role)
@@ -660,8 +679,9 @@ apiApp.patch(
     }
 
     const settings = await c.env.DB.prepare(
-      `SELECT motion_preference, language, ai_provider, persona_user_role,
-              persona_ai_role, persona_enabled, theme_hue, encrypted_ai_key
+      `SELECT motion_preference, language, ai_provider, ai_base_url, ai_model,
+              persona_user_role, persona_ai_role, persona_enabled, theme_hue,
+              encrypted_ai_key
         FROM user_settings WHERE user_id = ?`
     )
       .bind(c.get('userId'))
@@ -669,6 +689,8 @@ apiApp.patch(
         motion_preference: string
         language: string | null
         ai_provider: string | null
+        ai_base_url: string | null
+        ai_model: string | null
         persona_user_role: string | null
         persona_ai_role: string | null
         persona_enabled: number
@@ -680,6 +702,8 @@ apiApp.patch(
       motion_preference: settings?.motion_preference ?? 'standard',
       language: settings?.language ?? null,
       ai_provider: settings?.ai_provider ?? null,
+      ai_base_url: settings?.ai_base_url ?? null,
+      ai_model: settings?.ai_model ?? null,
       persona_user_role: settings?.persona_user_role ?? null,
       persona_ai_role: settings?.persona_ai_role ?? null,
       persona_enabled: settings?.persona_enabled === 1,
@@ -704,8 +728,12 @@ apiApp.post(
             type: 'object',
             required: ['provider'],
             properties: {
-              provider: { type: 'string', enum: ['opencode', 'openai', 'anthropic', 'gemini'] },
+              provider: {
+                type: 'string',
+                enum: ['opencode', 'openai', 'anthropic', 'gemini', 'ollama', 'custom'],
+              },
               key: { type: 'string', minLength: 1 },
+              base_url: { type: 'string', maxLength: 500 },
             },
           },
         },
@@ -768,9 +796,33 @@ apiApp.post(
           if (!res.ok) throw new Error()
           break
         }
-        case 'opencode':
-        default: {
+        case 'opencode': {
           const res = await fetch('https://api.opencode.ai/v1/models', {
+            headers: { Authorization: `Bearer ${apiKey}` },
+          })
+          if (!res.ok) throw new Error()
+          break
+        }
+        case 'ollama': {
+          const res = await fetch('https://ollama.com/v1/models', {
+            headers: { Authorization: `Bearer ${apiKey}` },
+          })
+          if (!res.ok) throw new Error()
+          break
+        }
+        case 'custom': {
+          const baseUrl = body.base_url?.trim()
+          if (!baseUrl) return c.json({ error: 'Base URL required for custom provider' }, 400)
+          let modelsUrl: URL
+          try {
+            modelsUrl = new URL(`${baseUrl.replace(/\/+$/, '')}/models`)
+          } catch {
+            return c.json({ error: 'Invalid base URL' }, 400)
+          }
+          if (modelsUrl.protocol !== 'https:') {
+            return c.json({ error: 'Base URL must use HTTPS' }, 400)
+          }
+          const res = await fetch(modelsUrl.toString(), {
             headers: { Authorization: `Bearer ${apiKey}` },
           })
           if (!res.ok) throw new Error()
@@ -890,13 +942,15 @@ apiApp.post(
     const { message, history } = c.req.valid('json')
 
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, encrypted_ai_key,
+      `SELECT ai_provider, ai_base_url, ai_model, encrypted_ai_key,
               persona_enabled, persona_user_role, persona_ai_role
          FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
       .first<{
         ai_provider: string | null
+        ai_base_url: string | null
+        ai_model: string | null
         encrypted_ai_key: string | null
         persona_enabled: number | null
         persona_user_role: string | null
@@ -1023,7 +1077,8 @@ apiApp.post(
             recentPurchases: recentPurchases.results || [],
           },
           message,
-          history || []
+          history || [],
+          { baseUrl: settings.ai_base_url, model: settings.ai_model }
         )
       } catch (err) {
         return c.json(
@@ -1093,10 +1148,15 @@ apiApp.post(
     }
 
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, encrypted_ai_key FROM user_settings WHERE user_id = ?`
+      `SELECT ai_provider, ai_base_url, ai_model, encrypted_ai_key FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
-      .first<{ ai_provider: string | null; encrypted_ai_key: string | null }>()
+      .first<{
+        ai_provider: string | null
+        ai_base_url: string | null
+        ai_model: string | null
+        encrypted_ai_key: string | null
+      }>()
 
     if (!settings?.ai_provider || !settings?.encrypted_ai_key) {
       return c.json(
@@ -1158,7 +1218,10 @@ apiApp.post(
       }
     } else {
       try {
-        scanResult = await extractReceiptItems(file.data, file.type, settings.ai_provider, aiKey)
+        scanResult = await extractReceiptItems(file.data, file.type, settings.ai_provider, aiKey, {
+          baseUrl: settings.ai_base_url,
+          model: settings.ai_model,
+        })
       } catch (err) {
         return c.json(
           {
@@ -2258,11 +2321,13 @@ apiApp.post(
     const householdId = c.get('householdId')
 
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, encrypted_ai_key, currency FROM user_settings WHERE user_id = ?`
+      `SELECT ai_provider, ai_base_url, ai_model, encrypted_ai_key, currency FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
       .first<{
         ai_provider: string | null
+        ai_base_url: string | null
+        ai_model: string | null
         encrypted_ai_key: string | null
         currency: string | null
       }>()
@@ -2407,7 +2472,8 @@ apiApp.post(
           expiring.results || [],
           recentPurchases.results || [],
           stores || [],
-          settings.currency || 'IDR'
+          settings.currency || 'IDR',
+          { baseUrl: settings.ai_base_url, model: settings.ai_model }
         )
       } catch (err) {
         return c.json(

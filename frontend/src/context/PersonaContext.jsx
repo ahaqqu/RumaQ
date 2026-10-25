@@ -36,8 +36,8 @@ export function PersonaProvider({ children, initialPersona }) {
     })
   }
 
-  const regenerateCopy = async (aiKey, provider, draftPersona = persona) => {
-    const generated = await generatePersonaCopy(draftPersona, aiKey, provider)
+  const regenerateCopy = async (aiKey, provider, draftPersona = persona, opts = {}) => {
+    const generated = await generatePersonaCopy(draftPersona, aiKey, provider, undefined, opts)
     if (generated) {
       setPersona({ generatedCopy: generated })
     }

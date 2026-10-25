@@ -15,8 +15,12 @@ import {
 } from 'valibot'
 
 export const settingsPatchSchema = strictObject({
-  ai_provider: optional(picklist(['opencode', 'openai', 'anthropic', 'gemini'])),
+  ai_provider: optional(
+    picklist(['opencode', 'openai', 'anthropic', 'gemini', 'ollama', 'custom'])
+  ),
   ai_key: optional(pipe(string(), minLength(1))),
+  ai_base_url: optional(pipe(string(), maxLength(500))),
+  ai_model: optional(pipe(string(), maxLength(200))),
   persona_user_role: optional(string()),
   persona_ai_role: optional(string()),
   persona_enabled: optional(boolean()),
@@ -34,8 +38,9 @@ export const storeSchema = object({
 })
 
 export const aiKeyTestSchema = object({
-  provider: picklist(['opencode', 'openai', 'anthropic', 'gemini']),
+  provider: picklist(['opencode', 'openai', 'anthropic', 'gemini', 'ollama', 'custom']),
   key: optional(pipe(string(), minLength(1))),
+  base_url: optional(pipe(string(), minLength(1), maxLength(500))),
 })
 
 export const stockPatchSchema = strictObject({

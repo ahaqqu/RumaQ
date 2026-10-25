@@ -108,6 +108,8 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState(aiKey || '')
   const [provider, setProvider] = useState('gemini')
+  const [customBaseUrl, setCustomBaseUrl] = useState('')
+  const [customModel, setCustomModel] = useState('')
   const [saved, setSaved] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testOk, setTestOk] = useState(null)
@@ -148,6 +150,12 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
     if (!settingsData) return
     if (settingsData.ai_provider) {
       setProvider(settingsData.ai_provider)
+    }
+    if (settingsData.ai_base_url) {
+      setCustomBaseUrl(settingsData.ai_base_url)
+    }
+    if (settingsData.ai_model) {
+      setCustomModel(settingsData.ai_model)
     }
     if (settingsData.has_ai_key) {
       setDraft('')
@@ -191,10 +199,15 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
       })
 
       if (personaDraft.enabled && personaDraft.userRole && personaDraft.aiRole && aiKey) {
-        await regenerateCopy(aiKey, provider, {
-          ...personaDraft,
-          hue: deriveHue(personaDraft.userRole, personaDraft.aiRole),
-        })
+        await regenerateCopy(
+          aiKey,
+          provider,
+          {
+            ...personaDraft,
+            hue: deriveHue(personaDraft.userRole, personaDraft.aiRole),
+          },
+          { baseUrl: customBaseUrl, model: customModel }
+        )
       }
 
       setPersonaApplied(true)
@@ -210,6 +223,10 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
 
   const save = async () => {
     const payload = { ai_key: draft.trim(), ai_provider: provider }
+    if (provider === 'custom') {
+      payload.ai_base_url = customBaseUrl.trim()
+      payload.ai_model = customModel.trim()
+    }
     setAiKey(draft.trim() || null)
     setTestOk(null)
     await saveSettings(payload)
@@ -219,7 +236,11 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
     setTesting(true)
     setTestOk(null)
     try {
-      await testAiKey(provider, draft || undefined)
+      await testAiKey(
+        provider,
+        draft || undefined,
+        provider === 'custom' ? customBaseUrl : undefined
+      )
       setTestOk(true)
     } catch {
       setTestOk(false)
@@ -301,8 +322,41 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                   <option value="openai">OpenAI</option>
                   <option value="anthropic">Anthropic</option>
                   <option value="gemini">Gemini</option>
+                  <option value="ollama">Ollama Cloud</option>
+                  <option value="custom">{t('settings.customProvider')}</option>
                 </select>
               </Setting>
+
+              {provider === 'custom' && (
+                <>
+                  <Setting
+                    title={t('settings.customBaseUrl')}
+                    desc={t('settings.customBaseUrlDesc')}
+                    className="flex-wrap"
+                  >
+                    <InlineInput
+                      value={customBaseUrl}
+                      onChange={setCustomBaseUrl}
+                      onSubmit={save}
+                      placeholder="https://api.example.com/v1"
+                      ariaLabel={t('settings.customBaseUrl')}
+                    />
+                  </Setting>
+                  <Setting
+                    title={t('settings.customModel')}
+                    desc={t('settings.customModelDesc')}
+                    className="flex-wrap"
+                  >
+                    <InlineInput
+                      value={customModel}
+                      onChange={setCustomModel}
+                      onSubmit={save}
+                      placeholder="llama3.3:70b"
+                      ariaLabel={t('settings.customModel')}
+                    />
+                  </Setting>
+                </>
+              )}
 
               <Setting
                 title={t('settings.apiKey')}

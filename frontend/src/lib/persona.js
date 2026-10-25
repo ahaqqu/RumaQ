@@ -117,7 +117,7 @@ function resolveMoodInstruction(mood, persona, t) {
   return dict[mood] || instructions[mood]
 }
 
-export function generatePersonaCopy(persona, aiKey, provider, t) {
+export function generatePersonaCopy(persona, aiKey, provider, t, opts = {}) {
   if (!persona.enabled || !persona.userRole || !persona.aiRole || !aiKey) {
     return Promise.resolve(null)
   }
@@ -159,7 +159,7 @@ export function generatePersonaCopy(persona, aiKey, provider, t) {
 
   const prompt = `${intro}\n\nBerikut teks dasar yang perlu ditulis ulang:\n${copyBlock}\n\n${task}\n\n${example}`
 
-  return callAI(prompt, aiKey, provider)
+  return callAI(prompt, aiKey, provider, opts)
     .then((raw) => {
       const json = stripJsonMarkdown(raw)
       let parsed
@@ -235,7 +235,10 @@ async function callAnthropic(prompt, aiKey) {
   return data.content?.[0]?.text || ''
 }
 
-async function callAI(prompt, aiKey, provider) {
+const OLLAMA_BASE_URL = 'https://ollama.com/v1'
+const OLLAMA_DEFAULT_MODEL = 'qwen3-vl:235b-instruct'
+
+async function callAI(prompt, aiKey, provider, opts = {}) {
   switch (provider) {
     case 'gemini':
       return callGemini(prompt, aiKey, 'gemini-1.5-flash')
@@ -243,13 +246,26 @@ async function callAI(prompt, aiKey, provider) {
       return callAnthropic(prompt, aiKey)
     case 'openai':
       return callOpenAICompatible(prompt, aiKey, 'https://api.openai.com/v1', 'gpt-4o-mini')
+    case 'ollama':
+      return callOpenAICompatible(
+        prompt,
+        aiKey,
+        OLLAMA_BASE_URL,
+        opts.model || OLLAMA_DEFAULT_MODEL
+      )
+    case 'custom': {
+      const baseUrl = (opts.baseUrl || '').trim()
+      const model = (opts.model || '').trim()
+      if (!baseUrl || !model) return ''
+      return callOpenAICompatible(prompt, aiKey, baseUrl, model)
+    }
     case 'opencode':
     default:
       return callOpenAICompatible(prompt, aiKey, 'https://api.opencode.ai/v1', 'opencode-mini')
   }
 }
 
-export async function testAiKey(provider, aiKey) {
+export async function testAiKey(provider, aiKey, baseUrl) {
   switch (provider) {
     case 'gemini': {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${aiKey}`)
@@ -268,6 +284,22 @@ export async function testAiKey(provider, aiKey) {
         headers: { Authorization: `Bearer ${aiKey}` },
       })
       if (!res.ok) throw new Error('Invalid API key')
+      return true
+    }
+    case 'ollama': {
+      const res = await fetch(`${OLLAMA_BASE_URL}/models`, {
+        headers: { Authorization: `Bearer ${aiKey}` },
+      })
+      if (!res.ok) throw new Error('Invalid API key')
+      return true
+    }
+    case 'custom': {
+      const base = (baseUrl || '').trim().replace(/\/+$/, '')
+      if (!base) throw new Error('Base URL required')
+      const res = await fetch(`${base}/models`, {
+        headers: { Authorization: `Bearer ${aiKey}` },
+      })
+      if (!res.ok) throw new Error('Invalid API key or base URL')
       return true
     }
     case 'opencode':

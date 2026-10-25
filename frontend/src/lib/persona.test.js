@@ -301,6 +301,43 @@ describe('generatePersonaCopy', () => {
     expect(result).not.toBeNull()
   })
 
+  it('generates with ollama provider', async () => {
+    let calledUrl = ''
+    globalThis.fetch = async (url) => {
+      calledUrl = url
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"homeLead":"AI"}' } }],
+        }),
+      }
+    }
+    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
+    const result = await generatePersonaCopy(p, 'sk-valid', 'ollama', idT)
+    expect(result).not.toBeNull()
+    expect(calledUrl).toContain('https://ollama.com/v1/chat/completions')
+  })
+
+  it('generates with custom provider using base URL and model', async () => {
+    let calledUrl = ''
+    globalThis.fetch = async (url) => {
+      calledUrl = url
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"homeLead":"AI"}' } }],
+        }),
+      }
+    }
+    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
+    const result = await generatePersonaCopy(p, 'sk-valid', 'custom', idT, {
+      baseUrl: 'https://api.example.com/v1',
+      model: 'llama3.3:70b',
+    })
+    expect(result).not.toBeNull()
+    expect(calledUrl).toContain('https://api.example.com/v1/chat/completions')
+  })
+
   it('returns null when AI response is empty', async () => {
     globalThis.fetch = async () => ({
       ok: true,

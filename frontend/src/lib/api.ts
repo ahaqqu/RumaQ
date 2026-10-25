@@ -123,10 +123,11 @@ export function getAiUsage(signal?: AbortSignal): Promise<unknown> {
 }
 
 export function testAiKey(
-  provider: 'opencode' | 'openai' | 'anthropic' | 'gemini',
-  key?: string
+  provider: 'opencode' | 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'custom',
+  key?: string,
+  baseUrl?: string
 ): Promise<unknown> {
-  return unwrap(client.POST('/api/ai-key/test', { body: { provider, key } }))
+  return unwrap(client.POST('/api/ai-key/test', { body: { provider, key, base_url: baseUrl } }))
 }
 
 export function patchStock(

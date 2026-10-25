@@ -80,23 +80,29 @@ type AnthropicResponse = {
   }>
 }
 
-type OpenCodeResponse = {
-  choices?: Array<{
-    message?: {
-      content?: string
-    }
-  }>
+export type AiCallOpts = {
+  baseUrl?: string | null
+  model?: string | null
 }
 
-async function callOpenAI(apiKey: string, messages: ChatMessage[]): Promise<string> {
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+const OLLAMA_BASE_URL = 'https://ollama.com/v1'
+const OLLAMA_DEFAULT_MODEL = 'qwen3-vl:235b-instruct'
+
+async function callOpenAICompatible(
+  providerLabel: string,
+  baseUrl: string,
+  model: string,
+  apiKey: string,
+  messages: ChatMessage[]
+): Promise<string> {
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
+      model,
       messages,
       max_tokens: 2000,
     }),
@@ -104,14 +110,24 @@ async function callOpenAI(apiKey: string, messages: ChatMessage[]): Promise<stri
 
   if (!res.ok) {
     const body = await res.text()
-    throw new Error(`OpenAI request failed: ${res.status} ${body}`)
+    throw new Error(`${providerLabel} request failed: ${res.status} ${body}`)
   }
 
   const data = (await res.json()) as OpenAIResponse
   const content = data.choices?.[0]?.message?.content
-  if (!content) throw new Error('OpenAI returned empty response')
+  if (!content) throw new Error(`${providerLabel} returned empty response`)
 
   return content
+}
+
+async function callOpenAI(apiKey: string, messages: ChatMessage[]): Promise<string> {
+  return callOpenAICompatible(
+    'OpenAI',
+    'https://api.openai.com/v1',
+    'gpt-4o-mini',
+    apiKey,
+    messages
+  )
 }
 
 async function callGemini(apiKey: string, messages: ChatMessage[]): Promise<string> {
@@ -224,29 +240,13 @@ async function callAnthropic(apiKey: string, messages: ChatMessage[]): Promise<s
 }
 
 async function callOpenCode(apiKey: string, messages: ChatMessage[]): Promise<string> {
-  const res = await fetch('https://api.opencode.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'opencode-vision',
-      messages,
-      max_tokens: 2000,
-    }),
-  })
-
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`OpenCode request failed: ${res.status} ${body}`)
-  }
-
-  const data = (await res.json()) as OpenCodeResponse
-  const content = data.choices?.[0]?.message?.content
-  if (!content) throw new Error('OpenCode returned empty response')
-
-  return content
+  return callOpenAICompatible(
+    'OpenCode',
+    'https://api.opencode.ai/v1',
+    'opencode-vision',
+    apiKey,
+    messages
+  )
 }
 
 function parseJsonResponse<T>(content: string): T {
@@ -279,7 +279,8 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 async function callProvider(
   provider: string,
   apiKey: string,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  opts?: AiCallOpts
 ): Promise<string> {
   switch (provider) {
     case 'openai':
@@ -290,6 +291,22 @@ async function callProvider(
       return callAnthropic(apiKey, messages)
     case 'opencode':
       return callOpenCode(apiKey, messages)
+    case 'ollama':
+      return callOpenAICompatible(
+        'Ollama Cloud',
+        OLLAMA_BASE_URL,
+        opts?.model || OLLAMA_DEFAULT_MODEL,
+        apiKey,
+        messages
+      )
+    case 'custom': {
+      const baseUrl = opts?.baseUrl?.trim()
+      const model = opts?.model?.trim()
+      if (!baseUrl || !model) {
+        throw new Error('Custom provider requires a base URL and model in Settings')
+      }
+      return callOpenAICompatible('Custom provider', baseUrl, model, apiKey, messages)
+    }
     default:
       throw new Error(`Unsupported AI provider: ${provider}`)
   }
@@ -299,20 +316,22 @@ export async function completeText(
   provider: string,
   apiKey: string,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  opts?: AiCallOpts
 ): Promise<string> {
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt },
   ]
-  return callProvider(provider, apiKey, messages)
+  return callProvider(provider, apiKey, messages, opts)
 }
 
 export async function extractReceiptItems(
   imageBuffer: ArrayBuffer,
   imageType: string,
   provider: string,
-  apiKey: string
+  apiKey: string,
+  opts?: AiCallOpts
 ): Promise<ScanResult> {
   const imageData = toDataUri(imageBuffer, imageType)
 
@@ -326,7 +345,7 @@ export async function extractReceiptItems(
     },
   ]
 
-  const content = await callProvider(provider, apiKey, messages)
+  const content = await callProvider(provider, apiKey, messages, opts)
   const result = parseJsonResponse<ScanResult>(content)
 
   const items: ParsedItem[] = ((result.items || []) as Record<string, unknown>[]).map((it) => ({
