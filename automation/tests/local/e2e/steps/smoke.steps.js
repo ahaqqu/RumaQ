@@ -47,3 +47,17 @@ Then('a heading should be visible', async ({ page }) => {
     timeout: 5_000,
   })
 })
+
+When('I log out via the logout URL', async ({ page }) => {
+  // Wait out the query-cache persister's 1s write throttle so the
+  // authenticated cache is guaranteed to be on disk, then log out via a
+  // full-page navigation. This mirrors the production smoke test and
+  // bypasses the SPA's queryClient.clear() path on purpose: the page after
+  // logout must recover to the login form even with a stale persisted cache.
+  await page.waitForTimeout(1_500)
+  await page.goto('/api/auth/logout', { waitUntil: 'networkidle' })
+})
+
+Then('the login form should be visible again', async ({ page }) => {
+  await page.waitForSelector('input#email', { timeout: 10_000 })
+})

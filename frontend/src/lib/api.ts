@@ -12,6 +12,16 @@ import type { paths } from './api-schema.js'
 
 const client = createClient<paths>({ credentials: 'include' })
 
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 async function unwrap<T>(resultPromise: Promise<unknown>): Promise<T> {
   const result = (await resultPromise) as {
     data?: T
@@ -20,7 +30,10 @@ async function unwrap<T>(resultPromise: Promise<unknown>): Promise<T> {
   }
   if (result.error !== undefined || !result.response.ok) {
     const body = result.error as { error?: string } | undefined
-    throw new Error(body?.error || `Request failed: ${result.response.status}`)
+    throw new ApiError(
+      body?.error || `Request failed: ${result.response.status}`,
+      result.response.status
+    )
   }
   return (result.data ?? null) as T
 }
