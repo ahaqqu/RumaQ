@@ -41,7 +41,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRAPER_DIR="$ROOT_DIR/scraper"
 
-HOST="kajianq.ahaqqu.com"
+# The box's hostname never lives in this public repo — it is resolved
+# after the helpers below, from $RUMAQ_VPS_HOST, the repo variable
+# VPS_HOST (the same value the CI deploy uses), or a prompt.
+HOST=""
 ADMIN_USER="ahaqqu"
 ADMIN_HOME="/home/ahaqqu"
 DEPLOY_USER="kajianq-deploy"
@@ -71,6 +74,21 @@ done
 log() { printf 'provision-vps: %s\n' "$*"; }
 die() { printf 'provision-vps: %s\n' "$*" >&2; exit 1; }
 
+# --- 0. the host ---------------------------------------------------------------
+HOST="${RUMAQ_VPS_HOST:-}"
+if [ -z "$HOST" ] && command -v gh >/dev/null; then
+  REPO_SLUG="$(git -C "$ROOT_DIR" remote get-url origin 2>/dev/null | sed -n 's#.*github.com[:/]##; s#\.git$##p' | head -1)"
+  if [ -n "$REPO_SLUG" ]; then
+    HOST="$(gh variable get VPS_HOST -R "$REPO_SLUG" 2>/dev/null || true)"
+    [ -n "$HOST" ] && log "host: resolved from the repo variable VPS_HOST"
+  fi
+fi
+if [ -z "$HOST" ]; then
+  printf 'VPS host (or re-run with RUMAQ_VPS_HOST set): '
+  IFS= read -r HOST </dev/tty
+fi
+[[ $HOST =~ ^[A-Za-z0-9.-]+$ ]] || die "host is empty or malformed — set RUMAQ_VPS_HOST or the repo variable VPS_HOST"
+
 # --- 1. preflight -------------------------------------------------------------
 log "preflight: local tools"
 command -v bun >/dev/null || die "bun not found on PATH"
@@ -85,19 +103,27 @@ log "preflight: ssh identities"
 "${ADMIN_SSH[@]}" "$ADMIN_USER@$HOST" 'test -x /usr/bin/bun' || die "/usr/bin/bun missing on the box"
 
 # --- 2. the Gemini key --------------------------------------------------------
+# Sources: --gemini-key-file > $GEMINI_API_KEY > interactive prompt
+# (3 attempts). The value is never echoed anywhere.
 if [ -n "$GEMINI_KEY_FILE" ]; then
   GEMINI_API_KEY="$(tr -d '[:space:]' < "$GEMINI_KEY_FILE")"
 elif [ -n "${GEMINI_API_KEY:-}" ]; then
   GEMINI_API_KEY="${GEMINI_API_KEY// /}"
 else
-  printf 'Gemini API key (https://aistudio.google.com/apikey), input hidden: '
-  IFS= read -rs GEMINI_API_KEY </dev/tty
-  printf '\n'
+  GEMINI_API_KEY=""
+  for attempt in 1 2 3; do
+    printf 'Gemini API key (https://aistudio.google.com/apikey), input hidden: '
+    IFS= read -rs GEMINI_API_KEY </dev/tty
+    printf '\n'
+    [[ $GEMINI_API_KEY =~ ^[A-Za-z0-9._-]+$ ]] && break
+    GEMINI_API_KEY=""
+    echo "provision-vps: key was empty or has unexpected characters (attempt $attempt of 3)" >&2
+  done
 fi
 # The env file is sourced by the units and re-read by the root
 # run's sed — keep every value inside a boring charset and fail
 # fast here rather than mysteriously on the box.
-[[ $GEMINI_API_KEY =~ ^[A-Za-z0-9_-]+$ ]] || die "Gemini key is empty or has unexpected characters"
+[[ $GEMINI_API_KEY =~ ^[A-Za-z0-9._-]+$ ]] || die "no usable Gemini key — re-run with --gemini-key-file FILE, export GEMINI_API_KEY, or paste one at the prompt (https://aistudio.google.com/apikey)"
 INGEST_SECRET="$(tr -d '[:space:]' < "$INGEST_SECRET_FILE")"
 [[ $INGEST_SECRET =~ ^[A-Za-z0-9_-]+$ ]] || die "ingest secret in $INGEST_SECRET_FILE has unexpected characters"
 
@@ -163,6 +189,8 @@ bash "$STAGE_HOME/provision/apply.sh" --install-deps
 echo "root-run: 5/6 chromium binary (as @DEPLOY_USER@, deploy-owned browsers dir)"
 sudo -u @DEPLOY_USER@ env PLAYWRIGHT_BROWSERS_PATH='@BROWSERS_PATH@' \
   /usr/bin/bun '@DEPLOY_ROOT@/node_modules/playwright-core/cli.js' install chromium
+chmod 755 '@DEPLOY_ROOT@' '@BROWSERS_PATH@'
+chmod -R go+rX '@BROWSERS_PATH@'
 
 echo "root-run: 6/6 self-check with the real env (the deploy gate)"
 systemctl start rumaq-scraper-selfcheck.service
