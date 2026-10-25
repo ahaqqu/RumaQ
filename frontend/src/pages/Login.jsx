@@ -1,24 +1,26 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { BrandMark } from '../components/icons.jsx'
-import { login, emailAuthStatus, emailLogin } from '../lib/api'
+import { login, emailLogin } from '../lib/api'
+import { useEmailAuthStatus } from '../lib/queries'
 import { Button } from '../components/Button.jsx'
 
 export function Login() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [emailAuth, setEmailAuth] = useState(false)
+  // Null until the status is known so the card renders complete in one paint;
+  // inserting the email form after mount would re-center the card and cause
+  // a layout shift. The persisted query cache resolves it without network on
+  // repeat visits; only true cold loads wait on the fetch.
+  const { data } = useEmailAuthStatus()
+  const emailAuth = data?.enabled ?? null
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    emailAuthStatus().then((res) => setEmailAuth(res.enabled))
-  }, [])
 
   const handleEmailLogin = async (e) => {
     e.preventDefault()
@@ -33,6 +35,10 @@ export function Login() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (emailAuth === null) {
+    return <div className="min-h-dvh grid place-items-center p-6 bg-surface" aria-busy="true" />
   }
 
   return (
