@@ -95,8 +95,11 @@ cf_cmd() {
   node "$ROOT_DIR/node_modules/cf/bin/cf" "$@"
 }
 
-# Detect branch for branch-specific deployments
-BRANCH_NAME="${BRANCH_NAME:-$(git rev-parse --abbrev-ref HEAD 2> /dev/null || echo 'main')}"
+# Detect branch for branch-specific deployments. Exported because
+# backend/cloudflare.config.ts (run as a child process by `cf deploy`) derives
+# the Worker name from it — an unexported value made branch deploys fall back
+# to the production Worker name.
+export BRANCH_NAME="${BRANCH_NAME:-$(git rev-parse --abbrev-ref HEAD 2> /dev/null || echo 'main')}"
 SANITIZED_BRANCH=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9-]/-/g')
 
 if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "HEAD" ]]; then
