@@ -63,6 +63,15 @@ run() {
 : "${RUMAQ_VPS_HOST:?RUMAQ_VPS_HOST is required — the box (or an ssh alias) to deploy to}"
 RUMAQ_VPS_USER="${RUMAQ_VPS_USER:-kajianq-deploy}"
 RUMAQ_VPS_ROOT="${RUMAQ_VPS_ROOT:-/srv/rumaq-scraper}"
+# RUMAQ_VPS_ROOT is interpolated inside single-quoted remote command strings
+# below — reject any value outside a conservative charset (no quotes,
+# spaces, or expansions) so the interpolation can never become injection as
+# the deploy identity. Fail fast with a clear message instead of a
+# confusing remote error.
+if [[ ! $RUMAQ_VPS_ROOT =~ ^/[A-Za-z0-9/._-]+$ ]]; then
+  echo "deploy/vps.sh: RUMAQ_VPS_ROOT must be an absolute path matching [A-Za-z0-9/._-] only (got: '${RUMAQ_VPS_ROOT}')" >&2
+  exit 1
+fi
 SSH_TARGET="${RUMAQ_VPS_USER}@${RUMAQ_VPS_HOST}"
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 BROWSERS_PATH="${RUMAQ_VPS_ROOT}/browsers"
@@ -71,25 +80,27 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp}/rumaq-vps-deploy-XXXXXX")"
 trap 'rm -rf "${STAGE}"' EXIT
 
 # --- 1. build ---------------------------------------------------------------
+# The build runs UNGATED (also in --dry-run): it is local and
+# side-effect-free, so `vps --dry-run` is the locally runnable smoke test
+# for the ship path — the one part (bundle + playwright-core copy) that can
+# fail locally must fail here, not on the box.
 log "building the scraper bundle (playwright-core external)"
-run bun --version >/dev/null
-run bun install --frozen-lockfile --cwd "$ROOT_DIR"
-run bun build "$SCRAPER_DIR/src/main.ts" \
+bun --version >/dev/null
+bun install --frozen-lockfile --cwd "$ROOT_DIR"
+bun build "$SCRAPER_DIR/src/main.ts" \
   --target=bun \
   --external playwright-core \
   --outfile "$STAGE/dist/index.js"
-if [ "$DRY_RUN" -eq 0 ]; then
-  # The bundle must actually be a bundle: a deploy that ships an empty stage
-  # would pass rsync and fail at 06:00 WIB.
-  if [[ ! -s $STAGE/dist/index.js ]]; then
-    echo "deploy/vps.sh: bundle is empty — the build produced nothing" >&2
-    exit 1
-  fi
-  # playwright-core resolves through the workspace to the .bun store (often
-  # a symlink) — copy the real directory, not the link.
-  mkdir -p "$STAGE/node_modules"
-  cp -L -r "$SCRAPER_DIR/node_modules/playwright-core" "$STAGE/node_modules/playwright-core"
+# The bundle must actually be a bundle: a deploy that ships an empty stage
+# would pass rsync and fail at 06:00 WIB.
+if [[ ! -s $STAGE/dist/index.js ]]; then
+  echo "deploy/vps.sh: bundle is empty — the build produced nothing" >&2
+  exit 1
 fi
+# playwright-core resolves through the workspace to the .bun store (often
+# a symlink) — copy the real directory, not the link.
+mkdir -p "$STAGE/node_modules"
+cp -L -r "$SCRAPER_DIR/node_modules/playwright-core" "$STAGE/node_modules/playwright-core"
 
 # --- 2. ship -----------------------------------------------------------------
 log "shipping to ${SSH_TARGET}:${RUMAQ_VPS_ROOT}"

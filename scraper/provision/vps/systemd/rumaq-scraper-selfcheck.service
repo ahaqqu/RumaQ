@@ -4,6 +4,11 @@
 # USER with the real env file, so a deploy that cannot prove the nightly job
 # would run (missing key, unwritable state, absent chromium revision) turns
 # the deploy red instead of surfacing at 06:00 WIB.
+#
+# Hardening matches rumaq-scraper.service verbatim: the deploy identity can
+# trigger this unit at will, so it gets the same sandbox as the nightly job
+# it proves (including MemoryDenyWriteExecute's deliberate absence — the
+# self-check can launch chromium, and V8 JIT needs executable memory).
 
 [Unit]
 Description=RumaQ scraper post-deploy self-check
@@ -24,9 +29,15 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectSystem=strict
 ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
 ReadWritePaths=/var/lib/rumaq-scraper
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
 MemoryMax=1G
+CPUQuota=100%
 
 StandardOutput=journal
 StandardError=journal
