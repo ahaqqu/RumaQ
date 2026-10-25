@@ -8,14 +8,20 @@ import path from 'node:path'
 export default defineConfig({
   build: {
     chunkSizeWarningLimit: 1000,
+    sourcemap: true,
   },
   plugins: [
     tailwindcss(),
-    TanStackRouterVite(),
+    TanStackRouterVite({
+      autoCodeSplitting: true,
+      codeSplittingOptions: {
+        defaultBehavior: [['component'], ['errorComponent'], ['notFoundComponent']],
+      },
+    }),
     react(),
     VitePWA({
       registerType: 'prompt',
-      injectRegister: 'auto',
+      injectRegister: 'script-defer',
       manifest: {
         id: '/',
         scope: '/',

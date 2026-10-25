@@ -10,14 +10,19 @@ export function Login() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [emailAuth, setEmailAuth] = useState(false)
+  // Resolved via null state so the card renders complete in one paint;
+  // inserting the email form after mount would re-center the card and cause
+  // a layout shift.
+  const [emailAuth, setEmailAuth] = useState(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    emailAuthStatus().then((res) => setEmailAuth(res.enabled))
+    emailAuthStatus()
+      .then((res) => setEmailAuth(res.enabled))
+      .catch(() => setEmailAuth(false))
   }, [])
 
   const handleEmailLogin = async (e) => {
@@ -33,6 +38,10 @@ export function Login() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (emailAuth === null) {
+    return <div className="min-h-dvh grid place-items-center p-6 bg-surface" aria-busy="true" />
   }
 
   return (
