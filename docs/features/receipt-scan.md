@@ -12,7 +12,7 @@ The receipt-scan feature lets users take or upload a photo of a shopping receipt
 ## How it works
 
 1. User captures a receipt image on the **Add from Receipt** page
-2. Image is uploaded to R2 and sent to the AI provider (OpenAI / Anthropic / Google / Groq) for OCR parsing
+2. Image is uploaded to R2 and sent to the configured AI provider (OpenCode, OpenAI, Anthropic, Gemini, Ollama Cloud, or a custom OpenAI-compatible endpoint) for OCR parsing
 3. The AI returns a structured list of items, a store guess, and a date guess
 4. Existing stores and items are fetched for the review form
 5. User reviews and edits parsed data, optionally matching items to existing catalog entries

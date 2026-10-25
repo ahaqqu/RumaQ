@@ -4,8 +4,8 @@ The settings page manages AI provider configuration, persona personalisation, st
 
 ## What it changes
 
-- **AI key** — set or change an API key for one of four providers (OpenCode, OpenAI, Anthropic, Gemini)
-- **Provider selector** — choose which AI backend to use
+- **AI key** — set or change an API key for one of six providers (OpenCode, OpenAI, Anthropic, Gemini, Ollama Cloud, Custom OpenAI-compatible)
+- **Provider selector** — choose which AI backend to use; the Custom option additionally takes a Base URL and model name for any OpenAI-compatible endpoint
 - **Test connection** — validate the API key before saving
 - **Usage meter** — shows current AI usage against daily limits
 - **Persona** — define user role and AI role for personalised tone, with AI-generated copy
