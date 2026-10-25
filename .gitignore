@@ -19,4 +19,4 @@ backend/.cloudflare
 
 # rumaq-scraper local state (novelty, images, dry-run payloads)
 scraper/state/
-state/
+/state/

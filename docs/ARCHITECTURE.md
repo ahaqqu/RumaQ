@@ -262,7 +262,7 @@ Daily usage is tracked in `ai_usage` so the app can show the meter and cap reque
 
 Grocery price data is produced by the `scraper/` workspace — a headless TypeScript/Bun port of the retired haqita pipeline (full plan: [`docs/plan/haqita-integration.md`](plan/haqita-integration.md)):
 
-- Superindo brochure pages are scraped with plain fetch (realistic Chrome headers, cookie jar, retry ladder), filtered for novelty by URL+MD5 state so unchanged pages are never re-downloaded or re-OCR'd.
+- Superindo brochure pages are scraped with plain fetch (realistic Chrome headers, cookie jar, retry ladder), filtered for novelty by URL+MD5 state so unchanged pages are downloaded once per run (the bytes are needed to compute the MD5) but never re-OCR'd or re-published.
 - New pages go through Gemini vision OCR (prompt ported verbatim from haqita) with a quota-aware retry policy; invalid items land in `rejected-items.log` in the state dir.
 - Extracted items are published to `POST /api/internal/ingest/prices` (bearer `HAQITA_INGEST_SECRET`). Until the matcher lands (PR3), items are published as `matchMethod: 'solo'` with `matchConfidence: 1.0` and the pipeline defaults to dry-run.
 - The ingest contract is the single shared Valibot schema in the `@rumaq/contract` workspace package (`contract/src/index.ts`), a declared dependency of both the backend and the scraper.
