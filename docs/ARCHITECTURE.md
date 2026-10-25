@@ -254,7 +254,7 @@ AI lanes (MVP):
 3. **Chat assistant.** The Worker proxies a chat request; the system prompt includes the user's persona setting.
    > **Tech debt:** Streaming is deferred. The current implementation returns the full response body. See `backend/src/lib/chat.ts` — `sendChatMessage` calls `completeText` (completion, not streaming). The persona system prompt is EN-only (single locale); see `backend/src/lib/persona.ts`.
 
-Daily usage is tracked in `ai_usage` so the app can show the meter and cap requests at 20/day per user by default.
+Daily usage is tracked in `ai_usage` so the app can show the meter. The 20/day cap applies only to requests served with RumaQ's shared server key (`RUMAQ_SERVER_AI_PROVIDER`/`RUMAQ_SERVER_AI_KEY`); users who configure their own provider key are unmetered. The user can pick the model (`ai_model`) and a thinking level (`ai_thinking_level`) per provider, mapped to each API's reasoning controls.
 
 ## 8. Deployment
 
