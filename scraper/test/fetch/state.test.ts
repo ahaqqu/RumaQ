@@ -13,10 +13,13 @@ import { FetchTransport } from '../../src/fetch/strategy.js'
 import {
   classifyImages,
   filenameFromUrl,
+  imageMimeType,
   loadState,
+  MAX_PROCESSED_HASHES,
   md5Hash,
   pruneImages,
   probeImageDimensions,
+  rememberProcessed,
   saveState,
 } from '../../src/fetch/state.js'
 
@@ -67,26 +70,46 @@ describe('state persistence', () => {
     const dir = await tempDir()
     const stateFile = path.join(dir, 'state.json')
     await Effect.runPromise(
-      saveState(
-        {
-          lastRun: '2026-05-14T12:00:00',
-          processed: [
-            {
-              filename: 'img1.jpg',
-              md5: 'abc123',
-              imageUrl: 'https://example.com/1.jpg',
-              brochureUrl: 'https://example.com',
-              downloadedAt: '2026-05-14T12:00:00',
-            },
-          ],
-        },
-        stateFile
-      )
+      saveState({ lastRun: '2026-05-14T12:00:00', processed: ['abc123'] }, stateFile)
     )
     const loaded = await Effect.runPromise(loadState(stateFile))
     expect(loaded.lastRun).toBe('2026-05-14T12:00:00')
-    expect(loaded.processed).toHaveLength(1)
-    expect(loaded.processed[0]!.md5).toBe('abc123')
+    expect(loaded.processed).toEqual(['abc123'])
+  })
+
+  it('compacts legacy object entries to bare md5 hashes on load', async () => {
+    const dir = await tempDir()
+    const stateFile = path.join(dir, 'state.json')
+    await writeFile(
+      stateFile,
+      JSON.stringify({
+        lastRun: '2026-05-14T12:00:00',
+        processed: [
+          'bare-hash',
+          {
+            filename: 'img1.jpg',
+            md5: 'abc123',
+            imageUrl: 'https://example.com/1.jpg',
+            brochureUrl: 'https://example.com',
+            downloadedAt: '2026-05-14T12:00:00',
+          },
+          { no_md5_here: true },
+        ],
+      }),
+      'utf8'
+    )
+    const loaded = await Effect.runPromise(loadState(stateFile))
+    expect(loaded.processed).toEqual(['bare-hash', 'abc123'])
+  })
+
+  it('bounds processed hashes with FIFO eviction beyond the retention cap', () => {
+    const state = { lastRun: null as string | null, processed: [] as string[] }
+    for (let i = 0; i < MAX_PROCESSED_HASHES + 10; i++) {
+      rememberProcessed(state, `hash-${i}`)
+    }
+    expect(state.processed).toHaveLength(MAX_PROCESSED_HASHES)
+    expect(state.processed[0]).toBe('hash-10') // oldest ten evicted
+    expect(state.processed.at(-1)).toBe(`hash-${MAX_PROCESSED_HASHES + 9}`)
   })
 
   it('tolerates malformed JSON by failing loudly', async () => {
@@ -145,19 +168,56 @@ describe('probeImageDimensions', () => {
   })
 })
 
+describe('imageMimeType', () => {
+  it('trusts an image/* content-type header over everything else', () => {
+    expect(
+      imageMimeType({
+        contentTypeHeader: 'image/webp; charset=binary',
+        bytes: fakePng(10, 10),
+        url: 'https://example.com/a.jpg',
+      })
+    ).toBe('image/webp')
+  })
+
+  it('sniffs PNG magic when the header is generic octet-stream', () => {
+    expect(
+      imageMimeType({
+        contentTypeHeader: 'application/octet-stream',
+        bytes: fakePng(10, 10),
+      })
+    ).toBe('image/png')
+  })
+
+  it('sniffs JPEG magic when the header is missing', () => {
+    expect(imageMimeType({ contentTypeHeader: null, bytes: fakeJpeg(10, 10) })).toBe('image/jpeg')
+  })
+
+  it('falls back to the URL extension when header and magic bytes say nothing', () => {
+    expect(
+      imageMimeType({ bytes: new Uint8Array(8), url: 'https://example.com/pages/001.PNG?w=800' })
+    ).toBe('image/png')
+  })
+
+  it('defaults to jpeg when nothing identifies the bytes', () => {
+    expect(imageMimeType({ bytes: new Uint8Array(8) })).toBe('image/jpeg')
+  })
+})
+
 describe('classifyImages', () => {
   async function setup() {
     const imagesDir = await tempDir()
     const big = fakeJpeg(640, 480, 60 * 1024) // passes size + dimension gates
     const fetcher = {
       fetchBytes: (url: string) => {
-        if (url.includes('small-file')) return Effect.succeed(new Uint8Array(100))
-        if (url.includes('small-dim')) return Effect.succeed(fakeJpeg(100, 100, 60 * 1024))
+        if (url.includes('small-file'))
+          return Effect.succeed({ bytes: new Uint8Array(100), contentType: 'image/jpeg' })
+        if (url.includes('small-dim'))
+          return Effect.succeed({ bytes: fakeJpeg(100, 100, 60 * 1024), contentType: 'image/jpeg' })
         if (url.includes('broken'))
           return Effect.fail(
             new FetchTransport({ url, cause: new Boom({ message: 'boom' }), message: 'boom' })
           )
-        return Effect.succeed(big)
+        return Effect.succeed({ bytes: big, contentType: 'image/jpeg' })
       },
     }
     return { imagesDir, fetcher, big }
@@ -167,18 +227,7 @@ describe('classifyImages', () => {
 
   it('classifies new vs existing by MD5 and skips rejects', async () => {
     const { imagesDir, fetcher, big } = await setup()
-    const state = {
-      lastRun: null,
-      processed: [
-        {
-          filename: 'known.jpg',
-          md5: md5Hash(big),
-          imageUrl: 'https://example.com/known.jpg',
-          brochureUrl: 'https://example.com',
-          downloadedAt: '2026-01-01T00:00:00',
-        },
-      ],
-    }
+    const state = { lastRun: null, processed: [md5Hash(big)] }
     const result = await Effect.runPromise(
       classifyImages(
         [
@@ -233,7 +282,9 @@ describe('classifyImages', () => {
   it('marks unseen content as new and writes files', async () => {
     const { imagesDir } = await setup()
     const alt = fakeJpeg(1024, 768, 70 * 1024)
-    const fetcherAlt = { fetchBytes: () => Effect.succeed(alt) }
+    const fetcherAlt = {
+      fetchBytes: () => Effect.succeed({ bytes: alt, contentType: 'image/jpeg' }),
+    }
     const result = await Effect.runPromise(
       classifyImages(
         [{ imageUrl: 'https://example.com/alt.jpg', brochureUrl: 'https://example.com/katalog' }],
@@ -249,23 +300,29 @@ describe('classifyImages', () => {
     expect(entry.brochureUrl).toBe('https://example.com/katalog')
   })
 
+  it('carries the derived content type on new images (PNG must not be declared jpeg)', async () => {
+    const imagesDir = await tempDir()
+    const png = fakePng(800, 600, 60 * 1024)
+    const fetcherPng = {
+      fetchBytes: () => Effect.succeed({ bytes: png, contentType: 'application/octet-stream' }),
+    }
+    const result = await Effect.runPromise(
+      classifyImages(
+        [{ imageUrl: 'https://example.com/page-001.png', brochureUrl: 'https://example.com/k' }],
+        { lastRun: null, processed: [] },
+        { ...opts, imagesDir, fetcher: fetcherPng }
+      )
+    )
+    expect(result.newImages).toHaveLength(1)
+    expect(result.newImages[0]!.contentType).toBe('image/png') // magic-byte sniff
+  })
+
   it('does not re-write already-processed images to disk', async () => {
     const { imagesDir, fetcher, big } = await setup()
     const result = await Effect.runPromise(
       classifyImages(
         [{ imageUrl: 'https://example.com/known.jpg', brochureUrl: 'https://example.com/katalog' }],
-        {
-          lastRun: null,
-          processed: [
-            {
-              filename: 'known.jpg',
-              md5: md5Hash(big),
-              imageUrl: 'https://example.com/known.jpg',
-              brochureUrl: 'https://example.com',
-              downloadedAt: '2026-01-01T00:00:00',
-            },
-          ],
-        },
+        { lastRun: null, processed: [md5Hash(big)] },
         { ...opts, imagesDir, fetcher }
       )
     )

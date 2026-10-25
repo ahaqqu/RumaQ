@@ -47,9 +47,15 @@ export type FetchError = BrowserTierRequired | FetchTransport | FetchHttpStatus 
 
 export type FetchLike = (url: string, init?: RequestInit & { proxy?: string }) => Promise<Response>
 
+/** A downloaded binary plus the content type the server declared for it. */
+export interface DownloadedImage {
+  bytes: Uint8Array
+  contentType: string | null
+}
+
 export interface StoreFetcher {
   fetchHtml(url: string): Effect.Effect<string, FetchError>
-  fetchBytes(url: string): Effect.Effect<Uint8Array, FetchError>
+  fetchBytes(url: string): Effect.Effect<DownloadedImage, FetchError>
 }
 
 interface CookieJar {
@@ -99,11 +105,16 @@ export interface CreateFetcherOptions {
   fetch?: FetchLike
   retries?: number
   backoffMs?: number
+  /** Per-attempt request timeout; a stalled peer becomes a retryable FetchTransport. */
+  timeoutMs?: number
   sleep?: (ms: number) => Promise<void>
   log?: (message: string) => void
   /** Tier-3 override; defaults to the store's proxyEnv value. */
   proxyUrl?: string
 }
+
+/** Default per-attempt timeout for page/image fetches (C5: no hung daily job). */
+export const DEFAULT_FETCH_TIMEOUT_MS = 30_000
 
 export function createFetcher(
   store: StoreConfig,
@@ -112,6 +123,7 @@ export function createFetcher(
   const fetchFn = options.fetch ?? fetch
   const retries = options.retries ?? 3
   const backoffMs = options.backoffMs ?? 2000
+  const timeoutMs = options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
   const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
   const log = options.log ?? (() => {})
   const proxyUrl = options.proxyUrl ?? (store.proxyEnv ? process.env[store.proxyEnv] : undefined)
@@ -127,7 +139,11 @@ export function createFetcher(
     const init: RequestInit & { proxy?: string } = { headers, redirect: 'follow' }
     if (proxyUrl) init.proxy = proxyUrl
     return Effect.tryPromise({
-      try: () => fetchFn(url, init),
+      // The signal is created inside the attempt body so every retry gets a
+      // fresh timeout window — an already-aborted shared signal would fail
+      // every later attempt instantly. An abort lands in `catch`, i.e. a
+      // retryable FetchTransport, never a defect.
+      try: () => fetchFn(url, { ...init, signal: AbortSignal.timeout(timeoutMs) }),
       catch: (cause) =>
         new FetchTransport({ url, cause, message: `Fetch failed for ${url}: ${String(cause)}` }),
     }).pipe(
@@ -143,7 +159,22 @@ export function createFetcher(
               })
             )
       ),
-      (effect) => withRetries(effect, { retries, backoffMs, sleep, log, context: `fetch ${url}` }),
+      (effect) =>
+        withRetries(effect, {
+          retries,
+          backoffMs,
+          sleep,
+          log,
+          context: `fetch ${url}`,
+          // Permanent client errors never succeed on retry: every 4xx except
+          // 429 (a backoff signal) fails fast, without burning the ladder's
+          // attempts and backoff waits. Transport errors stay retryable.
+          isFatal: (error) =>
+            error instanceof FetchHttpStatus &&
+            error.status >= 400 &&
+            error.status < 500 &&
+            error.status !== 429,
+        }),
       Effect.tap((response) => Effect.sync(() => storeCookies(jar, url, response)))
     )
   }
@@ -175,34 +206,39 @@ export function createFetcher(
         )
       )
     },
-    fetchBytes(url: string): Effect.Effect<Uint8Array, FetchError> {
+    fetchBytes(url: string): Effect.Effect<DownloadedImage, FetchError> {
       return request(url, '*/*').pipe(
-        Effect.flatMap((response): Effect.Effect<Uint8Array, NonImageContent | FetchTransport> => {
-          // Scraped image hrefs are external input: a body served as HTML
-          // (or anything clearly not an image) must never reach the OCR
-          // bytes. An absent header or a generic octet-stream passes — CDNs
-          // often omit it. Fatal by construction: wrong content never
-          // succeeds on retry.
-          const contentType = response.headers.get('content-type')
-          if (contentType && !isImageContentType(contentType)) {
-            return Effect.fail(
-              new NonImageContent({
-                url,
+        Effect.flatMap(
+          (response): Effect.Effect<DownloadedImage, NonImageContent | FetchTransport> => {
+            // Scraped image hrefs are external input: a body served as HTML
+            // (or anything clearly not an image) must never reach the OCR
+            // bytes. An absent header or a generic octet-stream passes — CDNs
+            // often omit it. Fatal by construction: wrong content never
+            // succeeds on retry.
+            const contentType = response.headers.get('content-type')
+            if (contentType && !isImageContentType(contentType)) {
+              return Effect.fail(
+                new NonImageContent({
+                  url,
+                  contentType,
+                  message: `Non-image content-type "${contentType}" for ${url}`,
+                })
+              )
+            }
+            return Effect.tryPromise({
+              try: async () => ({
+                bytes: new Uint8Array(await response.arrayBuffer()),
                 contentType,
-                message: `Non-image content-type "${contentType}" for ${url}`,
-              })
-            )
-          }
-          return Effect.tryPromise({
-            try: async () => new Uint8Array(await response.arrayBuffer()),
-            catch: (cause: unknown) =>
-              new FetchTransport({
-                url,
-                cause,
-                message: `Body read failed for ${url}: ${String(cause)}`,
               }),
-          })
-        })
+              catch: (cause: unknown) =>
+                new FetchTransport({
+                  url,
+                  cause,
+                  message: `Body read failed for ${url}: ${String(cause)}`,
+                }),
+            })
+          }
+        )
       )
     },
   }

@@ -126,6 +126,28 @@ describe('buildPayload', () => {
     expect(payload.stores.map((s) => s.slug)).toEqual(['superindo'])
   })
 
+  it('derives observedDate per batch so a cross-day replay keeps the extraction date', () => {
+    // An outbox line written on day 1, replayed by a day-3 run: the upsert
+    // conflict key includes observed_date, so the replay must keep day 1.
+    const payload = buildPayload({
+      stores: [superindo],
+      images: [
+        {
+          storeSlug: 'superindo',
+          brochureUrl: null,
+          products: [product!],
+          scrapedAt: '2026-10-24T23:00:05Z',
+        },
+        // Legacy/current-run batch without a per-batch timestamp → run date.
+        { storeSlug: 'superindo', brochureUrl: null, products: [product!] },
+      ],
+      scrapedAt: '2026-10-26T23:00:05Z',
+    })
+    expect(payload.items).toHaveLength(2)
+    expect(payload.items[0]!.observedDate).toBe('2026-10-24') // extraction day
+    expect(payload.items[1]!.observedDate).toBe('2026-10-26') // this run's day
+  })
+
   it('produces an empty-but-valid payload with no images', () => {
     const payload = buildPayload({
       stores: [superindo],

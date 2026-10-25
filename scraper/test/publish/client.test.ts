@@ -132,6 +132,90 @@ describe('publishPayload — POST', () => {
     expect(sleep).not.toHaveBeenCalled()
   })
 
+  it('fails fast on other permanent 4xx (404) without retrying', async () => {
+    const fetchMock = vi.fn(async () => new Response('no such route', { status: 404 }))
+    const sleep = vi.fn(async () => {})
+    await expect(
+      Effect.runPromise(
+        publishPayload(payload, {
+          stateDir: await tempStateDir(),
+          dryRun: false,
+          ingestUrl: 'https://api.example.com/wrong-ingest-route',
+          ingestSecret: 's3cret',
+          fetch: fetchMock,
+          sleep,
+          retries: 3,
+          backoffMs: 1,
+        })
+      )
+    ).rejects.toThrow('HTTP 404')
+    expect(fetchMock).toHaveBeenCalledTimes(1) // a dead route never succeeds on retry
+    expect(sleep).not.toHaveBeenCalled()
+  })
+
+  it('still retries 429 — it is a backoff signal, not a permanent failure', async () => {
+    let calls = 0
+    const fetchMock = vi.fn(async () => {
+      calls++
+      return calls < 2
+        ? new Response('slow down', { status: 429 })
+        : new Response(
+            JSON.stringify({
+              accepted: 1,
+              productsCreated: 1,
+              observationsUpserted: 1,
+              skipped: 0,
+            }),
+            { status: 200 }
+          )
+    })
+    const sleep = vi.fn(async () => {})
+    const result = await Effect.runPromise(
+      publishPayload(payload, {
+        stateDir: await tempStateDir(),
+        dryRun: false,
+        ingestUrl: 'https://api.example.com/ingest',
+        ingestSecret: 's3cret',
+        fetch: fetchMock,
+        sleep,
+        retries: 3,
+        backoffMs: 1,
+      })
+    )
+    expect(result.mode).toBe('published')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(sleep).toHaveBeenCalledTimes(1)
+  })
+
+  it('times out a stalled ingest POST as a retryable PublishError', async () => {
+    const fetchMock = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+        })
+    )
+    const sleep = vi.fn(async () => {})
+    await expect(
+      Effect.runPromise(
+        publishPayload(payload, {
+          stateDir: await tempStateDir(),
+          dryRun: false,
+          ingestUrl: 'https://api.example.com/ingest',
+          ingestSecret: 's3cret',
+          fetch: fetchMock,
+          sleep,
+          timeoutMs: 5,
+          retries: 2,
+          backoffMs: 1,
+        })
+      )
+    ).rejects.toThrow('Ingest POST failed')
+    // Timeout aborts surface as PublishError (not a defect) and retry with a
+    // fresh signal per attempt.
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(sleep).toHaveBeenCalledTimes(2)
+  })
+
   it('requires URL and secret from options or env', async () => {
     const stateDir = await tempStateDir()
     await expect(

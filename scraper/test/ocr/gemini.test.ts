@@ -78,6 +78,15 @@ describe('createOcr', () => {
     expect(items).toEqual(sampleItems)
   })
 
+  it('declares the caller-provided mimeType in inlineData (PNG pages are not jpeg)', async () => {
+    const { client, lastArgs } = stubClient('[]')
+    const ocr = createOcr({ model: 'gemini-3.5-flash', storeSlug: 'superindo', client })
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    await Effect.runPromise(ocr.ocrImage(pngBytes, 'image/png'))
+    const parts = lastArgs()!.parts as { inlineData?: { mimeType: string } }[]
+    expect(parts[1]!.inlineData!.mimeType).toBe('image/png')
+  })
+
   it('retries transient errors with the quota-aware policy', async () => {
     let failures = 0
     const { client, calls } = stubClient(JSON.stringify(sampleItems), (attempt) => {

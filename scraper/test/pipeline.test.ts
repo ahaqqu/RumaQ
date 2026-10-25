@@ -3,7 +3,7 @@
 // Gemini client, mocked publish). runPipeline is an Effect.
 
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, readdir } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -74,9 +74,15 @@ describe('runPipeline', () => {
     const jpeg = fakeJpegBytes()
     const fetchMock = makeFetchMock(katalogHtml, koranHtml, jpeg)
 
+    const inlineMimes: string[] = []
     const ocrClient: GeminiClient = {
       models: {
-        generateContent: async () => ({ text: JSON.stringify(ocrItems) }),
+        generateContent: async (args) => {
+          for (const part of args.contents[0]!.parts) {
+            if (part.inlineData) inlineMimes.push(part.inlineData.mimeType)
+          }
+          return { text: JSON.stringify(ocrItems) }
+        },
       },
     }
 
@@ -143,14 +149,15 @@ describe('runPipeline', () => {
     // (plan §6 keeps images 7 days after the run that published them).
     expect(existsSync(path.join(stateDir, 'superindo', 'images', '20261024'))).toBe(false)
 
-    // State file persisted the processed hashes.
+    // State file persisted the processed hashes (compacted to bare md5s).
     const stateJson = JSON.parse(
       await readFile(path.join(stateDir, 'superindo', 'state.json'), 'utf8')
     )
     expect(stateJson.processed.length).toBeGreaterThanOrEqual(1)
-    expect(stateJson.processed[0]!.md5).toBe(md5Hash(jpeg))
+    expect(stateJson.processed[0]).toBe(md5Hash(jpeg))
 
-    // Run items file: one JSON line per OCR'd image.
+    // Run items file: one JSON line per OCR'd image, stamped with the
+    // extracting run's scrapedAt so a later replay keeps the observed date.
     const runItems = await readFile(
       path.join(stateDir, 'superindo', 'run-2026-10-24T23-00-05-000Z.jsonl'),
       'utf8'
@@ -162,6 +169,11 @@ describe('runPipeline', () => {
     expect(lines).toHaveLength(entry.itemsExtracted > 0 ? stateJson.processed.length : 0)
     expect(lines[0]!.storeSlug).toBe('superindo')
     expect(lines[0]!.products[0]!.name).toBe('Gula Pasir')
+    expect(lines[0]!.scrapedAt).toBe('2026-10-24T23:00:05.000Z')
+
+    // The mock serves image/jpeg — the inlineData declaration must match.
+    expect(inlineMimes.length).toBeGreaterThanOrEqual(1)
+    expect(inlineMimes.every((mime) => mime === 'image/jpeg')).toBe(true)
   })
 
   it('replays and retires the outbox across a failed then successful publish', async () => {
@@ -235,6 +247,11 @@ describe('runPipeline', () => {
     expect(status2.stores['superindo']!.itemsExtracted).toBe(0) // no re-OCR
     expect(posted).toHaveLength(1)
     expect(posted[0]!.items.map((item) => item.productKey)).toContain('gula-pasir----1-kg')
+    // Replay keeps the EXTRACTION day's observed date, not the replay day's —
+    // the upsert conflict key includes observed_date, so day-2 dating would
+    // insert duplicate observation rows.
+    const replayed = posted[0]!.items.find((item) => item.productKey === 'gula-pasir----1-kg')!
+    expect(replayed.observedDate).toBe('2026-10-24')
 
     // Outbox consumed only now.
     expect(
@@ -319,7 +336,7 @@ describe('runPipeline', () => {
       await readFile(path.join(stateDir, 'superindo', 'state.json'), 'utf8')
     )
     expect(stateJson.processed).toHaveLength(1)
-    expect(stateJson.processed[0]!.md5).toBe(md5Hash(jpegA))
+    expect(stateJson.processed[0]).toBe(md5Hash(jpegA))
 
     const runItems = await readFile(
       path.join(stateDir, 'superindo', 'run-2026-10-24T23-00-05-000Z.jsonl'),
@@ -331,6 +348,89 @@ describe('runPipeline', () => {
       .map((line) => JSON.parse(line))
     expect(lines).toHaveLength(1)
     expect(lines[0]!.products[0]!.name).toBe('Gula Pasir')
+  })
+
+  it('re-OCRs an image whose outbox append failed — items are never stranded', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    const jpeg = fakeJpegBytes()
+    const fetchMock = makeFetchMock(katalogHtml, koranHtml, jpeg)
+    const now = () => new Date('2026-10-24T23:00:05Z')
+    // The outbox append target already exists as a READ-ONLY file: the
+    // replay's readFile of it succeeds (empty), but appendFile after the OCR
+    // fails with EACCES — the exact post-OCR crash window the
+    // append-before-checkpoint ordering guards.
+    const runItemsFile = path.join(stateDir, 'superindo', 'run-2026-10-24T23-00-05-000Z.jsonl')
+    await mkdir(path.dirname(runItemsFile), { recursive: true })
+    await writeFile(runItemsFile, '', { mode: 0o444 })
+
+    let ocrCalls = 0
+    const ocrClient: GeminiClient = {
+      models: {
+        generateContent: async () => {
+          ocrCalls++
+          return {
+            text: JSON.stringify([
+              {
+                name: 'Gula Pasir',
+                brand: null,
+                unit: '1 kg',
+                price: 17000,
+                promo: null,
+                period: null,
+              },
+            ]),
+          }
+        },
+      },
+    }
+
+    const failure = await Effect.runPromiseExit(
+      runPipeline({
+        stateDir,
+        dryRun: true,
+        fetch: fetchMock,
+        ocrClient,
+        sleep: noSleep,
+        now,
+        log: () => {},
+      })
+    )
+    expect(failure._tag).toBe('Failure')
+    const error = exitError(failure) as Error & { exitCode?: number }
+    expect(error.message).toContain('append')
+    expect(error.exitCode).toBe(1)
+
+    // The novelty checkpoint comes AFTER the outbox append, so the image's
+    // md5 never entered state.json — nothing was marked processed.
+    expect(existsSync(path.join(stateDir, 'superindo', 'state.json'))).toBe(false)
+
+    // Next run, with the append working again: the image is re-OCR'd
+    // (at-least-once — a duplicate outbox line dedupes in the upsert), not
+    // skipped as already-processed with its items stranded.
+    await rm(runItemsFile, { force: true })
+    const status2 = await Effect.runPromise(
+      runPipeline({
+        stateDir,
+        dryRun: true,
+        fetch: fetchMock,
+        ocrClient,
+        sleep: noSleep,
+        now,
+        log: () => {},
+      })
+    )
+    expect(status2.stores['superindo']!.newImages).toBeGreaterThanOrEqual(1)
+    expect(ocrCalls).toBe(2) // paid for twice, stranded never
+    const runItems = await readFile(runItemsFile, 'utf8')
+    expect(runItems).toContain('Gula Pasir')
   })
 
   it('completes a dry-run with zero new images and no GEMINI_API_KEY', async () => {

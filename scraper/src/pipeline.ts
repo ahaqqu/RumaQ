@@ -15,6 +15,7 @@ import {
   classifyImages,
   loadState,
   pruneImages,
+  rememberProcessed,
   saveState,
   StateIo,
   type ScraperState,
@@ -31,6 +32,7 @@ import {
 } from './publish/client.js'
 import { activePlugins } from './stores/index.js'
 import { isBrochurePlugin, type BrochureStorePlugin } from './stores/types.js'
+import { wrapIo } from './util/io.js'
 import { createLog, logRejectedItem, type LogFn } from './util/log.js'
 import { QuotaExhausted } from './util/retry.js'
 
@@ -74,12 +76,9 @@ export interface PipelineOptions {
   now?: () => Date
 }
 
-const ioTry = <A>(op: string, file: string, run: () => Promise<A>): Effect.Effect<A, StateIo> =>
-  Effect.tryPromise({
-    try: run,
-    catch: (cause) =>
-      new StateIo({ op, path: file, cause, message: `${op} ${file} failed: ${String(cause)}` }),
-  })
+// Shared fs-IO wrapper (util/io.ts) — same tagged-error mapping as the
+// state and outbox modules.
+const ioTry = wrapIo(StateIo)
 
 function writeStatus(stateDir: string, status: PipelineStatus): Effect.Effect<void> {
   return Effect.tryPromise({
@@ -169,7 +168,7 @@ function processStore(
       const bytes = yield* ioTry('read', image.filePath, () => readFile(image.filePath)).pipe(
         Effect.map((buffer) => new Uint8Array(buffer))
       )
-      const rawItems = yield* ocr.ocrImage(bytes)
+      const rawItems = yield* ocr.ocrImage(bytes, image.contentType)
       const products: ValidatedProduct[] = []
       for (const raw of rawItems) {
         const [product, rejectReason] = validateProduct(raw, image.filename)
@@ -190,27 +189,27 @@ function processStore(
       entry.itemsExtracted += products.length
       imageProducts.push({ storeSlug: store.slug, brochureUrl: image.brochureUrl, products })
 
-      // Checkpoint per image, only after its items are safely extracted: a
-      // mid-run quota kill keeps every image already paid for, so the next
-      // run resumes where this one stopped instead of re-spending Gemini
-      // calls on the same prefix.
-      state.processed.push({
-        filename: image.filename,
-        md5: image.md5,
-        imageUrl: image.imageUrl,
-        brochureUrl: image.brochureUrl,
-        downloadedAt: image.downloadedAt,
-      })
-      state.lastRun = scrapedAt
-      yield* saveState(state, stateFile)
+      // Outbox BEFORE novelty state, per image: if the run dies (or the
+      // append fails) between the two, the worst case is one duplicate OCR
+      // of this image on the next run — the same-observedDate upsert dedupes
+      // the double outbox line — never paid-for items stranded outside every
+      // run-*.jsonl. The line carries this run's scrapedAt so a later replay
+      // keeps the original observed date.
       yield* ioTry('append', runItemsFile, () =>
         appendFile(
           runItemsFile,
-          JSON.stringify({ storeSlug: store.slug, brochureUrl: image.brochureUrl, products }) +
-            '\n',
+          JSON.stringify({
+            storeSlug: store.slug,
+            brochureUrl: image.brochureUrl,
+            products,
+            scrapedAt,
+          }) + '\n',
           'utf8'
         )
       )
+      rememberProcessed(state, image.md5)
+      state.lastRun = scrapedAt
+      yield* saveState(state, stateFile)
     }
 
     state.lastRun = scrapedAt

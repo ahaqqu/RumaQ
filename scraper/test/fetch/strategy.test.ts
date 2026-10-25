@@ -67,6 +67,57 @@ describe('createFetcher', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3) // 1 initial + 2 retries
   })
 
+  it('fails fast on permanent 4xx without burning the retry ladder', async () => {
+    const fetchMock = vi.fn(async () => new Response('gone', { status: 404 }))
+    const sleep = vi.fn(async () => {})
+    const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep, retries: 3, backoffMs: 1 })
+    await expect(Effect.runPromise(fetcher.fetchHtml('https://example.com/'))).rejects.toThrow(
+      'HTTP 404'
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1) // 404 can never succeed on retry
+    expect(sleep).not.toHaveBeenCalled()
+  })
+
+  it('still retries 429 — it is a backoff signal, not a permanent failure', async () => {
+    let calls = 0
+    const fetchMock = vi.fn(async () => {
+      calls++
+      return calls < 2
+        ? new Response('slow down', { status: 429 })
+        : htmlResponse('<html>ok</html>')
+    })
+    const sleep = vi.fn(async () => {})
+    const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep, retries: 3, backoffMs: 1 })
+    const html = await Effect.runPromise(fetcher.fetchHtml('https://example.com/'))
+    expect(html).toBe('<html>ok</html>')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(sleep).toHaveBeenCalledTimes(1)
+  })
+
+  it('times out stalled peers as a retryable transport error', async () => {
+    const fetchMock = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+        })
+    )
+    const sleep = vi.fn(async () => {})
+    const fetcher = createFetcher(plainStore, {
+      fetch: fetchMock,
+      sleep,
+      timeoutMs: 5,
+      retries: 2,
+      backoffMs: 1,
+    })
+    await expect(Effect.runPromise(fetcher.fetchHtml('https://example.com/'))).rejects.toThrow(
+      'Fetch failed'
+    )
+    // Timeout aborts surface as FetchTransport (not a defect) — retried with a
+    // fresh signal per attempt.
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(sleep).toHaveBeenCalledTimes(2)
+  })
+
   it('persists cookies from responses into subsequent requests', async () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => {
       if (fetchMock.mock.calls.length === 1) {
@@ -105,8 +156,11 @@ describe('createFetcher', () => {
         })
     )
     const fetcher = createFetcher(browserStore, { fetch: fetchMock, sleep: async () => {} })
-    const bytes = await Effect.runPromise(fetcher.fetchBytes('https://cdn.example.com/img.jpg'))
-    expect(Array.from(bytes)).toEqual([1, 2, 3])
+    const downloaded = await Effect.runPromise(
+      fetcher.fetchBytes('https://cdn.example.com/img.jpg')
+    )
+    expect(Array.from(downloaded.bytes)).toEqual([1, 2, 3])
+    expect(downloaded.contentType).toBe('image/jpeg')
   })
 
   it('fetchBytes rejects a non-image content-type without retrying', async () => {
@@ -133,8 +187,11 @@ describe('createFetcher', () => {
           new Response(new Uint8Array([9]), { status: 200, headers })
       )
       const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep: async () => {} })
-      const bytes = await Effect.runPromise(fetcher.fetchBytes('https://cdn.example.com/img.jpg'))
-      expect(Array.from(bytes)).toEqual([9])
+      const downloaded = await Effect.runPromise(
+        fetcher.fetchBytes('https://cdn.example.com/img.jpg')
+      )
+      expect(Array.from(downloaded.bytes)).toEqual([9])
+      expect(downloaded.contentType).toBe(contentType)
     }
   })
 

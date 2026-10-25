@@ -26,6 +26,8 @@ export class PublishRejected extends Data.TaggedError('PublishRejected')<{
 
 /** Retryable publish failure (server error, transport, bad response body). */
 export class PublishError extends Data.TaggedError('PublishError')<{
+  /** HTTP status when the failure came from a non-ok ingest response. */
+  status?: number
   message: string
 }> {}
 
@@ -39,9 +41,14 @@ export interface PublishOptions {
   fetch?: FetchLike
   retries?: number
   backoffMs?: number
+  /** Per-attempt POST timeout; a stalled ingest endpoint becomes a retryable PublishError. */
+  timeoutMs?: number
   sleep?: (ms: number) => Promise<void>
   log?: (message: string) => void
 }
+
+/** Default per-attempt timeout for the ingest POST (payloads can be large). */
+export const DEFAULT_PUBLISH_TIMEOUT_MS = 60_000
 
 export interface PublishResult {
   mode: 'dry-run' | 'published'
@@ -80,6 +87,7 @@ function postPayload(
   const fetchFn = options.fetch ?? fetch
   const retries = options.retries ?? 3
   const backoffMs = options.backoffMs ?? 5000
+  const timeoutMs = options.timeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS
   const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
   const log = options.log ?? (() => {})
 
@@ -87,6 +95,9 @@ function postPayload(
     Effect.flatMap(({ url, secret }) =>
       withRetries(
         Effect.tryPromise({
+          // The signal is built inside the attempt body so each retry gets a
+          // fresh timeout window; an abort lands in `catch` as a retryable
+          // PublishError, never a defect.
           try: () =>
             fetchFn(url, {
               method: 'POST',
@@ -95,6 +106,7 @@ function postPayload(
                 Authorization: `Bearer ${secret}`,
               },
               body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(timeoutMs),
             }),
           catch: (cause: unknown) =>
             new PublishError({ message: `Ingest POST failed: ${String(cause)}` }),
@@ -113,7 +125,10 @@ function postPayload(
               }
               if (!response.ok) {
                 return Effect.fail(
-                  new PublishError({ message: `Ingest endpoint returned HTTP ${response.status}` })
+                  new PublishError({
+                    status: response.status,
+                    message: `Ingest endpoint returned HTTP ${response.status}`,
+                  })
                 )
               }
               return Effect.tryPromise({
@@ -130,7 +145,16 @@ function postPayload(
           sleep,
           log,
           context: 'publish',
-          isFatal: (error) => (error as { _tag?: string })._tag === 'PublishRejected',
+          // 401/403 are PublishRejected; every other permanent 4xx (400 bad
+          // payload, 404 wrong URL, 410, …) can never succeed on retry and
+          // fails fast too. 429 stays retryable — it is a backoff signal.
+          isFatal: (error) =>
+            error instanceof PublishRejected ||
+            (error instanceof PublishError &&
+              error.status !== undefined &&
+              error.status >= 400 &&
+              error.status < 500 &&
+              error.status !== 429),
         }
       )
     )

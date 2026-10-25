@@ -10,7 +10,8 @@ import path from 'node:path'
 import { Cause, Data, Effect } from 'effect'
 
 import type { BrochurePage } from '../stores/types.js'
-import type { StoreFetcher } from './strategy.js'
+import { wrapIo } from '../util/io.js'
+import type { DownloadedImage, StoreFetcher } from './strategy.js'
 
 export class StateIo extends Data.TaggedError('StateIo')<{
   op: string
@@ -19,24 +20,47 @@ export class StateIo extends Data.TaggedError('StateIo')<{
   message: string
 }> {}
 
-const io = <A>(op: string, file: string, run: () => Promise<A>): Effect.Effect<A, StateIo> =>
-  Effect.tryPromise({
-    try: run,
-    catch: (cause) =>
-      new StateIo({ op, path: file, cause, message: `${op} ${file} failed: ${String(cause)}` }),
-  })
-
-export interface ProcessedImage {
-  filename: string
-  md5: string
-  imageUrl: string
-  brochureUrl: string
-  downloadedAt: string
-}
+const io = wrapIo(StateIo)
 
 export interface ScraperState {
   lastRun: string | null
-  processed: ProcessedImage[]
+  /**
+   * MD5 hashes of processed brochure images, oldest first. Entries are bare
+   * hashes — novelty only ever reads the md5, and a compact list keeps the
+   * per-image state.json rewrite cheap; legacy object entries are compacted
+   * on load. Bounded by MAX_PROCESSED_HASHES (FIFO eviction).
+   */
+  processed: string[]
+}
+
+/**
+ * Novelty retention cap: at most this many md5 hashes are kept (evicted
+ * oldest-first). ~40 images/run/day ≈ 15k entries/year, so 50k covers years
+ * of brochures while keeping state.json bounded; a page unseen for that long
+ * is a genuinely new observation if it ever reappears.
+ */
+export const MAX_PROCESSED_HASHES = 50_000
+
+/** Record a processed md5 in state, evicting the oldest beyond the cap. */
+export function rememberProcessed(state: ScraperState, md5: string): void {
+  state.processed.push(md5)
+  if (state.processed.length > MAX_PROCESSED_HASHES) {
+    state.processed.splice(0, state.processed.length - MAX_PROCESSED_HASHES)
+  }
+}
+
+/**
+ * Normalize `processed` entries: legacy state files recorded full objects
+ * ({ filename, md5, imageUrl, ... }) — compact them to the md5 novelty
+ * reads. Unknown junk entries are dropped rather than crashing the run.
+ */
+function compactProcessed(entries: unknown): string[] {
+  if (!Array.isArray(entries)) return []
+  return entries.flatMap((entry) => {
+    if (typeof entry === 'string') return [entry]
+    const md5 = (entry as { md5?: unknown } | null)?.md5
+    return typeof md5 === 'string' ? [md5] : []
+  })
 }
 
 export function md5Hash(data: Uint8Array): string {
@@ -46,8 +70,11 @@ export function md5Hash(data: Uint8Array): string {
 export function loadState(stateFile: string): Effect.Effect<ScraperState, StateIo> {
   return io('read', stateFile, async () => {
     const raw = await readFile(stateFile, 'utf8')
-    const parsed = JSON.parse(raw) as Partial<ScraperState>
-    return { lastRun: parsed.lastRun ?? null, processed: parsed.processed ?? [] }
+    const parsed = JSON.parse(raw) as { lastRun?: string | null; processed?: unknown }
+    return {
+      lastRun: parsed.lastRun ?? null,
+      processed: compactProcessed(parsed.processed),
+    }
   }).pipe(
     Effect.catchIf(
       (error) => (error.cause as NodeJS.ErrnoException)?.code === 'ENOENT',
@@ -120,6 +147,50 @@ export function probeImageDimensions(bytes: Uint8Array): ImageDimensions | null 
   return null
 }
 
+const EXTENSION_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+}
+
+/**
+ * Best-effort content type of downloaded brochure bytes — Gemini's
+ * inlineData needs the true type, and a wrong declaration risks an API 400
+ * or degraded extraction. Trust the server's image/* declaration first,
+ * then magic bytes, then the URL extension; fall back to jpeg (the only
+ * format stores have served so far). Dependency-free by design.
+ */
+export function imageMimeType(input: {
+  contentTypeHeader?: string | null
+  bytes: Uint8Array
+  url?: string
+}): string {
+  const header = input.contentTypeHeader?.split(';')[0]?.trim().toLowerCase()
+  if (header?.startsWith('image/')) return header
+  if (
+    input.bytes.length > 4 &&
+    input.bytes[0] === 0x89 &&
+    input.bytes[1] === 0x50 &&
+    input.bytes[2] === 0x4e &&
+    input.bytes[3] === 0x47
+  ) {
+    return 'image/png'
+  }
+  if (input.bytes.length > 2 && input.bytes[0] === 0xff && input.bytes[1] === 0xd8) {
+    return 'image/jpeg'
+  }
+  if (input.url) {
+    try {
+      return EXTENSION_MIME[path.extname(new URL(input.url).pathname).toLowerCase()] ?? 'image/jpeg'
+    } catch {
+      // Malformed URL — fall through to the default.
+    }
+  }
+  return 'image/jpeg'
+}
+
 export interface ClassifyOptions {
   /** Directory images are written to. */
   imagesDir: string
@@ -129,7 +200,18 @@ export interface ClassifyOptions {
   log?: (message: string) => void
 }
 
-export interface ClassifiedImage extends ProcessedImage {
+export interface ClassifiedImage {
+  filename: string
+  md5: string
+  imageUrl: string
+  brochureUrl: string
+  downloadedAt: string
+  /**
+   * Content type derived at download time (server declaration, magic bytes,
+   * then URL extension) — threaded to Gemini so inlineData never misdeclares
+   * a PNG page as jpeg.
+   */
+  contentType: string
   /**
    * Absolute path the file is written to. Only NEW images are written to
    * disk — existing entries are classified without re-writing their bytes.
@@ -156,13 +238,13 @@ export function classifyImages(
   state: ScraperState,
   options: ClassifyOptions
 ): Effect.Effect<ClassifyResult, StateIo> {
-  const knownHashes = new Set(state.processed.map((entry) => entry.md5))
+  const knownHashes = new Set(state.processed)
   const seenThisRun = new Set<string>()
   const result: ClassifyResult = { newImages: [], existingImages: [], skipped: [] }
   const minSize = options.minImageSizeKb * 1024
   const log = options.log ?? (() => {})
 
-  const download = (page: BrochurePage): Effect.Effect<Uint8Array | null> =>
+  const download = (page: BrochurePage): Effect.Effect<DownloadedImage | null> =>
     options.fetcher.fetchBytes(page.imageUrl).pipe(
       // Total recovery: a failed download is a skip, never a run failure —
       // one bad image must not block the daily snapshot.
@@ -178,8 +260,12 @@ export function classifyImages(
       )
     )
 
-  const classifyBytes = (page: BrochurePage, data: Uint8Array): Effect.Effect<void, StateIo> =>
+  const classifyBytes = (
+    page: BrochurePage,
+    downloaded: DownloadedImage
+  ): Effect.Effect<void, StateIo> =>
     Effect.suspend(() => {
+      const data = downloaded.bytes
       if (data.byteLength < minSize) {
         const reason = `too_small_file: ${data.byteLength} bytes`
         log(`[SKIP] ${path.basename(page.imageUrl)} — ${reason}`)
@@ -215,6 +301,11 @@ export function classifyImages(
         imageUrl: page.imageUrl,
         brochureUrl: page.brochureUrl,
         downloadedAt: new Date().toISOString(),
+        contentType: imageMimeType({
+          contentTypeHeader: downloaded.contentType,
+          bytes: data,
+          url: page.imageUrl,
+        }),
         filePath,
       }
       if (knownHashes.has(hash)) {
@@ -232,8 +323,8 @@ export function classifyImages(
 
   const classifyPage = (page: BrochurePage): Effect.Effect<void, StateIo> =>
     download(page).pipe(
-      Effect.flatMap((data) =>
-        data === null ? Effect.succeed(undefined) : classifyBytes(page, data)
+      Effect.flatMap((downloaded) =>
+        downloaded === null ? Effect.succeed(undefined) : classifyBytes(page, downloaded)
       )
     )
 

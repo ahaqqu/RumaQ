@@ -50,6 +50,21 @@ describe('loadOutbox', () => {
     expect(pending).toEqual([batch, batch])
   })
 
+  it('round-trips the extracting run timestamp; legacy lines simply lack it', async () => {
+    const stateDir = await seedStoreDir()
+    const storeDir = path.join(stateDir, 'superindo')
+    await writeFile(
+      path.join(storeDir, 'run-2026-10-23T23-00-05-000Z.jsonl'),
+      JSON.stringify({ ...batch, scrapedAt: '2026-10-23T23:00:05.000Z' }) + '\n'
+    )
+    const pending = await Effect.runPromise(loadOutbox(stateDir, 'superindo'))
+    expect(pending).toHaveLength(3)
+    expect(pending[0]!.scrapedAt).toBe('2026-10-23T23:00:05.000Z')
+    // Legacy lines carry no timestamp — buildPayload falls back to the
+    // replay run's scrapedAt for them.
+    expect(pending[1]!.scrapedAt).toBeUndefined()
+  })
+
   it('returns [] when the store dir does not exist', async () => {
     const pending = await Effect.runPromise(loadOutbox('/nonexistent/rumaq', 'superindo'))
     expect(pending).toEqual([])

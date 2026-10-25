@@ -11,6 +11,7 @@ import path from 'node:path'
 
 import { Data, Effect } from 'effect'
 
+import { wrapIo } from '../util/io.js'
 import type { ImageProducts } from './payload.js'
 
 export class OutboxIo extends Data.TaggedError('OutboxIo')<{
@@ -23,12 +24,7 @@ export class OutboxIo extends Data.TaggedError('OutboxIo')<{
 /** Matches the files processStore writes: run-<ISO-scrapedAt>.jsonl */
 const RUN_FILE_RE = /^run-.*\.jsonl$/
 
-const io = <A>(op: string, file: string, run: () => Promise<A>): Effect.Effect<A, OutboxIo> =>
-  Effect.tryPromise({
-    try: run,
-    catch: (cause) =>
-      new OutboxIo({ op, path: file, cause, message: `${op} ${file} failed: ${String(cause)}` }),
-  })
+const io = wrapIo(OutboxIo)
 
 /**
  * Load pending outbox items for a store: every line of every

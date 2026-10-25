@@ -98,6 +98,15 @@ export interface ImageProducts {
   /** Brochure listing page the items were OCR'd from. */
   brochureUrl: string | null
   products: ValidatedProduct[]
+  /**
+   * ISO scrapedAt of the run that extracted these items. Outbox lines carry
+   * it so a cross-day replay keeps the original observed date — the ingest
+   * upsert's conflict key includes observed_date, so replaying with the
+   * replay day's date would insert duplicate observation rows. Current-run
+   * batches leave it unset and buildPayload falls back to the run's
+   * scrapedAt; legacy outbox lines without the field do the same.
+   */
+  scrapedAt?: string
 }
 
 /**
@@ -112,6 +121,10 @@ export function buildPayload(input: {
 }): IngestPayload {
   const items: IngestItem[] = []
   for (const image of input.images) {
+    // Per-batch observed date: replayed batches keep the date of the run
+    // that OCR'd them (the upsert conflict key includes observed_date), so
+    // a cross-day replay hits the same row instead of inserting duplicates.
+    const observedDate = (image.scrapedAt ?? input.scrapedAt).slice(0, 10)
     for (const product of image.products) {
       const [validFrom, validUntil] = parsePeriod(product.period)
       items.push({
@@ -127,7 +140,7 @@ export function buildPayload(input: {
         promoLabel: product.promo ? product.promo.join('; ') : null,
         validFrom,
         validUntil,
-        observedDate: input.scrapedAt.slice(0, 10),
+        observedDate,
         matchMethod: 'solo',
         matchConfidence: 1.0,
         brochureUrl: image.brochureUrl,
