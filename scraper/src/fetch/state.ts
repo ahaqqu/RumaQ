@@ -10,7 +10,7 @@ import path from 'node:path'
 import { Cause, Data, Effect } from 'effect'
 
 import type { BrochurePage } from '../stores/types.js'
-import { wrapIo } from '../util/io.js'
+import { writeFileAtomic, wrapIo } from '../util/io.js'
 import type { DownloadedImage, StoreFetcher } from './strategy.js'
 
 export class StateIo extends Data.TaggedError('StateIo')<{
@@ -69,8 +69,20 @@ export function md5Hash(data: Uint8Array): string {
 
 export function loadState(stateFile: string): Effect.Effect<ScraperState, StateIo> {
   return io('read', stateFile, async () => {
-    const raw = await readFile(stateFile, 'utf8')
-    const parsed = JSON.parse(raw) as { lastRun?: string | null; processed?: unknown }
+    let parsed: { lastRun?: string | null; processed?: unknown }
+    try {
+      parsed = JSON.parse(await readFile(stateFile, 'utf8')) as {
+        lastRun?: string | null
+        processed?: unknown
+      }
+    } catch (cause) {
+      // Corrupt JSON (e.g. truncated by a crash before saves were atomic)
+      // starts fresh — re-OCR of one run's images — instead of bricking the
+      // nightly job until a human deletes the file. Real IO errors keep
+      // their typed mapping.
+      if ((cause as NodeJS.ErrnoException)?.code) throw cause
+      return { lastRun: null, processed: [] }
+    }
     return {
       lastRun: parsed.lastRun ?? null,
       processed: compactProcessed(parsed.processed),
@@ -88,8 +100,10 @@ export function saveState(state: ScraperState, stateFile: string): Effect.Effect
     mkdir(path.dirname(stateFile), { recursive: true })
   ).pipe(
     Effect.flatMap(() =>
+      // Atomic (temp + rename): a kill mid-save must never leave a truncated
+      // state.json behind (same idiom as the catalog/embedding saves).
       io('write', stateFile, () =>
-        writeFile(stateFile, JSON.stringify(state, null, 2) + '\n', 'utf8')
+        writeFileAtomic(stateFile, JSON.stringify(state, null, 2) + '\n')
       )
     )
   )

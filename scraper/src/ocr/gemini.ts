@@ -7,6 +7,7 @@ import { Data, Effect } from 'effect'
 
 import type { RawOcrItem } from './parse.js'
 import { parseOcrJson } from './parse.js'
+import { lazyGeminiClient } from '../util/gemini.js'
 import { classifyQuotaError, QuotaExhausted, withQuotaPolicy } from '../util/retry.js'
 
 // Ported verbatim from haqita scripts/ocr/prompts/gemini.py — the prompt is
@@ -85,22 +86,11 @@ export function createOcr(options: OcrOptions): Ocr {
   // The client (and its API key requirement) is resolved lazily on the first
   // ocrImage call: a run with zero new images makes no OCR calls and must
   // work without GEMINI_API_KEY.
-  let client: GeminiClient | undefined = options.client
-  const resolveClient = (): Effect.Effect<GeminiClient, OcrError> =>
-    Effect.suspend(() =>
-      client
-        ? Effect.succeed(client)
-        : Effect.tryPromise({
-            try: async () => {
-              const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY
-              if (!apiKey) throw new Error('GEMINI_API_KEY not set (or pass options.apiKey)')
-              const { GoogleGenAI } = await import('@google/genai')
-              client = new GoogleGenAI({ apiKey })
-              return client
-            },
-            catch: (cause: unknown) => new OcrError({ message: String(cause) }),
-          })
-    )
+  const resolveClient = lazyGeminiClient({
+    client: options.client,
+    apiKey: options.apiKey,
+    tag: OcrError,
+  })
 
   return {
     ocrImage(

@@ -1,5 +1,5 @@
 import { Outlet, createRootRoute } from '@tanstack/react-router'
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
+import React, { Suspense } from 'react'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { PersonaProvider } from '../context/PersonaContext.jsx'
 import { AppProvider } from '../context/AppContext.jsx'
@@ -42,6 +42,14 @@ function AuthGate() {
   )
 }
 
+const ReactQueryDevtools = import.meta.env.DEV
+  ? React.lazy(() =>
+      import('@tanstack/react-query-devtools').then((m) => ({
+        default: m.ReactQueryDevtools,
+      }))
+    )
+  : () => null
+
 function RootComponent() {
   return (
     <PersistQueryClientProvider
@@ -52,7 +60,9 @@ function RootComponent() {
       <AppProvider>
         <AuthGate />
       </AppProvider>
-      <ReactQueryDevtools initialIsOpen={false} />
+      <Suspense fallback={null}>
+        <ReactQueryDevtools initialIsOpen={false} />
+      </Suspense>
       <PwaUpdatePrompt />
     </PersistQueryClientProvider>
   )

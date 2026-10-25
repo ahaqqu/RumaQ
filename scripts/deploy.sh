@@ -13,6 +13,8 @@ set -euo pipefail
 #   ./scripts/deploy.sh cloudflare --dry-run  # validate without deploying
 #   ./scripts/deploy.sh --dry-run             # alias for dry-run validation
 #   ./scripts/deploy.sh frontend              # deploy only the frontend
+#   ./scripts/deploy.sh vps                   # deploy the scraper to the VPS
+#   ./scripts/deploy.sh vps --dry-run         # build+plan the VPS ship only
 # ============================================================
 
 DRY_RUN=false
@@ -22,12 +24,12 @@ for arg in "$@"; do
     --dry-run)
       DRY_RUN=true
       ;;
-    local | cloudflare | frontend | dry-run)
+    local | cloudflare | frontend | dry-run | vps)
       MODE="$arg"
       ;;
     *)
       echo "Unknown argument: $arg"
-      echo "Usage: $0 [local|cloudflare|frontend|dry-run] [--dry-run]"
+      echo "Usage: $0 [local|cloudflare|frontend|dry-run|vps] [--dry-run]"
       exit 1
       ;;
   esac
@@ -447,6 +449,12 @@ case "$MODE" in
     if ! $DRY_RUN; then
       deploy_worker
     fi
+    ;;
+  vps)
+    # Ship the scraper bundle to the box (build -> rsync -> browsers ->
+    # self-check -> shared-box doctor). Configuration via RUMAQ_VPS_*
+    # environment variables; see scripts/deploy/vps.sh.
+    bash "$ROOT_DIR/scripts/deploy/vps.sh" $(if $DRY_RUN; then echo --dry-run; fi)
     ;;
   *)
     echo "Unknown mode: $MODE"

@@ -27,16 +27,17 @@ describe('Login', () => {
     vi.clearAllMocks()
   })
 
-  it('renders Google sign-in button', () => {
+  it('renders Google sign-in button', async () => {
     api.emailAuthStatus.mockResolvedValue({ enabled: false })
     const { container } = renderWithQuery(React.createElement(Login))
-    expect(container.querySelector('button')).toBeTruthy()
+    await waitFor(() => expect(container.querySelector('button')).toBeTruthy())
     expect(container.textContent).toContain('login.signIn')
   })
 
-  it('calls login on Google button click', () => {
+  it('calls login on Google button click', async () => {
     api.emailAuthStatus.mockResolvedValue({ enabled: false })
     const { container } = renderWithQuery(React.createElement(Login))
+    await waitFor(() => expect(container.querySelector('button')).toBeTruthy())
     fireEvent.click(container.querySelector('button'))
     expect(api.login).toHaveBeenCalled()
   })

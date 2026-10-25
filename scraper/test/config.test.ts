@@ -13,6 +13,17 @@ describe('loadConfig', () => {
       embeddingAmbiguousLow: 0.55,
       unitTolerancePct: 15,
       priceRatioMax: 3.0,
+      embeddingModel: 'gemini-embedding-001',
+      verifierRetries: 3,
+      gates: {
+        gate0UnitType: true,
+        gate1Brand: true,
+        gate2TokenJaccard: true,
+        gate3ExactMatch: true,
+        gate4Embedding: true,
+        gate5PricePlausibility: true,
+        gate6AiVerifier: true,
+      },
     })
   })
 

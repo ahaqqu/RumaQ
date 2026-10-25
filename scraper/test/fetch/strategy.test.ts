@@ -1,13 +1,13 @@
-// Tier-1 fetch ladder tests: default headers, retries, cookie jar, and the
-// browser-tier guard (port of the behavior in haqita base_scraper.py).
+// Fetch ladder tests: Tier-1 headers/retries/cookie jar + the tier dispatch
+// for browser stores (port of the behavior in haqita base_scraper.py).
 // Fetcher methods are Effects — driven through Effect.runPromise.
 
 import { describe, expect, it, vi } from 'vite-plus/test'
 import { Effect } from 'effect'
 
-import { exitError } from '../helpers.js'
+import { fakeBrowserLauncher } from '../helpers.js'
 
-import { createFetcher, DEFAULT_HEADERS } from '../../src/fetch/strategy.js'
+import { createFetcher, createStoreFetcher, DEFAULT_HEADERS } from '../../src/fetch/strategy.js'
 import type { StoreConfig } from '../../src/config.js'
 
 const plainStore: StoreConfig = {
@@ -152,16 +152,22 @@ describe('createFetcher', () => {
     expect(secondHeaders.Cookie).toBe('session=abc123')
   })
 
-  it('fails with BrowserTierRequired for browser stores instead of wasting plain fetches', async () => {
+  it('routes browser stores through the Tier-2 ladder, not plain fetches', async () => {
     const fetchMock = vi.fn(async () => htmlResponse('<html></html>'))
-    const fetcher = createFetcher(browserStore, { fetch: fetchMock, sleep: async () => {} })
-    const failure = await Effect.runPromiseExit(fetcher.fetchHtml('https://www.lottemart.co.id/'))
-    expect(failure._tag).toBe('Failure')
-    expect(exitError(failure)).toMatchObject({ _tag: 'BrowserTierRequired' })
+    const lotteBrowser = fakeBrowserLauncher('<html><body>listing</body></html>')
+    const fetcher = createStoreFetcher(browserStore, {
+      fetch: fetchMock,
+      launcher: lotteBrowser.launcher,
+      sleep: async () => {},
+    })
+    const html = await Effect.runPromise(fetcher.fetchHtml('https://www.lottemart.co.id/'))
+    expect(html).toBe('<html><body>listing</body></html>')
     expect(fetchMock).not.toHaveBeenCalled()
+    await fetcher.close()
+    expect(lotteBrowser.state.closed).toBe(true)
   })
 
-  it('still allows image downloads for browser stores (images are usually unblocked CDNs)', async () => {
+  it('still downloads browser-store images over the plain tier (unblocked CDNs)', async () => {
     const fetchMock = vi.fn(
       async (_url: string, _init?: RequestInit) =>
         new Response(new Uint8Array([1, 2, 3]), {
@@ -169,12 +175,13 @@ describe('createFetcher', () => {
           headers: { 'content-type': 'image/jpeg' },
         })
     )
-    const fetcher = createFetcher(browserStore, { fetch: fetchMock, sleep: async () => {} })
+    const fetcher = createStoreFetcher(browserStore, { fetch: fetchMock, sleep: async () => {} })
     const downloaded = await Effect.runPromise(
       fetcher.fetchBytes('https://cdn.example.com/img.jpg')
     )
     expect(Array.from(downloaded.bytes)).toEqual([1, 2, 3])
     expect(downloaded.contentType).toBe('image/jpeg')
+    await fetcher.close()
   })
 
   it('fetchBytes rejects a non-image content-type without retrying', async () => {

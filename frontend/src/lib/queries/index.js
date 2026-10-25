@@ -1,4 +1,5 @@
 export { useMe, useMeQueryOptions, useLogout } from './me.js'
+export { useEmailAuthStatus } from './emailAuthStatus.js'
 export { useStock, useUpdateStock } from './stock.js'
 export { useHome } from './home.js'
 export { useSettings, useUpdateSettings } from './settings.js'

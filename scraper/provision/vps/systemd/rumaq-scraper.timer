@@ -1,0 +1,19 @@
+# provision/vps/systemd/rumaq-scraper.timer — the nightly schedule.
+#
+# 23:00 UTC = 06:00 WIB: the brochures for the day are up and the ingest
+# lands before breakfast planning. Persistent=true runs a missed job after
+# downtime (the next run's novelty state makes that cheap).
+#
+# apply.sh installs the timer but does NOT enable it: enabling is the
+# go-live switch (PR4) so the box never spends Gemini quota on dry runs.
+
+[Unit]
+Description=Nightly RumaQ price scrape (23:00 UTC = 06:00 WIB)
+
+[Timer]
+OnCalendar=*-*-* 23:00:00
+Persistent=true
+Unit=rumaq-scraper.service
+
+[Install]
+WantedBy=timers.target
