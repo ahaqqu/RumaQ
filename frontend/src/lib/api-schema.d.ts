@@ -723,6 +723,8 @@ export interface operations {
           ai_key?: string
           ai_base_url?: string
           ai_model?: string
+          /** @enum {string} */
+          ai_thinking_level?: 'low' | 'medium' | 'high' | ''
           persona_user_role?: string
           persona_ai_role?: string
           persona_enabled?: boolean

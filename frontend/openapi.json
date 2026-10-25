@@ -283,6 +283,10 @@
                     "type": "string",
                     "maxLength": 200
                   },
+                  "ai_thinking_level": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", ""]
+                  },
                   "persona_user_role": {
                     "type": "string"
                   },
