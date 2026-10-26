@@ -27,14 +27,14 @@ describe('createCors', () => {
     expect(res.headers.get('access-control-allow-credentials')).toBe('true')
   })
 
-  it('allows the default pages.dev origin when PAGES_ORIGIN is unset', async () => {
+  it('allows the default canonical origin when PAGES_ORIGIN is unset', async () => {
     const app = makeApp()
     const res = await app.request(
       '/ping',
-      { headers: { Origin: 'https://rumaq.pages.dev' } },
+      { headers: { Origin: 'https://rumaq.ahaqqu.com' } },
       makeEnv()
     )
-    expect(res.headers.get('access-control-allow-origin')).toBe('https://rumaq.pages.dev')
+    expect(res.headers.get('access-control-allow-origin')).toBe('https://rumaq.ahaqqu.com')
   })
 
   it.each(['http://localhost:5173', 'http://localhost:8788'])(

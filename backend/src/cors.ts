@@ -6,7 +6,7 @@ export function createCors() {
     origin: (origin, c) => {
       if (!origin) return 'null'
       const env = c.env as Env['Bindings']
-      const allowed = env.PAGES_ORIGIN || 'https://rumaq.pages.dev'
+      const allowed = env.PAGES_ORIGIN || 'https://rumaq.ahaqqu.com'
 
       // Exact production / configured origin
       if (origin === allowed) {
