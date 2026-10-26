@@ -1,15 +1,17 @@
 # Haqita → RumaQ Integration — Architecture & Implementation Plan
 
-> Status: **PR1–PR3 merged; PR4 (go-live) in flight.** Written 2026-10-24, updated 2026-10-26.
+> Status: **PR1–PR4 merged; go-live (timer enable + first live ingest) pending.** Written 2026-10-24, updated 2026-10-26.
 > PR1 (contract & backend) merged as #252, PR2 (scraper scaffold + Superindo + Gemini OCR +
 > dry-run publish) merged as #255, PR3 (Lotte Tier-2 + matcher + commit-based VPS deploy,
-> VPS scope folded from milestone 4) merged as #262. Box bootstrap is
+> VPS scope folded from milestone 4) merged as #262, PR4 (go-live gate: freshness status
+> endpoint + smoke staleness alert + `provision-vps.sh --enable-timer`) merged as #275; its
+> homepage manifest/doctor change merged as ahaqqu/homepage#13. Box bootstrap is
 > `scripts/provision-vps.sh` (§7). 2026-10-26 owner decision: a scraping **monitoring
 > admin screen** is wanted — folded into milestones 4 (staleness alert) and 5
 > (`price_runs` + admin screen, §7.1). PR6 (haqita cleanup) remains after that.
 > 2026-10-26 owner decision: **backfill dropped** — haqita never went live (prototype
 > data only), so no data migration: the canonical catalog self-seeds from the first
-> real runs and price history accrues from them. `ahaqita-database` can be archived
+> real runs and price history accrues from them. `haqita-database` can be archived
 > in PR6 once go-live is verified.
 > This document is self-contained: a fresh session should be able to implement from it
 > without re-exploring the haqita repo. Source references to `/home/ahaqqu/Projects/haqita`
