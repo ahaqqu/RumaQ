@@ -247,6 +247,11 @@ log "verifying from the deploy identity"
   test -d $BROWSERS_PATH && echo 'browsers: present' || echo 'browsers: MISSING'
   systemctl is-enabled rumaq-scraper.timer 2>/dev/null || true
 "
-log "done. The nightly timer is intentionally NOT enabled — re-run with"
-log "--enable-timer to go live (apply.sh --enable-timer + RUMAQ_PUBLISH=true)."
+if [ "$ENABLE_TIMER" -eq 1 ]; then
+  log "done. GO-LIVE: timer enabled + RUMAQ_PUBLISH=true — first real run at the next 23:00 UTC."
+  log "Verify after it runs: the smoke freshness check goes green (GET /api/internal/prices/status)."
+else
+  log "done. The nightly timer is intentionally NOT enabled — re-run with"
+  log "--enable-timer to go live (apply.sh --enable-timer + RUMAQ_PUBLISH=true)."
+fi
 log "Next: the commit-based deploy can now run (deploy.yml deploy-vps job)."

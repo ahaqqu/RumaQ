@@ -75,6 +75,22 @@ function samplePayload() {
   })
 }
 
+function createEnv(db: D1Database, secret?: string) {
+  return {
+    DB: db,
+    RECEIPTS: { put: vi.fn(), get: vi.fn() },
+    GOOGLE_CLIENT_ID: 'test-client-id',
+    GOOGLE_CLIENT_SECRET: 'test-client-secret',
+    WORKER_JWT_SECRET: 'test-secret',
+    WORKER_ENCRYPTION_KEY: 'test-encryption-key-32-bytes-long!!',
+    EMAIL_AUTH_ENABLED: 'false',
+    ASSETS: undefined as unknown as Fetcher,
+    props: undefined,
+    TEST_MODE: 'true',
+    HAQITA_INGEST_SECRET: secret,
+  }
+}
+
 describe('ingestPayloadSchema', () => {
   it('accepts the canonical payload from the integration plan', () => {
     const result = samplePayload()
@@ -262,22 +278,6 @@ describe('POST /api/internal/ingest/prices', () => {
     return parsed.output
   }
 
-  function createEnv(db: D1Database, secret?: string) {
-    return {
-      DB: db,
-      RECEIPTS: { put: vi.fn(), get: vi.fn() },
-      GOOGLE_CLIENT_ID: 'test-client-id',
-      GOOGLE_CLIENT_SECRET: 'test-client-secret',
-      WORKER_JWT_SECRET: 'test-secret',
-      WORKER_ENCRYPTION_KEY: 'test-encryption-key-32-bytes-long!!',
-      EMAIL_AUTH_ENABLED: 'false',
-      ASSETS: undefined as unknown as Fetcher,
-      props: undefined,
-      TEST_MODE: 'true',
-      HAQITA_INGEST_SECRET: secret,
-    }
-  }
-
   it('returns 503 when the ingest secret is not configured', async () => {
     const { db } = createFakeDb()
     const res = await apiApp.request(
@@ -404,22 +404,6 @@ describe('getPricesStatus', () => {
 })
 
 describe('GET /api/internal/prices/status', () => {
-  function createEnv(db: D1Database, secret?: string) {
-    return {
-      DB: db,
-      RECEIPTS: { put: vi.fn(), get: vi.fn() },
-      GOOGLE_CLIENT_ID: 'test-client-id',
-      GOOGLE_CLIENT_SECRET: 'test-client-secret',
-      WORKER_JWT_SECRET: 'test-secret',
-      WORKER_ENCRYPTION_KEY: 'test-encryption-key-32-bytes-long!!',
-      EMAIL_AUTH_ENABLED: 'false',
-      ASSETS: undefined as unknown as Fetcher,
-      props: undefined,
-      TEST_MODE: 'true',
-      HAQITA_INGEST_SECRET: secret,
-    }
-  }
-
   it('returns 503 when the ingest secret is not configured', async () => {
     const { db } = createFakeDb()
     const res = await apiApp.request(

@@ -16,6 +16,9 @@ set -euo pipefail
 #   - HAQITA_INGEST_SECRET unset → the GitHub secret is not
 #     configured yet (post-merge, pre-go-live window).
 #   - zero observations → the first live ingest has not happened yet.
+# Everything else that cannot be interpreted — a missing/renamed field,
+# an inconsistent shape, transport or auth failure — fails the step: the
+# alert must never be silently disarmed.
 #
 # Env:
 #   HAQITA_INGEST_SECRET  bearer secret (same value the box uses)
@@ -35,12 +38,27 @@ status="$(curl -fsS --max-time 30 \
   -H "Authorization: Bearer ${HAQITA_INGEST_SECRET}" \
   "${BASE_URL}/api/internal/prices/status")"
 
-count="$(printf '%s' "$status" | jq -r '.observationCount // 0')"
-latest="$(printf '%s' "$status" | jq -r '.latestObservedDate // empty')"
+# Shape-check before interpreting: a renamed/missing field must fail loudly,
+# never masquerade as an empty table — that would silently disarm this alert.
+if ! printf '%s' "$status" | jq -e '.observationCount | numbers' >/dev/null 2>&1; then
+  echo "price-freshness: unexpected status response (no numeric observationCount) — failing" >&2
+  exit 1
+fi
 
-if [ "$count" -eq 0 ] || [ -z "$latest" ]; then
+count="$(printf '%s' "$status" | jq -r '.observationCount')"
+latest="$(printf '%s' "$status" | jq -r '.latestObservedDate')"
+
+# Empty table: exactly what the backend returns before the first live ingest.
+if [ "$count" -eq 0 ] && [ "$latest" = "null" ]; then
   echo "price-freshness: no observations yet — skipping (go-live pending)"
   exit 0
+fi
+
+# Rows without a latest date cannot be assessed for freshness; fail rather
+# than skip, so an inconsistent response never hides a real outage.
+if [ "$latest" = "null" ]; then
+  echo "price-freshness: status response inconsistent (observations without a latest date) — failing" >&2
+  exit 1
 fi
 
 latest_ts="$(date -ud "${latest}T00:00:00Z" +%s)"
