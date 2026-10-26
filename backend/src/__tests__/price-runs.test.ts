@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vite-plus/test'
+import { describe, it, expect } from 'vite-plus/test'
 import { safeParse } from 'valibot'
 import { runReportSchema } from '@rumaq/contract'
 import { recordRunReport, listPriceRuns } from '../lib/price-runs.js'

@@ -44,7 +44,10 @@ describe('deriveRunsUrl', () => {
 
 describe('postRunReport', () => {
   it('posts the report with the bearer secret to the derived runs URL', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true }), { status: 200 })
+    )
     await Effect.runPromise(
       postRunReport(report, {
         ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
@@ -61,7 +64,10 @@ describe('postRunReport', () => {
   })
 
   it('honors an explicit runsUrl override', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true }), { status: 200 })
+    )
     await Effect.runPromise(
       postRunReport(report, {
         ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
@@ -75,7 +81,9 @@ describe('postRunReport', () => {
   })
 
   it('is a no-op when no ingest config is available', async () => {
-    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) => new Response('{}', { status: 200 })
+    )
     await Effect.runPromise(postRunReport(report, { fetch: fetchMock }))
     expect(fetchMock).not.toHaveBeenCalled()
   })

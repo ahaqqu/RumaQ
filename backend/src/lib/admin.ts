@@ -1,4 +1,3 @@
-import { createMiddleware } from 'hono/factory'
 import type { MiddlewareHandler } from 'hono'
 
 import type { Env } from '../types.js'
