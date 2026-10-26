@@ -1,7 +1,10 @@
 # provision/vps/systemd/rumaq-scraper.timer — the nightly schedule.
 #
 # 23:00 UTC = 06:00 WIB: the brochures for the day are up and the ingest
-# lands before breakfast planning. Persistent=true runs a missed job after
+# lands before breakfast planning. The UTC suffix on OnCalendar is
+# deliberate: without it systemd reads the time in the box's local zone
+# (Europe/Berlin), which fired at 22:00 UTC / 05:00 WIB in winter and
+# 21:00 UTC / 04:00 WIB in summer. Persistent=true runs a missed job after
 # downtime (the next run's novelty state makes that cheap).
 #
 # apply.sh installs the timer but does NOT enable it: enabling is the
@@ -11,7 +14,7 @@
 Description=Nightly RumaQ price scrape (23:00 UTC = 06:00 WIB)
 
 [Timer]
-OnCalendar=*-*-* 23:00:00
+OnCalendar=*-*-* 23:00:00 UTC
 Persistent=true
 Unit=rumaq-scraper.service
 
