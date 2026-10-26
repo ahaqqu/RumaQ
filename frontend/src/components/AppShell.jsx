@@ -101,7 +101,7 @@ export function AppShell({ children }) {
                   {user.name || t('nav.settings')}
                 </div>
                 <button
-                  className="text-xs text-text-faint font-medium hover:text-danger underline-offset-2 hover:underline"
+                  className="text-xs text-text-muted font-medium hover:text-danger underline-offset-2 hover:underline"
                   onClick={() => logout.mutate()}
                 >
                   {t('nav.logout', 'Logout')}

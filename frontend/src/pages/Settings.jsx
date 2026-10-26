@@ -346,6 +346,11 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                     onSubmit={save}
                     placeholder="https://api.example.com/v1"
                     ariaLabel={t('settings.customBaseUrl')}
+                    action={
+                      <>
+                        <IconCheck size={15} /> {t('settings.save')}
+                      </>
+                    }
                   />
                 </Setting>
               )}
@@ -363,6 +368,11 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                   onSubmit={save}
                   placeholder={AI_PROVIDER_DEFAULTS[provider]}
                   ariaLabel={t('settings.model')}
+                  action={
+                    <>
+                      <IconCheck size={15} /> {t('settings.save')}
+                    </>
+                  }
                 />
               </Setting>
 

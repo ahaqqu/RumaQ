@@ -135,17 +135,17 @@ This plan lists every known work item for RumaQ, its current status, and its pri
 
 ## 8. Quality assurance
 
-| Item                        | Status      | Priority | Notes                                                                                          |
-| --------------------------- | ----------- | -------- | ---------------------------------------------------------------------------------------------- |
-| Frontend production build   | Done        | P0       | `vp build` passes                                                                              |
-| Worker TypeScript typecheck | Done        | P0       | `vp check --no-fmt --no-lint` passes                                                           |
-| Unit tests                  | Done        | P1       | Vitest: 16+ frontend suites, 3 backend suites with coverage thresholds                         |
-| API integration tests       | Done        | P1       | `automation/tests/local/api/` — Vitest BDD + fetch against Docker Miniflare; `vp run test:api` |
-| End-to-end tests            | Partial     | P2       | Playwright BDD smoke test in `automation/tests/local/e2e/`; `vp run test:e2e`                  |
-| Docker test automation      | Done        | P1       | `docker compose -f automation/docker-compose.yml` runs all tests; CI workflow                  |
-| Production smoke tests      | Done        | P1       | Scheduled GitHub Actions check `rumaq.ahaqqu.com` every 6 hours                                |
-| Accessibility audit         | Not started | P1       | Keyboard navigation, contrast, labels                                                          |
-| Performance budget          | Not started | P2       | Bundle size, First Contentful Paint                                                            |
+| Item                        | Status | Priority | Notes                                                                                                          |
+| --------------------------- | ------ | -------- | -------------------------------------------------------------------------------------------------------------- |
+| Frontend production build   | Done   | P0       | `vp build` passes                                                                                              |
+| Worker TypeScript typecheck | Done   | P0       | `vp check --no-fmt --no-lint` passes                                                                           |
+| Unit tests                  | Done   | P1       | Vitest: 16+ frontend suites, 3 backend suites with coverage thresholds                                         |
+| API integration tests       | Done   | P1       | `automation/tests/local/api/` — Vitest BDD + fetch against Docker Miniflare; `vp run test:api`                 |
+| End-to-end tests            | Done   | P2       | Playwright BDD: smoke + page-level features for inventory/plan/history/settings/receipt; per-scenario DB reset |
+| Docker test automation      | Done   | P1       | `docker compose -f automation/docker-compose.yml` runs all tests; CI workflow                                  |
+| Production smoke tests      | Done   | P1       | Scheduled GitHub Actions check `rumaq.ahaqqu.com` every 6 hours                                                |
+| Accessibility audit         | Done   | P1       | axe-core scans of every main page in E2E (critical/serious must be zero); first-wave contrast/label fixes      |
+| Performance budget          | Done   | P2       | Bundle gate 250 KB JS gzip (scripts/ci/bundle-budget.mjs) + Lighthouse CI budgets in ci.yml                    |
 
 ---
 
@@ -239,8 +239,8 @@ _User impact: review past purchases and spending patterns; app goes live._
 The MVP is shipped: production runs as a single Worker (`rumaq.ahaqqu.com`, deployed on merge to `main`), scheduled smoke tests run every 6 hours, and all P0 phases (01–05) plus phase 06 security hardening (one manual live-OAuth check outstanding) are done. Active work and remaining items:
 
 1. **Haqita integration** (`docs/plan/haqita-integration.md`) — PR1 #252, PR2 #255, PR3 #262 and PR4 #275 merged (freshness status endpoint, smoke staleness alert, `provision-vps.sh --enable-timer`; backfill dropped — haqita was never live). Go-live itself (enable the timer + first live ingest) is the remaining operator step; PR5 (frontend `/prices` + plan grounding + scraping monitor) and PR6 (cleanup) remain.
-2. **Phase 08** — route loader/Query alignment, PWA manifest extras, offline E2E (mostly-finished modernization).
-3. **Phase 09** — page-level E2E features, accessibility audit (axe), performance budget + Lighthouse CI.
+2. **Phase 09** — done: page-level E2E features, axe-core accessibility scans + first-wave fixes, bundle-size budget and Lighthouse CI (see `docs/TEST_STRATEGY.md`).
+3. **Phase 08** — route loader/Query alignment, PWA manifest screenshots, cache-TTL validation (mostly-finished modernization; offline E2E now covered by phase 09 features).
 4. **Phase 10** — AI feature expansion (recipes, cheapest-store rec, calibration, quick add, trip optimization, price alerts).
 5. **Phase 11** — isolation unit test, backup/export strategy, migration docs, query monitoring.
 6. Tech debt in `docs/ARCHITECTURE.md` §13 (KV rate-limit counters, AI streaming, R2 signed URLs, …).

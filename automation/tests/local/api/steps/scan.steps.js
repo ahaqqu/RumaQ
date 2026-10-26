@@ -104,7 +104,12 @@ defineFeature(feature, (test) => {
     })
   })
 
-  test('Scan with usage limit exceeded returns 429', ({ given, when, then, and }) => {
+  test('Scan with a user key is uncapped when the daily limit is exceeded', ({
+    given,
+    when,
+    then,
+    and,
+  }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })
@@ -137,8 +142,8 @@ defineFeature(feature, (test) => {
       )
     })
 
-    then('the response status should be 429', () => {
-      ctx.expectStatus(429)
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
     })
   })
 

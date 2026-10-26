@@ -44,7 +44,7 @@ const baseProps = (overrides = {}) => ({
 describe('Assistant', () => {
   it('renders FAB button', () => {
     const { container } = renderWithProviders(React.createElement(Assistant, baseProps()))
-    expect(container.querySelector('button[aria-label="assistant.fabAriaLabel"]')).toBeTruthy()
+    expect(container.querySelector('button[aria-label="assistant.fabLabel"]')).toBeTruthy()
   })
 
   it('opens dialog when open=true', () => {

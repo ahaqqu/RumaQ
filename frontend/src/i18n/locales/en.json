@@ -22,7 +22,6 @@
     "askPlan": "Ask for plan",
     "shopAt": "Shop at {{store}}",
     "itemCount": "{{count}} item",
-    "itemCount_plural": "{{count}} items",
     "estimated": "est. {{amount}}",
     "seePlan": "See plan",
     "noPlanYet": "No trip planned",
@@ -33,7 +32,8 @@
     "addFromReceipt": "Add from receipt",
     "savingsTip": "Savings tip",
     "savingsTipText": "Spinach and bread expire tomorrow. Ask the assistant for recipe ideas to finish them.",
-    "askRecipe": "Ask recipe"
+    "askRecipe": "Ask recipe",
+    "itemCount_other": "{{count}} items"
   },
   "inventory": {
     "searchPlaceholder": "Search items, e.g. milk, rice",
@@ -53,7 +53,6 @@
     "scanningTitle": "Reading receipt",
     "scanningDesc": "Recognizing items, prices, and store. Just a moment.",
     "itemsRead": "{{count}} item read",
-    "itemsRead_plural": "{{count}} items read",
     "aiReview": "AI — check & edit if needed",
     "reviewTitle": "Review AI reading",
     "editHint": "Type to correct",
@@ -61,14 +60,15 @@
     "retake": "Retake photo",
     "confirmAdd": "Confirm & add stock",
     "stockAdded": "Stock increased by {{count}} item",
-    "stockAdded_plural": "Stock increased by {{count}} items",
     "stockUpdatedDesc": "Remaining items are updated automatically from shopping patterns. No manual tracking needed.",
     "addAnother": "Add another receipt",
     "done": "Done",
     "goToSettings": "Go to Settings",
     "selectStore": "Select store...",
     "itemName": "Item name",
-    "keepNew": "— New item —"
+    "keepNew": "— New item —",
+    "itemsRead_other": "{{count}} items read",
+    "stockAdded_other": "Stock increased by {{count}} items"
   },
   "plan": {
     "leadNoKey": "Connect an API key first, then AI will create a shopping plan from items running low.",
@@ -78,11 +78,9 @@
     "addApiKey": "Add API key",
     "regenerate": "Regenerate plan",
     "stores": "{{count}} store",
-    "stores_plural": "{{count}} stores",
     "allBought": "All items purchased.",
     "allBoughtDesc": "Stock is updated automatically from the next receipt.",
     "basedOnItems": "This plan was created from {{count}} item running low. Ask the assistant to combine into one trip per store.",
-    "basedOnItems_plural": "This plan was created from {{count}} items running low. Ask the assistant to combine into one trip per store.",
     "askAssistant": "Ask assistant",
     "savePlan": "Save plan",
     "noActivePlan": "No active plan",
@@ -90,7 +88,9 @@
     "generate": "Generate plan",
     "generateNext": "Make next plan",
     "otherStore": "Other store",
-    "discardDraft": "Discard"
+    "discardDraft": "Discard",
+    "stores_other": "{{count}} stores",
+    "basedOnItems_other": "This plan was created from {{count}} items running low. Ask the assistant to combine into one trip per store."
   },
   "history": {
     "date": "Date",
@@ -127,17 +127,17 @@
     "filterTo": "To",
     "avgPerMonth": "avg/month",
     "purchases_count": "{{count}} purchase",
-    "purchases_count_plural": "{{count}} purchases",
     "patternsTitle": "Patterns",
     "patternEvery": "every {{n}} day",
-    "patternEvery_plural": "every {{n}} days",
     "patternRecently": "recently purchased",
     "patternSummary": "{{name}} {{pattern}} · avg {{qty}}",
     "loadMore": "Load more",
     "receipt": "Receipt",
     "itemsCount": "{{count}} item",
-    "itemsCount_plural": "{{count}} items",
-    "closeReceipt": "Close"
+    "closeReceipt": "Close",
+    "purchases_count_other": "{{count}} purchases",
+    "patternEvery_other": "every {{n}} days",
+    "itemsCount_other": "{{count}} items"
   },
   "settings": {
     "aiApiKey": "AI API Key",
@@ -212,11 +212,11 @@
       "myRole": "I am",
       "aiRole": "You are",
       "motion": "Motion preference"
-    }
+    },
+    "save": "Save"
   },
   "assistant": {
     "fabLabel": "Ask assistant",
-    "fabAriaLabel": "Ask AI assistant",
     "title": "RumaQ Assistant",
     "dialogAriaLabel": "AI Assistant RumaQ",
     "connected": "AI assistant connected",
