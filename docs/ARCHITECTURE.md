@@ -300,15 +300,16 @@ Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branc
 
 ### Custom domain
 
-The canonical production URL is `https://rumaq.ahaqqu.com`, attached as a **Worker Custom Domain** on the `api` Worker (declared via `worker.domains` in `backend/cloudflare.config.ts`; `cf deploy` creates the DNS record and certificate automatically on production deploys). The old `api.rumaq.workers.dev` URL keeps working — Cloudflare serves `*.workers.dev` alongside custom domains — but it is no longer referenced in docs, smoke tests, or the scraper ingest config.
+The canonical production URL is `https://rumaq.ahaqqu.com`, attached as a **Worker Custom Domain** on the `api` Worker (declared via `worker.domains` in `backend/cloudflare.config.ts`; `cf deploy` creates the DNS record and certificate automatically on production deploys). Attaching a custom domain disables the Worker's `*.workers.dev` route — `api.rumaq.workers.dev` no longer serves traffic, and nothing references it in docs, smoke tests, or the scraper ingest config.
 
 One-time cutover steps (already performed):
 
-1. **Cloudflare dashboard**: detach `rumaq.ahaqqu.com` from the legacy Pages project `rumaq` (Custom domains → remove). A hostname claimed by another project makes the Worker Custom Domain attach fail with a DNS overlap error.
-2. **Deploy `main`**: `./scripts/deploy.sh cloudflare` attaches the domain to the `api` Worker.
-3. **Google Cloud Console**: add `https://rumaq.ahaqqu.com/api/auth/callback` to the OAuth client's authorized redirect URIs — the callback `redirect_uri` is derived from the request origin, so Google sign-in only works for hosts registered there.
+1. **Migrate the zone**: add `ahaqqu.com` to the Cloudflare account and switch its nameservers away from the registrar — Worker Custom Domains require the hostname's zone to be a Cloudflare zone in the deploying account. The `kajianq.ahaqqu.com` A record was re-created as DNS-only after the import missed it.
+2. **Cloudflare dashboard**: detach `rumaq.ahaqqu.com` from the legacy Pages project `rumaq` (Custom domains → remove). A hostname claimed by another project makes the Worker Custom Domain attach fail with a DNS overlap error.
+3. **Deploy `main`**: `./scripts/deploy.sh cloudflare` attaches the domain to the `api` Worker.
+4. **Google Cloud Console**: add `https://rumaq.ahaqqu.com/api/auth/callback` to the OAuth client's authorized redirect URIs — the callback `redirect_uri` is derived from the request origin, so Google sign-in only works for hosts registered there.
 
-The legacy Pages project (`rumaq.pages.dev`, custom domain now detached) still 301-redirects to the canonical URL via `scripts/deploy/pages-redirect.sh`.
+The legacy Pages project was deleted after the cutover; `rumaq.pages.dev` no longer resolves.
 
 ### One-time setup
 
@@ -428,7 +429,7 @@ If usage grows, the first upgrade is Workers Paid ($5/mo) for higher request and
 - [x] R2 objects are private; frontend receives receipt images through `GET /api/purchases/:id/receipt` (proxy stream). R2 signed URLs are out of current scope (open security item).
 - [x] D1 queries are parameterized; no string concatenation.
 - [x] Every D1 query that reads or writes household-scoped data filters by `household_id` or `user_id`.
-- [x] Same-origin app + API: no cross-origin API calls in production. CORS keeps localhost dev origins and the legacy `rumaq.pages.dev` origins (transition window for stale clients) allowed; unknown origins are rejected.
+- [x] Same-origin app + API: no cross-origin API calls in production. CORS keeps localhost dev origins allowed and defaults to the canonical `rumaq.ahaqqu.com` origin (`PAGES_ORIGIN` overrides it); unknown origins are rejected.
 - [x] AI prompts never expose another user's data and avoid internal DB IDs where possible (`backend/src/__tests__/prompt-isolation.test.ts`).
 - [x] General API rate limiting returns 429 with `Retry-After`.
 

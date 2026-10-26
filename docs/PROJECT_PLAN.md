@@ -121,17 +121,17 @@ This plan lists every known work item for RumaQ, its current status, and its pri
 
 ## 7. DevOps & deployment
 
-| Item                                | Status  | Priority | Notes                                                                                                   |
-| ----------------------------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------- |
-| Cloudflare Pages deployment config  | Retired | P0       | Pages retired in #243 — single Worker serves app (static assets) + API; `rumaq.pages.dev` 301-redirects |
-| Cloudflare Worker deployment config | Done    | P0       | `backend/cloudflare.config.ts` (env-driven single config)                                               |
-| D1 database creation guide          | Done    | P0       | `scripts/deploy/setup-db.js` + README                                                                   |
-| R2 bucket creation guide            | Done    | P0       | `./scripts/deploy.sh cloudflare` creates the bucket if missing                                          |
-| GitHub Actions CI                   | Done    | P1       | Unit tests + build on push/PR to main                                                                   |
-| Test automation CI                  | Done    | P1       | Docker-based integration/E2E tests on push/PR to main                                                   |
-| Preview deployments for PRs         | Done    | P1       | Branch-specific Worker + Pages preview; auto-cleanup                                                    |
-| Secrets management documentation    | Done    | P0       | `docs/ARCHITECTURE.md` §8 env vars table; `RUN_SECRETS_CHECK` guards missing secrets                    |
-| Environment-specific configs        | Done    | P1       | `backend/.dev.vars` local, env-driven `cloudflare.config.ts`, `RUN_SECRETS_CHECK` startup guard         |
+| Item                                | Status  | Priority | Notes                                                                                                                                                       |
+| ----------------------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cloudflare Pages deployment config  | Retired | P0       | Pages retired in #243 — single Worker serves app (static assets) + API; canonical `rumaq.ahaqqu.com` Worker Custom Domain since #272, Pages project deleted |
+| Cloudflare Worker deployment config | Done    | P0       | `backend/cloudflare.config.ts` (env-driven single config)                                                                                                   |
+| D1 database creation guide          | Done    | P0       | `scripts/deploy/setup-db.js` + README                                                                                                                       |
+| R2 bucket creation guide            | Done    | P0       | `./scripts/deploy.sh cloudflare` creates the bucket if missing                                                                                              |
+| GitHub Actions CI                   | Done    | P1       | Unit tests + build on push/PR to main                                                                                                                       |
+| Test automation CI                  | Done    | P1       | Docker-based integration/E2E tests on push/PR to main                                                                                                       |
+| Preview deployments for PRs         | Done    | P1       | Branch-specific Worker + Pages preview; auto-cleanup                                                                                                        |
+| Secrets management documentation    | Done    | P0       | `docs/ARCHITECTURE.md` §8 env vars table; `RUN_SECRETS_CHECK` guards missing secrets                                                                        |
+| Environment-specific configs        | Done    | P1       | `backend/.dev.vars` local, env-driven `cloudflare.config.ts`, `RUN_SECRETS_CHECK` startup guard                                                             |
 
 ## 8. Quality assurance
 
