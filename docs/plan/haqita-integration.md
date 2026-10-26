@@ -300,6 +300,8 @@ dir). Images pruned 7 days after successful publish (disk-scarce box).
   (KajianQ pattern: `GEMINI_API_KEY`, `RUMAQ_INGEST_URL`, `RUMAQ_INGEST_SECRET`,
   optional per-store proxy vars).
 - `rumaq-scraper.timer` at 23:00 UTC (= 06:00 WIB). No nginx, no cert, no listener.
+  The unit pins the zone in `OnCalendar=*-*-* 23:00:00 UTC` — without the suffix
+  systemd reads the time in the box's local zone (Europe/Berlin).
 - CI deploys as `kajianq-deploy` via new scoped sudoers rule for
   `systemctl restart rumaq-scraper` (mirror `/etc/sudoers.d/gunbatte-deploy`).
 - RumaQ `scripts/deploy.sh` gains a `vps` mode (rsync + restart). **Add every new
