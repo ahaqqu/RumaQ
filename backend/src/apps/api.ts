@@ -9,7 +9,15 @@ import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { encryptAiKey, decryptAiKey, timingSafeEqualStrings } from '../lib/crypto.js'
-import { ingestPayloadSchema, ingestPrices, getPricesStatus } from '../lib/ingest.js'
+import {
+  ingestPayloadSchema,
+  runReportSchema,
+  ingestPrices,
+  getPricesStatus,
+} from '../lib/ingest.js'
+import { recordRunReport, listPriceRuns } from '../lib/price-runs.js'
+import { isAdminEmail, requireAdmin } from '../lib/admin.js'
+import { groundPlanItem } from '../lib/grounding.js'
 import { getRateLimitConfig, isRateLimited } from '../lib/rate-limit.js'
 import { computeRunOutDays } from '../lib/stock.js'
 import { computePatterns } from '../lib/patterns.js'
@@ -154,6 +162,18 @@ apiApp.post(
   }
 )
 
+// Run report from the rumaq-scraper (§7.1): one POST per finished live run,
+// including failures. Feeds the admin scraping monitor.
+apiApp.post(
+  '/api/internal/ingest/runs',
+  requireIngestSecret,
+  sValidator('json', runReportSchema),
+  async (c) => {
+    await recordRunReport(c.env.DB, c.req.valid('json'))
+    return c.json({ ok: true, status: 'recorded' })
+  }
+)
+
 // Freshness probe for the 6-hourly smoke staleness check (§7.1): the CI
 // workflow reads this with the same bearer secret and alerts when nightly
 // observations stop arriving.
@@ -231,6 +251,7 @@ apiApp.use('/api/plans/generate', propsAuthMiddleware)
 apiApp.use('/api/plans/:id/items/:itemId', propsAuthMiddleware)
 apiApp.use('/api/prices', propsAuthMiddleware)
 apiApp.use('/api/prices/:productKey', propsAuthMiddleware)
+apiApp.use('/api/admin/price-runs', propsAuthMiddleware)
 apiApp.use('/api/ai-key/*', propsAuthMiddleware)
 
 apiApp.get(
@@ -253,6 +274,7 @@ apiApp.get(
                     email: { type: 'string' },
                     name: { type: 'string', nullable: true } as any,
                     picture: { type: 'string', nullable: true } as any,
+                    isAdmin: { type: 'boolean' },
                   },
                 },
               },
@@ -266,8 +288,10 @@ apiApp.get(
   async (c) => {
     const user = await c.env.DB.prepare('SELECT id, email, name, picture FROM users WHERE id = ?')
       .bind(c.get('userId'))
-      .first()
-    const res = c.json({ user })
+      .first<{ id: string; email: string | null; name: string | null; picture: string | null }>()
+    const res = c.json({
+      user: user ? { ...user, isAdmin: isAdminEmail(c.env.ADMIN_EMAILS, user.email) } : null,
+    })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }
@@ -2060,6 +2084,29 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`)
 }
 
+// Admin scraping monitor (§7.1): run history with per-run detail and
+// last-success age. 403 for non-allowlisted users (requireAdmin); logs
+// themselves stay in journald on the VPS.
+apiApp.get(
+  '/api/admin/price-runs',
+  describeRoute({
+    description: 'Recent scraper run reports (admin-only).',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: { description: 'OK' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  async (c) => {
+    const feed = await listPriceRuns(c.env.DB)
+    const res = c.json(feed)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
 apiApp.get(
   '/api/prices',
   describeRoute({
@@ -2301,10 +2348,13 @@ apiApp.get(
 
     const { results: items } = await c.env.DB.prepare(
       `SELECT pi.id, pi.plan_id, pi.item_id, pi.store_id, i.name AS item_name,
-              s.label AS store_label, pi.qty, pi.unit, pi.price_estimate, pi.why, pi.status, pi.created_at
+              s.label AS store_label, pi.qty, pi.unit, pi.price_estimate, pi.why, pi.status, pi.created_at,
+              ps.name AS price_source_name, po.valid_until AS price_valid_until
        FROM plan_items pi
        LEFT JOIN items i ON i.id = pi.item_id
        LEFT JOIN stores s ON s.id = pi.store_id
+       LEFT JOIN price_observations po ON po.id = pi.price_observation_id
+       LEFT JOIN price_sources ps ON ps.id = po.source_id
        WHERE pi.plan_id IN (${placeholders})
        ORDER BY pi.created_at`
     )
@@ -2322,6 +2372,8 @@ apiApp.get(
         why: string | null
         status: string
         created_at: string
+        price_source_name: string | null
+        price_valid_until: string | null
       }>()
 
     const itemsByPlan: Record<string, typeof items> = {}
@@ -2525,16 +2577,24 @@ apiApp.post(
           .bind(householdId, normalizeItemName(item.name))
           .first<{ id: string; name: string }>()
 
+        // Price grounding (§5.4): a confident deterministic match against the
+        // observed catalog overrides the LLM's price guess and links the
+        // observation so the frontend can badge the estimate.
+        const grounding = await groundPlanItem(c.env.DB, item.name)
+
         return {
           name: item.name,
           qty: item.qty,
           unit: item.unit,
           store_id: item.store_id,
           store_label: item.store_id ? storeLabels.get(item.store_id) || null : null,
-          price_estimate: item.price_estimate,
+          price_estimate: grounding ? grounding.observation.price : item.price_estimate,
           why: item.why,
           item_id: existingItem?.id || null,
           matched_item_name: existingItem?.name || null,
+          price_observation_id: grounding?.observation.observationId ?? null,
+          price_source_name: grounding?.observation.sourceName ?? null,
+          price_valid_until: grounding?.observation.validUntil ?? null,
         }
       })
     )
@@ -2576,6 +2636,7 @@ apiApp.post(
                     store_id: { type: 'string' },
                     price_estimate: { type: 'number' },
                     why: { type: 'string' },
+                    price_observation_id: { type: 'string' },
                   },
                 },
               },
@@ -2666,8 +2727,8 @@ apiApp.post(
       const planItemId = crypto.randomUUID()
       statements.push(
         c.env.DB.prepare(
-          `INSERT INTO plan_items (id, plan_id, item_id, store_id, qty, unit, price_estimate, why, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
+          `INSERT INTO plan_items (id, plan_id, item_id, store_id, qty, unit, price_estimate, why, status, price_observation_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
         ).bind(
           planItemId,
           planId,
@@ -2677,6 +2738,7 @@ apiApp.post(
           item.unit,
           item.price_estimate ?? null,
           item.why ?? null,
+          item.price_observation_id ?? null,
           now
         )
       )
@@ -2701,11 +2763,14 @@ apiApp.post(
 
     const { results: planItems } = await c.env.DB.prepare(
       `SELECT pi.id, pi.item_id, pi.store_id, i.name AS item_name,
-              s.label AS store_label, pi.qty, pi.unit, pi.price_estimate, pi.why, pi.status
+              s.label AS store_label, pi.qty, pi.unit, pi.price_estimate, pi.why, pi.status,
+              ps.name AS price_source_name, po.valid_until AS price_valid_until
        FROM plan_items pi
        JOIN plans p ON p.id = pi.plan_id
        LEFT JOIN items i ON i.id = pi.item_id
        LEFT JOIN stores s ON s.id = pi.store_id
+       LEFT JOIN price_observations po ON po.id = pi.price_observation_id
+       LEFT JOIN price_sources ps ON ps.id = po.source_id
        WHERE pi.plan_id = ? AND p.household_id = ?
        ORDER BY pi.created_at`
     )
@@ -2721,6 +2786,8 @@ apiApp.post(
         price_estimate: number | null
         why: string | null
         status: string
+        price_source_name: string | null
+        price_valid_until: string | null
       }>()
 
     const res = c.json({ plan: { ...plan, items: planItems } }, 201)

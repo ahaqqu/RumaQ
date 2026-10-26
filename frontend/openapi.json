@@ -84,6 +84,9 @@
                         "picture": {
                           "type": "string",
                           "nullable": true
+                        },
+                        "isAdmin": {
+                          "type": "boolean"
                         }
                       }
                     }
@@ -917,6 +920,28 @@
         ]
       }
     },
+    "/api/admin/price-runs": {
+      "get": {
+        "operationId": "getApiAdminPriceRuns",
+        "description": "Recent scraper run reports (admin-only).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
+      }
+    },
     "/api/prices": {
       "get": {
         "operationId": "getApiPrices",
@@ -1056,6 +1081,9 @@
                           "type": "number"
                         },
                         "why": {
+                          "type": "string"
+                        },
+                        "price_observation_id": {
                           "type": "string"
                         }
                       }

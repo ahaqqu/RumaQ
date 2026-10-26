@@ -348,6 +348,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/admin/price-runs': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Recent scraper run reports (admin-only). */
+    get: operations['getApiAdminPriceRuns']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/prices': {
     parameters: {
       query?: never
@@ -562,6 +579,7 @@ export interface operations {
               email?: string
               name?: string | null
               picture?: string | null
+              isAdmin?: boolean
             }
           }
         }
@@ -1328,6 +1346,38 @@ export interface operations {
       }
     }
   }
+  getApiAdminPriceRuns: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
   getApiPrices: {
     parameters: {
       query?: {
@@ -1434,6 +1484,7 @@ export interface operations {
             store_id?: string
             price_estimate?: number
             why?: string
+            price_observation_id?: string
           }[]
         }
       }

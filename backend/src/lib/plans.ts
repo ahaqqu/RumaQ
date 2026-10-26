@@ -41,11 +41,21 @@ export const planCreateSchema = strictObject({
         store_id: optional(string()),
         price_estimate: optional(number()),
         why: optional(string()),
+        // Set when the estimate was grounded on a real price observation (§5.4).
+        price_observation_id: optional(string()),
       })
     ),
     minLength(1)
   ),
 })
+
+// Shape of a successful grounding match (see lib/grounding.ts) — declared here
+// so the plan route and the grounding lib agree on it without a cycle.
+export type GroundingMatch = {
+  productKey: string
+  productName: string
+  confidence: number
+}
 
 export function buildPlanPrompt(
   lowStock: Array<{

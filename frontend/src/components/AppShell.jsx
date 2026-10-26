@@ -8,6 +8,8 @@ import {
   IconHistory,
   IconSettings,
   IconReceipt,
+  IconPrices,
+  IconMonitor,
   BrandMark,
 } from './icons.jsx'
 import { AI_USAGE, usageState } from '../data/mock.js'
@@ -25,6 +27,7 @@ const NAV = [
   { id: 'inventory', key: 'nav.inventory', Icon: IconBox, to: '/inventory' },
   { id: 'plan', key: 'nav.plan', Icon: IconPlan, to: '/plan' },
   { id: 'history', key: 'nav.history', Icon: IconHistory, to: '/history' },
+  { id: 'prices', key: 'nav.prices', Icon: IconPrices, to: '/prices' },
   { id: 'settings', key: 'nav.settings', Icon: IconSettings, to: '/settings' },
 ]
 
@@ -43,12 +46,17 @@ export function AppShell({ children }) {
   const { pct, warn, danger } = usageState()
   const usageTone = danger ? 'text-danger' : warn ? 'text-warn' : ''
 
+  const user = me?.user
+
   const currentRouteId = matches[matches.length - 1]?.routeId || '/'
-  const currentNav = NAV.find((n) => n.to === currentRouteId)
+  // The scraping monitor is an operator surface — its nav entry only exists
+  // for allowlisted admins (me.user.isAdmin from the backend).
+  const navItems = user?.isAdmin
+    ? [...NAV, { id: 'monitor', key: 'nav.monitor', Icon: IconMonitor, to: '/admin/prices' }]
+    : NAV
+  const currentNav = navItems.find((n) => n.to === currentRouteId)
   const title = currentNav ? t(currentNav.key) : t('nav.home')
   const isActive = (to) => matches.some((m) => m.routeId === to)
-
-  const user = me?.user
 
   return (
     <div className="grid min-h-dvh lg:grid-cols-[248px_1fr]">
@@ -68,7 +76,7 @@ export function AppShell({ children }) {
         </Link>
 
         <nav className="flex flex-col gap-0.5" aria-label={t('nav.home')}>
-          {NAV.map(({ id, key, Icon, to }) => (
+          {navItems.map(({ id, key, Icon, to }) => (
             <NavItem key={id} to={to} active={isActive(to)}>
               <Icon size={18} className="shrink-0 opacity-90" /> {t(key)}
             </NavItem>

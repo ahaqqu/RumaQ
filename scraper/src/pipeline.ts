@@ -41,6 +41,8 @@ import { createOcr, type GeminiClient, type Ocr, type OcrError } from './ocr/gem
 import { validateProduct, type ValidatedProduct } from './ocr/parse.js'
 import { assertPayloadValid, buildPayload, type ImageProducts } from './publish/payload.js'
 import { loadOutbox, retireOutbox, type OutboxIo } from './publish/outbox.js'
+import { postRunReport } from './publish/runs.js'
+import type { RunReport } from '@rumaq/contract'
 import {
   publishPayload,
   type FetchLike as PublishFetch,
@@ -57,12 +59,18 @@ export class PipelineFailure extends Data.TaggedError('PipelineFailure')<{
   exitCode: number
 }> {}
 
-export type PipelineStage = 'scrape' | 'ocr' | 'match' | 'publish' | 'done'
+export type PipelineStage = 'scrape' | 'match' | 'publish' | 'done'
 
 export interface PipelineStatus {
   runStartedAt: string
   stage: PipelineStage
   match?: MatchStats
+  /** Outcome of the publish stage — unset until publish was reached. */
+  publish?: {
+    mode: 'dry-run' | 'published'
+    accepted?: number
+    skipped?: number
+  }
   stores: Record<
     string,
     {
@@ -417,6 +425,11 @@ export function runPipeline(
         sleep: options.sleep,
         log,
       })
+      status.publish = {
+        mode: result.mode,
+        accepted: result.response?.accepted,
+        skipped: result.response?.skipped,
+      }
       log(
         result.mode === 'dry-run'
           ? `[publish] Dry-run — payload written to ${result.payloadFile}`
@@ -472,8 +485,57 @@ export function runPipeline(
       return status
     })
 
+  // Run report (§7.1): one POST per finished live run — success or failure —
+  // feeding the admin scraping monitor. Dry-runs (local/manual) never report.
+  // Strictly best-effort: postRunReport already degrades an unconfigured
+  // endpoint to a no-op, and Effect.ignore keeps a monitor outage from
+  // touching the run's own outcome.
+  function reportRun(
+    status: PipelineStatus,
+    options: PipelineOptions,
+    log: LogFn,
+    exitCode: 0 | 1 | 2,
+    error?: string
+  ): Effect.Effect<void> {
+    if (options.dryRun) return Effect.void
+    const finishedAt = (options.now ?? (() => new Date()))().toISOString()
+    const match = status.match
+    const report: RunReport = {
+      schemaVersion: 1,
+      runStartedAt: status.runStartedAt,
+      finishedAt,
+      exitCode,
+      status: exitCode === 0 ? 'success' : 'failed',
+      stage: status.stage,
+      perStore: status.stores,
+      match: match
+        ? {
+            exact: match.exact,
+            embedding: match.embedding,
+            ai: match.ai,
+            solo: match.solo,
+            reviewItems: match.reviewItems,
+            embeddingsDegraded: match.embeddingsDegraded,
+          }
+        : null,
+      publish: status.publish ?? null,
+      error: error ?? null,
+    }
+    return postRunReport(report, {
+      ingestUrl: options.ingestUrl,
+      ingestSecret: options.ingestSecret,
+      fetch: options.publishFetch,
+      sleep: options.sleep,
+      log,
+    }).pipe(Effect.ignore)
+  }
+
   return program.pipe(
     Effect.mapError(toPipelineFailure),
+    Effect.tap((finalStatus) => reportRun(finalStatus, options, log, 0)),
+    Effect.tapError((failure) =>
+      reportRun(status, options, log, failure.exitCode as 0 | 1 | 2, failure.message)
+    ),
     Effect.onExit(() => writeStatus(options.stateDir, status))
   )
 }

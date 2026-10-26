@@ -1,5 +1,6 @@
 import {
   array,
+  boolean,
   integer,
   literal,
   maxLength,
@@ -10,6 +11,7 @@ import {
   nullish,
   picklist,
   pipe,
+  record,
   regex,
   strictObject,
   string,
@@ -71,3 +73,59 @@ export const ingestPayloadSchema = strictObject({
 export type IngestPayload = InferOutput<typeof ingestPayloadSchema>
 export type IngestStore = InferOutput<typeof ingestStoreSchema>
 export type IngestItem = InferOutput<typeof ingestItemSchema>
+
+// Run report (haqita-integration.md §7.1): the scraper reports each live run
+// to the backend so the admin scraping monitor can show run history without
+// reading journald. One POST per finished run — including failed runs, which
+// are exactly the ones the monitor exists to surface. Reporting failures are
+// swallowed by the scraper; this schema must therefore stay additive.
+export const runReportStoreSchema = strictObject({
+  pagesFound: pipe(number(), integer(), minValue(0)),
+  newImages: pipe(number(), integer(), minValue(0)),
+  existingImages: pipe(number(), integer(), minValue(0)),
+  skipped: pipe(number(), integer(), minValue(0)),
+  itemsExtracted: pipe(number(), integer(), minValue(0)),
+  itemsRejected: pipe(number(), integer(), minValue(0)),
+  error: nullish(string()),
+})
+
+export const runReportSchema = strictObject({
+  schemaVersion: literal(1),
+  // Stable identity for the run (its scrapedAt) — replay-safe upsert key.
+  runStartedAt: pipe(
+    string(),
+    regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, 'Expected an ISO 8601 timestamp.')
+  ),
+  finishedAt: pipe(
+    string(),
+    regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, 'Expected an ISO 8601 timestamp.')
+  ),
+  // 0 ok / 1 failure / 2 quota — same codes as the process exit.
+  exitCode: picklist([0, 1, 2]),
+  status: picklist(['success', 'failed']),
+  // Where the run got to — the monitor's first answer to "why did it fail".
+  stage: picklist(['scrape', 'match', 'publish', 'done']),
+  perStore: record(string(), runReportStoreSchema),
+  match: nullish(
+    strictObject({
+      exact: pipe(number(), integer(), minValue(0)),
+      embedding: pipe(number(), integer(), minValue(0)),
+      ai: pipe(number(), integer(), minValue(0)),
+      solo: pipe(number(), integer(), minValue(0)),
+      reviewItems: pipe(number(), integer(), minValue(0)),
+      embeddingsDegraded: boolean(),
+    })
+  ),
+  publish: nullish(
+    strictObject({
+      mode: picklist(['dry-run', 'published']),
+      accepted: nullish(pipe(number(), integer(), minValue(0))),
+      skipped: nullish(pipe(number(), integer(), minValue(0))),
+      error: nullish(string()),
+    })
+  ),
+  error: nullish(pipe(string(), maxLength(2000))),
+})
+
+export type RunReport = InferOutput<typeof runReportSchema>
+export type RunReportStore = InferOutput<typeof runReportStoreSchema>

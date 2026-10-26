@@ -266,3 +266,20 @@ export function updatePlanItem(
     })
   )
 }
+
+export function getPrices(
+  { q, source }: { q?: string; source?: string } = {},
+  signal?: AbortSignal
+): Promise<unknown> {
+  return unwrap(client.GET('/api/prices', { params: { query: { q, source } }, signal }))
+}
+
+export function getPriceDetail(productKey: string, signal?: AbortSignal): Promise<unknown> {
+  return unwrap(
+    client.GET('/api/prices/{productKey}', { params: { path: { productKey } }, signal })
+  )
+}
+
+export function getPriceRuns(signal?: AbortSignal): Promise<unknown> {
+  return unwrap(client.GET('/api/admin/price-runs', { signal }))
+}

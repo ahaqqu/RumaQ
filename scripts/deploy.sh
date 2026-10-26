@@ -264,7 +264,7 @@ put_worker_secrets() {
     return
   fi
 
-  local secrets=(GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY HAQITA_INGEST_SECRET)
+  local secrets=(GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY HAQITA_INGEST_SECRET ADMIN_EMAILS)
   for name in "${secrets[@]}"; do
     local val="${!name:-}"
     if [[ -z $val ]]; then
