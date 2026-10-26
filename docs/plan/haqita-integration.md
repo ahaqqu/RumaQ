@@ -309,8 +309,10 @@ dir). Images pruned 7 days after successful publish (disk-scarce box).
 - **Operator bootstrap**: `scripts/provision-vps.sh` — one local run does the whole
   box setup through a single `ssh -t` sudo (root SSH is disabled on the box): apply.sh,
   env fill, pre-built tree ship, `--install-deps`, chromium, self-check. Idempotent.
-  Go-live is `--enable-timer`: same run additionally enables the nightly timer and
-  sets `RUMAQ_PUBLISH=true` in the box env.
+  Go-live is `--go-live`: it reuses the box's existing root-only env (no Gemini-key
+  prompt, no re-provision), reconciles units, gates on the self-check, then enables
+  the nightly timer and sets `RUMAQ_PUBLISH=true`. `--enable-timer` remains the
+  full re-provision-plus-go-live variant.
 
 ### 7.1 Monitoring (owner decision 2026-10-26: admin screen wanted)
 
