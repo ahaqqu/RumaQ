@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { safeParse } from 'valibot'
 import { apiApp } from '../apps/api.js'
-import { ingestPayloadSchema, ingestPrices } from '../lib/ingest.js'
+import { ingestPayloadSchema, ingestPrices, getPricesStatus } from '../lib/ingest.js'
 
 type FakeRow = Record<string, unknown>
 type FakeStatement = { sql: string; params: unknown[] }
@@ -367,5 +367,110 @@ describe('POST /api/internal/ingest/prices', () => {
       skipped: 0,
     })
     expect(executedBatches.length).toBeGreaterThan(0)
+  })
+})
+
+describe('getPricesStatus', () => {
+  it('summarises the observation table', async () => {
+    const { db } = createFakeDb([
+      {
+        match: /FROM price_observations/,
+        rows: [
+          {
+            latest_observed_date: '2026-10-25',
+            latest_scraped_at: '2026-10-25T23:00:05Z',
+            observation_count: 42,
+          },
+        ],
+      },
+    ])
+
+    expect(await getPricesStatus(db)).toEqual({
+      latestObservedDate: '2026-10-25',
+      latestScrapedAt: '2026-10-25T23:00:05Z',
+      observationCount: 42,
+    })
+  })
+
+  it('reports an empty table as nulls and zero, not an error', async () => {
+    const { db } = createFakeDb()
+
+    expect(await getPricesStatus(db)).toEqual({
+      latestObservedDate: null,
+      latestScrapedAt: null,
+      observationCount: 0,
+    })
+  })
+})
+
+describe('GET /api/internal/prices/status', () => {
+  function createEnv(db: D1Database, secret?: string) {
+    return {
+      DB: db,
+      RECEIPTS: { put: vi.fn(), get: vi.fn() },
+      GOOGLE_CLIENT_ID: 'test-client-id',
+      GOOGLE_CLIENT_SECRET: 'test-client-secret',
+      WORKER_JWT_SECRET: 'test-secret',
+      WORKER_ENCRYPTION_KEY: 'test-encryption-key-32-bytes-long!!',
+      EMAIL_AUTH_ENABLED: 'false',
+      ASSETS: undefined as unknown as Fetcher,
+      props: undefined,
+      TEST_MODE: 'true',
+      HAQITA_INGEST_SECRET: secret,
+    }
+  }
+
+  it('returns 503 when the ingest secret is not configured', async () => {
+    const { db } = createFakeDb()
+    const res = await apiApp.request(
+      '/api/internal/prices/status',
+      { headers: { Authorization: 'Bearer anything' } },
+      createEnv(db)
+    )
+    expect(res.status).toBe(503)
+  })
+
+  it('returns 401 for a wrong or missing bearer token', async () => {
+    const { db } = createFakeDb()
+    const env = createEnv(db, 'secret-123')
+
+    const noHeader = await apiApp.request('/api/internal/prices/status', {}, env)
+    expect(noHeader.status).toBe(401)
+
+    const wrongToken = await apiApp.request(
+      '/api/internal/prices/status',
+      { headers: { Authorization: 'Bearer wrong' } },
+      env
+    )
+    expect(wrongToken.status).toBe(401)
+  })
+
+  it('returns the freshness summary for a valid token', async () => {
+    const { db } = createFakeDb([
+      {
+        match: /FROM price_observations/,
+        rows: [
+          {
+            latest_observed_date: '2026-10-25',
+            latest_scraped_at: '2026-10-25T23:00:05Z',
+            observation_count: 42,
+          },
+        ],
+      },
+    ])
+
+    const res = await apiApp.request(
+      '/api/internal/prices/status',
+      { headers: { Authorization: 'Bearer secret-123' } },
+      createEnv(db, 'secret-123')
+    )
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
+    expect(await res.json()).toEqual({
+      latestObservedDate: '2026-10-25',
+      latestScrapedAt: '2026-10-25T23:00:05Z',
+      observationCount: 42,
+    })
   })
 })

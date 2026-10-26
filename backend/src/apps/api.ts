@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
+import type { MiddlewareHandler } from 'hono'
 
 import { sValidator } from '@hono/standard-validator'
 import { openAPIRouteHandler, describeRoute } from 'hono-openapi'
@@ -8,7 +9,7 @@ import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { encryptAiKey, decryptAiKey, timingSafeEqualStrings } from '../lib/crypto.js'
-import { ingestPayloadSchema, ingestPrices } from '../lib/ingest.js'
+import { ingestPayloadSchema, ingestPrices, getPricesStatus } from '../lib/ingest.js'
 import { getRateLimitConfig, isRateLimited } from '../lib/rate-limit.js'
 import { computeRunOutDays } from '../lib/stock.js'
 import { computePatterns } from '../lib/patterns.js'
@@ -125,31 +126,43 @@ apiApp.get(
   })
 )
 
-// Internal ingest endpoint for the rumaq-scraper pipeline
-// (docs/plan/haqita-integration.md §5.2). Service-to-service: bearer-secret
-// auth instead of a session, exempt from the per-IP rate limiter above, and
-// excluded from the generated OpenAPI/docs surface.
+// Internal price-data routes for the rumaq-scraper pipeline
+// (docs/plan/haqita-integration.md §5.2/§7.1). Service-to-service:
+// bearer-secret auth instead of a session, exempt from the per-IP rate
+// limiter above, and excluded from the generated OpenAPI/docs surface.
+const requireIngestSecret: MiddlewareHandler<Env> = async (c, next) => {
+  if (!c.env.HAQITA_INGEST_SECRET) {
+    return c.json({ error: 'Ingest endpoint not configured' }, 503)
+  }
+  const header = c.req.header('Authorization') || ''
+  const token = header.startsWith('Bearer ') ? header.slice(7) : ''
+  if (!token || !(await timingSafeEqualStrings(token, c.env.HAQITA_INGEST_SECRET))) {
+    return c.json({ error: 'Unauthorized' }, 401, {
+      'WWW-Authenticate': 'Bearer realm="rumaq-ingest"',
+    })
+  }
+  await next()
+}
+
 apiApp.post(
   '/api/internal/ingest/prices',
-  async (c, next) => {
-    if (!c.env.HAQITA_INGEST_SECRET) {
-      return c.json({ error: 'Ingest endpoint not configured' }, 503)
-    }
-    const header = c.req.header('Authorization') || ''
-    const token = header.startsWith('Bearer ') ? header.slice(7) : ''
-    if (!token || !(await timingSafeEqualStrings(token, c.env.HAQITA_INGEST_SECRET))) {
-      return c.json({ error: 'Unauthorized' }, 401, {
-        'WWW-Authenticate': 'Bearer realm="rumaq-ingest"',
-      })
-    }
-    await next()
-  },
+  requireIngestSecret,
   sValidator('json', ingestPayloadSchema),
   async (c) => {
     const result = await ingestPrices(c.env.DB, c.req.valid('json'))
     return c.json(result)
   }
 )
+
+// Freshness probe for the 6-hourly smoke staleness check (§7.1): the CI
+// workflow reads this with the same bearer secret and alerts when nightly
+// observations stop arriving.
+apiApp.get('/api/internal/prices/status', requireIngestSecret, async (c) => {
+  const status = await getPricesStatus(c.env.DB)
+  const res = c.json(status)
+  res.headers.set('Cache-Control', 'private, no-cache')
+  return res
+})
 
 apiApp.get(
   '/api/health',

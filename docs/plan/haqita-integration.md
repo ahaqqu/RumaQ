@@ -1,12 +1,16 @@
 # Haqita → RumaQ Integration — Architecture & Implementation Plan
 
-> Status: **PR1–PR3 merged; box provisioning + monitoring next.** Written 2026-10-24, updated 2026-10-26.
+> Status: **PR1–PR3 merged; PR4 (go-live) in flight.** Written 2026-10-24, updated 2026-10-26.
 > PR1 (contract & backend) merged as #252, PR2 (scraper scaffold + Superindo + Gemini OCR +
 > dry-run publish) merged as #255, PR3 (Lotte Tier-2 + matcher + commit-based VPS deploy,
 > VPS scope folded from milestone 4) merged as #262. Box bootstrap is
 > `scripts/provision-vps.sh` (§7). 2026-10-26 owner decision: a scraping **monitoring
 > admin screen** is wanted — folded into milestones 4 (staleness alert) and 5
 > (`price_runs` + admin screen, §7.1). PR6 (haqita cleanup) remains after that.
+> 2026-10-26 owner decision: **backfill dropped** — haqita never went live (prototype
+> data only), so no data migration: the canonical catalog self-seeds from the first
+> real runs and price history accrues from them. `ahaqita-database` can be archived
+> in PR6 once go-live is verified.
 > This document is self-contained: a fresh session should be able to implement from it
 > without re-exploring the haqita repo. Source references to `/home/ahaqqu/Projects/haqita`
 > are included below; that repo still exists locally at time of writing.
@@ -269,8 +273,6 @@ scraper/
                           retry/backoff; --dry-run mode (write payload to state dir)
   src/util/               log, retry, image helpers
   scripts/run.sh          single-shot pipeline (systemd timer + manual use)
-  scripts/backfill.ts     one-off: clone ahaqqu/haqita-database → map price_history.json
-                          (schema v1.2, docs/database/price_history.md) → ingest payload → POST
   provision/vps/          apply.sh (idempotent bootstrap), rumaq-scraper.service
                           (Type=oneshot, MemoryMax=1G, CPUQuota=100%), rumaq-scraper.timer
                           (OnCalendar 23:00 UTC), logrotate stanza
@@ -305,6 +307,8 @@ dir). Images pruned 7 days after successful publish (disk-scarce box).
 - **Operator bootstrap**: `scripts/provision-vps.sh` — one local run does the whole
   box setup through a single `ssh -t` sudo (root SSH is disabled on the box): apply.sh,
   env fill, pre-built tree ship, `--install-deps`, chromium, self-check. Idempotent.
+  Go-live is `--enable-timer`: same run additionally enables the nightly timer and
+  sets `RUMAQ_PUBLISH=true` in the box env.
 
 ### 7.1 Monitoring (owner decision 2026-10-26: admin screen wanted)
 
@@ -347,9 +351,13 @@ green before merge. Suggested sequence:
    chromium → self-check → doctor), commit-based `deploy-vps` CI job gated on `vars.VPS_HOST`,
    `--self-check` CLI. Timer ships installed-but-disabled; enabling is go-live (milestone 4).
    Box bootstrap is `scripts/provision-vps.sh` (§7).
-4. **PR4 — Backfill + go-live**: backfill from haqita-database history, homepage MACHINE.md/doctor
-   PR, `apply.sh --enable-timer` + `RUMAQ_PUBLISH=true`, first successful live ingest into prod D1,
-   **smoke staleness check** (§7.1 — alert when data stops arriving).
+4. **PR4 — Go-live**: homepage MACHINE.md/doctor PR, `apply.sh --enable-timer` +
+   `RUMAQ_PUBLISH=true` (exposed as `scripts/provision-vps.sh --enable-timer`), first
+   successful live ingest into prod D1 (manual run on the box), **smoke staleness check**
+   (§7.1 — implemented as `GET /api/internal/prices/status` + a freshness step in the
+   6-hourly smoke workflow; it skips while no observations exist so merging it does not
+   red-flag smoke pre-go-live). Backfill dropped 2026-10-26 (owner decision: haqita
+   never went live — prototype data only).
 5. **PR5 — Frontend + scraping monitor**: `/prices` explorer (TanStack Router file route, page in
    `frontend/src/pages/`, api fns in `lib/api.js`, TanStack Query hooks in
    `lib/queries/`, i18n id/en); plan grounding logic + `price_observation_id` join;
@@ -358,7 +366,7 @@ green before merge. Suggested sequence:
    table + run-report endpoint (contract + scraper + backend), admin-only scraping
    monitor page (run history, per-run detail, last-success age).
 6. **PR6 — Cleanup**: archive github.com/ahaqqu/haqita + haqita-database (after
-   backfill verified); delete Cloudflare haqita Pages project / D1 `haqita-db` /
+   go-live is verified); delete Cloudflare haqita Pages project / D1 `haqita-db` /
    R2 `haqita-images`; update RumaQ docs (PROJECT_PLAN, phase-10 references).
 
 ## 9. Risks & mitigations
@@ -388,7 +396,6 @@ lines. The ~23k-line haqita is replaced by a producer an order of magnitude smal
 | `src/match/promo.ts`               | `scripts/matching/promo_parser.py`                                                               |
 | `src/match/normalize.ts`           | `scripts/matching/normalizer.py`                                                                 |
 | `src/config.ts`                    | `config.yaml`                                                                                    |
-| `scripts/backfill.ts`              | `docs/database/price_history.md` (schema v1.2), data from github.com/ahaqqu/haqita-database      |
 | fixtures                           | `data/test/` (HTML + images), `tests/` (matching/ocr/scrapers suites)                            |
 
 RumaQ touch-points (updated after the tech-stack tidy-up landed, #241-#244:

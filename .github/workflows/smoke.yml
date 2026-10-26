@@ -25,6 +25,11 @@ jobs:
         env:
           RUMAQ_PROD_SESSION: ${{ secrets.RUMAQ_PROD_SESSION }}
 
+      - name: Check price-data freshness
+        run: ./scripts/github/check-price-freshness.sh
+        env:
+          HAQITA_INGEST_SECRET: ${{ secrets.HAQITA_INGEST_SECRET }}
+
       - name: Close resolved issues
         if: success()
         uses: actions/github-script@v9

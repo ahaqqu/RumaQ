@@ -7,7 +7,8 @@ set -euo pipefail
 # cannot do itself)
 # ============================================================
 # Run this ONCE from a checkout, locally:
-#   ./scripts/provision-vps.sh
+#   ./scripts/provision-vps.sh                 # provision, timer stays off
+#   ./scripts/provision-vps.sh --enable-timer  # provision AND go live
 #
 # Root SSH is disabled on the box (homepage MACHINE.md lockdown),
 # so apply.sh — which must run as root — is executed through ONE
@@ -24,14 +25,15 @@ set -euo pipefail
 #                 --gemini-key-file / $GEMINI_API_KEY)
 #   4. root run   apply.sh (users/units/sudoers/env) → env fill →
 #                 tree ship (--chown deploy) → --install-deps →
-#                 chromium (as deploy user) → selfcheck → cleanup
+#                 chromium (as deploy user) → selfcheck → cleanup →
+#                 [--enable-timer: enable timer + RUMAQ_PUBLISH=true]
 #
 # Idempotent: safe to re-run (apply.sh reconciles, env re-filled,
 # rsync merges, chromium install no-ops when the revision matches).
 #
-# The nightly timer is deliberately NOT enabled here — go-live
-# (apply.sh --enable-timer + RUMAQ_PUBLISH=true) is a separate,
-# deliberate step.
+# By default the nightly timer is NOT enabled — go-live is a separate,
+# deliberate step (re-run with --enable-timer, or apply.sh
+# --enable-timer + RUMAQ_PUBLISH=true directly on the box).
 #
 # No secret is ever echoed or written into the repo. The staged
 # env-values file travels 0600 and is deleted on the box by the
@@ -64,10 +66,12 @@ done
 DEPLOY_SSH=(ssh -i "$DEPLOY_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10)
 
 GEMINI_KEY_FILE=""
+ENABLE_TIMER=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --gemini-key-file) GEMINI_KEY_FILE="${2:?--gemini-key-file needs a path}"; shift 2 ;;
-    *) echo "provision-vps: unknown argument: $1" >&2; echo "usage: $0 [--gemini-key-file FILE]" >&2; exit 1 ;;
+    --enable-timer) ENABLE_TIMER=1; shift ;;
+    *) echo "provision-vps: unknown argument: $1" >&2; echo "usage: $0 [--gemini-key-file FILE] [--enable-timer]" >&2; exit 1 ;;
   esac
 done
 
@@ -201,15 +205,29 @@ if systemctl is-failed --quiet rumaq-scraper-selfcheck.service; then
   exit 1
 fi
 
+GO_LIVE_NOTE="timer left disabled (re-run provision-vps.sh --enable-timer to go live)"
+if [ '@ENABLE_TIMER@' = '1' ]; then
+  echo "root-run: 7/7 GO-LIVE — enabling the nightly timer + RUMAQ_PUBLISH=true"
+  bash "$STAGE_HOME/provision/apply.sh" --enable-timer
+  if grep -q '^RUMAQ_PUBLISH=' /etc/rumaq-scraper/env; then
+    sed -i 's|^RUMAQ_PUBLISH=.*|RUMAQ_PUBLISH=true|' /etc/rumaq-scraper/env
+  else
+    printf 'RUMAQ_PUBLISH=true\n' >> /etc/rumaq-scraper/env
+  fi
+  chmod 0600 /etc/rumaq-scraper/env
+  GO_LIVE_NOTE="GO-LIVE COMPLETE — nightly scrape (23:00 UTC) armed and publishing for real"
+fi
+
 rm -rf "$STAGE_HOME"
-echo "root-run: PROVISION OK — timer left disabled (go-live: apply.sh --enable-timer + RUMAQ_PUBLISH)"
+echo "root-run: PROVISION OK — $GO_LIVE_NOTE"
 ROOT_RUN
 for pair in \
   "@ADMIN_HOME@|$ADMIN_HOME" \
   "@REMOTE_STAGE@|$REMOTE_STAGE" \
   "@DEPLOY_USER@|$DEPLOY_USER" \
   "@DEPLOY_ROOT@|$DEPLOY_ROOT" \
-  "@BROWSERS_PATH@|$BROWSERS_PATH"; do
+  "@BROWSERS_PATH@|$BROWSERS_PATH" \
+  "@ENABLE_TIMER@|$ENABLE_TIMER"; do
   value="${pair#*|}"
   [[ $value =~ ^[A-Za-z0-9/._-]+$ ]] || die "internal: unsafe substitution value for ${pair%%|*}"
   sed -i "s|${pair%%|*}|$value|g" "$STAGE/root-run.sh"
@@ -229,6 +247,6 @@ log "verifying from the deploy identity"
   test -d $BROWSERS_PATH && echo 'browsers: present' || echo 'browsers: MISSING'
   systemctl is-enabled rumaq-scraper.timer 2>/dev/null || true
 "
-log "done. The nightly timer is intentionally NOT enabled — go-live is"
-log "apply.sh --enable-timer + RUMAQ_PUBLISH=true (planned milestone 4)."
+log "done. The nightly timer is intentionally NOT enabled — re-run with"
+log "--enable-timer to go live (apply.sh --enable-timer + RUMAQ_PUBLISH=true)."
 log "Next: the commit-based deploy can now run (deploy.yml deploy-vps job)."
