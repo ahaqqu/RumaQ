@@ -77,6 +77,17 @@ defineFeature(feature, (test) => {
     }
   }
 
+  async function requestStatus(bearer = INGEST_SECRET) {
+    ctx.response = await fetch(`${ctx.baseUrl}/api/internal/prices/status`, {
+      headers: { Authorization: `Bearer ${bearer}` },
+    })
+    try {
+      ctx.responseBody = await ctx.response.json()
+    } catch {
+      ctx.responseBody = null
+    }
+  }
+
   test('Ingest rejects pushes without a valid bearer token', ({ given, when, then }) => {
     given('the API is running', () => {})
 
@@ -235,6 +246,44 @@ defineFeature(feature, (test) => {
     and('the product should have history entries', () => {
       expect(Array.isArray(ctx.responseBody.history)).toBe(true)
       expect(ctx.responseBody.history.length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
+  test('Freshness status requires the ingest bearer secret', ({ given, when, then }) => {
+    given('the API is running', () => {})
+
+    when('the scraper requests the price freshness status with a wrong bearer token', async () => {
+      await requestStatus('wrong-secret')
+    })
+
+    then('the response status should be 401', () => {
+      ctx.expectStatus(401)
+    })
+  })
+
+  test('Freshness status reports the latest observation', ({ given, and, when, then }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a valid price snapshot has been pushed', async () => {
+      await pushSnapshot()
+      ctx.expectStatus(200)
+    })
+
+    when('the scraper requests the price freshness status', async () => {
+      await requestStatus()
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and('the status should report the latest observation date and count', () => {
+      expect(ctx.responseBody).toMatchObject({
+        latestObservedDate: '2026-10-24',
+        observationCount: 3,
+      })
     })
   })
 })

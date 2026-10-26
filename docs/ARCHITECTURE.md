@@ -62,7 +62,7 @@ rumaq/
 │   │   ├── main.ts         # CLI entry — exit codes 0 ok / 1 failure / 2 quota
 │   │   ├── pipeline.ts     # scrape → novelty → OCR → publish orchestration
 │   │   ├── config.ts       # Ported haqita thresholds + per-store strategy table
-│   │   ├── stores/         # StorePlugin registry (superindo; lotte in PR3)
+│   │   ├── stores/         # StorePlugin registry (superindo, lotte)
 │   │   ├── fetch/          # Tier-1 fetch ladder + URL/MD5 novelty state
 │   │   ├── ocr/            # Gemini vision client (ported prompt) + pure parsing
 │   │   └── publish/        # Shared ingest contract (Valibot) + POST/dry-run client
@@ -81,6 +81,7 @@ rumaq/
 │   │   ├── ci.sh
 │   │   ├── cleanup-branch.sh
 │   │   ├── smoke.sh
+│   │   ├── check-price-freshness.sh  # Smoke staleness gate for the nightly scrape
 │   │   ├── test-automation.sh
 │   │   └── trigger-smoke.sh
 │   ├── style.sh            # Code formatting
