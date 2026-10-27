@@ -426,7 +426,18 @@ export function runPipeline(
       // pending items in place for the next live run. A retire failure never
       // fails an already-published run (worst case: a harmless replay).
       if (result.mode === 'published') {
-        for (const { plugin } of runs) {
+        for (const { plugin, entry } of runs) {
+          // A store that failed mid-run kept appending OCR'd images to its
+          // outbox after the payload was built — those items are not in this
+          // publish, and the novelty state already skips their images. Retire
+          // only healthy stores; the failed store's file replays next run
+          // (the ingest upsert makes that idempotent).
+          if (entry.error !== undefined) {
+            log(
+              `[outbox] keeping ${plugin.config.slug} pending — its run failed; items replay next run`
+            )
+            continue
+          }
           yield* retireOutbox(options.stateDir, plugin.config.slug, log).pipe(
             Effect.catchIf(
               () => true,
