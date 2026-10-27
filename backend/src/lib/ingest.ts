@@ -22,6 +22,11 @@ export type IngestResult = {
 
 // D1 caps a batch's total bound parameters; keep chunks well under it.
 const BATCH_CHUNK = 50
+// D1 also caps bound parameters per QUERY at 100 — an IN list must ride
+// under that ceiling, or a catalog of ≥100 products fails the whole ingest
+// with "too many SQL variables at offset …" (observed on the first 382-item
+// live publish). 90 leaves headroom for any fixed parameters a caller adds.
+const SELECT_IN_CHUNK = 90
 
 type Statement = ReturnType<D1Database['prepare']>
 
@@ -32,12 +37,17 @@ async function runBatch(db: D1Database, statements: Statement[]): Promise<void> 
 }
 
 async function selectIn<Row>(db: D1Database, sql: string, values: string[]): Promise<Row[]> {
-  const placeholders = values.map(() => '?').join(',')
-  const { results } = await db
-    .prepare(`${sql} (${placeholders})`)
-    .bind(...values)
-    .all<Row>()
-  return results ?? []
+  const rows: Row[] = []
+  for (let i = 0; i < values.length; i += SELECT_IN_CHUNK) {
+    const chunk = values.slice(i, i + SELECT_IN_CHUNK)
+    const placeholders = chunk.map(() => '?').join(',')
+    const { results } = await db
+      .prepare(`${sql} (${placeholders})`)
+      .bind(...chunk)
+      .all<Row>()
+    rows.push(...(results ?? []))
+  }
+  return rows
 }
 
 export async function ingestPrices(db: D1Database, payload: IngestPayload): Promise<IngestResult> {

@@ -5,9 +5,26 @@ import { ingestPayloadSchema, ingestPrices, getPricesStatus } from '../lib/inges
 
 type FakeRow = Record<string, unknown>
 type FakeStatement = { sql: string; params: unknown[] }
+type FakeSelect = {
+  match: RegExp
+  rows: FakeRow[] | ((params: unknown[]) => FakeRow[])
+}
 
-function createFakeDb(selects: Array<{ match: RegExp; rows: FakeRow[] }> = []) {
+/** D1 rejects any query binding more parameters than this (per statement). */
+const D1_MAX_BOUND_PARAMS = 100
+
+function createFakeDb(selects: FakeSelect[] = []) {
   const executedBatches: FakeStatement[][] = []
+  const resolve = (sql: string, params: unknown[]): FakeRow[] => {
+    // Mirror the real D1 ceiling — without it a 150-key IN-list looks fine
+    // here and only fails on the box ("too many SQL variables").
+    if (params.length > D1_MAX_BOUND_PARAMS) {
+      throw new Error('D1_ERROR: too many SQL variables at offset 0: SQLITE_ERROR')
+    }
+    const hit = selects.find((s) => s.match.test(sql))
+    if (!hit) return []
+    return typeof hit.rows === 'function' ? hit.rows(params) : hit.rows
+  }
   const db = {
     prepare(sql: string) {
       const stmt = {
@@ -18,20 +35,21 @@ function createFakeDb(selects: Array<{ match: RegExp; rows: FakeRow[] }> = []) {
           return stmt
         },
         async all() {
-          const hit = selects.find((s) => s.match.test(sql))
-          return { results: hit ? hit.rows : [] }
+          return { results: resolve(sql, stmt.params) }
         },
         async first() {
-          const hit = selects.find((s) => s.match.test(sql))
-          return hit && hit.rows.length > 0 ? hit.rows[0] : null
+          const rows = resolve(sql, stmt.params)
+          return rows.length > 0 ? rows[0] : null
         },
         async run() {
+          resolve(sql, stmt.params)
           return { success: true }
         },
       }
       return stmt
     },
     async batch(statements: FakeStatement[]) {
+      for (const statement of statements) resolve(statement.sql, statement.params)
       executedBatches.push(statements.map((s) => ({ sql: s.sql, params: s.params })))
       return statements.map(() => ({ success: true }))
     },
@@ -186,6 +204,58 @@ describe('ingestPrices', () => {
     )
     // observed_date defaults to the UTC date of scrapedAt
     expect(observationStmts[0]!.params).toContain('2026-10-24')
+  })
+
+  it('chunks the product IN-lists — a catalog beyond D1’s 100-parameter cap still ingests', async () => {
+    const items = Array.from({ length: 150 }, (_, i) => ({
+      productKey: `catalog-item-${i}`,
+      name: `Catalog Item ${i}`,
+      brand: null,
+      unit: null,
+      category: null,
+      storeSlug: 'lotte-mart',
+      price: 1000 + i,
+      effectiveUnitPrice: null,
+      promoType: null,
+      promoLabel: null,
+      validFrom: null,
+      validUntil: null,
+      matchMethod: 'solo' as const,
+      matchConfidence: 1,
+      brochureUrl: null,
+    }))
+    const parsed = safeParse(ingestPayloadSchema, {
+      schemaVersion: 1,
+      scrapedAt: '2026-10-24T23:00:05Z',
+      stores: [{ slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' }],
+      items,
+    })
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+
+    // The whole catalog already exists: the 150-key product lookups are the
+    // IN-lists that used to exceed D1's per-query bound-parameter ceiling
+    // (the first live 382-item publish failed with "too many SQL variables").
+    const { db } = createFakeDb([
+      { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
+      {
+        match: /^SELECT product_key FROM price_products/,
+        rows: (params) => params.map((key) => ({ product_key: key as string })),
+      },
+      {
+        match: /^SELECT id, product_key FROM price_products/,
+        rows: (params) =>
+          params.map((key) => ({ id: `p-${String(key)}`, product_key: key as string })),
+      },
+    ])
+
+    const result = await ingestPrices(db, parsed.output)
+    expect(result).toEqual({
+      accepted: 150,
+      productsCreated: 0,
+      observationsUpserted: 150,
+      skipped: 0,
+    })
   })
 
   it('skips items whose store slug was not declared, without failing the snapshot', async () => {
