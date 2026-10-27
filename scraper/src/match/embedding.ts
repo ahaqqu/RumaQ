@@ -12,9 +12,13 @@ import { classifyQuotaError, withQuotaPolicy, type QuotaExhausted } from '../uti
 /** Structural slice of @google/genai's client — the real thing satisfies it. */
 export interface EmbeddingClient {
   models: {
-    batchEmbedContents(args: {
+    // embedContent with a `contents` array is the SDK's batch embedding path
+    // (the bundled @google/genai 1.52.0 no longer exposes
+    // models.batchEmbedContents; the single call still posts to the
+    // batchEmbedContents REST endpoint and returns one vector per input).
+    embedContent(args: {
       model: string
-      requests: { model: string; contents: string }[]
+      contents: string[]
     }): Promise<{ embeddings?: { values?: number[] }[] }>
   }
 }
@@ -58,7 +62,7 @@ export interface EmbedOptions {
   log?: (message: string) => void
 }
 
-/** Texts per batchEmbedContents call — the API's per-request batch ceiling. */
+/** Texts per embedContent call — the API's per-request batch ceiling. */
 const BATCH_SIZE = 100
 
 /**
@@ -92,9 +96,9 @@ export function embedNames(
       const response = yield* withQuotaPolicy(
         Effect.tryPromise({
           try: () =>
-            activeClient.models.batchEmbedContents({
+            activeClient.models.embedContent({
               model: options.model,
-              requests: batch.map((text) => ({ model: options.model, contents: text })),
+              contents: batch,
             }),
           catch: (cause: unknown) =>
             classifyQuotaError(cause) ??

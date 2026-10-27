@@ -49,7 +49,7 @@ const emptyLotte = fakeBrowserLauncher('<html><body></body></html>')
 // environment must never make the test suite call the real API.
 const stubEmbedClient: EmbeddingClient = {
   models: {
-    batchEmbedContents: async () => ({ embeddings: [{ values: [1, 0] }] }),
+    embedContent: async () => ({ embeddings: [{ values: [1, 0] }] }),
   },
 }
 const stubVerifyClient: GeminiClient = {
@@ -384,6 +384,135 @@ describe('runPipeline', () => {
       .map((line) => JSON.parse(line))
     expect(lines).toHaveLength(1)
     expect(lines[0]!.products[0]!.name).toBe('Gula Pasir')
+  })
+
+  it("keeps a failed store's mid-run OCR in the outbox despite the successful publish", async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    // Two distinct brochure pages so the run has two NEW images (identical
+    // bytes would collapse into one through md5 novelty).
+    const jpegA = fakeJpegBytes()
+    const jpegB = (() => {
+      const bytes = fakeJpegBytes()
+      bytes.fill(0xdd, 29)
+      return bytes
+    })()
+    const seenUrls = new Map<string, Uint8Array<ArrayBuffer>>()
+    const fetchMock = async (
+      url: string,
+      init?: RequestInit & { proxy?: string }
+    ): Promise<Response> => {
+      expect(init?.headers).toBeDefined()
+      if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
+      if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
+      if (!seenUrls.has(url)) {
+        seenUrls.set(url, seenUrls.size === 0 ? jpegA : jpegB)
+      }
+      return new Response(seenUrls.get(url)!, {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      })
+    }
+
+    const items = [
+      { name: 'Gula Pasir', brand: null, unit: '1 kg', price: 17000, promo: null, period: null },
+    ]
+    // First image OCRs, every later attempt dies — the store fails mid-run
+    // with its first image already checkpointed in the outbox.
+    let ocrCalls = 0
+    const flakyOcr: GeminiClient = {
+      models: {
+        generateContent: async () => {
+          ocrCalls++
+          if (ocrCalls > 1) throw new Error('ocr exploded')
+          return { text: JSON.stringify(items) }
+        },
+      },
+    }
+
+    const posted: IngestPayload[] = []
+    const okPublish = async (_url: string, init?: RequestInit) => {
+      posted.push(JSON.parse(init!.body as string))
+      return new Response(
+        JSON.stringify({ accepted: 0, productsCreated: 0, observationsUpserted: 0, skipped: 0 }),
+        { status: 200 }
+      )
+    }
+
+    const failure = await Effect.runPromiseExit(
+      runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
+        stateDir,
+        dryRun: false,
+        fetch: fetchMock,
+        ocrClient: flakyOcr,
+        publishFetch: okPublish,
+        ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+        ingestSecret: 's3cret',
+        sleep: noSleep,
+        now: () => new Date('2026-10-24T23:00:05Z'),
+        log: () => {},
+      })
+    )
+
+    expect(failure._tag).toBe('Failure')
+    const error = exitError(failure) as Error & { exitCode?: number }
+    expect(error.message).toContain('superindo')
+    expect(error.exitCode).toBe(1)
+
+    // The publish still went out — without the failed store's items…
+    expect(posted).toHaveLength(1)
+    expect(posted[0]!.items.map((item) => item.productKey)).not.toContain('gula-pasir----1-kg')
+
+    // …but its outbox was NOT retired: the image OCR'd before the failure
+    // must replay next run (the ingest upsert makes the replay idempotent).
+    const runFiles = (await readdir(path.join(stateDir, 'superindo'))).filter((name) =>
+      name.startsWith('run-')
+    )
+    expect(runFiles).toHaveLength(1)
+    const survivors = (await readFile(path.join(stateDir, 'superindo', runFiles[0]!), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(survivors).toHaveLength(1)
+    expect(survivors[0]!.products[0]!.name).toBe('Gula Pasir')
+
+    // Next run (same pages, healthy OCR): the stranded image replays without
+    // re-OCR, the publish covers it, and only then does its file retire.
+    const healthyOcr: GeminiClient = {
+      models: { generateContent: async () => ({ text: JSON.stringify(items) }) },
+    }
+    await Effect.runPromise(
+      runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
+        stateDir,
+        dryRun: false,
+        fetch: fetchMock,
+        ocrClient: healthyOcr,
+        publishFetch: okPublish,
+        ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+        ingestSecret: 's3cret',
+        sleep: noSleep,
+        now: () => new Date('2026-10-25T23:00:05Z'),
+        log: () => {},
+      })
+    )
+    expect(posted).toHaveLength(2)
+    expect(posted[1]!.items.map((item) => item.productKey)).toContain('gula-pasir----1-kg')
+    expect(
+      (await readdir(path.join(stateDir, 'superindo'))).filter((name) => name.startsWith('run-'))
+    ).toEqual([])
   })
 
   it('re-OCRs an image whose outbox append failed — items are never stranded', async () => {

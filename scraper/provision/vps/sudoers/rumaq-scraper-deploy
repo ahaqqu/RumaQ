@@ -10,6 +10,18 @@
 # reads the root-only env file through systemd — the deploy itself never
 # reads /etc/rumaq-scraper/env.
 #
+# Operations (owner decision 2026-10-27) — restarting/re-arming the nightly
+# job and repairing the env's ingest URL must work without an interactive
+# sudo (the operator's password stays out of every loop):
+#   - start rumaq-scraper.service         trigger a run now (both blocking
+#     and --no-block forms, matched exactly)
+#   - reset-failed rumaq-scraper.service  clear a stale failed state
+#   - /usr/local/sbin/rumaq-scraper-ingest-url
+#     root-owned helper (installed by apply.sh, no arguments) that points
+#     the env's RUMAQ_INGEST_URL at the production ingest route. The URL is
+#     public repo knowledge; the env's key lines are never touched. No new
+#     risk: kajianq-deploy already owns the code tree it ships.
+#
 # Code deploys need no grant at all: the deploy identity owns
 # /srv/rumaq-scraper (code + browser cache), and the nightly job is a
 # timer-driven oneshot that picks up new code at its next start — there is
@@ -19,3 +31,7 @@
 Defaults:kajianq-deploy !requiretty
 
 kajianq-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start rumaq-scraper-selfcheck.service
+kajianq-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start rumaq-scraper.service
+kajianq-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block rumaq-scraper.service
+kajianq-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl reset-failed rumaq-scraper.service
+kajianq-deploy ALL=(root) NOPASSWD: /usr/local/sbin/rumaq-scraper-ingest-url

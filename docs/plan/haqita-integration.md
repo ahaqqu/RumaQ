@@ -327,9 +327,13 @@ fails, and the app has no visibility into runs.
 Planned, in two parts:
 
 - **Staleness alert (go-live, milestone 4)**: the existing 6-hourly smoke workflow
-  additionally checks price-data freshness — latest `price_observation` newer than
-  ~26h — reusing its auto-created `smoke-failure` issue on failure. Catches every
-  failure mode end-to-end (box down, timer off, scrape error, publish error).
+  additionally checks price-data freshness — latest `price_observations` newer than
+  7 days (168h) — reusing its auto-created `smoke-failure` issue on failure. The
+  7-day threshold is deliberate (owner decision 2026-10-27): one failed nightly run
+  is not "service down" — the scraper logs it (journal + status.json) and the
+  timer retries the next night (the systemd unit exits 0 and stays green);
+  only a week of consecutive failures means the pipeline is actually broken. Catches
+  every failure mode end-to-end (box down, timer off, scrape error, publish error).
 - **Scraping monitor screen (milestone 5, folded into the frontend PR)**:
   the pipeline reports each run to the backend (`price_runs` table via an
   internal ingest endpoint: started/finished, exit code, per-store pages/items/errors,
