@@ -26,7 +26,12 @@ defineFeature(feature, (test) => {
     ctx = new ApiContext()
   })
 
-  test('AI scan returns 429 after daily limit is exceeded', ({ given, when, then, and }) => {
+  test('AI scan with a user key is uncapped when the daily limit is exceeded', ({
+    given,
+    when,
+    then,
+    and,
+  }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })
@@ -45,15 +50,12 @@ defineFeature(feature, (test) => {
     when(/I send a (POST) request to (\S+) with a test image/, async (method, path) => {
       await sendTestImage(ctx, method, path)
     })
-    then('the response status should be 429', () => {
-      ctx.expectStatus(429)
-    })
-    and('the response should contain a Retry-After header', () => {
-      expect(ctx.response.headers.get('Retry-After')).toBeTruthy()
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
     })
   })
 
-  test('AI plan generation returns 429 after daily limit is exceeded', ({
+  test('AI plan generation with a user key is uncapped when the daily limit is exceeded', ({
     given,
     when,
     then,
@@ -77,15 +79,17 @@ defineFeature(feature, (test) => {
     when(/I send a (POST) request to (\S+)/, async (method, path) => {
       await ctx.sendRequest(method, path)
     })
-    then('the response status should be 429', () => {
-      ctx.expectStatus(429)
-    })
-    and('the response should contain a Retry-After header', () => {
-      expect(ctx.response.headers.get('Retry-After')).toBeTruthy()
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
     })
   })
 
-  test('AI chat returns 429 after daily limit is exceeded', ({ given, when, then, and }) => {
+  test('AI chat with a user key is uncapped when the daily limit is exceeded', ({
+    given,
+    when,
+    then,
+    and,
+  }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })
@@ -104,11 +108,8 @@ defineFeature(feature, (test) => {
     when(/I send a (POST) request to (\S+) with body/, async (method, path, body) => {
       await ctx.sendRequestWithBody(method, path, JSON.parse(body))
     })
-    then('the response status should be 429', () => {
-      ctx.expectStatus(429)
-    })
-    and('the response should contain a Retry-After header', () => {
-      expect(ctx.response.headers.get('Retry-After')).toBeTruthy()
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
     })
   })
 })

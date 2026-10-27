@@ -8,10 +8,14 @@ const testDir = defineBddConfig({
 
 export default defineConfig({
   testDir,
-  fullyParallel: true,
+  // One worker: every scenario runs against the same seeded Docker stack, so
+  // parallel scenarios would race on shared household data. Each scenario
+  // resets + reseeds the database in shared.steps.js's Before hook.
+  workers: 1,
+  fullyParallel: false,
   retries: 0,
   reporter: 'html',
-  timeout: 30_000,
+  timeout: 60_000,
   expect: { timeout: 10_000 },
   use: {
     baseURL: process.env.TEST_BASE_URL || 'http://localhost:3000',

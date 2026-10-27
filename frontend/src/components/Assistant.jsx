@@ -112,7 +112,9 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
           'max-sm:right-4 max-sm:bottom-[calc(104px+env(safe-area-inset-bottom))]'
         )}
         onClick={() => (open ? onClose() : onOpen())}
-        aria-label={t('assistant.fabAriaLabel')}
+        // The visible label doubles as the accessible name so voice-control
+        // users can reference the button by the text they see.
+        aria-label={t('assistant.fabLabel')}
         aria-expanded={open}
       >
         <span className="w-[9px] h-[9px] rounded-full bg-on-accent animate-[pulse_2.4s_cubic-bezier(0.2,0.8,0.2,1)_infinite]" />

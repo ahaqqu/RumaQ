@@ -17,6 +17,7 @@ WORKDIR /app
 COPY bun.lock package.json ./
 COPY frontend/package.json ./frontend/
 COPY backend/package.json ./backend/
+COPY contract/package.json ./contract/
 RUN --mount=type=cache,target=/root/.bun \
   bun install --frozen-lockfile
 
@@ -25,11 +26,13 @@ COPY vite.config.ts ./
 COPY backend/vite.config.ts ./backend/
 COPY backend/tsconfig.json ./backend/
 COPY backend/cloudflare.config.ts ./backend/
+COPY contract/tsconfig.json ./contract/
 
 # Layer 3: build source (changes most frequently). Keep migrations and test
 # support files out of this layer so backend-only edits don't invalidate them.
 COPY backend/src/ ./backend/src/
 COPY backend/migrations/ ./backend/migrations/
+COPY contract/src/ ./contract/src/
 # The backend build packs frontend/dist as Worker static assets; the API test
 # harness serves the SPA via nginx instead, so an empty dist is sufficient.
 # Run vp with Node (not bunx) so cloudflare.config.ts can load.

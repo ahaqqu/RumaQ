@@ -116,6 +116,7 @@ export function Inventory() {
               <div
                 className="grid grid-cols-[1fr_auto] items-center gap-4 px-5 py-4 border-b border-border last:border-b-0 hover:bg-surface-sunken transition-colors"
                 key={s.id}
+                data-testid="stock-row"
               >
                 <div className="min-w-0">
                   <div className="font-semibold text-sm flex items-center gap-3 flex-wrap">
@@ -139,7 +140,7 @@ export function Inventory() {
                     >
                       <IconMinus size={14} />
                     </button>
-                    <span className="font-semibold min-w-[3ch] text-center">
+                    <span className="font-semibold min-w-[3ch] text-center" data-testid="stock-qty">
                       {s.qty} {s.unit}
                     </span>
                     <button

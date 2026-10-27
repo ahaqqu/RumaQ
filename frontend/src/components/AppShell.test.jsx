@@ -106,7 +106,7 @@ describe('AppShell', () => {
     const { container } = renderWithProviders(
       React.createElement(AppShell, null, React.createElement('div', null, 'content'))
     )
-    const logoutBtn = container.querySelector('button.text-xs.text-text-faint')
+    const logoutBtn = container.querySelector('button.text-xs.text-text-muted')
     if (logoutBtn) fireEvent.click(logoutBtn)
     expect(mutate).toHaveBeenCalled()
   })

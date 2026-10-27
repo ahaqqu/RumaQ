@@ -1,13 +1,14 @@
 import pkg from 'playwright-bdd'
 import { expect } from '@playwright/test'
+import { TEST_EMAIL as EMAIL, TEST_PASSWORD as PASSWORD } from './shared.steps.js'
+
 const { createBdd, test } = pkg
 
 const { Given, When, Then } = createBdd(test)
 
-// Seeded by migration 0002 / automation/tests/fixtures/seed.sql; the local
-// test stack runs with EMAIL_AUTH_ENABLED=true.
-const EMAIL = 'test@rumaq.dev'
-const PASSWORD = 'password123'
+// Credentials come from shared.steps.js (seeded by
+// automation/tests/fixtures/seed.sql; the local test stack runs with
+// EMAIL_AUTH_ENABLED=true).
 
 Given('I visit the app', async ({ page }) => {
   await page.goto('/')

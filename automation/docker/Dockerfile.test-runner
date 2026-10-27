@@ -8,6 +8,9 @@ USER root
 COPY bun.lock package.json ./
 COPY frontend/package.json ./frontend/
 COPY backend/package.json ./backend/
+COPY contract/package.json ./contract/
+COPY scraper/package.json ./scraper/
+COPY scraper/tsconfig.json ./scraper/
 RUN --mount=type=cache,target=/root/.bun/install/cache \
   bun install --frozen-lockfile
 
@@ -28,6 +31,15 @@ COPY automation/playwright.config.js ./automation/playwright.config.js
 # Layer 3: app source (changes moderately)
 COPY backend/src/ ./backend/src/
 COPY frontend/src/ ./frontend/src/
+# The contract workspace is imported by the backend (@rumaq/contract) and has
+# no build step — the source is the package.
+COPY contract/src/ ./contract/src/
+COPY contract/tsconfig.json ./contract/
+# The root vp config declares a scraper vitest project, so the project root
+# must exist for every vitest startup (even when only --project integration
+# runs) — without it vitest aborts with "Root path does not exist".
+COPY scraper/src/ ./scraper/src/
+COPY scraper/test/ ./scraper/test/
 
 # Layer 4: tests (changes most frequently)
 COPY automation/tests/ ./automation/tests/

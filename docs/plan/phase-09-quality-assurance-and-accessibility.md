@@ -1,6 +1,6 @@
 # Phase 09 — Quality Assurance & Accessibility
 
-**Status:** Partial (E2E tests partial, accessibility and performance not started)  
+**Status:** Done (page-level E2E features for inventory/plan/history/settings/receipt + axe-core accessibility scans implemented as `automation/tests/local/e2e/features/*.feature` with per-scenario DB reset; first-wave a11y fixes shipped: text-contrast tokens, unnamed Settings submit buttons, assistant FAB accessible name; performance budget enforced via `scripts/ci/bundle-budget.mjs` (250 KB JS gzip) and Lighthouse CI in `ci.yml`; login/logout flows remain covered by `smoke.feature` instead of a separate login feature. Remaining out-of-wave items: `--ok` token contrast (~3.8:1, unrendered on audited pages), manual screen-reader pass, Lighthouse runs on the live preview URL)  
 **Priority:** P1/P2  
 **Source sections:** Section 8 of `docs/PROJECT_PLAN.md`  
 **Estimated effort:** Medium
