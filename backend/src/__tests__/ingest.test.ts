@@ -160,15 +160,9 @@ describe('ingestPrices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT product_key FROM price_products/,
-        rows: [{ product_key: 'beras--pandan-wangi--5-kg' }],
-      },
-      {
         match: /^SELECT id, product_key FROM price_products/,
-        rows: [
-          { id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' },
-          { id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' },
-        ],
+        // Only the rice already exists — the oil is created by this ingest.
+        rows: [{ id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' }],
       },
     ])
 
@@ -204,6 +198,10 @@ describe('ingestPrices', () => {
     )
     // observed_date defaults to the UTC date of scrapedAt
     expect(observationStmts[0]!.params).toContain('2026-10-24')
+
+    // The observation references the id generated for the insert — the id
+    // map is complete without a second lookup.
+    expect(observationStmts.flatMap((s) => s.params)).toContain(productStmts[0]!.params[0])
   })
 
   it('chunks the product IN-lists — a catalog beyond D1’s 100-parameter cap still ingests', async () => {
@@ -233,15 +231,11 @@ describe('ingestPrices', () => {
     expect(parsed.success).toBe(true)
     if (!parsed.success) return
 
-    // The whole catalog already exists: the 150-key product lookups are the
-    // IN-lists that used to exceed D1's per-query bound-parameter ceiling
+    // The whole catalog already exists: the 150-key product lookup is the
+    // IN-list that used to exceed D1's per-query bound-parameter ceiling
     // (the first live 382-item publish failed with "too many SQL variables").
     const { db } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
-      {
-        match: /^SELECT product_key FROM price_products/,
-        rows: (params) => params.map((key) => ({ product_key: key as string })),
-      },
       {
         match: /^SELECT id, product_key FROM price_products/,
         rows: (params) =>
@@ -261,7 +255,6 @@ describe('ingestPrices', () => {
   it('skips items whose store slug was not declared, without failing the snapshot', async () => {
     const { db } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
-      { match: /^SELECT product_key FROM price_products/, rows: [] },
       {
         match: /^SELECT id, product_key FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' }],
@@ -288,13 +281,6 @@ describe('ingestPrices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT product_key FROM price_products/,
-        rows: [
-          { product_key: 'minyak-goreng--bimoli--1-l' },
-          { product_key: 'beras--pandan-wangi--5-kg' },
-        ],
-      },
-      {
         match: /^SELECT id, product_key FROM price_products/,
         rows: [
           { id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' },
@@ -317,7 +303,6 @@ describe('ingestPrices', () => {
   it('honours an explicit observedDate over the scrapedAt default', async () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
-      { match: /^SELECT product_key FROM price_products/, rows: [] },
       {
         match: /^SELECT id, product_key FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' }],
@@ -407,15 +392,9 @@ describe('POST /api/internal/ingest/prices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT product_key FROM price_products/,
-        rows: [{ product_key: 'beras--pandan-wangi--5-kg' }],
-      },
-      {
         match: /^SELECT id, product_key FROM price_products/,
-        rows: [
-          { id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' },
-          { id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' },
-        ],
+        // Only the rice already exists — the oil is created by this ingest.
+        rows: [{ id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' }],
       },
     ])
 

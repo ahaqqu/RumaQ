@@ -20,7 +20,10 @@ export type IngestResult = {
   skipped: number
 }
 
-// D1 caps a batch's total bound parameters; keep chunks well under it.
+// A db.batch() call counts as ONE query against D1's per-invocation budget
+// (50 on the free plan); within it, the per-query limits (100 bound
+// parameters) apply to each statement — an observation binds 14. 50
+// statements per batch keeps both limits comfortable.
 const BATCH_CHUNK = 50
 // D1 also caps bound parameters per QUERY at 100 — an IN list must ride
 // under that ceiling, or a catalog of ≥100 products fails the whole ingest
@@ -91,15 +94,22 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
 
   const keys = [...new Set(usable.map((item) => item.productKey))]
   const itemByKey = new Map(usable.map((item) => [item.productKey, item]))
+  // One lookup serves both purposes: its rows decide which products need an
+  // insert, and their ids seed the observation pass. New products get their
+  // ids here (bound in the INSERT below), so a second IN-list round trip is
+  // never needed — at catalog scale the per-invocation query budget (50 on
+  // the free plan) is D1's tightest limit, and each extra chunked pass is
+  // ceil(N/90) queries.
   const existingRows = keys.length
-    ? await selectIn<{ product_key: string }>(
+    ? await selectIn<{ id: string; product_key: string }>(
         db,
-        'SELECT product_key FROM price_products WHERE product_key IN',
+        'SELECT id, product_key FROM price_products WHERE product_key IN',
         keys
       )
     : []
   const existingKeys = new Set(existingRows.map((row) => row.product_key))
   const newKeys = keys.filter((key) => !existingKeys.has(key))
+  const newIdByKey = new Map(newKeys.map((key) => [key, crypto.randomUUID()]))
   const now = new Date().toISOString()
 
   if (newKeys.length > 0) {
@@ -114,7 +124,7 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(
-            crypto.randomUUID(),
+            newIdByKey.get(key)!,
             key,
             item.name,
             item.brand ?? null,
@@ -127,14 +137,10 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
     )
   }
 
-  const productRows = keys.length
-    ? await selectIn<{ id: string; product_key: string }>(
-        db,
-        'SELECT id, product_key FROM price_products WHERE product_key IN',
-        keys
-      )
-    : []
-  const productIdByKey = new Map(productRows.map((row) => [row.product_key, row.id]))
+  const productIdByKey = new Map([
+    ...existingRows.map((row) => [row.product_key, row.id] as const),
+    ...newIdByKey,
+  ])
 
   const observedDefault = payload.scrapedAt.slice(0, 10)
   await runBatch(
