@@ -40,10 +40,10 @@ When('I save the draft plan', async ({ page }) => {
   await expect(page.getByRole('checkbox').first()).toBeVisible({ timeout: 15_000 })
 })
 
-// 'xpath=..' resolves to the wrapping <label> of the checkbox; filtering by
-// item name targets the right row when several plan items are listed.
+// locator('..') resolves to the wrapping <label> of the checkbox; filtering
+// by item name targets the right row when several plan items are listed.
 const activePlanItem = (page, name) =>
-  page.getByRole('checkbox').locator('xpath=..').filter({ hasText: name })
+  page.getByRole('checkbox').locator('..').filter({ hasText: name })
 
 // Plain click: check() verifies the state synchronously after the click and
 // races React's optimistic re-render (the checkbox flips a moment later),

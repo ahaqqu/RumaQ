@@ -27,6 +27,8 @@ const READY = {
 
 const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']
 
+const scan = (page) => new AxeBuilder({ page }).withTags(AXE_TAGS)
+
 function assertNoCriticalOrSerious(violations) {
   const blocking = violations.filter((v) => ['critical', 'serious'].includes(v.impact))
   const summary = blocking.map((v) => `${v.id} (${v.impact}): ${v.nodes.length} node(s)`).join('; ')
@@ -36,8 +38,7 @@ function assertNoCriticalOrSerious(violations) {
 Then('the login page should have no critical or serious axe violations', async ({ page }) => {
   // "I visit the app" (smoke.steps.js) already navigated to the app root.
   await page.waitForSelector('input#email', { timeout: 15_000 })
-  const results = await new AxeBuilder({ page }).withTags(AXE_TAGS).analyze()
-  assertNoCriticalOrSerious(results.violations)
+  assertNoCriticalOrSerious((await scan(page).analyze()).violations)
 })
 
 Then(
@@ -52,7 +53,6 @@ Then(
       // Give queries one settle cycle on pages without a stable ready signal.
       await page.waitForLoadState('networkidle')
     }
-    const results = await new AxeBuilder({ page }).withTags(AXE_TAGS).analyze()
-    assertNoCriticalOrSerious(results.violations)
+    assertNoCriticalOrSerious((await scan(page).analyze()).violations)
   }
 )

@@ -13,6 +13,10 @@ import { join, resolve } from 'node:path'
 
 const DIST_ASSETS = resolve(process.argv[2] ?? 'frontend/dist/assets')
 const BUDGET_KB = Number(process.argv[3] ?? 250)
+if (!Number.isFinite(BUDGET_KB) || BUDGET_KB <= 0) {
+  console.error(`bundle-budget: invalid budget "${process.argv[3]}" — pass a positive KB number`)
+  process.exit(1)
+}
 
 const js = readdirSync(DIST_ASSETS)
   .filter((f) => f.endsWith('.js') && !f.endsWith('.map'))
