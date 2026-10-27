@@ -8,6 +8,7 @@ WORKDIR /app
 COPY bun.lock package.json ./
 COPY frontend/package.json ./frontend/
 COPY backend/package.json ./backend/
+COPY contract/package.json ./contract/
 RUN --mount=type=cache,target=/root/.bun \
   bun install --frozen-lockfile
 

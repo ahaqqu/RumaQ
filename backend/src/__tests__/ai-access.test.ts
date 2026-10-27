@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vite-plus/test'
-import { resolveAiAccess } from '../lib/ai-access.js'
+import { isAiUsageLimited, resolveAiAccess } from '../lib/ai-access.js'
 
 // Same key pair the api-routes tests use, so encrypted_ai_key decrypts.
 const ENCRYPTED_KEY = 'v1:KIPkC6p1Fvnv4KoVsu-dx-GNoEqmm2kStaExhNbptUJ3lrE'
@@ -65,5 +65,28 @@ describe('resolveAiAccess', () => {
 
     const stale = await resolveAiAccess(baseEnv, userSettings({ ai_thinking_level: 'extreme' }))
     expect(stale?.thinkingLevel).toBeNull()
+  })
+})
+
+describe('isAiUsageLimited', () => {
+  const access = (keySource: 'user' | 'server') => ({
+    provider: 'openai',
+    apiKey: 'sk-test',
+    baseUrl: null,
+    model: null,
+    thinkingLevel: null,
+    keySource,
+  })
+  const exceeded = { id: 'usage-1', used: 20, daily_limit: 20 }
+  const under = { id: 'usage-1', used: 3, daily_limit: 20 }
+
+  it('caps server-key traffic once the daily limit is reached', () => {
+    expect(isAiUsageLimited(access('server'), exceeded)).toBe(true)
+    expect(isAiUsageLimited(access('server'), under)).toBe(false)
+  })
+
+  it('never caps user-key traffic', () => {
+    expect(isAiUsageLimited(access('user'), exceeded)).toBe(false)
+    expect(isAiUsageLimited(access('user'), under)).toBe(false)
   })
 })

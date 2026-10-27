@@ -31,6 +31,9 @@ bun audit --audit-level=critical
 echo "=== CI: build ==="
 bash "$ROOT_DIR/scripts/build.sh"
 
+echo "=== CI: bundle size budget ==="
+node "$ROOT_DIR/scripts/ci/bundle-budget.mjs"
+
 echo "=== CI: validate Worker config ==="
 if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
   # Builds the Worker with backend/cloudflare.config.ts and runs cf's checks

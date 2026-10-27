@@ -24,7 +24,6 @@
     "askPlan": "Minta rencana",
     "shopAt": "Belanja di {{store}}",
     "itemCount": "{{count}} item",
-    "itemCount_plural": "{{count}} item",
     "estimated": "perkiraan {{amount}}",
     "seePlan": "Lihat rencana",
     "noPlanYet": "Belum ada rencana belanja",
@@ -35,7 +34,8 @@
     "addFromReceipt": "Tambah dari struk",
     "savingsTip": "Saran hemat",
     "savingsTipText": "Bayam dan roti tawar kedaluwarsa besok. Minta asisten menyarankan resep untuk menghabiskannya.",
-    "askRecipe": "Minta resep"
+    "askRecipe": "Minta resep",
+    "itemCount_other": "{{count}} item"
   },
   "inventory": {
     "searchPlaceholder": "Cari item, mis. susu, beras",
@@ -55,7 +55,6 @@
     "scanningTitle": "Membaca struk",
     "scanningDesc": "Mengenali item, harga, dan toko. Sebentar lagi.",
     "itemsRead": "{{count}} item terbaca",
-    "itemsRead_plural": "{{count}} item terbaca",
     "aiReview": "AI · periksa & ubah bila perlu",
     "reviewTitle": "Periksa hasil baca AI",
     "editHint": "Ketik untuk mengoreksi",
@@ -63,14 +62,15 @@
     "retake": "Ulang foto",
     "confirmAdd": "Konfirmasi & tambah stok",
     "stockAdded": "Stok bertambah {{count}} item",
-    "stockAdded_plural": "Stok bertambah {{count}} item",
     "stockUpdatedDesc": "Sisa item diperbarui otomatis dari pola belanja. Tidak perlu catat pakai manual.",
     "addAnother": "Tambah struk lagi",
     "done": "Selesai",
     "goToSettings": "Buka Pengaturan",
     "selectStore": "Pilih toko...",
     "itemName": "Nama item",
-    "keepNew": "— Item baru —"
+    "keepNew": "— Item baru —",
+    "itemsRead_other": "{{count}} item terbaca",
+    "stockAdded_other": "Stok bertambah {{count}} item"
   },
   "plan": {
     "leadNoKey": "Hubungkan kunci API dulu, lalu AI menyusun rencana belanja dari stok yang menipis.",
@@ -80,11 +80,9 @@
     "addApiKey": "Tambah kunci API",
     "regenerate": "Susun ulang rencana",
     "stores": "{{count}} toko",
-    "stores_plural": "{{count}} toko",
     "allBought": "Semua item sudah dibeli.",
     "allBoughtDesc": "Stok diperbarui otomatis dari struk berikutnya.",
     "basedOnItems": "Rencana ini disusun dari {{count}} item yang menipis. Minta asisten menggabungkan agar cukup satu perjalanan per toko.",
-    "basedOnItems_plural": "Rencana ini disusun dari {{count}} item yang menipis. Minta asisten menggabungkan agar cukup satu perjalanan per toko.",
     "askAssistant": "Tanya asisten",
     "savePlan": "Simpan rencana",
     "noActivePlan": "Belum ada rencana aktif",
@@ -93,6 +91,8 @@
     "generateNext": "Buat rencana berikutnya",
     "otherStore": "Toko lain",
     "discardDraft": "Buang",
+    "stores_other": "{{count}} toko",
+    "basedOnItems_other": "Rencana ini disusun dari {{count}} item yang menipis. Minta asisten menggabungkan agar cukup satu perjalanan per toko.",
     "groundedFrom": "harga dari brosur {{source}}",
     "groundedUntil": "berlaku s/d {{date}}"
   },
@@ -184,17 +184,17 @@
     "filterTo": "Hingga",
     "avgPerMonth": "rata-rata/bulan",
     "purchases_count": "{{count}} pembelian",
-    "purchases_count_plural": "{{count}} pembelian",
     "patternsTitle": "Pola belanja",
     "patternEvery": "setiap {{n}} hari",
-    "patternEvery_plural": "setiap {{n}} hari",
     "patternRecently": "baru saja dibeli",
     "patternSummary": "{{name}} {{pattern}} · rata-rata {{qty}}",
     "loadMore": "Muat lagi",
     "receipt": "Struk",
     "itemsCount": "{{count}} item",
-    "itemsCount_plural": "{{count}} item",
-    "closeReceipt": "Tutup"
+    "closeReceipt": "Tutup",
+    "purchases_count_other": "{{count}} pembelian",
+    "patternEvery_other": "setiap {{n}} hari",
+    "itemsCount_other": "{{count}} item"
   },
   "settings": {
     "aiApiKey": "Kunci API AI",
@@ -269,11 +269,11 @@
       "myRole": "Saya adalah",
       "aiRole": "Kamu adalah",
       "motion": "Preferensi gerakan"
-    }
+    },
+    "save": "Simpan"
   },
   "assistant": {
     "fabLabel": "Tanya asisten",
-    "fabAriaLabel": "Tanya asisten AI",
     "title": "Asisten RumaQ",
     "dialogAriaLabel": "Asisten AI RumaQ",
     "connected": "Asisten AI terhubung",

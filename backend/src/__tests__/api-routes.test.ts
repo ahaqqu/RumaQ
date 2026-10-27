@@ -247,6 +247,32 @@ describe('api routes', () => {
     expect(((await res.json()) as any).has_ai_key).toBe(true)
   })
 
+  it('/api/ai/chat returns 429 with Retry-After when the server key hits the daily cap', async () => {
+    // The daily usage cap applies to the shared server key only; BYO user
+    // keys are uncapped (ai-access.ts). This covers the HTTP wiring (status
+    // + header) that the integration suite no longer reaches end-to-end.
+    const env = createMockEnv({
+      props: { userId: 'u1', householdId: 'h1' },
+      RUMAQ_SERVER_AI_PROVIDER: 'openai',
+      RUMAQ_SERVER_AI_KEY: 'sk-server',
+    })
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce(null) // user_settings: no user key -> server key path
+      .mockResolvedValueOnce({ id: 'usage-1', used: 20, daily_limit: 20 }) // ai_usage
+    const res = await apiApp.request(
+      '/api/ai/chat',
+      {
+        method: 'POST',
+        body: JSON.stringify({ message: 'hello' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBeTruthy()
+  })
+
   it('/api/locations lists locations', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.all = vi.fn().mockResolvedValue({ results: [{ id: 'l1', label: 'Kulkas' }] })
