@@ -216,6 +216,7 @@ cat > "$STAGE/root-run.sh" <<'ROOT_RUN'
 set -euo pipefail
 STAGE_HOME='@ADMIN_HOME@/@REMOTE_STAGE@'
 GO_LIVE_ONLY='@GO_LIVE_ONLY@'
+FIX_INGEST_URL='@FIX_INGEST_URL@'
 
 # Flip the go-live switch in the root-only env file without touching the
 # key / URL / secret lines. Shared by both paths.
@@ -312,6 +313,23 @@ for pair in \
   value="${pair#*|}"
   [[ $value =~ ^[A-Za-z0-9/._-]+$ ]] || die "internal: unsafe substitution value for ${pair%%|*}"
   sed -i "s|${pair%%|*}|$value|g" "$STAGE/root-run.sh"
+done
+
+# Local gate before anything ships (--fix-ingest-url once died on the box
+# with "$FIX_INGEST_URL: unbound variable" because the placeholder loop and
+# the heredoc's variable names had drifted): the generated script must parse,
+# leave no placeholder behind, and only use variables it assigns itself —
+# root-run.sh runs under `set -u`, so a name mismatch would abort mid-way as
+# root instead of failing here.
+bash -n "$STAGE/root-run.sh" || die "internal: generated root-run.sh does not parse"
+if grep -qE '@[A-Z_]+@' "$STAGE/root-run.sh"; then
+  die "internal: unsubstituted placeholder in generated root-run.sh"
+fi
+for name in $(grep -oE '\$\{?[A-Z_][A-Z0-9_]*' "$STAGE/root-run.sh" | tr -d '${' | sort -u); do
+  # These three arrive by sourcing the staged env-values file in full mode.
+  case "$name" in GEMINI_API_KEY | RUMAQ_INGEST_URL | RUMAQ_INGEST_SECRET) continue ;; esac
+  grep -qE "(^|[[:space:]])${name}=" "$STAGE/root-run.sh" ||
+    die "internal: generated root-run.sh uses unassigned \$$name"
 done
 
 log "staging everything to $ADMIN_USER@$HOST:~/$REMOTE_STAGE"
