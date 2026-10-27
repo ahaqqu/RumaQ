@@ -438,8 +438,13 @@ describe('runPipeline', () => {
     }
 
     const posted: IngestPayload[] = []
-    const okPublish = async (_url: string, init?: RequestInit) => {
-      posted.push(JSON.parse(init!.body as string))
+    // The live pipeline also POSTs a run report through the same injectable
+    // fetch — capture only price publishes so the outbox assertions below
+    // count what they mean to count.
+    const okPublish = async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/internal/ingest/prices')) {
+        posted.push(JSON.parse(init!.body as string))
+      }
       return new Response(
         JSON.stringify({ accepted: 0, productsCreated: 0, observationsUpserted: 0, skipped: 0 }),
         { status: 200 }
