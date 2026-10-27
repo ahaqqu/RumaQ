@@ -438,7 +438,12 @@ describe('runPipeline', () => {
     }
 
     const posted: IngestPayload[] = []
-    const okPublish = async (_url: string, init?: RequestInit) => {
+    const okPublish = async (url: string, init?: RequestInit) => {
+      // The run-report POST rides the same fetch (…/ingest/runs); only the
+      // payload goes into `posted`.
+      if (!url.endsWith('/api/internal/ingest/prices')) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }
       posted.push(JSON.parse(init!.body as string))
       return new Response(
         JSON.stringify({ accepted: 0, productsCreated: 0, observationsUpserted: 0, skipped: 0 }),
