@@ -316,7 +316,7 @@
     "closeToLimit": "Hampir mencapai batas harian.",
     "closeToLimitDesc": "Hampir mencapai batas harian. Sisa {{remaining}} permintaan.",
     "remainingRequests": "Sisa {{remaining}} permintaan hari ini.",
-    "ownKeyRequestsToday": "{{used}} permintaan hari ini · kunci sendiri",
+    "ownKeyTokensToday": "{{input}} masuk · {{output}} keluar hari ini · kunci sendiri",
     "ownKeyUnlimited": "Tanpa batas — pemakaian ditanggung kunci API milikmu."
   },
   "offline": {

@@ -14,6 +14,7 @@ import {
 } from './icons.jsx'
 import { usageState } from '../data/mock.js'
 import { cn } from '../lib/cn.js'
+import { formatTokens } from './ui.jsx'
 import { useApp } from '../context/AppContext.jsx'
 import { useMe, useLogout } from '../lib/queries/me.js'
 import { useSettings, useUsage } from '../lib/queries/index.js'
@@ -144,7 +145,10 @@ export function AppShell({ children }) {
                         used: meterUsage.used,
                         limit: meterUsage.limit,
                       })
-                    : t('ui.ownKeyRequestsToday', { used: usage.used })}
+                    : t('ui.ownKeyTokensToday', {
+                        input: formatTokens(usage.input_tokens),
+                        output: formatTokens(usage.output_tokens),
+                      })}
                 </span>
                 {meterUsage && (
                   <span className={cn('font-semibold tabular-nums', usageTone)}>

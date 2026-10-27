@@ -65,13 +65,23 @@ export function TimeSignal({ expiryDays, runOut, basis }) {
 
 export { EmptyState, SkeletonRows }
 
+// Compact token counts for usage metering: 950 → "950", 18230 → "18.2k",
+// 234500 → "235k".
+export function formatTokens(n) {
+  const v = Number(n) || 0
+  if (v < 1000) return String(v)
+  if (v < 100000) return `${(v / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  return `${Math.round(v / 1000)}k`
+}
+
 export function UsageMeter({ usage }) {
   const { t } = useTranslation()
   // Without loaded data render nothing — the mock fallback would misreport
   // provider and counts as real usage.
   if (!usage) return null
-  // The daily cap only applies to RumaQ's shared server key; a user's own
-  // key is unmetered.
+  // The daily cap only applies to RumaQ's shared server key; a user's own key
+  // is unmetered — what matters for them is the token count their provider
+  // subscription bills.
   const ownKey = usage.key_source === 'user'
   const normalized = { ...usage, limit: usage.limit ?? usage.daily_limit ?? 20 }
   const { pct, remaining, warn, danger } = usageState(normalized)
@@ -84,22 +94,27 @@ export function UsageMeter({ usage }) {
           <div className="font-semibold text-base">{normalized.provider}</div>
           <div className="text-sm text-text-muted mt-0.5">
             {ownKey
-              ? t('ui.ownKeyRequestsToday', { used: normalized.used })
+              ? t('ui.ownKeyTokensToday', {
+                  input: formatTokens(normalized.input_tokens),
+                  output: formatTokens(normalized.output_tokens),
+                })
               : t('ui.requestsToday', {
                   used: normalized.used,
                   limit: normalized.limit,
                 })}
           </div>
         </div>
-        <div
-          className={cn(
-            'font-bold text-lg tabular-nums',
-            tone === 'danger' && 'text-danger',
-            tone === 'warn' && 'text-warn'
-          )}
-        >
-          {ownKey ? normalized.used : `${normalized.used}/${normalized.limit}`}
-        </div>
+        {!ownKey && (
+          <div
+            className={cn(
+              'font-bold text-lg tabular-nums',
+              tone === 'danger' && 'text-danger',
+              tone === 'warn' && 'text-warn'
+            )}
+          >
+            {normalized.used}/{normalized.limit}
+          </div>
+        )}
       </div>
       {!ownKey && (
         <>

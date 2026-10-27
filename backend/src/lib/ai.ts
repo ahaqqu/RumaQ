@@ -62,6 +62,10 @@ type OpenAIResponse = {
       content?: string
     }
   }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+  }
 }
 
 type GeminiResponse = {
@@ -72,28 +76,44 @@ type GeminiResponse = {
       }>
     }
   }>
+  usageMetadata?: {
+    promptTokenCount?: number
+    candidatesTokenCount?: number
+    thoughtsTokenCount?: number
+  }
 }
 
 type AnthropicResponse = {
   content?: Array<{
     text?: string
   }>
+  usage?: {
+    input_tokens?: number
+    output_tokens?: number
+  }
 }
 
 export type ThinkingLevel = 'low' | 'medium' | 'high'
+
+// Real provider token counts (what the caller's own provider subscription
+// bills). Reported through AiCallOpts.onUsage when the provider includes
+// usage in its response.
+export type TokenUsage = {
+  input_tokens: number
+  output_tokens: number
+}
 
 export type AiCallOpts = {
   baseUrl?: string | null
   model?: string | null
   thinkingLevel?: ThinkingLevel | null
+  onUsage?: (usage: TokenUsage) => void
 }
 
 const OLLAMA_BASE_URL = 'https://ollama.com/v1'
 // Vision-capable default for receipt OCR. qwen3-vl:235b-instruct was retired
 // by Ollama Cloud on 2026-06-16 (requests now 410).
 const OLLAMA_DEFAULT_MODEL = 'glm-5.3-flash'
-// Room for reasoning tokens + item JSON on long receipts (1M-token models).
-const OLLAMA_MAX_TOKENS = 16000
 
 // Gemini exposes thinking as a token budget on thinking-capable models.
 const GEMINI_THINKING_BUDGET: Record<ThinkingLevel, number> = {
@@ -109,25 +129,34 @@ const ANTHROPIC_THINKING_BUDGET: Record<ThinkingLevel, number> = {
   high: 16384,
 }
 
+type OpenAICompatibleOpts = {
+  thinkingLevel?: ThinkingLevel | null
+  onUsage?: (usage: TokenUsage) => void
+  maxTokensField?: 'max_tokens' | 'max_completion_tokens'
+  // Omit to send no cap and let the provider/model defaults apply (Ollama
+  // reasoning models otherwise spend the cap on thinking alone).
+  maxTokens?: number
+}
+
 async function callOpenAICompatible(
   providerLabel: string,
   baseUrl: string,
   model: string,
   apiKey: string,
   messages: ChatMessage[],
-  thinkingLevel?: ThinkingLevel | null,
-  maxTokensField: 'max_tokens' | 'max_completion_tokens' = 'max_tokens',
-  maxTokens = 2000
+  opts?: OpenAICompatibleOpts
 ): Promise<string> {
   const body: Record<string, unknown> = {
     model,
     messages,
   }
-  body[maxTokensField] = maxTokens
+  if (opts?.maxTokens !== undefined) {
+    body[opts.maxTokensField ?? 'max_tokens'] = opts.maxTokens
+  }
   // Only accepted by reasoning-capable models; incompatible models surface a
   // provider 400 to the user via the usual 502 error path.
-  if (thinkingLevel) {
-    body.reasoning_effort = thinkingLevel
+  if (opts?.thinkingLevel) {
+    body.reasoning_effort = opts.thinkingLevel
   }
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
@@ -144,6 +173,12 @@ async function callOpenAICompatible(
   }
 
   const data = (await res.json()) as OpenAIResponse
+  if (opts?.onUsage && data.usage) {
+    opts.onUsage({
+      input_tokens: data.usage.prompt_tokens ?? 0,
+      output_tokens: data.usage.completion_tokens ?? 0,
+    })
+  }
   const content = data.choices?.[0]?.message?.content
   if (!content) throw new Error(`${providerLabel} returned empty response`)
 
@@ -161,10 +196,14 @@ async function callOpenAI(
     opts?.model?.trim() || 'gpt-4o-mini',
     apiKey,
     messages,
-    opts?.thinkingLevel,
-    // Reasoning models reject max_tokens; max_completion_tokens is accepted
-    // across OpenAI's chat models.
-    'max_completion_tokens'
+    {
+      thinkingLevel: opts?.thinkingLevel,
+      onUsage: opts?.onUsage,
+      // Reasoning models reject max_tokens; max_completion_tokens is accepted
+      // across OpenAI's chat models.
+      maxTokensField: 'max_completion_tokens',
+      maxTokens: 2000,
+    }
   )
 }
 
@@ -231,6 +270,13 @@ async function callGemini(
   }
 
   const data = (await res.json()) as GeminiResponse
+  if (opts?.onUsage && data.usageMetadata) {
+    const meta = data.usageMetadata
+    opts.onUsage({
+      input_tokens: meta.promptTokenCount ?? 0,
+      output_tokens: (meta.candidatesTokenCount ?? 0) + (meta.thoughtsTokenCount ?? 0),
+    })
+  }
   const content = data.candidates?.[0]?.content?.parts?.[0]?.text
   if (!content) throw new Error('Gemini returned empty response')
 
@@ -298,6 +344,12 @@ async function callAnthropic(
   }
 
   const result = (await res.json()) as AnthropicResponse
+  if (opts?.onUsage && result.usage) {
+    opts.onUsage({
+      input_tokens: result.usage.input_tokens ?? 0,
+      output_tokens: result.usage.output_tokens ?? 0,
+    })
+  }
   const content = result.content?.[0]?.text
   if (!content) throw new Error('Anthropic returned empty response')
 
@@ -315,7 +367,11 @@ async function callOpenCode(
     opts?.model?.trim() || 'opencode-vision',
     apiKey,
     messages,
-    opts?.thinkingLevel
+    {
+      thinkingLevel: opts?.thinkingLevel,
+      onUsage: opts?.onUsage,
+      maxTokens: 2000,
+    }
   )
 }
 
@@ -362,20 +418,20 @@ async function callProvider(
     case 'opencode':
       return callOpenCode(apiKey, messages, opts)
     case 'ollama':
-      // Reasoning models on Ollama Cloud (e.g. deepseek-v4.1-flash) spend
-      // thousands of tokens thinking before the JSON content; the shared
-      // 2000 cap gets consumed by reasoning alone and the response comes
-      // back empty. Ollama bills actual usage, so a generous cap only
-      // guards against runaways.
+      // No max_tokens cap: reasoning models (e.g. deepseek-v4.1-flash) spend
+      // thousands of tokens thinking before the JSON content, and the key
+      // owner pays per actual token anyway. The model's own context window is
+      // the only limit.
       return callOpenAICompatible(
         'Ollama Cloud',
         OLLAMA_BASE_URL,
         opts?.model?.trim() || OLLAMA_DEFAULT_MODEL,
         apiKey,
         messages,
-        opts?.thinkingLevel,
-        'max_tokens',
-        OLLAMA_MAX_TOKENS
+        {
+          thinkingLevel: opts?.thinkingLevel,
+          onUsage: opts?.onUsage,
+        }
       )
     case 'custom': {
       const baseUrl = opts?.baseUrl?.trim()
@@ -383,14 +439,11 @@ async function callProvider(
       if (!baseUrl || !model) {
         throw new Error('Custom provider requires a base URL and model in Settings')
       }
-      return callOpenAICompatible(
-        'Custom provider',
-        baseUrl,
-        model,
-        apiKey,
-        messages,
-        opts?.thinkingLevel
-      )
+      return callOpenAICompatible('Custom provider', baseUrl, model, apiKey, messages, {
+        thinkingLevel: opts?.thinkingLevel,
+        onUsage: opts?.onUsage,
+        maxTokens: 2000,
+      })
     }
     default:
       throw new Error(`Unsupported AI provider: ${provider}`)

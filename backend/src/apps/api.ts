@@ -29,7 +29,7 @@ import {
   getSignedUrl,
   extFromType,
 } from '../lib/receipts.js'
-import { extractReceiptItems } from '../lib/ai.js'
+import { extractReceiptItems, type TokenUsage } from '../lib/ai.js'
 import {
   resolveAiAccess,
   getOrCreateAiUsage,
@@ -933,7 +933,7 @@ apiApp.get(
     const provider = access?.provider ?? settings?.ai_provider ?? null
 
     const existing = await c.env.DB.prepare(
-      'SELECT id, used, daily_limit, provider FROM ai_usage WHERE user_id = ? AND date = ?'
+      'SELECT id, used, daily_limit, provider, input_tokens, output_tokens FROM ai_usage WHERE user_id = ? AND date = ?'
     )
       .bind(userId, today)
       .first<{
@@ -941,6 +941,8 @@ apiApp.get(
         used: number
         daily_limit: number
         provider: string | null
+        input_tokens: number
+        output_tokens: number
       }>()
 
     if (!existing) {
@@ -956,6 +958,8 @@ apiApp.get(
         daily_limit: 20,
         provider,
         key_source: keySource,
+        input_tokens: 0,
+        output_tokens: 0,
       })
       res.headers.set('Cache-Control', 'private, no-cache')
       return res
@@ -966,6 +970,8 @@ apiApp.get(
       daily_limit: existing.daily_limit,
       provider: existing.provider ?? provider,
       key_source: keySource,
+      input_tokens: existing.input_tokens,
+      output_tokens: existing.output_tokens,
     })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
@@ -1058,6 +1064,7 @@ apiApp.post(
     }
 
     let reply: string
+    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 }
     if (c.env.TEST_MODE === 'true') {
       reply = `(test) You asked: "${message}". Based on your household stock, consider checking your low items soon.`
     } else {
@@ -1146,6 +1153,10 @@ apiApp.post(
             baseUrl: access.baseUrl,
             model: access.model,
             thinkingLevel: access.thinkingLevel,
+            onUsage: (usage) => {
+              tokenUsage.input_tokens += usage.input_tokens
+              tokenUsage.output_tokens += usage.output_tokens
+            },
           }
         )
       } catch (err) {
@@ -1158,8 +1169,10 @@ apiApp.post(
       }
     }
 
-    await c.env.DB.prepare('UPDATE ai_usage SET used = used + 1 WHERE id = ?')
-      .bind(usageRow.id)
+    await c.env.DB.prepare(
+      'UPDATE ai_usage SET used = used + 1, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?'
+    )
+      .bind(tokenUsage.input_tokens, tokenUsage.output_tokens, usageRow.id)
       .run()
 
     const res = c.json({ reply })
@@ -1260,6 +1273,7 @@ apiApp.post(
     }
 
     let scanResult
+    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 }
     if (c.env.TEST_MODE === 'true') {
       scanResult = {
         store_name: 'Indomaret',
@@ -1281,6 +1295,10 @@ apiApp.post(
             baseUrl: access.baseUrl,
             model: access.model,
             thinkingLevel: access.thinkingLevel,
+            onUsage: (usage) => {
+              tokenUsage.input_tokens += usage.input_tokens
+              tokenUsage.output_tokens += usage.output_tokens
+            },
           }
         )
       } catch (err) {
@@ -1294,8 +1312,10 @@ apiApp.post(
       }
     }
 
-    await c.env.DB.prepare('UPDATE ai_usage SET used = used + 1 WHERE id = ?')
-      .bind(usageRow.id)
+    await c.env.DB.prepare(
+      'UPDATE ai_usage SET used = used + 1, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?'
+    )
+      .bind(tokenUsage.input_tokens, tokenUsage.output_tokens, usageRow.id)
       .run()
 
     const imageUrl: string | null = getSignedUrl()
@@ -2506,6 +2526,7 @@ apiApp.post(
       price_estimate: number | null
       why: string
     }>
+    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 }
 
     if (c.env.TEST_MODE === 'true') {
       generatedItems = [
@@ -2548,6 +2569,10 @@ apiApp.post(
             baseUrl: access.baseUrl,
             model: access.model,
             thinkingLevel: access.thinkingLevel,
+            onUsage: (usage) => {
+              tokenUsage.input_tokens += usage.input_tokens
+              tokenUsage.output_tokens += usage.output_tokens
+            },
           }
         )
       } catch (err) {
@@ -2560,8 +2585,10 @@ apiApp.post(
       }
     }
 
-    await c.env.DB.prepare('UPDATE ai_usage SET used = used + 1 WHERE id = ?')
-      .bind(usageRow.id)
+    await c.env.DB.prepare(
+      'UPDATE ai_usage SET used = used + 1, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?'
+    )
+      .bind(tokenUsage.input_tokens, tokenUsage.output_tokens, usageRow.id)
       .run()
 
     const storeLabels = new Map(stores.map((s) => [s.id, s.label]))

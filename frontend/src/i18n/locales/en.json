@@ -316,7 +316,7 @@
     "closeToLimit": "Close to daily limit.",
     "closeToLimitDesc": "Close to daily limit. {{remaining}} requests left.",
     "remainingRequests": "{{remaining}} requests left today.",
-    "ownKeyRequestsToday": "{{used}} requests today · your own key",
+    "ownKeyTokensToday": "{{input}} in · {{output}} out today · your own key",
     "ownKeyUnlimited": "Unlimited — your own API key covers the usage."
   },
   "offline": {

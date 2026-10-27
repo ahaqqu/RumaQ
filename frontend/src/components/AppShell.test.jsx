@@ -128,4 +128,22 @@ describe('AppShell', () => {
     )
     expect(container.querySelector('.text-danger')).toBeTruthy()
   })
+
+  it('shows token usage without a cap meter for own-key users', () => {
+    vi.mocked(useSettings).mockReturnValue({ data: { has_ai_key: true } })
+    vi.mocked(useUsage).mockReturnValue({
+      data: {
+        used: 3,
+        daily_limit: 20,
+        provider: 'ollama',
+        input_tokens: 18230,
+        output_tokens: 6100,
+        key_source: 'user',
+      },
+    })
+    const { container } = renderWithProviders(
+      React.createElement(AppShell, null, React.createElement('div', null, 'content'))
+    )
+    expect(container.querySelector('[class*="h-[5px]"]')).toBeNull()
+  })
 })

@@ -9,7 +9,19 @@ import {
   UsageMeter,
   MetaItem,
   IconPin,
+  formatTokens,
 } from './ui.jsx'
+
+describe('formatTokens', () => {
+  it('formats compact token counts', () => {
+    expect(formatTokens(0)).toBe('0')
+    expect(formatTokens(950)).toBe('950')
+    expect(formatTokens(1000)).toBe('1k')
+    expect(formatTokens(18230)).toBe('18.2k')
+    expect(formatTokens(234500)).toBe('235k')
+    expect(formatTokens(undefined)).toBe('0')
+  })
+})
 
 describe('LocChip', () => {
   it('renders location name', () => {
@@ -143,15 +155,23 @@ describe('UsageMeter', () => {
     expect(container.querySelector('.text-text-muted')).toBeTruthy()
   })
 
-  it('shows unlimited usage for own-key users', () => {
+  it('shows token usage for own-key users without a cap meter', () => {
     const { container } = render(
       React.createElement(UsageMeter, {
-        usage: { provider: 'Gemini', used: 20, daily_limit: 20, key_source: 'user' },
+        usage: {
+          provider: 'Ollama Cloud',
+          used: 3,
+          daily_limit: 20,
+          input_tokens: 18230,
+          output_tokens: 6100,
+          key_source: 'user',
+        },
       })
     )
-    expect(container.querySelector('.text-danger')).toBeNull()
+    // Own key: no request cap meter, provider name still visible.
     expect(container.querySelector('.h-2')).toBeNull()
-    expect(container.textContent).toContain('20')
+    expect(container.querySelector('.text-danger')).toBeNull()
+    expect(container.textContent).toContain('Ollama Cloud')
   })
 })
 
