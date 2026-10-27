@@ -37,6 +37,14 @@ describe('loadConfig', () => {
     expect(storeBySlug(config, 'lotte-mart')!.strategy).toBe('browser')
   })
 
+  it('keeps haqita lotte.py en-US Accept-Language override verbatim', () => {
+    const config = loadConfig()
+    expect(storeBySlug(config, 'lotte-mart')!.headerOverrides).toEqual({
+      'Accept-Language': 'en-US,en;q=0.5',
+    })
+    expect(storeBySlug(config, 'superindo')!.headerOverrides).toBeUndefined()
+  })
+
   it('caps pages per store as a Gemini quota guard', () => {
     for (const store of loadConfig().stores) {
       expect(store.maxPages).toBeGreaterThan(0)

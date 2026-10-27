@@ -7,7 +7,8 @@
 // plain stores get the Tier-1 fetcher, browser stores get Tier-2 HTML with
 // Tier-1 image downloads (the brochure CDN is not challenge-protected).
 //
-// Port of haqita base_scraper.py DEFAULT_HEADERS + _request_with_retries.
+// Port of haqita base_scraper.py DEFAULT_HEADERS + _request_with_retries,
+// plus haqita's per-store HEADERS overrides (config headerOverrides).
 // All failures are typed tagged errors; transport and HTTP-status failures
 // are retried by the shared engine, content-type and tier errors are fatal.
 
@@ -115,7 +116,11 @@ export function createFetcher(
     url: string,
     accept: string
   ): Effect.Effect<Response, FetchTransport | FetchHttpStatus> => {
-    const headers: Record<string, string> = { ...DEFAULT_HEADERS, Accept: accept }
+    const headers: Record<string, string> = {
+      ...DEFAULT_HEADERS,
+      ...store.headerOverrides,
+      Accept: accept,
+    }
     const cookie = jarCookieHeader(jar, url)
     if (cookie) headers.Cookie = cookie
     const init: RequestInit & { proxy?: string } = { headers, redirect: 'follow' }

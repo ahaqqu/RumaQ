@@ -20,6 +20,12 @@ export interface StoreConfig {
   maxPages: number
   /** Optional per-store proxy (Tier 3), read from this env var when set. */
   proxyEnv?: string
+  /**
+   * Per-store header overrides merged over DEFAULT_HEADERS on the plain
+   * tier (haqita's per-store HEADERS dicts). Accept stays per-request
+   * (html vs image) and always wins.
+   */
+  headerOverrides?: Record<string, string>
 }
 
 export interface ScraperConfig {
@@ -89,6 +95,11 @@ export function loadConfig(): ScraperConfig {
       {
         // Lotte sits behind Imperva Incapsula → Tier-2 browser strategy.
         // Plugin lands in PR3; registered now for the reachability gate.
+        // haqita's lotte.py overrode Accept-Language to en-US for every
+        // plain-tier request (listing + images) — kept verbatim, though the
+        // 2026-10-28 probe (see ARCHITECTURE.md) showed even the exact haqita
+        // client+headers receives the Incapsula challenge from a Jakarta
+        // residential IP today: the override is fidelity, not a bypass.
         slug: 'lotte-mart',
         name: 'Lotte Mart',
         kind: 'brochure',
@@ -97,6 +108,7 @@ export function loadConfig(): ScraperConfig {
         website: 'https://www.lottemart.co.id/',
         maxPages: 40,
         proxyEnv: 'LOTTE_PROXY_URL',
+        headerOverrides: { 'Accept-Language': 'en-US,en;q=0.5' },
       },
     ],
   }
