@@ -41,8 +41,10 @@ export const planCreateSchema = strictObject({
         store_id: optional(string()),
         price_estimate: optional(number()),
         why: optional(string()),
-        // Set when the estimate was grounded on a real price observation (§5.4).
-        price_observation_id: optional(string()),
+        // Set when the estimate was grounded on a real price observation
+        // (§5.4). The browser client sends an explicit null for ungrounded
+        // items, so this is nullish rather than merely optional.
+        price_observation_id: nullish(string()),
       })
     ),
     minLength(1)

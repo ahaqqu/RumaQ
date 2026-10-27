@@ -803,6 +803,34 @@ describe('api routes', () => {
     expect(insert!.params[8]).toBeNull()
   })
 
+  it('/api/plans accepts an explicit null price_observation_id (ungrounded item)', async () => {
+    // The browser client sends null for ungrounded items; the schema must not
+    // reject it, and no observation lookup should run for null.
+    const { env, prepared } = createCapturingPlansEnv([
+      null, // no existing active plan
+      null, // items lookup misses
+      { id: 'pl1', household_id: 'h1', status: 'active' }, // plan re-read
+    ])
+    const res = await apiApp.request(
+      '/api/plans',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          items: [{ name: 'Milk', qty: 1, unit: 'L', price_observation_id: null }],
+        }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(201)
+    expect(
+      prepared.find((s) => s.sql.includes('SELECT id FROM price_observations'))
+    ).toBeUndefined()
+    const insert = prepared.find((s) => s.sql.includes('INSERT INTO plan_items'))
+    expect(insert).toBeDefined()
+    expect(insert!.params[8]).toBeNull()
+  })
+
   it('/api/plans/:id/items/:itemId updates item status', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.first = vi
