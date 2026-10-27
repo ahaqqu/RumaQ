@@ -108,8 +108,17 @@ log "units installed + daemon reloaded"
 # --- 4b. the ingest-url repair helper ------------------------------------------
 # Root-owned, no arguments, one narrow job (rewrite the env's ingest URL);
 # the sudoers fragment below grants it to kajianq-deploy so the repair never
-# needs an interactive sudo.
-install -m 0755 -o root -g root "$HERE/bin/rumaq-scraper-ingest-url" /usr/local/sbin/rumaq-scraper-ingest-url
+# needs an interactive sudo. The URL is substituted from env.example — the
+# repo's single literal for the ingest route — so a route change has one edit.
+ingest_url="$(sed -n 's/^RUMAQ_INGEST_URL=//p' "$HERE/env.example")"
+[[ $ingest_url =~ ^https://[A-Za-z0-9/._-]+$ ]] || {
+  echo "apply.sh: no usable RUMAQ_INGEST_URL in $HERE/env.example" >&2
+  exit 1
+}
+sed "s|@RUMAQ_INGEST_URL@|$ingest_url|" "$HERE/bin/rumaq-scraper-ingest-url" \
+  > /usr/local/sbin/rumaq-scraper-ingest-url
+chmod 0755 /usr/local/sbin/rumaq-scraper-ingest-url
+chown root:root /usr/local/sbin/rumaq-scraper-ingest-url
 log "ingest-url repair helper installed at /usr/local/sbin/rumaq-scraper-ingest-url"
 
 # --- 5. sudoers ----------------------------------------------------------------

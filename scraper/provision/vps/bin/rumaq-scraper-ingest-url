@@ -5,13 +5,23 @@
 # fragment, so pointing the nightly job back at the production ingest route
 # never needs an interactive sudo.
 #
-# The URL is public repo knowledge (the same constant provision-vps.sh
-# fills at provisioning time). Only the RUMAQ_INGEST_URL line is rewritten —
-# the env file's key lines are never read here, only preserved in place.
+# This is a TEMPLATE: apply.sh substitutes @RUMAQ_INGEST_URL@ with the
+# canonical value from provision/vps/env.example at install time, so the
+# repo keeps exactly one literal for the ingest route. Only the
+# RUMAQ_INGEST_URL line is rewritten — the env file's key lines are never
+# read here, only preserved in place (and the 0600 mode is re-asserted).
 set -euo pipefail
 
 ENV_FILE=/etc/rumaq-scraper/env
-INGEST_URL='https://rumaq.ahaqqu.com/api/internal/ingest/prices'
+INGEST_URL='@RUMAQ_INGEST_URL@'
+
+# Running the repo copy directly would write the literal placeholder.
+case "$INGEST_URL" in
+  @*)
+    echo "rumaq-scraper-ingest-url: template not installed — run provision/vps/apply.sh (it substitutes the URL from env.example)" >&2
+    exit 1
+    ;;
+esac
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "rumaq-scraper-ingest-url: $ENV_FILE missing — provision first (apply.sh)" >&2
@@ -23,4 +33,5 @@ if ! grep -q '^RUMAQ_INGEST_URL=' "$ENV_FILE"; then
 fi
 
 sed -i "s|^RUMAQ_INGEST_URL=.*|RUMAQ_INGEST_URL=${INGEST_URL}|" "$ENV_FILE"
+chmod 0600 "$ENV_FILE"
 grep '^RUMAQ_INGEST_URL=' "$ENV_FILE"

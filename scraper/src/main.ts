@@ -9,9 +9,9 @@
 // --self-check is the post-deploy gate (provision/vps/deploy path).
 //
 // A failed nightly run exits 0 on purpose: the failure is logged to the
-// journal and POSTed to the run-report monitor (pipeline carries its own
-// exit code 1/2 in the report), the systemd unit stays green, and the
-// timer simply retries tomorrow. Seven consecutive failed nights trip the
+// journal and recorded in status.json (the pipeline still carries its own
+// exit code 1/2 internally), the systemd unit stays green, and the timer
+// simply retries tomorrow. Seven consecutive failed nights trip the
 // freshness gate instead (scripts/github/check-price-freshness.sh) — that,
 // not one bad run, is the service-down signal. The deploy-time self-check
 // still exits 1 so a tree that cannot run fails its deploy.
@@ -80,8 +80,8 @@ if (args.selfCheck) {
     () => process.exit(0),
     (error) => {
       // Soft on purpose — see the header: a failed nightly run is logged
-      // (here and in the run report) and retried by tomorrow's timer, not
-      // turned into a failed unit that flags the box's shared doctor.
+      // (journal + status.json) and retried by tomorrow's timer, not turned
+      // into a failed unit that flags the box's shared doctor.
       process.stderr.write(
         `[scraper] nightly run failed (logged + reported; retrying next scheduled run): ${String(error)}\n`
       )

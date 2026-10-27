@@ -66,7 +66,7 @@ DEPLOY_USER="kajianq-deploy"
 REMOTE_STAGE="rumaq-provision" # under the admin user's home
 DEPLOY_ROOT="/srv/rumaq-scraper"
 BROWSERS_PATH="$DEPLOY_ROOT/browsers"
-INGEST_URL="https://rumaq.ahaqqu.com/api/internal/ingest/prices"
+INGEST_URL="$(sed -n 's/^RUMAQ_INGEST_URL=//p' "$SCRAPER_DIR/provision/vps/env.example")"
 # Generated once during provisioning prep; the same value is the
 # GitHub secret HAQITA_INGEST_SECRET (the Worker side of the pair).
 INGEST_SECRET_FILE="$HOME/.config/rumaq/ingest-secret"
@@ -101,6 +101,13 @@ fi
 if [ "$FIX_INGEST_URL" -eq 1 ] && [ -n "$GEMINI_KEY_FILE" ]; then
   die "--fix-ingest-url rewrites only the ingest URL line — it takes no --gemini-key-file"
 fi
+if [ "$FIX_INGEST_URL" -eq 1 ] && [ "$ENABLE_TIMER" -eq 1 ]; then
+  # --go-live also sets ENABLE_TIMER, so this covers both flags.
+  die "--fix-ingest-url is a focused repair — it takes no --enable-timer/--go-live (use --go-live for the go-live flow)"
+fi
+# env.example is the repo's single literal for the ingest route (the repair
+# helper is installed from it too) — fail loudly if it ever loses the line.
+[[ $INGEST_URL =~ ^https://[A-Za-z0-9/._-]+$ ]] || die "scraper/provision/vps/env.example has no usable RUMAQ_INGEST_URL"
 
 # --- 0. the host ---------------------------------------------------------------
 HOST="${RUMAQ_VPS_HOST:-}"

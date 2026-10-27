@@ -23,12 +23,13 @@ set -euo pipefail
 # Env:
 #   HAQITA_INGEST_SECRET  bearer secret (same value the box uses)
 #   RUMAQ_PROD_URL        default https://rumaq.ahaqqu.com
-#   PRICE_STALE_HOURS     default 168 (7 days) — the service-down threshold.
-#                         A single failed nightly run is NOT down: the scraper
-#                         logs it, reports it to the run monitor, and the timer
-#                         retries the next night (the systemd unit stays green).
-#                         Only 7 consecutive failed nights — a week of no data
-#                         — means the pipeline is actually broken.
+#   PRICE_STALE_HOURS     default 168 (7 days) — the service-down threshold,
+#                         measured from the end of the latest observation's
+#                         date. A single failed nightly run is NOT down: the
+#                         scraper logs it (journal + status.json) and the
+#                         timer retries the next night (the systemd unit
+#                         stays green). Only 7 consecutive failed nights — a
+#                         week of no data — means the pipeline is broken.
 # ============================================================
 
 BASE_URL="${RUMAQ_PROD_URL:-https://rumaq.ahaqqu.com}"
@@ -66,7 +67,12 @@ if [ "$latest" = "null" ]; then
   exit 1
 fi
 
-latest_ts="$(date -ud "${latest}T00:00:00Z" +%s)"
+# latestObservedDate is a date only, and the nightly publish lands late on
+# that day (23:00 UTC) — anchor the age at the END of it. Midnight anchoring
+# would reach 168h at D+7 00:00 (six failed nights), one night before the
+# owner decision's seven; end-of-day is reached at D+8 00:00, after the
+# seventh missed run.
+latest_ts="$(date -ud "${latest}T23:59:59Z" +%s)"
 now_ts="$(date -u +%s)"
 age_hours=$(( (now_ts - latest_ts) / 3600 ))
 

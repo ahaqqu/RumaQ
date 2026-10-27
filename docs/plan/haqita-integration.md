@@ -330,8 +330,8 @@ Planned, in two parts:
   additionally checks price-data freshness — latest `price_observations` newer than
   7 days (168h) — reusing its auto-created `smoke-failure` issue on failure. The
   7-day threshold is deliberate (owner decision 2026-10-27): one failed nightly run
-  is not "service down" — the scraper logs it, reports it to the run monitor, and
-  the timer retries the next night (the systemd unit exits 0 and stays green);
+  is not "service down" — the scraper logs it (journal + status.json) and the
+  timer retries the next night (the systemd unit exits 0 and stays green);
   only a week of consecutive failures means the pipeline is actually broken. Catches
   every failure mode end-to-end (box down, timer off, scrape error, publish error).
 - **Scraping monitor screen (milestone 5, folded into the frontend PR)**:

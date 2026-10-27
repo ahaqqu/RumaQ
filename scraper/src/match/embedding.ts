@@ -13,9 +13,9 @@ import { classifyQuotaError, withQuotaPolicy, type QuotaExhausted } from '../uti
 export interface EmbeddingClient {
   models: {
     // embedContent with a `contents` array is the SDK's batch embedding path
-    // (1.x ≥ ~1.30 removed models.batchEmbedContents; the single call still
-    // posts to the batchEmbedContents REST endpoint and returns one vector
-    // per input).
+    // (the bundled @google/genai 1.52.0 no longer exposes
+    // models.batchEmbedContents; the single call still posts to the
+    // batchEmbedContents REST endpoint and returns one vector per input).
     embedContent(args: {
       model: string
       contents: string[]
