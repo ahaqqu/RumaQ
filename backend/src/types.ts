@@ -17,6 +17,7 @@ export type Env = {
     WORKER_JWT_SECRET: string
     WORKER_ENCRYPTION_KEY: string
     HAQITA_INGEST_SECRET?: string
+    ADMIN_EMAILS?: string
     PAGES_ORIGIN?: string
     EMAIL_AUTH_ENABLED: string
     ASSETS: Fetcher

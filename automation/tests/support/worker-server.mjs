@@ -64,6 +64,9 @@ const mf = new Miniflare({
     WORKER_ENCRYPTION_KEY: 'a'.repeat(32),
     // Bearer secret for the internal price ingest endpoint (haqita PR1).
     HAQITA_INGEST_SECRET: 'test-ingest-secret',
+    // Admin allowlist for the scraping monitor — the default authenticated
+    // test user is the operator in the local test stack.
+    ADMIN_EMAILS: 'test@rumaq.dev',
     TEST_MODE: 'true',
     EMAIL_AUTH_ENABLED: 'true',
     // Rate-limit overrides are optional; newer Miniflare rejects undefined

@@ -5,9 +5,11 @@ export {
   ingestStoreSchema,
   ingestItemSchema,
   ingestPayloadSchema,
+  runReportSchema,
   type IngestPayload,
   type IngestStore,
   type IngestItem,
+  type RunReport,
 } from '@rumaq/contract'
 import type { IngestPayload } from '@rumaq/contract'
 

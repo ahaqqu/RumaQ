@@ -88,6 +88,46 @@ defineFeature(feature, (test) => {
     }
   }
 
+  function runReport() {
+    return {
+      schemaVersion: 1,
+      runStartedAt: '2026-10-24T23:00:05Z',
+      finishedAt: '2026-10-24T23:04:11Z',
+      exitCode: 0,
+      status: 'success',
+      stage: 'done',
+      perStore: {
+        superindo: {
+          pagesFound: 2,
+          newImages: 1,
+          existingImages: 1,
+          skipped: 0,
+          itemsExtracted: 7,
+          itemsRejected: 0,
+        },
+      },
+      match: { exact: 5, embedding: 1, ai: 0, solo: 1, reviewItems: 0, embeddingsDegraded: false },
+      publish: { mode: 'published', accepted: 3, skipped: 0 },
+      error: null,
+    }
+  }
+
+  async function pushRunReport(bearer = INGEST_SECRET) {
+    ctx.response = await fetch(`${ctx.baseUrl}/api/internal/ingest/runs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${bearer}`,
+      },
+      body: JSON.stringify(runReport()),
+    })
+    try {
+      ctx.responseBody = await ctx.response.json()
+    } catch {
+      ctx.responseBody = null
+    }
+  }
+
   test('Ingest rejects pushes without a valid bearer token', ({ given, when, then }) => {
     given('the API is running', () => {})
 
@@ -284,6 +324,48 @@ defineFeature(feature, (test) => {
         latestObservedDate: '2026-10-24',
         observationCount: 3,
       })
+    })
+  })
+
+  test('Run report requires the ingest bearer secret', ({ given, when, then }) => {
+    given('the API is running', () => {})
+
+    when('the scraper pushes a run report with a wrong bearer token', async () => {
+      await pushRunReport('wrong-secret')
+    })
+
+    then('the response status should be 401', () => {
+      ctx.expectStatus(401)
+    })
+  })
+
+  test('Run report is recorded and visible to an admin', ({ given, and, when, then }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a valid price snapshot has been pushed', async () => {
+      await pushSnapshot()
+      ctx.expectStatus(200)
+    })
+
+    when('the scraper pushes a run report', async () => {
+      await pushRunReport()
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and('the admin sees the run in the monitor feed', async () => {
+      await ctx.authenticate()
+      await ctx.sendRequest('GET', '/api/admin/price-runs')
+      ctx.expectStatus(200)
+      expect(ctx.responseBody.runs).toHaveLength(1)
+      expect(ctx.responseBody.runs[0].status).toBe('success')
+      expect(ctx.responseBody.runs[0].stage).toBe('done')
+      expect(ctx.responseBody.runs[0].perStore.superindo.itemsExtracted).toBe(7)
+      expect(ctx.responseBody.lastSuccessAt).toBe('2026-10-24T23:00:05Z')
     })
   })
 })

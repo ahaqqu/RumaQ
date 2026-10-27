@@ -16,7 +16,7 @@ import { exitError, fakeBrowserLauncher } from './helpers.js'
 import type { GeminiClient } from '../src/ocr/gemini.js'
 import type { EmbeddingClient } from '../src/match/embedding.js'
 import { md5Hash } from '../src/fetch/state.js'
-import type { IngestPayload } from '@rumaq/contract'
+import type { IngestPayload, RunReport } from '@rumaq/contract'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -246,14 +246,18 @@ describe('runPipeline', () => {
     expect(runFiles).toHaveLength(1)
 
     // Run 2: pages unchanged (zero new OCR), ingest succeeds — the POST body
-    // replays run 1's stranded items, then the outbox is retired.
+    // replays run 1's stranded items, then the outbox is retired. The fake
+    // also serves the run-report endpoint the live pipeline now posts to.
     const posted: IngestPayload[] = []
-    const okPublish = async (_url: string, init?: RequestInit) => {
-      posted.push(JSON.parse(init!.body as string))
-      return new Response(
-        JSON.stringify({ accepted: 1, productsCreated: 1, observationsUpserted: 1, skipped: 0 }),
-        { status: 200 }
-      )
+    const okPublish = async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/internal/ingest/prices')) {
+        posted.push(JSON.parse(init!.body as string))
+        return new Response(
+          JSON.stringify({ accepted: 1, productsCreated: 1, observationsUpserted: 1, skipped: 0 }),
+          { status: 200 }
+        )
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
     }
     const status2 = await Effect.runPromise(
       runPipeline({
@@ -530,6 +534,40 @@ describe('runPipeline', () => {
     expect(statusFile.stores['superindo'].pagesFound).toBe(0)
     expect(statusFile.stores['superindo'].error).toContain('HTTP 500')
     expect(statusFile.stores['lotte-mart'].error).toBeUndefined()
+  })
+
+  it('reports a failed live run to the backend (§7.1)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const reported: RunReport[] = []
+    const failingFetch = async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/internal/ingest/runs')) {
+        reported.push(JSON.parse(init!.body as string))
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }
+      return new Response('nope', { status: 500 })
+    }
+    await Effect.runPromiseExit(
+      runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
+        stateDir,
+        dryRun: false,
+        fetch: failingFetch,
+        publishFetch: failingFetch,
+        ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+        ingestSecret: 's3cret',
+        sleep: noSleep,
+        now: () => new Date('2026-10-24T23:00:05Z'),
+        log: () => {},
+      })
+    )
+    expect(reported).toHaveLength(1)
+    expect(reported[0]!.status).toBe('failed')
+    expect(reported[0]!.exitCode).toBe(1)
+    expect(reported[0]!.stage).toBe('publish')
+    expect(reported[0]!.error).toContain('HTTP 500')
+    expect(reported[0]!.perStore['superindo']!.error).toContain('HTTP 500')
   })
 
   it("isolates stores — one store failing never blocks the other stores' publish", async () => {

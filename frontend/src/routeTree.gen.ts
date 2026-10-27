@@ -14,7 +14,9 @@ import { Route as AddRouteImport } from './routes/add'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as PlanRouteImport } from './routes/plan'
+import { Route as PricesRouteImport } from './routes/prices'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as AdminPricesRouteImport } from './routes/admin.prices'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -41,9 +43,19 @@ const PlanRoute = PlanRouteImport.update({
   path: '/plan',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PricesRoute = PricesRouteImport.update({
+  id: '/prices',
+  path: '/prices',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminPricesRoute = AdminPricesRouteImport.update({
+  id: '/admin/prices',
+  path: '/admin/prices',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -53,7 +65,9 @@ export interface FileRoutesByFullPath {
   '/history': typeof HistoryRoute
   '/inventory': typeof InventoryRoute
   '/plan': typeof PlanRoute
+  '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
+  '/admin/prices': typeof AdminPricesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -61,7 +75,9 @@ export interface FileRoutesByTo {
   '/history': typeof HistoryRoute
   '/inventory': typeof InventoryRoute
   '/plan': typeof PlanRoute
+  '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
+  '/admin/prices': typeof AdminPricesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -70,13 +86,31 @@ export interface FileRoutesById {
   '/history': typeof HistoryRoute
   '/inventory': typeof InventoryRoute
   '/plan': typeof PlanRoute
+  '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
+  '/admin/prices': typeof AdminPricesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/add' | '/history' | '/inventory' | '/plan' | '/settings'
+  fullPaths:
+    | '/'
+    | '/add'
+    | '/history'
+    | '/inventory'
+    | '/plan'
+    | '/prices'
+    | '/settings'
+    | '/admin/prices'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/add' | '/history' | '/inventory' | '/plan' | '/settings'
+  to:
+    | '/'
+    | '/add'
+    | '/history'
+    | '/inventory'
+    | '/plan'
+    | '/prices'
+    | '/settings'
+    | '/admin/prices'
   id:
     | '__root__'
     | '/'
@@ -84,7 +118,9 @@ export interface FileRouteTypes {
     | '/history'
     | '/inventory'
     | '/plan'
+    | '/prices'
     | '/settings'
+    | '/admin/prices'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -93,7 +129,9 @@ export interface RootRouteChildren {
   HistoryRoute: typeof HistoryRoute
   InventoryRoute: typeof InventoryRoute
   PlanRoute: typeof PlanRoute
+  PricesRoute: typeof PricesRoute
   SettingsRoute: typeof SettingsRoute
+  AdminPricesRoute: typeof AdminPricesRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -133,11 +171,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PlanRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/prices': {
+      id: '/prices'
+      path: '/prices'
+      fullPath: '/prices'
+      preLoaderRoute: typeof PricesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/prices': {
+      id: '/admin/prices'
+      path: '/admin/prices'
+      fullPath: '/admin/prices'
+      preLoaderRoute: typeof AdminPricesRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -149,7 +201,9 @@ const rootRouteChildren: RootRouteChildren = {
   HistoryRoute: HistoryRoute,
   InventoryRoute: InventoryRoute,
   PlanRoute: PlanRoute,
+  PricesRoute: PricesRoute,
   SettingsRoute: SettingsRoute,
+  AdminPricesRoute: AdminPricesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

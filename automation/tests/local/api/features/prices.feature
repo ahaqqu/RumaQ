@@ -56,3 +56,15 @@ Feature: Price data ingest and explorer
     When the scraper requests the price freshness status
     Then the response status should be 200
     And the status should report the latest observation date and count
+
+  Scenario: Run report requires the ingest bearer secret
+    Given the API is running
+    When the scraper pushes a run report with a wrong bearer token
+    Then the response status should be 401
+
+  Scenario: Run report is recorded and visible to an admin
+    Given the database has seed data
+    And a valid price snapshot has been pushed
+    When the scraper pushes a run report
+    Then the response status should be 200
+    And the admin sees the run in the monitor feed

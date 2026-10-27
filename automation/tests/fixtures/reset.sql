@@ -4,6 +4,9 @@ DELETE FROM plan_items;
 DELETE FROM price_observations;
 DELETE FROM price_products;
 DELETE FROM price_sources;
+-- Scraper run reports (migration 0010) — no FK relations, but reset must
+-- return the monitor feed to a clean slate for the price scenarios.
+DELETE FROM price_runs;
 DELETE FROM plans;
 DELETE FROM purchase_items;
 DELETE FROM purchases;

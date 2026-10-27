@@ -26,6 +26,8 @@ import {
   ArrowLeft as IconArrowLeft,
   CalendarBlank as IconCalendarBlank,
   WifiSlash as IconOffline,
+  Tag as IconPrices,
+  Pulse as IconMonitor,
 } from '@phosphor-icons/react'
 
 export {
@@ -55,6 +57,8 @@ export {
   IconArrowLeft,
   IconCalendarBlank,
   IconOffline,
+  IconPrices,
+  IconMonitor,
 }
 
 export function BrandMark({ size = 32 }) {

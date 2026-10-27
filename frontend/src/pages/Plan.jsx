@@ -96,6 +96,7 @@ export function Plan({ askAssistant, setView }) {
       store_id: it.store_id,
       price_estimate: it.price_estimate,
       why: it.why,
+      price_observation_id: it.price_observation_id,
     }))
     await saveMutation.mutateAsync(items)
     generateMutation.reset()
@@ -215,6 +216,13 @@ export function Plan({ askAssistant, setView }) {
                         {it.unit ? ` ${it.unit}` : ''}
                       </div>
                       <div className="text-xs text-text-muted mt-0.5">{it.why}</div>
+                      {it.price_source_name && it.price_estimate != null && (
+                        <div className="text-xs text-accent-hover mt-0.5">
+                          {t('plan.groundedFrom', { source: it.price_source_name })}
+                          {it.price_valid_until &&
+                            ` · ${t('plan.groundedUntil', { date: it.price_valid_until })}`}
+                        </div>
+                      )}
                     </div>
                     {it.price_estimate != null && (
                       <div className="text-sm font-semibold">
@@ -328,6 +336,13 @@ export function Plan({ askAssistant, setView }) {
                         {it.unit ? ` ${it.unit}` : ''}
                       </div>
                       {it.why && <div className="text-xs text-text-muted mt-0.5">{it.why}</div>}
+                      {it.price_source_name && it.price_estimate != null && (
+                        <div className="text-xs text-accent-hover mt-0.5">
+                          {t('plan.groundedFrom', { source: it.price_source_name })}
+                          {it.price_valid_until &&
+                            ` · ${t('plan.groundedUntil', { date: it.price_valid_until })}`}
+                        </div>
+                      )}
                     </div>
                     {it.price_estimate != null && (
                       <div className="text-sm font-semibold">

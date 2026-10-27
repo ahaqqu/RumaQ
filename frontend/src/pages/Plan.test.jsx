@@ -134,6 +134,30 @@ describe('Plan', () => {
     ).toBeTruthy()
   })
 
+  it('shows the grounded-estimate badge on grounded items', () => {
+    const groundedPlan = {
+      plans: [
+        {
+          ...mockActivePlan.plans[0],
+          items: [
+            {
+              ...mockActivePlan.plans[0].items[0],
+              price_source_name: 'Lotte Mart',
+              price_valid_until: '2026-10-28',
+            },
+          ],
+        },
+      ],
+    }
+    vi.mocked(usePlans).mockReturnValue({ data: groundedPlan, isLoading: false })
+    const { container } = renderWithQuery(
+      React.createElement(Plan, { askAssistant: vi.fn(), setView: vi.fn() })
+    )
+    // The i18n mock returns raw keys — assert the badge branch rendered.
+    expect(container.textContent).toContain('plan.groundedFrom')
+    expect(container.textContent).toContain('plan.groundedUntil')
+  })
+
   it('toggles checkbox on plan items', () => {
     const mutate = vi.fn()
     vi.mocked(useUpdatePlanItem).mockReturnValue({

@@ -368,6 +368,7 @@ The legacy Pages project was deleted after the cutover; `rumaq.pages.dev` no lon
 | `WORKER_JWT_SECRET`      | Worker secret | HMAC key for session JWT                                                                                                                                                            |
 | `WORKER_ENCRYPTION_KEY`  | Worker secret | AES-GCM key for AI keys                                                                                                                                                             |
 | `HAQITA_INGEST_SECRET`   | Worker secret | Bearer secret for the internal price ingest endpoint (`POST /api/internal/ingest/prices`, pushed daily by the rumaq-scraper VPS job). Optional: when unset the endpoint returns 503 |
+| `ADMIN_EMAILS`           | Worker secret | Comma-separated admin allowlist for operator-only surfaces (the scraping monitor at `/admin/prices`, fed by `POST /api/internal/ingest/runs`). Optional: when unset nobody is admin |
 | `CLOUDFLARE_ACCOUNT_ID`  | Build/deploy  | Cloudflare account ID; used by Wrangler and the deploy script                                                                                                                       |
 | `CLOUDFLARE_DATABASE_ID` | Build/deploy  | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed                                                                                          |
 | `CLOUDFLARE_API_TOKEN`   | Build/deploy  | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                                                                                            |
@@ -403,13 +404,14 @@ export WORKER_ENCRYPTION_KEY=...
 
 **Important:** Rotating `WORKER_ENCRYPTION_KEY` invalidates every stored AI API key because they are encrypted with the old key. After rotation, all users must re-enter their AI key in Settings. Rotating `WORKER_JWT_SECRET` only invalidates active sessions; users simply log in again.
 
-| Secret                  | Local | Test | Production | Rotation impact                                  |
-| ----------------------- | ----- | ---- | ---------- | ------------------------------------------------ |
-| `GOOGLE_CLIENT_ID`      | yes   | no   | yes        | OAuth login only                                 |
-| `GOOGLE_CLIENT_SECRET`  | yes   | no   | yes        | OAuth login only                                 |
-| `WORKER_JWT_SECRET`     | yes   | yes  | yes        | Active sessions invalidated                      |
-| `WORKER_ENCRYPTION_KEY` | yes   | yes  | yes        | Stored AI keys must be re-entered                |
-| `HAQITA_INGEST_SECRET`  | yes   | yes  | yes        | Scraper pushes rejected until its env is rotated |
+| Secret                  | Local | Test | Production | Rotation impact                                          |
+| ----------------------- | ----- | ---- | ---------- | -------------------------------------------------------- |
+| `GOOGLE_CLIENT_ID`      | yes   | no   | yes        | OAuth login only                                         |
+| `GOOGLE_CLIENT_SECRET`  | yes   | no   | yes        | OAuth login only                                         |
+| `WORKER_JWT_SECRET`     | yes   | yes  | yes        | Active sessions invalidated                              |
+| `WORKER_ENCRYPTION_KEY` | yes   | yes  | yes        | Stored AI keys must be re-entered                        |
+| `HAQITA_INGEST_SECRET`  | yes   | yes  | yes        | Scraper pushes rejected until its env is rotated         |
+| `ADMIN_EMAILS`          | yes   | yes  | yes        | Admin monitor access changes on next login/session check |
 
 ## 9. Free-tier headroom
 
