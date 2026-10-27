@@ -96,10 +96,11 @@ describe('recordRunReport', () => {
     expect(params[2]).toBe('2026-10-26T23:04:11Z')
     expect(params[3]).toBe(0)
     expect(params[4]).toBe('success')
-    expect(JSON.parse(params[5] as string)).toEqual(sampleReport().perStore)
-    expect(JSON.parse(params[6] as string)).toEqual(sampleReport().match)
-    expect(JSON.parse(params[7] as string)).toEqual(sampleReport().publish)
-    expect(params[8]).toBeNull()
+    expect(params[5]).toBe('done')
+    expect(JSON.parse(params[6] as string)).toEqual(sampleReport().perStore)
+    expect(JSON.parse(params[7] as string)).toEqual(sampleReport().match)
+    expect(JSON.parse(params[8] as string)).toEqual(sampleReport().publish)
+    expect(params[9]).toBeNull()
   })
 
   it('stores null for absent match/publish sections and the error message', async () => {
@@ -113,9 +114,9 @@ describe('recordRunReport', () => {
       error: 'store superindo failed',
     }
     await recordRunReport(db, failed)
-    expect(statements[0]!.params[6]).toBeNull()
     expect(statements[0]!.params[7]).toBeNull()
-    expect(statements[0]!.params[8]).toBe('store superindo failed')
+    expect(statements[0]!.params[8]).toBeNull()
+    expect(statements[0]!.params[9]).toBe('store superindo failed')
   })
 })
 
@@ -127,6 +128,7 @@ describe('listPriceRuns', () => {
       finished_at: '2026-10-26T23:04:11Z',
       exit_code: 0,
       status: 'success',
+      stage: 'done',
       per_store: JSON.stringify(sampleReport().perStore),
       match_stats: JSON.stringify(sampleReport().match),
       publish_result: JSON.stringify(sampleReport().publish),
@@ -136,6 +138,7 @@ describe('listPriceRuns', () => {
     const feed = await listPriceRuns(db)
     expect(feed.runs).toHaveLength(1)
     expect(feed.runs[0]!.status).toBe('success')
+    expect(feed.runs[0]!.stage).toBe('done')
     expect(feed.runs[0]!.perStore['superindo']!.itemsExtracted).toBe(7)
     expect(feed.runs[0]!.match!.exact).toBe(5)
     expect(feed.lastSuccessAt).toBe('2026-10-26T23:00:05Z')
@@ -148,6 +151,7 @@ describe('listPriceRuns', () => {
       finished_at: '2026-10-25T23:01:00Z',
       exit_code: 1,
       status: 'failed',
+      stage: 'publish',
       per_store: '{not json',
       match_stats: null,
       publish_result: null,

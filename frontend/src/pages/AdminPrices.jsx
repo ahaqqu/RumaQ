@@ -28,6 +28,7 @@ function durationSeconds(startedAt, finishedAt) {
 }
 
 function stageKey(stage) {
+  if (!stage) return null
   return `monitor.stage${stage.charAt(0).toUpperCase()}${stage.slice(1)}`
 }
 
@@ -163,7 +164,8 @@ function RunRow({ run }) {
           <div className="text-sm font-medium">
             {formatClock(run.runStartedAt, i18n.language)}{' '}
             <span className="text-text-muted font-normal">
-              · {durationSeconds(run.runStartedAt, run.finishedAt)} · {t(stageKey(run.stage))}
+              · {durationSeconds(run.runStartedAt, run.finishedAt)}
+              {stageKey(run.stage) && ` · ${t(stageKey(run.stage))}`}
             </span>
           </div>
           {run.error && (

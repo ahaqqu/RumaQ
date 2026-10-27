@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS price_runs (
   finished_at TEXT NOT NULL,
   exit_code INTEGER NOT NULL,          -- 0 ok / 1 failure / 2 quota
   status TEXT NOT NULL,                -- 'success' | 'failed'
+  stage TEXT,                          -- 'scrape' | 'match' | 'publish' | 'done' (where the run died / finished)
   per_store TEXT,                      -- JSON: {slug: {pagesFound, newImages, itemsExtracted, …, error}}
   match_stats TEXT,                    -- JSON: {exact, embedding, ai, solo, reviewItems, embeddingsDegraded}
   publish_result TEXT,                 -- JSON: {mode, accepted, skipped, error}

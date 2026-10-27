@@ -363,6 +363,7 @@ defineFeature(feature, (test) => {
       ctx.expectStatus(200)
       expect(ctx.responseBody.runs).toHaveLength(1)
       expect(ctx.responseBody.runs[0].status).toBe('success')
+      expect(ctx.responseBody.runs[0].stage).toBe('done')
       expect(ctx.responseBody.runs[0].perStore.superindo.itemsExtracted).toBe(7)
       expect(ctx.responseBody.lastSuccessAt).toBe('2026-10-24T23:00:05Z')
     })

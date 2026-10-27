@@ -14,12 +14,13 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
   await db
     .prepare(
       `INSERT INTO price_runs
-         (id, run_started_at, finished_at, exit_code, status, per_store, match_stats, publish_result, error)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (id, run_started_at, finished_at, exit_code, status, stage, per_store, match_stats, publish_result, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(run_started_at) DO UPDATE SET
          finished_at = excluded.finished_at,
          exit_code = excluded.exit_code,
          status = excluded.status,
+         stage = excluded.stage,
          per_store = excluded.per_store,
          match_stats = excluded.match_stats,
          publish_result = excluded.publish_result,
@@ -31,6 +32,7 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
       report.finishedAt,
       report.exitCode,
       report.status,
+      report.stage,
       JSON.stringify(report.perStore),
       report.match ? JSON.stringify(report.match) : null,
       report.publish ? JSON.stringify(report.publish) : null,
@@ -71,6 +73,7 @@ export type PriceRun = {
   finishedAt: string
   exitCode: number
   status: 'success' | 'failed'
+  stage: string | null
   perStore: Record<string, RunStoreSummary>
   match: RunMatchSummary | null
   publish: RunPublishSummary | null
@@ -83,6 +86,7 @@ type PriceRunRow = {
   finished_at: string
   exit_code: number
   status: string
+  stage: string | null
   per_store: string | null
   match_stats: string | null
   publish_result: string | null
@@ -107,7 +111,7 @@ export type PriceRunsFeed = {
 export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRunsFeed> {
   const { results } = await db
     .prepare(
-      `SELECT id, run_started_at, finished_at, exit_code, status,
+      `SELECT id, run_started_at, finished_at, exit_code, status, stage,
               per_store, match_stats, publish_result, error
        FROM price_runs
        ORDER BY run_started_at DESC
@@ -122,6 +126,7 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
     finishedAt: row.finished_at,
     exitCode: row.exit_code,
     status: row.status === 'success' ? ('success' as const) : ('failed' as const),
+    stage: row.stage,
     perStore: parseJson<Record<string, RunStoreSummary>>(row.per_store) ?? {},
     match: parseJson<RunMatchSummary>(row.match_stats),
     publish: parseJson<RunPublishSummary>(row.publish_result),

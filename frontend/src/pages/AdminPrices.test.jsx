@@ -110,6 +110,20 @@ describe('AdminPrices', () => {
     expect(container.textContent).toContain('monitor.stale')
   })
 
+  it('renders a run with a missing stage without crashing', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [{ ...mockFeed.runs[0], stage: undefined }],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    expect(container.textContent).toContain('monitor.success')
+    expect(container.textContent).not.toContain('monitor.stage')
+  })
+
   it('renders the empty state when no runs were reported', () => {
     vi.mocked(usePriceRuns).mockReturnValue({
       data: { runs: [], lastSuccessAt: null },
