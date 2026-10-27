@@ -61,6 +61,11 @@ function makeFetchMock(katalogHtml: string, koranHtml: string, jpeg: Uint8Array<
     expect(init?.headers).toBeDefined()
     if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
     if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
+    // Astro category pages: empty page → the catalog store contributes no
+    // items unless a scenario serves the astro fixture explicitly.
+    if (url.includes('astronauts.id')) {
+      return new Response('<html><body></body></html>', { status: 200 })
+    }
     return new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
   }
 }
@@ -835,4 +840,89 @@ it('runs the lotte flow through the Tier-2 browser ladder and cross-matches with
   expect(gulaItems).toHaveLength(2)
   expect(new Set(gulaItems.map((item) => item.productKey)).size).toBe(1)
   expect(gulaItems.map((item) => item.matchMethod).sort()).toEqual(['exact', 'solo'])
+})
+
+it('runs the astro catalog store end to end — no OCR, outbox like the brochure stores', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+  const astroHtml = await readFile(path.join(__dirname, 'fixtures/astro/category.html'), 'utf8')
+  const fetchMock = async (
+    url: string,
+    init?: RequestInit & { proxy?: string }
+  ): Promise<Response> => {
+    expect(init?.headers).toBeDefined()
+    // One astro category page serves the fixture; the others (and the
+    // brochure stores' listings) serve empty pages.
+    if (url.includes('beras-lokal-5858')) return new Response(astroHtml, { status: 200 })
+    return new Response('<html><body></body></html>', { status: 200 })
+  }
+
+  const status = await Effect.runPromise(
+    runPipeline({
+      stateDir,
+      dryRun: true,
+      launcher: emptyLotte.launcher,
+      embedClient: stubEmbedClient,
+      verifyClient: stubVerifyClient,
+      fetch: fetchMock,
+      // The OCR client must never fire for a catalog-only run.
+      ocrClient: {
+        models: {
+          generateContent: async () => {
+            throw new Error('OCR must not run for catalog stores')
+          },
+        },
+      },
+      sleep: noSleep,
+      now: () => new Date('2026-10-24T23:00:05Z'),
+      log: () => {},
+    })
+  )
+
+  expect(status.stage).toBe('done')
+  const astro = status.stores['astro']!
+  expect(astro.pagesFound).toBe(1)
+  expect(astro.itemsExtracted).toBe(3) // duplicate + truncated object excluded
+  expect(astro.itemsRejected).toBe(0)
+
+  const payload: IngestPayload = JSON.parse(
+    await readFile(path.join(stateDir, 'payload-2026-10-24T23-00-05-000Z.json'), 'utf8')
+  )
+  const astroItems = payload.items.filter((item) => item.storeSlug === 'astro')
+  expect(astroItems).toHaveLength(3)
+
+  // Post-discount price + parsed promo ("Diskon 8%" → discount_pct with the
+  // effective unit price equal to the discounted listing price).
+  const beras = astroItems.find((item) => item.name === 'Beras Setra Ramos Astro Goods')!
+  expect(beras.productKey).toBe('beras-setra-ramos-astro-goods----5kg')
+  expect(beras.price).toBe(70840)
+  expect(beras.promoType).toBe('discount_pct')
+  expect(beras.effectiveUnitPrice).toBe(70840)
+  expect(beras.promoLabel).toBe('Diskon 8%')
+  expect(beras.brochureUrl).toBe(
+    'https://www.astronauts.id/c/kebutuhan-pokok-2721/beras-lokal-5858'
+  )
+  expect(beras.observedDate).toBe('2026-10-24')
+  expect(beras.matchMethod).toBe('solo')
+
+  // A tier promo stays label-only: conditional on buying N units, so it must
+  // not claim an effective unit price.
+  const ayam = astroItems.find((item) => item.name === 'Dada Ayam Boneless Astro Farm')!
+  expect(ayam.price).toBe(30800)
+  expect(ayam.promoType).toBeNull()
+  expect(ayam.effectiveUnitPrice).toBeNull()
+  expect(ayam.promoLabel).toBe('Beli 2 Disc.4%')
+
+  // Outbox file: one JSON line per source page, stamped with the run's
+  // scrapedAt — the same at-least-once guarantee the brochure stores have.
+  const runItems = await readFile(
+    path.join(stateDir, 'astro', 'run-2026-10-24T23-00-05-000Z.jsonl'),
+    'utf8'
+  )
+  const lines = runItems
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { products: unknown[]; scrapedAt: string })
+  expect(lines).toHaveLength(1)
+  expect(lines[0]!.products).toHaveLength(3)
+  expect(lines[0]!.scrapedAt).toBe('2026-10-24T23:00:05.000Z')
 })

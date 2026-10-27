@@ -1,7 +1,7 @@
 // StorePlugin interface — every store is pluggable (docs/plan/haqita-integration.md §1).
 // Two capabilities, matching how a store publishes promos:
 // - brochure: image pages that need OCR (Superindo, Lotte)
-// - catalog:  structured items fetched directly (Astro, Alfamart/Indomaret — future)
+// - catalog:  structured items fetched directly (Astro; Alfamart/Indomaret future)
 //
 // All plugin entry points are Effects: failures surface as typed tagged
 // errors (FetchError from the strategy ladder) instead of exceptions.
@@ -51,4 +51,8 @@ export type StorePlugin = BrochureStorePlugin | CatalogStorePlugin
 
 export function isBrochurePlugin(plugin: StorePlugin): plugin is BrochureStorePlugin {
   return plugin.config.kind === 'brochure'
+}
+
+export function isCatalogPlugin(plugin: StorePlugin): plugin is CatalogStorePlugin {
+  return plugin.config.kind === 'catalog'
 }

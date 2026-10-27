@@ -293,6 +293,49 @@ sync_cloudflare.py, seed_d1.py, haqita.sh, git-database auto-commit, agentic
 harness, review queue/admin UI (replaced by `rejected-items.log` in the VPS state
 dir). Images pruned 7 days after successful publish (disk-scarce box).
 
+### 6.1 Astro catalog store (implemented 2026-10-28)
+
+Astro is the first `catalog`-kind store (§6's "structured items directly"
+capability — no brochure images, no Gemini OCR). Investigation findings, all
+probed live on 2026-10-28:
+
+- **Source**: category pages on `www.astronauts.id` server-render page 0 of
+  the listing (30 items) with the full inventory API response embedded as raw
+  JSON inside the Next.js flight stream (`self.__next_f.push([1,"…"])`).
+- **Why not the API**: every direct call to `api.astronauts.id` is gated by an
+  app-version check (`error_code EC1001`, "Aplikasi kamu perlu di-update
+  dulu") plus an `X-DEVICE-ID` device fingerprint header. The web bundle
+  hardcodes the version headers (`X-API-VERSION: 1.9.11`,
+  `X-APP-VERSION: android-2.17.1`, `X-DEVICE: web-customer`,
+  `X-DEVICE-VERSION: 3.4.10`), but replaying them still trips the gate — so
+  the plugin scrapes the SSR route instead, which needs no headers beyond the
+  Tier-1 defaults. `?page=1` is ignored server-side; 30 items per category is
+  the v1 coverage.
+- **Extraction**: product objects are located *structurally* — the API's key
+  order varies between responses (one fetch orders `variantRelativeProductIds`
+  first, the next puts it mid-object), so a first-key anchor silently returns
+  0 items. The parser does one string-aware brace scan and resolves each
+  `variantRelativeProductIds` occurrence to its innermost enclosing object.
+- **Category pages** (the three RumaQ v1 staples): beras
+  (`kebutuhan-pokok-2721/beras-lokal-5858` + `beras-import-5859`), minyak
+  goreng (`kebutuhan-pokok-2721/minyak-goreng-25060`), daging ayam
+  (`ayam-unggas-7179/ayam-parting-7181` + `ayam-utuh-7182`).
+- **Promo mechanics per product**, mapped to the ingest contract:
+  - *inventory discount*: `product_discount_price` (post-discount, becomes
+    the item's `price`) + `product_discount_percentage` → promo label
+    "Diskon 8%" → `parsePromo` → `discount_pct`, effective unit price = the
+    discounted price. Quota-limited (`product_discount_stock`,
+    `product_discount_daily_quota`) — not surfaced; the observed price is
+    what the customer pays.
+  - *tier discount*: `inventory_discount_tier_label` ("Beli 2 Disc.4%" with
+    the per-unit `final_price` at that qty) → kept as promo label text only;
+    it is conditional on buying N units, so it must not claim an effective
+    unit price (`parsePromo` leaves it `single`).
+  - *vouchers*: `voucher_labels` exist but are empty on category listings in
+    practice — not mapped.
+  - `product_grammation_label` ("5kg", "450-550gram") becomes `unit`; the
+    listing carries only a numeric `brandId`, so `brand` is null.
+
 ## 7. VPS operations (follow homepage MACHINE.md runbook)
 
 - System user `rumaq-scraper`; code rsynced to `/srv/rumaq-scraper`;
