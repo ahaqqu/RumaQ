@@ -311,7 +311,7 @@ probed live on 2026-10-28:
   the plugin scrapes the SSR route instead, which needs no headers beyond the
   Tier-1 defaults. `?page=1` is ignored server-side; 30 items per category is
   the v1 coverage.
-- **Extraction**: product objects are located *structurally* — the API's key
+- **Extraction**: product objects are located _structurally_ — the API's key
   order varies between responses (one fetch orders `variantRelativeProductIds`
   first, the next puts it mid-object), so a first-key anchor silently returns
   0 items. The parser does one string-aware brace scan and resolves each
@@ -321,17 +321,17 @@ probed live on 2026-10-28:
   goreng (`kebutuhan-pokok-2721/minyak-goreng-25060`), daging ayam
   (`ayam-unggas-7179/ayam-parting-7181` + `ayam-utuh-7182`).
 - **Promo mechanics per product**, mapped to the ingest contract:
-  - *inventory discount*: `product_discount_price` (post-discount, becomes
+  - _inventory discount_: `product_discount_price` (post-discount, becomes
     the item's `price`) + `product_discount_percentage` → promo label
     "Diskon 8%" → `parsePromo` → `discount_pct`, effective unit price = the
     discounted price. Quota-limited (`product_discount_stock`,
     `product_discount_daily_quota`) — not surfaced; the observed price is
     what the customer pays.
-  - *tier discount*: `inventory_discount_tier_label` ("Beli 2 Disc.4%" with
+  - _tier discount_: `inventory_discount_tier_label` ("Beli 2 Disc.4%" with
     the per-unit `final_price` at that qty) → kept as promo label text only;
     it is conditional on buying N units, so it must not claim an effective
     unit price (`parsePromo` leaves it `single`).
-  - *vouchers*: `voucher_labels` exist but are empty on category listings in
+  - _vouchers_: `voucher_labels` exist but are empty on category listings in
     practice — not mapped.
   - `product_grammation_label` ("5kg", "450-550gram") becomes `unit`; the
     listing carries only a numeric `brandId`, so `brand` is null.
