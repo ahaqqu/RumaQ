@@ -18,6 +18,7 @@ import {
 import { recordRunReport, listPriceRuns } from '../lib/price-runs.js'
 import { isAdminEmail, requireAdmin } from '../lib/admin.js'
 import { groundPlanItem } from '../lib/grounding.js'
+import { escapeLike } from '../lib/sql.js'
 import { getRateLimitConfig, isRateLimited } from '../lib/rate-limit.js'
 import { computeRunOutDays } from '../lib/stock.js'
 import { computePatterns } from '../lib/patterns.js'
@@ -2080,10 +2081,6 @@ apiApp.delete(
 const PRICE_MIN_CONFIDENCE = 0.55
 const PRICE_LOW_CONFIDENCE_FLAG = 0.85
 
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`)
-}
-
 // Admin scraping monitor (§7.1): run history with per-run detail and
 // last-success age. 403 for non-allowlisted users (requireAdmin); logs
 // themselves stay in journald on the VPS.
@@ -2684,6 +2681,20 @@ apiApp.post(
       ).bind(planId, householdId, totalEstimate, now, now)
     )
 
+    // Client-supplied price_observation_id is untrusted (§5.4): a bogus id
+    // would fail the whole batch on the plan_items FK and 500. Verify each id
+    // against price_observations and persist null for the ones that don't
+    // exist — the plan stays savable either way.
+    const validObservationIds = new Set<string>()
+    for (const item of body.items) {
+      const observationId = item.price_observation_id
+      if (!observationId || validObservationIds.has(observationId)) continue
+      const observation = await c.env.DB.prepare('SELECT id FROM price_observations WHERE id = ?')
+        .bind(observationId)
+        .first<{ id: string }>()
+      if (observation) validObservationIds.add(observationId)
+    }
+
     const itemIdsByName = new Map<string, string>()
 
     for (const item of body.items) {
@@ -2725,6 +2736,10 @@ apiApp.post(
       }
 
       const planItemId = crypto.randomUUID()
+      const groundedObservationId =
+        item.price_observation_id && validObservationIds.has(item.price_observation_id)
+          ? item.price_observation_id
+          : null
       statements.push(
         c.env.DB.prepare(
           `INSERT INTO plan_items (id, plan_id, item_id, store_id, qty, unit, price_estimate, why, status, price_observation_id, created_at)
@@ -2738,7 +2753,7 @@ apiApp.post(
           item.unit,
           item.price_estimate ?? null,
           item.why ?? null,
-          item.price_observation_id ?? null,
+          groundedObservationId,
           now
         )
       )

@@ -411,7 +411,7 @@ export WORKER_ENCRYPTION_KEY=...
 | `WORKER_JWT_SECRET`     | yes   | yes  | yes        | Active sessions invalidated                              |
 | `WORKER_ENCRYPTION_KEY` | yes   | yes  | yes        | Stored AI keys must be re-entered                        |
 | `HAQITA_INGEST_SECRET`  | yes   | yes  | yes        | Scraper pushes rejected until its env is rotated         |
-| `ADMIN_EMAILS`          | yes   | no   | yes        | Admin monitor access changes on next login/session check |
+| `ADMIN_EMAILS`          | yes   | yes  | yes        | Admin monitor access changes on next login/session check |
 
 ## 9. Free-tier headroom
 

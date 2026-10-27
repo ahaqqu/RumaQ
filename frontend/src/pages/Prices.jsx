@@ -35,11 +35,16 @@ function groupByProduct(items) {
     }
     groups.get(item.product_key).offers.push(item)
   }
-  return [...groups.values()].map(({ product, offers }) => ({
-    ...product,
-    offers: [...offers].sort((a, b) => a.price - b.price),
-    bestPrice: offers[0]?.price,
-  }))
+  return [...groups.values()].map(({ product, offers }) => {
+    // Sort once and read the headline price from the sorted copy — the
+    // backend orders rows by product/store name, not by price.
+    const sorted = [...offers].sort((a, b) => a.price - b.price)
+    return {
+      ...product,
+      offers: sorted,
+      bestPrice: sorted[0]?.price,
+    }
+  })
 }
 
 // Minimal inline SVG sparkline of one source's observed prices.
@@ -99,7 +104,7 @@ function PriceDetail({ productKey }) {
             {offer.promo_label && (
               <span className="text-text-muted text-xs">{offer.promo_label}</span>
             )}
-            {offer.match_confidence < 0.85 && (
+            {offer.low_confidence && (
               <span className="text-warn text-xs inline-flex items-center gap-1">
                 <IconWarning size={12} /> {t('prices.lowConfidence')}
               </span>
@@ -210,7 +215,7 @@ export function Prices() {
                         <div className="text-xs text-text-muted mt-0.5">
                           {product.unit ? `${product.unit} · ` : ''}
                           {t('prices.storesCount', { count: product.offers.length })}
-                          {product.offers.some((o) => o.match_confidence < 0.85) && (
+                          {product.offers.some((o) => o.low_confidence) && (
                             <span className="text-warn"> · {t('prices.lowConfidence')}</span>
                           )}
                         </div>

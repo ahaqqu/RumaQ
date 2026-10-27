@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vite-plus/test'
-import { groundPlanItem, scoreGroundingMatch } from '../lib/grounding.js'
+import { groundPlanItem, scoreGroundingMatch, unitTokens } from '../lib/grounding.js'
 
 type FakeRow = Record<string, unknown>
 
@@ -111,5 +111,86 @@ describe('groundPlanItem', () => {
   it('returns null for names with no content tokens', async () => {
     const db = createFakeDb()
     expect(await groundPlanItem(db, '5 kg')).toBeNull()
+  })
+})
+
+describe('unitTokens', () => {
+  it('extracts quantity and unit words only', () => {
+    expect(unitTokens('Beras Pandan Wangi 5 kg')).toEqual(['5', 'kg'])
+  })
+
+  it('returns nothing for names without package info', () => {
+    expect(unitTokens('Beras Pandan Wangi')).toEqual([])
+  })
+})
+
+describe('groundPlanItem tie-break', () => {
+  // Same name and brand, different package sizes: the exact failure mode of
+  // the old first-row-wins selection.
+  const fiveKgRow = {
+    id: 'product-5kg',
+    product_key: 'beras--pandan-wangi--5-kg',
+    name: 'Beras Pandan Wangi',
+    brand: 'Pandan Wangi',
+    unit: '5 kg',
+  }
+  const oneKgRow = {
+    id: 'product-1kg',
+    product_key: 'beras--pandan-wangi--1-kg',
+    name: 'Beras Pandan Wangi',
+    brand: 'Pandan Wangi',
+    unit: '1 kg',
+  }
+  const observationRow = {
+    id: 'obs-5kg',
+    price: 69000,
+    valid_until: '2026-10-28',
+    source_slug: 'lotte-mart',
+    source_name: 'Lotte Mart',
+  }
+
+  it('prefers the unit-matching candidate when name and brand tie', async () => {
+    // 1-kg row arrives first even though the item asks for 5 kg.
+    const db = createFakeDb([
+      { match: /FROM price_products/, rows: [oneKgRow, fiveKgRow] },
+      { match: /FROM price_observations/, rows: [observationRow] },
+    ])
+    const match = await groundPlanItem(db, 'Beras Pandan Wangi 5 kg')
+    expect(match).not.toBeNull()
+    expect(match!.productKey).toBe('beras--pandan-wangi--5-kg')
+    expect(match!.observation.price).toBe(69000)
+  })
+
+  it('picks the same winner regardless of DB row order', async () => {
+    const db = createFakeDb([
+      { match: /FROM price_products/, rows: [fiveKgRow, oneKgRow] },
+      { match: /FROM price_observations/, rows: [observationRow] },
+    ])
+    const match = await groundPlanItem(db, 'Beras Pandan Wangi 5 kg')
+    expect(match!.productKey).toBe('beras--pandan-wangi--5-kg')
+  })
+
+  it('falls back to product_key order when no unit signal exists', async () => {
+    // Item carries no package size: unit-match counts tie at 0, so the
+    // lexicographic product_key decides instead of row order.
+    const db = createFakeDb([
+      { match: /FROM price_products/, rows: [fiveKgRow, oneKgRow] },
+      { match: /FROM price_observations/, rows: [observationRow] },
+    ])
+    const match = await groundPlanItem(db, 'Beras Pandan Wangi')
+    expect(match!.productKey).toBe('beras--pandan-wangi--1-kg')
+  })
+
+  it('anchors the prefilter with a deterministic ORDER BY', async () => {
+    const db = createFakeDb([{ match: /FROM price_products/, rows: [fiveKgRow] }]) as any
+    const sqls: string[] = []
+    const originalPrepare = db.prepare.bind(db)
+    db.prepare = (sql: string) => {
+      sqls.push(sql)
+      return originalPrepare(sql)
+    }
+    await groundPlanItem(db, 'Beras Pandan Wangi 5 kg')
+    const prefilter = sqls.find((sql) => sql.includes('FROM price_products'))
+    expect(prefilter).toContain('ORDER BY name COLLATE NOCASE, product_key')
   })
 })

@@ -1,4 +1,5 @@
 import type { GroundingMatch } from './plans.js'
+import { escapeLike } from './sql.js'
 
 // Deterministic plan price grounding (haqita-integration.md §5.4): fuzzy-match
 // a plan item's name against `price_products`, and on a confident match feed
@@ -46,6 +47,25 @@ export function groundTokens(name: string): string[] {
   return normalizeGroundingName(name)
     .split(' ')
     .filter((token) => token !== '' && !UNIT_WORDS.has(token) && !/^\d+$/.test(token))
+}
+
+// Inverse of groundTokens: only the quantity/unit tokens ("5", "kg", "1l").
+// Exported for tests — the unit-aware tie-break below compares these between
+// the plan item and each candidate so same-name products in different package
+// sizes don't resolve to whichever row D1 happens to return first.
+export function unitTokens(name: string): string[] {
+  return normalizeGroundingName(name)
+    .split(' ')
+    .filter((token) => token !== '' && (UNIT_WORDS.has(token) || /^\d+$/.test(token)))
+}
+
+function countSharedTokens(a: string[], b: string[]): number {
+  const setB = new Set(b)
+  let shared = 0
+  for (const token of new Set(a)) {
+    if (setB.has(token)) shared++
+  }
+  return shared
 }
 
 function jaccard(a: string[], b: string[]): number {
@@ -138,22 +158,46 @@ export async function groundPlanItem(
 
   // The token is user input — escape LIKE wildcards so "%"/"_" in an item
   // name cannot widen the prefilter (same treatment as the /api/prices q).
-  const pattern = `%${anchor.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
+  const pattern = `%${escapeLike(anchor)}%`
+  // ORDER BY keeps candidate order stable regardless of D1's physical row
+  // order — the tie-break below must not depend on it.
   const { results: candidates } = await db
     .prepare(
-      `SELECT id, product_key, name, brand FROM price_products
+      `SELECT id, product_key, name, brand, unit FROM price_products
        WHERE name LIKE ? ESCAPE '\\' OR brand LIKE ? ESCAPE '\\'
+       ORDER BY name COLLATE NOCASE, product_key
        LIMIT 50`
     )
     .bind(pattern, pattern)
-    .all<{ id: string; product_key: string; name: string; brand: string | null }>()
+    .all<{
+      id: string
+      product_key: string
+      name: string
+      brand: string | null
+      unit: string | null
+    }>()
 
-  let best: { candidate: (typeof candidates)[number]; confidence: number } | null = null
+  // Deterministic winner: unit-token overlap with the item (a same-name
+  // candidate in a different package size must lose), then confidence, then
+  // product_key lexicographic for a fully stable last resort.
+  const itemUnits = unitTokens(name)
+  let best: {
+    candidate: (typeof candidates)[number]
+    confidence: number
+    unitMatches: number
+  } | null = null
   for (const candidate of candidates) {
     const confidence = scoreGroundingMatch(name, `${candidate.name} ${candidate.brand ?? ''}`)
-    if (confidence >= GROUND_MIN_CONFIDENCE && (!best || confidence > best.confidence)) {
-      best = { candidate, confidence }
-    }
+    if (confidence < GROUND_MIN_CONFIDENCE) continue
+    const candidateUnits = unitTokens(`${candidate.name} ${candidate.unit ?? ''}`)
+    const unitMatches = countSharedTokens(itemUnits, candidateUnits)
+    const better =
+      !best ||
+      unitMatches > best.unitMatches ||
+      (unitMatches === best.unitMatches &&
+        (confidence > best.confidence ||
+          (confidence === best.confidence && candidate.product_key < best.candidate.product_key)))
+    if (better) best = { candidate, confidence, unitMatches }
   }
   if (!best) return null
 

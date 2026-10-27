@@ -20,9 +20,10 @@ const mockItems = [
     unit: '1 L',
     source_slug: 'lotte-mart',
     source_name: 'Lotte Mart',
-    price: 21500,
+    price: 23000,
     promo_label: 'Diskon 15%',
     match_confidence: 1.0,
+    low_confidence: false,
   },
   {
     product_key: 'minyak-goreng--bimoli--1-l',
@@ -31,9 +32,10 @@ const mockItems = [
     unit: '1 L',
     source_slug: 'superindo',
     source_name: 'Superindo',
-    price: 23000,
+    price: 21500,
     promo_label: null,
     match_confidence: 1.0,
+    low_confidence: false,
   },
   {
     product_key: 'beras--pandan-wangi--5-kg',
@@ -45,6 +47,7 @@ const mockItems = [
     price: 72000,
     promo_label: null,
     match_confidence: 0.7,
+    low_confidence: true,
   },
 ]
 
@@ -87,17 +90,30 @@ describe('Prices', () => {
     })
   })
 
-  it('groups offers per product and shows the best price', () => {
+  it('groups offers per product and shows the cheapest price', () => {
     const { container } = renderPrices()
     expect(container.textContent).toContain('Minyak Goreng Bimoli')
     expect(container.textContent).toContain('Beras Pandan Wangi')
-    // Cheapest offer wins the row: Rp 21.500 for the oil.
+    // Regression (input order is name-ordered, not price-ordered): the
+    // alphabetically-first store (Lotte Mart, Rp 23.000) is NOT the cheapest —
+    // the headline must show Superindo's Rp 21.500.
     expect(container.textContent).toContain('21.500')
+    expect(container.textContent).not.toContain('23.000')
   })
 
-  it('flags low-confidence products', () => {
+  it('flags low-confidence products from the backend flag', () => {
     const { container } = renderPrices()
     expect(container.textContent).toContain('prices.lowConfidence')
+  })
+
+  it('does not flag fully confident products', () => {
+    vi.mocked(usePrices).mockReturnValue({
+      data: { items: mockItems.filter((item) => !item.low_confidence), total: 2 },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderPrices()
+    expect(container.textContent).not.toContain('prices.lowConfidence')
   })
 
   it('expands a product into per-store detail', () => {
@@ -108,8 +124,9 @@ describe('Prices', () => {
           {
             source_slug: 'lotte-mart',
             source_name: 'Lotte Mart',
-            price: 21500,
+            price: 23000,
             match_confidence: 1.0,
+            low_confidence: false,
           },
         ],
         history: [],

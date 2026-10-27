@@ -146,6 +146,7 @@
     "forbiddenDesc": "The scraping monitor is restricted to operator accounts.",
     "noRuns": "No runs reported yet",
     "noRunsDesc": "The scraper reports each finished live run here — dry-runs never appear.",
+    "error": "Couldn't load run history",
     "storeError": "store failed"
   },
   "history": {

@@ -12,8 +12,8 @@ import { IconClock, IconWarning, IconCheck, IconBolt } from '../components/icons
 // has not succeeded for >26h means the pipeline is not landing.
 const STALE_HOURS = 26
 
-function formatClock(iso) {
-  return new Date(iso).toLocaleString('id-ID', {
+function formatClock(iso, locale) {
+  return new Date(iso).toLocaleString(locale, {
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
@@ -36,7 +36,7 @@ function ageHours(iso) {
 }
 
 function LastSuccessCard({ lastSuccessAt }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   if (!lastSuccessAt) {
     return (
       <Panel className="p-5 flex gap-4 items-center mb-4">
@@ -57,7 +57,7 @@ function LastSuccessCard({ lastSuccessAt }) {
         {stale ? <IconWarning size={22} /> : <IconCheck size={22} />}
       </div>
       <div className="flex-1 text-sm">
-        <strong>{t('monitor.lastSuccess')}</strong> {formatClock(lastSuccessAt)}
+        <strong>{t('monitor.lastSuccess')}</strong> {formatClock(lastSuccessAt, i18n.language)}
         {stale && <div className="text-danger text-xs mt-0.5">{t('monitor.stale')}</div>}
       </div>
     </Panel>
@@ -146,7 +146,7 @@ function RunDetail({ run }) {
 }
 
 function RunRow({ run }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const failed = run.status !== 'success'
   return (
@@ -161,7 +161,7 @@ function RunRow({ run }) {
         />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">
-            {formatClock(run.runStartedAt)}{' '}
+            {formatClock(run.runStartedAt, i18n.language)}{' '}
             <span className="text-text-muted font-normal">
               · {durationSeconds(run.runStartedAt, run.finishedAt)} · {t(stageKey(run.stage))}
             </span>
@@ -209,7 +209,7 @@ export function AdminPrices() {
         </Panel>
       ) : isError ? (
         <Panel>
-          <EmptyState icon={IconWarning} title={t('monitor.noRuns')} desc={t('offline.banner')} />
+          <EmptyState icon={IconWarning} title={t('monitor.error')} desc={t('offline.banner')} />
         </Panel>
       ) : (data?.runs ?? []).length === 0 ? (
         <Panel>

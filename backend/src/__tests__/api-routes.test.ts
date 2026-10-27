@@ -692,6 +692,91 @@ describe('api routes', () => {
     expect(res.status).toBe(201)
   })
 
+  // Capturing fake DB for the POST /api/plans route: records every prepared
+  // statement's SQL and bound params so the plan_items INSERT payload can be
+  // asserted. Bind order mirrors the route: (id, plan_id, item_id, store_id,
+  // qty, unit, price_estimate, why, price_observation_id, created_at).
+  function createCapturingPlansEnv(firstQueue: unknown[]) {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    const prepared: Array<{ sql: string; params: unknown[] }> = []
+    env.DB.prepare = vi.fn((sql: string) => {
+      const stmt: { sql: string; params: unknown[]; first: unknown; all: unknown; run: unknown } = {
+        sql,
+        params: [],
+        first: env.DB.first,
+        all: env.DB.all,
+        run: env.DB.run,
+      }
+      prepared.push(stmt)
+      return {
+        bind: (...params: unknown[]) => {
+          stmt.params = params
+          return stmt
+        },
+      }
+    }) as never
+    env.DB.first = vi.fn()
+    for (const value of firstQueue) env.DB.first.mockResolvedValueOnce(value)
+    env.DB.all = vi.fn().mockResolvedValue({ results: [] })
+    env.DB.batch = vi.fn(async (statements: Array<{ sql: string; params: unknown[] }>) => {
+      prepared.push(...statements)
+      return []
+    })
+    return { env, prepared }
+  }
+
+  it('/api/plans keeps a grounded price_observation_id that exists', async () => {
+    const { env, prepared } = createCapturingPlansEnv([
+      null, // no existing active plan
+      { id: 'obs-1' }, // price_observations lookup hits
+      null, // items lookup misses
+      { id: 'pl1', household_id: 'h1', status: 'active' }, // plan re-read
+    ])
+    const res = await apiApp.request(
+      '/api/plans',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          items: [{ name: 'Milk', qty: 1, unit: 'L', price_observation_id: 'obs-1' }],
+        }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(201)
+    const lookup = prepared.find((s) => s.sql.includes('SELECT id FROM price_observations'))
+    expect(lookup?.params).toEqual(['obs-1'])
+    const insert = prepared.find((s) => s.sql.includes('INSERT INTO plan_items'))
+    expect(insert).toBeDefined()
+    expect(insert!.params[8]).toBe('obs-1')
+  })
+
+  it('/api/plans nulls a bogus price_observation_id and still saves the plan', async () => {
+    const { env, prepared } = createCapturingPlansEnv([
+      null, // no existing active plan
+      null, // price_observations lookup misses
+      null, // items lookup misses
+      { id: 'pl1', household_id: 'h1', status: 'active' }, // plan re-read
+    ])
+    const res = await apiApp.request(
+      '/api/plans',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          items: [{ name: 'Milk', qty: 1, unit: 'L', price_observation_id: 'obs-bogus' }],
+        }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(201)
+    const lookup = prepared.find((s) => s.sql.includes('SELECT id FROM price_observations'))
+    expect(lookup?.params).toEqual(['obs-bogus'])
+    const insert = prepared.find((s) => s.sql.includes('INSERT INTO plan_items'))
+    expect(insert).toBeDefined()
+    expect(insert!.params[8]).toBeNull()
+  })
+
   it('/api/plans/:id/items/:itemId updates item status', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.first = vi

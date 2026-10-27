@@ -146,6 +146,7 @@
     "forbiddenDesc": "Monitor scraping hanya untuk akun operator.",
     "noRuns": "Belum ada run yang dilaporkan",
     "noRunsDesc": "Scraper melaporkan setiap run live yang selesai di sini — dry-run tidak muncul.",
+    "error": "Gagal memuat riwayat run",
     "storeError": "toko gagal"
   },
   "history": {

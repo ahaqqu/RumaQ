@@ -119,4 +119,17 @@ describe('AdminPrices', () => {
     const { container } = renderAdmin()
     expect(container.textContent).toContain('monitor.noRuns')
   })
+
+  it('renders a dedicated error state when run history fails to load', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+    })
+    const { container } = renderAdmin()
+    // A 5xx must not read as "no data" — its own title, not monitor.noRuns.
+    expect(container.textContent).toContain('monitor.error')
+    expect(container.textContent).toContain('offline.banner')
+    expect(container.textContent).not.toContain('monitor.noRuns')
+  })
 })
