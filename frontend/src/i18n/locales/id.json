@@ -203,7 +203,7 @@
     "customProvider": "Kustom (format OpenAI)",
     "customBaseUrl": "Base URL",
     "customBaseUrlDesc": "Endpoint kompatibel OpenAI, contoh: https://ollama.com/v1",
-    "customModelDesc": "Nama model yang dipanggil, contoh: qwen3-vl:235b-instruct. Pemindaian struk memerlukan model yang mendukung gambar (vision).",
+    "customModelDesc": "Nama model yang dipanggil, contoh: glm-5.3-flash. Pemindaian struk memerlukan model yang mendukung gambar (vision).",
     "model": "Model",
     "modelDesc": "Model yang dipanggil dari penyedia. Biarkan kosong untuk memakai bawaan penyedia. Pemindaian struk memerlukan model yang mendukung gambar (vision).",
     "thinking": "Tingkat berpikir",

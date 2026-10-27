@@ -167,7 +167,9 @@ export function AddFromReceipt({ onDone }) {
     setImageUrl(null)
   }
 
-  const lineTotal = items.reduce((a, b) => a + (Number(b.price) || 0), 0)
+  // Sum qty × price per line — summing price alone reads as a bogus total on
+  // multi-quantity receipts.
+  const lineTotal = items.reduce((a, b) => a + (Number(b.qty) || 0) * (Number(b.price) || 0), 0)
 
   return (
     <>

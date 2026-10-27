@@ -12,11 +12,11 @@ import {
   IconMonitor,
   BrandMark,
 } from './icons.jsx'
-import { AI_USAGE, usageState } from '../data/mock.js'
+import { usageState } from '../data/mock.js'
 import { cn } from '../lib/cn.js'
 import { useApp } from '../context/AppContext.jsx'
 import { useMe, useLogout } from '../lib/queries/me.js'
-import { useSettings } from '../lib/queries/index.js'
+import { useSettings, useUsage } from '../lib/queries/index.js'
 import { Assistant } from './Assistant.jsx'
 import { OfflineBanner } from './OfflineBanner.jsx'
 import { Button } from './Button.jsx'
@@ -43,7 +43,14 @@ export function AppShell({ children }) {
 
   const hasBackendKey = settings?.has_ai_key === true
   const isAiConnected = Boolean(aiKey) || hasBackendKey
-  const { pct, warn, danger } = usageState()
+  const { data: usage } = useUsage()
+  // The daily cap only applies to RumaQ's shared server key; a user's own key
+  // is unmetered (mirrors UsageMeter).
+  const meterUsage =
+    usage && usage.key_source !== 'user'
+      ? { used: usage.used, limit: usage.daily_limit ?? 20 }
+      : null
+  const { pct, warn, danger } = usageState(meterUsage ?? { used: 0, limit: 20 })
   const usageTone = danger ? 'text-danger' : warn ? 'text-warn' : ''
 
   const user = me?.user
@@ -128,34 +135,42 @@ export function AppShell({ children }) {
             {isAiConnected ? t('assistant.connected') : t('assistant.noKey')}
           </div>
 
-          {isAiConnected && (
+          {isAiConnected && usage && (
             <div className="flex flex-col gap-2 px-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-text-muted">
-                  {t('common.requestsToday', {
-                    used: AI_USAGE.used,
-                    limit: AI_USAGE.limit,
-                  })}
+                  {meterUsage
+                    ? t('ui.requestsToday', {
+                        used: meterUsage.used,
+                        limit: meterUsage.limit,
+                      })
+                    : t('ui.ownKeyRequestsToday', { used: usage.used })}
                 </span>
-                <span className={cn('font-semibold tabular-nums', usageTone)}>
-                  {AI_USAGE.used}/{AI_USAGE.limit}
-                </span>
+                {meterUsage && (
+                  <span className={cn('font-semibold tabular-nums', usageTone)}>
+                    {meterUsage.used}/{meterUsage.limit}
+                  </span>
+                )}
               </div>
-              <div className="h-[5px] rounded-pill bg-surface-inset overflow-hidden">
-                <div
-                  className={cn(
-                    'h-full rounded-pill bg-accent transition-[width] duration-300',
-                    warn && 'bg-warn',
-                    danger && 'bg-danger'
-                  )}
-                  style={{ width: pct + '%' }}
-                />
-              </div>
-              {danger ? (
-                <div className="text-xs text-danger">{t('ui.dailyLimitReached')}</div>
-              ) : warn ? (
-                <div className="text-xs text-warn">{t('assistant.closeToLimit')}</div>
-              ) : null}
+              {meterUsage && (
+                <>
+                  <div className="h-[5px] rounded-pill bg-surface-inset overflow-hidden">
+                    <div
+                      className={cn(
+                        'h-full rounded-pill bg-accent transition-[width] duration-300',
+                        warn && 'bg-warn',
+                        danger && 'bg-danger'
+                      )}
+                      style={{ width: pct + '%' }}
+                    />
+                  </div>
+                  {danger ? (
+                    <div className="text-xs text-danger">{t('ui.dailyLimitReached')}</div>
+                  ) : warn ? (
+                    <div className="text-xs text-warn">{t('assistant.closeToLimit')}</div>
+                  ) : null}
+                </>
+              )}
             </div>
           )}
         </div>

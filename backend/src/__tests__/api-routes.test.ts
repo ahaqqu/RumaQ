@@ -213,13 +213,13 @@ describe('api routes', () => {
       '/api/settings',
       {
         method: 'PATCH',
-        body: JSON.stringify({ ai_model: 'qwen3-vl:235b-instruct' }),
+        body: JSON.stringify({ ai_model: 'glm-5.3-flash' }),
         headers: { 'Content-Type': 'application/json' },
       },
       env
     )
     expect(res.status).toBe(200)
-    expect(env.DB.bind.mock.calls.flat()).toContain('qwen3-vl:235b-instruct')
+    expect(env.DB.bind.mock.calls.flat()).toContain('glm-5.3-flash')
   })
 
   it('/api/settings stores encrypted ai_key', async () => {

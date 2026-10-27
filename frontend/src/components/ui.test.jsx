@@ -103,8 +103,17 @@ describe('SkeletonRows', () => {
 
 describe('UsageMeter', () => {
   it('renders usage info', () => {
-    const { container } = render(React.createElement(UsageMeter))
+    const { container } = render(
+      React.createElement(UsageMeter, {
+        usage: { provider: 'Gemini', used: 5, limit: 20 },
+      })
+    )
     expect(container.querySelector('[class*="flex flex-col gap-3 p-5"]')).toBeTruthy()
+  })
+
+  it('renders nothing without usage data', () => {
+    const { container } = render(React.createElement(UsageMeter))
+    expect(container.querySelector('[class*="flex flex-col gap-3 p-5"]')).toBeNull()
   })
 
   it('shows warning for high usage', () => {

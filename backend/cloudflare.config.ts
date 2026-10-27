@@ -13,8 +13,11 @@ import { bindings, defineConfig } from 'cf/config'
  *                             and preview origin, matching the old deploy.sh logic.
  * - D1_DATABASE_NAME / R2_BUCKET_NAME — resource names (deploy.sh defaults).
  *
- * Secrets are not declared here; they are set per-environment via
- * `cf workers secrets update` (see scripts/deploy.sh).
+ * Secrets are declared as deployment-only placeholders (bindings.secret()):
+ * values are set per-environment via `cf workers secrets update` (see
+ * scripts/deploy.sh) in production and read from backend/.dev.vars in local
+ * dev. Without a declaration the Vite plugin never injects .dev.vars values,
+ * so local dev runs with undefined secrets.
  */
 
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? 'LOCAL'
@@ -58,6 +61,13 @@ export default defineConfig({
       // Startup secrets check only makes sense against a real account; local
       // dev runs on placeholder secrets from .dev.vars.
       RUN_SECRETS_CHECK: bindings.text(accountId === 'LOCAL' ? 'false' : 'true'),
+      // Required by gateway.ts's startup check. Optional secrets
+      // (HAQITA_INGEST_SECRET, ADMIN_EMAILS, RUMAQ_SERVER_AI_*) stay
+      // undeclared so local dev without them does not warn.
+      GOOGLE_CLIENT_ID: bindings.secret(),
+      GOOGLE_CLIENT_SECRET: bindings.secret(),
+      WORKER_JWT_SECRET: bindings.secret(),
+      WORKER_ENCRYPTION_KEY: bindings.secret(),
     },
   },
 })

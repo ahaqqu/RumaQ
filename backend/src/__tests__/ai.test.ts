@@ -89,7 +89,7 @@ describe('completeText', () => {
       expect.objectContaining({ method: 'POST' })
     )
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
-    expect(body.model).toBe('qwen3-vl:235b-instruct')
+    expect(body.model).toBe('glm-5.3-flash')
   })
 
   it('uses the selected model for Ollama when a model option is passed', async () => {

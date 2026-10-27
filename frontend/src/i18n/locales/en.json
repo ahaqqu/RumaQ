@@ -203,7 +203,7 @@
     "customProvider": "Custom (OpenAI-compatible)",
     "customBaseUrl": "Base URL",
     "customBaseUrlDesc": "OpenAI-compatible endpoint, e.g. https://ollama.com/v1",
-    "customModelDesc": "Model name the provider should call, e.g. qwen3-vl:235b-instruct. Receipt scanning requires a vision-capable model.",
+    "customModelDesc": "Model name the provider should call, e.g. glm-5.3-flash. Receipt scanning requires a vision-capable model.",
     "model": "Model",
     "modelDesc": "Model the provider should call. Leave empty to use its default. Receipt scanning requires a vision-capable model.",
     "thinking": "Thinking level",

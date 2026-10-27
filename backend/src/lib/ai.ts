@@ -41,7 +41,7 @@ Rules:
 - Extract every item line from the receipt.
 - qty must be a number (default 1 if not specified).
 - unit should be the unit of measurement (pcs, kg, L, pack, etc).
-- price is the unit price or line total in the local currency (integer).
+- price is the per-item unit price (the per-piece HARGA/price column), not the line total; only fall back to the line total when no unit price is shown.
 - Omit subtotals, taxes, and total lines.
 - If you cannot read the receipt clearly, return { "items": [] }.
 - Do NOT include any text outside the JSON.`
@@ -89,7 +89,11 @@ export type AiCallOpts = {
 }
 
 const OLLAMA_BASE_URL = 'https://ollama.com/v1'
-const OLLAMA_DEFAULT_MODEL = 'qwen3-vl:235b-instruct'
+// Vision-capable default for receipt OCR. qwen3-vl:235b-instruct was retired
+// by Ollama Cloud on 2026-06-16 (requests now 410).
+const OLLAMA_DEFAULT_MODEL = 'glm-5.3-flash'
+// Room for reasoning tokens + item JSON on long receipts (1M-token models).
+const OLLAMA_MAX_TOKENS = 16000
 
 // Gemini exposes thinking as a token budget on thinking-capable models.
 const GEMINI_THINKING_BUDGET: Record<ThinkingLevel, number> = {
@@ -112,13 +116,14 @@ async function callOpenAICompatible(
   apiKey: string,
   messages: ChatMessage[],
   thinkingLevel?: ThinkingLevel | null,
-  maxTokensField: 'max_tokens' | 'max_completion_tokens' = 'max_tokens'
+  maxTokensField: 'max_tokens' | 'max_completion_tokens' = 'max_tokens',
+  maxTokens = 2000
 ): Promise<string> {
   const body: Record<string, unknown> = {
     model,
     messages,
   }
-  body[maxTokensField] = 2000
+  body[maxTokensField] = maxTokens
   // Only accepted by reasoning-capable models; incompatible models surface a
   // provider 400 to the user via the usual 502 error path.
   if (thinkingLevel) {
@@ -357,13 +362,20 @@ async function callProvider(
     case 'opencode':
       return callOpenCode(apiKey, messages, opts)
     case 'ollama':
+      // Reasoning models on Ollama Cloud (e.g. deepseek-v4.1-flash) spend
+      // thousands of tokens thinking before the JSON content; the shared
+      // 2000 cap gets consumed by reasoning alone and the response comes
+      // back empty. Ollama bills actual usage, so a generous cap only
+      // guards against runaways.
       return callOpenAICompatible(
         'Ollama Cloud',
         OLLAMA_BASE_URL,
         opts?.model?.trim() || OLLAMA_DEFAULT_MODEL,
         apiKey,
         messages,
-        opts?.thinkingLevel
+        opts?.thinkingLevel,
+        'max_tokens',
+        OLLAMA_MAX_TOKENS
       )
     case 'custom': {
       const baseUrl = opts?.baseUrl?.trim()

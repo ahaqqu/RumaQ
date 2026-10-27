@@ -46,7 +46,11 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        navigateFallback: '/offline.html',
+        // Serve the app shell for navigations, online or not: '/offline.html'
+        // here would make EVERY hard navigation (direct URL, refresh) show the
+        // offline page once the SW is active. Offline UX is handled in-app by
+        // the OfflineBanner.
+        navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/offline\.html$/, /^\/api\//],
         runtimeCaching: [
           {

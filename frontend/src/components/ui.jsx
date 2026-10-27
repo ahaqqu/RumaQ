@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { IconPin, IconClock, IconShop } from './icons.jsx'
-import { AI_USAGE, usageState } from '../data/mock.js'
+import { usageState } from '../data/mock.js'
 import { cn } from '../lib/cn.js'
 import { Chip } from './Chip.jsx'
 import { Badge } from './Badge.jsx'
@@ -67,10 +67,13 @@ export { EmptyState, SkeletonRows }
 
 export function UsageMeter({ usage }) {
   const { t } = useTranslation()
+  // Without loaded data render nothing — the mock fallback would misreport
+  // provider and counts as real usage.
+  if (!usage) return null
   // The daily cap only applies to RumaQ's shared server key; a user's own
   // key is unmetered.
-  const ownKey = usage?.key_source === 'user'
-  const normalized = usage ? { ...usage, limit: usage.limit ?? usage.daily_limit ?? 20 } : AI_USAGE
+  const ownKey = usage.key_source === 'user'
+  const normalized = { ...usage, limit: usage.limit ?? usage.daily_limit ?? 20 }
   const { pct, remaining, warn, danger } = usageState(normalized)
   const tone = !ownKey && danger ? 'danger' : !ownKey && warn ? 'warn' : 'muted'
 
