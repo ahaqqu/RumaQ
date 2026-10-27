@@ -82,7 +82,9 @@ function RunDetail({ run }) {
               {storeEntries.map(([slug, stats]) => (
                 <div key={slug} className="text-xs">
                   <span className="font-medium">{slug}</span>
-                  {stats.error ? (
+                  {stats.needsProxy ? (
+                    <span className="text-warn"> — {t('monitor.needsProxy')}</span>
+                  ) : stats.error ? (
                     <span className="text-danger">
                       {' '}
                       — {t('monitor.storeError')}: {stats.error}
@@ -150,6 +152,9 @@ function RunRow({ run }) {
   const { t, i18n } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const failed = run.status !== 'success'
+  // A green run can still carry a by-design needs-proxy skip — surface it on
+  // the row so the gap is visible without expanding.
+  const needsProxy = Object.values(run.perStore ?? {}).some((stats) => stats.needsProxy)
   return (
     <div className="border-b border-border last:border-b-0">
       <button
@@ -172,6 +177,11 @@ function RunRow({ run }) {
             <div className="text-xs text-danger truncate max-w-[60ch]">{run.error}</div>
           )}
         </div>
+        {needsProxy && !failed && (
+          <Chip variant="default" className="text-warn">
+            {t('monitor.needsProxyChip')}
+          </Chip>
+        )}
         <Chip variant={failed ? 'accent' : 'default'}>
           {failed ? t('monitor.failed') : t('monitor.success')}
         </Chip>

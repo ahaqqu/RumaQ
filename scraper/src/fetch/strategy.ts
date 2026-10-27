@@ -14,6 +14,7 @@
 import { Effect } from 'effect'
 
 import type { StoreConfig } from '../config.js'
+import { storeProxyUrl } from '../config.js'
 import { isPermanentClientStatus, withRetries } from '../util/retry.js'
 import { createBrowserFetcher, type BrowserLauncher } from './browser.js'
 import { type FetchError, FetchHttpStatus, FetchTransport, NonImageContent } from './errors.js'
@@ -108,7 +109,7 @@ export function createFetcher(
   const timeoutMs = options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
   const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
   const log = options.log ?? (() => {})
-  const proxyUrl = options.proxyUrl ?? (store.proxyEnv ? process.env[store.proxyEnv] : undefined)
+  const proxyUrl = options.proxyUrl ?? storeProxyUrl(store)
   const jar: CookieJar = { jars: new Map() }
   const request = (
     url: string,

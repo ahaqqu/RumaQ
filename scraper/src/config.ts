@@ -105,3 +105,14 @@ export function loadConfig(): ScraperConfig {
 export function storeBySlug(config: ScraperConfig, slug: string): StoreConfig | undefined {
   return config.stores.find((store) => store.slug === slug)
 }
+
+/**
+ * The store's Tier-3 proxy URL, read from its configured env var (§2).
+ * An empty value counts as not configured — the pipeline's by-design
+ * needs-proxy skip keys off this, so `LOTTE_PROXY_URL=` must never be
+ * treated as a working proxy.
+ */
+export function storeProxyUrl(store: StoreConfig): string | undefined {
+  const url = store.proxyEnv ? process.env[store.proxyEnv] : undefined
+  return url || undefined
+}

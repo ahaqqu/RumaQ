@@ -147,7 +147,9 @@
     "noRuns": "Belum ada run yang dilaporkan",
     "noRunsDesc": "Scraper melaporkan setiap run live yang selesai di sini — dry-run tidak muncul.",
     "error": "Gagal memuat riwayat run",
-    "storeError": "toko gagal"
+    "storeError": "toko gagal",
+    "needsProxy": "perlu proxy Tier-3 — sengaja dilewati sampai kredensial diisi",
+    "needsProxyChip": "perlu proxy"
   },
   "history": {
     "date": "Tanggal",
