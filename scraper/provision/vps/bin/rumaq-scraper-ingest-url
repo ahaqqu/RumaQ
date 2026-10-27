@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# provision/vps/bin/rumaq-scraper-ingest-url — repair the box env's ingest
+# URL. Installed root-owned (0755, no arguments) at /usr/local/sbin/ by
+# provision/vps/apply.sh and granted to kajianq-deploy in the sudoers
+# fragment, so pointing the nightly job back at the production ingest route
+# never needs an interactive sudo.
+#
+# The URL is public repo knowledge (the same constant provision-vps.sh
+# fills at provisioning time). Only the RUMAQ_INGEST_URL line is rewritten —
+# the env file's key lines are never read here, only preserved in place.
+set -euo pipefail
+
+ENV_FILE=/etc/rumaq-scraper/env
+INGEST_URL='https://rumaq.ahaqqu.com/api/internal/ingest/prices'
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "rumaq-scraper-ingest-url: $ENV_FILE missing — provision first (apply.sh)" >&2
+  exit 1
+fi
+if ! grep -q '^RUMAQ_INGEST_URL=' "$ENV_FILE"; then
+  echo "rumaq-scraper-ingest-url: RUMAQ_INGEST_URL line missing from $ENV_FILE" >&2
+  exit 1
+fi
+
+sed -i "s|^RUMAQ_INGEST_URL=.*|RUMAQ_INGEST_URL=${INGEST_URL}|" "$ENV_FILE"
+grep '^RUMAQ_INGEST_URL=' "$ENV_FILE"

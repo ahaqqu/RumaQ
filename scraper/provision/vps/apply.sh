@@ -15,7 +15,9 @@ set -euo pipefail
 #   - /var/lib/rumaq-scraper       state         (owned by rumaq-scraper)
 #   - /etc/rumaq-scraper/env       secrets       (root:root 0600, installed
 #                                                 once — never overwritten)
-#   - three systemd units + one sudoers fragment
+#   - three systemd units + one sudoers fragment + the ingest-url repair
+#     helper at /usr/local/sbin/rumaq-scraper-ingest-url (root-owned, no
+#     arguments, granted to kajianq-deploy in the sudoers fragment)
 #
 # Usage:
 #   ./apply.sh                 # bootstrap / reconcile everything
@@ -102,6 +104,13 @@ for unit in rumaq-scraper.service rumaq-scraper.timer rumaq-scraper-selfcheck.se
 done
 systemctl daemon-reload
 log "units installed + daemon reloaded"
+
+# --- 4b. the ingest-url repair helper ------------------------------------------
+# Root-owned, no arguments, one narrow job (rewrite the env's ingest URL);
+# the sudoers fragment below grants it to kajianq-deploy so the repair never
+# needs an interactive sudo.
+install -m 0755 -o root -g root "$HERE/bin/rumaq-scraper-ingest-url" /usr/local/sbin/rumaq-scraper-ingest-url
+log "ingest-url repair helper installed at /usr/local/sbin/rumaq-scraper-ingest-url"
 
 # --- 5. sudoers ----------------------------------------------------------------
 # Parse gate in front of the install, never after: a malformed sudoers.d

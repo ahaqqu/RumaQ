@@ -22,7 +22,7 @@ describe('embedNames', () => {
     let calls = 0
     const c: EmbeddingClient = {
       models: {
-        batchEmbedContents: async (_args: { requests: { contents: string }[] }) => {
+        embedContent: async (_args: { contents: string[] }) => {
           calls++
           return { embeddings: [{ values: [calls] }] }
         },
@@ -42,9 +42,9 @@ describe('embedNames', () => {
     const batchSizes: number[] = []
     const c: EmbeddingClient = {
       models: {
-        batchEmbedContents: async ({ requests }: { requests: { contents: string }[] }) => {
-          batchSizes.push(requests.length)
-          return { embeddings: requests.map(() => ({ values: [1, 2] })) }
+        embedContent: async ({ contents }: { contents: string[] }) => {
+          batchSizes.push(contents.length)
+          return { embeddings: contents.map(() => ({ values: [1, 2] })) }
         },
       },
     }
@@ -56,7 +56,7 @@ describe('embedNames', () => {
   it('fails typed on empty vectors', async () => {
     const c: EmbeddingClient = {
       models: {
-        batchEmbedContents: async () => ({ embeddings: [{ values: [] }] }),
+        embedContent: async () => ({ embeddings: [{ values: [] }] }),
       },
     }
     const exit = await Effect.runPromiseExit(

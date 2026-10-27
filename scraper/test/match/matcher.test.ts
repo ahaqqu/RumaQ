@@ -44,8 +44,8 @@ const CFG: MatchGateConfig = {
 function embedClient(vectors: Record<string, number[]>): EmbeddingClient {
   return {
     models: {
-      batchEmbedContents: async ({ requests }: { requests: { contents: string }[] }) => ({
-        embeddings: requests.map(({ contents }) => ({ values: vectors[contents] ?? [1, 0] })),
+      embedContent: async ({ contents }: { contents: string[] }) => ({
+        embeddings: contents.map((text) => ({ values: vectors[text] ?? [1, 0] })),
       }),
     },
   }
@@ -141,7 +141,7 @@ describe('runMatch — embedding tier', () => {
   it('degrades to exact-only when embeddings are unavailable', async () => {
     const embedFails: EmbeddingClient = {
       models: {
-        batchEmbedContents: async () => {
+        embedContent: async () => {
           throw new Error('no network')
         },
       },

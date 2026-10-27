@@ -49,7 +49,7 @@ const emptyLotte = fakeBrowserLauncher('<html><body></body></html>')
 // environment must never make the test suite call the real API.
 const stubEmbedClient: EmbeddingClient = {
   models: {
-    batchEmbedContents: async () => ({ embeddings: [{ values: [1, 0] }] }),
+    embedContent: async () => ({ embeddings: [{ values: [1, 0] }] }),
   },
 }
 const stubVerifyClient: GeminiClient = {

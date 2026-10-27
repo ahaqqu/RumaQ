@@ -11,6 +11,11 @@ set -euo pipefail
 #   ./scripts/provision-vps.sh --enable-timer  # provision AND go live
 #   ./scripts/provision-vps.sh --go-live       # go live only (box already
 #                                              # provisioned + deployed)
+#   ./scripts/provision-vps.sh --fix-ingest-url  # repair the env's ingest
+#                                              # URL + re-arm a run (also
+#                                              # reconciles units/sudoers —
+#                                              # the one-time sudo that arms
+#                                              # the passwordless grants)
 #
 # Root SSH is disabled on the box (homepage MACHINE.md lockdown),
 # so apply.sh — which must run as root — is executed through ONE
@@ -76,12 +81,14 @@ DEPLOY_SSH=(ssh -i "$DEPLOY_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o Conne
 GEMINI_KEY_FILE=""
 ENABLE_TIMER=0
 GO_LIVE_ONLY=0
+FIX_INGEST_URL=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --gemini-key-file) GEMINI_KEY_FILE="${2:?--gemini-key-file needs a path}"; shift 2 ;;
     --enable-timer) ENABLE_TIMER=1; shift ;;
     --go-live) GO_LIVE_ONLY=1; ENABLE_TIMER=1; shift ;;
-    *) echo "provision-vps: unknown argument: $1" >&2; echo "usage: $0 [--gemini-key-file FILE] [--enable-timer] [--go-live]" >&2; exit 1 ;;
+    --fix-ingest-url) FIX_INGEST_URL=1; shift ;;
+    *) echo "provision-vps: unknown argument: $1" >&2; echo "usage: $0 [--gemini-key-file FILE] [--enable-timer] [--go-live] [--fix-ingest-url]" >&2; exit 1 ;;
   esac
 done
 
@@ -90,6 +97,9 @@ die() { printf 'provision-vps: %s\n' "$*" >&2; exit 1; }
 
 if [ "$GO_LIVE_ONLY" -eq 1 ] && [ -n "$GEMINI_KEY_FILE" ]; then
   die "--go-live reuses the box's existing env — it takes no --gemini-key-file"
+fi
+if [ "$FIX_INGEST_URL" -eq 1 ] && [ -n "$GEMINI_KEY_FILE" ]; then
+  die "--fix-ingest-url rewrites only the ingest URL line — it takes no --gemini-key-file"
 fi
 
 # --- 0. the host ---------------------------------------------------------------
@@ -110,9 +120,10 @@ fi
 # --- 1. preflight -------------------------------------------------------------
 log "preflight: local tools"
 command -v rsync >/dev/null || die "rsync not found on PATH"
-if [ "$GO_LIVE_ONLY" -eq 0 ]; then
+if [ "$GO_LIVE_ONLY" -eq 0 ] && [ "$FIX_INGEST_URL" -eq 0 ]; then
   # Full provisioning builds the bundle and stages the secret values;
-  # --go-live only ships the provision dir, so neither is needed.
+  # --go-live only ships the provision dir, and --fix-ingest-url only
+  # reconciles units + one env line, so neither is needed.
   command -v bun >/dev/null || die "bun not found on PATH"
   command -v openssl >/dev/null || die "openssl not found on PATH"
   [ -f "$INGEST_SECRET_FILE" ] || die "missing $INGEST_SECRET_FILE (the ingest secret shared with the Worker)"
@@ -120,15 +131,17 @@ fi
 
 log "preflight: ssh identities"
 "${ADMIN_SSH[@]}" "$ADMIN_USER@$HOST" true || die "cannot ssh $ADMIN_USER@$HOST (passwordless key required)"
-[ -n "$DEPLOY_KEY" ] || die "no deploy key (~/.ssh/rumaq-vps-deploy or ~/.ssh/kajianq-deploy)"
-"${DEPLOY_SSH[@]}" "$DEPLOY_USER@$HOST" true || die "cannot ssh $DEPLOY_USER@$HOST with $DEPLOY_KEY"
+if [ "$FIX_INGEST_URL" -eq 0 ]; then
+  [ -n "$DEPLOY_KEY" ] || die "no deploy key (~/.ssh/rumaq-vps-deploy or ~/.ssh/kajianq-deploy)"
+  "${DEPLOY_SSH[@]}" "$DEPLOY_USER@$HOST" true || die "cannot ssh $DEPLOY_USER@$HOST with $DEPLOY_KEY"
+fi
 "${ADMIN_SSH[@]}" "$ADMIN_USER@$HOST" 'test -x /usr/bin/bun' || die "/usr/bin/bun missing on the box"
 
 # --- 2. the Gemini key (full provisioning only) --------------------------------
 # --go-live never touches the env file: the box's key/URL/secret stay
 # exactly as they are. Sources here: --gemini-key-file > $GEMINI_API_KEY >
 # interactive prompt (3 attempts). The value is never echoed anywhere.
-if [ "$GO_LIVE_ONLY" -eq 0 ]; then
+if [ "$GO_LIVE_ONLY" -eq 0 ] && [ "$FIX_INGEST_URL" -eq 0 ]; then
   if [ -n "$GEMINI_KEY_FILE" ]; then
     GEMINI_API_KEY="$(tr -d '[:space:]' < "$GEMINI_KEY_FILE")"
   elif [ -n "${GEMINI_API_KEY:-}" ]; then
@@ -156,7 +169,7 @@ fi
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/rumaq-provision-XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 
-if [ "$GO_LIVE_ONLY" -eq 0 ]; then
+if [ "$GO_LIVE_ONLY" -eq 0 ] && [ "$FIX_INGEST_URL" -eq 0 ]; then
   # Full mode builds the same bundle + playwright-core copy the real deploy
   # ships (scripts/deploy/vps.sh stage 1, kept in sync manually), so
   # apply.sh --install-deps finds a tree to work with.
@@ -174,7 +187,7 @@ fi
 log "staging provision tree"
 mkdir -p "$STAGE/provision"
 cp -r "$SCRAPER_DIR/provision/vps/." "$STAGE/provision/"
-if [ "$GO_LIVE_ONLY" -eq 0 ]; then
+if [ "$GO_LIVE_ONLY" -eq 0 ] && [ "$FIX_INGEST_URL" -eq 0 ]; then
   # 0600: the admin identity owns the staging dir, but the values
   # must not be readable by anything else on the box while staged.
   (
@@ -220,7 +233,16 @@ selfcheck() {
   fi
 }
 
-if [ "$GO_LIVE_ONLY" = '1' ]; then
+if [ "$FIX_INGEST_URL" = '1' ]; then
+  echo "root-run: 1/2 apply.sh (reconcile units/sudoers + the ingest-url repair helper — arms the passwordless grants)"
+  bash "$STAGE_HOME/provision/apply.sh"
+
+  echo "root-run: 2/2 FIX — correct RUMAQ_INGEST_URL in the env, then trigger a nightly run now"
+  /usr/local/sbin/rumaq-scraper-ingest-url
+  systemctl reset-failed rumaq-scraper.service 2>/dev/null || true
+  systemctl start --no-block rumaq-scraper.service
+  GO_LIVE_NOTE="FIX COMPLETE — env ingest URL corrected and a run triggered (watch: journalctl -u rumaq-scraper.service -f)"
+elif [ "$GO_LIVE_ONLY" = '1' ]; then
   echo "root-run: 1/3 apply.sh (reconcile units/sudoers; env left untouched)"
   bash "$STAGE_HOME/provision/apply.sh"
 
@@ -278,7 +300,8 @@ for pair in \
   "@DEPLOY_ROOT@|$DEPLOY_ROOT" \
   "@BROWSERS_PATH@|$BROWSERS_PATH" \
   "@ENABLE_TIMER@|$ENABLE_TIMER" \
-  "@GO_LIVE_ONLY@|$GO_LIVE_ONLY"; do
+  "@GO_LIVE_ONLY@|$GO_LIVE_ONLY" \
+  "@FIX_INGEST_URL@|$FIX_INGEST_URL"; do
   value="${pair#*|}"
   [[ $value =~ ^[A-Za-z0-9/._-]+$ ]] || die "internal: unsafe substitution value for ${pair%%|*}"
   sed -i "s|${pair%%|*}|$value|g" "$STAGE/root-run.sh"
@@ -292,6 +315,16 @@ log "running the privileged half on the box (sudo password prompted once)"
 ssh -t "$ADMIN_USER@$HOST" "sudo bash '$ADMIN_HOME/$REMOTE_STAGE/root-run.sh'"
 
 # --- 5. unprivileged verification ----------------------------------------------
+if [ "$FIX_INGEST_URL" -eq 1 ]; then
+  log "done. FIX: units/sudoers reconciled (passwordless grants armed), env ingest URL corrected, nightly run triggered."
+  log "Watch it:   ssh $ADMIN_USER@$HOST journalctl -u rumaq-scraper.service -f"
+  log "Verify:     the smoke freshness check (GET /api/internal/prices/status) goes green after it publishes."
+  log "From now on these need NO sudo (kajianq-deploy):"
+  log "  sudo /usr/local/sbin/rumaq-scraper-ingest-url"
+  log "  sudo /usr/bin/systemctl start rumaq-scraper.service          # re-run now"
+  log "  sudo /usr/bin/systemctl reset-failed rumaq-scraper.service   # clear a stale failed state"
+  exit 0
+fi
 log "verifying from the deploy identity"
 "${DEPLOY_SSH[@]}" "$DEPLOY_USER@$HOST" "
   test -d $DEPLOY_ROOT/dist && echo 'tree: present' || echo 'tree: MISSING'

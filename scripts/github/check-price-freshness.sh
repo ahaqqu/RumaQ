@@ -23,11 +23,16 @@ set -euo pipefail
 # Env:
 #   HAQITA_INGEST_SECRET  bearer secret (same value the box uses)
 #   RUMAQ_PROD_URL        default https://rumaq.ahaqqu.com
-#   PRICE_STALE_HOURS     default 26 — tolerates one missed nightly run
+#   PRICE_STALE_HOURS     default 168 (7 days) — the service-down threshold.
+#                         A single failed nightly run is NOT down: the scraper
+#                         logs it, reports it to the run monitor, and the timer
+#                         retries the next night (the systemd unit stays green).
+#                         Only 7 consecutive failed nights — a week of no data
+#                         — means the pipeline is actually broken.
 # ============================================================
 
 BASE_URL="${RUMAQ_PROD_URL:-https://rumaq.ahaqqu.com}"
-MAX_AGE_HOURS="${PRICE_STALE_HOURS:-26}"
+MAX_AGE_HOURS="${PRICE_STALE_HOURS:-168}"
 
 if [ -z "${HAQITA_INGEST_SECRET:-}" ]; then
   echo "price-freshness: HAQITA_INGEST_SECRET not set — skipping (set the GitHub secret to arm the staleness alert)"

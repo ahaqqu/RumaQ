@@ -6,3 +6,4 @@ scripts/deploy/*.js text eol=lf mode=755
 scraper/scripts/*.sh text eol=lf mode=755
 scraper/provision/vps/apply.sh text eol=lf mode=755
 scripts/ci/*.mjs text eol=lf mode=755
+scraper/provision/vps/bin/* text eol=lf mode=755
