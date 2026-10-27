@@ -6,13 +6,15 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vite-plus/test'
+import { afterEach, describe, expect, it } from 'vite-plus/test'
 import { Effect } from 'effect'
 
 import {
   createAstroPlugin,
   extractFlightChunks,
+  isAllowedCategoryUrl,
   parseProductObjects,
+  resolveCategoryPages,
   toCatalogItem,
   type AstroProduct,
 } from '../../src/stores/astro.js'
@@ -101,6 +103,76 @@ describe('toCatalogItem', () => {
     expect(
       toCatalogItem({ product_id: 1, product_name: 'Beras', product_price: 'abc' }, 'u')
     ).toBeNull()
+  })
+})
+
+describe('isAllowedCategoryUrl', () => {
+  it('allows astronauts.id and its subdomains', () => {
+    expect(isAllowedCategoryUrl('https://www.astronauts.id/c/kebutuhan-pokok-2721')).toBe(true)
+    expect(isAllowedCategoryUrl('https://astronauts.id/c/x-1')).toBe(true)
+  })
+
+  it('rejects other hosts, lookalike suffixes, and non-URLs', () => {
+    expect(isAllowedCategoryUrl('https://evil.com/c/x-1')).toBe(false)
+    expect(isAllowedCategoryUrl('https://astronauts.id.evil.com/c/x-1')).toBe(false)
+    expect(isAllowedCategoryUrl('/c/x-1')).toBe(false)
+  })
+})
+
+describe('resolveCategoryPages', () => {
+  const ENV = 'ASTRO_CATEGORY_PAGES'
+  const original = process.env[ENV]
+  afterEach(() => {
+    if (original === undefined) delete process.env[ENV]
+    else process.env[ENV] = original
+  })
+
+  it('falls back to the default staple pages when the env var is unset', () => {
+    delete process.env[ENV]
+    const pages = resolveCategoryPages()
+    expect(pages).toHaveLength(5)
+    expect(pages[0]).toContain('beras-lokal-5858')
+  })
+
+  it('uses the env var URLs in order when valid', () => {
+    process.env[ENV] =
+      'https://www.astronauts.id/c/ayam-unggas-7179/ayam-utuh-7182, https://www.astronauts.id/c/kebutuhan-pokok-2721/minyak-goreng-25060'
+    expect(resolveCategoryPages()).toEqual([
+      'https://www.astronauts.id/c/ayam-unggas-7179/ayam-utuh-7182',
+      'https://www.astronauts.id/c/kebutuhan-pokok-2721/minyak-goreng-25060',
+    ])
+  })
+
+  it('drops off-host and malformed entries, dedupes, and trims', () => {
+    process.env[ENV] =
+      ' https://www.astronauts.id/c/kebutuhan-pokok-2721/beras-lokal-5858 , https://evil.com/c/x-1, not-a-url, ,https://astronauts.id.evil.com/c/y-2, https://www.astronauts.id/c/kebutuhan-pokok-2721/beras-lokal-5858'
+    expect(resolveCategoryPages()).toEqual([
+      'https://www.astronauts.id/c/kebutuhan-pokok-2721/beras-lokal-5858',
+    ])
+  })
+
+  it('falls back to defaults when no entry survives validation', () => {
+    process.env[ENV] = 'https://evil.com/c/x-1, not-a-url'
+    expect(resolveCategoryPages()).toHaveLength(5)
+  })
+
+  it('plugin fetches exactly the overridden pages', async () => {
+    process.env[ENV] = 'https://www.astronauts.id/c/kebutuhan-pokok-2721/minyak-goreng-25060'
+    const plugin = createAstroPlugin(storeBySlug(loadConfig(), 'astro')!)
+    const fetched: string[] = []
+    await Effect.runPromise(
+      plugin.listItems({
+        fetchHtml: (url) =>
+          Effect.sync(() => {
+            fetched.push(url)
+            return loadFixture('category.html')
+          }),
+        runStartedAt: '2026-10-28T00:00:00Z',
+      })
+    )
+    expect(fetched).toEqual([
+      'https://www.astronauts.id/c/kebutuhan-pokok-2721/minyak-goreng-25060',
+    ])
   })
 })
 

@@ -34,14 +34,44 @@ import type { CatalogItem, CatalogStorePlugin, FetchContext } from './types.js'
 // One page per RumaQ v1 staple: beras (local + import), minyak goreng,
 // daging ayam (cut parts + whole bird). The listing server-renders only page
 // 0 (30 items) — deeper pages would need the version-gated API — so 30 per
-// category is the v1 coverage.
-const CATEGORY_PAGES = [
+// category is the v1 coverage. Overridable without a redeploy via
+// ASTRO_CATEGORY_PAGES (see resolveCategoryPages).
+const DEFAULT_CATEGORY_PAGES = [
   'https://www.astronauts.id/c/kebutuhan-pokok-2721/beras-lokal-5858',
   'https://www.astronauts.id/c/kebutuhan-pokok-2721/beras-import-5859',
   'https://www.astronauts.id/c/kebutuhan-pokok-2721/minyak-goreng-25060',
   'https://www.astronauts.id/c/ayam-unggas-7179/ayam-parting-7181',
   'https://www.astronauts.id/c/ayam-unggas-7179/ayam-utuh-7182',
 ]
+
+// The parent category segment is part of the page path (/c/beras-lokal-5858
+// 404s), so the override takes full URLs, comma-separated — the same
+// full-URL override shape as Lotte's LOTTE_URL. Scraped-target discipline
+// still applies: only astronauts.id hosts are accepted, and an override
+// with no valid entries falls back to the defaults instead of silently
+// scraping nothing.
+const CATEGORY_PAGES_ENV = 'ASTRO_CATEGORY_PAGES'
+const CATEGORY_HOST_SUFFIX = 'astronauts.id'
+
+export function isAllowedCategoryUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return host === CATEGORY_HOST_SUFFIX || host.endsWith(`.${CATEGORY_HOST_SUFFIX}`)
+  } catch {
+    return false
+  }
+}
+
+export function resolveCategoryPages(
+  env: string | undefined = process.env[CATEGORY_PAGES_ENV]
+): string[] {
+  const parsed = (env ?? '')
+    .split(',')
+    .map((url) => url.trim())
+    .filter((url) => url.length > 0 && isAllowedCategoryUrl(url))
+  const unique = [...new Set(parsed)]
+  return unique.length > 0 ? unique : DEFAULT_CATEGORY_PAGES
+}
 
 export interface AstroTierLabel {
   label?: string
@@ -183,13 +213,16 @@ export function toCatalogItem(product: AstroProduct, pageUrl: string): CatalogIt
 }
 
 export function createAstroPlugin(config: StoreConfig): CatalogStorePlugin {
+  // Resolved once per plugin build: the env var is read at creation time so
+  // tests can stub it per case instead of at module import.
+  const categoryPages = resolveCategoryPages()
   return {
     config,
     listItems(ctx: FetchContext): Effect.Effect<CatalogItem[], FetchError> {
       return Effect.gen(function* () {
         const items: CatalogItem[] = []
         const seen = new Set<number>()
-        for (const url of CATEGORY_PAGES.slice(0, config.maxPages)) {
+        for (const url of categoryPages.slice(0, config.maxPages)) {
           const html = yield* ctx.fetchHtml(url)
           for (const product of parseProductObjects(extractFlightChunks(html))) {
             // The flight can carry the same product twice (SSR + widget

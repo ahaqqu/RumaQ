@@ -320,6 +320,15 @@ probed live on 2026-10-28:
   (`kebutuhan-pokok-2721/beras-lokal-5858` + `beras-import-5859`), minyak
   goreng (`kebutuhan-pokok-2721/minyak-goreng-25060`), daging ayam
   (`ayam-unggas-7179/ayam-parting-7181` + `ayam-utuh-7182`).
+- **Category override**: `ASTRO_CATEGORY_PAGES` (comma-separated full URLs,
+  same shape as Lotte's `LOTTE_URL`) swaps the page list without a redeploy —
+  full URLs because the parent category segment is required (`/c/beras-lokal-5858`
+  404s). Only `astronauts.id` hosts are accepted and an override with no valid
+  entries falls back to the defaults; `maxPages` still caps the count. Note
+  Astro has no leaflet-style image brochure — promos are per-product in the
+  inventory JSON (captured above) or client-rendered campaign pages
+  (`/promo/…`) without the embedded JSON, so the catalog parser cannot read
+  them.
 - **Promo mechanics per product**, mapped to the ingest contract:
   - _inventory discount_: `product_discount_price` (post-discount, becomes
     the item's `price`) + `product_discount_percentage` → promo label
