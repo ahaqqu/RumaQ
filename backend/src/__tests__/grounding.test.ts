@@ -76,11 +76,13 @@ describe('groundPlanItem', () => {
       { match: /FROM price_products/, rows: [productRow] },
       {
         match: /FROM price_observations/,
-        // The SQL orders by price ASC LIMIT 1 — the fake mirrors its output.
+        // The SQL orders by COALESCE(effective_unit_price, price) ASC,
+        // s.slug ASC LIMIT 1 — the fake mirrors its output.
         rows: [
           {
             id: 'obs-lotte',
             price: 69000,
+            effective_price: 69000,
             valid_until: '2026-10-28',
             source_slug: 'lotte-mart',
             source_name: 'Lotte Mart',
@@ -94,6 +96,43 @@ describe('groundPlanItem', () => {
     expect(match!.observation.observationId).toBe('obs-lotte')
     expect(match!.observation.price).toBe(69000)
     expect(match!.observation.sourceName).toBe('Lotte Mart')
+  })
+
+  it('grounds on the effective price and returns it as the estimate', async () => {
+    const sqls: string[] = []
+    const db = createFakeDb([
+      { match: /FROM price_products/, rows: [productRow] },
+      {
+        match: /FROM price_observations/,
+        // The winner is the effective-price cheapest store: raw price 25000
+        // beats tag 26000, but its promo makes it 23000 payable.
+        rows: [
+          {
+            id: 'obs-superindo',
+            price: 26000,
+            effective_price: 23000,
+            valid_until: '2026-10-28',
+            source_slug: 'superindo',
+            source_name: 'Superindo',
+          },
+        ],
+      },
+    ]) as any
+    const originalPrepare = db.prepare.bind(db)
+    db.prepare = (sql: string) => {
+      sqls.push(sql)
+      return originalPrepare(sql)
+    }
+
+    const match = await groundPlanItem(db, 'Beras Pandan Wangi 5 kg')
+    expect(match).not.toBeNull()
+    // The estimate is the effective (payable) price — the same basis as the
+    // price explorer — so estimates can move down where promos apply.
+    expect(match!.observation.price).toBe(23000)
+    expect(match!.observation.sourceSlug).toBe('superindo')
+
+    const obsSql = sqls.find((sql) => sql.includes('FROM price_observations'))
+    expect(obsSql).toContain('ORDER BY COALESCE(o.effective_unit_price, o.price) ASC, s.slug ASC')
   })
 
   it('returns null when no candidate clears the confidence bar', async () => {
@@ -144,6 +183,7 @@ describe('groundPlanItem tie-break', () => {
   const observationRow = {
     id: 'obs-5kg',
     price: 69000,
+    effective_price: 69000,
     valid_until: '2026-10-28',
     source_slug: 'lotte-mart',
     source_name: 'Lotte Mart',

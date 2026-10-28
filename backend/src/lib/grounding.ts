@@ -109,14 +109,21 @@ export type GroundedObservation = {
 }
 
 // Latest observation per source for one product, cheapest wins — the estimate
-// the plan item shows should be the best current deal.
+// the plan item shows should be the best current deal. Cheapest is judged on
+// the effective price (COALESCE(effective_unit_price, price)) — the same basis
+// as the price explorer — so plan grounding and the explorer's cheapest
+// highlight always name the same store; s.slug breaks ties deterministically.
+// The returned price is the effective (payable) price, so estimates can move
+// down where promos apply (issue #291, deliberate behavior change).
 async function cheapestCurrentObservation(
   db: D1Database,
   productId: string
 ): Promise<GroundedObservation | null> {
   const row = await db
     .prepare(
-      `SELECT o.id, o.price, o.valid_until, s.slug AS source_slug, s.name AS source_name
+      `SELECT o.id, o.price,
+              COALESCE(o.effective_unit_price, o.price) AS effective_price,
+              o.valid_until, s.slug AS source_slug, s.name AS source_name
        FROM price_observations o
        JOIN price_sources s ON s.id = o.source_id
        WHERE o.product_id = ?
@@ -126,13 +133,14 @@ async function cheapestCurrentObservation(
            ORDER BY o2.observed_date DESC, o2.scraped_at DESC
            LIMIT 1
          )
-       ORDER BY o.price ASC
+       ORDER BY COALESCE(o.effective_unit_price, o.price) ASC, s.slug ASC
        LIMIT 1`
     )
     .bind(productId)
     .first<{
       id: string
       price: number
+      effective_price: number
       valid_until: string | null
       source_slug: string
       source_name: string
@@ -140,7 +148,7 @@ async function cheapestCurrentObservation(
   if (!row) return null
   return {
     observationId: row.id,
-    price: row.price,
+    price: row.effective_price,
     sourceSlug: row.source_slug,
     sourceName: row.source_name,
     validUntil: row.valid_until,
