@@ -7,6 +7,7 @@ import { Data, Effect } from 'effect'
 
 import {
   classifyQuotaError,
+  isModelFatalError,
   parseRetryDelay,
   QuotaExhausted,
   withQuotaPolicy,
@@ -54,6 +55,34 @@ describe('classifyQuotaError', () => {
 })
 
 class Transient extends Data.TaggedError('Transient')<{ message: string }> {}
+
+// Verbatim shape of the issue #306 live-log failure (code/message/status).
+const MODEL_GONE_404 =
+  '{"error":{"code":404,"message":"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash …","status":"NOT_FOUND"}}'
+
+describe('isModelFatalError', () => {
+  it('classifies the live 404 NOT_FOUND model-gone body as fatal', () => {
+    expect(isModelFatalError(new Error(MODEL_GONE_404))).toBe(true)
+    expect(isModelFatalError(new Error('404 NOT_FOUND: models/gemini-x not found'))).toBe(true)
+  })
+
+  it.each([
+    '400 INVALID_ARGUMENT: Model models/gemini-x is not supported for generateContent',
+    '400 INVALID_ARGUMENT: models/gemini-x not found for API version v1beta',
+  ])('classifies explicit invalid-model 400s as fatal: %s', (message) => {
+    expect(isModelFatalError(new Error(message))).toBe(true)
+  })
+
+  it.each([
+    '503 UNAVAILABLE',
+    '500 INTERNAL',
+    '429 RESOURCE_EXHAUSTED: retry in 30s',
+    '400 INVALID_ARGUMENT: Request payload size exceeds the limit',
+    'ECONNRESET',
+  ])('keeps transient and non-model errors retryable: %s', (message) => {
+    expect(isModelFatalError(new Error(message))).toBe(false)
+  })
+})
 
 describe('withRetries', () => {
   it('returns the value on success without sleeping', async () => {
@@ -114,6 +143,20 @@ describe('withRetries', () => {
 })
 
 describe('withQuotaPolicy', () => {
+  it('fails fast on a model-gone 404 — no retries, no sleeps', async () => {
+    const sleep = vi.fn(async () => {})
+    let attempts = 0
+    const effect = Effect.suspend(() => {
+      attempts++
+      return Effect.fail(new Transient({ message: MODEL_GONE_404 }))
+    })
+    await expect(Effect.runPromise(withQuotaPolicy(effect, { retries: 3, sleep }))).rejects.toThrow(
+      /no longer available/
+    )
+    expect(attempts).toBe(1)
+    expect(sleep).not.toHaveBeenCalled()
+  })
+
   it('propagates QuotaExhausted immediately without retrying', async () => {
     const sleep = vi.fn(async () => {})
     let attempts = 0

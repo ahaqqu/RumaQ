@@ -82,6 +82,23 @@ describe('verifyPairs', () => {
     expect(c.calls).toBe(3) // 1 initial + 2 retries
   })
 
+  it('fails a fatal model-gone 404 fast: one call per pair, no retry burn', async () => {
+    // Verbatim issue #306 live-log failure — a deprecated model id never
+    // recovers, so the pair degrades to null immediately and the sweep moves
+    // on instead of burning 3 retries per pair.
+    const c = client([
+      new Error(
+        '{"error":{"code":404,"message":"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash …","status":"NOT_FOUND"}}'
+      ),
+    ])
+    const outcome = await Effect.runPromise(
+      verifyPairs([PAIR, { ...PAIR, nameA: 'Other' }], OPTS(c))
+    )
+    expect(outcome.answers).toEqual([null, null])
+    expect(outcome.quotaExhausted).toBe(false)
+    expect(c.calls).toBe(2) // exactly 1 per pair
+  })
+
   it('sleeps the parsed delay for per-minute rate limits', async () => {
     const sleeps: number[] = []
     const c = client([new Error('429 RESOURCE_EXHAUSTED: Please retry in 30s'), 'YES'])

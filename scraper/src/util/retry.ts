@@ -4,7 +4,8 @@
 // `withQuotaPolicy` is the Gemini-specific policy that understands SDK quota
 // errors (429 / RESOURCE_EXHAUSTED, daily quota vs per-minute rate limit,
 // retry-delay hints from the error payload — which is why this is not a
-// `Schedule`: schedules cannot read the failed error to pick a delay).
+// `Schedule`: schedules cannot read the failed error to pick a delay) and
+// model-gone fatals (404 NOT_FOUND — a deprecated model never recovers).
 // Everywhere in this package `retries` counts EXTRA attempts after the first
 // (so `retries: 2` makes at most 3 calls). Sleep stays injectable so tests
 // are fast and deterministic.
@@ -63,6 +64,25 @@ export function isPermanentClientStatus(status: number): boolean {
   return status >= 400 && status < 500 && status !== 429 && status !== 408 && status !== 425
 }
 
+/**
+ * A Gemini error that can never succeed on retry: the model id itself is
+ * gone. 404 NOT_FOUND on generateContent/embedContent means a deprecated or
+ * unknown model for this key's cohort (issue #306 live evidence: "This model
+ * models/gemini-2.5-flash is no longer available to new users", status
+ * NOT_FOUND); some invalid-model 400s spell the model problem out instead.
+ * A dead model never recovers by retrying — call sites fail fast. The typed
+ * call-site errors (VerifierError etc.) embed the SDK message verbatim, so
+ * classification matches the payload text rather than the wrapper type.
+ */
+export function isModelFatalError(error: unknown): boolean {
+  const text = errorText(error)
+  if (text.includes('404') && text.includes('NOT_FOUND')) return true
+  return (
+    /\b400\b|INVALID_ARGUMENT/.test(text) &&
+    /models?\/[\w.:-]+ (is )?(not found|no longer available|not supported)/i.test(text)
+  )
+}
+
 export interface RetryOptions {
   /** Extra attempts after the first (default 3). */
   retries?: number
@@ -114,10 +134,12 @@ export function withRetries<A, E>(
 
 /**
  * Quota-aware retry for Gemini SDK calls: `QuotaExhausted` propagates
- * immediately (the caller aborts the run — exit code 2), per-minute rate
- * limits sleep the delay parsed from the error payload (60s fallback),
- * everything else backs off exponentially. On the final attempt the real
- * error is re-failed — a persistent rate limit surfaces as itself.
+ * immediately (the caller aborts the run — exit code 2), model-gone errors
+ * (404 NOT_FOUND / invalid-model 400, `isModelFatalError`) fail fast — a
+ * deprecated model never recovers by retrying —, per-minute rate limits
+ * sleep the delay parsed from the error payload (60s fallback), everything
+ * else backs off exponentially. On the final attempt the real error is
+ * re-failed — a persistent rate limit surfaces as itself.
  */
 export function withQuotaPolicy<A, E>(
   effect: Effect.Effect<A, E>,
@@ -134,6 +156,7 @@ export function withQuotaPolicy<A, E>(
         () => true,
         (error) => {
           if (error instanceof QuotaExhausted) return Effect.fail(error)
+          if (isModelFatalError(error)) return Effect.fail(error)
           if (n >= retries) return Effect.fail(error)
           const errStr = errorText(error)
           const isRateLimit = isQuotaSignal(errStr, errStr.toLowerCase())
