@@ -119,10 +119,11 @@ export function buildFooterStats(items, sourceOrder) {
   return { segments, matched }
 }
 
-// TanStack Router exposes location.hash WITHOUT the leading '#', decoded;
-// navigate({ hash }) takes the bare value. Normalize both directions here
-// so the deep link never fights the router over the '#' (arch §4).
+// TanStack Router exposes location.hash WITHOUT the leading '#', already
+// decoded (router-core parseLocation → decodePath); navigate({ hash }) takes
+// the same bare value. No second decode here — one throws on stray '%'
+// (a hand-typed '#50%') during render and corrupts values like '%25'.
 export function normalizeHash(rawHash) {
   if (!rawHash) return ''
-  return decodeURIComponent(rawHash.replace(/^#/, ''))
+  return rawHash.replace(/^#/, '')
 }

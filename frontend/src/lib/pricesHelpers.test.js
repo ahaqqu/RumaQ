@@ -201,12 +201,15 @@ describe('buildFooterStats', () => {
 })
 
 describe('normalizeHash', () => {
-  it('strips the leading hash mark and decodes', () => {
+  it('strips the leading hash mark without a second decode', () => {
     expect(normalizeHash('#gula-pasir')).toBe('gula-pasir')
     expect(normalizeHash('gula-pasir')).toBe('gula-pasir')
     expect(normalizeHash('')).toBe('')
     expect(normalizeHash(null)).toBe('')
-    expect(normalizeHash(encodeURIComponent('produk with space'))).toBe('produk with space')
+    // The router already decoded the hash (decodePath); the helper must not
+    // decode again — and must never throw on a stray '%'.
+    expect(normalizeHash('produk with space')).toBe('produk with space')
+    expect(normalizeHash('50%')).toBe('50%')
   })
 })
 
