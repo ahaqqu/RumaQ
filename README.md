@@ -95,11 +95,12 @@ A scheduled GitHub Actions workflow (`.github/workflows/smoke.yml`) verifies `ru
 
 This project uses agent skills to keep complex workflows consistent. Invoke them with `/<skill-name>`.
 
-| Skill                   | When to use                                                   | How to use                                             | Benefit                                                                            |
-| ----------------------- | ------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `pr-creation`           | Creating or opening a pull request                            | Mention or invoke `pr-creation`                        | Ensures a green gate, proper description, and review rules before submitting       |
-| `guided-implementation` | Implementing a difficult or unclear plan from a markdown file | Invoke `guided-implementation` with the plan file path | Confirms the high-level approach before coding and protects architecture decisions |
-| `code-review`           | Reviewing a PR after it is created                            | Mention or invoke `code-review`                        | Sets review depth, checks philosophy and guardrails, posts itemized PR comments    |
+| Skill                   | When to use                                                   | How to use                                             | Benefit                                                                                                                                                 |
+| ----------------------- | ------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pr-creation`           | Creating or opening a pull request                            | Mention or invoke `pr-creation`                        | Ensures a green gate, proper description, and review rules before submitting                                                                            |
+| `guided-implementation` | Implementing a difficult or unclear plan from a markdown file | Invoke `guided-implementation` with the plan file path | Confirms the high-level approach before coding and protects architecture decisions                                                                      |
+| `code-review`           | Reviewing a PR after it is created                            | Mention or invoke `code-review`                        | Sets review depth, checks philosophy and guardrails, posts itemized PR comments                                                                         |
+| `manager`               | Orchestrating workstreams via subagents ("run as manager")    | Mention or invoke `manager`                            | Runs the issue → research → design → plan → implement → review → verify loop over a GitHub-issue backlog and kanban board, without touching code itself |
 
 ### `/pr-creation`
 
@@ -112,6 +113,10 @@ Use when asked to implement a plan that may be ambiguous, cross-cutting, or arch
 ### `/code-review`
 
 Use whenever a PR needs review. It sets the review depth — normal for docs/skill-only changes, thermos (via `thermos-with-comments` and the two thermo-nuclear passes) mandatory for anything touching code — checks the PR against `docs/ARCHITECTURE.md` goals and the `AGENTS.md`/conventions guardrails, and posts each finding as an individual line-anchored review comment. See [`.agents/skills/code-review/SKILL.md`](.agents/skills/code-review/SKILL.md).
+
+### `/manager`
+
+Use when managing workstreams or implementations via subagents, when asked to "run as manager", or when orchestrating the issue → research → design → plan → implement → review → verify loop. It drives GitHub-issue-driven backlogs through a GitHub Projects kanban board, coordinates research/design/implementation/review/verification subagents in the background, maintains a durable state file, and raises workflow problems as `[workflow]` GitHub issues — never editing product code itself. See [`.agents/skills/manager/SKILL.md`](.agents/skills/manager/SKILL.md).
 
 ---
 
