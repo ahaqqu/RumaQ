@@ -26,6 +26,12 @@ WorkingDirectory=/var/lib/rumaq-scraper
 EnvironmentFile=/etc/rumaq-scraper/env
 # Browser revision ships with the deploy tree, not with the OS package set.
 Environment=PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers
+# The agent derives the lock file and the child's --state-dir from this (the
+# env file does not set it, and the 'state' default is relative to the
+# working dir): it MUST be the same path the nightly unit flocks, or the
+# manual-vs-nightly exclusion and the shared state (catalog, checkpoints)
+# both silently break.
+Environment=RUMAQ_SCRAPER_STATE_DIR=/var/lib/rumaq-scraper
 ExecStart=/usr/bin/bun /srv/rumaq-scraper/dist/agent.js
 # The agent itself never exits on error (it logs + continues); this is the
 # backstop for a crashed process. 5s keeps a crash-loop visible in the
