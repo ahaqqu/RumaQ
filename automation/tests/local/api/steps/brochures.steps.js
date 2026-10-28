@@ -259,13 +259,17 @@ defineFeature(feature, (test) => {
 
   test('Retention sweep deletes unreferenced past-grace objects and keeps the rest', ({
     given,
+    and,
     when,
     then,
   }) => {
-    given(
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and(
       'brochure images exist with an old referenced key, an old unreferenced key, and a fresh unreferenced key',
       async () => {
-        await ctx.resetAndSeed()
         for (const key of [OLD_REFERENCED_KEY, OLD_UNREFERENCED_KEY, FRESH_UNREFERENCED_KEY]) {
           const res = await putBrochure(key)
           expect(res.status).toBe(200)
