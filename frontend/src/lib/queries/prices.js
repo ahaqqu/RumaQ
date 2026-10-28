@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { getPrices, getPricesMeta, getPriceDetail, getPriceRuns } from '../api'
+import { getPrices, getPricesMeta, getPriceDetail, getPriceRuns, getPromos } from '../api'
 
 // Brochure data changes only when a scrape lands (daily) — a 5-minute
 // refetch keeps countdowns and prices current in long-lived tabs while the
@@ -21,6 +21,18 @@ export function usePriceMeta() {
   return useQuery({
     queryKey: ['prices', 'meta'],
     queryFn: ({ signal }) => getPricesMeta(signal),
+    staleTime: 1000 * 60 * 5,
+    refetchInterval: PRICES_REFETCH_MS,
+  })
+}
+
+// Promo catalog for the Promos segment (issue #292): same 5-min visible-tab
+// refresh as usePrices so the two segments' counts cannot disagree
+// mid-session (PM §7.6).
+export function usePricePromos() {
+  return useQuery({
+    queryKey: ['prices', 'promos'],
+    queryFn: ({ signal }) => getPromos(signal),
     staleTime: 1000 * 60 * 5,
     refetchInterval: PRICES_REFETCH_MS,
   })

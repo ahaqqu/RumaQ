@@ -282,6 +282,12 @@ export function getPricesMeta(signal?: AbortSignal): Promise<unknown> {
   return unwrap(client.GET('/api/prices/meta', { signal }))
 }
 
+// Promo catalog (issue #292) — first prices endpoint with a real generated
+// response type, so the promos view reads it fully typed.
+export function getPromos(signal?: AbortSignal) {
+  return unwrap(client.GET('/api/prices/promos', { signal }))
+}
+
 export function getPriceDetail(productKey: string, signal?: AbortSignal): Promise<unknown> {
   return unwrap(
     client.GET('/api/prices/{productKey}', { params: { path: { productKey } }, signal })
