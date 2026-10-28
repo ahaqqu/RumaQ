@@ -6,6 +6,7 @@ import {
   useScrapeCommands,
   useScrapeEvents,
   useTriggerScrape,
+  ACTIVE_STATUSES,
 } from '../lib/queries/index.js'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
@@ -13,10 +14,6 @@ import { Chip } from '../components/Chip.jsx'
 import { Button } from '../components/Button.jsx'
 import { cn } from '../lib/cn.js'
 import { IconBolt, IconClock, IconWarning } from '../components/icons.jsx'
-
-// One run at a time — a command in either state blocks the trigger button and
-// flips polling to the fast cadence (queries/scrape.js).
-const ACTIVE_STATUSES = new Set(['pending', 'running'])
 
 const STATUS_DOT = {
   pending: 'bg-warn',
@@ -95,7 +92,9 @@ function TriggerPanel({ activeCommand }) {
   const [selected, setSelected] = useState([])
   const stores = data?.stores ?? []
   const blocked = trigger.isPending || Boolean(activeCommand)
-  const alreadyRunning = blocked || trigger.error?.status === 409
+  // The inline reason must not fire while the first POST is merely in flight —
+  // only a live command or the server's own 409 means "one run at a time".
+  const alreadyRunning = Boolean(activeCommand) || trigger.error?.status === 409
 
   const toggleStore = (slug, checked) => {
     setSelected((prev) => (checked ? [...prev, slug] : prev.filter((entry) => entry !== slug)))

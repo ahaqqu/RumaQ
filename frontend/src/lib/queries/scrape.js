@@ -4,7 +4,7 @@ import { getScrapeStores, createScrape, getScrapeCommands, getScrapeEvents } fro
 
 // One run at a time — a pending/running command blocks new ones (and flips
 // every consumer into its fast polling cadence).
-const ACTIVE_STATUSES = new Set(['pending', 'running'])
+export const ACTIVE_STATUSES = new Set(['pending', 'running'])
 
 export function useScrapeStores() {
   return useQuery({

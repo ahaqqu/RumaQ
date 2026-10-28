@@ -9,6 +9,7 @@ vi.mock('../lib/queries/me.js', () => ({
 }))
 
 vi.mock('../lib/queries/index.js', () => ({
+  ACTIVE_STATUSES: new Set(['pending', 'running']),
   useScrapeStores: vi.fn(),
   useScrapeCommands: vi.fn(),
   useScrapeEvents: vi.fn(),
