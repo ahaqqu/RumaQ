@@ -388,6 +388,14 @@ describe('GET /api/admin/scrape/commands + events', () => {
     expect(body.commands[0]!.stores).toEqual(['lotte-mart'])
     expect(body.commands[1]!.id).toBe(firstId)
     expect(body.commands[1]!.status).toBe('success')
+    // The browser client sends limit as a digit string (query params have no
+    // types on the wire) — it must coerce, not 400 (regression: the SPA's
+    // history panel failed to load when this validator rejected strings).
+    const limited = await apiApp.request('/api/admin/scrape/commands?limit=20', {}, env)
+    expect(limited.status).toBe(200)
+    expect(((await limited.json()) as { commands: unknown[] }).commands).toHaveLength(2)
+    const badLimit = await apiApp.request('/api/admin/scrape/commands?limit=0', {}, env)
+    expect(badLimit.status).toBe(400)
   })
 
   it('404s events for an unknown command', async () => {

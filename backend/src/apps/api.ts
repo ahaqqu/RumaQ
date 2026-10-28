@@ -15,6 +15,7 @@ import {
   maxValue,
   pipe,
   regex,
+  transform,
 } from 'valibot'
 import {
   SCRAPE_STORE_SLUGS,
@@ -110,7 +111,11 @@ const scrapeEventsQuery = object({
 })
 
 const scrapeCommandsQuery = object({
-  limit: optional(pipe(number(), integer(), minValue(1), maxValue(50))),
+  // Hono delivers query params as strings — accept a digit string and coerce
+  // (the OpenAPI annotation below still documents an integer).
+  limit: optional(
+    pipe(string(), transform(Number), number(), integer(), minValue(1), maxValue(50))
+  ),
 })
 
 const apiApp = new Hono<Env>()
