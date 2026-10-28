@@ -38,6 +38,37 @@ describe('createFetcher', () => {
     expect(headers['Accept-Language']).toBe('id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7')
   })
 
+  it('applies per-store header overrides on both the html and image tiers', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit & { proxy?: string }) =>
+      _url.endsWith('.jpg')
+        ? new Response(new Uint8Array([1, 2, 3]), { status: 200 })
+        : htmlResponse('<html></html>')
+    )
+    // haqita lotte.py: en-US Accept-Language on every plain request.
+    const lotte: StoreConfig = {
+      ...browserStore,
+      headerOverrides: { 'Accept-Language': 'en-US,en;q=0.5' },
+    }
+    const fetcher = createFetcher(lotte, { fetch: fetchMock, sleep: async () => {} })
+    await Effect.runPromise(fetcher.fetchHtml('https://www.lottemart.co.id/'))
+    const htmlHeaders = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<
+      string,
+      string
+    >
+    expect(htmlHeaders['Accept-Language']).toBe('en-US,en;q=0.5')
+    expect(htmlHeaders['User-Agent']).toBe(DEFAULT_HEADERS['User-Agent'])
+    // The per-request Accept (html) is untouched by the override mechanism.
+    expect(htmlHeaders['Accept']).toBe(DEFAULT_HEADERS['Accept'])
+
+    await Effect.runPromise(fetcher.fetchBytes('https://www.lottemart.co.id/assets/promo.jpg'))
+    const imageHeaders = (fetchMock.mock.calls[1]![1] as RequestInit).headers as Record<
+      string,
+      string
+    >
+    expect(imageHeaders['Accept-Language']).toBe('en-US,en;q=0.5')
+    expect(imageHeaders['Accept']).toBe('*/*')
+  })
+
   it('retries with exponential backoff and succeeds', async () => {
     let calls = 0
     const fetchMock = vi.fn(async () => {

@@ -49,6 +49,8 @@ export type RunStoreSummary = {
   itemsExtracted: number
   itemsRejected: number
   error?: string
+  /** By-design skip: Tier-2 store needs a Tier-3 proxy, none configured. */
+  needsProxy?: boolean
 }
 
 export type RunMatchSummary = {

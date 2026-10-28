@@ -7,13 +7,15 @@
 // plain stores get the Tier-1 fetcher, browser stores get Tier-2 HTML with
 // Tier-1 image downloads (the brochure CDN is not challenge-protected).
 //
-// Port of haqita base_scraper.py DEFAULT_HEADERS + _request_with_retries.
+// Port of haqita base_scraper.py DEFAULT_HEADERS + _request_with_retries,
+// plus haqita's per-store HEADERS overrides (config headerOverrides).
 // All failures are typed tagged errors; transport and HTTP-status failures
 // are retried by the shared engine, content-type and tier errors are fatal.
 
 import { Effect } from 'effect'
 
 import type { StoreConfig } from '../config.js'
+import { storeProxyUrl } from '../config.js'
 import { isPermanentClientStatus, withRetries } from '../util/retry.js'
 import { createBrowserFetcher, type BrowserLauncher } from './browser.js'
 import { type FetchError, FetchHttpStatus, FetchTransport, NonImageContent } from './errors.js'
@@ -108,13 +110,17 @@ export function createFetcher(
   const timeoutMs = options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
   const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
   const log = options.log ?? (() => {})
-  const proxyUrl = options.proxyUrl ?? (store.proxyEnv ? process.env[store.proxyEnv] : undefined)
+  const proxyUrl = options.proxyUrl ?? storeProxyUrl(store)
   const jar: CookieJar = { jars: new Map() }
   const request = (
     url: string,
     accept: string
   ): Effect.Effect<Response, FetchTransport | FetchHttpStatus> => {
-    const headers: Record<string, string> = { ...DEFAULT_HEADERS, Accept: accept }
+    const headers: Record<string, string> = {
+      ...DEFAULT_HEADERS,
+      ...store.headerOverrides,
+      Accept: accept,
+    }
     const cookie = jarCookieHeader(jar, url)
     if (cookie) headers.Cookie = cookie
     const init: RequestInit & { proxy?: string } = { headers, redirect: 'follow' }

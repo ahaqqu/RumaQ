@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vite-plus/test'
 import { Effect } from 'effect'
 
-import { runPipeline } from '../src/pipeline.js'
+import { runPipeline, type PipelineOptions } from '../src/pipeline.js'
 import { exitError, fakeBrowserLauncher } from './helpers.js'
 import type { GeminiClient } from '../src/ocr/gemini.js'
 import type { EmbeddingClient } from '../src/match/embedding.js'
@@ -81,6 +81,73 @@ const ocrItems = [
   },
   { name: 'B', brand: null, unit: null, price: 5000, promo: null, period: null }, // name_too_short
 ]
+
+/** Live-publish fetch capturing run reports and price payloads; all accepted. */
+function makeReportCapture() {
+  const reported: RunReport[] = []
+  const posted: IngestPayload[] = []
+  return {
+    reported,
+    posted,
+    publishFetch: async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/internal/ingest/runs')) {
+        reported.push(JSON.parse(init!.body as string))
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }
+      posted.push(JSON.parse(init!.body as string))
+      return new Response(JSON.stringify({ accepted: 7, skipped: 0 }), { status: 200 })
+    },
+  }
+}
+
+// Shared arrange for the by-design needs-proxy scenarios: Lotte's browser
+// tier is served a persistent Incapsula challenge, and LOTTE_PROXY_URL is
+// guarded so every scenario restores the environment it started with.
+async function setupChallengedLotte() {
+  const katalogHtml = await readFile(
+    path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+    'utf8'
+  )
+  const koranHtml = await readFile(
+    path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+    'utf8'
+  )
+  const challengedLotte = fakeBrowserLauncher(
+    '<html><script src="/_Incapsula_Resource?SWHDLEDF"></script></html>'
+  )
+  const ocrClient: GeminiClient = {
+    models: { generateContent: async () => ({ text: JSON.stringify(ocrItems) }) },
+  }
+  const previousProxy = process.env.LOTTE_PROXY_URL
+  return {
+    setProxy(value: string | undefined) {
+      if (value === undefined) delete process.env.LOTTE_PROXY_URL
+      else process.env.LOTTE_PROXY_URL = value
+    },
+    restoreProxy() {
+      if (previousProxy !== undefined) process.env.LOTTE_PROXY_URL = previousProxy
+      else delete process.env.LOTTE_PROXY_URL
+    },
+    options(
+      stateDir: string,
+      overrides: Partial<PipelineOptions> & Pick<PipelineOptions, 'dryRun'>
+    ): PipelineOptions {
+      return {
+        launcher: challengedLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
+        stateDir,
+        fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
+        ocrClient,
+        sleep: noSleep,
+        now: () => new Date('2026-10-24T23:00:05Z'),
+        log: () => {},
+        ...overrides,
+      }
+    },
+    browserClosed: () => challengedLotte.state.closed,
+  }
+}
 
 describe('runPipeline', () => {
   it('runs the superindo flow end to end in dry-run mode', async () => {
@@ -709,56 +776,150 @@ describe('runPipeline', () => {
     expect(reported[0]!.perStore['superindo']!.error).toContain('HTTP 500')
   })
 
+  it('reports a needs-proxy skip as a successful run with the store marker (§7.1)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const harness = await setupChallengedLotte()
+    const { reported, publishFetch } = makeReportCapture()
+    harness.setProxy(undefined)
+    try {
+      const status = await Effect.runPromise(
+        runPipeline(
+          harness.options(stateDir, {
+            dryRun: false,
+            publishFetch,
+            ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+            ingestSecret: 's3cret',
+          })
+        )
+      )
+      expect(status.stage).toBe('done')
+
+      // The monitor feed sees a green run whose Lotte row carries the marker.
+      expect(reported).toHaveLength(1)
+      expect(reported[0]!.status).toBe('success')
+      expect(reported[0]!.exitCode).toBe(0)
+      expect(reported[0]!.error).toBeNull()
+      expect(reported[0]!.perStore['lotte-mart']!.needsProxy).toBe(true)
+      expect(reported[0]!.perStore['lotte-mart']!.error).toContain('LOTTE_PROXY_URL')
+      expect(reported[0]!.perStore['superindo']!.error).toBeUndefined()
+    } finally {
+      harness.restoreProxy()
+    }
+  })
+
+  it('skips a challenged browser store by design when no proxy is configured', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const harness = await setupChallengedLotte()
+    harness.setProxy(undefined)
+    try {
+      const status = await Effect.runPromise(
+        runPipeline(harness.options(stateDir, { dryRun: true }))
+      )
+
+      // The run completes — Lotte's expected skip must not redden it.
+      expect(status.stage).toBe('done')
+      const lotte = status.stores['lotte-mart']!
+      expect(lotte.needsProxy).toBe(true)
+      expect(lotte.error).toContain('LOTTE_PROXY_URL')
+
+      // Superindo's snapshot still published (dry-run payload with its items).
+      const payload: IngestPayload = JSON.parse(
+        await readFile(path.join(stateDir, 'payload-2026-10-24T23-00-05-000Z.json'), 'utf8')
+      )
+      expect(payload.items.map((item) => item.productKey)).toContain('gula-pasir----1-kg')
+
+      // status.json carries the marker for box-side inspection.
+      const statusFile = JSON.parse(await readFile(path.join(stateDir, 'status.json'), 'utf8'))
+      expect(statusFile.stores['lotte-mart'].needsProxy).toBe(true)
+      expect(harness.browserClosed()).toBe(true)
+    } finally {
+      harness.restoreProxy()
+    }
+  })
+
   it("isolates stores — one store failing never blocks the other stores' publish", async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
-    const katalogHtml = await readFile(
-      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
-      'utf8'
-    )
-    const koranHtml = await readFile(
-      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
-      'utf8'
-    )
-    const jpeg = fakeJpegBytes()
-    const fetchMock = makeFetchMock(katalogHtml, koranHtml, jpeg)
-    const ocrClient: GeminiClient = {
-      models: { generateContent: async () => ({ text: JSON.stringify(ocrItems) }) },
+    const harness = await setupChallengedLotte()
+    // With the Tier-3 proxy configured, a persisting challenge is a real
+    // failure again — a fatal BrowserTierRequired for that store alone.
+    harness.setProxy('http://residential-proxy.example:8080')
+    try {
+      const failure = await Effect.runPromiseExit(
+        runPipeline(harness.options(stateDir, { dryRun: true }))
+      )
+
+      // Superindo's snapshot still published (dry-run payload written with its
+      // items) even though lotte's store run died…
+      const payload: IngestPayload = JSON.parse(
+        await readFile(path.join(stateDir, 'payload-2026-10-24T23-00-05-000Z.json'), 'utf8')
+      )
+      expect(payload.items.map((item) => item.productKey)).toContain('gula-pasir----1-kg')
+
+      // …and the run itself fails non-zero AFTER publishing, naming the store.
+      expect(failure._tag).toBe('Failure')
+      const error = exitError(failure) as Error & { exitCode?: number }
+      expect(error.message).toContain('lotte-mart')
+      expect(error.message).toContain('BrowserTierRequired')
+      expect(error.exitCode).toBe(1)
+      expect(harness.browserClosed()).toBe(true)
+    } finally {
+      harness.restoreProxy()
     }
-    // Lotte is served a persistent Incapsula challenge on the browser tier —
-    // a fatal BrowserTierRequired for that store alone.
-    const challengedLotte = fakeBrowserLauncher(
-      '<html><script src="/_Incapsula_Resource?SWHDLEDF"></script></html>'
-    )
+  })
 
-    const failure = await Effect.runPromiseExit(
-      runPipeline({
-        launcher: challengedLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        dryRun: true,
-        fetch: fetchMock,
-        ocrClient,
-        sleep: noSleep,
-        now: () => new Date('2026-10-24T23:00:05Z'),
-        log: () => {},
-      })
+  it("retires a needs-proxy skipped store's pre-run outbox with the publish", async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const harness = await setupChallengedLotte()
+    const { reported, posted, publishFetch } = makeReportCapture()
+    // A previous run OCR'd one Lotte image but never published — its batch
+    // waits in the outbox for this run's replay.
+    const lotteDir = path.join(stateDir, 'lotte-mart')
+    await mkdir(lotteDir, { recursive: true })
+    await writeFile(
+      path.join(lotteDir, 'run-2026-10-23T23-00-05-000Z.jsonl'),
+      JSON.stringify({
+        storeSlug: 'lotte-mart',
+        brochureUrl: 'https://www.lottemart.co.id/promosi/2026-10-23',
+        products: [
+          {
+            name: 'Susu UHT Cokelat',
+            brand: null,
+            unit: '1 L',
+            price: 19000,
+            promo: null,
+            period: null,
+            ocrRawPrice: '19000',
+            imageSource: 'promo-2026-10-23-1.jpg',
+          },
+        ],
+        scrapedAt: '2026-10-23T23:00:05Z',
+      }) + '\n',
+      'utf8'
     )
-
-    // Superindo's snapshot still published (dry-run payload written with its
-    // items) even though lotte's store run died…
-    const payload: IngestPayload = JSON.parse(
-      await readFile(path.join(stateDir, 'payload-2026-10-24T23-00-05-000Z.json'), 'utf8')
-    )
-    expect(payload.items.map((item) => item.productKey)).toContain('gula-pasir----1-kg')
-
-    // …and the run itself fails non-zero AFTER publishing, naming the store.
-    expect(failure._tag).toBe('Failure')
-    const error = exitError(failure) as Error & { exitCode?: number }
-    expect(error.message).toContain('lotte-mart')
-    expect(error.message).toContain('BrowserTierRequired')
-    expect(error.exitCode).toBe(1)
-    expect(challengedLotte.state.closed).toBe(true)
+    harness.setProxy(undefined)
+    try {
+      const status = await Effect.runPromise(
+        runPipeline(
+          harness.options(stateDir, {
+            dryRun: false,
+            publishFetch,
+            ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+            ingestSecret: 's3cret',
+          })
+        )
+      )
+      // The skip is marked and the run stays green…
+      expect(status.stage).toBe('done')
+      expect(status.stores['lotte-mart']!.needsProxy).toBe(true)
+      expect(reported[0]!.status).toBe('success')
+      // …the pre-run batch rode this publish…
+      expect(posted).toHaveLength(1)
+      expect(posted[0]!.items.map((item) => item.storeSlug)).toContain('lotte-mart')
+      // …and the outbox retired like a healthy store's.
+      expect((await readdir(lotteDir)).filter((name) => name.startsWith('run-'))).toEqual([])
+    } finally {
+      harness.restoreProxy()
+    }
   })
 })
 
