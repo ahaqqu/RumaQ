@@ -51,17 +51,21 @@ type ScrapeCommandSqlRow = {
   log_truncated: number
 }
 
-function toCommand(row: ScrapeCommandSqlRow): ScrapeCommandRow {
-  let stores: string[] = []
+/** The one JSON-parse guard for the stored stores blob (feed rows + claims). */
+function parseCommandStores(storesJson: string): string[] {
   try {
-    const parsed: unknown = JSON.parse(row.stores)
-    if (Array.isArray(parsed)) stores = parsed.map(String)
+    const parsed: unknown = JSON.parse(storesJson)
+    if (Array.isArray(parsed)) return parsed.map(String)
   } catch {
     // A malformed blob must never break the whole feed.
   }
+  return []
+}
+
+function toCommand(row: ScrapeCommandSqlRow): ScrapeCommandRow {
   return {
     id: row.id,
-    stores,
+    stores: parseCommandStores(row.stores),
     status: (row.status === 'running' || row.status === 'success' || row.status === 'failed'
       ? row.status
       : 'pending') as ScrapeCommandRow['status'],
@@ -73,10 +77,6 @@ function toCommand(row: ScrapeCommandSqlRow): ScrapeCommandRow {
     error: row.error,
     logTruncated: row.log_truncated === 1,
   }
-}
-
-function parseJsonStores(stores: string[]): string {
-  return JSON.stringify(stores)
 }
 
 export async function createScrapeCommand(
@@ -97,7 +97,7 @@ export async function createScrapeCommand(
       `INSERT INTO scrape_commands (id, stores, status, created_by, created_at)
        VALUES (?, ?, 'pending', ?, ?)`
     )
-    .bind(id, parseJsonStores(stores), createdBy, createdAt)
+    .bind(id, JSON.stringify(stores), createdBy, createdAt)
     .run()
 
   // History cap: drop everything beyond the newest 50 (events explicitly —
@@ -167,16 +167,6 @@ export async function claimNextScrapeCommand(db: D1Database): Promise<ClaimedCom
     stores: parseCommandStores(claimed.stores),
     createdAt: claimed.created_at,
   }
-}
-
-function parseCommandStores(storesJson: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(storesJson)
-    if (Array.isArray(parsed)) return parsed.map(String)
-  } catch {
-    // Treated as an empty scope by the caller (agent logs + fails the run).
-  }
-  return []
 }
 
 export async function appendScrapeEvents(
@@ -262,7 +252,9 @@ export async function listScrapeCommands(db: D1Database, limit = 20): Promise<Sc
 export async function listScrapeEvents(
   db: D1Database,
   commandId: string,
-  afterSeq = 0,
+  // -1 = the full log (seq 0 reachable) — the same semantic the route applies
+  // when the admin omits afterSeq; 0 would silently skip the first line.
+  afterSeq = -1,
   limit = 1000
 ): Promise<{ events: ScrapeEvent[]; truncated: boolean }> {
   const command = await db
