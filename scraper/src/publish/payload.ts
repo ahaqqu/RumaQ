@@ -40,9 +40,10 @@ export interface ImageProducts {
    * Worker-served object URL (issue #293, `/api/brochures/{store}/{date}/
    * {file}`) for current-run brochure-store batches — the stored
    * `brochureUrl` observations point at. Catalog stores and outbox replays
-   * (which already recorded the object URL in `brochureUrl`) leave it unset.
+   * (which already recorded the object URL in `brochureUrl`) leave it unset —
+   * no producer ever sets null, so the type is optional-string only.
    */
-  brochureObjectUrl?: string | null
+  brochureObjectUrl?: string
   products: ValidatedProduct[]
   /**
    * ISO scrapedAt of the run that extracted these items. Outbox lines carry
