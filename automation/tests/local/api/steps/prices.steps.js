@@ -496,8 +496,11 @@ defineFeature(feature, (test) => {
     })
 
     and(/the product names should appear in order "(.+)"/, (expected) => {
-      const names = ctx.responseBody.items.map((i) => i.name)
-      expect(names).toEqual(expected.split(','))
+      // The feature file names products by first word ("Minyak", "Gula", …);
+      // rows repeat per source, so dedupe and compare the first-word
+      // sequence of the ordered page.
+      const names = [...new Set(ctx.responseBody.items.map((i) => i.name))]
+      expect(names.map((name) => name.split(' ')[0])).toEqual(expected.split(','))
       expect(ctx.responseBody.truncated).toBe(false)
     })
 
@@ -511,6 +514,60 @@ defineFeature(feature, (test) => {
       expect(gula.savings_pct).toBe(5.3)
       expect(gula.cheapest_source_slug).toBe('superindo')
       expect(gula.cheapest_valid_until).toBe('2026-10-30')
+    })
+
+    // jest-cucumber matches step definitions to feature-file steps
+    // positionally — each occurrence in the scenario needs its own
+    // registration, even when the text repeats.
+    when(/I request the price list sorted by "(\w+)"/, async (sort) => {
+      await ctx.sendRequest('GET', `/api/prices?sort=${sort}`)
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and(/the product names should appear in order "(.+)"/, (expected) => {
+      // The feature file names products by first word ("Minyak", "Gula", …);
+      // rows repeat per source, so dedupe and compare the first-word
+      // sequence of the ordered page.
+      const names = [...new Set(ctx.responseBody.items.map((i) => i.name))]
+      expect(names.map((name) => name.split(' ')[0])).toEqual(expected.split(','))
+      expect(ctx.responseBody.truncated).toBe(false)
+    })
+
+    when(/I request the price list sorted by "(\w+)"/, async (sort) => {
+      await ctx.sendRequest('GET', `/api/prices?sort=${sort}`)
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and(/the product names should appear in order "(.+)"/, (expected) => {
+      // The feature file names products by first word ("Minyak", "Gula", …);
+      // rows repeat per source, so dedupe and compare the first-word
+      // sequence of the ordered page.
+      const names = [...new Set(ctx.responseBody.items.map((i) => i.name))]
+      expect(names.map((name) => name.split(' ')[0])).toEqual(expected.split(','))
+      expect(ctx.responseBody.truncated).toBe(false)
+    })
+
+    when(/I request the price list sorted by "(\w+)"/, async (sort) => {
+      await ctx.sendRequest('GET', `/api/prices?sort=${sort}`)
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and(/the product names should appear in order "(.+)"/, (expected) => {
+      // The feature file names products by first word ("Minyak", "Gula", …);
+      // rows repeat per source, so dedupe and compare the first-word
+      // sequence of the ordered page.
+      const names = [...new Set(ctx.responseBody.items.map((i) => i.name))]
+      expect(names.map((name) => name.split(' ')[0])).toEqual(expected.split(','))
+      expect(ctx.responseBody.truncated).toBe(false)
     })
   })
 
@@ -551,6 +608,10 @@ defineFeature(feature, (test) => {
 
     when(/I search the sorted price list for "(.+)"/, async (term) => {
       await ctx.sendRequest('GET', `/api/prices?sort=savings&q=${encodeURIComponent(term)}`)
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
     })
 
     and('the page should hold 11 complete products without truncation', () => {
