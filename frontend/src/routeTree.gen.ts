@@ -17,6 +17,7 @@ import { Route as PlanRouteImport } from './routes/plan'
 import { Route as PricesRouteImport } from './routes/prices'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as AdminPricesRouteImport } from './routes/admin.prices'
+import { Route as AdminScrapeRouteImport } from './routes/admin.scrape'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -58,6 +59,11 @@ const AdminPricesRoute = AdminPricesRouteImport.update({
   path: '/admin/prices',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminScrapeRoute = AdminScrapeRouteImport.update({
+  id: '/admin/scrape',
+  path: '/admin/scrape',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -68,6 +74,7 @@ export interface FileRoutesByFullPath {
   '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
   '/admin/prices': typeof AdminPricesRoute
+  '/admin/scrape': typeof AdminScrapeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -78,6 +85,7 @@ export interface FileRoutesByTo {
   '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
   '/admin/prices': typeof AdminPricesRoute
+  '/admin/scrape': typeof AdminScrapeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -89,6 +97,7 @@ export interface FileRoutesById {
   '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
   '/admin/prices': typeof AdminPricesRoute
+  '/admin/scrape': typeof AdminScrapeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -101,6 +110,7 @@ export interface FileRouteTypes {
     | '/prices'
     | '/settings'
     | '/admin/prices'
+    | '/admin/scrape'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -111,6 +121,7 @@ export interface FileRouteTypes {
     | '/prices'
     | '/settings'
     | '/admin/prices'
+    | '/admin/scrape'
   id:
     | '__root__'
     | '/'
@@ -121,6 +132,7 @@ export interface FileRouteTypes {
     | '/prices'
     | '/settings'
     | '/admin/prices'
+    | '/admin/scrape'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -132,6 +144,7 @@ export interface RootRouteChildren {
   PricesRoute: typeof PricesRoute
   SettingsRoute: typeof SettingsRoute
   AdminPricesRoute: typeof AdminPricesRoute
+  AdminScrapeRoute: typeof AdminScrapeRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -192,6 +205,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminPricesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/scrape': {
+      id: '/admin/scrape'
+      path: '/admin/scrape'
+      fullPath: '/admin/scrape'
+      preLoaderRoute: typeof AdminScrapeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -204,6 +224,7 @@ const rootRouteChildren: RootRouteChildren = {
   PricesRoute: PricesRoute,
   SettingsRoute: SettingsRoute,
   AdminPricesRoute: AdminPricesRoute,
+  AdminScrapeRoute: AdminScrapeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
