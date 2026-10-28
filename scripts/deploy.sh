@@ -294,11 +294,45 @@ deploy_worker() {
     dry_run_flag="--dry-run"
   fi
 
+  # The four gateway secrets are declared as secret bindings
+  # (cloudflare.config.ts), so they must carry values at deploy time: the CLI
+  # refuses to create a Worker whose declared secrets are unset (fresh branch
+  # previews), and `workers secrets update` (put_worker_secrets, below) can
+  # only run after the first deploy. Supply them via a secrets file.
+  local secrets_file=""
+  if ! $DRY_RUN; then
+    local missing=""
+    local secret_name
+    for secret_name in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY; do
+      if [[ -z ${!secret_name:-} ]]; then
+        missing+=" ${secret_name}"
+      fi
+    done
+    if [[ -n $missing ]]; then
+      warn "Missing required secret values:${missing}"
+      warn "Set them in the environment or .env before deploying."
+      exit 1
+    fi
+    secrets_file="$(mktemp)"
+    chmod 600 "$secrets_file"
+    for secret_name in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY; do
+      printf '%s=%s\n' "$secret_name" "${!secret_name}" >> "$secrets_file"
+    done
+    dry_run_flag+=" --secrets-file ${secrets_file}"
+  fi
+
   # shellcheck disable=SC2086
   # cf deploy must run next to cloudflare.config.ts so it finds the project.
+  local deploy_status=0
   cd "$BACKEND_DIR"
-  cf_cmd deploy ${dry_run_flag}
+  cf_cmd deploy ${dry_run_flag} || deploy_status=$?
   cd "$ROOT_DIR"
+  if [[ -n $secrets_file ]]; then
+    rm -f "$secrets_file"
+  fi
+  if (( deploy_status != 0 )); then
+    exit "$deploy_status"
+  fi
 
   if $DRY_RUN; then
     ok "Worker dry-run build succeeded."
