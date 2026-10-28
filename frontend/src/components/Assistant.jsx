@@ -11,6 +11,7 @@ import {
   IconKey,
 } from './icons.jsx'
 import { cn } from '../lib/cn.js'
+import { formatTokens, usageMeterModel } from '../lib/usage.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { useApp } from '../context/AppContext.jsx'
 import { personaText } from '../lib/persona.js'
@@ -64,13 +65,9 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
   // with RumaQ's shared key when the user has none of their own.
   const isConnected = Boolean(aiKey) || hasBackendKey || settings?.server_ai_available === true
 
-  const used = usage?.used ?? 0
-  const limit = usage?.daily_limit ?? 20
-  // The daily cap only applies to RumaQ's shared server key; a user's own key
-  // is unmetered.
-  const ownKey = usage?.key_source === 'user'
-  const warn = !ownKey && used >= limit - 4
-  const danger = !ownKey && used >= limit
+  // Shared metering model; while the usage query loads, show the zeroed
+  // server-key default (same as before the data arrives).
+  const meter = usageMeterModel(usage) ?? usageMeterModel({ used: 0, daily_limit: 20 })
 
   const send = async (text) => {
     if (!text.trim() || chat.isPending) return
@@ -150,14 +147,17 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
                       <span
                         className={cn(
                           'w-2 h-2 rounded-full',
-                          danger ? 'bg-text-faint' : warn ? 'bg-warn' : 'bg-ok'
+                          meter.danger ? 'bg-text-faint' : meter.warn ? 'bg-warn' : 'bg-ok'
                         )}
                       />
-                      {danger
+                      {meter.danger
                         ? t('assistant.dailyLimitReached')
-                        : ownKey
-                          ? t('assistant.readyOwnKey', { used })
-                          : t('assistant.ready', { used, limit })}
+                        : meter.ownKey
+                          ? t('assistant.readyOwnKey', {
+                              input: formatTokens(meter.inputTokens),
+                              output: formatTokens(meter.outputTokens),
+                            })
+                          : t('assistant.ready', { used: meter.used, limit: meter.limit })}
                     </>
                   ) : (
                     t('assistant.notConnected')

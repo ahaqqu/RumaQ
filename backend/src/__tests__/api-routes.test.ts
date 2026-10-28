@@ -524,6 +524,33 @@ describe('api routes', () => {
     expect(((await res.json()) as any).items.length).toBeGreaterThan(0)
   })
 
+  it('/api/purchases/scan meters provider tokens on the error path', async () => {
+    const env = createMockEnv({
+      props: { userId: 'u1', householdId: 'h1' },
+      TEST_MODE: 'false',
+    })
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ ai_provider: 'ollama', encrypted_ai_key: ENCRYPTED_KEY })
+      .mockResolvedValueOnce({ id: 'usage-1', used: 0, daily_limit: 20 })
+    env.DB.run = vi.fn().mockResolvedValue(undefined)
+    // Provider responds with usage but empty content: the key owner is billed
+    // for the input tokens even though the scan fails.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '' } }],
+        usage: { prompt_tokens: 100, completion_tokens: 50 },
+      }),
+    })
+    const file = new File(['x'], 'receipt.jpg', { type: 'image/jpeg' })
+    const formData = new FormData()
+    formData.append('image', file)
+    const res = await apiApp.request('/api/purchases/scan', { method: 'POST', body: formData }, env)
+    expect(res.status).toBe(502)
+    expect(env.DB.bind.mock.calls.flat()).toEqual(expect.arrayContaining([0, 100, 50, 'usage-1']))
+  })
+
   it('/api/purchases/scan rejects missing image', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     const res = await apiApp.request(

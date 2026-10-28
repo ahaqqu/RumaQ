@@ -29,11 +29,12 @@ import {
   getSignedUrl,
   extFromType,
 } from '../lib/receipts.js'
-import { extractReceiptItems, type TokenUsage } from '../lib/ai.js'
+import { extractReceiptItems, usageCollector, type TokenUsage } from '../lib/ai.js'
 import {
   resolveAiAccess,
   getOrCreateAiUsage,
   isAiUsageLimited,
+  recordAiUsage,
   type UserAiSettings,
 } from '../lib/ai-access.js'
 import { sendChatMessage } from '../lib/chat.js'
@@ -1153,13 +1154,16 @@ apiApp.post(
             baseUrl: access.baseUrl,
             model: access.model,
             thinkingLevel: access.thinkingLevel,
-            onUsage: (usage) => {
-              tokenUsage.input_tokens += usage.input_tokens
-              tokenUsage.output_tokens += usage.output_tokens
-            },
+            onUsage: usageCollector(tokenUsage),
           }
         )
       } catch (err) {
+        // The provider billed the failed attempt's input tokens; meter them
+        // even though the request itself is not counted.
+        await recordAiUsage(c.env, usageRow, {
+          inputTokens: tokenUsage.input_tokens,
+          outputTokens: tokenUsage.output_tokens,
+        })
         return c.json(
           {
             error: `AI chat failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -1169,11 +1173,11 @@ apiApp.post(
       }
     }
 
-    await c.env.DB.prepare(
-      'UPDATE ai_usage SET used = used + 1, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?'
-    )
-      .bind(tokenUsage.input_tokens, tokenUsage.output_tokens, usageRow.id)
-      .run()
+    await recordAiUsage(c.env, usageRow, {
+      requests: 1,
+      inputTokens: tokenUsage.input_tokens,
+      outputTokens: tokenUsage.output_tokens,
+    })
 
     const res = c.json({ reply })
     res.headers.set('Cache-Control', 'private, no-cache')
@@ -1295,13 +1299,16 @@ apiApp.post(
             baseUrl: access.baseUrl,
             model: access.model,
             thinkingLevel: access.thinkingLevel,
-            onUsage: (usage) => {
-              tokenUsage.input_tokens += usage.input_tokens
-              tokenUsage.output_tokens += usage.output_tokens
-            },
+            onUsage: usageCollector(tokenUsage),
           }
         )
       } catch (err) {
+        // The provider billed the failed attempt's input tokens; meter them
+        // even though the request itself is not counted.
+        await recordAiUsage(c.env, usageRow, {
+          inputTokens: tokenUsage.input_tokens,
+          outputTokens: tokenUsage.output_tokens,
+        })
         return c.json(
           {
             error: `AI scan failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -1312,11 +1319,11 @@ apiApp.post(
       }
     }
 
-    await c.env.DB.prepare(
-      'UPDATE ai_usage SET used = used + 1, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?'
-    )
-      .bind(tokenUsage.input_tokens, tokenUsage.output_tokens, usageRow.id)
-      .run()
+    await recordAiUsage(c.env, usageRow, {
+      requests: 1,
+      inputTokens: tokenUsage.input_tokens,
+      outputTokens: tokenUsage.output_tokens,
+    })
 
     const imageUrl: string | null = getSignedUrl()
 
@@ -2569,13 +2576,16 @@ apiApp.post(
             baseUrl: access.baseUrl,
             model: access.model,
             thinkingLevel: access.thinkingLevel,
-            onUsage: (usage) => {
-              tokenUsage.input_tokens += usage.input_tokens
-              tokenUsage.output_tokens += usage.output_tokens
-            },
+            onUsage: usageCollector(tokenUsage),
           }
         )
       } catch (err) {
+        // The provider billed the failed attempt's input tokens; meter them
+        // even though the request itself is not counted.
+        await recordAiUsage(c.env, usageRow, {
+          inputTokens: tokenUsage.input_tokens,
+          outputTokens: tokenUsage.output_tokens,
+        })
         return c.json(
           {
             error: `AI plan generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -2585,11 +2595,11 @@ apiApp.post(
       }
     }
 
-    await c.env.DB.prepare(
-      'UPDATE ai_usage SET used = used + 1, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?'
-    )
-      .bind(tokenUsage.input_tokens, tokenUsage.output_tokens, usageRow.id)
-      .run()
+    await recordAiUsage(c.env, usageRow, {
+      requests: 1,
+      inputTokens: tokenUsage.input_tokens,
+      outputTokens: tokenUsage.output_tokens,
+    })
 
     const storeLabels = new Map(stores.map((s) => [s.id, s.label]))
 

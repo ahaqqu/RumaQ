@@ -302,7 +302,7 @@
     "error": "Assistant error: {{message}}",
     "usageLimit": "Daily AI usage limit reached. Try again tomorrow.",
     "keyMissing": "AI key not configured. Add a key in Settings.",
-    "readyOwnKey": "ready to help · your key · {{used}} today"
+    "readyOwnKey": "ready to help · your key · {{input}} in · {{output}} out today"
   },
   "ui": {
     "expiringTomorrow": "expiring tomorrow",

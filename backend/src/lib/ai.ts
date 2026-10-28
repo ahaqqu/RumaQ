@@ -33,7 +33,7 @@ Return ONLY valid JSON in this exact format:
   "store_name": "Name of store (if visible)",
   "date": "Purchase date in YYYY-MM-DD format (if visible)",
   "items": [
-    { "name": "Item name", "qty": 1, "unit": "pcs", "price": 10000 }
+    { "name": "Item name", "qty": 1, "unit": "pcs", "price": 10000, "total": 10000 }
   ]
 }
 
@@ -42,6 +42,7 @@ Rules:
 - qty must be a number (default 1 if not specified).
 - unit should be the unit of measurement (pcs, kg, L, pack, etc).
 - price is the per-item unit price (the per-piece HARGA/price column), not the line total; only fall back to the line total when no unit price is shown.
+- total is the printed line total for the item when the receipt shows one; omit it otherwise.
 - Omit subtotals, taxes, and total lines.
 - If you cannot read the receipt clearly, return { "items": [] }.
 - Do NOT include any text outside the JSON.`
@@ -101,6 +102,14 @@ export type ThinkingLevel = 'low' | 'medium' | 'high'
 export type TokenUsage = {
   input_tokens: number
   output_tokens: number
+}
+
+// Accumulate provider-reported usage into a caller-owned total across calls.
+export function usageCollector(target: TokenUsage): (usage: TokenUsage) => void {
+  return (usage) => {
+    target.input_tokens += usage.input_tokens
+    target.output_tokens += usage.output_tokens
+  }
 }
 
 export type AiCallOpts = {

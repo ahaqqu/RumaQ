@@ -302,7 +302,7 @@
     "error": "Kesalahan asisten: {{message}}",
     "usageLimit": "Batas penggunaan AI harian tercapai. Coba lagi besok.",
     "keyMissing": "Kunci AI belum dikonfigurasi. Tambahkan kunci di Pengaturan.",
-    "readyOwnKey": "siap membantu · kunci sendiri · {{used}} hari ini"
+    "readyOwnKey": "siap membantu · kunci sendiri · {{input}} masuk · {{output}} keluar hari ini"
   },
   "ui": {
     "expiringTomorrow": "kedaluwarsa besok",

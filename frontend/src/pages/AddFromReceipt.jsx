@@ -115,7 +115,18 @@ export function AddFromReceipt({ onDone }) {
   }
 
   function updateItem(id, field, value) {
-    setItems((prev) => prev.map((it) => (it._id === id ? { ...it, [field]: value } : it)))
+    // Editing qty or price invalidates the scanned line total, if any.
+    setItems((prev) =>
+      prev.map((it) =>
+        it._id === id
+          ? {
+              ...it,
+              [field]: value,
+              ...(field === 'qty' || field === 'price' ? { total: undefined } : {}),
+            }
+          : it
+      )
+    )
   }
 
   function selectItemMatch(id, catalogItemId) {
@@ -167,9 +178,13 @@ export function AddFromReceipt({ onDone }) {
     setImageUrl(null)
   }
 
-  // Sum qty × price per line — summing price alone reads as a bogus total on
-  // multi-quantity receipts.
-  const lineTotal = items.reduce((a, b) => a + (Number(b.qty) || 0) * (Number(b.price) || 0), 0)
+  // Prefer the printed line total the scan reported; qty × unit price
+  // otherwise — summing price alone reads as a bogus total on multi-quantity
+  // receipts.
+  const lineTotal = items.reduce(
+    (a, b) => a + (Number(b.total) || (Number(b.qty) || 0) * (Number(b.price) || 0)),
+    0
+  )
 
   return (
     <>

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vite-plus/test'
+import { describe, it, expect, vi } from 'vite-plus/test'
 import { render } from '@testing-library/react'
 import React from 'react'
 import {
@@ -9,18 +9,29 @@ import {
   UsageMeter,
   MetaItem,
   IconPin,
-  formatTokens,
 } from './ui.jsx'
 
-describe('formatTokens', () => {
-  it('formats compact token counts', () => {
-    expect(formatTokens(0)).toBe('0')
-    expect(formatTokens(950)).toBe('950')
-    expect(formatTokens(1000)).toBe('1k')
-    expect(formatTokens(18230)).toBe('18.2k')
-    expect(formatTokens(234500)).toBe('235k')
-    expect(formatTokens(undefined)).toBe('0')
-  })
+// The global test-setup t() mock returns raw keys; these tests assert the
+// rendered token counts, so resolve en.json and interpolate like i18next.
+vi.mock('react-i18next', async () => {
+  const { vi } = await import('vite-plus/test')
+  const en = (await import('../i18n/locales/en.json')).default
+  const t = (key, opts) => {
+    if (opts && opts.returnObjects) return {}
+    const template = key.split('.').reduce((node, k) => (node == null ? node : node[k]), en)
+    if (typeof template !== 'string') return opts?.defaultValue ?? key
+    if (!opts) return template
+    return template.replace(/\{\{(\w+)\}\}/g, (_, name) => String(opts[name] ?? `{{${name}}}`))
+  }
+  return {
+    t,
+    useTranslation: () => ({
+      t,
+      i18n: { language: 'en', changeLanguage: vi.fn(), on: vi.fn(), off: vi.fn() },
+    }),
+    I18nextProvider: ({ children }) => children,
+    initReactI18next: { type: '3rdParty', init: vi.fn() },
+  }
 })
 
 describe('LocChip', () => {
@@ -168,10 +179,11 @@ describe('UsageMeter', () => {
         },
       })
     )
-    // Own key: no request cap meter, provider name still visible.
+    // Own key: no request cap meter, token counts still rendered.
     expect(container.querySelector('.h-2')).toBeNull()
     expect(container.querySelector('.text-danger')).toBeNull()
     expect(container.textContent).toContain('Ollama Cloud')
+    expect(container.textContent).toContain('18.2k in · 6.1k out today · your own key')
   })
 })
 

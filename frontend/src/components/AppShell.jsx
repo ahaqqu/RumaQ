@@ -12,9 +12,8 @@ import {
   IconMonitor,
   BrandMark,
 } from './icons.jsx'
-import { usageState } from '../data/mock.js'
 import { cn } from '../lib/cn.js'
-import { formatTokens } from './ui.jsx'
+import { formatTokens, usageMeterModel } from '../lib/usage.js'
 import { useApp } from '../context/AppContext.jsx'
 import { useMe, useLogout } from '../lib/queries/me.js'
 import { useSettings, useUsage } from '../lib/queries/index.js'
@@ -45,14 +44,10 @@ export function AppShell({ children }) {
   const hasBackendKey = settings?.has_ai_key === true
   const isAiConnected = Boolean(aiKey) || hasBackendKey
   const { data: usage } = useUsage()
-  // The daily cap only applies to RumaQ's shared server key; a user's own key
-  // is unmetered (mirrors UsageMeter).
-  const meterUsage =
-    usage && usage.key_source !== 'user'
-      ? { used: usage.used, limit: usage.daily_limit ?? 20 }
-      : null
-  const { pct, warn, danger } = usageState(meterUsage ?? { used: 0, limit: 20 })
-  const usageTone = danger ? 'text-danger' : warn ? 'text-warn' : ''
+  // Shared metering model: server-key usage gets the cap meter, own-key
+  // usage the token counts (lib/usage.js).
+  const meter = usageMeterModel(usage)
+  const usageTone = meter ? (meter.danger ? 'text-danger' : meter.warn ? 'text-warn' : '') : ''
 
   const user = me?.user
 
@@ -136,41 +131,41 @@ export function AppShell({ children }) {
             {isAiConnected ? t('assistant.connected') : t('assistant.noKey')}
           </div>
 
-          {isAiConnected && usage && (
+          {isAiConnected && meter && (
             <div className="flex flex-col gap-2 px-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-text-muted">
-                  {meterUsage
-                    ? t('ui.requestsToday', {
-                        used: meterUsage.used,
-                        limit: meterUsage.limit,
+                  {meter.ownKey
+                    ? t('ui.ownKeyTokensToday', {
+                        input: formatTokens(meter.inputTokens),
+                        output: formatTokens(meter.outputTokens),
                       })
-                    : t('ui.ownKeyTokensToday', {
-                        input: formatTokens(usage.input_tokens),
-                        output: formatTokens(usage.output_tokens),
+                    : t('ui.requestsToday', {
+                        used: meter.used,
+                        limit: meter.limit,
                       })}
                 </span>
-                {meterUsage && (
+                {!meter.ownKey && (
                   <span className={cn('font-semibold tabular-nums', usageTone)}>
-                    {meterUsage.used}/{meterUsage.limit}
+                    {meter.used}/{meter.limit}
                   </span>
                 )}
               </div>
-              {meterUsage && (
+              {!meter.ownKey && (
                 <>
                   <div className="h-[5px] rounded-pill bg-surface-inset overflow-hidden">
                     <div
                       className={cn(
                         'h-full rounded-pill bg-accent transition-[width] duration-300',
-                        warn && 'bg-warn',
-                        danger && 'bg-danger'
+                        meter.warn && 'bg-warn',
+                        meter.danger && 'bg-danger'
                       )}
-                      style={{ width: pct + '%' }}
+                      style={{ width: meter.pct + '%' }}
                     />
                   </div>
-                  {danger ? (
+                  {meter.danger ? (
                     <div className="text-xs text-danger">{t('ui.dailyLimitReached')}</div>
-                  ) : warn ? (
+                  ) : meter.warn ? (
                     <div className="text-xs text-warn">{t('assistant.closeToLimit')}</div>
                   ) : null}
                 </>

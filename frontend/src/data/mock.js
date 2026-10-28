@@ -387,13 +387,3 @@ export function relUpdated(iso, t) {
   if (days === 1) return t ? t('common.yesterday') : 'yesterday'
   return t ? t('common.daysAgo', { days }) : `${days} days ago`
 }
-
-export const AI_USAGE = { provider: 'Gemini', used: 17, limit: 20 }
-
-export function usageState(u = AI_USAGE) {
-  const pct = Math.min(100, Math.round((u.used / u.limit) * 100))
-  const remaining = Math.max(0, u.limit - u.used)
-  const warn = u.used >= Math.round(u.limit * 0.8) && u.used < u.limit
-  const danger = u.used >= u.limit
-  return { pct, remaining, warn, danger }
-}

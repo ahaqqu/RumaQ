@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { IconPin, IconClock, IconShop } from './icons.jsx'
-import { usageState } from '../data/mock.js'
+import { formatTokens, usageMeterModel } from '../lib/usage.js'
 import { cn } from '../lib/cn.js'
 import { Chip } from './Chip.jsx'
 import { Badge } from './Badge.jsx'
@@ -65,46 +65,31 @@ export function TimeSignal({ expiryDays, runOut, basis }) {
 
 export { EmptyState, SkeletonRows }
 
-// Compact token counts for usage metering: 950 → "950", 18230 → "18.2k",
-// 234500 → "235k".
-export function formatTokens(n) {
-  const v = Number(n) || 0
-  if (v < 1000) return String(v)
-  if (v < 100000) return `${(v / 1000).toFixed(1).replace(/\.0$/, '')}k`
-  return `${Math.round(v / 1000)}k`
-}
-
 export function UsageMeter({ usage }) {
   const { t } = useTranslation()
-  // Without loaded data render nothing — the mock fallback would misreport
-  // provider and counts as real usage.
-  if (!usage) return null
-  // The daily cap only applies to RumaQ's shared server key; a user's own key
-  // is unmetered — what matters for them is the token count their provider
-  // subscription bills.
-  const ownKey = usage.key_source === 'user'
-  const normalized = { ...usage, limit: usage.limit ?? usage.daily_limit ?? 20 }
-  const { pct, remaining, warn, danger } = usageState(normalized)
-  const tone = !ownKey && danger ? 'danger' : !ownKey && warn ? 'warn' : 'muted'
+  const meter = usageMeterModel(usage)
+  if (!meter) return null
+  const tone =
+    !meter.ownKey && meter.danger ? 'danger' : !meter.ownKey && meter.warn ? 'warn' : 'muted'
 
   return (
     <div className="flex flex-col gap-3 p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="font-semibold text-base">{normalized.provider}</div>
+          <div className="font-semibold text-base">{usage.provider}</div>
           <div className="text-sm text-text-muted mt-0.5">
-            {ownKey
+            {meter.ownKey
               ? t('ui.ownKeyTokensToday', {
-                  input: formatTokens(normalized.input_tokens),
-                  output: formatTokens(normalized.output_tokens),
+                  input: formatTokens(meter.inputTokens),
+                  output: formatTokens(meter.outputTokens),
                 })
               : t('ui.requestsToday', {
-                  used: normalized.used,
-                  limit: normalized.limit,
+                  used: meter.used,
+                  limit: meter.limit,
                 })}
           </div>
         </div>
-        {!ownKey && (
+        {!meter.ownKey && (
           <div
             className={cn(
               'font-bold text-lg tabular-nums',
@@ -112,11 +97,11 @@ export function UsageMeter({ usage }) {
               tone === 'warn' && 'text-warn'
             )}
           >
-            {normalized.used}/{normalized.limit}
+            {meter.used}/{meter.limit}
           </div>
         )}
       </div>
-      {!ownKey && (
+      {!meter.ownKey && (
         <>
           <div className="h-2 rounded-pill bg-surface-inset overflow-hidden">
             <div
@@ -125,23 +110,23 @@ export function UsageMeter({ usage }) {
                 tone === 'warn' && 'bg-warn',
                 tone === 'danger' && 'bg-danger'
               )}
-              style={{ width: pct + '%' }}
+              style={{ width: meter.pct + '%' }}
             />
           </div>
-          {danger ? (
+          {meter.danger ? (
             <div className="text-sm text-danger">{t('ui.dailyLimitReachedDesc')}</div>
-          ) : warn ? (
+          ) : meter.warn ? (
             <div className="text-sm text-warn font-medium">
-              {t('ui.closeToLimitDesc', { remaining })}
+              {t('ui.closeToLimitDesc', { remaining: meter.remaining })}
             </div>
           ) : (
             <div className="text-sm text-text-muted">
-              {t('ui.remainingRequests', { remaining })}
+              {t('ui.remainingRequests', { remaining: meter.remaining })}
             </div>
           )}
         </>
       )}
-      {ownKey && <div className="text-sm text-text-muted">{t('ui.ownKeyUnlimited')}</div>}
+      {meter.ownKey && <div className="text-sm text-text-muted">{t('ui.ownKeyUnlimited')}</div>}
     </div>
   )
 }
