@@ -33,7 +33,11 @@ import {
   ingestPrices,
   getPricesStatus,
 } from '../lib/ingest.js'
-import { LATEST_OBSERVATION_SUBQUERY, LATEST_OBSERVATION_PREDICATE } from '../lib/prices.js'
+import {
+  LATEST_OBSERVATION_SUBQUERY,
+  LATEST_OBSERVATION_PREDICATE,
+  getPromoCatalog,
+} from '../lib/prices.js'
 import {
   appendScrapeEvents,
   claimNextScrapeCommand,
@@ -2679,6 +2683,91 @@ apiApp.get(
   async (c) => {
     const status = await getPricesStatus(c.env.DB)
     const res = c.json(status)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+// Promo catalog for the /prices Promos view (issue #292): current
+// observations grouped by promo type with per-source product counts and ≤5
+// example products per group. Grouping lives in getPromoCatalog (lib/prices),
+// which interpolates the same LATEST_OBSERVATION_PREDICATE as the explorer —
+// the two views' counts cannot drift apart.
+apiApp.get(
+  '/api/prices/promos',
+  describeRoute({
+    description:
+      'Promo catalog: current observations grouped by promo type, with per-store product counts and up to five example products per type.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                types: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      promo_type: {
+                        type: 'string',
+                        enum: [
+                          'discount_pct',
+                          'discount_fixed',
+                          'get_free',
+                          'bundle_buy',
+                          'multi_price',
+                          'other',
+                        ],
+                      },
+                      product_count: { type: 'integer' },
+                      stores: { type: 'object', additionalProperties: { type: 'integer' } },
+                      example_products: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            product_key: { type: 'string' },
+                            name: { type: 'string' },
+                            brand: { type: 'string', nullable: true } as any,
+                            unit: { type: 'string', nullable: true } as any,
+                            source_slug: { type: 'string' },
+                            source_name: { type: 'string' },
+                            price: { type: 'number' },
+                            effective_unit_price: { type: 'number', nullable: true } as any,
+                          },
+                          required: [
+                            'product_key',
+                            'name',
+                            'brand',
+                            'unit',
+                            'source_slug',
+                            'source_name',
+                            'price',
+                            'effective_unit_price',
+                          ],
+                        },
+                      },
+                    },
+                    required: ['promo_type', 'product_count', 'stores', 'example_products'],
+                  },
+                },
+                total: { type: 'integer' },
+              },
+              required: ['types', 'total'],
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+    },
+  }),
+  async (c) => {
+    const catalog = await getPromoCatalog(c.env.DB)
+    const res = c.json(catalog)
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }

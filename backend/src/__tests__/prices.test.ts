@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vite-plus/test'
 import { apiApp } from '../apps/api.js'
+import { LATEST_OBSERVATION_PREDICATE } from '../lib/prices.js'
 
 type FakeRow = Record<string, unknown>
 
@@ -10,6 +11,10 @@ function createPricesEnv(
     current?: FakeRow[]
     history?: FakeRow[]
     status?: FakeRow | null
+    promoTotals?: FakeRow[]
+    promoSources?: FakeRow[]
+    promoExamples?: FakeRow[]
+    promoTotal?: FakeRow[]
   },
   opts: { authenticated?: boolean } = {}
 ) {
@@ -48,8 +53,28 @@ function createPricesEnv(
       }
       return stmt
     },
-    async batch(statements: Array<{ sql: string; params: unknown[] }>) {
-      return statements.map(() => ({ success: true }))
+    async batch(statements: Array<{ sql: string; params?: unknown[] }>) {
+      // Batched statements never hit all(), so record them for the SQL
+      // assertions; unique `-- promos: <name>` markers route canned results
+      // per statement (the real D1 executes the SQL).
+      for (const stmt of statements) {
+        prepareCalls.push({ sql: stmt.sql, params: stmt.params ?? [] })
+      }
+      return statements.map((stmt) => {
+        if (stmt.sql.includes('-- promos: totals')) {
+          return { results: rows.promoTotals ?? [], success: true }
+        }
+        if (stmt.sql.includes('-- promos: sources')) {
+          return { results: rows.promoSources ?? [], success: true }
+        }
+        if (stmt.sql.includes('-- promos: examples')) {
+          return { results: rows.promoExamples ?? [], success: true }
+        }
+        if (stmt.sql.includes('-- promos: total')) {
+          return { results: rows.promoTotal ?? [], success: true }
+        }
+        return { success: true }
+      })
     },
   }
   return {
@@ -449,5 +474,187 @@ describe('GET /api/prices/:productKey', () => {
     expect(body.current).toHaveLength(2)
     // Fake rows arrive in effective-price order — the handler preserves it.
     expect(body.current[0]!.source_slug).toBe('superindo')
+  })
+})
+
+describe('GET /api/prices/promos', () => {
+  const exampleRow = (overrides: FakeRow = {}): FakeRow => ({
+    group_key: 'discount_pct',
+    product_key: 'minyak-goreng--bimoli--1-l',
+    name: 'Minyak Goreng Bimoli',
+    brand: 'Bimoli',
+    unit: '1 L',
+    source_slug: 'lotte-mart',
+    source_name: 'Lotte Mart',
+    price: 21500,
+    effective_unit_price: 21500,
+    ...overrides,
+  })
+
+  it('requires authentication', async () => {
+    const { env } = createPricesEnv({ promoTotal: [] }, { authenticated: false })
+    const res = await apiApp.request('/api/prices/promos', {}, env)
+    expect(res.status).toBe(401)
+  })
+
+  it('answers the catalog instead of falling through to the detail route', async () => {
+    const { env, prepareCalls } = createPricesEnv({
+      promoTotals: [{ group_key: 'discount_pct', product_count: 1 }],
+      promoSources: [{ group_key: 'discount_pct', source_slug: 'lotte-mart', product_count: 1 }],
+      promoExamples: [exampleRow()],
+      promoTotal: [{ total: 1 }],
+    })
+    const res = await apiApp.request('/api/prices/promos', {}, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
+
+    const body = (await res.json()) as {
+      types: Array<{
+        promo_type: string
+        product_count: number
+        stores: Record<string, number>
+        example_products: Array<Record<string, unknown>>
+      }>
+      total: number
+    }
+    expect(body.types[0]!.promo_type).toBe('discount_pct')
+    expect(body.types[0]!.product_count).toBe(1)
+    expect(body.types[0]!.stores).toEqual({ 'lotte-mart': 1 })
+    expect(body.types[0]!.example_products[0]).toMatchObject({
+      product_key: 'minyak-goreng--bimoli--1-l',
+      name: 'Minyak Goreng Bimoli',
+      source_slug: 'lotte-mart',
+      source_name: 'Lotte Mart',
+      price: 21500,
+      effective_unit_price: 21500,
+    })
+    expect(body.total).toBe(1)
+    // "promos" must never be treated as a productKey by the detail handler.
+    expect(
+      prepareCalls.some((call) => call.sql.includes('FROM price_products WHERE product_key'))
+    ).toBe(false)
+  })
+
+  it('orders groups by the fixed enum order and omits empty ones', async () => {
+    const { env } = createPricesEnv({
+      promoTotals: [
+        { group_key: 'other', product_count: 2 },
+        { group_key: 'discount_pct', product_count: 3 },
+      ],
+      promoTotal: [{ total: 5 }],
+    })
+    const res = await apiApp.request('/api/prices/promos', {}, env)
+    const body = (await res.json()) as { types: Array<{ promo_type: string }> }
+    // 'other' sorts last; absent types are omitted entirely.
+    expect(body.types.map((g) => g.promo_type)).toEqual(['discount_pct', 'other'])
+  })
+
+  it('takes the group product_count from totals, not the per-source sum', async () => {
+    // Double-count hazard: one product on promo at two sources shows 1
+    // distinct product in the group but 2 across the stores badges.
+    const { env } = createPricesEnv({
+      promoTotals: [{ group_key: 'discount_pct', product_count: 1 }],
+      promoSources: [
+        { group_key: 'discount_pct', source_slug: 'lotte-mart', product_count: 1 },
+        { group_key: 'discount_pct', source_slug: 'superindo', product_count: 1 },
+      ],
+      promoTotal: [{ total: 1 }],
+    })
+    const res = await apiApp.request('/api/prices/promos', {}, env)
+    const body = (await res.json()) as {
+      types: Array<{ product_count: number; stores: Record<string, number> }>
+    }
+    expect(body.types[0]!.product_count).toBe(1)
+    expect(body.types[0]!.stores).toEqual({ 'lotte-mart': 1, superindo: 1 })
+  })
+
+  it('routes unknown and NULL-type rows through the Other group by construction', async () => {
+    const { env, prepareCalls } = createPricesEnv({
+      promoTotals: [
+        { group_key: 'get_free', product_count: 1 },
+        { group_key: 'other', product_count: 2 },
+      ],
+      promoSources: [{ group_key: 'other', source_slug: 'lotte-mart', product_count: 2 }],
+      promoExamples: [
+        // Absorption inputs the SQL must handle: an unknown future enum value
+        // and a NULL type with a label both group into 'other'.
+        exampleRow({
+          group_key: 'other',
+          product_key: 'tepung--segitiga-biru--1-kg',
+          name: 'Tepung Segitiga Biru 1 kg',
+          promo_type: null,
+          promo_label: 'Beli 2 gratis 1',
+        }),
+        exampleRow({
+          group_key: 'other',
+          product_key: 'mystery--future--1-pcs',
+          name: 'Mystery Future Item',
+          promo_type: 'mystery_future',
+          promo_label: 'Mystery deal',
+        }),
+      ],
+      promoTotal: [{ total: 3 }],
+    })
+    const res = await apiApp.request('/api/prices/promos', {}, env)
+    const body = (await res.json()) as {
+      types: Array<{ promo_type: string; example_products: Array<{ product_key: string }> }>
+    }
+    expect(body.types.map((g) => g.promo_type)).toEqual(['get_free', 'other'])
+    expect(body.types[1]!.example_products.map((p) => p.product_key)).toEqual([
+      'tepung--segitiga-biru--1-kg',
+      'mystery--future--1-pcs',
+    ])
+
+    // The CASE … ELSE 'other' over the closed 5-value enum is the only place
+    // those values live — unknown and NULL types cannot escape it.
+    const totalsCall = prepareCalls.find((call) => call.sql.includes('-- promos: totals'))!
+    expect(totalsCall.sql).toContain("THEN o.promo_type ELSE 'other' END")
+    expect(totalsCall.sql).toContain(
+      "'discount_pct','discount_fixed','get_free','bundle_buy','multi_price'"
+    )
+  })
+
+  it('returns an empty catalog before any promo evidence', async () => {
+    const { env } = createPricesEnv({ promoTotal: [] })
+    const res = await apiApp.request('/api/prices/promos', {}, env)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ types: [], total: 0 })
+  })
+
+  it('pins the shared predicate: list and catalog SQL carry the identical base', async () => {
+    // Layer-1 count-parity guarantee: the identical LATEST_OBSERVATION_PREDICATE
+    // string (latest-obs subquery + 0.55 confidence floor) rides in both.
+    const { env, prepareCalls } = createPricesEnv({ list: [], promoTotals: [] })
+    await apiApp.request('/api/prices', {}, env)
+    await apiApp.request('/api/prices/promos', {}, env)
+
+    const listCall = prepareCalls.find(
+      (call) => call.sql.includes('FROM price_observations') && !call.sql.includes('-- promos:')
+    )
+    const totalsCall = prepareCalls.find((call) => call.sql.includes('-- promos: totals'))
+    expect(listCall).toBeDefined()
+    expect(totalsCall).toBeDefined()
+    expect(listCall!.sql).toContain(LATEST_OBSERVATION_PREDICATE)
+    expect(totalsCall!.sql).toContain(LATEST_OBSERVATION_PREDICATE)
+  })
+
+  it('structures the examples SQL: ≤5 per group, name-ordered, cheapest-offer basis', async () => {
+    const { env, prepareCalls } = createPricesEnv({ promoTotals: [] })
+    await apiApp.request('/api/prices/promos', {}, env)
+
+    const examplesCall = prepareCalls.find((call) => call.sql.includes('-- promos: examples'))!
+    expect(examplesCall.sql).toContain('WHERE group_rn <= 5')
+    expect(examplesCall.sql).toContain('ORDER BY name COLLATE NOCASE ASC, product_key ASC')
+    // Cheapest offer per (group, product) on the effective-price basis.
+    expect(examplesCall.sql).toContain(
+      'ORDER BY COALESCE(effective_unit_price, price) ASC, source_slug ASC'
+    )
+    // The evidence filter admits label-only (NULL type) rows.
+    expect(examplesCall.sql).toContain(
+      "o.promo_type IS NOT NULL OR (o.promo_label IS NOT NULL AND o.promo_label <> '')"
+    )
+
+    const totalCall = prepareCalls.find((call) => call.sql.includes('-- promos: total'))!
+    expect(totalCall.sql).toContain('COUNT(DISTINCT p.product_key)')
   })
 })

@@ -1291,6 +1291,112 @@
         }
       }
     },
+    "/api/prices/promos": {
+      "get": {
+        "operationId": "getApiPricesPromos",
+        "description": "Promo catalog: current observations grouped by promo type, with per-store product counts and up to five example products per type.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "promo_type": {
+                            "type": "string",
+                            "enum": [
+                              "discount_pct",
+                              "discount_fixed",
+                              "get_free",
+                              "bundle_buy",
+                              "multi_price",
+                              "other"
+                            ]
+                          },
+                          "product_count": {
+                            "type": "integer"
+                          },
+                          "stores": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "integer"
+                            }
+                          },
+                          "example_products": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "product_key": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "brand": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "unit": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "source_slug": {
+                                  "type": "string"
+                                },
+                                "source_name": {
+                                  "type": "string"
+                                },
+                                "price": {
+                                  "type": "number"
+                                },
+                                "effective_unit_price": {
+                                  "type": "number",
+                                  "nullable": true
+                                }
+                              },
+                              "required": [
+                                "product_key",
+                                "name",
+                                "brand",
+                                "unit",
+                                "source_slug",
+                                "source_name",
+                                "price",
+                                "effective_unit_price"
+                              ]
+                            }
+                          }
+                        },
+                        "required": ["promo_type", "product_count", "stores", "example_products"]
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": ["types", "total"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
     "/api/prices/{productKey}": {
       "get": {
         "operationId": "getApiPricesByProductKey",
