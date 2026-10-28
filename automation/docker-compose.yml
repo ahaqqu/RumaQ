@@ -7,6 +7,9 @@ services:
       - TEST_MODE=true
       - RATE_LIMIT_WINDOW_MS=60000
       - RATE_LIMIT_MAX_REQUESTS=1000000
+      # Lets e2e scenarios seed price data through the internal ingest
+      # endpoint (tests/local/e2e/features/prices-explorer.feature).
+      - HAQITA_INGEST_SECRET=test-ingest-secret
     healthcheck:
       test:
         [

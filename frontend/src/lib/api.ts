@@ -267,11 +267,19 @@ export function updatePlanItem(
   )
 }
 
+export type PriceSort = 'name' | 'cheapest' | 'savings' | 'expiry'
+
 export function getPrices(
-  { q, source }: { q?: string; source?: string } = {},
+  { q, source, sort }: { q?: string; source?: string; sort?: PriceSort } = {},
   signal?: AbortSignal
 ): Promise<unknown> {
-  return unwrap(client.GET('/api/prices', { params: { query: { q, source } }, signal }))
+  return unwrap(client.GET('/api/prices', { params: { query: { q, source, sort } }, signal }))
+}
+
+// Sorted lists are product-level pages with a `truncated` flag (issue #291);
+// the no-sort legacy response (used by usePriceSources) is unchanged.
+export function getPricesMeta(signal?: AbortSignal): Promise<unknown> {
+  return unwrap(client.GET('/api/prices/meta', { signal }))
 }
 
 export function getPriceDetail(productKey: string, signal?: AbortSignal): Promise<unknown> {

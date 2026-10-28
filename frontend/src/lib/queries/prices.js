@@ -1,11 +1,28 @@
 import { useQuery } from '@tanstack/react-query'
-import { getPrices, getPriceDetail, getPriceRuns } from '../api'
+import { getPrices, getPricesMeta, getPriceDetail, getPriceRuns } from '../api'
 
-export function usePrices({ q, source } = {}) {
+// Brochure data changes only when a scrape lands (daily) — a 5-minute
+// refetch keeps countdowns and prices current in long-lived tabs while the
+// tab is visible (react-query skips refetchIntervalInBackground by default).
+const PRICES_REFETCH_MS = 1000 * 60 * 5
+
+export function usePrices({ q, source, sort } = {}) {
   return useQuery({
-    queryKey: ['prices', q ?? '', source ?? ''],
-    queryFn: ({ signal }) => getPrices({ q, source }, signal),
+    queryKey: ['prices', q ?? '', source ?? '', sort ?? ''],
+    queryFn: ({ signal }) => getPrices({ q, source, sort }, signal),
     staleTime: 1000 * 60 * 5,
+    refetchInterval: PRICES_REFETCH_MS,
+  })
+}
+
+// Freshness for the explorer page: latest scrape time / observation window
+// from GET /api/prices/meta (issue #291).
+export function usePriceMeta() {
+  return useQuery({
+    queryKey: ['prices', 'meta'],
+    queryFn: ({ signal }) => getPricesMeta(signal),
+    staleTime: 1000 * 60 * 5,
+    refetchInterval: PRICES_REFETCH_MS,
   })
 }
 
