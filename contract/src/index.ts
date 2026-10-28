@@ -132,3 +132,40 @@ export const runReportSchema = strictObject({
 
 export type RunReport = InferOutput<typeof runReportSchema>
 export type RunReportStore = InferOutput<typeof runReportStoreSchema>
+
+// Scrape Now (docs/plan/scrape-now.md): admin-triggered, store-selectable
+// scraping. The admin UI queues a command; the VPS agent claims it over the
+// bearer channel, streams the run's output lines back as events, and posts a
+// terminal finish. Shared by the Worker (request validation) and the agent
+// (defense-in-depth re-validation of claimed slugs). Additive only.
+
+export const SCRAPE_STORE_SLUGS = ['superindo', 'lotte-mart', 'astro'] as const
+
+export const scrapeCommandCreateSchema = strictObject({
+  stores: pipe(array(picklist(SCRAPE_STORE_SLUGS)), minLength(1)),
+})
+
+export const scrapeEventSchema = strictObject({
+  // Agent-assigned, monotonic per command — the (command_id, seq) upsert key.
+  seq: pipe(number(), integer(), minValue(0)),
+  ts: pipe(
+    string(),
+    regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, 'Expected an ISO 8601 timestamp.')
+  ),
+  level: picklist(['info', 'error']),
+  // Raw scraper output line — an empty line is still a line the admin saw.
+  message: pipe(string(), maxLength(8000)),
+})
+
+export const scrapeEventsPostSchema = strictObject({
+  events: pipe(array(scrapeEventSchema), minLength(1), maxLength(100)),
+})
+
+export const scrapeFinishSchema = strictObject({
+  status: picklist(['success', 'failed']),
+  exitCode: picklist([0, 1, 2]),
+  error: nullish(pipe(string(), maxLength(2000))),
+  logTruncated: nullish(boolean()),
+})
+
+export type ScrapeEvent = InferOutput<typeof scrapeEventSchema>

@@ -1,41 +1,38 @@
 // CLI entry — scrapes new brochure pages, OCRs them, matches against the
 // canonical catalog, and publishes a price snapshot (dry-run until go-live).
-// Exit codes: 0 ok, 1 self-check failure (the post-deploy gate).
+// Exit codes: 0 ok, 1 self-check/usage failure (the post-deploy gate), and
+// the pipeline's real exit code for scoped runs.
 //
-//   bun src/main.ts [--publish] [--self-check] [--state-dir=DIR]
+//   bun src/main.ts [--publish] [--self-check] [--state-dir=DIR] [--stores=slug1,slug2]
 //
 // --publish may also come from RUMAQ_PUBLISH=true in the environment (the
 // systemd unit's go-live switch: no unit edit, one env line as root).
 // --self-check is the post-deploy gate (provision/vps/deploy path).
+// --stores scopes a run to the given slugs (docs/plan/scrape-now.md §2) —
+// that is the on-demand path the scrape agent drives.
 //
-// A failed nightly run exits 0 on purpose: the failure is logged to the
+// A failed NIGHTLY run exits 0 on purpose: the failure is logged to the
 // journal and recorded in status.json (the pipeline still carries its own
 // exit code 1/2 internally), the systemd unit stays green, and the timer
 // simply retries tomorrow. Seven consecutive failed nights trip the
 // freshness gate instead (scripts/github/check-price-freshness.sh) — that,
-// not one bad run, is the service-down signal. The deploy-time self-check
-// still exits 1 so a tree that cannot run fails its deploy.
+// not one bad run, is the service-down signal. A scoped (--stores) run must
+// NOT soft-exit: the scrape agent depends on the real exit code to finish
+// its command failed, so scoped failures exit 1/2. The deploy-time
+// self-check still exits 1 so a tree that cannot run fails its deploy.
 
 import { Effect } from 'effect'
 
-import { runPipeline } from './pipeline.js'
+import { parseArgs } from './args.js'
+import { PipelineFailure, runPipeline } from './pipeline.js'
 import { runSelfCheck } from './selfcheck.js'
 
-function parseArgs(argv: string[]): { publish: boolean; selfCheck: boolean; stateDir: string } {
-  const selfCheck = argv.includes('--self-check')
-  const publish =
-    argv.includes('--publish') || ['1', 'true', 'yes'].includes(process.env.RUMAQ_PUBLISH ?? '')
-  const stateDirArg = argv.find((arg) => arg.startsWith('--state-dir='))
-  return {
-    publish,
-    selfCheck,
-    stateDir: stateDirArg
-      ? stateDirArg.slice('--state-dir='.length)
-      : (process.env.RUMAQ_SCRAPER_STATE_DIR ?? 'state'),
-  }
-}
-
 const args = parseArgs(process.argv.slice(2))
+
+if (args.storesError) {
+  process.stderr.write(`[scraper] ${args.storesError}\n`)
+  process.exit(1)
+}
 
 if (args.selfCheck) {
   // The unit's journal is the only place a failed deploy explains itself —
@@ -57,7 +54,11 @@ if (args.selfCheck) {
     }
   )
 } else {
-  const program = runPipeline({ stateDir: args.stateDir, dryRun: !args.publish }).pipe(
+  const program = runPipeline({
+    stateDir: args.stateDir,
+    dryRun: !args.publish,
+    stores: args.stores,
+  }).pipe(
     Effect.tap((status) =>
       Effect.sync(() => {
         for (const [slug, entry] of Object.entries(status.stores)) {
@@ -79,6 +80,13 @@ if (args.selfCheck) {
   Effect.runPromise(program).then(
     () => process.exit(0),
     (error) => {
+      if (args.stores) {
+        // Scoped runs report the pipeline's REAL exit code — the scrape
+        // agent finishes its command failed with it. See the header.
+        const exitCode = error instanceof PipelineFailure ? error.exitCode : 1
+        process.stderr.write(`[scraper] scoped run failed (exit ${exitCode}): ${String(error)}\n`)
+        process.exit(exitCode === 2 ? 2 : 1)
+      }
       // Soft on purpose — see the header: a failed nightly run is logged
       // (journal + status.json) and retried by tomorrow's timer, not turned
       // into a failed unit that flags the box's shared doctor.

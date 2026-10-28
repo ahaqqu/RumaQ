@@ -7,6 +7,10 @@ DELETE FROM price_sources;
 -- Scraper run reports (migration 0010) — no FK relations, but reset must
 -- return the monitor feed to a clean slate for the price scenarios.
 DELETE FROM price_runs;
+-- Scrape Now command queue (migration 0012) — events reference commands, so
+-- events go first; reset must reopen the one-run-at-a-time queue.
+DELETE FROM scrape_run_events;
+DELETE FROM scrape_commands;
 DELETE FROM plans;
 DELETE FROM purchase_items;
 DELETE FROM purchases;

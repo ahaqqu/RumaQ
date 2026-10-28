@@ -7,7 +7,8 @@
     "prices": "Prices",
     "monitor": "Scraper Monitor",
     "settings": "Settings",
-    "addFromReceipt": "Add from Receipt"
+    "addFromReceipt": "Add from Receipt",
+    "scrape": "Scrape Now"
   },
   "home": {
     "lead": "Stock tracked automatically from grocery receipts. Remaining stock is calculated from your habits, not entered manually.",
@@ -150,6 +151,31 @@
     "storeError": "store failed",
     "needsProxy": "needs a Tier-3 proxy — skipped by design until credentials are configured",
     "needsProxyChip": "needs proxy"
+  },
+  "scrape": {
+    "activeRun": "Active run",
+    "alreadyRunning": "A scrape is already pending or running — one run at a time.",
+    "createdBy": "Requested by",
+    "elapsed": "Elapsed",
+    "exitCode": "Exit code",
+    "forbidden": "Admins only",
+    "forbiddenDesc": "This page is only available to allowlisted operators.",
+    "history": "Recent commands",
+    "lead": "Queue an on-demand scrape of the selected stores. The VPS agent picks the command up within seconds and streams the raw scraper output here.",
+    "loadError": "Couldn't load scrape commands",
+    "logTruncated": "The head of the log was dropped — this is the tail of the run.",
+    "noCommands": "No scrape commands yet",
+    "noCommandsDesc": "Triggered scrapes and their full logs appear here.",
+    "noEvents": "No output yet",
+    "queueError": "Couldn't queue the scrape",
+    "queueing": "Queuing…",
+    "scrapeNow": "Scrape Now",
+    "statusFailed": "Failed",
+    "statusPending": "Pending",
+    "statusRunning": "Running",
+    "statusSuccess": "Success",
+    "triggerTitle": "Trigger a scrape",
+    "waitingForAgent": "Waiting for the VPS agent to pick up the command…"
   },
   "history": {
     "date": "Date",

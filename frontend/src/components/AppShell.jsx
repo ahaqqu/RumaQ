@@ -10,6 +10,7 @@ import {
   IconReceipt,
   IconPrices,
   IconMonitor,
+  IconBolt,
   BrandMark,
 } from './icons.jsx'
 import { cn } from '../lib/cn.js'
@@ -52,10 +53,15 @@ export function AppShell({ children }) {
   const user = me?.user
 
   const currentRouteId = matches[matches.length - 1]?.routeId || '/'
-  // The scraping monitor is an operator surface — its nav entry only exists
-  // for allowlisted admins (me.user.isAdmin from the backend).
+  // The scraping monitor and the manual scrape trigger are operator surfaces —
+  // their nav entries only exist for allowlisted admins (me.user.isAdmin from
+  // the backend).
   const navItems = user?.isAdmin
-    ? [...NAV, { id: 'monitor', key: 'nav.monitor', Icon: IconMonitor, to: '/admin/prices' }]
+    ? [
+        ...NAV,
+        { id: 'monitor', key: 'nav.monitor', Icon: IconMonitor, to: '/admin/prices' },
+        { id: 'scrape', key: 'nav.scrape', Icon: IconBolt, to: '/admin/scrape' },
+      ]
     : NAV
   const currentNav = navItems.find((n) => n.to === currentRouteId)
   const title = currentNav ? t(currentNav.key) : t('nav.home')

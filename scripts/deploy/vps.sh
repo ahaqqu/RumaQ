@@ -8,9 +8,10 @@ set -euo pipefail
 # single deploy entrypoint — for commit-based deploys from CI and manual
 # operator runs. Five stages, first failure aborts:
 #
-#   1. build   one self-contained Bun bundle (playwright-core external —
+#   1. build   self-contained Bun bundles (playwright-core external —
 #              it spawns its driver from its own package dir, so it ships
-#              beside the bundle instead of inside it)
+#              beside the bundles instead of inside them): dist/index.js
+#              (the scraper CLI) and dist/agent.js (the Scrape Now agent)
 #   2. ship    rsync --delete to /srv/rumaq-scraper (the deploy identity
 #              owns the tree; browsers/ is preserved — it is revision-
 #              locked to the shipped playwright-core, not to the code)
@@ -21,7 +22,9 @@ set -euo pipefail
 #              (the deploy identity's ONLY root grant): runs the shipped
 #              CLI's --self-check as the service user with the real env —
 #              a deploy that cannot prove the nightly job runs has not
-#              deployed
+#              deployed. Then restart the Scrape Now agent so it runs the
+#              code just shipped — non-fatal: the agent unit only exists
+#              after the root apply.sh run that installs it.
 #   5. doctor  the shared-box sweep from /srv/vps-ops (homepage-owned);
 #              unprivileged — without the nginx sudo diagnostics it warns
 #
@@ -91,9 +94,16 @@ bun build "$SCRAPER_DIR/src/main.ts" \
   --target=bun \
   --external playwright-core \
   --outfile "$STAGE/dist/index.js"
-# The bundle must actually be a bundle: a deploy that ships an empty stage
-# would pass rsync and fail at 06:00 WIB.
-if [[ ! -s $STAGE/dist/index.js ]]; then
+# The Scrape Now agent (docs/plan/scrape-now.md §2) ships beside the CLI —
+# same tree, same node_modules; it imports no playwright, nothing to mark
+# external.
+bun build "$SCRAPER_DIR/src/agent.ts" \
+  --target=bun \
+  --outfile "$STAGE/dist/agent.js"
+# The bundles must actually be bundles: a deploy that ships an empty stage
+# would pass rsync and fail at 06:00 WIB (or leave the agent idling on an
+# old bundle).
+if [[ ! -s $STAGE/dist/index.js || ! -s $STAGE/dist/agent.js ]]; then
   echo "deploy/vps.sh: bundle is empty — the build produced nothing" >&2
   exit 1
 fi
@@ -141,6 +151,14 @@ if [ "$DRY_RUN" -eq 0 ]; then
   fi
   log "self-check passed"
 fi
+
+# The agent runs the tree the deploy just shipped — restart it so the new
+# bundle loads immediately. Non-fatal by design: the unit only exists after
+# the root apply.sh run installs it (a warning here is expected exactly once,
+# until the operator re-runs apply.sh).
+log "restarting the scrape agent (non-fatal until apply.sh installs the unit)"
+run ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
+  "sudo -n /usr/bin/systemctl restart rumaq-scraper-agent.service 2>/dev/null || echo 'deploy/vps: warning: rumaq-scraper-agent.service not installed yet — run provision/vps/apply.sh as root to enable Scrape Now' "
 
 # --- 5. doctor (shared-box gate) --------------------------------------------------
 # One copy on the box, owned by homepage; every app's deploy runs it so a

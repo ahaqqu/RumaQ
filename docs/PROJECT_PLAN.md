@@ -239,8 +239,9 @@ _User impact: review past purchases and spending patterns; app goes live._
 The MVP is shipped: production runs as a single Worker (`rumaq.ahaqqu.com`, deployed on merge to `main`), scheduled smoke tests run every 6 hours, and all P0 phases (01–05) plus phase 06 security hardening (one manual live-OAuth check outstanding) are done. Active work and remaining items:
 
 1. **Haqita integration** (`docs/plan/haqita-integration.md`) — PR1 #252, PR2 #255, PR3 #262 and PR4 #275 merged (freshness status endpoint, smoke staleness alert, `provision-vps.sh --enable-timer`; backfill dropped — haqita was never live). Go-live itself (enable the timer + first live ingest) is the remaining operator step; PR5 (frontend `/prices` + plan grounding + scraping monitor) and PR6 (cleanup) remain.
-2. **Phase 09** — done: page-level E2E features, axe-core accessibility scans + first-wave fixes, bundle-size budget and Lighthouse CI (see `docs/TEST_STRATEGY.md`).
-3. **Phase 08** — route loader/Query alignment, PWA manifest screenshots, cache-TTL validation (mostly-finished modernization; offline E2E now covered by phase 09 features).
-4. **Phase 10** — AI feature expansion (recipes, cheapest-store rec, calibration, quick add, trip optimization, price alerts).
-5. **Phase 11** — isolation unit test, backup/export strategy, migration docs, query monitoring.
-6. Tech debt in `docs/ARCHITECTURE.md` §13 (KV rate-limit counters, AI streaming, R2 signed URLs, …).
+2. **Scrape Now** (`docs/plan/scrape-now.md`) — admin-triggered, store-selectable scraping: command queue in D1 + polling VPS agent + frontend `/admin/scrape` (trigger, live log, failure logs) all on `feat/scrape-now` (PR open); merge and live verification (VPS agent unit install + first real trigger) remain.
+3. **Phase 09** — done: page-level E2E features, axe-core accessibility scans + first-wave fixes, bundle-size budget and Lighthouse CI (see `docs/TEST_STRATEGY.md`).
+4. **Phase 08** — route loader/Query alignment, PWA manifest screenshots, cache-TTL validation (mostly-finished modernization; offline E2E now covered by phase 09 features).
+5. **Phase 10** — AI feature expansion (recipes, cheapest-store rec, calibration, quick add, trip optimization, price alerts).
+6. **Phase 11** — isolation unit test, backup/export strategy, migration docs, query monitoring.
+7. Tech debt in `docs/ARCHITECTURE.md` §13 (KV rate-limit counters, AI streaming, R2 signed URLs, …).

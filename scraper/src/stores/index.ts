@@ -21,3 +21,15 @@ export function createPlugin(config: StoreConfig): StorePlugin {
 export function activePlugins(config: ScraperConfig): StorePlugin[] {
   return config.stores.map(createPlugin)
 }
+
+/**
+ * Store scope for on-demand runs (docs/plan/scrape-now.md §2): an explicit
+ * --stores list narrows the nightly work list. Unknown slugs simply filter
+ * out — the pipeline turns an empty result into a typed error, so the run
+ * can never "succeed" doing nothing.
+ */
+export function scopedPlugins(config: ScraperConfig, stores?: string[]): StorePlugin[] {
+  if (!stores || stores.length === 0) return activePlugins(config)
+  const requested = new Set(stores)
+  return activePlugins(config).filter((plugin) => requested.has(plugin.config.slug))
+}

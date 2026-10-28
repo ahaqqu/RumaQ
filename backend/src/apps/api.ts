@@ -4,7 +4,25 @@ import type { MiddlewareHandler } from 'hono'
 
 import { sValidator } from '@hono/standard-validator'
 import { openAPIRouteHandler, describeRoute } from 'hono-openapi'
-import { object, string, optional, picklist, number, integer, minValue, pipe } from 'valibot'
+import {
+  object,
+  string,
+  optional,
+  picklist,
+  number,
+  integer,
+  minValue,
+  maxValue,
+  pipe,
+  regex,
+  transform,
+} from 'valibot'
+import {
+  SCRAPE_STORE_SLUGS,
+  scrapeCommandCreateSchema,
+  scrapeEventsPostSchema,
+  scrapeFinishSchema,
+} from '@rumaq/contract'
 import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
@@ -15,6 +33,16 @@ import {
   ingestPrices,
   getPricesStatus,
 } from '../lib/ingest.js'
+import {
+  appendScrapeEvents,
+  claimNextScrapeCommand,
+  createScrapeCommand,
+  finishScrapeCommand,
+  listScrapeCommands,
+  listScrapeEvents,
+  ScrapeConflictError,
+  ScrapeNotFoundError,
+} from '../lib/scrape.js'
 import { recordRunReport, listPriceRuns } from '../lib/price-runs.js'
 import { isAdminEmail, requireAdmin } from '../lib/admin.js'
 import { groundPlanItem } from '../lib/grounding.js'
@@ -76,6 +104,18 @@ const purchasesQuery = object({
   group_by: optional(picklist(['month', 'store'])),
   limit: optional(pipe(number(), integer(), minValue(1))),
   cursor: optional(string()),
+})
+
+const scrapeEventsQuery = object({
+  afterSeq: optional(pipe(string(), regex(/^\d+$/, 'Expected a non-negative integer.'))),
+})
+
+const scrapeCommandsQuery = object({
+  // Hono delivers query params as strings — accept a digit string and coerce
+  // (the OpenAPI annotation below still documents an integer).
+  limit: optional(
+    pipe(string(), transform(Number), number(), integer(), minValue(1), maxValue(50))
+  ),
 })
 
 const apiApp = new Hono<Env>()
@@ -176,6 +216,51 @@ apiApp.post(
   }
 )
 
+// Scrape Now command queue for the VPS agent (docs/plan/scrape-now.md §3):
+// the agent polls /next to claim a queued admin command, streams the run's
+// output lines back as events, and posts a terminal finish. Same
+// bearer-secret channel as the ingest routes; retries are idempotent.
+apiApp.get('/api/internal/scrape/next', requireIngestSecret, async (c) => {
+  const command = await claimNextScrapeCommand(c.env.DB)
+  const res = c.json({ command })
+  res.headers.set('Cache-Control', 'private, no-cache')
+  return res
+})
+
+apiApp.post(
+  '/api/internal/scrape/commands/:id/events',
+  requireIngestSecret,
+  sValidator('json', scrapeEventsPostSchema),
+  async (c) => {
+    const commandId = c.req.param('id')
+    try {
+      await appendScrapeEvents(c.env.DB, commandId, c.req.valid('json').events)
+      return c.json({ ok: true })
+    } catch (error) {
+      if (error instanceof ScrapeNotFoundError) return c.json({ error: error.message }, 404)
+      if (error instanceof ScrapeConflictError) return c.json({ error: error.message }, 409)
+      throw error
+    }
+  }
+)
+
+apiApp.post(
+  '/api/internal/scrape/commands/:id/finish',
+  requireIngestSecret,
+  sValidator('json', scrapeFinishSchema),
+  async (c) => {
+    const commandId = c.req.param('id')
+    try {
+      // Only running→terminal; a repeated finish after a retry is a no-op.
+      await finishScrapeCommand(c.env.DB, commandId, c.req.valid('json'))
+      return c.json({ ok: true })
+    } catch (error) {
+      if (error instanceof ScrapeNotFoundError) return c.json({ error: error.message }, 404)
+      throw error
+    }
+  }
+)
+
 // Freshness probe for the 6-hourly smoke staleness check (§7.1): the CI
 // workflow reads this with the same bearer secret and alerts when nightly
 // observations stop arriving.
@@ -254,6 +339,10 @@ apiApp.use('/api/plans/:id/items/:itemId', propsAuthMiddleware)
 apiApp.use('/api/prices', propsAuthMiddleware)
 apiApp.use('/api/prices/:productKey', propsAuthMiddleware)
 apiApp.use('/api/admin/price-runs', propsAuthMiddleware)
+apiApp.use('/api/admin/scrape', propsAuthMiddleware)
+apiApp.use('/api/admin/scrape/stores', propsAuthMiddleware)
+apiApp.use('/api/admin/scrape/commands', propsAuthMiddleware)
+apiApp.use('/api/admin/scrape/commands/:id/events', propsAuthMiddleware)
 apiApp.use('/api/ai-key/*', propsAuthMiddleware)
 
 apiApp.get(
@@ -2128,6 +2217,222 @@ apiApp.get(
     const res = c.json(feed)
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
+  }
+)
+
+// Scrape Now (docs/plan/scrape-now.md §3): admin-triggered, store-selectable
+// scraping. The POST queues a command the VPS agent claims over the internal
+// bearer channel; events/commands endpoints feed the live log and history.
+apiApp.get(
+  '/api/admin/scrape/stores',
+  describeRoute({
+    description: 'Stores available for an on-demand scrape (admin-only).',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                stores: { type: 'array', items: { type: 'string' } },
+              },
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  (c) => {
+    const res = c.json({ stores: [...SCRAPE_STORE_SLUGS] })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+apiApp.post(
+  '/api/admin/scrape',
+  describeRoute({
+    description:
+      'Queue an on-demand scrape of the given stores (admin-only). 409 when a scrape is already pending or running — one run at a time.',
+    security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['stores'],
+            properties: {
+              stores: {
+                type: 'array',
+                items: { type: 'string', enum: [...SCRAPE_STORE_SLUGS] },
+                minItems: 1,
+              },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      201: {
+        description: 'Created',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: { id: { type: 'string' } },
+            },
+          },
+        },
+      },
+      400: { description: 'Validation error (unknown store slug)' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      409: { description: 'A scrape is already pending or running' },
+    },
+  }),
+  requireAdmin,
+  sValidator('json', scrapeCommandCreateSchema),
+  async (c) => {
+    try {
+      const { id } = await createScrapeCommand(c.env.DB, {
+        stores: c.req.valid('json').stores,
+        createdBy: c.get('userId'),
+      })
+      const res = c.json({ id }, 201)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (error) {
+      if (error instanceof ScrapeConflictError) return c.json({ error: error.message }, 409)
+      throw error
+    }
+  }
+)
+
+apiApp.get(
+  '/api/admin/scrape/commands',
+  describeRoute({
+    description: 'Recent scrape commands, newest first (admin-only).',
+    security: [{ cookieAuth: [] }],
+    parameters: [
+      {
+        in: 'query',
+        name: 'limit',
+        required: false,
+        schema: { type: 'integer', minimum: 1, maximum: 50 },
+      },
+    ],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                commands: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' },
+                      stores: { type: 'array', items: { type: 'string' } },
+                      status: { type: 'string' },
+                      createdBy: { type: 'string' },
+                      createdAt: { type: 'string' },
+                      pickedUpAt: { type: 'string', nullable: true } as any,
+                      finishedAt: { type: 'string', nullable: true } as any,
+                      exitCode: { type: 'integer', nullable: true } as any,
+                      error: { type: 'string', nullable: true } as any,
+                      logTruncated: { type: 'boolean' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  sValidator('query', scrapeCommandsQuery),
+  async (c) => {
+    const commands = await listScrapeCommands(c.env.DB, c.req.valid('query').limit ?? 20)
+    const res = c.json({ commands })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+apiApp.get(
+  '/api/admin/scrape/commands/:id/events',
+  describeRoute({
+    description:
+      'Incremental log events for a scrape command (admin-only). Omit afterSeq for the full log; poll with afterSeq=<last seen seq> while the run is pending/running.',
+    security: [{ cookieAuth: [] }],
+    parameters: [
+      {
+        in: 'query',
+        name: 'afterSeq',
+        required: false,
+        schema: { type: 'string', pattern: '^[0-9]+$' },
+      },
+    ],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                events: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      seq: { type: 'integer' },
+                      ts: { type: 'string' },
+                      level: { type: 'string' },
+                      message: { type: 'string' },
+                    },
+                  },
+                },
+                truncated: { type: 'boolean' },
+              },
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      404: { description: 'Unknown command' },
+    },
+  }),
+  requireAdmin,
+  sValidator('query', scrapeEventsQuery),
+  async (c) => {
+    const commandId = c.req.param('id')
+    // Absent afterSeq = the full log (seq > -1); an explicit afterSeq=0
+    // means "after seq 0" — seq-strict, so a poll can never re-receive.
+    const afterSeq = c.req.valid('query').afterSeq ? Number(c.req.valid('query').afterSeq) : -1
+    try {
+      const feed = await listScrapeEvents(c.env.DB, commandId, afterSeq)
+      const res = c.json(feed)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (error) {
+      if (error instanceof ScrapeNotFoundError) return c.json({ error: error.message }, 404)
+      throw error
+    }
   }
 )
 

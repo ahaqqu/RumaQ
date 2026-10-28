@@ -1087,3 +1087,62 @@ it('runs the astro catalog store end to end — no OCR, outbox like the brochure
   expect(lines[0]!.products).toHaveLength(3)
   expect(lines[0]!.scrapedAt).toBe('2026-10-24T23:00:05.000Z')
 })
+
+describe('runPipeline --stores scoping (docs/plan/scrape-now.md §2)', () => {
+  it('runs only the requested stores — the status map covers nothing else', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    const status = await Effect.runPromise(
+      runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
+        stateDir,
+        dryRun: true,
+        stores: ['superindo'],
+        fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
+        ocrClient: {
+          models: { generateContent: async () => ({ text: JSON.stringify(ocrItems) }) },
+        },
+        sleep: noSleep,
+        now: () => new Date('2026-10-24T23:00:05Z'),
+        log: () => {},
+      })
+    )
+    expect(Object.keys(status.stores)).toEqual(['superindo'])
+    expect(status.stores['superindo']!.itemsExtracted).toBeGreaterThanOrEqual(1)
+    // The unscoped stores are absent, not zeroed — the admin sees the truth.
+    expect(status.stores['lotte-mart']).toBeUndefined()
+    expect(status.stores['astro']).toBeUndefined()
+  })
+
+  it('fails a scope that matches nothing — never a "successful" empty run', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const exit = await Effect.runPromiseExit(
+      runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: stubEmbedClient,
+        verifyClient: stubVerifyClient,
+        stateDir,
+        dryRun: true,
+        stores: ['unknown-store'],
+        fetch: makeFetchMock('<html></html>', '<html></html>', fakeJpegBytes()),
+        ocrClient: { models: { generateContent: async () => ({ text: '[]' }) } },
+        sleep: noSleep,
+        now: () => new Date('2026-10-24T23:00:05Z'),
+        log: () => {},
+      })
+    )
+    const failure = exitError(exit)
+    expect(failure).not.toBeNull()
+    expect(failure!.exitCode).toBe(1)
+    expect(failure!.message).toContain('unknown-store')
+  })
+})

@@ -1,0 +1,58 @@
+# provision/vps/systemd/rumaq-scraper-agent.service — the Scrape Now agent
+# (docs/plan/scrape-now.md §2): a long-running service that polls the
+# Worker's command queue every 15s and drives admin-triggered, store-
+# selectable scrapes. Safe pre-go-live: with no queued commands it is an
+# idle poller — it never scrapes on its own initiative.
+#
+# Same user, env file, and hardening as the nightly rumaq-scraper.service;
+# differences are Type=simple + Restart=always (a service, not a oneshot).
+# The agent spawns the scrape child through `flock` on
+# /var/lib/rumaq-scraper/run.lock — the same file the nightly unit wraps in
+# `flock -n` — so a manual run and the nightly can never overlap.
+#
+# Chromium hardening notes carry over: MemoryDenyWriteExecute is absent
+# (V8 JIT), MemoryMax=1G / CPUQuota=100% follow the 2-vCPU box budget (§9).
+
+[Unit]
+Description=RumaQ scrape agent (polls the scrape command queue)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rumaq-scraper
+Group=rumaq-scraper
+WorkingDirectory=/var/lib/rumaq-scraper
+EnvironmentFile=/etc/rumaq-scraper/env
+# Browser revision ships with the deploy tree, not with the OS package set.
+Environment=PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers
+# The agent derives the lock file and the child's --state-dir from this (the
+# env file does not set it, and the 'state' default is relative to the
+# working dir): it MUST be the same path the nightly unit flocks, or the
+# manual-vs-nightly exclusion and the shared state (catalog, checkpoints)
+# both silently break.
+Environment=RUMAQ_SCRAPER_STATE_DIR=/var/lib/rumaq-scraper
+ExecStart=/usr/bin/bun /srv/rumaq-scraper/dist/agent.js
+# The agent itself never exits on error (it logs + continues); this is the
+# backstop for a crashed process. 5s keeps a crash-loop visible in the
+# journal without hammering the Worker.
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/rumaq-scraper
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryMax=1G
+CPUQuota=100%
+
+StandardOutput=journal
+StandardError=journal
