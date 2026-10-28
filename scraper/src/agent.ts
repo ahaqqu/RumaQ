@@ -321,11 +321,20 @@ export async function runCommand(
   let linesSinceFlush = 0
 
   // Serialized flush chain: batches post strictly in seq order, one at a
-  // time, and only fully-posted batches leave the buffer.
+  // time, and only fully-posted batches leave the buffer. Each batch is
+  // SPLICED out of the buffer synchronously — before any await — so a
+  // truncation head-drop that lands during the in-flight POST can never
+  // remove the wrong (still-unposted) events, and the byte accounting stays
+  // exact; a failed POST puts its batch back at the head for the retry.
   let flushChain: Promise<void> = Promise.resolve()
+  const takeBatch = (): AgentEvent[] => {
+    const batch = buffer.pending.splice(0, 100)
+    for (const event of batch) buffer.bytes -= event.message.length
+    return batch
+  }
   const flush = async (): Promise<void> => {
     while (buffer.pending.length > 0) {
-      const batch = buffer.pending.slice(0, 100)
+      const batch = takeBatch()
       const ok = await postJson(
         deps.fetch,
         eventsUrl,
@@ -334,9 +343,11 @@ export async function runCommand(
         config,
         log
       )
-      if (!ok) return // keep everything; the next flush retries (idempotent)
-      for (const event of batch) buffer.bytes -= event.message.length
-      buffer.pending = buffer.pending.slice(batch.length)
+      if (!ok) {
+        buffer.pending.unshift(...batch)
+        for (const event of batch) buffer.bytes += event.message.length
+        return // keep everything; the next flush retries (idempotent)
+      }
     }
   }
   const scheduleFlush = () => {
