@@ -11,6 +11,12 @@ export const SUGAR_KEY = 'gula-pasir--gulaku--1-kg'
 export const COFFEE_KEY = 'kopi--kapal-api--165-g'
 export const FLOUR_KEY = 'tepung--segitiga-biru--1-kg'
 
+// Servable brochure object URLs (issue #293): the per-image grouping keys of
+// the brochures view. Dated by the snapshot's scrape date; the round-trip and
+// sweep scenarios upload the corresponding R2 objects explicitly.
+export const BROCHURE_PAGE_LOTTE = '/api/brochures/lotte-mart/20261024/page_1_2ad1c95b.jpg'
+export const BROCHURE_KORAN_SUPERINDO = '/api/brochures/superindo/20261024/koran_a_1b2c3d4e.jpg'
+
 export function priceSnapshot() {
   return {
     schemaVersion: 1,
@@ -34,6 +40,9 @@ export function priceSnapshot() {
         promoLabel: 'Diskon 15%',
         matchMethod: 'exact',
         matchConfidence: 1.0,
+        // Brochure object URLs (issue #293): every OCR'd page gets its own
+        // relative same-origin URL — oil and flour share Lotte's page 1.
+        brochureUrl: BROCHURE_PAGE_LOTTE,
       },
       {
         productKey: OIL_KEY,
@@ -46,6 +55,7 @@ export function priceSnapshot() {
         promoLabel: 'Diskon 15%',
         matchMethod: 'exact',
         matchConfidence: 1.0,
+        brochureUrl: BROCHURE_KORAN_SUPERINDO,
       },
       {
         productKey: RICE_KEY,
@@ -58,6 +68,7 @@ export function priceSnapshot() {
         promoLabel: 'Beli 1 gratis 1',
         matchMethod: 'embedding',
         matchConfidence: 0.7,
+        brochureUrl: BROCHURE_KORAN_SUPERINDO,
       },
       {
         // Label but no promo_type: the Other bucket's input (issue #292).
@@ -72,6 +83,7 @@ export function priceSnapshot() {
         promoLabel: 'Beli 2 gratis 1',
         matchMethod: 'exact',
         matchConfidence: 1.0,
+        brochureUrl: BROCHURE_PAGE_LOTTE,
       },
     ],
   }
@@ -150,5 +162,55 @@ export function bulkCatalogueSnapshot(count) {
       matchMethod: 'exact',
       matchConfidence: 1.0,
     })),
+  }
+}
+
+// Brochure listing fixture (issue #293): items over the two servable object
+// URLs above, plus one legacy retailer-page URL row (the pre-#293 data shape)
+// that the servable-shape predicate must exclude from every group.
+export function brochureSnapshot() {
+  return {
+    schemaVersion: 1,
+    scrapedAt: '2026-10-26T23:00:05Z',
+    stores: [
+      { slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' },
+      { slug: 'superindo', name: 'Superindo', region: 'jakarta' },
+    ],
+    items: [
+      {
+        productKey: 'susu-uht--ultra--1-l',
+        name: 'Susu UHT Ultra 1 L',
+        brand: 'Ultra',
+        unit: '1 L',
+        storeSlug: 'lotte-mart',
+        price: 19000,
+        matchMethod: 'exact',
+        matchConfidence: 1.0,
+        brochureUrl: BROCHURE_PAGE_LOTTE,
+      },
+      {
+        productKey: 'roti-tawar--sari-roti--1-bungkus',
+        name: 'Roti Tawar Sari Roti',
+        brand: 'Sari Roti',
+        unit: '1 bungkus',
+        storeSlug: 'lotte-mart',
+        price: 14000,
+        matchMethod: 'exact',
+        matchConfidence: 1.0,
+        // Legacy retailer-page URL: never servable, never in a group.
+        brochureUrl: 'https://www.lottemart.co.id/brosur',
+      },
+      {
+        productKey: 'sabun-mandi--lifebuoy--1-bks',
+        name: 'Sabun Mandi Lifebuoy',
+        brand: 'Lifebuoy',
+        unit: '1 bks',
+        storeSlug: 'superindo',
+        price: 5000,
+        matchMethod: 'exact',
+        matchConfidence: 1.0,
+        brochureUrl: BROCHURE_KORAN_SUPERINDO,
+      },
+    ],
   }
 }
