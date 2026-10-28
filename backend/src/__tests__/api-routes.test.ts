@@ -626,6 +626,21 @@ describe('api routes', () => {
     expect(((await res.json()) as any).purchases).toHaveLength(1)
   })
 
+  it('/api/purchases accepts ?limit=N as a digit string (regression: Hono sends strings)', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.all = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({ results: [] })
+    // The browser client sends limit as a string (query params have no types on
+    // the wire) — it must coerce, not 400.
+    const res = await apiApp.request('/api/purchases?limit=10', {}, env)
+    expect(res.status).toBe(200)
+    const bad = await apiApp.request('/api/purchases?limit=0', {}, env)
+    expect(bad.status).toBe(400)
+  })
+
   it('/api/purchases/:id returns a purchase', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.first = vi

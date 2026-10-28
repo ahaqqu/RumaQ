@@ -102,7 +102,9 @@ const purchasesQuery = object({
   to: optional(string()),
   q: optional(string()),
   group_by: optional(picklist(['month', 'store'])),
-  limit: optional(pipe(number(), integer(), minValue(1))),
+  // Hono delivers query params as strings — accept a digit string and coerce
+  // (the OpenAPI annotation below still documents an integer).
+  limit: optional(pipe(string(), transform(Number), number(), integer(), minValue(1))),
   cursor: optional(string()),
 })
 
