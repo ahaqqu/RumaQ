@@ -169,7 +169,9 @@ const server = createServer(async (req, res) => {
       body,
       redirect: 'manual',
     })
-    const responseBody = await workerResponse.text()
+    // Buffer the body — .text() would UTF-8-decode binary responses (R2
+    // images) with replacement characters, corrupting every non-ASCII byte.
+    const responseBody = Buffer.from(await workerResponse.arrayBuffer())
 
     // Strip headers that conflict with Node.js http.ServerResponse
     const sanitizedHeaders = Object.fromEntries(
