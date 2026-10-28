@@ -7,7 +7,8 @@
     "prices": "Harga",
     "monitor": "Monitor Scraper",
     "settings": "Pengaturan",
-    "addFromReceipt": "Tambah dari struk"
+    "addFromReceipt": "Tambah dari struk",
+    "scrape": "Scrape Sekarang"
   },
   "home": {
     "lead": "Stok terpantau otomatis dari struk belanja. Sisa dihitung dari kebiasaanmu, bukan diisi manual.",
@@ -150,6 +151,31 @@
     "storeError": "toko gagal",
     "needsProxy": "perlu proxy Tier-3 — sengaja dilewati sampai kredensial diisi",
     "needsProxyChip": "perlu proxy"
+  },
+  "scrape": {
+    "activeRun": "Run aktif",
+    "alreadyRunning": "Scrape masih menunggu atau sedang berjalan — satu run dalam satu waktu.",
+    "createdBy": "Diminta oleh",
+    "elapsed": "Berjalan selama",
+    "exitCode": "Kode keluar",
+    "forbidden": "Khusus admin",
+    "forbiddenDesc": "Halaman ini hanya tersedia untuk operator yang diizinkan.",
+    "history": "Perintah terbaru",
+    "lead": "Antrekan scraping sesuai permintaan untuk toko yang dipilih. Agent VPS mengambil perintah dalam hitungan detik dan menyalurkan output mentah scraper ke sini.",
+    "loadError": "Gagal memuat perintah scrape",
+    "logTruncated": "Awal log dipangkas — ini adalah bagian akhir run.",
+    "noCommands": "Belum ada perintah scrape",
+    "noCommandsDesc": "Scrape yang dipicu beserta log lengkapnya muncul di sini.",
+    "noEvents": "Belum ada output",
+    "queueError": "Gagal mengantrekan scrape",
+    "queueing": "Mengantre…",
+    "scrapeNow": "Scrape Sekarang",
+    "statusFailed": "Gagal",
+    "statusPending": "Menunggu",
+    "statusRunning": "Berjalan",
+    "statusSuccess": "Berhasil",
+    "triggerTitle": "Picu scrape",
+    "waitingForAgent": "Menunggu agent VPS mengambil perintah…"
   },
   "history": {
     "date": "Tanggal",

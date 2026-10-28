@@ -283,3 +283,40 @@ export function getPriceDetail(productKey: string, signal?: AbortSignal): Promis
 export function getPriceRuns(signal?: AbortSignal): Promise<unknown> {
   return unwrap(client.GET('/api/admin/price-runs', { signal }))
 }
+
+// Scrape Now (docs/plan/scrape-now.md §4): admin-triggered, store-selectable
+// scraping. The POST queues a command the VPS agent claims; commands/events
+// feed the live log and the failure-log history.
+export type ScrapeStoreSlug = 'superindo' | 'lotte-mart' | 'astro'
+
+export function getScrapeStores(signal?: AbortSignal): Promise<unknown> {
+  return unwrap(client.GET('/api/admin/scrape/stores', { signal }))
+}
+
+export function createScrape(stores: ScrapeStoreSlug[]): Promise<unknown> {
+  return unwrap(client.POST('/api/admin/scrape', { body: { stores } }))
+}
+
+export function getScrapeCommands(
+  { limit }: { limit?: number } = {},
+  signal?: AbortSignal
+): Promise<unknown> {
+  return unwrap(client.GET('/api/admin/scrape/commands', { params: { query: { limit } }, signal }))
+}
+
+export function getScrapeEvents(
+  commandId: string,
+  { afterSeq }: { afterSeq?: number } = {},
+  signal?: AbortSignal
+): Promise<unknown> {
+  return unwrap(
+    client.GET('/api/admin/scrape/commands/{id}/events', {
+      params: {
+        path: { id: commandId },
+        // The wire type is a digit string; undefined omits it (full log).
+        query: { afterSeq: afterSeq === undefined ? undefined : String(afterSeq) },
+      },
+      signal,
+    })
+  )
+}
