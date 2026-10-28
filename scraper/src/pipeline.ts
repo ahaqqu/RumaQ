@@ -24,6 +24,7 @@ import {
   type MatchInputItem,
   type MatchOutcome,
   type MatchStats,
+  type ReviewItemRecord,
 } from './match/matcher.js'
 import {
   classifyImages,
@@ -76,6 +77,13 @@ export interface PipelineStatus {
   runStartedAt: string
   stage: PipelineStage
   match?: MatchStats
+  /**
+   * Pairs the matcher flagged for human review (issue #294), frozen at flag
+   * time. Unset when the run had no items to match. The run report carries a
+   * 200-item slice of these (reportRun) — the full list lives here so the
+   * monitor number is unaffected by the payload cap.
+   */
+  reviewItems?: ReviewItemRecord[]
   /** Outcome of the publish stage — unset until publish was reached. */
   publish?: {
     mode: 'dry-run' | 'published'
@@ -609,6 +617,7 @@ export function runPipeline(
           scrapedAt
         )
         status.match = matched.stats
+        status.reviewItems = matched.reviewItems
         log(
           `[match] ${matched.stats.exact} exact, ${matched.stats.embedding} embedding, ` +
             `${matched.stats.ai} ai-verified, ${matched.stats.solo} new — ` +
