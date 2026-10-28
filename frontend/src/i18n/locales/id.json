@@ -130,7 +130,22 @@
     "minAgo": "{{count}} mnt lalu",
     "hourAgo": "{{count}} jam lalu",
     "dayAgo": "{{count}} hr lalu",
-    "matched": "Cocok: {{count}}"
+    "matched": "Cocok: {{count}}",
+    "viewProducts": "Produk",
+    "viewPromos": "Promo",
+    "promosLead": "Promo berjalan dari brosur mingguan, dikelompokkan per jenis.",
+    "promosTotal": "{{count}} produk sedang promo",
+    "promoTypeDiscountPct": "Diskon %",
+    "promoTypeDiscountFixed": "Diskon (Nominal)",
+    "promoTypeGetFree": "Beli Satu Gratis Satu",
+    "promoTypeBundleBuy": "Bundling",
+    "promoTypeMultiPrice": "Harga promo",
+    "promoTypeOther": "Lainnya",
+    "productsCount": "{{count}} produk",
+    "productsCount_plural": "{{count}} produk",
+    "showExamples": "Contoh produk",
+    "promosEmpty": "Belum ada promo",
+    "promosEmptyDesc": "Promo akan muncul di sini setelah scraping brosur berikutnya."
   },
   "monitor": {
     "lead": "Proses scraping harian di VPS. Log tersimpan di journald pada server; layar ini menampilkan hasil yang dilaporkan.",

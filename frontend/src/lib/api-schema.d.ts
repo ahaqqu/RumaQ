@@ -467,6 +467,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/prices/promos': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Promo catalog: current observations grouped by promo type, with per-store product counts and up to five example products per type. */
+    get: operations['getApiPricesPromos']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/prices/{productKey}': {
     parameters: {
       query?: never
@@ -1705,6 +1722,59 @@ export interface operations {
             latestScrapedAt: string | null
             latestObservedDate: string | null
             observationCount: number
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiPricesPromos: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            types: {
+              /** @enum {string} */
+              promo_type:
+                | 'discount_pct'
+                | 'discount_fixed'
+                | 'get_free'
+                | 'bundle_buy'
+                | 'multi_price'
+                | 'other'
+              product_count: number
+              stores: {
+                [key: string]: number
+              }
+              example_products: {
+                product_key: string
+                name: string
+                brand: string | null
+                unit: string | null
+                source_slug: string
+                source_name: string
+                price: number
+                effective_unit_price: number | null
+              }[]
+            }[]
+            total: number
           }
         }
       }

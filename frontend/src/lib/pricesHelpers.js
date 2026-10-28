@@ -127,3 +127,14 @@ export function normalizeHash(rawHash) {
   if (!rawHash) return ''
   return rawHash.replace(/^#/, '')
 }
+
+// IDR display price — shared by the explorer and the promo catalog view
+// (issue #292) so both pages format identically (Intl id-ID uses an NBSP
+// between "Rp" and the amount).
+export function formatPrice(amount) {
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+  }).format(amount)
+}

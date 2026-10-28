@@ -11,18 +11,25 @@ const PATHS = {
   Plan: '/plan',
   History: '/history',
   Settings: '/settings',
+  Prices: '/prices',
+  'Prices promos': '/prices?view=promos',
 }
 
 // Per-page signals that the async data has rendered, so axe scans real
 // content instead of skeletons. Inventory/History expose a search control
 // ('Search items' is an input aria-label; History's input is type=search so
 // its role is searchbox); Settings exposes the storage section heading.
+// The Prices explorer's search input carries the 'Search prices' aria-label;
+// the promos view has no search input and no stable ready signal, so it gets
+// a networkidle settle like Home/Plan.
 const READY = {
   Home: null,
   Inventory: (page) => page.getByLabel('Search items'),
   Plan: null,
   History: (page) => page.getByLabel('Search items'),
   Settings: (page) => page.getByRole('heading', { name: 'Storage Locations' }),
+  Prices: (page) => page.getByLabel('Search prices'),
+  'Prices promos': null,
 }
 
 const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']

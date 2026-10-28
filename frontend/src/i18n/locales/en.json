@@ -130,7 +130,22 @@
     "minAgo": "{{count}}m ago",
     "hourAgo": "{{count}}h ago",
     "dayAgo": "{{count}}d ago",
-    "matched": "Matched: {{count}}"
+    "matched": "Matched: {{count}}",
+    "viewProducts": "Products",
+    "viewPromos": "Promos",
+    "promosLead": "Current promotions from weekly brochures, grouped by deal type.",
+    "promosTotal": "{{count}} products on promo",
+    "promoTypeDiscountPct": "Discount %",
+    "promoTypeDiscountFixed": "Discount (Fixed)",
+    "promoTypeGetFree": "Buy One Get One",
+    "promoTypeBundleBuy": "Bundle",
+    "promoTypeMultiPrice": "Promo price",
+    "promoTypeOther": "Other",
+    "productsCount": "{{count}} product",
+    "productsCount_plural": "{{count}} products",
+    "showExamples": "Example products",
+    "promosEmpty": "No promos yet",
+    "promosEmptyDesc": "Promotions will appear here after the next brochure scrape."
   },
   "monitor": {
     "lead": "Nightly scraper runs on the VPS. Logs live in journald on the box; this screen shows reported outcomes.",

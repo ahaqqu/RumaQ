@@ -12,6 +12,7 @@ vi.mock('@tanstack/react-router', () => ({
     navigate(options)
   },
   useLocation: () => ({ hash: mockHash }),
+  useSearch: () => ({ view: mockView }),
 }))
 
 vi.mock('../lib/queries/index.js', () => ({
@@ -19,12 +20,20 @@ vi.mock('../lib/queries/index.js', () => ({
   usePriceSources: vi.fn(),
   usePriceMeta: vi.fn(),
   usePriceDetail: vi.fn(),
+  usePricePromos: vi.fn(),
 }))
 
-import { usePrices, usePriceSources, usePriceMeta, usePriceDetail } from '../lib/queries/index.js'
+import {
+  usePrices,
+  usePriceSources,
+  usePriceMeta,
+  usePriceDetail,
+  usePricePromos,
+} from '../lib/queries/index.js'
 
 const navigate = vi.fn()
 let mockHash = ''
+let mockView = ''
 
 const OIL_KEY = 'minyak-goreng--bimoli--1-l'
 const RICE_KEY = 'beras--pandan-wangi--5-kg'
@@ -88,13 +97,29 @@ function createQueryClient() {
 }
 
 function renderPrices() {
-  return render(
+  const queryClient = createQueryClient()
+  const utils = render(
     React.createElement(
       QueryClientProvider,
-      { client: createQueryClient() },
+      { client: queryClient },
       React.createElement(Prices, null)
     )
   )
+  utils._queryClient = queryClient
+  return utils
+}
+
+// The router mock cannot re-render on navigate — flip the mocked search
+// params through a rerender instead.
+function rerenderPrices(utils) {
+  utils.rerender(
+    React.createElement(
+      QueryClientProvider,
+      { client: utils._queryClient },
+      React.createElement(Prices, null)
+    )
+  )
+  return utils
 }
 
 // The suite's i18n mock returns raw keys, so assertions match keys and
@@ -107,6 +132,7 @@ function findClickable(container, text) {
 describe('Prices', () => {
   beforeEach(() => {
     mockHash = ''
+    mockView = ''
     navigate.mockClear()
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(usePriceSources).mockReturnValue({
@@ -394,6 +420,116 @@ describe('Prices', () => {
     vi.mocked(usePriceMeta).mockReturnValue({ data: null })
     const { container } = renderPrices()
     expect(container.textContent).not.toContain('prices.updated')
+  })
+
+  // --- Promos view (issue #292) ---
+
+  describe('segmented Products|Promos view', () => {
+    const promoCatalog = {
+      types: [
+        {
+          promo_type: 'discount_pct',
+          product_count: 2,
+          stores: { 'lotte-mart': 1, superindo: 1 },
+          example_products: [
+            {
+              product_key: OIL_KEY,
+              name: 'Minyak Goreng Bimoli',
+              brand: 'Bimoli',
+              unit: '1 L',
+              price: 21500,
+              effective_unit_price: 21500,
+            },
+          ],
+        },
+        {
+          promo_type: 'get_free',
+          product_count: 1,
+          stores: { superindo: 1 },
+          example_products: [],
+        },
+      ],
+      total: 3,
+    }
+
+    it('defaults to the products view with search and chips visible', () => {
+      const { container } = renderPrices()
+      expect(container.querySelector('input[type="search"]')).toBeTruthy()
+      expect(container.textContent).not.toContain('prices.promosLead')
+      expect(container.textContent).not.toContain('prices.viewPromos-pressed-anyway')
+    })
+
+    it('?view=promos renders the promos view and hides products-only controls', () => {
+      mockView = 'promos'
+      vi.mocked(usePricePromos).mockReturnValue({
+        data: promoCatalog,
+        isLoading: false,
+        isError: false,
+      })
+      const { container } = renderPrices()
+      expect(container.textContent).toContain('prices.promosLead')
+      expect(container.textContent).toContain('prices.promoTypeDiscountPct')
+      expect(container.textContent).toContain('prices.promoTypeGetFree')
+      expect(container.textContent).toContain('prices.promosTotal')
+      expect(container.querySelector('input[type="search"]')).toBeNull()
+      expect(container.querySelector('select')).toBeNull()
+      // Segment row stays visible in both views.
+      expect(container.textContent).toContain('prices.viewProducts')
+      expect(container.textContent).toContain('prices.viewPromos')
+    })
+
+    it('a hash present forces the products view even with view=promos', () => {
+      mockView = 'promos'
+      mockHash = `#${OIL_KEY}`
+      const { container } = renderPrices()
+      expect(container.textContent).toContain('prices.lead')
+      expect(container.querySelector('input[type="search"]')).toBeTruthy()
+      expect(container.textContent).not.toContain('prices.promosLead')
+    })
+
+    it('clicking an example jumps: clears filters and deep-links the product', () => {
+      const utils = renderPrices()
+      const { container } = utils
+      // Prime the shell's local filters through the products view first —
+      // the jump must clear exactly these. (Search is debounced into the
+      // query, so its clearing is asserted via the input value below.)
+      fireEvent.change(container.querySelector('input[type="search"]'), {
+        target: { value: 'minyak' },
+      })
+      fireEvent.click(findClickable(container, 'Lotte Mart'))
+      expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
+        q: undefined,
+        source: 'lotte-mart',
+        sort: 'cheapest',
+      })
+
+      mockView = 'promos'
+      vi.mocked(usePricePromos).mockReturnValue({
+        data: promoCatalog,
+        isLoading: false,
+        isError: false,
+      })
+      rerenderPrices(utils)
+      // Expand the Discount % card first — example rows live inside it.
+      fireEvent.click(findClickable(container, 'prices.promoTypeDiscountPct'))
+      expect(container.textContent).toContain('prices.showExamples')
+      fireEvent.click(findClickable(container, 'Minyak Goreng Bimoli'))
+      expect(navigate).toHaveBeenCalledWith({
+        to: '/prices',
+        search: {},
+        hash: OIL_KEY,
+        replace: false,
+      })
+      // The jump dropped the view param (hash wins) and cleared the local
+      // filters — the unfiltered products query is the landing context.
+      expect(mockHash).toBe(`#${OIL_KEY}`)
+      expect(container.querySelector('input[type="search"]').value).toBe('')
+      expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
+        q: undefined,
+        source: null,
+        sort: 'cheapest',
+      })
+    })
   })
 
   describe('deep link (#productKey)', () => {

@@ -34,6 +34,11 @@ import {
   getPricesStatus,
 } from '../lib/ingest.js'
 import {
+  LATEST_OBSERVATION_SUBQUERY,
+  LATEST_OBSERVATION_PREDICATE,
+  getPromoCatalog,
+} from '../lib/prices.js'
+import {
   appendScrapeEvents,
   claimNextScrapeCommand,
   createScrapeCommand,
@@ -2198,8 +2203,9 @@ apiApp.delete(
 
 // Price explorer over the scraper-fed global price tables
 // (docs/plan/haqita-integration.md §5.3). Observations below the ingest
-// confidence floor are hidden; 0.55–0.85 rows are returned flagged.
-const PRICE_MIN_CONFIDENCE = 0.55
+// confidence floor are hidden; 0.55–0.85 rows are returned flagged. The
+// confidence floor and the latest-observation predicate are shared with the
+// promo catalog via lib/prices.ts (issue #292).
 const PRICE_LOW_CONFIDENCE_FLAG = 0.85
 
 // Product page size for sorted list queries. LIMIT 200 + 1 so the `truncated`
@@ -2551,13 +2557,7 @@ apiApp.get(
                FROM price_observations o
                JOIN price_products p ON p.id = o.product_id
                JOIN price_sources s ON s.id = o.source_id
-               WHERE o.id = (
-                 SELECT o2.id FROM price_observations o2
-                 WHERE o2.product_id = o.product_id AND o2.source_id = o.source_id
-                 ORDER BY o2.observed_date DESC, o2.scraped_at DESC
-                 LIMIT 1
-               )
-               AND o.match_confidence >= ${PRICE_MIN_CONFIDENCE}${filters.sql}
+               WHERE ${LATEST_OBSERVATION_PREDICATE}${filters.sql}
                ORDER BY p.name COLLATE NOCASE, s.name COLLATE NOCASE
                LIMIT ${PRICE_LIST_LIMIT}`
 
@@ -2591,13 +2591,7 @@ apiApp.get(
   FROM price_observations o
   JOIN price_products p ON p.id = o.product_id
   JOIN price_sources s ON s.id = o.source_id
-  WHERE o.id = (
-          SELECT o2.id FROM price_observations o2
-          WHERE o2.product_id = o.product_id AND o2.source_id = o.source_id
-          ORDER BY o2.observed_date DESC, o2.scraped_at DESC
-          LIMIT 1
-        )
-    AND o.match_confidence >= ${PRICE_MIN_CONFIDENCE}${filters.sql}
+  WHERE ${LATEST_OBSERVATION_PREDICATE}${filters.sql}
 ),
 cheapest AS (
   SELECT product_key,
@@ -2694,6 +2688,91 @@ apiApp.get(
   }
 )
 
+// Promo catalog for the /prices Promos view (issue #292): current
+// observations grouped by promo type with per-source product counts and ≤5
+// example products per group. Grouping lives in getPromoCatalog (lib/prices),
+// which interpolates the same LATEST_OBSERVATION_PREDICATE as the explorer —
+// the two views' counts cannot drift apart.
+apiApp.get(
+  '/api/prices/promos',
+  describeRoute({
+    description:
+      'Promo catalog: current observations grouped by promo type, with per-store product counts and up to five example products per type.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                types: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      promo_type: {
+                        type: 'string',
+                        enum: [
+                          'discount_pct',
+                          'discount_fixed',
+                          'get_free',
+                          'bundle_buy',
+                          'multi_price',
+                          'other',
+                        ],
+                      },
+                      product_count: { type: 'integer' },
+                      stores: { type: 'object', additionalProperties: { type: 'integer' } },
+                      example_products: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            product_key: { type: 'string' },
+                            name: { type: 'string' },
+                            brand: { type: 'string', nullable: true } as any,
+                            unit: { type: 'string', nullable: true } as any,
+                            source_slug: { type: 'string' },
+                            source_name: { type: 'string' },
+                            price: { type: 'number' },
+                            effective_unit_price: { type: 'number', nullable: true } as any,
+                          },
+                          required: [
+                            'product_key',
+                            'name',
+                            'brand',
+                            'unit',
+                            'source_slug',
+                            'source_name',
+                            'price',
+                            'effective_unit_price',
+                          ],
+                        },
+                      },
+                    },
+                    required: ['promo_type', 'product_count', 'stores', 'example_products'],
+                  },
+                },
+                total: { type: 'integer' },
+              },
+              required: ['types', 'total'],
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+    },
+  }),
+  async (c) => {
+    const catalog = await getPromoCatalog(c.env.DB)
+    const res = c.json(catalog)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
 apiApp.get(
   '/api/prices/:productKey',
   describeRoute({
@@ -2736,12 +2815,7 @@ apiApp.get(
        FROM price_observations o
        JOIN price_sources s ON s.id = o.source_id
        WHERE o.product_id = (SELECT id FROM price_products WHERE product_key = ?)
-         AND o.id = (
-           SELECT o2.id FROM price_observations o2
-           WHERE o2.product_id = o.product_id AND o2.source_id = o.source_id
-           ORDER BY o2.observed_date DESC, o2.scraped_at DESC
-           LIMIT 1
-         )
+         AND ${LATEST_OBSERVATION_SUBQUERY}
        ORDER BY COALESCE(o.effective_unit_price, o.price) ASC, s.slug ASC`
     )
       .bind(productKey)
