@@ -818,6 +818,84 @@ describe('runPipeline', () => {
     }
   })
 
+  it('caps the review pairs on the run report at 200 with the truncation visible (issue #294)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const { reported, publishFetch } = makeReportCapture()
+    // Enough unique ambiguous names that a single image's sweep holds more
+    // than 200 pairs: the first item founds the entry, the rest hold against
+    // it (its name carries the same tokens, so gate 2 passes).
+    const manyItems = [
+      { name: 'Indomie Goreng', brand: null, unit: '1 kg', price: 3500, promo: null, period: null },
+      ...Array.from({ length: 210 }, (_, i) => ({
+        name: `Indomie Goreng Kuah ${i + 1}`,
+        brand: null,
+        unit: '1 kg',
+        price: 3500,
+        promo: null,
+        period: null,
+      })),
+    ]
+    const ocrClient: GeminiClient = {
+      models: { generateContent: async () => ({ text: JSON.stringify(manyItems) }) },
+    }
+    // [1,1] for the held names vs [1,0] for the founded entry: cos ≈ 0.707 —
+    // the ambiguous band, so every pair rides the verifier.
+    const bandEmbedClient: EmbeddingClient = {
+      models: {
+        embedContent: async ({ contents }: { contents: string[] }) => ({
+          embeddings: contents.map((name) => ({
+            values: name.startsWith('Indomie Goreng Kuah') ? [1, 1] : [1, 0],
+          })),
+        }),
+      },
+    }
+    // An unparseable verdict resolves every held pair to null — each stays
+    // matched and emits one verifier_unresolved record.
+    const maybeVerifier: GeminiClient = {
+      models: { generateContent: async () => ({ text: 'MAYBE' }) },
+    }
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    const status = await Effect.runPromise(
+      runPipeline({
+        launcher: emptyLotte.launcher,
+        embedClient: bandEmbedClient,
+        verifyClient: maybeVerifier,
+        stateDir,
+        dryRun: false,
+        fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
+        ocrClient,
+        publishFetch,
+        ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+        ingestSecret: 's3cret',
+        sleep: noSleep,
+        now: () => new Date('2026-10-24T23:00:05Z'),
+        log: () => {},
+      })
+    )
+    expect(status.stage).toBe('done')
+    expect(status.reviewItems!.length).toBe(status.match!.reviewItems)
+    expect(status.match!.reviewItems).toBeGreaterThan(200)
+
+    const report = reported[0]!
+    // The monitor count is the pre-slice total; the payload carries the cap
+    // and says so.
+    expect(report.match!.reviewItems).toBe(status.match!.reviewItems)
+    expect(report.match!.reviewItemPairs).toHaveLength(200)
+    expect(report.match!.reviewItemsTotal).toBe(report.match!.reviewItems)
+    expect(report.match!.reviewItemsTruncated).toBe(true)
+    for (const pair of report.match!.reviewItemPairs!) {
+      expect(pair.reason).toBe('verifier_unresolved')
+      expect(pair.matchMethod).toBe('ai')
+    }
+  })
+
   it('skips a challenged browser store by design when no proxy is configured', async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
     const harness = await setupChallengedLotte()
