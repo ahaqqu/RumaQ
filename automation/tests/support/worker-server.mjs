@@ -54,7 +54,7 @@ const mf = new Miniflare({
   modules: MODULES,
   modulesRoot: DIST_DIR,
   d1Databases: { DB: 'rumaq-test' },
-  r2Buckets: { RECEIPTS: 'rumaq-receipts-test' },
+  r2Buckets: { RECEIPTS: 'rumaq-receipts-test', BROCHURES: 'rumaq-brochures-test' },
   compatibilityDate: '2026-07-10',
   compatibilityFlags: ['nodejs_compat'],
   bindings: {
@@ -169,7 +169,9 @@ const server = createServer(async (req, res) => {
       body,
       redirect: 'manual',
     })
-    const responseBody = await workerResponse.text()
+    // Buffer the body — .text() would UTF-8-decode binary responses (R2
+    // images) with replacement characters, corrupting every non-ASCII byte.
+    const responseBody = Buffer.from(await workerResponse.arrayBuffer())
 
     // Strip headers that conflict with Node.js http.ServerResponse
     const sanitizedHeaders = Object.fromEntries(

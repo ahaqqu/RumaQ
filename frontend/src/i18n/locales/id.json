@@ -145,7 +145,12 @@
     "productsCount_plural": "{{count}} produk",
     "showExamples": "Contoh produk",
     "promosEmpty": "Belum ada promo",
-    "promosEmptyDesc": "Promo akan muncul di sini setelah scraping brosur berikutnya."
+    "promosEmptyDesc": "Promo akan muncul di sini setelah scraping brosur berikutnya.",
+    "viewBrochures": "Brosur",
+    "brochuresLead": "Halaman brosur asli di balik harga berjalan, dikelompokkan per toko.",
+    "brochuresEmpty": "Belum ada brosur",
+    "brochuresEmptyDesc": "Halaman brosur akan muncul di sini setelah scraping berikutnya memublikasikannya.",
+    "brochureAlt": "Halaman brosur {{store}}"
   },
   "monitor": {
     "lead": "Proses scraping harian di VPS. Log tersimpan di journald pada server; layar ini menampilkan hasil yang dilaporkan.",

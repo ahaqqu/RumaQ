@@ -351,9 +351,9 @@ The legacy Pages project was deleted after the cutover; `rumaq.pages.dev` no lon
    ./scripts/deploy.sh cloudflare
    ```
 
-   The deploy script creates the bucket if missing.
+   The deploy script creates the buckets if missing.
 
-   The bucket is private by default. Verify privacy in the Cloudflare dashboard under R2 > `rumaq-receipts` > Settings: "Object access" should be "Private".
+   The buckets are private by default. Verify privacy in the Cloudflare dashboard under R2 > `rumaq-receipts` and R2 > `rumaq-brochures` > Settings: "Object access" should be "Private". Receipts are keep-forever user documents; brochures (issue #293) are rotating marketing images swept once no current observation references them (14-day grace), served only through the authenticated Worker proxy `GET /api/brochures/*`.
 
 4. Set Worker secrets:
 
@@ -365,22 +365,23 @@ The legacy Pages project was deleted after the cutover; `rumaq.pages.dev` no lon
 
 ### Environment variables
 
-| Variable                 | Where         | Purpose                                                                                                                                                                             |
-| ------------------------ | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GOOGLE_CLIENT_ID`       | Worker secret | Google OAuth client ID                                                                                                                                                              |
-| `GOOGLE_CLIENT_SECRET`   | Worker secret | Google OAuth client secret                                                                                                                                                          |
-| `WORKER_JWT_SECRET`      | Worker secret | HMAC key for session JWT                                                                                                                                                            |
-| `WORKER_ENCRYPTION_KEY`  | Worker secret | AES-GCM key for AI keys                                                                                                                                                             |
-| `HAQITA_INGEST_SECRET`   | Worker secret | Bearer secret for the internal price ingest endpoint (`POST /api/internal/ingest/prices`, pushed daily by the rumaq-scraper VPS job). Optional: when unset the endpoint returns 503 |
-| `ADMIN_EMAILS`           | Worker secret | Comma-separated admin allowlist for operator-only surfaces (the scraping monitor at `/admin/prices`, fed by `POST /api/internal/ingest/runs`). Optional: when unset nobody is admin |
-| `CLOUDFLARE_ACCOUNT_ID`  | Build/deploy  | Cloudflare account ID; used by Wrangler and the deploy script                                                                                                                       |
-| `CLOUDFLARE_DATABASE_ID` | Build/deploy  | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed                                                                                          |
-| `CLOUDFLARE_API_TOKEN`   | Build/deploy  | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                                                                                            |
-| `EMAIL_AUTH_ENABLED`     | Worker var    | Set to `"true"` or `"false"` to enable or disable email/password testing auth                                                                                                       |
-| `RUN_SECRETS_CHECK`      | Worker var    | Set to `"true"` to enable missing-secrets check on startup (recommended for production); off by default                                                                             |
-| `WORKER_URL`             | Build env     | URL of the deployed Worker (e.g. `https://rumaq.ahaqqu.com`); used at build time as `VITE_API_BASE`                                                                                 |
-| `D1_DATABASE_NAME`       | Deploy        | D1 database name (default: `rumaq`)                                                                                                                                                 |
-| `R2_BUCKET_NAME`         | Deploy        | R2 bucket name for receipt images (default: `rumaq-receipts`)                                                                                                                       |
+| Variable                   | Where         | Purpose                                                                                                                                                                             |
+| -------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_CLIENT_ID`         | Worker secret | Google OAuth client ID                                                                                                                                                              |
+| `GOOGLE_CLIENT_SECRET`     | Worker secret | Google OAuth client secret                                                                                                                                                          |
+| `WORKER_JWT_SECRET`        | Worker secret | HMAC key for session JWT                                                                                                                                                            |
+| `WORKER_ENCRYPTION_KEY`    | Worker secret | AES-GCM key for AI keys                                                                                                                                                             |
+| `HAQITA_INGEST_SECRET`     | Worker secret | Bearer secret for the internal price ingest endpoint (`POST /api/internal/ingest/prices`, pushed daily by the rumaq-scraper VPS job). Optional: when unset the endpoint returns 503 |
+| `ADMIN_EMAILS`             | Worker secret | Comma-separated admin allowlist for operator-only surfaces (the scraping monitor at `/admin/prices`, fed by `POST /api/internal/ingest/runs`). Optional: when unset nobody is admin |
+| `CLOUDFLARE_ACCOUNT_ID`    | Build/deploy  | Cloudflare account ID; used by Wrangler and the deploy script                                                                                                                       |
+| `CLOUDFLARE_DATABASE_ID`   | Build/deploy  | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed                                                                                          |
+| `CLOUDFLARE_API_TOKEN`     | Build/deploy  | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                                                                                            |
+| `EMAIL_AUTH_ENABLED`       | Worker var    | Set to `"true"` or `"false"` to enable or disable email/password testing auth                                                                                                       |
+| `RUN_SECRETS_CHECK`        | Worker var    | Set to `"true"` to enable missing-secrets check on startup (recommended for production); off by default                                                                             |
+| `WORKER_URL`               | Build env     | URL of the deployed Worker (e.g. `https://rumaq.ahaqqu.com`); used at build time as `VITE_API_BASE`                                                                                 |
+| `D1_DATABASE_NAME`         | Deploy        | D1 database name (default: `rumaq`)                                                                                                                                                 |
+| `R2_BUCKET_NAME`           | Deploy        | R2 bucket name for receipt images (default: `rumaq-receipts`)                                                                                                                       |
+| `R2_BROCHURES_BUCKET_NAME` | Deploy        | R2 bucket name for brochure images (default: `rumaq-brochures`)                                                                                                                     |
 
 ### Secrets management
 

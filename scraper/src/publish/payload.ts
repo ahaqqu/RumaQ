@@ -36,6 +36,14 @@ export interface ImageProducts {
   storeSlug: string
   /** Brochure listing page the items were OCR'd from. */
   brochureUrl: string | null
+  /**
+   * Worker-served object URL (issue #293, `/api/brochures/{store}/{date}/
+   * {file}`) for current-run brochure-store batches — the stored
+   * `brochureUrl` observations point at. Catalog stores and outbox replays
+   * (which already recorded the object URL in `brochureUrl`) leave it unset —
+   * no producer ever sets null, so the type is optional-string only.
+   */
+  brochureObjectUrl?: string
   products: ValidatedProduct[]
   /**
    * ISO scrapedAt of the run that extracted these items. Outbox lines carry
@@ -89,7 +97,9 @@ export function buildPayload(input: {
         observedDate,
         matchMethod: outcome?.matchMethod ?? 'solo',
         matchConfidence: outcome?.matchConfidence ?? 1.0,
-        brochureUrl: image.brochureUrl,
+        // Issue #293 repoint: brochure-store items reference the R2-backed
+        // same-origin object URL; catalog stores keep the page URL.
+        brochureUrl: image.brochureObjectUrl ?? image.brochureUrl,
       })
     }
   }

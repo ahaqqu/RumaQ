@@ -138,3 +138,16 @@ export function formatPrice(amount) {
     minimumFractionDigits: 0,
   }).format(amount)
 }
+
+// The catalog segments of /prices (issues #292/#293): ?view= selects one,
+// absence or any other value means the Products explorer. One definition —
+// the route's validateSearch and the page shell resolve the active view
+// from it, so adding a segment is a one-line change here.
+export const PRICE_CATALOG_VIEWS = ['promos', 'brochures']
+
+// A #productKey hash is the stronger intent (deep link) and forces the
+// Products view regardless of ?view= (PM AC 7 / #293 AC 5).
+export function resolvePriceView(view, hash) {
+  if (hash) return 'products'
+  return PRICE_CATALOG_VIEWS.includes(view) ? view : 'products'
+}

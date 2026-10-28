@@ -9,9 +9,90 @@ type MockD1 = {
   batch: Mock
 }
 
-export type MockEnv = Omit<Env['Bindings'], 'DB' | 'RECEIPTS' | 'ASSETS' | 'props'> & {
+// Minimal in-memory R2 stub for the BROCHURES bucket (issue #293):
+// get/put/delete/list over a Map — enough surface for the upload/proxy
+// routes and the retention sweep's paginated list. Real Miniflare R2 in the
+// automation harness covers the actual semantics.
+export type StubR2Object = {
+  key: string
+  httpMetadata?: { contentType?: string }
+  customMetadata?: Record<string, string>
+  blob: () => Promise<Blob>
+  arrayBuffer: () => Promise<ArrayBuffer>
+}
+
+export function createBrochuresStub() {
+  const objects = new Map<
+    string,
+    {
+      bytes: Uint8Array
+      httpMetadata?: { contentType?: string }
+      customMetadata?: Record<string, string>
+    }
+  >()
+  return {
+    objects,
+    async put(
+      key: string,
+      value: Uint8Array,
+      options: {
+        httpMetadata?: { contentType?: string }
+        customMetadata?: Record<string, string>
+      } = {}
+    ) {
+      objects.set(key, {
+        bytes: value,
+        httpMetadata: options.httpMetadata,
+        customMetadata: options.customMetadata,
+      })
+      return { key }
+    },
+    async get(key: string): Promise<StubR2Object | null> {
+      const obj = objects.get(key)
+      if (!obj) return null
+      return {
+        key,
+        httpMetadata: obj.httpMetadata,
+        customMetadata: obj.customMetadata,
+        blob: () => Promise.resolve(new Blob([obj.bytes as BlobPart])),
+        arrayBuffer: () => Promise.resolve(obj.bytes.slice().buffer as ArrayBuffer),
+      }
+    },
+    async delete(key: string) {
+      objects.delete(key)
+    },
+    async list(options: { prefix?: string; cursor?: string; limit?: number } = {}) {
+      const prefix = options.prefix ?? ''
+      const all = [...objects.keys()].sort().filter((key) => key.startsWith(prefix))
+      // R2 cursors are key-anchored (stable under concurrent deletes), not
+      // numeric offsets — model the same semantics so sweep pagination is
+      // exercised honestly.
+      let startIdx = 0
+      if (options.cursor) {
+        startIdx = all.findIndex((key) => key > options.cursor!)
+        if (startIdx === -1) startIdx = all.length
+      }
+      const limit = options.limit ?? 1000
+      const page = all.slice(startIdx, startIdx + limit)
+      const truncated = startIdx + limit < all.length
+      return {
+        objects: page.map((key) => ({ key })) as Array<{ key: string }>,
+        truncated,
+        ...(truncated && page.length > 0 ? { cursor: page[page.length - 1] } : {}),
+      }
+    },
+  }
+}
+
+export type MockBrochures = ReturnType<typeof createBrochuresStub>
+
+export type MockEnv = Omit<
+  Env['Bindings'],
+  'DB' | 'RECEIPTS' | 'BROCHURES' | 'ASSETS' | 'props'
+> & {
   DB: MockD1
   RECEIPTS: Record<string, never>
+  BROCHURES: MockBrochures
   ASSETS: Fetcher
   props?: AuthProps
 }
@@ -26,6 +107,7 @@ export function createMockEnv(overrides: Partial<MockEnv> = {}): MockEnv {
       batch: vi.fn().mockResolvedValue([]),
     },
     RECEIPTS: {},
+    BROCHURES: createBrochuresStub(),
     GOOGLE_CLIENT_ID: 'test-client-id',
     GOOGLE_CLIENT_SECRET: 'test-client-secret',
     WORKER_JWT_SECRET: 'test-secret',

@@ -21,6 +21,7 @@ vi.mock('../lib/queries/index.js', () => ({
   usePriceMeta: vi.fn(),
   usePriceDetail: vi.fn(),
   usePricePromos: vi.fn(),
+  usePriceBrochures: vi.fn(),
 }))
 
 import {
@@ -29,6 +30,7 @@ import {
   usePriceMeta,
   usePriceDetail,
   usePricePromos,
+  usePriceBrochures,
 } from '../lib/queries/index.js'
 
 const navigate = vi.fn()
@@ -528,6 +530,92 @@ describe('Prices', () => {
         q: undefined,
         source: null,
         sort: 'cheapest',
+      })
+    })
+  })
+
+  describe('Brochures view (issue #293)', () => {
+    const brochureCatalog = {
+      groups: [
+        {
+          source_slug: 'lotte-mart',
+          source_name: 'Lotte Mart',
+          brochure_url: '/api/brochures/lotte-mart/20261029/page_1_2ad1c95b.jpg',
+          observed_date: '2026-10-29',
+          product_count: 2,
+          example_products: [
+            {
+              product_key: OIL_KEY,
+              name: 'Minyak Goreng Bimoli',
+              brand: 'Bimoli',
+              unit: '1 L',
+              price: 21500,
+              effective_unit_price: 21500,
+            },
+          ],
+        },
+      ],
+    }
+
+    it('?view=brochures renders the brochures view with the third segment', () => {
+      mockView = 'brochures'
+      vi.mocked(usePriceBrochures).mockReturnValue({
+        data: brochureCatalog,
+        isLoading: false,
+        isError: false,
+      })
+      const { container } = renderPrices()
+      expect(container.textContent).toContain('prices.brochuresLead')
+      expect(container.textContent).toContain('Lotte Mart')
+      expect(container.textContent).toContain('prices.viewBrochures')
+      // Products-only controls hidden; segment row stays visible.
+      expect(container.querySelector('input[type="search"]')).toBeNull()
+      expect(container.textContent).toContain('prices.viewProducts')
+      expect(container.textContent).toContain('prices.viewPromos')
+    })
+
+    it('absent view param still defaults to Products', () => {
+      const { container } = renderPrices()
+      expect(container.textContent).not.toContain('prices.brochuresLead')
+      expect(container.querySelector('input[type="search"]')).toBeTruthy()
+    })
+
+    it('a hash present forces the products view even with view=brochures', () => {
+      mockView = 'brochures'
+      mockHash = `#${OIL_KEY}`
+      const { container } = renderPrices()
+      expect(container.textContent).toContain('prices.lead')
+      expect(container.textContent).not.toContain('prices.brochuresLead')
+    })
+
+    it('empty catalog renders the empty state with the segment row visible', () => {
+      mockView = 'brochures'
+      vi.mocked(usePriceBrochures).mockReturnValue({
+        data: { groups: [] },
+        isLoading: false,
+        isError: false,
+      })
+      const { container } = renderPrices()
+      expect(container.textContent).toContain('prices.brochuresEmpty')
+      expect(container.textContent).toContain('prices.viewBrochures')
+      expect(container.textContent).toContain('prices.viewProducts')
+    })
+
+    it('clicking a brochure example jumps with the product key', () => {
+      mockView = 'brochures'
+      vi.mocked(usePriceBrochures).mockReturnValue({
+        data: brochureCatalog,
+        isLoading: false,
+        isError: false,
+      })
+      const { container } = renderPrices()
+      fireEvent.click(container.querySelector('button[aria-expanded]'))
+      fireEvent.click(findClickable(container, 'Minyak Goreng Bimoli'))
+      expect(navigate).toHaveBeenCalledWith({
+        to: '/prices',
+        search: {},
+        hash: OIL_KEY,
+        replace: false,
       })
     })
   })
