@@ -35,6 +35,8 @@ endpoints (`shared.steps.js` `Before` hook), and scenarios run with
 | `history.feature`       | Month groups, totals, store filter, item search (whole-purchase match semantics)      |
 | `settings.feature`      | Seeded locations/stores listed, add + remove location and store                       |
 | `add-receipt.feature`   | Upload → mock scan → review → confirm → stock updated; unsupported type rejected      |
+| `prices-explorer.feature` | Server-side sort, promo badges, freshness line, #productKey deep-link expand + scroll |
+| `price-promos.feature`  | Promos segment: fixed-order cards, expand, example jump into the explorer, empty state |
 | `accessibility.feature` | axe-core scan (wcag2a/2aa/21a/21aa) of every main page; fails on critical/serious     |
 
 Notes for writing new E2E scenarios:
