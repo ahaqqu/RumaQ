@@ -76,9 +76,11 @@ function twoEvents() {
 /** Drives pending → running → success exactly like the VPS agent does. */
 async function runFullLifecycle(ctx) {
   await queueScrape(ctx, ['superindo', 'astro'])
+  expect(ctx.response.status).toBe(201)
   ctx.commandId = ctx.responseBody.id
   await claimNext(ctx)
   ctx.claimed = ctx.responseBody.command
+  expect(ctx.claimed).not.toBeNull()
   await postEvents(ctx, ctx.commandId, twoEvents())
   await postFinish(ctx, ctx.commandId, { status: 'success', exitCode: 0, error: null })
 }
@@ -102,7 +104,7 @@ defineFeature(feature, (test) => {
     })
   })
 
-  test('Queueing a scrape requires an admin', ({ given, when, then }) => {
+  test('Queueing a scrape requires an admin', ({ given, and, when, then }) => {
     given('the API is running', () => {})
 
     and('I am authenticated as a non-admin user', async () => {
@@ -181,7 +183,8 @@ defineFeature(feature, (test) => {
 
     and('a second queue attempt while running should also return 409', async () => {
       await claimNext(ctx)
-      expect(ctx.responseBody.command.id).toBe(ctx.commandId)
+      ctx.claimed = ctx.responseBody.command
+      expect(ctx.claimed).toMatchObject({ id: ctx.commandId })
       await queueScrape(ctx, ['lotte-mart'])
       ctx.expectStatus(409)
     })

@@ -2353,7 +2353,7 @@ apiApp.get(
   '/api/admin/scrape/commands/:id/events',
   describeRoute({
     description:
-      'Incremental log events for a scrape command (admin-only). Poll with afterSeq while the run is pending/running.',
+      'Incremental log events for a scrape command (admin-only). Omit afterSeq for the full log; poll with afterSeq=<last seen seq> while the run is pending/running.',
     security: [{ cookieAuth: [] }],
     parameters: [
       {
@@ -2398,7 +2398,9 @@ apiApp.get(
   sValidator('query', scrapeEventsQuery),
   async (c) => {
     const commandId = c.req.param('id')
-    const afterSeq = c.req.valid('query').afterSeq ? Number(c.req.valid('query').afterSeq) : 0
+    // Absent afterSeq = the full log (seq > -1); an explicit afterSeq=0
+    // means "after seq 0" — seq-strict, so a poll can never re-receive.
+    const afterSeq = c.req.valid('query').afterSeq ? Number(c.req.valid('query').afterSeq) : -1
     try {
       const feed = await listScrapeEvents(c.env.DB, commandId, afterSeq)
       const res = c.json(feed)

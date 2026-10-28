@@ -363,6 +363,24 @@ describe('GET /api/admin/scrape/commands + events', () => {
     const res = await apiApp.request('/api/admin/scrape/commands/nope/events', {}, fake.env())
     expect(res.status).toBe(404)
   })
+
+  it('returns the full log when afterSeq is absent (seq 0 reachable)', async () => {
+    const fake = createScrapeDb()
+    const env = fake.env()
+    await apiApp.request(
+      '/api/admin/scrape',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["astro"]}' },
+      env
+    )
+    const claimed = (await claimNextScrapeCommand(fake.db))!
+    await appendScrapeEvents(fake.db, claimed.id, [
+      { seq: 0, ts: '2026-10-28T01:00:00Z', level: 'info', message: 'first' },
+      { seq: 1, ts: '2026-10-28T01:00:01Z', level: 'info', message: 'second' },
+    ])
+    const full = await apiApp.request(`/api/admin/scrape/commands/${claimed.id}/events`, {}, env)
+    expect(full.status).toBe(200)
+    expect(((await full.json()) as { events: Array<{ seq: number }> }).events.map((e) => e.seq)).toEqual([0, 1])
+  })
 })
 
 describe('internal scrape routes (bearer channel)', () => {

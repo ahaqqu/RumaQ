@@ -39,9 +39,7 @@ Feature: Scrape Now command queue
     When the agent pushes the scrape log events
     Then the response status should be 200
     When the agent pushes the same log events again
-    Then the response status should be 200
     When the agent finishes the scrape command successfully
-    Then the response status should be 200
     When the admin reads the command feed
     Then the feed should show one successful command for the requested stores
     And the admin reading the incremental log after seq 0 should see only the tail

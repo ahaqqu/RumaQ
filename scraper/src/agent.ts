@@ -334,7 +334,8 @@ export async function runCommand(
     pumpLines(child.stderr, (line) => capture(line, 'stderr')),
   ]).then(() => undefined)
 
-  // Kill a wedged child after the hard timeout (docs/plan: 60min).
+  // Kill a wedged child after the hard timeout (docs/plan: 60min). The kill
+  // closes the pipes, so the readers drain what was buffered and stop.
   const killTimer = setTimeout(() => {
     timedOut = true
     log(`[agent] command ${command.id}: exceeded ${config.childTimeoutMs}ms — killing child`)
@@ -345,15 +346,22 @@ export async function runCommand(
   const flushTimer = setInterval(scheduleFlush, config.flushIntervalMs)
 
   try {
-    // The pipes close when the child exits (a kill closes them too), so the
-    // readers drain the tail even if we only woke up on `exited`.
-    await Promise.race([readerDone, child.exited.then(() => readerDone)])
+    // Bounded by the kill timer above: a wedged child gets killed and its
+    // `exited` resolves (null). Never wait on the pipes here — a child may
+    // close its stdio early and keep running.
+    exitCode = await child.exited
   } finally {
     clearTimeout(killTimer)
     clearInterval(flushTimer)
   }
+  // The pipes are closed by now (exit or kill) — drain anything buffered.
+  // Bounded: a grandchild that inherited the pipe must not wedge the loop
+  // forever (whatever arrived by the deadline still gets flushed).
+  await Promise.race([readerDone, new Promise((resolve) => setTimeout(resolve, 5000))])
 
-  exitCode = await child.exited
+  // Drain whatever the final lines left below the batch threshold — the
+  // readers may have captured events after the last scheduled flush.
+  flushChain = flushChain.then(flush, () => {})
   await flushChain
 
   const status: 'success' | 'failed' = !timedOut && exitCode === 0 ? 'success' : 'failed'
@@ -386,7 +394,8 @@ async function pumpLines(
     while ((idx = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, idx)
       buf = buf.slice(idx + 1)
-      if (line.length > 0) onLine(line)
+      // Every line is an event — even an empty one the admin would have seen.
+      onLine(line)
     }
   }
   buf += decoder.decode()
