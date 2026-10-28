@@ -59,14 +59,21 @@ export function createBrochuresStub() {
     async list(options: { prefix?: string; cursor?: string; limit?: number } = {}) {
       const prefix = options.prefix ?? ''
       const all = [...objects.keys()].sort().filter((key) => key.startsWith(prefix))
-      const cursor = options.cursor ? Number(options.cursor) : 0
+      // R2 cursors are key-anchored (stable under concurrent deletes), not
+      // numeric offsets — model the same semantics so sweep pagination is
+      // exercised honestly.
+      let startIdx = 0
+      if (options.cursor) {
+        startIdx = all.findIndex((key) => key > options.cursor!)
+        if (startIdx === -1) startIdx = all.length
+      }
       const limit = options.limit ?? 1000
-      const page = all.slice(cursor, cursor + limit)
-      const truncated = cursor + limit < all.length
+      const page = all.slice(startIdx, startIdx + limit)
+      const truncated = startIdx + limit < all.length
       return {
         objects: page.map((key) => ({ key })) as Array<{ key: string }>,
         truncated,
-        ...(truncated ? { truncatedPart: String(cursor + limit) } : {}),
+        ...(truncated && page.length > 0 ? { truncatedPart: page[page.length - 1] } : {}),
       }
     },
   }

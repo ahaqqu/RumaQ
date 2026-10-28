@@ -39,6 +39,13 @@ import {
   getPromoCatalog,
 } from '../lib/prices.js'
 import {
+  BROCHURE_CONTENT_TYPES,
+  BROCHURE_MAX_BYTES,
+  getBrochureCatalog,
+  parseBrochureKey,
+  sweepUnreferencedBrochures,
+} from '../lib/brochures.js'
+import {
   appendScrapeEvents,
   claimNextScrapeCommand,
   createScrapeCommand,
@@ -210,7 +217,54 @@ apiApp.post(
   sValidator('json', ingestPayloadSchema),
   async (c) => {
     const result = await ingestPrices(c.env.DB, c.req.valid('json'))
+    // Brochure retention sweep (issue #293): piggybacks on the ingest — the
+    // daily tick that is exactly when the referenced set changes — never a
+    // cron (a preview worker inheriting the trigger would sweep production
+    // from preview code). Best-effort: a sweep failure is a logged no-op and
+    // never fails the ingest response or alters its shape.
+    try {
+      if (c.env.BROCHURES) {
+        await sweepUnreferencedBrochures(c.env.DB, c.env.BROCHURES, {
+          log: (message) => console.log(message),
+        })
+      }
+    } catch (error) {
+      console.warn('[brochures] retention sweep failed:', error)
+    }
     return c.json(result)
+  }
+)
+
+// Brochure image upload from the rumaq-scraper (issue #293): the scraper
+// holds no R2 credentials — this PUT rides the same bearer channel as the
+// ingest routes and writes the object at the validated key. Idempotent, so
+// at-least-once replay is safe. 404 on a malformed key doubles as the
+// deploy-order signal: the Worker must carry this route before the scraper
+// updates, and a permanent 404 is a config error the nightly must surface.
+apiApp.put(
+  '/api/internal/brochures/:storeSlug/:date/:file',
+  requireIngestSecret,
+  async (c) => {
+    if (!c.env.BROCHURES) {
+      return c.json({ error: 'Brochure storage not configured' }, 503)
+    }
+    const key = parseBrochureKey(c.req.param('storeSlug'), c.req.param('date'), c.req.param('file'))
+    if (!key) {
+      return c.json({ error: 'Invalid brochure key' }, 404)
+    }
+    const contentType = (c.req.header('Content-Type') ?? '').split(';')[0]!.trim().toLowerCase()
+    if (!BROCHURE_CONTENT_TYPES.has(contentType)) {
+      return c.json({ error: 'Unsupported brochure image type' }, 415)
+    }
+    const body = await c.req.arrayBuffer()
+    if (body.byteLength === 0 || body.byteLength > BROCHURE_MAX_BYTES) {
+      return c.json({ error: 'Brochure image size out of range' }, 413)
+    }
+    await c.env.BROCHURES.put(key, body, {
+      httpMetadata: { contentType },
+      customMetadata: { uploadedAt: new Date().toISOString() },
+    })
+    return c.json({ ok: true })
   }
 )
 
@@ -1682,6 +1736,44 @@ apiApp.get(
   }
 )
 
+// Brochure image proxy (issue #293): private R2 objects served only through
+// the Worker, same pattern as the receipt route. propsAuthMiddleware rides
+// in the handler chain explicitly (not via a use() prefix — immune to
+// future use() reordering); the distinct /api/brochures/* prefix has no
+// param-route collision. Keys are immutable (content-addressed filename +
+// scrape date), so one day of private browser caching is safe and keeps
+// segment-toggling from re-fetching the grid.
+apiApp.get(
+  '/api/brochures/:storeSlug/:date/:file',
+  propsAuthMiddleware,
+  describeRoute({
+    description: 'Stream a brochure image from R2.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: { description: 'Image stream' },
+      401: { description: 'Unauthorized' },
+      404: { description: 'Not found' },
+    },
+  }),
+  async (c) => {
+    if (!c.env.BROCHURES) {
+      return c.json({ error: 'Brochure storage not configured' }, 503)
+    }
+    const key = parseBrochureKey(c.req.param('storeSlug'), c.req.param('date'), c.req.param('file'))
+    if (!key) {
+      return c.json({ error: 'Brochure not found' }, 404)
+    }
+    const object = await c.env.BROCHURES.get(key)
+    if (!object) {
+      return c.json({ error: 'Brochure not found' }, 404)
+    }
+    const headers = new Headers()
+    headers.set('Content-Type', object.httpMetadata?.contentType || 'image/jpeg')
+    headers.set('Cache-Control', 'private, max-age=86400')
+    return new Response(await object.blob(), { headers })
+  }
+)
+
 apiApp.get(
   '/api/purchases/patterns',
   describeRoute({
@@ -2767,6 +2859,87 @@ apiApp.get(
   }),
   async (c) => {
     const catalog = await getPromoCatalog(c.env.DB)
+    const res = c.json(catalog)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+// Brochure catalog for the /prices Brochures view (issue #293): current
+// observations with a servable brochure URL grouped by (source, brochure
+// image), newest first, ≤5 example products per group. Grouping lives in
+// getBrochureCatalog (lib/brochures), which interpolates the same
+// LATEST_OBSERVATION_PREDICATE as the explorer and the promo catalog — the
+// views' counts cannot drift. Registered BEFORE /api/prices/:productKey so
+// "brochures" is never captured as a product key (the #292-pinned landmine).
+apiApp.get(
+  '/api/prices/brochures',
+  describeRoute({
+    description:
+      'Brochure catalog: current observations grouped by brochure image per store, with up to five example products per group.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                groups: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      source_slug: { type: 'string' },
+                      source_name: { type: 'string' },
+                      brochure_url: { type: 'string' },
+                      observed_date: { type: 'string' },
+                      product_count: { type: 'integer' },
+                      example_products: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            product_key: { type: 'string' },
+                            name: { type: 'string' },
+                            brand: { type: 'string', nullable: true } as any,
+                            unit: { type: 'string', nullable: true } as any,
+                            price: { type: 'number' },
+                            effective_unit_price: { type: 'number', nullable: true } as any,
+                          },
+                          required: [
+                            'product_key',
+                            'name',
+                            'brand',
+                            'unit',
+                            'price',
+                            'effective_unit_price',
+                          ],
+                        },
+                      },
+                    },
+                    required: [
+                      'source_slug',
+                      'source_name',
+                      'brochure_url',
+                      'observed_date',
+                      'product_count',
+                      'example_products',
+                    ],
+                  },
+                },
+              },
+              required: ['groups'],
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+    },
+  }),
+  async (c) => {
+    const catalog = await getBrochureCatalog(c.env.DB)
     const res = c.json(catalog)
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
