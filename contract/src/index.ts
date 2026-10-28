@@ -136,8 +136,8 @@ export type RunReportStore = InferOutput<typeof runReportStoreSchema>
 // Scrape Now (docs/plan/scrape-now.md): admin-triggered, store-selectable
 // scraping. The admin UI queues a command; the VPS agent claims it over the
 // bearer channel, streams the run's output lines back as events, and posts a
-// terminal finish. Shared by the Worker (validation + responses) and the
-// agent (defense-in-depth re-validation of claimed slugs). Additive only.
+// terminal finish. Shared by the Worker (request validation) and the agent
+// (defense-in-depth re-validation of claimed slugs). Additive only.
 
 export const SCRAPE_STORE_SLUGS = ['superindo', 'lotte-mart', 'astro'] as const
 
@@ -169,36 +169,3 @@ export const scrapeFinishSchema = strictObject({
 })
 
 export type ScrapeEvent = InferOutput<typeof scrapeEventSchema>
-
-// Admin response schemas (the typed OpenAPI codegen depends on them).
-export const scrapeCommandSchema = strictObject({
-  id: string(),
-  stores: array(string()),
-  status: picklist(['pending', 'running', 'success', 'failed']),
-  createdBy: string(),
-  createdAt: string(),
-  pickedUpAt: nullish(string()),
-  finishedAt: nullish(string()),
-  exitCode: nullish(pipe(number(), integer())),
-  error: nullish(string()),
-  logTruncated: boolean(),
-})
-
-export const scrapeCommandsFeedSchema = strictObject({
-  commands: array(scrapeCommandSchema),
-})
-
-export const scrapeEventsFeedSchema = strictObject({
-  events: array(scrapeEventSchema),
-  // True when the agent's ring buffer dropped the head of the log before it
-  // could be posted — the admin view is a tail, not the whole run.
-  truncated: boolean(),
-})
-
-export const scrapeStoresSchema = strictObject({
-  stores: array(string()),
-})
-
-export type ScrapeCommand = InferOutput<typeof scrapeCommandSchema>
-export type ScrapeCommandsFeed = InferOutput<typeof scrapeCommandsFeedSchema>
-export type ScrapeEventsFeed = InferOutput<typeof scrapeEventsFeedSchema>
