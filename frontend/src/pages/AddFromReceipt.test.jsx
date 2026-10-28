@@ -117,6 +117,55 @@ describe('AddFromReceipt', () => {
     })
   })
 
+  it('sums qty × price in the review total', async () => {
+    const { container } = renderComponent()
+
+    api.scanReceipt.mockResolvedValueOnce({
+      items: [
+        { name: 'Milk', qty: 2, unit: 'L', price: 20000 },
+        { name: 'Bread', qty: 1, unit: 'pack', price: 15000 },
+      ],
+      imageKey: 'key-123',
+      imageUrl: null,
+      storeGuess: null,
+      dateGuess: null,
+    })
+    api.getStores.mockResolvedValueOnce(MOCK_STORES)
+    api.getItems.mockResolvedValueOnce(MOCK_ITEMS)
+
+    const file = createFile('test.jpg', 'image/jpeg', 1000)
+    selectFile(container, file)
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('55,000')
+    })
+  })
+
+  it('prefers the printed line total over qty × price', async () => {
+    const { container } = renderComponent()
+
+    api.scanReceipt.mockResolvedValueOnce({
+      items: [
+        // Line total printed on the receipt (discounted): 30,000, not 2 × 20,000.
+        { name: 'Milk', qty: 2, unit: 'L', price: 20000, total: 30000 },
+        { name: 'Bread', qty: 1, unit: 'pack', price: 15000 },
+      ],
+      imageKey: 'key-123',
+      imageUrl: null,
+      storeGuess: null,
+      dateGuess: null,
+    })
+    api.getStores.mockResolvedValueOnce(MOCK_STORES)
+    api.getItems.mockResolvedValueOnce(MOCK_ITEMS)
+
+    const file = createFile('test.jpg', 'image/jpeg', 1000)
+    selectFile(container, file)
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('45,000')
+    })
+  })
+
   it('shows done state after confirm', async () => {
     const { container } = renderComponent()
 

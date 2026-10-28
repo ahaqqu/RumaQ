@@ -8,7 +8,6 @@ import {
   formatRp,
   storeLabel,
   relUpdated,
-  usageState,
 } from './mock.js'
 import { i18n } from '../i18n/index.js'
 
@@ -80,38 +79,5 @@ describe('relUpdated', () => {
 
   it('returns days ago', () => {
     expect(relUpdated('2026-06-20')).toBe('9 days ago')
-  })
-})
-
-describe('usageState', () => {
-  it('returns correct pct and flags for normal usage', () => {
-    const state = usageState({ provider: 'Gemini', used: 5, limit: 20 })
-    expect(state.pct).toBe(25)
-    expect(state.remaining).toBe(15)
-    expect(state.warn).toBe(false)
-    expect(state.danger).toBe(false)
-  })
-
-  it('returns warn flag when near limit', () => {
-    const state = usageState({ used: 17, limit: 20 })
-    expect(state.warn).toBe(true)
-    expect(state.danger).toBe(false)
-  })
-
-  it('returns danger flag at limit', () => {
-    const state = usageState({ used: 20, limit: 20 })
-    expect(state.danger).toBe(true)
-    expect(state.warn).toBe(false)
-    expect(state.remaining).toBe(0)
-  })
-
-  it('caps pct at 100', () => {
-    const state = usageState({ used: 25, limit: 20 })
-    expect(state.pct).toBe(100)
-  })
-
-  it('uses AI_USAGE default', () => {
-    const state = usageState()
-    expect(state.pct).toBeGreaterThanOrEqual(0)
   })
 })

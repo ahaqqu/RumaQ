@@ -205,7 +205,7 @@
     "customProvider": "Custom (OpenAI-compatible)",
     "customBaseUrl": "Base URL",
     "customBaseUrlDesc": "OpenAI-compatible endpoint, e.g. https://ollama.com/v1",
-    "customModelDesc": "Model name the provider should call, e.g. qwen3-vl:235b-instruct. Receipt scanning requires a vision-capable model.",
+    "customModelDesc": "Model name the provider should call, e.g. glm-5.3-flash. Receipt scanning requires a vision-capable model.",
     "model": "Model",
     "modelDesc": "Model the provider should call. Leave empty to use its default. Receipt scanning requires a vision-capable model.",
     "thinking": "Thinking level",
@@ -304,7 +304,7 @@
     "error": "Assistant error: {{message}}",
     "usageLimit": "Daily AI usage limit reached. Try again tomorrow.",
     "keyMissing": "AI key not configured. Add a key in Settings.",
-    "readyOwnKey": "ready to help · your key · {{used}} today"
+    "readyOwnKey": "ready to help · your key · {{input}} in · {{output}} out today"
   },
   "ui": {
     "expiringTomorrow": "expiring tomorrow",
@@ -318,7 +318,7 @@
     "closeToLimit": "Close to daily limit.",
     "closeToLimitDesc": "Close to daily limit. {{remaining}} requests left.",
     "remainingRequests": "{{remaining}} requests left today.",
-    "ownKeyRequestsToday": "{{used}} requests today · your own key",
+    "ownKeyTokensToday": "{{input}} in · {{output}} out today · your own key",
     "ownKeyUnlimited": "Unlimited — your own API key covers the usage."
   },
   "offline": {

@@ -213,13 +213,13 @@ describe('api routes', () => {
       '/api/settings',
       {
         method: 'PATCH',
-        body: JSON.stringify({ ai_model: 'qwen3-vl:235b-instruct' }),
+        body: JSON.stringify({ ai_model: 'glm-5.3-flash' }),
         headers: { 'Content-Type': 'application/json' },
       },
       env
     )
     expect(res.status).toBe(200)
-    expect(env.DB.bind.mock.calls.flat()).toContain('qwen3-vl:235b-instruct')
+    expect(env.DB.bind.mock.calls.flat()).toContain('glm-5.3-flash')
   })
 
   it('/api/settings stores encrypted ai_key', async () => {
@@ -522,6 +522,33 @@ describe('api routes', () => {
     const res = await apiApp.request('/api/purchases/scan', { method: 'POST', body: formData }, env)
     expect(res.status).toBe(200)
     expect(((await res.json()) as any).items.length).toBeGreaterThan(0)
+  })
+
+  it('/api/purchases/scan meters provider tokens on the error path', async () => {
+    const env = createMockEnv({
+      props: { userId: 'u1', householdId: 'h1' },
+      TEST_MODE: 'false',
+    })
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ ai_provider: 'ollama', encrypted_ai_key: ENCRYPTED_KEY })
+      .mockResolvedValueOnce({ id: 'usage-1', used: 0, daily_limit: 20 })
+    env.DB.run = vi.fn().mockResolvedValue(undefined)
+    // Provider responds with usage but empty content: the key owner is billed
+    // for the input tokens even though the scan fails.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '' } }],
+        usage: { prompt_tokens: 100, completion_tokens: 50 },
+      }),
+    })
+    const file = new File(['x'], 'receipt.jpg', { type: 'image/jpeg' })
+    const formData = new FormData()
+    formData.append('image', file)
+    const res = await apiApp.request('/api/purchases/scan', { method: 'POST', body: formData }, env)
+    expect(res.status).toBe(502)
+    expect(env.DB.bind.mock.calls.flat()).toEqual(expect.arrayContaining([0, 100, 50, 'usage-1']))
   })
 
   it('/api/purchases/scan rejects missing image', async () => {

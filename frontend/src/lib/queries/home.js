@@ -4,6 +4,8 @@ import { getHome } from '../api'
 export function useHome() {
   return useQuery({
     queryKey: ['home'],
-    queryFn: getHome,
+    // The queryFn receives a { signal } context; passing it through verbatim
+    // makes the client build a Request with a non-AbortSignal and throw.
+    queryFn: ({ signal }) => getHome(signal),
   })
 }

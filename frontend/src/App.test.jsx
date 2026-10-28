@@ -45,15 +45,6 @@ vi.mock('./lib/api', () => ({
   emailLogin: vi.fn().mockResolvedValue({ ok: true }),
 }))
 
-vi.mock('./data/mock.js', async () => {
-  const actual = await vi.importActual('./data/mock.js')
-  return {
-    ...actual,
-    AI_USAGE: { provider: 'Gemini', used: 5, limit: 20 },
-    usageState: () => ({ pct: 25, remaining: 15, warn: false, danger: false }),
-  }
-})
-
 describe('App', () => {
   it('renders without crashing', async () => {
     render(React.createElement(App))

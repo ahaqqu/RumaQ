@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vite-plus/test'
+import { describe, it, expect, vi } from 'vite-plus/test'
 import { render } from '@testing-library/react'
 import React from 'react'
 import {
@@ -10,6 +10,29 @@ import {
   MetaItem,
   IconPin,
 } from './ui.jsx'
+
+// The global test-setup t() mock returns raw keys; these tests assert the
+// rendered token counts, so resolve en.json and interpolate like i18next.
+vi.mock('react-i18next', async () => {
+  const { vi } = await import('vite-plus/test')
+  const en = (await import('../i18n/locales/en.json')).default
+  const t = (key, opts) => {
+    if (opts && opts.returnObjects) return {}
+    const template = key.split('.').reduce((node, k) => (node == null ? node : node[k]), en)
+    if (typeof template !== 'string') return opts?.defaultValue ?? key
+    if (!opts) return template
+    return template.replace(/\{\{(\w+)\}\}/g, (_, name) => String(opts[name] ?? `{{${name}}}`))
+  }
+  return {
+    t,
+    useTranslation: () => ({
+      t,
+      i18n: { language: 'en', changeLanguage: vi.fn(), on: vi.fn(), off: vi.fn() },
+    }),
+    I18nextProvider: ({ children }) => children,
+    initReactI18next: { type: '3rdParty', init: vi.fn() },
+  }
+})
 
 describe('LocChip', () => {
   it('renders location name', () => {
@@ -103,8 +126,17 @@ describe('SkeletonRows', () => {
 
 describe('UsageMeter', () => {
   it('renders usage info', () => {
-    const { container } = render(React.createElement(UsageMeter))
+    const { container } = render(
+      React.createElement(UsageMeter, {
+        usage: { provider: 'Gemini', used: 5, limit: 20 },
+      })
+    )
     expect(container.querySelector('[class*="flex flex-col gap-3 p-5"]')).toBeTruthy()
+  })
+
+  it('renders nothing without usage data', () => {
+    const { container } = render(React.createElement(UsageMeter))
+    expect(container.querySelector('[class*="flex flex-col gap-3 p-5"]')).toBeNull()
   })
 
   it('shows warning for high usage', () => {
@@ -134,15 +166,24 @@ describe('UsageMeter', () => {
     expect(container.querySelector('.text-text-muted')).toBeTruthy()
   })
 
-  it('shows unlimited usage for own-key users', () => {
+  it('shows token usage for own-key users without a cap meter', () => {
     const { container } = render(
       React.createElement(UsageMeter, {
-        usage: { provider: 'Gemini', used: 20, daily_limit: 20, key_source: 'user' },
+        usage: {
+          provider: 'Ollama Cloud',
+          used: 3,
+          daily_limit: 20,
+          input_tokens: 18230,
+          output_tokens: 6100,
+          key_source: 'user',
+        },
       })
     )
-    expect(container.querySelector('.text-danger')).toBeNull()
+    // Own key: no request cap meter, token counts still rendered.
     expect(container.querySelector('.h-2')).toBeNull()
-    expect(container.textContent).toContain('20')
+    expect(container.querySelector('.text-danger')).toBeNull()
+    expect(container.textContent).toContain('Ollama Cloud')
+    expect(container.textContent).toContain('18.2k in · 6.1k out today · your own key')
   })
 })
 

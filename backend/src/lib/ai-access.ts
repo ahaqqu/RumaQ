@@ -108,3 +108,19 @@ export async function getOrCreateAiUsage(
 export function isAiUsageLimited(access: AiAccess, usage: AiUsageRow): boolean {
   return access.keySource === 'server' && usage.used >= usage.daily_limit
 }
+
+// Persist one call's metered usage against today's row. `requests` stays
+// success-only (callers omit it on the provider-error path); tokens are
+// recorded whenever the provider reported them, error or not — the key
+// owner is billed for failed calls too.
+export async function recordAiUsage(
+  env: Env['Bindings'],
+  usageRow: { id: string },
+  delta: { requests?: number; inputTokens?: number; outputTokens?: number }
+): Promise<void> {
+  await env.DB.prepare(
+    'UPDATE ai_usage SET used = used + ?, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?'
+  )
+    .bind(delta.requests ?? 0, delta.inputTokens ?? 0, delta.outputTokens ?? 0, usageRow.id)
+    .run()
+}

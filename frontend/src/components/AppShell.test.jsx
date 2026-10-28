@@ -7,16 +7,30 @@ import { AppShell } from './AppShell.jsx'
 import { useSettings, useUsage, useSendChatMessage } from '../lib/queries/index.js'
 import { useMe, useLogout } from '../lib/queries/me.js'
 
-const mockUsage = { used: 17, daily_limit: 20, provider: 'Gemini' }
-let mockUsageState = { pct: 85, remaining: 3, warn: true, danger: false }
-
-vi.mock('../data/mock.js', async () => {
-  const actual = await vi.importActual('../data/mock.js')
+// The global test-setup t() mock returns raw keys; these tests assert the
+// rendered token counts, so resolve en.json and interpolate like i18next.
+vi.mock('react-i18next', async () => {
+  const { vi } = await import('vite-plus/test')
+  const en = (await import('../i18n/locales/en.json')).default
+  const t = (key, opts) => {
+    if (opts && opts.returnObjects) return {}
+    const template = key.split('.').reduce((node, k) => (node == null ? node : node[k]), en)
+    if (typeof template !== 'string') return opts?.defaultValue ?? key
+    if (!opts) return template
+    return template.replace(/\{\{(\w+)\}\}/g, (_, name) => String(opts[name] ?? `{{${name}}}`))
+  }
   return {
-    ...actual,
-    usageState: () => mockUsageState,
+    t,
+    useTranslation: () => ({
+      t,
+      i18n: { language: 'en', changeLanguage: vi.fn(), on: vi.fn(), off: vi.fn() },
+    }),
+    I18nextProvider: ({ children }) => children,
+    initReactI18next: { type: '3rdParty', init: vi.fn() },
   }
 })
+
+const mockUsage = { used: 17, daily_limit: 20, provider: 'Gemini' }
 
 vi.mock('../lib/queries/me.js', () => ({
   useMe: vi.fn(),
@@ -44,7 +58,6 @@ function renderWithProviders(ui) {
 
 describe('AppShell', () => {
   beforeEach(() => {
-    mockUsageState = { pct: 85, remaining: 3, warn: true, danger: false }
     vi.mocked(useMe).mockReturnValue({
       data: { user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: null } },
       isLoading: false,
@@ -80,7 +93,7 @@ describe('AppShell', () => {
     const { container } = renderWithProviders(
       React.createElement(AppShell, null, React.createElement('div', null, 'content'))
     )
-    expect(container.querySelector('nav[aria-label="nav.home"]')).toBeTruthy()
+    expect(container.querySelector('nav[aria-label="Home"]')).toBeTruthy()
   })
 
   it('renders topbar', () => {
@@ -120,12 +133,30 @@ describe('AppShell', () => {
   })
 
   it('shows danger usage tone', () => {
-    mockUsageState = { pct: 100, remaining: 0, warn: false, danger: true }
     vi.mocked(useSettings).mockReturnValue({ data: { has_ai_key: true } })
     vi.mocked(useUsage).mockReturnValue({ data: { used: 20, daily_limit: 20, provider: 'Gemini' } })
     const { container } = renderWithProviders(
       React.createElement(AppShell, null, React.createElement('div', null, 'content'))
     )
     expect(container.querySelector('.text-danger')).toBeTruthy()
+  })
+
+  it('shows token usage without a cap meter for own-key users', () => {
+    vi.mocked(useSettings).mockReturnValue({ data: { has_ai_key: true } })
+    vi.mocked(useUsage).mockReturnValue({
+      data: {
+        used: 3,
+        daily_limit: 20,
+        provider: 'ollama',
+        input_tokens: 18230,
+        output_tokens: 6100,
+        key_source: 'user',
+      },
+    })
+    const { container } = renderWithProviders(
+      React.createElement(AppShell, null, React.createElement('div', null, 'content'))
+    )
+    expect(container.querySelector('[class*="h-[5px]"]')).toBeNull()
+    expect(container.textContent).toContain('18.2k in · 6.1k out today · your own key')
   })
 })

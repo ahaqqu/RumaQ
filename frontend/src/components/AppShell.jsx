@@ -12,11 +12,11 @@ import {
   IconMonitor,
   BrandMark,
 } from './icons.jsx'
-import { AI_USAGE, usageState } from '../data/mock.js'
 import { cn } from '../lib/cn.js'
+import { formatTokens, usageMeterModel } from '../lib/usage.js'
 import { useApp } from '../context/AppContext.jsx'
 import { useMe, useLogout } from '../lib/queries/me.js'
-import { useSettings } from '../lib/queries/index.js'
+import { useSettings, useUsage } from '../lib/queries/index.js'
 import { Assistant } from './Assistant.jsx'
 import { OfflineBanner } from './OfflineBanner.jsx'
 import { Button } from './Button.jsx'
@@ -43,8 +43,11 @@ export function AppShell({ children }) {
 
   const hasBackendKey = settings?.has_ai_key === true
   const isAiConnected = Boolean(aiKey) || hasBackendKey
-  const { pct, warn, danger } = usageState()
-  const usageTone = danger ? 'text-danger' : warn ? 'text-warn' : ''
+  const { data: usage } = useUsage()
+  // Shared metering model: server-key usage gets the cap meter, own-key
+  // usage the token counts (lib/usage.js).
+  const meter = usageMeterModel(usage)
+  const usageTone = meter ? (meter.danger ? 'text-danger' : meter.warn ? 'text-warn' : '') : ''
 
   const user = me?.user
 
@@ -128,34 +131,45 @@ export function AppShell({ children }) {
             {isAiConnected ? t('assistant.connected') : t('assistant.noKey')}
           </div>
 
-          {isAiConnected && (
+          {isAiConnected && meter && (
             <div className="flex flex-col gap-2 px-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-text-muted">
-                  {t('common.requestsToday', {
-                    used: AI_USAGE.used,
-                    limit: AI_USAGE.limit,
-                  })}
+                  {meter.ownKey
+                    ? t('ui.ownKeyTokensToday', {
+                        input: formatTokens(meter.inputTokens),
+                        output: formatTokens(meter.outputTokens),
+                      })
+                    : t('ui.requestsToday', {
+                        used: meter.used,
+                        limit: meter.limit,
+                      })}
                 </span>
-                <span className={cn('font-semibold tabular-nums', usageTone)}>
-                  {AI_USAGE.used}/{AI_USAGE.limit}
-                </span>
+                {!meter.ownKey && (
+                  <span className={cn('font-semibold tabular-nums', usageTone)}>
+                    {meter.used}/{meter.limit}
+                  </span>
+                )}
               </div>
-              <div className="h-[5px] rounded-pill bg-surface-inset overflow-hidden">
-                <div
-                  className={cn(
-                    'h-full rounded-pill bg-accent transition-[width] duration-300',
-                    warn && 'bg-warn',
-                    danger && 'bg-danger'
-                  )}
-                  style={{ width: pct + '%' }}
-                />
-              </div>
-              {danger ? (
-                <div className="text-xs text-danger">{t('ui.dailyLimitReached')}</div>
-              ) : warn ? (
-                <div className="text-xs text-warn">{t('assistant.closeToLimit')}</div>
-              ) : null}
+              {!meter.ownKey && (
+                <>
+                  <div className="h-[5px] rounded-pill bg-surface-inset overflow-hidden">
+                    <div
+                      className={cn(
+                        'h-full rounded-pill bg-accent transition-[width] duration-300',
+                        meter.warn && 'bg-warn',
+                        meter.danger && 'bg-danger'
+                      )}
+                      style={{ width: meter.pct + '%' }}
+                    />
+                  </div>
+                  {meter.danger ? (
+                    <div className="text-xs text-danger">{t('ui.dailyLimitReached')}</div>
+                  ) : meter.warn ? (
+                    <div className="text-xs text-warn">{t('assistant.closeToLimit')}</div>
+                  ) : null}
+                </>
+              )}
             </div>
           )}
         </div>

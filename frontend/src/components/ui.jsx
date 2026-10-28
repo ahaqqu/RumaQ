@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { IconPin, IconClock, IconShop } from './icons.jsx'
-import { AI_USAGE, usageState } from '../data/mock.js'
+import { formatTokens, usageMeterModel } from '../lib/usage.js'
 import { cn } from '../lib/cn.js'
 import { Chip } from './Chip.jsx'
 import { Badge } from './Badge.jsx'
@@ -67,38 +67,41 @@ export { EmptyState, SkeletonRows }
 
 export function UsageMeter({ usage }) {
   const { t } = useTranslation()
-  // The daily cap only applies to RumaQ's shared server key; a user's own
-  // key is unmetered.
-  const ownKey = usage?.key_source === 'user'
-  const normalized = usage ? { ...usage, limit: usage.limit ?? usage.daily_limit ?? 20 } : AI_USAGE
-  const { pct, remaining, warn, danger } = usageState(normalized)
-  const tone = !ownKey && danger ? 'danger' : !ownKey && warn ? 'warn' : 'muted'
+  const meter = usageMeterModel(usage)
+  if (!meter) return null
+  const tone =
+    !meter.ownKey && meter.danger ? 'danger' : !meter.ownKey && meter.warn ? 'warn' : 'muted'
 
   return (
     <div className="flex flex-col gap-3 p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="font-semibold text-base">{normalized.provider}</div>
+          <div className="font-semibold text-base">{usage.provider}</div>
           <div className="text-sm text-text-muted mt-0.5">
-            {ownKey
-              ? t('ui.ownKeyRequestsToday', { used: normalized.used })
+            {meter.ownKey
+              ? t('ui.ownKeyTokensToday', {
+                  input: formatTokens(meter.inputTokens),
+                  output: formatTokens(meter.outputTokens),
+                })
               : t('ui.requestsToday', {
-                  used: normalized.used,
-                  limit: normalized.limit,
+                  used: meter.used,
+                  limit: meter.limit,
                 })}
           </div>
         </div>
-        <div
-          className={cn(
-            'font-bold text-lg tabular-nums',
-            tone === 'danger' && 'text-danger',
-            tone === 'warn' && 'text-warn'
-          )}
-        >
-          {ownKey ? normalized.used : `${normalized.used}/${normalized.limit}`}
-        </div>
+        {!meter.ownKey && (
+          <div
+            className={cn(
+              'font-bold text-lg tabular-nums',
+              tone === 'danger' && 'text-danger',
+              tone === 'warn' && 'text-warn'
+            )}
+          >
+            {meter.used}/{meter.limit}
+          </div>
+        )}
       </div>
-      {!ownKey && (
+      {!meter.ownKey && (
         <>
           <div className="h-2 rounded-pill bg-surface-inset overflow-hidden">
             <div
@@ -107,23 +110,23 @@ export function UsageMeter({ usage }) {
                 tone === 'warn' && 'bg-warn',
                 tone === 'danger' && 'bg-danger'
               )}
-              style={{ width: pct + '%' }}
+              style={{ width: meter.pct + '%' }}
             />
           </div>
-          {danger ? (
+          {meter.danger ? (
             <div className="text-sm text-danger">{t('ui.dailyLimitReachedDesc')}</div>
-          ) : warn ? (
+          ) : meter.warn ? (
             <div className="text-sm text-warn font-medium">
-              {t('ui.closeToLimitDesc', { remaining })}
+              {t('ui.closeToLimitDesc', { remaining: meter.remaining })}
             </div>
           ) : (
             <div className="text-sm text-text-muted">
-              {t('ui.remainingRequests', { remaining })}
+              {t('ui.remainingRequests', { remaining: meter.remaining })}
             </div>
           )}
         </>
       )}
-      {ownKey && <div className="text-sm text-text-muted">{t('ui.ownKeyUnlimited')}</div>}
+      {meter.ownKey && <div className="text-sm text-text-muted">{t('ui.ownKeyUnlimited')}</div>}
     </div>
   )
 }

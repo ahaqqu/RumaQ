@@ -89,7 +89,7 @@ describe('completeText', () => {
       expect.objectContaining({ method: 'POST' })
     )
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
-    expect(body.model).toBe('qwen3-vl:235b-instruct')
+    expect(body.model).toBe('glm-5.3-flash')
   })
 
   it('uses the selected model for Ollama when a model option is passed', async () => {
@@ -103,6 +103,50 @@ describe('completeText', () => {
     await completeText('ollama', 'sk-test', 'system', 'user', { model: 'llama3.3:70b' })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body.model).toBe('llama3.3:70b')
+  })
+
+  it('sends no max_tokens cap to Ollama so reasoning models can finish', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Hello from Ollama' } }],
+      }),
+    })
+    globalThis.fetch = fetchMock
+    await completeText('ollama', 'sk-test', 'system', 'user')
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.max_tokens).toBeUndefined()
+  })
+
+  it('reports provider token usage through onUsage', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Hello from Ollama' } }],
+        usage: { prompt_tokens: 1055, completion_tokens: 5059 },
+      }),
+    })
+    globalThis.fetch = fetchMock
+    const seen: Array<{ input_tokens: number; output_tokens: number }> = []
+    await completeText('ollama', 'sk-test', 'system', 'user', {
+      onUsage: (usage) => seen.push(usage),
+    })
+    expect(seen).toEqual([{ input_tokens: 1055, output_tokens: 5059 }])
+  })
+
+  it('reports no usage when the provider omits it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Hello' } }],
+      }),
+    })
+    globalThis.fetch = fetchMock
+    const seen: Array<{ input_tokens: number; output_tokens: number }> = []
+    await completeText('openai', 'sk-test', 'system', 'user', {
+      onUsage: (usage) => seen.push(usage),
+    })
+    expect(seen).toEqual([])
   })
 
   it('passes reasoning_effort to OpenAI-compatible providers when a thinking level is set', async () => {
