@@ -38,7 +38,7 @@ import type { BrowserLauncher } from './fetch/browser.js'
 import { BrowserTierRequired, type FetchError } from './fetch/errors.js'
 import { createStoreFetcher, type FetchLike } from './fetch/strategy.js'
 import { createOcr, type GeminiClient, type Ocr, type OcrError } from './ocr/gemini.js'
-import { validateProduct, type ValidatedProduct } from './ocr/parse.js'
+import { validateProduct, type RawOcrItem, type ValidatedProduct } from './ocr/parse.js'
 import { assertPayloadValid, buildPayload, type ImageProducts } from './publish/payload.js'
 import { loadOutbox, retireOutbox, type OutboxIo } from './publish/outbox.js'
 import { postRunReport } from './publish/runs.js'
@@ -49,7 +49,13 @@ import {
   type PublishFailure,
 } from './publish/client.js'
 import { activePlugins } from './stores/index.js'
-import { isBrochurePlugin, type BrochureStorePlugin, type StorePlugin } from './stores/types.js'
+import {
+  isCatalogPlugin,
+  type BrochureStorePlugin,
+  type CatalogItem,
+  type CatalogStorePlugin,
+  type StorePlugin,
+} from './stores/types.js'
 import { wrapIo } from './util/io.js'
 import { createLog, logRejectedItem, type LogFn } from './util/log.js'
 import { QuotaExhausted } from './util/retry.js'
@@ -213,46 +219,23 @@ function processStore(
         Effect.map((buffer) => new Uint8Array(buffer))
       )
       const rawItems = yield* ocr.ocrImage(bytes, image.contentType)
-      const products: ValidatedProduct[] = []
-      for (const raw of rawItems) {
-        const [product, rejectReason] = validateProduct(raw, image.filename)
-        if (product) {
-          products.push(product)
-        } else {
-          entry.itemsRejected++
-          yield* ioTry('append', path.join(options.stateDir, 'rejected-items.log'), () =>
-            logRejectedItem(options.stateDir, {
-              storeSlug: store.slug,
-              imageFilename: image.filename,
-              name: raw.name ? String(raw.name) : undefined,
-              reason: rejectReason!,
-            })
-          )
-        }
-      }
-      entry.itemsExtracted += products.length
+      const products = yield* appendValidatedBatch(
+        options,
+        store.slug,
+        runItemsFile,
+        entry,
+        { brochureUrl: image.brochureUrl, imageFilename: image.filename, rawItems },
+        scrapedAt
+      )
       imageProducts.push({ storeSlug: store.slug, brochureUrl: image.brochureUrl, products })
 
-      // Outbox BEFORE novelty state, per image: if the run dies (or the
-      // append fails) between the two, the worst case is one duplicate OCR
-      // of this image on the next run — never paid-for items stranded
-      // outside every run-*.jsonl. A same-UTC-day recovery dedupes through
-      // the (product_id, source_id, observed_date) upsert; a cross-day
-      // recovery costs one extra re-observation row — bounded, and
-      // preferable to stranding. The line carries this run's scrapedAt so a
-      // later replay keeps the original observed date.
-      yield* ioTry('append', runItemsFile, () =>
-        appendFile(
-          runItemsFile,
-          JSON.stringify({
-            storeSlug: store.slug,
-            brochureUrl: image.brochureUrl,
-            products,
-            scrapedAt,
-          }) + '\n',
-          'utf8'
-        )
-      )
+      // The outbox append happened inside appendValidatedBatch — BEFORE the
+      // novelty state here: if the run dies (or the append fails) between the
+      // two, the worst case is one duplicate OCR of this image on the next
+      // run — never paid-for items stranded outside every run-*.jsonl. A
+      // same-UTC-day recovery dedupes through the (product_id, source_id,
+      // observed_date) upsert; a cross-day recovery costs one extra
+      // re-observation row — bounded, and preferable to stranding.
       rememberProcessed(state, image.md5)
       state.lastRun = scrapedAt
       yield* saveState(state, stateFile)
@@ -267,6 +250,154 @@ function processStore(
     // run, whatever exit it takes; close() itself never throws.
     Effect.onExit(() => Effect.promise(() => fetcher.close()))
   )
+}
+
+/**
+ * CatalogItem → the raw-item shape validateProduct consumes. The same
+ * name/price gates an OCR item faces, so a catalog source can never sneak a
+ * junk price past the payload.
+ */
+function catalogItemToRaw(item: CatalogItem): RawOcrItem {
+  return {
+    name: item.name,
+    brand: item.brand,
+    unit: item.unit,
+    price: item.price,
+    promo: item.promoLabels ?? null,
+    period: null,
+  }
+}
+
+/**
+ * Validate one batch of raw items, log the rejects, update the entry
+ * counters, and append the batch to the run's outbox file — the at-least-once
+ * mechanics shared by the brochure and catalog store paths, so the outbox
+ * line shape and the reject logging have exactly one definition. Returns the
+ * validated products.
+ */
+function appendValidatedBatch(
+  options: PipelineOptions,
+  storeSlug: string,
+  runItemsFile: string,
+  entry: PipelineStatus['stores'][string],
+  batch: { brochureUrl: string | null; imageFilename: string; rawItems: RawOcrItem[] },
+  scrapedAt: string
+): Effect.Effect<ValidatedProduct[], StoreRunError> {
+  return Effect.gen(function* () {
+    const products: ValidatedProduct[] = []
+    for (const raw of batch.rawItems) {
+      const [product, rejectReason] = validateProduct(raw, batch.imageFilename)
+      if (product) {
+        products.push(product)
+      } else {
+        entry.itemsRejected++
+        yield* ioTry('append', path.join(options.stateDir, 'rejected-items.log'), () =>
+          logRejectedItem(options.stateDir, {
+            storeSlug,
+            imageFilename: batch.imageFilename,
+            name: raw.name ? String(raw.name) : undefined,
+            reason: rejectReason!,
+          })
+        )
+      }
+    }
+    entry.itemsExtracted += products.length
+    // The line carries this run's scrapedAt so a later replay keeps the
+    // original observed date.
+    yield* ioTry('append', runItemsFile, () =>
+      appendFile(
+        runItemsFile,
+        JSON.stringify({
+          storeSlug,
+          brochureUrl: batch.brochureUrl,
+          products,
+          scrapedAt,
+        }) + '\n',
+        'utf8'
+      )
+    )
+    return products
+  })
+}
+
+/**
+ * Catalog stores (Astro): no images, no novelty state, no OCR — items go
+ * straight to validation. Each source page becomes one outbox batch, the
+ * same at-least-once file the brochure stores write, so a crash between
+ * scrape and publish replays the items next run instead of losing them.
+ */
+function processCatalogStore(
+  plugin: CatalogStorePlugin,
+  options: PipelineOptions,
+  scrapedAt: string,
+  entry: PipelineStatus['stores'][string],
+  log: LogFn
+): Effect.Effect<ImageProducts[], StoreRunError> {
+  const store = plugin.config
+  const fetcher = createStoreFetcher(store, {
+    fetch: options.fetch,
+    log,
+    sleep: options.sleep,
+  })
+
+  return Effect.gen(function* () {
+    const items = yield* plugin.listItems({
+      fetchHtml: (url) => fetcher.fetchHtml(url),
+      runStartedAt: scrapedAt,
+    })
+    // Pages that yielded at least one item; a page URL is optional on
+    // CatalogItem, and an item without one has no page to count.
+    const pageUrls = new Set<string>()
+    for (const item of items) if (item.pageUrl) pageUrls.add(item.pageUrl)
+    entry.pagesFound = pageUrls.size
+
+    const byPage = new Map<string, CatalogItem[]>()
+    for (const item of items) {
+      const pageUrl = item.pageUrl ?? ''
+      const pageItems = byPage.get(pageUrl)
+      if (pageItems) pageItems.push(item)
+      else byPage.set(pageUrl, [item])
+    }
+
+    // Per-run items file: one JSON line per page batch as soon as it is
+    // validated, so a crashed run leaves the publishable payload on disk.
+    const runItemsFile = path.join(
+      options.stateDir,
+      store.slug,
+      `run-${scrapedAt.replace(/[:.]/g, '-')}.jsonl`
+    )
+    yield* ioTry('ensure-dir', path.dirname(runItemsFile), () =>
+      mkdir(path.dirname(runItemsFile), { recursive: true })
+    )
+
+    const imageProducts: ImageProducts[] = []
+    for (const [pageUrl, pageItems] of byPage) {
+      const products = yield* appendValidatedBatch(
+        options,
+        store.slug,
+        runItemsFile,
+        entry,
+        {
+          // A catalog item without a source page carries no deep-link
+          // rather than an empty URL.
+          brochureUrl: pageUrl.length > 0 ? pageUrl : null,
+          imageFilename: pageUrl,
+          rawItems: pageItems.map(catalogItemToRaw),
+        },
+        scrapedAt
+      )
+      imageProducts.push({
+        storeSlug: store.slug,
+        brochureUrl: pageUrl.length > 0 ? pageUrl : null,
+        products,
+        scrapedAt,
+      })
+    }
+    log(
+      `[pipeline] catalog store ${store.slug}: ${entry.itemsExtracted} items from ${byPage.size} page(s)`
+    )
+    return imageProducts
+  }).pipe(Effect.onExit(() => Effect.promise(() => fetcher.close())))
 }
 
 function toPipelineFailure(error: unknown): PipelineFailure {
@@ -330,12 +461,6 @@ export function runPipeline(
       }
 
       for (const { plugin, entry } of runs) {
-        if (!isBrochurePlugin(plugin)) {
-          return yield* new PipelineFailure({
-            message: `No brochure plugin for ${plugin.config.slug}`,
-            exitCode: 1,
-          })
-        }
         // Per-store isolation: one store's fatal failure (a persistent
         // Incapsula challenge, a dead listing route, a missing chromium)
         // must not block the other stores' nightly publish — the healthy
@@ -343,13 +468,10 @@ export function runPipeline(
         // (and fail again) for as long as the broken store stays broken.
         // QuotaExhausted deliberately propagates: the Gemini quota is shared
         // by every store, so there is nothing left to isolate.
-        const imageProducts = yield* processStore(
-          plugin,
-          config,
-          options,
-          scrapedAt,
-          entry,
-          log
+        const imageProducts = yield* (
+          isCatalogPlugin(plugin)
+            ? processCatalogStore(plugin, options, scrapedAt, entry, log)
+            : processStore(plugin, config, options, scrapedAt, entry, log)
         ).pipe(
           Effect.catchIf(
             (error) => !(error instanceof QuotaExhausted),

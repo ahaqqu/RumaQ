@@ -110,6 +110,18 @@ export function loadConfig(): ScraperConfig {
         proxyEnv: 'LOTTE_PROXY_URL',
         headerOverrides: { 'Accept-Language': 'en-US,en;q=0.5' },
       },
+      {
+        // Astro (astronauts.id) — the first catalog store: category pages
+        // server-render the inventory JSON, so Tier-1 plain fetch needs no
+        // OCR and no API headers. maxPages caps category pages, not images.
+        slug: 'astro',
+        name: 'Astro',
+        kind: 'catalog',
+        strategy: 'plain',
+        region: 'jakarta',
+        website: 'https://www.astronauts.id/',
+        maxPages: 10,
+      },
     ],
   }
 }
