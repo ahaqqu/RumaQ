@@ -227,6 +227,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/brochures/{storeSlug}/{date}/{file}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Stream a brochure image from R2. */
+    get: operations['getApiBrochuresByStoreSlugByDateByFile']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/purchases/patterns': {
     parameters: {
       query?: never
@@ -476,6 +493,23 @@ export interface paths {
     }
     /** @description Promo catalog: current observations grouped by promo type, with per-store product counts and up to five example products per type. */
     get: operations['getApiPricesPromos']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/prices/brochures': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Brochure catalog: current observations grouped by brochure image per store, with up to five example products per group. */
+    get: operations['getApiPricesBrochures']
     put?: never
     post?: never
     delete?: never
@@ -1170,6 +1204,42 @@ export interface operations {
       }
     }
   }
+  getApiBrochuresByStoreSlugByDateByFile: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        storeSlug: string
+        date: string
+        file: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Image stream */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
   getApiPurchasesPatterns: {
     parameters: {
       query?: never
@@ -1775,6 +1845,49 @@ export interface operations {
               }[]
             }[]
             total: number
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiPricesBrochures: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            groups: {
+              source_slug: string
+              source_name: string
+              brochure_url: string
+              observed_date: string
+              product_count: number
+              example_products: {
+                product_key: string
+                name: string
+                brand: string | null
+                unit: string | null
+                price: number
+                effective_unit_price: number | null
+              }[]
+            }[]
           }
         }
       }
