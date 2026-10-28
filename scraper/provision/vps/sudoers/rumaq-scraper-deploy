@@ -8,7 +8,7 @@
 # this one. The RumaQ VPS deploy needs exactly ONE privileged operation:
 # start the post-deploy self-check unit, which runs as the service user and
 # reads the root-only env file through systemd — the deploy itself never
-# reads /etc/rumaq-scraper/env.
+# reads /etc/rumaq-scraper/env. (Plus the agent restart below.)
 #
 # Operations (owner decision 2026-10-27) — restarting/re-arming the nightly
 # job and repairing the env's ingest URL must work without an interactive
@@ -16,17 +16,21 @@
 #   - start rumaq-scraper.service         trigger a run now (both blocking
 #     and --no-block forms, matched exactly)
 #   - reset-failed rumaq-scraper.service  clear a stale failed state
+#   - restart rumaq-scraper-agent.service the Scrape Now agent runs the code
+#     the deploy just shipped; a restart loads it immediately (the agent is
+#     an idle poller until a command is queued, so the restart is safe)
 #   - /usr/local/sbin/rumaq-scraper-ingest-url
 #     root-owned helper (installed by apply.sh, no arguments) that points
 #     the env's RUMAQ_INGEST_URL at the production ingest route. The URL is
 #     public repo knowledge; the env's key lines are never touched. No new
 #     risk: kajianq-deploy already owns the code tree it ships.
 #
-# Code deploys need no grant at all: the deploy identity owns
-# /srv/rumaq-scraper (code + browser cache), and the nightly job is a
-# timer-driven oneshot that picks up new code at its next start — there is
-# nothing to restart. Exact command, absolute path, no wildcards: wildcard
-# arguments in sudoers are the classic privilege-escalation footgun.
+# Code deploys need no grant beyond the agent restart: the deploy identity
+# owns /srv/rumaq-scraper (code + browser cache); the nightly job is a
+# timer-driven oneshot that picks up new code at its next start, and the
+# agent (the only long-lived process) is restarted right above. Exact
+# command, absolute path, no wildcards: wildcard arguments in sudoers are
+# the classic privilege-escalation footgun.
 
 Defaults:kajianq-deploy !requiretty
 
@@ -34,4 +38,5 @@ kajianq-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start rumaq-scraper-selfc
 kajianq-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start rumaq-scraper.service
 kajianq-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block rumaq-scraper.service
 kajianq-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl reset-failed rumaq-scraper.service
+kajianq-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart rumaq-scraper-agent.service
 kajianq-deploy ALL=(root) NOPASSWD: /usr/local/sbin/rumaq-scraper-ingest-url

@@ -48,7 +48,7 @@ import {
   type FetchLike as PublishFetch,
   type PublishFailure,
 } from './publish/client.js'
-import { activePlugins } from './stores/index.js'
+import { scopedPlugins } from './stores/index.js'
 import {
   isCatalogPlugin,
   type BrochureStorePlugin,
@@ -119,6 +119,12 @@ export interface PipelineOptions {
   sleep?: (ms: number) => Promise<void>
   /** Injectable clock for deterministic scrapedAt in tests. */
   now?: () => Date
+  /**
+   * Store scope for on-demand runs (docs/plan/scrape-now.md §2): an explicit
+   * slug list narrows the run to those stores; unset = every configured
+   * store (the nightly). An empty filtered list is a typed failure.
+   */
+  stores?: string[]
 }
 
 // Shared fs-IO wrapper (util/io.ts) — same tagged-error mapping as the
@@ -423,10 +429,12 @@ export function runPipeline(
   const log = options.log ?? createLog('pipeline')
   const config = loadConfig()
   const scrapedAt = (options.now ?? (() => new Date()))().toISOString()
-  // activePlugins is the single source of truth for which stores run: both
-  // the work list and the status map come from it, so they cannot drift.
-  const runs: { plugin: StorePlugin; entry: PipelineStatus['stores'][string] }[] = activePlugins(
-    config
+  // scopedPlugins (→ activePlugins) is the single source of truth for which
+  // stores run: both the work list and the status map come from it, so they
+  // cannot drift. A scope that matches nothing fails before any IO.
+  const runs: { plugin: StorePlugin; entry: PipelineStatus['stores'][string] }[] = scopedPlugins(
+    config,
+    options.stores
   ).map((plugin) => ({
     plugin,
     entry: {
@@ -446,6 +454,14 @@ export function runPipeline(
 
   const program: Effect.Effect<PipelineStatus, StoreRunError | PublishFailure | PipelineFailure> =
     Effect.gen(function* () {
+      // An empty scope (all requested slugs unknown) must fail loudly, never
+      // publish an empty snapshot "successfully".
+      if (runs.length === 0) {
+        return yield* new PipelineFailure({
+          message: `No matching stores for the requested scope (${(options.stores ?? []).join(', ')})`,
+          exitCode: 1,
+        })
+      }
       // Outbox replay: items OCR'd by a previous run that never published
       // (crash, exhausted retries) are re-included here so paid-for Gemini
       // work always reaches D1. The ingest upsert makes replay idempotent.

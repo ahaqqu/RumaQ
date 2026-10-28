@@ -15,7 +15,7 @@ set -euo pipefail
 #   - /var/lib/rumaq-scraper       state         (owned by rumaq-scraper)
 #   - /etc/rumaq-scraper/env       secrets       (root:root 0600, installed
 #                                                 once — never overwritten)
-#   - three systemd units + one sudoers fragment + the ingest-url repair
+#   - four systemd units + one sudoers fragment + the ingest-url repair
 #     helper at /usr/local/sbin/rumaq-scraper-ingest-url (root-owned, no
 #     arguments, granted to kajianq-deploy in the sudoers fragment)
 #
@@ -99,11 +99,19 @@ chmod 0600 "$ENV_FILE"
 
 # --- 4. systemd units ---------------------------------------------------------
 systemd_dir="/etc/systemd/system"
-for unit in rumaq-scraper.service rumaq-scraper.timer rumaq-scraper-selfcheck.service; do
+for unit in rumaq-scraper.service rumaq-scraper.timer rumaq-scraper-selfcheck.service \
+            rumaq-scraper-agent.service; do
   install -m 0644 "$HERE/systemd/$unit" "$systemd_dir/$unit"
 done
 systemctl daemon-reload
 log "units installed + daemon reloaded"
+
+# --- 4a. the Scrape Now agent ---------------------------------------------------
+# Safe pre-go-live: the agent is an idle poller until an admin queues a
+# command — it never scrapes on its own initiative, so enabling it here
+# costs nothing and the Scrape Now button works the moment a deploy ships.
+systemctl enable --now rumaq-scraper-agent.service
+log "scrape agent enabled (polls the command queue; idle until a command exists)"
 
 # --- 4b. the ingest-url repair helper ------------------------------------------
 # Root-owned, no arguments, one narrow job (rewrite the env's ingest URL);
@@ -126,7 +134,7 @@ log "ingest-url repair helper installed at /usr/local/sbin/rumaq-scraper-ingest-
 # file can lock sudo out of the box entirely (KajianQ pattern).
 if visudo -cf "$HERE/sudoers/rumaq-scraper-deploy" >/dev/null; then
   install -m 0440 -o root -g root "$HERE/sudoers/rumaq-scraper-deploy" /etc/sudoers.d/rumaq-scraper-deploy
-  log "sudoers fragment installed (grant: start rumaq-scraper-selfcheck.service)"
+  log "sudoers fragment installed (grants: selfcheck/nightly start, agent restart, ingest-url helper)"
 else
   echo "apply.sh: sudoers candidate failed visudo -cf — NOT installed" >&2
   exit 1

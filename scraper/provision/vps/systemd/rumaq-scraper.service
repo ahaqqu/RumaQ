@@ -11,6 +11,11 @@
 # (V8 JIT needs executable memory), and MemoryMax=1G / CPUQuota=100% follow
 # the plan's 2-vCPU box budget (§9). Logs go to the journal; journald's
 # global caps bound disk use.
+#
+# ExecStart is wrapped in `flock -n` on the SAME lock file the Scrape Now
+# agent holds while a manual run executes (docs/plan/scrape-now.md §2) — a
+# nightly that collides with a manual run exits non-zero immediately and the
+# timer simply retries tomorrow (the existing soft-fail philosophy).
 
 [Unit]
 Description=RumaQ price scraper (scrape -> OCR -> match -> publish)
@@ -25,7 +30,7 @@ WorkingDirectory=/var/lib/rumaq-scraper
 EnvironmentFile=/etc/rumaq-scraper/env
 # Browser revision ships with the deploy tree, not with the OS package set.
 Environment=PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers
-ExecStart=/usr/bin/bun /srv/rumaq-scraper/dist/index.js --state-dir=/var/lib/rumaq-scraper
+ExecStart=/usr/bin/flock -n /var/lib/rumaq-scraper/run.lock /usr/bin/bun /srv/rumaq-scraper/dist/index.js --state-dir=/var/lib/rumaq-scraper
 
 NoNewPrivileges=yes
 PrivateTmp=yes
