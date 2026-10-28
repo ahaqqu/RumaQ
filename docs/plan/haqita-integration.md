@@ -337,9 +337,12 @@ probed live on 2026-10-28:
     `product_discount_daily_quota`) — not surfaced; the observed price is
     what the customer pays.
   - _tier discount_: `inventory_discount_tier_label` ("Beli 2 Disc.4%" with
-    the per-unit `final_price` at that qty) → kept as promo label text only;
-    it is conditional on buying N units, so it must not claim an effective
-    unit price (`parsePromo` leaves it `single`).
+    the per-unit `final_price` at that qty) → kept as promo label text only.
+    It is conditional on buying N units; the observed "Disc.%" phrasing
+    matches no `parsePromo` pattern, so it stays `single` (no effective unit
+    price). A tier label phrased like a standard promo ("Beli 2 Gratis 1")
+    would claim its math — the same treatment OCR'd conditional brochure
+    promos get, not a special guarantee.
   - _vouchers_: `voucher_labels` exist but are empty on category listings in
     practice — not mapped.
   - `product_grammation_label` ("5kg", "450-550gram") becomes `unit`; the

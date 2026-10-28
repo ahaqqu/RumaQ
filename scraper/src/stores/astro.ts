@@ -23,7 +23,10 @@
 // the listed price is what the customer pays), promo labels go through
 // parsePromo ("Diskon 8%" → discount_pct, effective = the discounted price).
 // Tier labels are preserved as promo text only: they are conditional on
-// buying N units, so they must not move effectiveUnitPrice.
+// buying N units. The observed "Disc.%" phrasing matches no parsePromo
+// pattern, so they stay `single` (no effective unit price) — a tier label
+// phrased like a standard promo ("Beli 2 Gratis 1") would claim its math,
+// exactly like the OCR path's conditional brochure promos.
 
 import { Effect } from 'effect'
 
@@ -79,12 +82,18 @@ export interface AstroTierLabel {
   final_price?: number
 }
 
-/** The product fields the plugin consumes; the API response has more. */
+/**
+ * The product fields the plugin consumes; the API response has more. The
+ * flight text is only ever cast to this shape (`JSON.parse … as AstroProduct`),
+ * so toCatalogItem re-checks every free-form field at runtime — a malformed
+ * value skips the item, it never throws.
+ */
 export interface AstroProduct {
   product_id: number
   product_name?: string
-  product_price?: string
-  product_discount_price?: string
+  /** Observed as strings; a number is tolerated (parseInt coerces). */
+  product_price?: string | number
+  product_discount_price?: string | number
   product_discount_percentage?: string
   product_grammation_label?: string
   inventory_discount_tier_label?: AstroTierLabel[]
@@ -120,14 +129,23 @@ export function extractFlightChunks(html: string): string {
 export function parseProductObjects(flight: string): AstroProduct[] {
   const KEY = 'variantRelativeProductIds'
 
-  // Occurrences of the key outside string literals (a JSON key, not prose).
+  // Occurrences of the key as a JSON key — the full quoted string, followed
+  // by a colon. A mention inside a string value is prose, not a key: it must
+  // not resolve to its enclosing object (a product-field mention would
+  // double-parse it; the state machine below cannot tell a key string from a
+  // value string).
   const occurrences: number[] = []
   let searchFrom = 0
   while (true) {
     const at = flight.indexOf(KEY, searchFrom)
     if (at < 0) break
-    occurrences.push(at)
     searchFrom = at + KEY.length
+    if (flight[at - 1] !== '"') continue
+    let after = at + KEY.length
+    if (flight[after] !== '"') continue
+    after++
+    while (after < flight.length && /\s/.test(flight[after]!)) after++
+    if (flight[after] === ':') occurrences.push(at)
   }
   if (occurrences.length === 0) return []
 
@@ -177,14 +195,18 @@ export function parseProductObjects(flight: string): AstroProduct[] {
 }
 
 /** Post-discount price as an integer, or null when the field is unusable. */
-function toRupiah(raw: string | undefined): number | null {
+function toRupiah(raw: string | number | undefined): number | null {
   if (!raw) return null
-  const value = Number.parseInt(raw, 10)
+  const value = Number.parseInt(String(raw), 10)
   return Number.isFinite(value) && value > 0 ? value : null
 }
 
 export function toCatalogItem(product: AstroProduct, pageUrl: string): CatalogItem | null {
-  const name = (product.product_name ?? '').trim()
+  // Every free-form field is re-checked: the flight text is cast, not
+  // validated, so a non-string value here must skip the item — a throw would
+  // be an Effect defect, which the pipeline's per-store isolation (typed
+  // errors only) does not catch.
+  const name = typeof product.product_name === 'string' ? product.product_name.trim() : ''
   const basePrice = toRupiah(product.product_price)
   if (name.length === 0 || basePrice === null) return null
 
@@ -192,7 +214,11 @@ export function toCatalogItem(product: AstroProduct, pageUrl: string): CatalogIt
   const price = discountPrice ?? basePrice
 
   const promoParts: string[] = []
-  if (discountPrice !== null && product.product_discount_percentage) {
+  if (
+    discountPrice !== null &&
+    product.product_discount_percentage &&
+    typeof product.product_discount_percentage === 'string'
+  ) {
     promoParts.push(`Diskon ${product.product_discount_percentage.trim()}`)
   }
   const tiers = (product.inventory_discount_tier_label ?? [])
@@ -203,9 +229,12 @@ export function toCatalogItem(product: AstroProduct, pageUrl: string): CatalogIt
   return {
     name,
     brand: null, // the listing carries only a brandId, no brand name
-    unit: product.product_grammation_label?.trim() || null,
+    unit:
+      typeof product.product_grammation_label === 'string'
+        ? product.product_grammation_label.trim() || null
+        : null,
     price,
-    promoLabel: promoParts.length > 0 ? promoParts.join('; ') : null,
+    promoLabels: promoParts.length > 0 ? promoParts : null,
     validFrom: null,
     validUntil: null,
     pageUrl,

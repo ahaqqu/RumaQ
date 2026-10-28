@@ -55,6 +55,15 @@ describe('parseProductObjects', () => {
   it('returns [] for flight text without product objects', () => {
     expect(parseProductObjects('2:["$","div",null,{"children":"hi"}]')).toEqual([])
   })
+
+  it('ignores key occurrences inside string values', () => {
+    // A prose mention of the key inside a product field is not a JSON key —
+    // it must not resolve to a second parse of the enclosing object.
+    const flight =
+      '{"variantRelativeProductIds":[],"product_id":1,' +
+      '"product_name":"variantRelativeProductIds in prose","product_price":"50000"}'
+    expect(parseProductObjects(flight)).toHaveLength(1)
+  })
 })
 
 describe('toCatalogItem', () => {
@@ -65,7 +74,7 @@ describe('toCatalogItem', () => {
       brand: null,
       unit: '5kg',
       price: 70840,
-      promoLabel: 'Diskon 8%',
+      promoLabels: ['Diskon 8%'],
       validFrom: null,
       validUntil: null,
       pageUrl: 'https://www.astronauts.id/c/x',
@@ -78,14 +87,14 @@ describe('toCatalogItem', () => {
       name: 'Dada Ayam Boneless Astro Farm',
       price: 30800,
       unit: '450-550gram',
-      promoLabel: 'Beli 2 Disc.4%',
+      promoLabels: ['Beli 2 Disc.4%'],
     })
   })
 
   it('maps a plain product without any promo text', () => {
     const item = toCatalogItem(fixtureProducts()[2]!, 'https://www.astronauts.id/c/x')
     expect(item).toMatchObject({ name: 'Minyak Goreng Astro Goods 2L', price: 40000 })
-    expect(item!.promoLabel).toBeNull()
+    expect(item!.promoLabels).toBeNull()
   })
 
   it('keeps the base price when the discount field is unusable', () => {
@@ -94,7 +103,7 @@ describe('toCatalogItem', () => {
       'u'
     )
     expect(item!.price).toBe(77000)
-    expect(item!.promoLabel).toBeNull()
+    expect(item!.promoLabels).toBeNull()
   })
 
   it('returns null for products without a usable name or price', () => {
@@ -103,6 +112,31 @@ describe('toCatalogItem', () => {
     expect(
       toCatalogItem({ product_id: 1, product_name: 'Beras', product_price: 'abc' }, 'u')
     ).toBeNull()
+  })
+
+  it('skips products with non-string free-form fields instead of throwing', () => {
+    // parseProductObjects casts any object with a numeric product_id, so a
+    // malformed field type reaches here — it must skip the item, never throw
+    // (a throw would defect the whole pipeline run: the per-store isolation
+    // only catches typed errors).
+    expect(
+      toCatalogItem(
+        { product_id: 1, product_name: 123 as unknown as string, product_price: '50000' },
+        'u'
+      )
+    ).toBeNull()
+    const item = toCatalogItem(
+      {
+        product_id: 1,
+        product_name: 'Beras',
+        product_price: '50000',
+        product_discount_price: '45000',
+        product_discount_percentage: 8 as unknown as string,
+        product_grammation_label: 5 as unknown as string,
+      },
+      'u'
+    )
+    expect(item).toMatchObject({ price: 45000, unit: null, promoLabels: null })
   })
 })
 
