@@ -28,11 +28,19 @@ AND o.match_confidence >= ${PRICE_MIN_CONFIDENCE}`
 
 // --- Promo catalog (issue #292 design-arch §1.2) ---
 
-// The closed 5-value promo_type enum the brochure parser produces. The CASE
-// below is the ONLY place these values live: unknown future enum values and
-// NULL-type-with-label rows fall into 'other' by construction (NULL never
-// matches IN).
-const PROMO_GROUP_CASE = `CASE WHEN o.promo_type IN ('discount_pct','discount_fixed','get_free','bundle_buy','multi_price')
+// The closed 5-value promo_type enum the brochure parser produces. Single
+// source of truth: the SQL CASE's IN-list and the fixed response order both
+// derive from this array. Unknown future enum values and NULL-type-with-label
+// rows fall into 'other' by construction (NULL never matches IN).
+const KNOWN_PROMO_TYPES = [
+  'discount_pct',
+  'discount_fixed',
+  'get_free',
+  'bundle_buy',
+  'multi_price',
+] as const
+
+const PROMO_GROUP_CASE = `CASE WHEN o.promo_type IN (${KNOWN_PROMO_TYPES.map((t) => `'${t}'`).join(',')})
        THEN o.promo_type ELSE 'other' END`
 
 // Rows carry promo evidence when the type is set, or a label rides along
@@ -44,14 +52,7 @@ const PROMO_EVIDENCE = `(o.promo_type IS NOT NULL OR (o.promo_label IS NOT NULL 
 
 // Fixed response order (PM §2); groups absent from the totals result are
 // omitted during assembly. 'other' sorts last.
-const PROMO_GROUP_ORDER = [
-  'discount_pct',
-  'discount_fixed',
-  'get_free',
-  'bundle_buy',
-  'multi_price',
-  'other',
-] as const
+const PROMO_GROUP_ORDER = [...KNOWN_PROMO_TYPES, 'other'] as const
 
 // The unfiltered explorer base — no q/source filters. Count parity with the
 // explorer is the binding requirement, and the explorer with no filters is
