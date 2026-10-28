@@ -1229,11 +1229,61 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["name", "cheapest", "savings", "expiry"],
+              "default": "name"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/prices/meta": {
+      "get": {
+        "operationId": "getApiPricesMeta",
+        "description": "Price data freshness: latest scrape time, latest observed date, and observation count.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "latestScrapedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "latestObservedDate": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "observationCount": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": ["latestScrapedAt", "latestObservedDate", "observationCount"]
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized"

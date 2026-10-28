@@ -450,6 +450,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/prices/meta': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Price data freshness: latest scrape time, latest observed date, and observation count. */
+    get: operations['getApiPricesMeta']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/prices/{productKey}': {
     parameters: {
       query?: never
@@ -1645,6 +1662,7 @@ export interface operations {
       query?: {
         q?: string
         source?: string
+        sort?: 'name' | 'cheapest' | 'savings' | 'expiry'
       }
       header?: never
       path?: never
@@ -1658,6 +1676,37 @@ export interface operations {
           [name: string]: unknown
         }
         content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiPricesMeta: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            latestScrapedAt: string | null
+            latestObservedDate: string | null
+            observationCount: number
+          }
+        }
       }
       /** @description Unauthorized */
       401: {
