@@ -241,32 +241,28 @@ apiApp.post(
 // at-least-once replay is safe. 404 on a malformed key doubles as the
 // deploy-order signal: the Worker must carry this route before the scraper
 // updates, and a permanent 404 is a config error the nightly must surface.
-apiApp.put(
-  '/api/internal/brochures/:storeSlug/:date/:file',
-  requireIngestSecret,
-  async (c) => {
-    if (!c.env.BROCHURES) {
-      return c.json({ error: 'Brochure storage not configured' }, 503)
-    }
-    const key = parseBrochureKey(c.req.param('storeSlug'), c.req.param('date'), c.req.param('file'))
-    if (!key) {
-      return c.json({ error: 'Invalid brochure key' }, 404)
-    }
-    const contentType = (c.req.header('Content-Type') ?? '').split(';')[0]!.trim().toLowerCase()
-    if (!BROCHURE_CONTENT_TYPES.has(contentType)) {
-      return c.json({ error: 'Unsupported brochure image type' }, 415)
-    }
-    const body = await c.req.arrayBuffer()
-    if (body.byteLength === 0 || body.byteLength > BROCHURE_MAX_BYTES) {
-      return c.json({ error: 'Brochure image size out of range' }, 413)
-    }
-    await c.env.BROCHURES.put(key, body, {
-      httpMetadata: { contentType },
-      customMetadata: { uploadedAt: new Date().toISOString() },
-    })
-    return c.json({ ok: true })
+apiApp.put('/api/internal/brochures/:storeSlug/:date/:file', requireIngestSecret, async (c) => {
+  if (!c.env.BROCHURES) {
+    return c.json({ error: 'Brochure storage not configured' }, 503)
   }
-)
+  const key = parseBrochureKey(c.req.param('storeSlug'), c.req.param('date'), c.req.param('file'))
+  if (!key) {
+    return c.json({ error: 'Invalid brochure key' }, 404)
+  }
+  const contentType = (c.req.header('Content-Type') ?? '').split(';')[0]!.trim().toLowerCase()
+  if (!BROCHURE_CONTENT_TYPES.has(contentType)) {
+    return c.json({ error: 'Unsupported brochure image type' }, 415)
+  }
+  const body = await c.req.arrayBuffer()
+  if (body.byteLength === 0 || body.byteLength > BROCHURE_MAX_BYTES) {
+    return c.json({ error: 'Brochure image size out of range' }, 413)
+  }
+  await c.env.BROCHURES.put(key, body, {
+    httpMetadata: { contentType },
+    customMetadata: { uploadedAt: new Date().toISOString() },
+  })
+  return c.json({ ok: true })
+})
 
 // Run report from the rumaq-scraper (§7.1): one POST per finished live run,
 // including failures. Feeds the admin scraping monitor.

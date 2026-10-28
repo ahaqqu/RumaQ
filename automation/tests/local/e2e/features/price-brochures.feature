@@ -11,7 +11,7 @@ Feature: Price brochures view
     When I navigate to "/prices?view=brochures"
     Then the brochures segment row should be visible
     And the store sections should appear in order "Lotte Mart,Superindo"
-    And the Lotte Mart card should show the uploaded brochure image
+    And the "Lotte Mart" card should show the uploaded brochure image
 
   Scenario: Expanding a card and clicking an example jumps into the explorer
     Given a brochure snapshot has been pushed with one image uploaded
@@ -33,7 +33,6 @@ Feature: Price brochures view
     And I am logged in as the seeded test user
     When I navigate to "/prices?view=brochures"
     Then the "Superindo" card should render the fallback block instead of a broken image
-
   Scenario: Empty brochure catalog renders the empty state with the segment visible
     Given a promo-free price snapshot has been pushed
     And I am logged in as the seeded test user

@@ -1,5 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
-import { getPrices, getPricesMeta, getPriceDetail, getPriceRuns, getPromos, getBrochures } from '../api'
+import {
+  getPrices,
+  getPricesMeta,
+  getPriceDetail,
+  getPriceRuns,
+  getPromos,
+  getBrochures,
+} from '../api'
 
 // Brochure data changes only when a scrape lands (daily) — a 5-minute
 // refetch keeps countdowns and prices current in long-lived tabs while the

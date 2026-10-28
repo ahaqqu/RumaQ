@@ -24,7 +24,11 @@ export type StubR2Object = {
 export function createBrochuresStub() {
   const objects = new Map<
     string,
-    { bytes: Uint8Array; httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }
+    {
+      bytes: Uint8Array
+      httpMetadata?: { contentType?: string }
+      customMetadata?: Record<string, string>
+    }
   >()
   return {
     objects,
@@ -36,7 +40,11 @@ export function createBrochuresStub() {
         customMetadata?: Record<string, string>
       } = {}
     ) {
-      objects.set(key, { bytes: value, httpMetadata: options.httpMetadata, customMetadata: options.customMetadata })
+      objects.set(key, {
+        bytes: value,
+        httpMetadata: options.httpMetadata,
+        customMetadata: options.customMetadata,
+      })
       return { key }
     },
     async get(key: string): Promise<StubR2Object | null> {
@@ -47,10 +55,7 @@ export function createBrochuresStub() {
         httpMetadata: obj.httpMetadata,
         customMetadata: obj.customMetadata,
         blob: () => Promise.resolve(new Blob([obj.bytes as BlobPart])),
-        arrayBuffer: () =>
-          Promise.resolve(
-            obj.bytes.slice().buffer as ArrayBuffer
-          ),
+        arrayBuffer: () => Promise.resolve(obj.bytes.slice().buffer as ArrayBuffer),
       }
     },
     async delete(key: string) {
@@ -73,7 +78,7 @@ export function createBrochuresStub() {
       return {
         objects: page.map((key) => ({ key })) as Array<{ key: string }>,
         truncated,
-        ...(truncated && page.length > 0 ? { truncatedPart: page[page.length - 1] } : {}),
+        ...(truncated && page.length > 0 ? { cursor: page[page.length - 1] } : {}),
       }
     },
   }
@@ -81,7 +86,10 @@ export function createBrochuresStub() {
 
 export type MockBrochures = ReturnType<typeof createBrochuresStub>
 
-export type MockEnv = Omit<Env['Bindings'], 'DB' | 'RECEIPTS' | 'BROCHURES' | 'ASSETS' | 'props'> & {
+export type MockEnv = Omit<
+  Env['Bindings'],
+  'DB' | 'RECEIPTS' | 'BROCHURES' | 'ASSETS' | 'props'
+> & {
   DB: MockD1
   RECEIPTS: Record<string, never>
   BROCHURES: MockBrochures

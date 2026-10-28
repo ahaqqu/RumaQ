@@ -37,11 +37,7 @@ const DATE_PATTERN = /^\d{8}$/
  * `{storeSlug}/{YYYYMMDD}/{filename}` — or null when any segment is
  * malformed (both routes answer 404, never leaking shape details).
  */
-export function parseBrochureKey(
-  storeSlug: string,
-  date: string,
-  filename: string
-): string | null {
+export function parseBrochureKey(storeSlug: string, date: string, filename: string): string | null {
   if (!(SCRAPE_STORE_SLUGS as readonly string[]).includes(storeSlug)) return null
   if (!DATE_PATTERN.test(date)) return null
   const month = Number(date.slice(4, 6))
@@ -115,7 +111,7 @@ WHERE ${BROCHURE_SERVABLE}
       deleted++
       log(`[brochures] swept unreferenced ${object.key}`)
     }
-    cursor = page.truncated ? page.truncatedPart : undefined
+    cursor = page.truncated ? page.cursor : undefined
   } while (cursor)
 
   return { deleted }

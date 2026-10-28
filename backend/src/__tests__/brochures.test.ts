@@ -72,13 +72,17 @@ function createEnv(
   opts: {
     authenticated?: boolean
     secret?: string | null
-    brochures?: ReturnType<typeof createBrochuresStub> | null
+    // Unknown: the in-memory stub is structurally close enough for the fake
+    // routes; real R2 semantics live in the Miniflare automation harness.
+    brochures?: unknown | null
   } = {}
 ) {
   return {
     DB: db,
     RECEIPTS: {},
-    BROCHURES: (opts.brochures === undefined ? createBrochuresStub() : opts.brochures) as R2Bucket,
+    BROCHURES: (opts.brochures === undefined
+      ? createBrochuresStub()
+      : opts.brochures) as unknown as R2Bucket,
     GOOGLE_CLIENT_ID: 'test-client-id',
     GOOGLE_CLIENT_SECRET: 'test-client-secret',
     WORKER_JWT_SECRET: 'test-secret',
@@ -177,11 +181,15 @@ describe('PUT /api/internal/brochures', () => {
       '/api/internal/brochures/lotte-mart/2026-10-29/page.jpg',
       '/api/internal/brochures/lotte-mart/20261029/../secret',
     ]) {
-      const res = await apiApp.request(path, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'image/jpeg', ...AUTH },
-        body: pngBytes,
-      }, env)
+      const res = await apiApp.request(
+        path,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'image/jpeg', ...AUTH },
+          body: pngBytes,
+        },
+        env
+      )
       expect(res.status, path).toBe(404)
     }
   })
@@ -201,7 +209,11 @@ describe('PUT /api/internal/brochures', () => {
     const env = createEnv(db)
     const empty = await apiApp.request(
       '/api/internal/brochures/lotte-mart/20261029/page.jpg',
-      { method: 'PUT', headers: { 'Content-Type': 'image/jpeg', ...AUTH }, body: new Uint8Array(0) },
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/jpeg', ...AUTH },
+        body: new Uint8Array(0),
+      },
       env
     )
     expect(empty.status).toBe(413)
@@ -233,14 +245,21 @@ describe('GET /api/brochures', () => {
     const res = await apiApp.request(
       '/api/brochures/lotte-mart/20261029/page_1_2ad1c95b.jpg',
       {},
-      createEnv((env as { DB: D1Database }).DB, { authenticated: false, brochures: env.BROCHURES as R2Bucket })
+      createEnv((env as { DB: D1Database }).DB, {
+        authenticated: false,
+        brochures: env.BROCHURES as R2Bucket,
+      })
     )
     expect(res.status).toBe(401)
   })
 
   it('streams the stored bytes with the stored content type and a private day of caching', async () => {
     const { env } = await seededEnv()
-    const res = await apiApp.request('/api/brochures/lotte-mart/20261029/page_1_2ad1c95b.jpg', {}, env)
+    const res = await apiApp.request(
+      '/api/brochures/lotte-mart/20261029/page_1_2ad1c95b.jpg',
+      {},
+      env
+    )
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('image/png')
     expect(res.headers.get('Cache-Control')).toBe('private, max-age=86400')
@@ -287,7 +306,11 @@ describe('GET /api/prices/brochures', () => {
 
   it('requires authentication', async () => {
     const { db } = createFakeDb()
-    const res = await apiApp.request('/api/prices/brochures', {}, createEnv(db, { authenticated: false }))
+    const res = await apiApp.request(
+      '/api/prices/brochures',
+      {},
+      createEnv(db, { authenticated: false })
+    )
     expect(res.status).toBe(401)
   })
 
@@ -373,9 +396,7 @@ describe('GET /api/prices/brochures', () => {
     const examplesCall = prepareCalls.find((call) => call.sql.includes('-- brochures: examples'))!
     expect(examplesCall.sql).toContain('WHERE group_rn <= 5')
     expect(examplesCall.sql).toContain('ORDER BY name COLLATE NOCASE ASC, product_key ASC')
-    expect(examplesCall.sql).toContain(
-      'ORDER BY COALESCE(effective_unit_price, price) ASC'
-    )
+    expect(examplesCall.sql).toContain('ORDER BY COALESCE(effective_unit_price, price) ASC')
     expect(examplesCall.sql).toContain('PARTITION BY brochure_url, product_key')
   })
 })

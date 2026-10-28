@@ -5,12 +5,12 @@ import { SUGAR_KEY } from '../../../support/price-fixtures.js'
 const { Given, When, Then } = createBdd()
 
 // Fixtures pushed through the internal ingest endpoint like the promos suite;
-// the brochure object rides the internal PUT endpoint (issue #293).
+// the brochure object rides the internal PUT endpoint (issue #293). The jump
+// assertions reuse price-promos.steps.js's globally-registered steps (they
+// match this suite's feature text verbatim).
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
 const INGEST_SECRET = 'test-ingest-secret'
-const PNG_BYTES = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10, 1, 2, 3, 4, 5, 6, 7, 8,
-])
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10, 1, 2, 3, 4, 5, 6, 7, 8])
 
 // Today's date keys the uploaded object — fresh enough that no retention
 // sweep (grace = 14 days from the key date) can delete it mid-run even when
@@ -99,7 +99,7 @@ Then(/the store sections should appear in order "(.+)"/, async ({ page }, expect
   expect(headings).toEqual(expected.split(','))
 })
 
-Then('the {string} card should show the uploaded brochure image', async ({ page }) => {
+Then('the {string} card should show the uploaded brochure image', async ({ page }, _store) => {
   // The uploaded object round-trips through the authenticated proxy: the img
   // element actually decodes (same-origin <img> carries the session cookie).
   const key = e2eBrochureKey()
@@ -111,29 +111,13 @@ Then('the {string} card should show the uploaded brochure image', async ({ page 
 })
 
 When('I expand the {string} brochure card', async ({ page }, store) => {
-  await page
-    .locator('button[aria-expanded]')
-    .filter({ hasText: store })
-    .first()
-    .click()
+  await page.locator('button[aria-expanded]').filter({ hasText: store }).first().click()
 })
 
 When('I click the {string} brochure example', async ({ page }, name) => {
   // Example rows exist only inside an expanded card, so the name is
   // unambiguous here.
   await page.locator('button').filter({ hasText: name }).first().click()
-})
-
-Then(/I should land on the products view with "(.+)" expanded/, async ({ page }, name) => {
-  await expect(page).toHaveURL(new RegExp(`#${SUGAR_KEY}`))
-  await expect(page.getByText('Current prices')).toBeVisible()
-  await expect(page.locator('button').filter({ hasText: name }).first()).toContainText(
-    'Price history'
-  )
-})
-
-Then('the view param should be gone from the URL', async ({ page }) => {
-  await expect(page).not.toHaveURL(/view=brochures/)
 })
 
 Then(

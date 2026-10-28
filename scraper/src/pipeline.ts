@@ -735,23 +735,22 @@ export function runPipeline(
     if (options.dryRun) return Effect.void
     const finishedAt = (options.now ?? (() => new Date()))().toISOString()
     const match = status.match
-      // The store entries carry status.json-only fields (brochuresUploaded,
-      // issue #293) that the strict run-report schema must never see — strip
-      // them here so whichever side deploys second stays compatible.
-      const perStore = Object.fromEntries(
-        Object.entries(status.stores).map(([slug, { brochuresUploaded: _, ...store }]) => [
-          slug,
-          store,
-        ])
-      ) as RunReport['perStore']
-      const report: RunReport = {
-        schemaVersion: 1,
-        runStartedAt: status.runStartedAt,
-        finishedAt,
-        exitCode,
-        status: exitCode === 0 ? 'success' : 'failed',
-        stage: status.stage,
-        perStore,
+    // The store entries carry status.json-only fields (brochuresUploaded,
+    // issue #293) that the strict run-report schema must never see — strip
+    // them here so whichever side deploys second stays compatible.
+    const perStore = Object.fromEntries(
+      Object.entries(status.stores).map(
+        ([slug, { brochuresUploaded: _brochuresUploaded, ...store }]) => [slug, store]
+      )
+    ) as RunReport['perStore']
+    const report: RunReport = {
+      schemaVersion: 1,
+      runStartedAt: status.runStartedAt,
+      finishedAt,
+      exitCode,
+      status: exitCode === 0 ? 'success' : 'failed',
+      stage: status.stage,
+      perStore,
       match: match
         ? {
             exact: match.exact,

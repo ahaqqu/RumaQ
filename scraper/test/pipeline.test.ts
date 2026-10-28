@@ -1276,7 +1276,7 @@ describe('brochure uploads (issue #293)', () => {
 
   it('replays an upload failure: outbox retained, image not remembered, run exits 1 after publish', async () => {
     const { stateDir, base } = await liveScenario()
-    const { posted, publishFetch } = makeUploadCapture()
+    const { publishFetch } = makeUploadCapture()
     const failingUpload = async (url: string, init?: RequestInit) => {
       if (url.includes('/api/internal/brochures/')) {
         return new Response('r2 down', { status: 500 })
@@ -1312,7 +1312,11 @@ describe('brochure uploads (issue #293)', () => {
     // emit the same object URL; the upload happens exactly once more.
     const { puts, posted: posted2, publishFetch: publishFetch2 } = makeUploadCapture()
     const status2 = await Effect.runPromise(
-      runPipeline({ ...base, now: () => new Date('2026-10-25T23:00:05Z'), publishFetch: publishFetch2 })
+      runPipeline({
+        ...base,
+        now: () => new Date('2026-10-25T23:00:05Z'),
+        publishFetch: publishFetch2,
+      })
     )
     expect(status2.stage).toBe('done')
     expect(puts).toHaveLength(1)

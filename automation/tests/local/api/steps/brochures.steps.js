@@ -280,9 +280,10 @@ defineFeature(feature, (test) => {
       const snapshot = priceSnapshot()
       snapshot.items = snapshot.items.map((item) => ({
         ...item,
-        brochureUrl: item.storeSlug === 'lotte-mart'
-          ? `/api/brochures/${OLD_REFERENCED_KEY}`
-          : item.brochureUrl,
+        brochureUrl:
+          item.storeSlug === 'lotte-mart'
+            ? `/api/brochures/${OLD_REFERENCED_KEY}`
+            : item.brochureUrl,
       }))
       await pushSnapshot(snapshot)
     })

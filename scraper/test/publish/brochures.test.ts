@@ -31,7 +31,9 @@ const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])
 function okFetch(counts: { attempts: number }) {
   return async (url: string, init?: RequestInit) => {
     counts.attempts++
-    expect(url).toBe('https://api.example.com/api/internal/brochures/lotte-mart/20261029/page_1_2ad1c95b.jpg')
+    expect(url).toBe(
+      'https://api.example.com/api/internal/brochures/lotte-mart/20261029/page_1_2ad1c95b.jpg'
+    )
     expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer s3cret')
     expect(new Headers(init?.headers).get('Content-Type')).toBe('image/jpeg')
     expect(init?.method).toBe('PUT')
@@ -51,9 +53,7 @@ describe('deriveBrochuresBase / brochureObjectUrl', () => {
   })
 
   it('builds the relative same-origin object URL from the key segments', () => {
-    expect(brochureObjectUrl(target)).toBe(
-      '/api/brochures/lotte-mart/20261029/page_1_2ad1c95b.jpg'
-    )
+    expect(brochureObjectUrl(target)).toBe('/api/brochures/lotte-mart/20261029/page_1_2ad1c95b.jpg')
   })
 })
 
@@ -77,13 +77,17 @@ describe('uploadBrochure', () => {
   it('percent-encodes odd filename characters on the endpoint path', async () => {
     let url = ''
     const exit = await Effect.runPromiseExit(
-      uploadBrochure(bytes, { ...target, filename: 'page (1).jpg' }, {
-        ...options,
-        fetch: async (u: string) => {
-          url = u
-          return new Response('{}', { status: 200 })
-        },
-      })
+      uploadBrochure(
+        bytes,
+        { ...target, filename: 'page (1).jpg' },
+        {
+          ...options,
+          fetch: async (u: string) => {
+            url = u
+            return new Response('{}', { status: 200 })
+          },
+        }
+      )
     )
     expect(exit._tag).toBe('Success')
     expect(url).toBe(

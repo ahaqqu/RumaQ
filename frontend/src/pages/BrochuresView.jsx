@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { usePriceBrochures } from '../lib/queries/index.js'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
-import { Panel, PanelBody } from '../components/Panel.jsx'
+import { Panel } from '../components/Panel.jsx'
 import { IconSearch, IconWarning } from '../components/icons.jsx'
 import { formatPrice } from '../lib/pricesHelpers.js'
 
@@ -15,7 +15,11 @@ function sectionBySource(groups) {
     if (last && last.source_slug === group.source_slug) {
       last.groups.push(group)
     } else {
-      sections.push({ source_slug: group.source_slug, source_name: group.source_name, groups: [group] })
+      sections.push({
+        source_slug: group.source_slug,
+        source_name: group.source_name,
+        groups: [group],
+      })
     }
   }
   return sections
@@ -31,7 +35,7 @@ function observedDateLabel(date, language) {
 // shift), a lazy native img, and a fallback block in the same frame when the
 // object is missing (404) — never a broken-image glyph (PM AC 6).
 function BrochureCard({ group, expanded, onToggle, onJump }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const [failed, setFailed] = useState(false)
   return (
     <div>

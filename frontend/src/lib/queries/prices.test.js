@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
-import { usePrices, usePriceMeta, usePriceSources, usePricePromos, usePriceBrochures } from './prices.js'
+import {
+  usePrices,
+  usePriceMeta,
+  usePriceSources,
+  usePricePromos,
+  usePriceBrochures,
+} from './prices.js'
 import { getPrices, getPricesMeta, getPromos, getBrochures } from '../api'
 
 vi.mock('../api', () => ({
