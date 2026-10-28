@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vite-plus/test'
 
 import {
   agentConfigFromEnv,
+  defaultSpawn,
   deriveScrapeBase,
   lineToEvent,
   pollOnce,
@@ -392,4 +393,22 @@ describe('pollOnce', () => {
       })
     ).rejects.toThrow('HTTP 503')
   })
+})
+
+describe('defaultSpawn (real process group)', () => {
+  // Regression for the hard-kill path: the spawned command is `flock … bun …`,
+  // and flock fork+exec's the scraper — a plain proc.kill() would orphan the
+  // grandchild, which keeps the stdio pipes open and wedges the agent past
+  // the timeout. The kill must reach the whole process GROUP.
+  it('kills grandchildren holding stdio, so close fires promptly', async () => {
+    const child = defaultSpawn(['/bin/sh', '-c', 'sleep 30 & wait'], { env: {} })
+    const closed = child.exited.then(() => true)
+    await new Promise((resolve) => setTimeout(resolve, 150)) // let sh fork the sleep
+    child.kill()
+    const closedSoon = await Promise.race([
+      closed,
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 3000)),
+    ])
+    expect(closedSoon).toBe(true)
+  }, 10_000)
 })

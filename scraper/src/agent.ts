@@ -110,8 +110,9 @@ export type AgentSpawn = (
 
 /**
  * Spawns the child through node:child_process (fully supported under the Bun
- * runtime, which is what ExecStart uses). `close` — not `exit` — feeds the
- * exited promise so stdio is fully flushed before we read the code.
+ * runtime, which is what ExecStart uses) as its own process GROUP. `close` —
+ * not `exit` — feeds the exited promise so stdio is fully flushed before we
+ * read the code.
  */
 export function defaultSpawn(
   cmd: string[],
@@ -120,12 +121,26 @@ export function defaultSpawn(
   const proc = nodeSpawn(cmd[0]!, cmd.slice(1), {
     env: opts.env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    // The command is [flock, …, bun, index.js, …] — flock fork+exec's the
+    // scraper, so the process we spawn is only the WRAPPER. A detached spawn
+    // makes it a group leader and the kill below signals the whole group;
+    // without it, killing flock would orphan the bun scraper (still holding
+    // the lock fd and the pipes) and wedge the agent past the hard timeout.
+    detached: true,
   })
   return {
     stdout: proc.stdout as unknown as AsyncIterable<Uint8Array>,
     stderr: proc.stderr as unknown as AsyncIterable<Uint8Array>,
     exited: new Promise((resolve) => proc.on('close', (code) => resolve(code))),
-    kill: () => proc.kill(),
+    kill: () => {
+      try {
+        if (proc.pid !== undefined) process.kill(-proc.pid, 'SIGTERM')
+        return
+      } catch {
+        // Group already reaped (exit raced the timeout) — fall through.
+      }
+      proc.kill()
+    },
   }
 }
 
@@ -381,13 +396,18 @@ export async function runCommand(
   const error = timedOut
     ? `timeout: scrape exceeded ${Math.round(config.childTimeoutMs / 60000)} minutes and was killed`
     : (lastErrorLine ?? (exitCode === 0 ? null : `scrape exited with code ${exitCode ?? 'signal'}`))
+  // The kill is authoritative: a timed-out run never reports the success-like
+  // exit 0 (a child that exited 0 right at the deadline still failed as a
+  // command) — "failed / exit code 0" would read as a contradiction.
+  const clampedExit = clampExitCode(exitCode)
+  const reportedExit = timedOut && clampedExit === 0 ? 1 : clampedExit
 
   log(`[agent] command ${command.id}: finished ${status} (exit ${exitCode})`)
   await postJson(
     deps.fetch,
     finishUrl,
     config.secret,
-    { status, exitCode: clampExitCode(exitCode), error, logTruncated: buffer.truncated },
+    { status, exitCode: reportedExit, error, logTruncated: buffer.truncated },
     config,
     log
   )
