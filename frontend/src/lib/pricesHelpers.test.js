@@ -12,6 +12,7 @@ import {
   savePctVisible,
   buildFooterStats,
   normalizeHash,
+  resolvePriceView,
 } from './pricesHelpers.js'
 
 // Fixed instants: midday local so local-midnight normalization is exercised,
@@ -218,5 +219,18 @@ describe('effectivePrice', () => {
     expect(effectivePrice({ price: 100, effective_unit_price: 90 })).toBe(90)
     expect(effectivePrice({ price: 100 })).toBe(100)
     expect(effectivePrice({ price: 100, effective_unit_price: 0 })).toBe(0)
+  })
+})
+
+describe('resolvePriceView', () => {
+  it('maps the catalog views, defaults to products, and lets the hash win', () => {
+    expect(resolvePriceView(undefined, '')).toBe('products')
+    expect(resolvePriceView('promos', '')).toBe('promos')
+    expect(resolvePriceView('brochures', '')).toBe('brochures')
+    expect(resolvePriceView('nonsense', '')).toBe('products')
+    // A #productKey deep link is the stronger intent (PM AC 7 / #293 AC 5):
+    // the hash forces the Products view whatever ?view= says.
+    expect(resolvePriceView('brochures', 'gula-pasir')).toBe('products')
+    expect(resolvePriceView(undefined, 'gula-pasir')).toBe('products')
   })
 })

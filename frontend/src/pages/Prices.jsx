@@ -5,6 +5,13 @@ import { Chip } from '../components/Chip.jsx'
 import { ProductsView } from './ProductsView.jsx'
 import { PromosView } from './PromosView.jsx'
 import { BrochuresView } from './BrochuresView.jsx'
+import { resolvePriceView } from '../lib/pricesHelpers.js'
+
+// Lead copy per catalog view; the Products explorer keeps prices.lead.
+const LEAD_KEY_BY_VIEW = {
+  promos: 'prices.promosLead',
+  brochures: 'prices.brochuresLead',
+}
 
 // Products|Promos|Brochures shell for /prices (issue #292 PM §3, #293 PM §2).
 // The search text and source filter live here (not inside ProductsView) so
@@ -19,14 +26,9 @@ export function Prices() {
 
   // ?view=promos|brochures selects a catalog view; a #productKey hash is the
   // stronger intent and forces the Products view regardless of the param
-  // (PM AC 7 / #293 AC 5).
+  // (PM AC 7 / #293 AC 5) — one shared resolver (lib/pricesHelpers.js).
   const { view } = useSearch({ strict: false })
-  const activeView =
-    view === 'promos' && !location.hash
-      ? 'promos'
-      : view === 'brochures' && !location.hash
-        ? 'brochures'
-        : 'products'
+  const activeView = resolvePriceView(view, location.hash)
 
   const selectView = (next) => {
     navigate({ to: '/prices', search: next === 'products' ? {} : { view: next }, hash: '' })
@@ -46,11 +48,7 @@ export function Prices() {
     <>
       <div className="mb-6">
         <p className="text-md text-text-muted leading-snug max-w-[62ch]">
-          {activeView === 'promos'
-            ? t('prices.promosLead')
-            : activeView === 'brochures'
-              ? t('prices.brochuresLead')
-              : t('prices.lead')}
+          {activeView === 'products' ? t('prices.lead') : t(LEAD_KEY_BY_VIEW[activeView])}
         </p>
       </div>
 
