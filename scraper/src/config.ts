@@ -20,6 +20,12 @@ export interface StoreConfig {
   maxPages: number
   /** Optional per-store proxy (Tier 3), read from this env var when set. */
   proxyEnv?: string
+  /**
+   * Per-store header overrides merged over DEFAULT_HEADERS on the plain
+   * tier (haqita's per-store HEADERS dicts). Accept stays per-request
+   * (html vs image) and always wins.
+   */
+  headerOverrides?: Record<string, string>
 }
 
 export interface ScraperConfig {
@@ -89,6 +95,11 @@ export function loadConfig(): ScraperConfig {
       {
         // Lotte sits behind Imperva Incapsula → Tier-2 browser strategy.
         // Plugin lands in PR3; registered now for the reachability gate.
+        // haqita's lotte.py overrode Accept-Language to en-US for every
+        // plain-tier request (listing + images) — kept verbatim, though the
+        // 2026-10-28 probe (see ARCHITECTURE.md) showed even the exact haqita
+        // client+headers receives the Incapsula challenge from a Jakarta
+        // residential IP today: the override is fidelity, not a bypass.
         slug: 'lotte-mart',
         name: 'Lotte Mart',
         kind: 'brochure',
@@ -97,6 +108,7 @@ export function loadConfig(): ScraperConfig {
         website: 'https://www.lottemart.co.id/',
         maxPages: 40,
         proxyEnv: 'LOTTE_PROXY_URL',
+        headerOverrides: { 'Accept-Language': 'en-US,en;q=0.5' },
       },
     ],
   }
@@ -104,4 +116,15 @@ export function loadConfig(): ScraperConfig {
 
 export function storeBySlug(config: ScraperConfig, slug: string): StoreConfig | undefined {
   return config.stores.find((store) => store.slug === slug)
+}
+
+/**
+ * The store's Tier-3 proxy URL, read from its configured env var (§2).
+ * An empty or whitespace-only value counts as not configured — the
+ * pipeline's by-design needs-proxy skip keys off this, so `LOTTE_PROXY_URL=`
+ * must never be treated as a working proxy.
+ */
+export function storeProxyUrl(store: StoreConfig): string | undefined {
+  const url = store.proxyEnv ? process.env[store.proxyEnv]?.trim() : undefined
+  return url || undefined
 }

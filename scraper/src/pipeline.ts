@@ -10,7 +10,7 @@ import path from 'node:path'
 
 import { Data, Effect } from 'effect'
 
-import { loadConfig, type ScraperConfig } from './config.js'
+import { loadConfig, storeProxyUrl, type ScraperConfig } from './config.js'
 import {
   loadCatalog,
   loadEmbeddingCache,
@@ -35,7 +35,7 @@ import {
   type ScraperState,
 } from './fetch/state.js'
 import type { BrowserLauncher } from './fetch/browser.js'
-import type { FetchError } from './fetch/errors.js'
+import { BrowserTierRequired, type FetchError } from './fetch/errors.js'
 import { createStoreFetcher, type FetchLike } from './fetch/strategy.js'
 import { createOcr, type GeminiClient, type Ocr, type OcrError } from './ocr/gemini.js'
 import { validateProduct, type ValidatedProduct } from './ocr/parse.js'
@@ -82,6 +82,12 @@ export interface PipelineStatus {
       itemsRejected: number
       /** Set when this store's run failed — the run still publishes the rest. */
       error?: string
+      /**
+       * By-design skip (§2): a Tier-2 store the browser tier cannot reach
+       * while its per-store proxy env var is unset. Expected, so the run
+       * stays green and the monitor shows the gap per store.
+       */
+      needsProxy?: boolean
     }
   >
 }
@@ -271,6 +277,15 @@ function toPipelineFailure(error: unknown): PipelineFailure {
   return new PipelineFailure({ message: String(error), exitCode: 1 })
 }
 
+/**
+ * A needs-proxy skip is expected, not a failure: it neither reddens the run
+ * nor holds its outbox back — the store fetched nothing this run, and its
+ * pre-run pending items were already replayed into this run's payload.
+ */
+function storeFailed(entry: PipelineStatus['stores'][string]): boolean {
+  return entry.error !== undefined && !entry.needsProxy
+}
+
 export function runPipeline(
   options: PipelineOptions
 ): Effect.Effect<PipelineStatus, PipelineFailure> {
@@ -340,6 +355,23 @@ export function runPipeline(
             (error) => !(error instanceof QuotaExhausted),
             (error) =>
               Effect.sync(() => {
+                // A Tier-2 store the browser tier cannot reach is a Tier-3
+                // (per-store proxy) decision (§2). With the proxy env var
+                // unset that is a permanent, expected state — not a nightly
+                // failure: mark it and keep the run green until credentials
+                // are configured; the monitor shows the gap on the store row.
+                if (error instanceof BrowserTierRequired && !storeProxyUrl(plugin.config)) {
+                  const envVar = plugin.config.proxyEnv ?? 'a per-store proxy env var'
+                  entry.needsProxy = true
+                  entry.error =
+                    `Tier-3 proxy required but ${envVar} is not configured — ` +
+                    'skipped by design (docs/plan/haqita-integration.md §2)'
+                  log(
+                    `[pipeline] store ${plugin.config.slug} needs a Tier-3 proxy ` +
+                      `(${envVar} unset) — skipping by design, run stays green`
+                  )
+                  return [] as ImageProducts[]
+                }
                 log(
                   `[pipeline] store ${plugin.config.slug} failed — continuing with the remaining stores: ${String(error)}`
                 )
@@ -442,10 +474,11 @@ export function runPipeline(
         for (const { plugin, entry } of runs) {
           // A store that failed mid-run kept appending OCR'd images to its
           // outbox after the payload was built — those items are not in this
-          // publish, and the novelty state already skips their images. Retire
-          // only healthy stores; the failed store's file replays next run
-          // (the ingest upsert makes that idempotent).
-          if (entry.error !== undefined) {
+          // publish, and the novelty state already skips their images. Only a
+          // real failure keeps its file pending for the next run's replay; a
+          // needs-proxy skip retires like a healthy store (it fetched nothing
+          // this run, and its pre-run pending items are in this payload).
+          if (storeFailed(entry)) {
             log(
               `[outbox] keeping ${plugin.config.slug} pending — its run failed; items replay next run`
             )
@@ -482,8 +515,9 @@ export function runPipeline(
       // A failed store must fail the run (red timer, non-zero exit) — but
       // only AFTER publish and outbox handling, so the healthy stores'
       // snapshot went out and the failed store's already-OCR'd items stay in
-      // the outbox for the next run's replay.
-      const failed = runs.filter(({ entry }) => entry.error !== undefined)
+      // the outbox for the next run's replay. A needs-proxy skip is expected
+      // and must not: the run stays green and the monitor shows the gap.
+      const failed = runs.filter(({ entry }) => storeFailed(entry))
       if (failed.length > 0) {
         return yield* new PipelineFailure({
           message: `Store failure(s): ${failed

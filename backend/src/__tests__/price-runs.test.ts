@@ -56,6 +56,17 @@ function sampleReport() {
         itemsExtracted: 7,
         itemsRejected: 1,
       },
+      // The by-design Tier-3 skip (§2): expected, not a nightly failure.
+      'lotte-mart': {
+        pagesFound: 0,
+        newImages: 0,
+        existingImages: 0,
+        skipped: 0,
+        itemsExtracted: 0,
+        itemsRejected: 0,
+        error: 'Tier-3 proxy required but LOTTE_PROXY_URL is not configured',
+        needsProxy: true,
+      },
     },
     match: {
       exact: 5,
@@ -82,6 +93,16 @@ describe('runReportSchema', () => {
 
   it('rejects unknown fields (contract drift must be explicit)', () => {
     expect(safeParse(runReportSchema, { ...sampleReport(), surprise: true }).success).toBe(false)
+  })
+
+  it('accepts the by-design needs-proxy store state', () => {
+    expect(safeParse(runReportSchema, sampleReport()).success).toBe(true)
+    // Absent marker on a healthy store stays valid too.
+    const withoutMarker = {
+      ...sampleReport(),
+      perStore: { superindo: sampleReport().perStore['superindo'] },
+    }
+    expect(safeParse(runReportSchema, withoutMarker).success).toBe(true)
   })
 })
 
@@ -140,6 +161,7 @@ describe('listPriceRuns', () => {
     expect(feed.runs[0]!.status).toBe('success')
     expect(feed.runs[0]!.stage).toBe('done')
     expect(feed.runs[0]!.perStore['superindo']!.itemsExtracted).toBe(7)
+    expect(feed.runs[0]!.perStore['lotte-mart']!.needsProxy).toBe(true)
     expect(feed.runs[0]!.match!.exact).toBe(5)
     expect(feed.lastSuccessAt).toBe('2026-10-26T23:00:05Z')
   })

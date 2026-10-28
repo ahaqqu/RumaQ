@@ -87,6 +87,9 @@ export const runReportStoreSchema = strictObject({
   itemsExtracted: pipe(number(), integer(), minValue(0)),
   itemsRejected: pipe(number(), integer(), minValue(0)),
   error: nullish(string()),
+  // By-design skip (§2): a Tier-2 store the browser tier cannot reach while
+  // its per-store proxy env var is unset — expected, not a nightly failure.
+  needsProxy: nullish(boolean()),
 })
 
 export const runReportSchema = strictObject({

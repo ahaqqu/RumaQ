@@ -8,6 +8,7 @@
 import { Effect } from 'effect'
 
 import type { StoreConfig } from '../config.js'
+import { storeProxyUrl } from '../config.js'
 import { isPermanentClientStatus, withRetries } from '../util/retry.js'
 import { BrowserTierRequired, FetchError, FetchHttpStatus, FetchTransport } from './errors.js'
 
@@ -133,9 +134,7 @@ export function createBrowserFetcher(
   const challengeSettleMs = options.challengeSettleMs ?? 8_000
   const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
   const log = options.log ?? (() => {})
-  const launcher =
-    options.launcher ??
-    playwrightLauncher({ proxyUrl: store.proxyEnv ? process.env[store.proxyEnv] : undefined })
+  const launcher = options.launcher ?? playwrightLauncher({ proxyUrl: storeProxyUrl(store) })
 
   let session: BrowserSession | undefined
   const ensureSession = async (): Promise<BrowserSession> => {

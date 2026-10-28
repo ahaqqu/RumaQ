@@ -100,6 +100,41 @@ describe('AdminPrices', () => {
     expect(container.textContent).toContain('Ingest endpoint returned HTTP 500')
   })
 
+  it('marks a green run carrying the by-design needs-proxy skip', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [
+          {
+            ...mockFeed.runs[0],
+            perStore: {
+              superindo: mockFeed.runs[0].perStore.superindo,
+              'lotte-mart': {
+                pagesFound: 0,
+                newImages: 0,
+                existingImages: 0,
+                skipped: 0,
+                itemsExtracted: 0,
+                itemsRejected: 0,
+                error: 'Tier-3 proxy required but LOTTE_PROXY_URL is not configured',
+                needsProxy: true,
+              },
+            },
+          },
+        ],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    // The run stays green, the store row shows the amber gap — never the red
+    // store-failed rendering.
+    expect(container.textContent).toContain('monitor.success')
+    expect(container.textContent).toContain('monitor.needsProxyChip')
+    expect(container.textContent).toContain('monitor.needsProxy')
+    expect(container.textContent).not.toContain('monitor.storeError')
+  })
+
   it('warns when the last success is older than a day', () => {
     vi.mocked(usePriceRuns).mockReturnValue({
       data: { ...mockFeed, lastSuccessAt: staleSuccess },
