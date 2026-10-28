@@ -31,6 +31,24 @@ describe('loadConfig', () => {
     expect(loadConfig().novelty).toEqual({ minImageSizeKb: 50, minDimensionPx: 300 })
   })
 
+  it('pins live Gemini model ids — bumping one must be a conscious change', () => {
+    const config = loadConfig()
+    // gemini-2.5-flash 404'd for new key cohorts (issue #306 live run:
+    // NOT_FOUND "no longer available to new users"); Google's error names
+    // gemini-3.8-flash as the successor.
+    expect(config.ocr.verifierModel).toBe('gemini-3.8-flash')
+    expect(config.ocr.model).toBe('gemini-3.5-flash')
+    expect(config.consolidation.embeddingModel).toBe('gemini-embedding-001')
+    // Sweep guard: no default pin may regress to the deprecated id.
+    for (const pinned of [
+      config.ocr.model,
+      config.ocr.verifierModel,
+      config.consolidation.embeddingModel,
+    ]) {
+      expect(pinned).not.toBe('gemini-2.5-flash')
+    }
+  })
+
   it('pins superindo to the plain strategy and lotte to the browser tier', () => {
     const config = loadConfig()
     expect(storeBySlug(config, 'superindo')!.strategy).toBe('plain')
