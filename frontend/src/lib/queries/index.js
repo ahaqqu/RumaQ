@@ -15,6 +15,7 @@ export {
   usePriceDetail,
   usePriceRuns,
   usePricePromos,
+  usePriceBrochures,
 } from './prices.js'
 export {
   useScrapeStores,

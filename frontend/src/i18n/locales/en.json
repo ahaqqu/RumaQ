@@ -145,7 +145,12 @@
     "productsCount_plural": "{{count}} products",
     "showExamples": "Example products",
     "promosEmpty": "No promos yet",
-    "promosEmptyDesc": "Promotions will appear here after the next brochure scrape."
+    "promosEmptyDesc": "Promotions will appear here after the next brochure scrape.",
+    "viewBrochures": "Brochures",
+    "brochuresLead": "The actual brochure pages behind the current prices, grouped by store.",
+    "brochuresEmpty": "No brochures yet",
+    "brochuresEmptyDesc": "Brochure pages will appear here after the next scrape publishes them.",
+    "brochureAlt": "{{store}} brochure page"
   },
   "monitor": {
     "lead": "Nightly scraper runs on the VPS. Logs live in journald on the box; this screen shows reported outcomes.",

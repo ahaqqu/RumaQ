@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
-import { usePrices, usePriceMeta, usePriceSources, usePricePromos } from './prices.js'
-import { getPrices, getPricesMeta, getPromos } from '../api'
+import { usePrices, usePriceMeta, usePriceSources, usePricePromos, usePriceBrochures } from './prices.js'
+import { getPrices, getPricesMeta, getPromos, getBrochures } from '../api'
 
 vi.mock('../api', () => ({
   getPrices: vi.fn(),
@@ -11,6 +11,7 @@ vi.mock('../api', () => ({
   getPriceDetail: vi.fn(),
   getPriceRuns: vi.fn(),
   getPromos: vi.fn(),
+  getBrochures: vi.fn(),
 }))
 
 function createWrapper(queryClient) {
@@ -109,6 +110,25 @@ describe('usePricePromos', () => {
     // cannot disagree mid-session (PM §7.6).
     expect(queryClient.getQueryCache().getAll()[0].options.refetchInterval).toBe(300_000)
     expect(queryClient.getQueryData(['prices', 'promos'])).toEqual({ types: [], total: 0 })
+  })
+})
+
+describe('usePriceBrochures', () => {
+  it('polls the brochure catalog on its own cache key with the shared refresh', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    vi.clearAllMocks()
+    getBrochures.mockResolvedValue({ groups: [] })
+
+    const { result } = renderHook(() => usePriceBrochures(), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(getBrochures).toHaveBeenCalledTimes(1)
+    // Same 5-min visible-tab cadence as its siblings so segments cannot
+    // disagree mid-session (issue #293 PM §2).
+    expect(queryClient.getQueryCache().getAll()[0].options.refetchInterval).toBe(300_000)
+    expect(queryClient.getQueryData(['prices', 'brochures'])).toEqual({ groups: [] })
   })
 })
 

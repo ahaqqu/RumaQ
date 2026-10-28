@@ -7,10 +7,12 @@ function RouteComponent() {
 }
 
 export const Route = createFileRoute('/prices')({
-  // ?view=promos selects the promo catalog view (issue #292); any other
-  // value or absence means the Products explorer. A #productKey hash
+  // ?view=promos|brochures selects a catalog view (issues #292/#293); any
+  // other value or absence means the Products explorer. A #productKey hash
   // overrides the view param (stronger intent) — enforced in the page shell.
-  validateSearch: ({ view }) => ({ view: view === 'promos' ? 'promos' : undefined }),
+  validateSearch: ({ view }) => ({
+    view: view === 'promos' || view === 'brochures' ? view : undefined,
+  }),
   component: RouteComponent,
   errorComponent: RouteError,
 })

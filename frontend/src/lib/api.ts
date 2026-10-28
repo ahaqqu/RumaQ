@@ -288,6 +288,13 @@ export function getPromos(signal?: AbortSignal) {
   return unwrap(client.GET('/api/prices/promos', { signal }))
 }
 
+// Brochure catalog (issue #293) — grouped brochure images with ≤5 example
+// products each; images themselves load via plain <img src> against the
+// authenticated /api/brochures proxy, not the typed client.
+export function getBrochures(signal?: AbortSignal) {
+  return unwrap(client.GET('/api/prices/brochures', { signal }))
+}
+
 export function getPriceDetail(productKey: string, signal?: AbortSignal): Promise<unknown> {
   return unwrap(
     client.GET('/api/prices/{productKey}', { params: { path: { productKey } }, signal })

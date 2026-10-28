@@ -4,11 +4,12 @@ import { useLocation, useNavigate, useSearch } from '@tanstack/react-router'
 import { Chip } from '../components/Chip.jsx'
 import { ProductsView } from './ProductsView.jsx'
 import { PromosView } from './PromosView.jsx'
+import { BrochuresView } from './BrochuresView.jsx'
 
-// Products|Promos shell for /prices (issue #292 PM §3). The search text and
-// source filter live here (not inside ProductsView) so the promo view's
-// example jump can clear them — a jump is a fresh browse context that must
-// land inside the unfiltered 200.
+// Products|Promos|Brochures shell for /prices (issue #292 PM §3, #293 PM §2).
+// The search text and source filter live here (not inside ProductsView) so
+// the promo/brochure views' example jump can clear them — a jump is a fresh
+// browse context that must land inside the unfiltered 200.
 export function Prices() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -16,14 +17,19 @@ export function Prices() {
   const [search, setSearch] = useState('')
   const [source, setSource] = useState(null)
 
-  // ?view=promos selects the promo catalog; a #productKey hash is the
+  // ?view=promos|brochures selects a catalog view; a #productKey hash is the
   // stronger intent and forces the Products view regardless of the param
-  // (PM AC 7).
+  // (PM AC 7 / #293 AC 5).
   const { view } = useSearch({ strict: false })
-  const activeView = view === 'promos' && !location.hash ? 'promos' : 'products'
+  const activeView =
+    view === 'promos' && !location.hash
+      ? 'promos'
+      : view === 'brochures' && !location.hash
+        ? 'brochures'
+        : 'products'
 
   const selectView = (next) => {
-    navigate({ to: '/prices', search: next === 'promos' ? { view: 'promos' } : {}, hash: '' })
+    navigate({ to: '/prices', search: next === 'products' ? {} : { view: next }, hash: '' })
   }
 
   // Example-product jump (PM AC 6): clear the local search/source filters —
@@ -40,7 +46,11 @@ export function Prices() {
     <>
       <div className="mb-6">
         <p className="text-md text-text-muted leading-snug max-w-[62ch]">
-          {activeView === 'promos' ? t('prices.promosLead') : t('prices.lead')}
+          {activeView === 'promos'
+            ? t('prices.promosLead')
+            : activeView === 'brochures'
+              ? t('prices.brochuresLead')
+              : t('prices.lead')}
         </p>
       </div>
 
@@ -59,12 +69,21 @@ export function Prices() {
         >
           {t('prices.viewPromos')}
         </Chip>
+        <Chip
+          variant="filter"
+          pressed={activeView === 'brochures'}
+          onClick={() => selectView('brochures')}
+        >
+          {t('prices.viewBrochures')}
+        </Chip>
       </div>
 
       {activeView === 'products' ? (
         <ProductsView search={search} setSearch={setSearch} source={source} setSource={setSource} />
-      ) : (
+      ) : activeView === 'promos' ? (
         <PromosView onJump={jump} />
+      ) : (
+        <BrochuresView onJump={jump} />
       )}
     </>
   )
