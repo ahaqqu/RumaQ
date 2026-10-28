@@ -90,6 +90,9 @@ const stockQuery = object({
 const pricesQuery = object({
   q: optional(string()),
   source: optional(string()),
+  // Absent sort keeps the legacy flat name-ordered query and its exact
+  // response shape, so unsorted consumers (usePriceSources) never regress.
+  sort: optional(picklist(['name', 'cheapest', 'savings', 'expiry'])),
 })
 
 const plansQuery = object({
@@ -2199,6 +2202,74 @@ apiApp.delete(
 const PRICE_MIN_CONFIDENCE = 0.55
 const PRICE_LOW_CONFIDENCE_FLAG = 0.85
 
+// Product page size for sorted list queries. LIMIT 200 + 1 so the `truncated`
+// flag is precise (201st product existed) instead of a row-count heuristic.
+const PRICE_LIST_LIMIT = 200
+const PRICE_PAGE_LIMIT = PRICE_LIST_LIMIT + 1
+
+// Fixed ORDER BY fragments per sort value (issue #291 design §1.2). User
+// input only ever selects a key of this map — it is never interpolated into
+// SQL. `page` and the outer query share the primary expression so row order
+// equals product order; ties resolve by name, then stable ids.
+const PRICE_SORTS = {
+  name: { page: 'pp.name COLLATE NOCASE', outer: 'l.name COLLATE NOCASE' },
+  cheapest: { page: 'a.price_min', outer: 'a.price_min' },
+  savings: {
+    page: 'CASE WHEN a.price_max > a.price_min THEN 0 ELSE 1 END, a.savings_pct DESC',
+    outer: 'CASE WHEN a.price_max > a.price_min THEN 0 ELSE 1 END, a.savings_pct DESC',
+  },
+  expiry: {
+    page: 'CASE WHEN ch.cheapest_valid_until IS NULL THEN 1 ELSE 0 END, ch.cheapest_valid_until',
+    outer: 'CASE WHEN ch.cheapest_valid_until IS NULL THEN 1 ELSE 0 END, ch.cheapest_valid_until',
+  },
+} as const
+
+// Optional q / source filters shared by the legacy flat query and the sorted
+// CTE pipeline. Inside the CTE the aggregates (price_min, savings_pct, …)
+// reflect exactly the filtered set the user is looking at.
+function buildPriceFilters(q: string | undefined, source: string | undefined) {
+  let sql = ''
+  const params: unknown[] = []
+  if (q) {
+    sql += ` AND (p.name LIKE ? ESCAPE '\\' OR p.brand LIKE ? ESCAPE '\\' OR p.product_key LIKE ? ESCAPE '\\')`
+    const pattern = `%${escapeLike(q)}%`
+    params.push(pattern, pattern, pattern)
+  }
+  if (source) {
+    sql += ' AND s.slug = ?'
+    params.push(source)
+  }
+  return { sql, params }
+}
+
+type PriceListRow = {
+  product_key: string
+  name: string
+  brand: string | null
+  unit: string | null
+  category: string | null
+  source_slug: string
+  source_name: string
+  observed_date: string
+  price: number
+  effective_unit_price: number | null
+  promo_type: string | null
+  promo_label: string | null
+  valid_from: string | null
+  valid_until: string | null
+  match_method: string | null
+  match_confidence: number
+  brochure_url: string | null
+}
+
+type PriceAggregateFields = {
+  price_min: number
+  price_max: number
+  savings_pct: number
+  cheapest_source_slug: string
+  cheapest_valid_until: string | null
+}
+
 // Admin scraping monitor (§7.1): run history with per-run detail and
 // last-success age. 403 for non-allowlisted users (requireAdmin); logs
 // themselves stay in journald on the VPS.
@@ -2446,6 +2517,16 @@ apiApp.get(
     parameters: [
       { in: 'query', name: 'q', required: false, schema: { type: 'string' } },
       { in: 'query', name: 'source', required: false, schema: { type: 'string' } },
+      {
+        in: 'query',
+        name: 'sort',
+        required: false,
+        schema: {
+          type: 'string',
+          enum: ['name', 'cheapest', 'savings', 'expiry'],
+          default: 'name',
+        },
+      },
     ],
     responses: {
       200: { description: 'OK' },
@@ -2454,9 +2535,15 @@ apiApp.get(
   }),
   sValidator('query', pricesQuery),
   async (c) => {
-    const { q, source } = c.req.valid('query')
+    const { q, source, sort } = c.req.valid('query')
 
-    let sql = `SELECT p.product_key, p.name, p.brand, p.unit, p.category,
+    const filters = buildPriceFilters(q, source)
+
+    // No sort param → the legacy flat name-ordered query and its exact
+    // response: usePriceSources builds the source-chip bar from this path and
+    // must never see a different shape or order.
+    if (!sort) {
+      let sql = `SELECT p.product_key, p.name, p.brand, p.unit, p.category,
                       s.slug AS source_slug, s.name AS source_name,
                       o.observed_date, o.price, o.effective_unit_price,
                       o.promo_type, o.promo_label, o.valid_from, o.valid_until,
@@ -2470,48 +2557,138 @@ apiApp.get(
                  ORDER BY o2.observed_date DESC, o2.scraped_at DESC
                  LIMIT 1
                )
-               AND o.match_confidence >= ${PRICE_MIN_CONFIDENCE}`
-    const params: unknown[] = []
+               AND o.match_confidence >= ${PRICE_MIN_CONFIDENCE}${filters.sql}
+               ORDER BY p.name COLLATE NOCASE, s.name COLLATE NOCASE
+               LIMIT ${PRICE_LIST_LIMIT}`
 
-    if (q) {
-      sql += ` AND (p.name LIKE ? ESCAPE '\\' OR p.brand LIKE ? ESCAPE '\\' OR p.product_key LIKE ? ESCAPE '\\')`
-      const pattern = `%${escapeLike(q)}%`
-      params.push(pattern, pattern, pattern)
+      const { results } = await c.env.DB.prepare(sql)
+        .bind(...filters.params)
+        .all<PriceListRow>()
+
+      const items = (results ?? []).map((row) => ({
+        ...row,
+        low_confidence: row.match_confidence < PRICE_LOW_CONFIDENCE_FLAG,
+      }))
+
+      const res = c.json({ items, total: items.length })
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
     }
-    if (source) {
-      sql += ' AND s.slug = ?'
-      params.push(source)
-    }
-    sql += ' ORDER BY p.name COLLATE NOCASE, s.name COLLATE NOCASE LIMIT 200'
+
+    // Sorted path: aggregate first, page on products second. The sort keys for
+    // cheapest/savings/expiry are product-level aggregates, so LIMIT must
+    // apply after aggregation or whole products get dropped or split across
+    // the page boundary (issue #291 design §1.1). Every returned product is
+    // complete; `truncated` reports whether a 201st product existed.
+    const order = PRICE_SORTS[sort]
+    const sql = `WITH latest AS (
+  SELECT p.product_key, p.name, p.brand, p.unit, p.category,
+         s.slug AS source_slug, s.name AS source_name,
+         o.observed_date, o.price, o.effective_unit_price,
+         o.promo_type, o.promo_label, o.valid_from, o.valid_until,
+         o.match_method, o.match_confidence, o.brochure_url,
+         COALESCE(o.effective_unit_price, o.price) AS effective_price
+  FROM price_observations o
+  JOIN price_products p ON p.id = o.product_id
+  JOIN price_sources s ON s.id = o.source_id
+  WHERE o.id = (
+          SELECT o2.id FROM price_observations o2
+          WHERE o2.product_id = o.product_id AND o2.source_id = o.source_id
+          ORDER BY o2.observed_date DESC, o2.scraped_at DESC
+          LIMIT 1
+        )
+    AND o.match_confidence >= ${PRICE_MIN_CONFIDENCE}${filters.sql}
+),
+cheapest AS (
+  SELECT product_key,
+         source_slug AS cheapest_source_slug,
+         valid_until AS cheapest_valid_until,
+         ROW_NUMBER() OVER (
+           PARTITION BY product_key
+           ORDER BY effective_price ASC, source_slug ASC
+         ) AS rn
+  FROM latest
+),
+agg AS (
+  SELECT product_key,
+         MIN(effective_price) AS price_min,
+         MAX(effective_price) AS price_max,
+         CASE WHEN MAX(effective_price) > 0
+              THEN ROUND((MAX(effective_price) - MIN(effective_price)) * 100.0 / MAX(effective_price), 1)
+              ELSE 0 END AS savings_pct
+  FROM latest
+  GROUP BY product_key
+),
+page AS (
+  SELECT a.product_key
+  FROM agg a
+  JOIN cheapest ch ON ch.product_key = a.product_key AND ch.rn = 1
+  JOIN price_products pp ON pp.product_key = a.product_key
+  ORDER BY ${order.page}, pp.name COLLATE NOCASE, a.product_key
+  LIMIT ${PRICE_PAGE_LIMIT}
+)
+SELECT l.product_key, l.name, l.brand, l.unit, l.category,
+       l.source_slug, l.source_name,
+       l.observed_date, l.price, l.effective_unit_price,
+       l.promo_type, l.promo_label, l.valid_from, l.valid_until,
+       l.match_method, l.match_confidence, l.brochure_url,
+       a.price_min, a.price_max, a.savings_pct,
+       ch.cheapest_source_slug, ch.cheapest_valid_until
+FROM latest l
+JOIN agg a ON a.product_key = l.product_key
+JOIN cheapest ch ON ch.product_key = l.product_key AND ch.rn = 1
+JOIN page pg ON pg.product_key = l.product_key
+ORDER BY ${order.outer}, l.name COLLATE NOCASE, l.source_name COLLATE NOCASE, l.product_key`
 
     const { results } = await c.env.DB.prepare(sql)
-      .bind(...params)
-      .all<{
-        product_key: string
-        name: string
-        brand: string | null
-        unit: string | null
-        category: string | null
-        source_slug: string
-        source_name: string
-        observed_date: string
-        price: number
-        effective_unit_price: number | null
-        promo_type: string | null
-        promo_label: string | null
-        valid_from: string | null
-        valid_until: string | null
-        match_method: string | null
-        match_confidence: number
-        brochure_url: string | null
-      }>()
+      .bind(...filters.params)
+      .all<PriceListRow & PriceAggregateFields>()
 
     const items = (results ?? []).map((row) => ({
       ...row,
       low_confidence: row.match_confidence < PRICE_LOW_CONFIDENCE_FLAG,
     }))
 
-    const res = c.json({ items, total: items.length })
+    const productCount = new Set(items.map((item) => item.product_key)).size
+    const res = c.json({ items, total: items.length, truncated: productCount > PRICE_LIST_LIMIT })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+// Freshness for the price explorer page (issue #291): session-authed sibling
+// of the internal status probe, reusing getPricesStatus verbatim. Registered
+// before /api/prices/:productKey so "meta" is never captured as a product
+// key; auth comes from the existing /api/prices/:productKey middleware line.
+apiApp.get(
+  '/api/prices/meta',
+  describeRoute({
+    description:
+      'Price data freshness: latest scrape time, latest observed date, and observation count.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                latestScrapedAt: { type: 'string', nullable: true } as any,
+                latestObservedDate: { type: 'string', nullable: true } as any,
+                observationCount: { type: 'integer' },
+              },
+              required: ['latestScrapedAt', 'latestObservedDate', 'observationCount'],
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+    },
+  }),
+  async (c) => {
+    const status = await getPricesStatus(c.env.DB)
+    const res = c.json(status)
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }
@@ -2565,7 +2742,7 @@ apiApp.get(
            ORDER BY o2.observed_date DESC, o2.scraped_at DESC
            LIMIT 1
          )
-       ORDER BY o.price ASC`
+       ORDER BY COALESCE(o.effective_unit_price, o.price) ASC, s.slug ASC`
     )
       .bind(productKey)
       .all<{

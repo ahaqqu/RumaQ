@@ -68,3 +68,57 @@ Feature: Price data ingest and explorer
     When the scraper pushes a run report
     Then the response status should be 200
     And the admin sees the run in the monitor feed
+
+  Scenario: Price explorer sorts by cheapest, savings, expiry, and name
+    Given the database has seed data
+    And a valid price snapshot has been pushed
+    And a promo snapshot has been pushed
+    And I am authenticated as a test user
+    When I request the price list sorted by "cheapest"
+    Then the response status should be 200
+    And the product names should appear in order "Minyak,Kopi,Gula,Beras"
+    And the gula item should carry effective-price aggregates
+    When I request the price list sorted by "savings"
+    Then the response status should be 200
+    And the product names should appear in order "Minyak,Gula,Beras,Kopi"
+    When I request the price list sorted by "expiry"
+    Then the response status should be 200
+    And the product names should appear in order "Kopi,Gula,Beras,Minyak"
+    When I request the price list sorted by "name"
+    Then the response status should be 200
+    And the product names should appear in order "Beras,Gula,Kopi,Minyak"
+
+  Scenario: Price explorer applies LIMIT after aggregation
+    Given the database has seed data
+    And a bulk catalogue of 205 single-source products has been pushed
+    And I am authenticated as a test user
+    When I request the price list sorted by "savings"
+    Then the response status should be 200
+    And the page should hold the 201st product and flag truncation
+    When I search the sorted price list for "Item 3"
+    Then the response status should be 200
+    And the page should hold 11 complete products without truncation
+
+  Scenario: Price detail orders current offers by the effective price
+    Given the database has seed data
+    And a valid price snapshot has been pushed
+    And a promo snapshot has been pushed
+    And I am authenticated as a test user
+    When I request the price detail for the promo product
+    Then the response status should be 200
+    And the first current offer should be the effective-price cheapest store
+
+  Scenario: Price freshness meta requires authentication
+    Given the database has seed data
+    And a valid price snapshot has been pushed
+    When I send an unauthenticated GET request to /api/prices/meta
+    Then the response status should be 401
+
+  Scenario: Price freshness meta reports the latest scrape
+    Given the database has seed data
+    And a valid price snapshot has been pushed
+    And I am authenticated as a test user
+    When I request the price freshness meta
+    Then the response status should be 200
+    And the meta should report the latest scrape time and count
+    And the meta response should be private and no-cache
