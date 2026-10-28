@@ -5,6 +5,7 @@ import {
   OIL_KEY,
   RICE_KEY,
   SUGAR_KEY,
+  FLOUR_KEY,
   priceSnapshot,
   promoSnapshot,
   bulkCatalogueSnapshot,
@@ -139,9 +140,9 @@ defineFeature(feature, (test) => {
 
     and('the ingest should report accepted items', () => {
       expect(ctx.responseBody).toMatchObject({
-        accepted: 3,
-        productsCreated: 2,
-        observationsUpserted: 3,
+        accepted: 4,
+        productsCreated: 3,
+        observationsUpserted: 4,
         skipped: 0,
       })
     })
@@ -171,7 +172,7 @@ defineFeature(feature, (test) => {
       ctx.expectStatus(200)
       const oilRows = ctx.responseBody.items.filter((i) => i.product_key === OIL_KEY)
       expect(oilRows).toHaveLength(2)
-      expect(ctx.responseBody.total).toBe(3)
+      expect(ctx.responseBody.total).toBe(4)
     })
   })
 
@@ -308,7 +309,7 @@ defineFeature(feature, (test) => {
     and('the status should report the latest observation date and count', () => {
       expect(ctx.responseBody).toMatchObject({
         latestObservedDate: '2026-10-24',
-        observationCount: 3,
+        observationCount: 4,
       })
     })
   })
@@ -565,12 +566,185 @@ defineFeature(feature, (test) => {
       expect(ctx.responseBody).toEqual({
         latestObservedDate: '2026-10-24',
         latestScrapedAt: '2026-10-24T23:00:05Z',
-        observationCount: 3,
+        observationCount: 4,
       })
     })
 
     and('the meta response should be private and no-cache', () => {
       expect(ctx.response.headers.get('Cache-Control')).toBe('private, no-cache')
+    })
+  })
+
+  // --- Promos catalog (issue #292) ---
+
+  // Mirrors the SQL CASE in getPromoCatalog: the closed 5-value enum keeps its
+  // group; anything else (unknown future enum values, NULL type with a label)
+  // lands in 'other'.
+  const KNOWN_PROMO_TYPES = [
+    'discount_pct',
+    'discount_fixed',
+    'get_free',
+    'bundle_buy',
+    'multi_price',
+  ]
+
+  function promoGroupOf(item) {
+    if (KNOWN_PROMO_TYPES.includes(item.promo_type)) return item.promo_type
+    return 'other'
+  }
+
+  function hasPromoEvidence(item) {
+    return item.promo_type != null || (item.promo_label != null && item.promo_label !== '')
+  }
+
+  test('Promos catalog requires authentication', ({ given, and, when, then }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a valid price snapshot has been pushed', async () => {
+      await pushSnapshot()
+      ctx.expectStatus(200)
+    })
+
+    when(/I send an unauthenticated GET request to (\S+)/, async (path) => {
+      const saved = ctx.headers
+      ctx.headers = { ...ctx.headers } // no Cookie → unauthenticated
+      delete ctx.headers.Cookie
+      await ctx.sendRequest('GET', path)
+      ctx.headers = saved
+    })
+
+    then('the response status should be 401', () => {
+      ctx.expectStatus(401)
+    })
+  })
+
+  test('Promos catalog groups current observations with explorer count parity', ({
+    given,
+    and,
+    when,
+    then,
+  }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a valid price snapshot has been pushed', async () => {
+      await pushSnapshot()
+      ctx.expectStatus(200)
+    })
+
+    and('I am authenticated as a test user', async () => {
+      await ctx.authenticate()
+    })
+
+    when('I request the promo catalog', async () => {
+      await ctx.sendRequest('GET', '/api/prices/promos')
+      // Stash the catalog body: the parity step later fires an explorer
+      // request that overwrites ctx.responseBody.
+      ctx.promoBody = ctx.responseBody
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and('the promo catalog response should be private and no-cache', () => {
+      expect(ctx.response.headers.get('Cache-Control')).toBe('private, no-cache')
+    })
+
+    and(/the promo groups should appear in order "(.+)"/, (expected) => {
+      // Empty groups are omitted; 'other' sorts last by construction.
+      expect(ctx.promoBody.types.map((g) => g.promo_type)).toEqual(expected.split(','))
+    })
+
+    and('the promo counts should match the explorer per type', async () => {
+      const promos = ctx.promoBody
+      await ctx.sendRequest('GET', '/api/prices')
+      const explorerRows = ctx.responseBody.items
+
+      // The explorer's promo-evidence rows grouped exactly like the SQL CASE.
+      const explorerGroups = new Map()
+      for (const row of explorerRows) {
+        if (!hasPromoEvidence(row)) continue
+        const key = promoGroupOf(row)
+        if (!explorerGroups.has(key)) explorerGroups.set(key, new Set())
+        explorerGroups.get(key).add(row.product_key)
+      }
+
+      // Layer 1: each catalog group's product_count equals the distinct
+      // products the explorer shows for that type.
+      for (const group of promos.types) {
+        expect(group.product_count).toBe(explorerGroups.get(group.promo_type)?.size ?? 0)
+      }
+      // Layer 2: no explorer group is missing from the catalog.
+      expect(promos.types.map((g) => g.promo_type).sort()).toEqual(
+        [...explorerGroups.keys()].sort()
+      )
+      // Layer 3: group×store cells reconcile 1:1 with the evidence rows
+      // (latest observation per (product, source) ⇒ one row per cell).
+      const perStoreSum = promos.types.reduce(
+        (sum, g) => sum + Object.values(g.stores).reduce((a, b) => a + b, 0),
+        0
+      )
+      const evidenceRows = explorerRows.filter(hasPromoEvidence).length
+      expect(perStoreSum).toBe(evidenceRows)
+      // Layer 4: the view total is the distinct evidence products.
+      expect(promos.total).toBe(
+        new Set(explorerRows.filter(hasPromoEvidence).map((r) => r.product_key)).size
+      )
+    })
+
+    and('the Other group should hold the label-only product', () => {
+      const other = ctx.promoBody.types.find((g) => g.promo_type === 'other')
+      expect(other).toBeDefined()
+      expect(other.example_products.map((p) => p.product_key)).toContain(FLOUR_KEY)
+      // The rice row (get_free) never leaks into Other.
+      const getFree = ctx.promoBody.types.find((g) => g.promo_type === 'get_free')
+      expect(getFree.example_products.map((p) => p.product_key)).toContain(RICE_KEY)
+    })
+
+    and('the promo catalog should not double-count products across stores', () => {
+      const discountPct = ctx.promoBody.types.find((g) => g.promo_type === 'discount_pct')
+      // Oil sits on promo at two stores: 2 per-source cells but 1 distinct
+      // product — product_count must come from the totals statement.
+      expect(discountPct.product_count).toBe(1)
+      expect(discountPct.stores).toEqual({ 'lotte-mart': 1, superindo: 1 })
+      // The example row is the cheapest offer (Lotte 21500 < Superindo 23000).
+      expect(discountPct.example_products).toHaveLength(1)
+      expect(discountPct.example_products[0]).toMatchObject({
+        product_key: OIL_KEY,
+        source_slug: 'lotte-mart',
+        price: 21500,
+      })
+    })
+  })
+
+  test('Promos catalog is empty without promo observations', ({ given, and, when, then }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a bulk catalogue of 3 single-source products has been pushed', async () => {
+      await pushJsonSnapshot(bulkCatalogueSnapshot(3))
+      ctx.expectStatus(200)
+    })
+
+    and('I am authenticated as a test user', async () => {
+      await ctx.authenticate()
+    })
+
+    when('I request the promo catalog', async () => {
+      await ctx.sendRequest('GET', '/api/prices/promos')
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and('the promo catalog should have no groups', () => {
+      expect(ctx.responseBody).toEqual({ types: [], total: 0 })
     })
   })
 })

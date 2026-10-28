@@ -9,6 +9,7 @@ export const OIL_KEY = 'minyak-goreng--bimoli--1-l'
 export const RICE_KEY = 'beras--pandan-wangi--5-kg'
 export const SUGAR_KEY = 'gula-pasir--gulaku--1-kg'
 export const COFFEE_KEY = 'kopi--kapal-api--165-g'
+export const FLOUR_KEY = 'tepung--segitiga-biru--1-kg'
 
 export function priceSnapshot() {
   return {
@@ -26,6 +27,11 @@ export function priceSnapshot() {
         unit: '1 L',
         storeSlug: 'lotte-mart',
         price: 21500,
+        // Promo evidence for the promos catalog (issue #292): oil sits on
+        // discount_pct at TWO stores — the count-parity fixture's
+        // double-count hazard (2 evidence rows, 1 distinct product).
+        promoType: 'discount_pct',
+        promoLabel: 'Diskon 15%',
         matchMethod: 'exact',
         matchConfidence: 1.0,
       },
@@ -36,6 +42,8 @@ export function priceSnapshot() {
         unit: '1 L',
         storeSlug: 'superindo',
         price: 23000,
+        promoType: 'discount_pct',
+        promoLabel: 'Diskon 15%',
         matchMethod: 'exact',
         matchConfidence: 1.0,
       },
@@ -46,8 +54,24 @@ export function priceSnapshot() {
         unit: '5 kg',
         storeSlug: 'superindo',
         price: 72000,
+        promoType: 'get_free',
+        promoLabel: 'Beli 1 gratis 1',
         matchMethod: 'embedding',
         matchConfidence: 0.7,
+      },
+      {
+        // Label but no promo_type: the Other bucket's input (issue #292).
+        // High price + no validity + "T" name so the sort scenarios append
+        // it after the existing products instead of reshuffling them.
+        productKey: FLOUR_KEY,
+        name: 'Tepung Segitiga Biru 1 kg',
+        brand: 'Segitiga Biru',
+        unit: '1 kg',
+        storeSlug: 'lotte-mart',
+        price: 80000,
+        promoLabel: 'Beli 2 gratis 1',
+        matchMethod: 'exact',
+        matchConfidence: 1.0,
       },
     ],
   }

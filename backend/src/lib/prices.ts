@@ -36,8 +36,10 @@ const PROMO_GROUP_CASE = `CASE WHEN o.promo_type IN ('discount_pct','discount_fi
        THEN o.promo_type ELSE 'other' END`
 
 // Rows carry promo evidence when the type is set, or a label rides along
-// with an unclassified type (the Other bucket's input). Interpolated into
-// the examples and total statements so they cannot drift apart.
+// with an unclassified type. Interpolated into ALL FOUR statements: without
+// it, plain non-promo rows fall into 'other' via the CASE and the group
+// counts would not reconcile with the explorer (caught by the automation
+// count-parity fixture against real D1).
 const PROMO_EVIDENCE = `(o.promo_type IS NOT NULL OR (o.promo_label IS NOT NULL AND o.promo_label <> ''))`
 
 // Fixed response order (PM §2); groups absent from the totals result are
@@ -97,12 +99,14 @@ export async function getPromoCatalog(db: D1Database): Promise<PromoCatalog> {
 SELECT ${PROMO_GROUP_CASE} AS group_key,
        COUNT(DISTINCT p.product_key) AS product_count
 ${PROMO_LATEST_BASE}
+  AND ${PROMO_EVIDENCE}
 GROUP BY group_key`),
     db.prepare(`-- promos: sources
 SELECT ${PROMO_GROUP_CASE} AS group_key,
        s.slug AS source_slug,
        COUNT(DISTINCT p.product_key) AS product_count
 ${PROMO_LATEST_BASE}
+  AND ${PROMO_EVIDENCE}
 GROUP BY group_key, source_slug
 ORDER BY source_slug ASC`),
     db.prepare(`-- promos: examples

@@ -76,17 +76,17 @@ Feature: Price data ingest and explorer
     And I am authenticated as a test user
     When I request the price list sorted by "cheapest"
     Then the response status should be 200
-    And the product names should appear in order "Minyak,Kopi,Gula,Beras"
+    And the product names should appear in order "Minyak,Kopi,Gula,Beras,Tepung"
     And the gula item should carry effective-price aggregates
     When I request the price list sorted by "savings"
     Then the response status should be 200
-    And the product names should appear in order "Minyak,Gula,Beras,Kopi"
+    And the product names should appear in order "Minyak,Gula,Beras,Kopi,Tepung"
     When I request the price list sorted by "expiry"
     Then the response status should be 200
-    And the product names should appear in order "Kopi,Gula,Beras,Minyak"
+    And the product names should appear in order "Kopi,Gula,Beras,Minyak,Tepung"
     When I request the price list sorted by "name"
     Then the response status should be 200
-    And the product names should appear in order "Beras,Gula,Kopi,Minyak"
+    And the product names should appear in order "Beras,Gula,Kopi,Minyak,Tepung"
 
   Scenario: Price explorer applies LIMIT after aggregation
     Given the database has seed data
@@ -122,3 +122,29 @@ Feature: Price data ingest and explorer
     Then the response status should be 200
     And the meta should report the latest scrape time and count
     And the meta response should be private and no-cache
+
+  Scenario: Promos catalog requires authentication
+    Given the database has seed data
+    And a valid price snapshot has been pushed
+    When I send an unauthenticated GET request to /api/prices/promos
+    Then the response status should be 401
+
+  Scenario: Promos catalog groups current observations with explorer count parity
+    Given the database has seed data
+    And a valid price snapshot has been pushed
+    And I am authenticated as a test user
+    When I request the promo catalog
+    Then the response status should be 200
+    And the promo catalog response should be private and no-cache
+    And the promo groups should appear in order "discount_pct,get_free,other"
+    And the promo counts should match the explorer per type
+    And the Other group should hold the label-only product
+    And the promo catalog should not double-count products across stores
+
+  Scenario: Promos catalog is empty without promo observations
+    Given the database has seed data
+    And a bulk catalogue of 3 single-source products has been pushed
+    And I am authenticated as a test user
+    When I request the promo catalog
+    Then the response status should be 200
+    And the promo catalog should have no groups

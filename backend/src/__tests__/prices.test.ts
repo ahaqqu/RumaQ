@@ -612,6 +612,11 @@ describe('GET /api/prices/promos', () => {
     expect(totalsCall.sql).toContain(
       "'discount_pct','discount_fixed','get_free','bundle_buy','multi_price'"
     )
+    // The evidence filter rides on the totals too — without it plain
+    // non-promo rows fall into 'other' and pollute the group counts.
+    expect(totalsCall.sql).toContain(
+      "o.promo_type IS NOT NULL OR (o.promo_label IS NOT NULL AND o.promo_label <> '')"
+    )
   })
 
   it('returns an empty catalog before any promo evidence', async () => {
