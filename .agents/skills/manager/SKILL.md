@@ -27,9 +27,9 @@ Every work unit — feature OR bug — is a GitHub issue. The board is a GitHub 
 
 Mechanics (record the project/field/option IDs in the state file once):
 
-- `gh project create` / `gh project field-list`
-- `gh project item-add <n> --owner <owner> --url <issue-url>`
-- `gh project item-edit --id <item> --project-id <pid> --field-id <fid> --single-select-option-id <oid>`
+- `gh project create --owner <owner> --title "Delivery Kanban"` / `gh project field-list --owner <owner> <project-number>`
+- `gh project item-add <project-number> --owner <owner> --url <issue-url>`
+- `gh project item-edit --id <item-id> --project-id <project-id> --field-id <field-id> --single-select-option-id <option-id>`
 
 At EVERY phase transition: move the issue's board status AND append a brief phase comment on the issue (phase started/completed + artifact links: research doc, design doc, plan doc, PR, deploy/verification evidence). The issue is the durable record; the board is the monitoring view; together with the state file they let a terminated execution be resumed.
 
@@ -52,10 +52,10 @@ Run each work unit through these 9 steps; skip only phases recorded as pre-compl
 1. **Issue** — `gh issue create` with a self-contained body: summary, entry phase + rationale, scope, acceptance criteria, links to any repo artifacts (never reference paths outside the repo without inlining the content). Move the issue to the entry-phase board column.
 2. **Research** (features) — spawn a background research subagent (read-only) to produce a research doc: existing code paths, reusable patterns, risks, open questions. Manager reviews it into the issue.
 3. **Design** — spawn TWO background subagents in parallel: a **product manager** persona (product decisions: user value, scope cuts, UX/acceptance criteria) and a **product architect** persona (technical design: components, data model, conventions compliance, integration points, alternatives rejected). Manager reconciles both into one design doc and posts it to the issue.
-4. **Plan** — the manager writes the implementation plan doc from research + design (under full autonomy the manager proceeds; otherwise hold for user approval). The plan states execution phases if large.
+4. **Plan** — the manager writes the implementation plan doc from research + design (hold for user approval under Active autonomy; proceed under the other AFK levels). The plan states execution phases if large.
 5. **Implement** — spawn implementation subagent(s) (background) instructed to: follow the `guided-implementation` skill on the plan doc; obey repo `AGENTS.md` + conventions docs; work in a dedicated git worktree + branch (never `main`); run the repo test entrypoints (`scripts/test.sh`); open the PR per the `pr-creation` skill in the final phase. Split large plans into sequential phases on the same branch to bound agent context.
 6. **Review** — spawn a review subagent to run the `code-review` skill on the PR (docs/skill-only changes → normal depth; code → whatever code-review mandates). It then fixes ALL findings it reported, pushes, and reports finding→resolution pairs.
-7. **Merge or re-review** — the manager evaluates. Substantial findings / failed checks → fresh review agent (back to step 6). Clean → verify CI green (`gh pr checks`) → squash-merge matching repo history — only if the user granted autonomy; otherwise hold and report.
+7. **Merge or re-review** — the manager evaluates. Substantial findings / failed checks → fresh review agent (back to step 6). Clean → verify CI green (`gh pr checks`) → squash-merge matching repo history — only under Full autonomy; under the other AFK levels hold and report.
 8. **Verify** — spawn a verification subagent: deploy via the repo's deploy entrypoints (`scripts/deploy.sh`) and verify on the LIVE URL (browser automation where possible; note evidence in the issue). Limits: admin-only surfaces need the user's admin login → verify via automation/e2e and flag for user spot-check; operator/root steps are surfaced as blocked items, never skipped silently.
 9. **Complete** — anything discovered that needs implementing becomes a new GitHub issue (entry phase judged per Entry-point judgment) and the loop runs on it. Then `gh issue close` the original with a completion comment.
 
