@@ -388,16 +388,11 @@ export function Prices() {
                           </div>
                           {badges.length > 0 && (
                             <div className="flex flex-wrap items-center gap-1 mt-1">
-                              {badges.slice(0, 2).map((badge) => (
+                              {badges.map((badge) => (
                                 <Badge key={badge.text} tone={badge.tone}>
                                   {badge.text}
                                 </Badge>
                               ))}
-                              {badges.length > 2 && (
-                                <span className="text-xs text-text-muted">
-                                  +{badges.length - 2}
-                                </span>
-                              )}
                             </div>
                           )}
                         </div>
