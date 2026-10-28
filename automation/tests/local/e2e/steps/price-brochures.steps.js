@@ -10,7 +10,12 @@ const { Given, When, Then } = createBdd()
 // match this suite's feature text verbatim).
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
 const INGEST_SECRET = 'test-ingest-secret'
-const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10, 1, 2, 3, 4, 5, 6, 7, 8])
+// A real 1x1 transparent PNG: the browser must be able to DECODE the served
+// bytes — magic bytes alone are not enough for <img> to skip its error event.
+const PNG_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+)
 
 // Today's date keys the uploaded object — fresh enough that no retention
 // sweep (grace = 14 days from the key date) can delete it mid-run even when
