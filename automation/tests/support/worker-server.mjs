@@ -54,7 +54,7 @@ const mf = new Miniflare({
   modules: MODULES,
   modulesRoot: DIST_DIR,
   d1Databases: { DB: 'rumaq-test' },
-  r2Buckets: { RECEIPTS: 'rumaq-receipts-test' },
+  r2Buckets: { RECEIPTS: 'rumaq-receipts-test', BROCHURES: 'rumaq-brochures-test' },
   compatibilityDate: '2026-07-10',
   compatibilityFlags: ['nodejs_compat'],
   bindings: {

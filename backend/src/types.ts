@@ -12,6 +12,8 @@ export type Env = {
   Bindings: {
     DB: D1Database
     RECEIPTS: R2Bucket
+    /** Brochure images (issue #293) — private, served only via the Worker proxy. */
+    BROCHURES: R2Bucket
     GOOGLE_CLIENT_ID: string
     GOOGLE_CLIENT_SECRET: string
     WORKER_JWT_SECRET: string

@@ -238,19 +238,21 @@ setup_database_remote() {
 }
 
 # ------------------------------------------------------------------
-# R2 bucket – create if missing
+# R2 buckets – create if missing (receipts + brochures, issue #293)
 # ------------------------------------------------------------------
 ensure_r2_bucket() {
-  local bucket_name="${R2_BUCKET_NAME:-rumaq-receipts}"
+  local buckets=("${R2_BUCKET_NAME:-rumaq-receipts}" "${R2_BROCHURES_BUCKET_NAME:-rumaq-brochures}")
 
-  run_when_live "R2 bucket check" bash -c "
-    if node '$ROOT_DIR/node_modules/cf/bin/cf' r2 buckets list 2>/dev/null | grep -q '\"$bucket_name\"'; then
-      echo '  ok  R2 bucket \"$bucket_name\" already exists.'
-    else
-      node '$ROOT_DIR/node_modules/cf/bin/cf' r2 buckets create --name '$bucket_name' \
-        && echo '  ok  Created R2 bucket \"$bucket_name\".'
-    fi
-  "
+  for bucket_name in "${buckets[@]}"; do
+    run_when_live "R2 bucket check" bash -c "
+      if node '$ROOT_DIR/node_modules/cf/bin/cf' r2 buckets list 2>/dev/null | grep -q '\"$bucket_name\"'; then
+        echo '  ok  R2 bucket \"$bucket_name\" already exists.'
+      else
+        node '$ROOT_DIR/node_modules/cf/bin/cf' r2 buckets create --name '$bucket_name' \
+          && echo '  ok  Created R2 bucket \"$bucket_name\".'
+      fi
+    "
+  done
 }
 
 # ------------------------------------------------------------------

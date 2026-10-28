@@ -28,6 +28,9 @@ const LOCAL_DATABASE_ID = '00000000-0000-4000-8000-000000000000'
 const databaseId = process.env.CLOUDFLARE_DATABASE_ID ?? LOCAL_DATABASE_ID
 const databaseName = process.env.D1_DATABASE_NAME ?? 'rumaq'
 const bucketName = process.env.R2_BUCKET_NAME ?? 'rumaq-receipts'
+// Brochure images (issue #293): a separate bucket from receipts — different
+// retention law (referenced-set sweep with a 14-day grace) and blast radius.
+const brochuresBucketName = process.env.R2_BROCHURES_BUCKET_NAME ?? 'rumaq-brochures'
 
 const branch = process.env.BRANCH_NAME ?? 'main'
 const isProduction = branch === 'main' || branch === 'master' || branch === 'HEAD'
@@ -56,6 +59,7 @@ export default defineConfig({
     env: {
       DB: bindings.d1({ name: databaseName, id: databaseId }),
       RECEIPTS: bindings.r2({ name: bucketName }),
+      BROCHURES: bindings.r2({ name: brochuresBucketName }),
       ASSETS: bindings.assets(),
       EMAIL_AUTH_ENABLED: bindings.text('true'),
       // Startup secrets check only makes sense against a real account; local
