@@ -62,6 +62,9 @@ describe('loadConfig', () => {
       // needs-proxy skip must see it as unset, never as a working proxy.
       process.env.LOTTE_PROXY_URL = ''
       expect(storeProxyUrl(lotte)).toBeUndefined()
+      // Whitespace-only is equally unconfigured (env-file edit leftovers).
+      process.env.LOTTE_PROXY_URL = '  '
+      expect(storeProxyUrl(lotte)).toBeUndefined()
       process.env.LOTTE_PROXY_URL = 'http://residential-proxy.example:8080'
       expect(storeProxyUrl(lotte)).toBe('http://residential-proxy.example:8080')
     } finally {

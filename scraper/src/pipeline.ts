@@ -10,7 +10,7 @@ import path from 'node:path'
 
 import { Data, Effect } from 'effect'
 
-import { loadConfig, type ScraperConfig } from './config.js'
+import { loadConfig, storeProxyUrl, type ScraperConfig } from './config.js'
 import {
   loadCatalog,
   loadEmbeddingCache,
@@ -36,7 +36,6 @@ import {
 } from './fetch/state.js'
 import type { BrowserLauncher } from './fetch/browser.js'
 import { BrowserTierRequired, type FetchError } from './fetch/errors.js'
-import { storeProxyUrl } from './config.js'
 import { createStoreFetcher, type FetchLike } from './fetch/strategy.js'
 import { createOcr, type GeminiClient, type Ocr, type OcrError } from './ocr/gemini.js'
 import { validateProduct, type ValidatedProduct } from './ocr/parse.js'

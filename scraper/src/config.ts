@@ -120,11 +120,11 @@ export function storeBySlug(config: ScraperConfig, slug: string): StoreConfig | 
 
 /**
  * The store's Tier-3 proxy URL, read from its configured env var (§2).
- * An empty value counts as not configured — the pipeline's by-design
- * needs-proxy skip keys off this, so `LOTTE_PROXY_URL=` must never be
- * treated as a working proxy.
+ * An empty or whitespace-only value counts as not configured — the
+ * pipeline's by-design needs-proxy skip keys off this, so `LOTTE_PROXY_URL=`
+ * must never be treated as a working proxy.
  */
 export function storeProxyUrl(store: StoreConfig): string | undefined {
-  const url = store.proxyEnv ? process.env[store.proxyEnv] : undefined
+  const url = store.proxyEnv ? process.env[store.proxyEnv]?.trim() : undefined
   return url || undefined
 }

@@ -5,6 +5,13 @@
 #
 #   ./scripts/ops/enable-lotte-proxy.sh
 #
+# SSH target: the `rumaq-vps` ssh-config alias (set RUMAQ_VPS_TARGET to
+# override) — the address itself lives in ~/.ssh/config, not in this repo:
+#
+#   Host rumaq-vps
+#       HostName <your-vps-address>
+#       User ahaqqu
+#
 # Prerequisites:
 #   - The home-box tunnel services are running (user units
 #     lotte-connect-proxy.service + lotte-tunnel.service, installed 2026-10-28;
@@ -17,19 +24,23 @@
 #     Verify from a real browser first; a plain curl only ever sees the
 #     Incapsula challenge, not the origin state.
 #
-# The env edit needs root on the box (the env file is root:root 0600), so the
-# script asks for the sudo password once over an interactive ssh.
+# The env edit needs root on the box (the env file is root:root 0600). sudo
+# cannot prompt through piped stdin — ssh refuses PTY allocation when stdin is
+# not a terminal, and with a forced PTY the piped script lines would be eaten
+# as sudo password attempts — so the edit is staged as a temp file on the VPS
+# and run through an interactive `ssh -t` with the terminal as stdin.
 set -euo pipefail
 
-SSH_TARGET="${RUMAQ_VPS_USER:-ahaqqu}@${RUMAQ_VPS_HOST:-62.83.35.220}"
+SSH_TARGET="${RUMAQ_VPS_TARGET:-rumaq-vps}"
 PROXY_URL="http://127.0.0.1:18080"
+REMOTE_TMP="/tmp/rumaq-lotte-proxy-enable.sh"
 
 log() { printf 'enable-lotte-proxy: %s\n' "$*"; }
 
 log "checking the tunnel egress from the VPS (${SSH_TARGET})…"
 EGRESS_IP="$(ssh -o BatchMode=yes "${SSH_TARGET}" \
   "curl -s --max-time 20 -x ${PROXY_URL} https://ipinfo.io/json" \
-  | python3 -c 'import json, sys; print(json.load(sys.stdin).get("ip", ""))' || true)"
+  | jq -r '.ip // empty' || true)"
 if [ -z "${EGRESS_IP}" ]; then
   log "FAIL: no response through ${PROXY_URL} — is the tunnel down?"
   log "  On the home box: systemctl --user status lotte-tunnel lotte-connect-proxy"
@@ -37,15 +48,21 @@ if [ -z "${EGRESS_IP}" ]; then
 fi
 VPS_IP="$(ssh -o BatchMode=yes "${SSH_TARGET}" \
   "curl -s --max-time 20 https://ipinfo.io/json" \
-  | python3 -c 'import json, sys; print(json.load(sys.stdin).get("ip", ""))' || true)"
+  | jq -r '.ip // empty' || true)"
 if [ "${EGRESS_IP}" = "${VPS_IP}" ]; then
   log "FAIL: proxied egress equals the VPS IP (${VPS_IP}) — the tunnel is looping, not forwarding."
   exit 1
 fi
 log "OK: proxied egress is ${EGRESS_IP} (VPS direct: ${VPS_IP})"
 
-log "asking for sudo on the box to set LOTTE_PROXY_URL and restart the unit…"
-ssh -t "${SSH_TARGET}" 'sudo sh -s' <<'REMOTE'
+log "staging the env edit on the box, then asking for sudo…"
+STAGE_FILE="$(mktemp)"
+cleanup() {
+  rm -f "${STAGE_FILE}"
+  ssh -o BatchMode=yes "${SSH_TARGET}" "rm -f ${REMOTE_TMP}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+cat > "${STAGE_FILE}" <<'REMOTE'
 grep -q "^LOTTE_PROXY_URL=" /etc/rumaq-scraper/env ||
   printf '\n# Tier-3 per-store proxy for Lotte (home-box reverse tunnel)\nLOTTE_PROXY_URL=http://127.0.0.1:18080\n' \
     >> /etc/rumaq-scraper/env
@@ -53,6 +70,8 @@ systemctl restart rumaq-scraper
 systemctl is-active rumaq-scraper
 grep -n "^LOTTE_PROXY_URL=" /etc/rumaq-scraper/env
 REMOTE
+ssh -o BatchMode=yes "${SSH_TARGET}" "cat > ${REMOTE_TMP}" < "${STAGE_FILE}"
+ssh -t "${SSH_TARGET}" "sudo sh ${REMOTE_TMP}"
 
 log "done. The next nightly run (23:00 UTC) scrapes Lotte through the home IP."
 log "Rollback: remove the LOTTE_PROXY_URL line from /etc/rumaq-scraper/env and"
