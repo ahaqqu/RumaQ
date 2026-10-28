@@ -110,7 +110,9 @@ describe('deriveScrapeBase', () => {
 describe('agentConfigFromEnv', () => {
   it('is null when the ingest env is unconfigured (idle box, no crash)', () => {
     expect(agentConfigFromEnv({})).toBeNull()
-    expect(agentConfigFromEnv({ RUMAQ_INGEST_URL: 'https://x/api/internal/ingest/prices' })).toBeNull()
+    expect(
+      agentConfigFromEnv({ RUMAQ_INGEST_URL: 'https://x/api/internal/ingest/prices' })
+    ).toBeNull()
   })
 
   it('derives the scrape base and the lock path from the standard env', () => {
@@ -225,10 +227,14 @@ describe('runCommand lifecycle', () => {
 
   it('surfaces the last error line as the finish error', async () => {
     const api = fakeApi()
-    const { spawn } = fakeSpawn(['2026-10-28T01:00:01Z ok'], [
-      '2026-10-28T01:00:02Z [pipeline] store superindo failed: dead',
-      '2026-10-28T01:00:03Z [pipeline] PipelineFailure: giving up',
-    ], 1)
+    const { spawn } = fakeSpawn(
+      ['2026-10-28T01:00:01Z ok'],
+      [
+        '2026-10-28T01:00:02Z [pipeline] store superindo failed: dead',
+        '2026-10-28T01:00:03Z [pipeline] PipelineFailure: giving up',
+      ],
+      1
+    )
     await runCommand(command, baseConfig, { fetch: api.fetch, spawn, log: () => {} })
     expect(api.finishes[0]).toMatchObject({
       status: 'failed',
@@ -255,11 +261,15 @@ describe('runCommand lifecycle', () => {
     const { spawn } = fakeSpawn(
       Array.from({ length: 30 }, (_, i) => `line ${i}`) // > maxBufferEvents below
     )
-    await runCommand(command, { ...baseConfig, maxBufferEvents: 10 }, {
-      fetch: api.fetch,
-      spawn,
-      log: () => {},
-    })
+    await runCommand(
+      command,
+      { ...baseConfig, maxBufferEvents: 10 },
+      {
+        fetch: api.fetch,
+        spawn,
+        log: () => {},
+      }
+    )
     // Seqs stay monotonic and gap-free (dropped head events keep their seqs):
     // the admin sees a contiguous tail plus the truncation flag.
     const seqs = api.eventsBatches.flat().map((e) => e.seq)
@@ -318,11 +328,15 @@ describe('runCommand lifecycle', () => {
         },
       }
     }
-    await runCommand(command, { ...baseConfig, childTimeoutMs: 20 }, {
-      fetch: api.fetch,
-      spawn,
-      log: () => {},
-    })
+    await runCommand(
+      command,
+      { ...baseConfig, childTimeoutMs: 20 },
+      {
+        fetch: api.fetch,
+        spawn,
+        log: () => {},
+      }
+    )
     expect(killed).toBe(true)
     expect(api.finishes[0]).toMatchObject({ status: 'failed', exitCode: 1 })
     expect(String(api.finishes[0]!.error)).toContain('timeout')
@@ -346,7 +360,9 @@ describe('pollOnce', () => {
       const u = String(url)
       if (u.endsWith('/next')) {
         return new Response(
-          JSON.stringify({ command: { id: 'cmd-9', stores: ['astro'], createdAt: '2026-10-28T01:00:00Z' } }),
+          JSON.stringify({
+            command: { id: 'cmd-9', stores: ['astro'], createdAt: '2026-10-28T01:00:00Z' },
+          }),
           { status: 200 }
         )
       }

@@ -2255,6 +2255,24 @@ apiApp.post(
     description:
       'Queue an on-demand scrape of the given stores (admin-only). 409 when a scrape is already pending or running — one run at a time.',
     security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['stores'],
+            properties: {
+              stores: {
+                type: 'array',
+                items: { type: 'string', enum: [...SCRAPE_STORE_SLUGS] },
+                minItems: 1,
+              },
+            },
+          },
+        },
+      },
+    },
     responses: {
       201: {
         description: 'Created',

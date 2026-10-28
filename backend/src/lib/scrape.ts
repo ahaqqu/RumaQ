@@ -86,9 +86,7 @@ export async function createScrapeCommand(
   // One run at a time: the scraper's lock file serialises processes on the
   // VPS, but a queued backlog would surprise the admin — refuse instead.
   const active = await db
-    .prepare(
-      `SELECT id FROM scrape_commands WHERE status IN ('pending', 'running') LIMIT 1`
-    )
+    .prepare(`SELECT id FROM scrape_commands WHERE status IN ('pending', 'running') LIMIT 1`)
     .first<{ id: string }>()
   if (active) throw new ScrapeConflictError()
 
@@ -116,7 +114,9 @@ export async function createScrapeCommand(
     const ids = (old.results ?? []).map((row) => row.id)
     const placeholders = ids.map(() => '?').join(', ')
     await db.batch([
-      db.prepare(`DELETE FROM scrape_run_events WHERE command_id IN (${placeholders})`).bind(...ids),
+      db
+        .prepare(`DELETE FROM scrape_run_events WHERE command_id IN (${placeholders})`)
+        .bind(...ids),
       db.prepare(`DELETE FROM scrape_commands WHERE id IN (${placeholders})`).bind(...ids),
     ])
   }
@@ -162,7 +162,11 @@ export async function claimNextScrapeCommand(db: D1Database): Promise<ClaimedCom
     .first<{ id: string; stores: string; created_at: string }>()
   if (!claimed) return null
 
-  return { id: claimed.id, stores: parseCommandStores(claimed.stores), createdAt: claimed.created_at }
+  return {
+    id: claimed.id,
+    stores: parseCommandStores(claimed.stores),
+    createdAt: claimed.created_at,
+  }
 }
 
 function parseCommandStores(storesJson: string): string[] {

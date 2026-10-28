@@ -154,7 +154,9 @@ export function lineToEvent(
   now: () => Date = () => new Date()
 ): AgentEvent {
   const trimmed = line.replace(/\r$/, '')
-  const parsed = ISO_PREFIX.test(trimmed) ? trimmed.slice(0, ISO_PREFIX.exec(trimmed)![0].length) : null
+  const parsed = ISO_PREFIX.test(trimmed)
+    ? trimmed.slice(0, ISO_PREFIX.exec(trimmed)![0].length)
+    : null
   const level: AgentEvent['level'] =
     source === 'stderr' || /error|fail/i.test(trimmed) ? 'error' : 'info'
   return {
@@ -184,10 +186,7 @@ function bufferPush(buffer: EventBuffer, event: AgentEvent, config: AgentConfig)
   buffer.bytes += event.message.length
   // Keep the TAIL: drop from the head while over either cap. Dropped events
   // were never posted — the admin view is a tail, hence logTruncated.
-  while (
-    buffer.pending.length > config.maxBufferEvents ||
-    buffer.bytes > config.maxBufferBytes
-  ) {
+  while (buffer.pending.length > config.maxBufferEvents || buffer.bytes > config.maxBufferBytes) {
     const dropped = buffer.pending.shift()
     if (!dropped) break
     buffer.bytes -= dropped.message.length
@@ -270,7 +269,12 @@ export async function runCommand(
       deps.fetch,
       finishUrl,
       config.secret,
-      { status: 'failed', exitCode: 1, error: 'no valid store slugs in command', logTruncated: false },
+      {
+        status: 'failed',
+        exitCode: 1,
+        error: 'no valid store slugs in command',
+        logTruncated: false,
+      },
       config,
       log
     )
@@ -307,14 +311,23 @@ export async function runCommand(
   const flush = async (): Promise<void> => {
     while (buffer.pending.length > 0) {
       const batch = buffer.pending.slice(0, 100)
-      const ok = await postJson(deps.fetch, eventsUrl, config.secret, { events: batch }, config, log)
+      const ok = await postJson(
+        deps.fetch,
+        eventsUrl,
+        config.secret,
+        { events: batch },
+        config,
+        log
+      )
       if (!ok) return // keep everything; the next flush retries (idempotent)
       for (const event of batch) buffer.bytes -= event.message.length
       buffer.pending = buffer.pending.slice(batch.length)
     }
   }
   const scheduleFlush = () => {
-    flushChain = flushChain.then(() => flush()).catch((cause) => log(`[agent] flush: ${String(cause)}`))
+    flushChain = flushChain
+      .then(() => flush())
+      .catch((cause) => log(`[agent] flush: ${String(cause)}`))
   }
 
   const capture = (line: string, source: 'stdout' | 'stderr') => {
@@ -365,10 +378,9 @@ export async function runCommand(
   await flushChain
 
   const status: 'success' | 'failed' = !timedOut && exitCode === 0 ? 'success' : 'failed'
-  const error =
-    timedOut
-      ? `timeout: scrape exceeded ${Math.round(config.childTimeoutMs / 60000)} minutes and was killed`
-      : (lastErrorLine ?? (exitCode === 0 ? null : `scrape exited with code ${exitCode ?? 'signal'}`))
+  const error = timedOut
+    ? `timeout: scrape exceeded ${Math.round(config.childTimeoutMs / 60000)} minutes and was killed`
+    : (lastErrorLine ?? (exitCode === 0 ? null : `scrape exited with code ${exitCode ?? 'signal'}`))
 
   log(`[agent] command ${command.id}: finished ${status} (exit ${exitCode})`)
   await postJson(
@@ -408,7 +420,6 @@ export type PollDeps = RunCommandDeps
 
 /** One poll → at most one claimed command, driven to completion. */
 export async function pollOnce(config: AgentConfig, deps: PollDeps): Promise<boolean> {
-  const log = deps.log ?? createLog('agent')
   const res = await deps.fetch(`${config.scrapeBase}/next`, {
     headers: { Authorization: `Bearer ${config.secret}` },
     signal: AbortSignal.timeout(config.postTimeoutMs),

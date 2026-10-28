@@ -134,7 +134,7 @@ function createScrapeDb(opts: { viewerEmail?: string | null } = {}) {
         number,
         string,
         string,
-        string
+        string,
       ]
       if (events.some((event) => event.command_id === commandId && event.seq === seq)) {
         return [] // ON CONFLICT DO NOTHING
@@ -149,7 +149,7 @@ function createScrapeDb(opts: { viewerEmail?: string | null } = {}) {
         number,
         string | null,
         number,
-        string
+        string,
       ]
       const row = find(id)
       if (!row || row.status !== 'running') return []
@@ -241,7 +241,11 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
     const fake = createScrapeDb()
     const res = await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["superindo"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["superindo"]}',
+      },
       fake.env({ props: undefined })
     )
     expect(res.status).toBe(401)
@@ -251,7 +255,11 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
     const fake = createScrapeDb({ viewerEmail: 'pleb@rumaq.dev' })
     const res = await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["superindo"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["superindo"]}',
+      },
       fake.env()
     )
     expect(res.status).toBe(403)
@@ -261,7 +269,11 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
     const fake = createScrapeDb()
     const res = await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["tokopedia"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["tokopedia"]}',
+      },
       fake.env()
     )
     expect(res.status).toBe(400)
@@ -272,7 +284,11 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
     const env = fake.env()
     const res = await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["superindo","astro"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["superindo","astro"]}',
+      },
       env
     )
     expect(res.status).toBe(201)
@@ -284,7 +300,11 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
 
     const second = await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["superindo"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["superindo"]}',
+      },
       env
     )
     expect(second.status).toBe(409)
@@ -295,7 +315,11 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
     const env = fake.env()
     const first = await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["superindo"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["superindo"]}',
+      },
       env
     )
     const { id } = (await first.json()) as { id: string }
@@ -305,7 +329,11 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
 
     const second = await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["lotte-mart"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["lotte-mart"]}',
+      },
       env
     )
     expect(second.status).toBe(201)
@@ -329,7 +357,11 @@ describe('GET /api/admin/scrape/commands + events', () => {
     const env = fake.env()
     const a = await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["superindo"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["superindo"]}',
+      },
       env
     )
     const firstId = ((await a.json()) as { id: string }).id
@@ -369,7 +401,11 @@ describe('GET /api/admin/scrape/commands + events', () => {
     const env = fake.env()
     await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["astro"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["astro"]}',
+      },
       env
     )
     const claimed = (await claimNextScrapeCommand(fake.db))!
@@ -379,7 +415,9 @@ describe('GET /api/admin/scrape/commands + events', () => {
     ])
     const full = await apiApp.request(`/api/admin/scrape/commands/${claimed.id}/events`, {}, env)
     expect(full.status).toBe(200)
-    expect(((await full.json()) as { events: Array<{ seq: number }> }).events.map((e) => e.seq)).toEqual([0, 1])
+    expect(
+      ((await full.json()) as { events: Array<{ seq: number }> }).events.map((e) => e.seq)
+    ).toEqual([0, 1])
   })
 })
 
@@ -399,7 +437,11 @@ describe('internal scrape routes (bearer channel)', () => {
     const env = fake.env()
     await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["superindo","astro"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["superindo","astro"]}',
+      },
       env
     )
     const headers = { Authorization: 'Bearer ingest-secret' }
@@ -423,7 +465,11 @@ describe('internal scrape routes (bearer channel)', () => {
     const env = fake.env()
     await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["superindo"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["superindo"]}',
+      },
       env
     )
     // Claim, then age the command past the 2h stale window.
@@ -432,14 +478,18 @@ describe('internal scrape routes (bearer channel)', () => {
     stale.picked_up_at = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
 
     const headers = { Authorization: 'Bearer ingest-secret' }
-    const res = await apiApp.request('/api/internal/scrape/next', { headers }, env)
+    await apiApp.request('/api/internal/scrape/next', { headers }, env)
     expect(stale.status).toBe('failed')
     expect(stale.error).toBe('agent lost — no terminal report')
     expect(stale.finished_at).not.toBeNull()
     // Queue is open again — a fresh command can now be created and claimed.
     const next = await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["astro"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["astro"]}',
+      },
       env
     )
     expect(next.status).toBe(201)
@@ -450,7 +500,11 @@ describe('internal scrape routes (bearer channel)', () => {
     const env = fake.env()
     await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["superindo"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["superindo"]}',
+      },
       env
     )
     const claimed = await claimNextScrapeCommand(fake.db)
@@ -479,11 +533,7 @@ describe('internal scrape routes (bearer channel)', () => {
     expect(fake.events).toHaveLength(2)
 
     // Admin incremental read with afterSeq.
-    const feed = await apiApp.request(
-      `/api/admin/scrape/commands/${id}/events?afterSeq=0`,
-      {},
-      env
-    )
+    const feed = await apiApp.request(`/api/admin/scrape/commands/${id}/events?afterSeq=0`, {}, env)
     expect(feed.status).toBe(200)
     const feedBody = (await feed.json()) as {
       events: Array<{ seq: number; level: string }>
@@ -500,7 +550,9 @@ describe('internal scrape routes (bearer channel)', () => {
       {
         method: 'POST',
         headers,
-        body: JSON.stringify({ events: [{ seq: 2, ts: '2026-10-28T01:00:02Z', level: 'info', message: 'late' }] }),
+        body: JSON.stringify({
+          events: [{ seq: 2, ts: '2026-10-28T01:00:02Z', level: 'info', message: 'late' }],
+        }),
       },
       env
     )
@@ -516,7 +568,9 @@ describe('internal scrape routes (bearer channel)', () => {
       {
         method: 'POST',
         headers,
-        body: JSON.stringify({ events: [{ seq: 0, ts: '2026-10-28T01:00:00Z', level: 'info', message: 'x' }] }),
+        body: JSON.stringify({
+          events: [{ seq: 0, ts: '2026-10-28T01:00:00Z', level: 'info', message: 'x' }],
+        }),
       },
       env
     )
@@ -533,7 +587,11 @@ describe('internal scrape routes (bearer channel)', () => {
     const fake = createScrapeDb()
     await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["superindo"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["superindo"]}',
+      },
       fake.env()
     )
     const claimed = await claimNextScrapeCommand(fake.db)
@@ -556,7 +614,11 @@ describe('internal scrape routes (bearer channel)', () => {
     const env = fake.env()
     await apiApp.request(
       '/api/admin/scrape',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"stores":["astro"]}' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["astro"]}',
+      },
       env
     )
     const claimed = (await claimNextScrapeCommand(fake.db))!
@@ -612,6 +674,8 @@ describe('history prune (newest 50)', () => {
     // The oldest survivor from before is gone now too.
     const oldest = [...fake.commands].sort((a, b) => a.created_at.localeCompare(b.created_at))
     expect(oldest[0]!.created_at).toBe(new Date(base + 3 * 1000).toISOString())
-    expect(fake.events.every((event) => fake.commands.some((c) => c.id === event.command_id))).toBe(true)
+    expect(fake.events.every((event) => fake.commands.some((c) => c.id === event.command_id))).toBe(
+      true
+    )
   })
 })
