@@ -94,6 +94,11 @@ function makeReportCapture() {
         reported.push(JSON.parse(init!.body as string))
         return new Response(JSON.stringify({ ok: true }), { status: 200 })
       }
+      // Brochure image PUTs (issue #293) are accepted, never captured — the
+      // body is bytes, not JSON.
+      if (url.includes('/api/internal/brochures/')) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }
       posted.push(JSON.parse(init!.body as string))
       return new Response(JSON.stringify({ accepted: 7, skipped: 0 }), { status: 200 })
     },
@@ -289,7 +294,13 @@ describe('runPipeline', () => {
 
     // Run 1: OCR succeeds, the ingest POST always 500s → run fails, but the
     // extracted items are checkpointed in the outbox (and novelty state).
-    const failingPublish = async () => new Response('boom', { status: 500 })
+    // Brochure PUTs succeed (issue #293) so the failure is the ingest POST's.
+    const failingPublish = async (url: string, _init?: RequestInit) => {
+      if (url.includes('/api/internal/brochures/')) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }
+      return new Response('boom', { status: 500 })
+    }
     const failure = await Effect.runPromiseExit(
       runPipeline({
         launcher: emptyLotte.launcher,
@@ -1144,5 +1155,180 @@ describe('runPipeline --stores scoping (docs/plan/scrape-now.md §2)', () => {
     expect(failure).not.toBeNull()
     expect(failure!.exitCode).toBe(1)
     expect(failure!.message).toContain('unknown-store')
+  })
+})
+
+describe('brochure uploads (issue #293)', () => {
+  /** Live-publish fetch capturing brochure PUTs, price payloads, and reports. */
+  function makeUploadCapture() {
+    const puts: Array<{ url: string; contentType: string | null; bytes: Uint8Array }> = []
+    const posted: IngestPayload[] = []
+    const publishFetch = async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/internal/brochures/')) {
+        puts.push({
+          url,
+          contentType: new Headers(init?.headers).get('Content-Type'),
+          bytes: new Uint8Array(await (init!.body as ArrayBuffer)),
+        })
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }
+      if (url.endsWith('/api/internal/ingest/runs')) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }
+      posted.push(JSON.parse(init!.body as string))
+      return new Response(JSON.stringify({ accepted: 1, skipped: 0 }), { status: 200 })
+    }
+    return { puts, posted, publishFetch }
+  }
+
+  async function liveScenario() {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    const jpeg = fakeJpegBytes()
+    const ocrClient: GeminiClient = {
+      models: { generateContent: async () => ({ text: JSON.stringify(ocrItems) }) },
+    }
+    const base = {
+      launcher: emptyLotte.launcher,
+      embedClient: stubEmbedClient,
+      verifyClient: stubVerifyClient,
+      stateDir,
+      dryRun: false as const,
+      fetch: makeFetchMock(katalogHtml, koranHtml, jpeg),
+      ocrClient,
+      sleep: noSleep,
+      now: () => new Date('2026-10-24T23:00:05Z'),
+      log: () => {},
+      ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+      ingestSecret: 's3cret',
+    }
+    return { stateDir, jpeg, base }
+  }
+
+  it('uploads each new image at {store}/{YYYYMMDD}/{file}, emits the object URL, then remembers', async () => {
+    const { stateDir, jpeg, base } = await liveScenario()
+    const { puts, posted, publishFetch } = makeUploadCapture()
+    const status = await Effect.runPromise(runPipeline({ ...base, publishFetch }))
+
+    // One PUT per new image, riding the ingest base URL with the store, the
+    // compact scrape date, and the md5-suffixed filename. The fixture's real
+    // filename carries parentheses — the accepted charset must cover it.
+    expect(puts.length).toBeGreaterThanOrEqual(1)
+    const md5 = md5Hash(jpeg)
+    for (const put of puts) {
+      expect(put.url).toMatch(
+        /^https:\/\/api\.example\.com\/api\/internal\/brochures\/superindo\/20261024\/[A-Za-z0-9._()-]+$/
+      )
+      expect(decodeURIComponent(put.url)).toContain(`_${md5.slice(0, 8)}`)
+      expect(put.contentType).toBe('image/jpeg')
+      expect(Buffer.from(put.bytes).equals(Buffer.from(jpeg))).toBe(true)
+    }
+
+    // The payload's brochureUrl is the relative same-origin object URL.
+    expect(posted).toHaveLength(1)
+    const keys = puts.map((put) => put.url.split('/api/internal/brochures/')[1])
+    const expectedUrls = keys.map((key) => `/api/brochures/${key}`)
+    for (const item of posted[0]!.items) {
+      expect(expectedUrls).toContain(item.brochureUrl)
+    }
+
+    // Upload happened BEFORE rememberProcessed: the image is in novelty state.
+    const stateFile = path.join(stateDir, 'superindo', 'state.json')
+    const stateJson = JSON.parse(await readFile(stateFile, 'utf8'))
+    expect(stateJson.processed).toContain(md5)
+
+    // Per-store status counter (status.json only — reports stay strict).
+    expect(status.stores['superindo']!.brochuresUploaded).toBe(puts.length)
+
+    // Second run: novelty-skipped images issue NO further uploads.
+    const { puts: puts2, publishFetch: publishFetch2 } = makeUploadCapture()
+    await Effect.runPromise(
+      runPipeline({
+        ...base,
+        now: () => new Date('2026-10-25T23:00:05Z'),
+        publishFetch: publishFetch2,
+      })
+    )
+    expect(puts2).toHaveLength(0)
+  })
+
+  it('dry-run writes the payload but never uploads', async () => {
+    const { stateDir, base } = await liveScenario()
+    const { puts, publishFetch } = makeUploadCapture()
+    const status = await Effect.runPromise(runPipeline({ ...base, dryRun: true, publishFetch }))
+
+    expect(puts).toHaveLength(0)
+    expect(status.stores['superindo']!.brochuresUploaded).toBeUndefined()
+    // The dry-run payload still carries the object URLs — construction is
+    // independent of the transport.
+    const payload: IngestPayload = JSON.parse(
+      await readFile(path.join(stateDir, 'payload-2026-10-24T23-00-05-000Z.json'), 'utf8')
+    )
+    expect(payload.items[0]!.brochureUrl).toMatch(/^\/api\/brochures\/superindo\/20261024\//)
+  })
+
+  it('replays an upload failure: outbox retained, image not remembered, run exits 1 after publish', async () => {
+    const { stateDir, base } = await liveScenario()
+    const { posted, publishFetch } = makeUploadCapture()
+    const failingUpload = async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/internal/brochures/')) {
+        return new Response('r2 down', { status: 500 })
+      }
+      return publishFetch(url, init)
+    }
+
+    const failure = await Effect.runPromiseExit(
+      runPipeline({ ...base, publishFetch: failingUpload })
+    )
+    expect(failure._tag).toBe('Failure')
+    const error = exitError(failure) as Error & { exitCode?: number }
+    expect(error.message).toContain('HTTP 500')
+    expect(error.exitCode).toBe(1)
+
+    // The payload POST still went out (no items this run), but the image was
+    // NOT remembered — the next run re-downloads, re-OCRs, re-uploads. The
+    // upload abort precedes the loop's saveState, so a first-image failure
+    // leaves no state file at all.
+    const stateFile = path.join(stateDir, 'superindo', 'state.json')
+    const stateJson = existsSync(stateFile)
+      ? JSON.parse(await readFile(stateFile, 'utf8'))
+      : { processed: [] }
+    expect(stateJson.processed).toHaveLength(0)
+
+    // The outbox line was appended before the upload and survives for replay.
+    const runFiles = (await readdir(path.join(stateDir, 'superindo'))).filter((name) =>
+      name.startsWith('run-')
+    )
+    expect(runFiles).toHaveLength(1)
+
+    // Run 2 with a healthy upload: the replayed batch AND the re-OCR'd batch
+    // emit the same object URL; the upload happens exactly once more.
+    const { puts, posted: posted2, publishFetch: publishFetch2 } = makeUploadCapture()
+    const status2 = await Effect.runPromise(
+      runPipeline({ ...base, now: () => new Date('2026-10-25T23:00:05Z'), publishFetch: publishFetch2 })
+    )
+    expect(status2.stage).toBe('done')
+    expect(puts).toHaveLength(1)
+    // Run 2 re-uploads under ITS OWN scrape date — a fresh immutable key.
+    expect(puts[0]!.url).toMatch(/\/api\/internal\/brochures\/superindo\/20261025\//)
+    const uploadedUrl = `/api/brochures/${puts[0]!.url.split('/api/internal/brochures/')[1]}`
+    // The current-run batch (observed 2026-10-25) references the uploaded
+    // object — the URL the view will serve for the now-current observation.
+    const current = posted2[0]!.items.find(
+      (item) => item.productKey === 'gula-pasir----1-kg' && item.observedDate === '2026-10-25'
+    )!
+    expect(current.brochureUrl).toBe(uploadedUrl)
+    // The replayed outbox batch keeps the URL recorded in run 1 (its own
+    // date key) — its observation is immediately superseded by the 2026-10-25
+    // row, so the never-uploaded run-1 URL stays out of the view's base.
+    const replayed = posted2[0]!.items.find((item) => item.observedDate === '2026-10-24')!
+    expect(replayed.brochureUrl).toMatch(/^\/api\/brochures\/superindo\/20261024\//)
   })
 })

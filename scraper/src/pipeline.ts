@@ -42,6 +42,11 @@ import { validateProduct, type RawOcrItem, type ValidatedProduct } from './ocr/p
 import { assertPayloadValid, buildPayload, type ImageProducts } from './publish/payload.js'
 import { loadOutbox, retireOutbox, type OutboxIo } from './publish/outbox.js'
 import { postRunReport } from './publish/runs.js'
+import {
+  brochureObjectUrl,
+  uploadBrochure,
+  type BrochureUploadOptions,
+} from './publish/brochures.js'
 import type { RunReport } from '@rumaq/contract'
 import {
   publishPayload,
@@ -94,6 +99,12 @@ export interface PipelineStatus {
        * stays green and the monitor shows the gap per store.
        */
       needsProxy?: boolean
+      /**
+       * Brochure images uploaded to R2 this run (issue #293). status.json
+       * only — the run-report store schema is strict and stays untouched
+       * (reportRun strips it before posting).
+       */
+      brochuresUploaded?: number
     }
   >
 }
@@ -152,7 +163,14 @@ function writeStatus(stateDir: string, status: PipelineStatus): Effect.Effect<vo
   }).pipe(Effect.ignore)
 }
 
-type StoreRunError = FetchError | StateIo | OcrError | QuotaExhausted | OutboxIo | CatalogIo
+type StoreRunError =
+  | FetchError
+  | StateIo
+  | OcrError
+  | QuotaExhausted
+  | OutboxIo
+  | CatalogIo
+  | PublishFailure
 
 function processStore(
   plugin: BrochureStorePlugin,
@@ -164,12 +182,9 @@ function processStore(
 ): Effect.Effect<ImageProducts[], StoreRunError> {
   const store = plugin.config
   const stateFile = path.join(options.stateDir, store.slug, 'state.json')
-  const imagesDir = path.join(
-    options.stateDir,
-    store.slug,
-    'images',
-    scrapedAt.slice(0, 10).replace(/-/g, '')
-  )
+  // Compact scrape date — the images dir suffix and the R2 key's age segment.
+  const compactDate = scrapedAt.slice(0, 10).replace(/-/g, '')
+  const imagesDir = path.join(options.stateDir, store.slug, 'images', compactDate)
 
   const fetcher = createStoreFetcher(store, {
     fetch: options.fetch,
@@ -225,15 +240,52 @@ function processStore(
         Effect.map((buffer) => new Uint8Array(buffer))
       )
       const rawItems = yield* ocr.ocrImage(bytes, image.contentType)
+      // Brochure object URL (issue #293): every OCR'd page gets its own
+      // relative same-origin URL — the per-image grouping key for the
+      // brochures view and the sweep's servable-shape predicate.
+      const uploadTarget = {
+        storeSlug: store.slug,
+        date: compactDate,
+        filename: image.filename,
+        contentType: image.contentType,
+      }
+      const objectUrl = brochureObjectUrl(uploadTarget)
       const products = yield* appendValidatedBatch(
         options,
         store.slug,
         runItemsFile,
         entry,
-        { brochureUrl: image.brochureUrl, imageFilename: image.filename, rawItems },
+        // The outbox line carries the OBJECT URL: a replayed batch must emit
+        // the R2-backed URL, not the retailer listing page.
+        { brochureUrl: objectUrl, imageFilename: image.filename, rawItems },
         scrapedAt
       )
-      imageProducts.push({ storeSlug: store.slug, brochureUrl: image.brochureUrl, products })
+      imageProducts.push({
+        storeSlug: store.slug,
+        brochureUrl: image.brochureUrl,
+        brochureObjectUrl: objectUrl,
+        products,
+      })
+
+      // Publish-stage upload (issue #293): AFTER the outbox append, BEFORE
+      // rememberProcessed — an upload failure leaves this run's items in the
+      // outbox for next-run replay, and the image is not remembered, so the
+      // next run re-downloads, re-OCRs, and re-uploads (idempotent PUT). A
+      // referenced-but-missing object cannot persist beyond the retry
+      // horizon. Same bounded duplicate-OCR cost the append-before-remember
+      // comment above already accepts.
+      const uploadOptions: BrochureUploadOptions = {
+        ingestUrl: options.ingestUrl,
+        ingestSecret: options.ingestSecret,
+        dryRun: options.dryRun,
+        fetch: options.publishFetch,
+        sleep: options.sleep,
+        log,
+      }
+      if (!options.dryRun) {
+        yield* uploadBrochure(bytes, uploadTarget, uploadOptions)
+        entry.brochuresUploaded = (entry.brochuresUploaded ?? 0) + 1
+      }
 
       // The outbox append happened inside appendValidatedBatch — BEFORE the
       // novelty state here: if the run dies (or the append fails) between the
@@ -683,14 +735,23 @@ export function runPipeline(
     if (options.dryRun) return Effect.void
     const finishedAt = (options.now ?? (() => new Date()))().toISOString()
     const match = status.match
-    const report: RunReport = {
-      schemaVersion: 1,
-      runStartedAt: status.runStartedAt,
-      finishedAt,
-      exitCode,
-      status: exitCode === 0 ? 'success' : 'failed',
-      stage: status.stage,
-      perStore: status.stores,
+      // The store entries carry status.json-only fields (brochuresUploaded,
+      // issue #293) that the strict run-report schema must never see — strip
+      // them here so whichever side deploys second stays compatible.
+      const perStore = Object.fromEntries(
+        Object.entries(status.stores).map(([slug, { brochuresUploaded: _, ...store }]) => [
+          slug,
+          store,
+        ])
+      ) as RunReport['perStore']
+      const report: RunReport = {
+        schemaVersion: 1,
+        runStartedAt: status.runStartedAt,
+        finishedAt,
+        exitCode,
+        status: exitCode === 0 ? 'success' : 'failed',
+        stage: status.stage,
+        perStore,
       match: match
         ? {
             exact: match.exact,
