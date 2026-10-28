@@ -59,10 +59,12 @@ const env = (name: string, fallback: string): string => process.env[name] ?? fal
 export function loadConfig(): ScraperConfig {
   return {
     ocr: {
-      // haqita ran gemini-3.5-flash + gemini-2.5-flash verifier; override
-      // with GEMINI_MODEL / GEMINI_VERIFIER_MODEL if these drift.
+      // haqita ran gemini-3.5-flash + gemini-2.5-flash verifier; the verifier
+      // id 404'd for new key cohorts (issue #306) — Google's error names
+      // gemini-3.8-flash as the successor. Override with GEMINI_MODEL /
+      // GEMINI_VERIFIER_MODEL if these drift.
       model: env('GEMINI_MODEL', 'gemini-3.5-flash'),
-      verifierModel: env('GEMINI_VERIFIER_MODEL', 'gemini-2.5-flash'),
+      verifierModel: env('GEMINI_VERIFIER_MODEL', 'gemini-3.8-flash'),
       maxRetries: 2,
     },
     consolidation: {

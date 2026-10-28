@@ -31,6 +31,29 @@ describe('loadConfig', () => {
     expect(loadConfig().novelty).toEqual({ minImageSizeKb: 50, minDimensionPx: 300 })
   })
 
+  it('pins live Gemini model ids — bumping one must be a conscious change', () => {
+    // Assert the shipped defaults, not the ambient shell: GEMINI_MODEL /
+    // GEMINI_VERIFIER_MODEL / GEMINI_EMBEDDING_MODEL are documented override
+    // knobs — the guard must stay meaningful (and quiet) when they are set.
+    const overrideVars = ['GEMINI_MODEL', 'GEMINI_VERIFIER_MODEL', 'GEMINI_EMBEDDING_MODEL']
+    const previous = overrideVars.map((name) => process.env[name])
+    try {
+      for (const name of overrideVars) delete process.env[name]
+      const config = loadConfig()
+      // gemini-2.5-flash 404'd for new key cohorts (issue #306 live run:
+      // NOT_FOUND "no longer available to new users"); Google's error names
+      // gemini-3.8-flash as the successor.
+      expect(config.ocr.verifierModel).toBe('gemini-3.8-flash')
+      expect(config.ocr.model).toBe('gemini-3.5-flash')
+      expect(config.consolidation.embeddingModel).toBe('gemini-embedding-001')
+    } finally {
+      overrideVars.forEach((name, i) => {
+        if (previous[i] !== undefined) process.env[name] = previous[i]!
+        else delete process.env[name]
+      })
+    }
+  })
+
   it('pins superindo to the plain strategy and lotte to the browser tier', () => {
     const config = loadConfig()
     expect(storeBySlug(config, 'superindo')!.strategy).toBe('plain')
