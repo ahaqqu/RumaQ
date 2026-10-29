@@ -8,8 +8,8 @@ const { Given, When, Then } = createBdd()
 // bearer channel the real nightly reports on (issue #294).
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
 const INGEST_SECRET = 'test-ingest-secret'
-// Mirrors the seed's pbkdf2 hash for password123 — same password, no admin
-// allowlist entry, so the account exercises the 403 surface.
+// Mirrors the seed's pbkdf2 hash for password123 — same password, but the
+// seed grants it no is_admin flag, so the account exercises the 403 surface.
 const NON_ADMIN_EMAIL = 'second@rumaq.dev'
 
 const reviewPair = {

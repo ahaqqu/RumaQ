@@ -55,8 +55,8 @@ export function AppShell({ children }) {
 
   const currentRouteId = matches[matches.length - 1]?.routeId || '/'
   // The scraping monitor and the manual scrape trigger are operator surfaces —
-  // their nav entries only exist for allowlisted admins (me.user.isAdmin from
-  // the backend).
+  // their nav entries only exist for admins (me.user.isAdmin from the
+  // backend, backed by the users.is_admin grant).
   const navItems = user?.isAdmin
     ? [
         ...NAV,
