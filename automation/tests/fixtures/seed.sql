@@ -1,11 +1,14 @@
-INSERT INTO users (id, email, name, picture, google_id, password_hash)
+-- Default authenticated user; is_admin = 1 makes it the operator for the
+-- admin surfaces (users.is_admin, migration 0014 — the env allowlist is gone).
+INSERT INTO users (id, email, name, picture, google_id, password_hash, is_admin)
 VALUES (
   'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
   'test@rumaq.dev',
   'Test User',
   NULL,
   'google-test-123',
-  'pbkdf2_sha256$100000$pGW_FQUWkZ4LWR5SAXwDbg$eavlQExxmqixP0sIhu9HM8OIZqaxNm5ngKDMQd7Ge3s'
+  'pbkdf2_sha256$100000$pGW_FQUWkZ4LWR5SAXwDbg$eavlQExxmqixP0sIhu9HM8OIZqaxNm5ngKDMQd7Ge3s',
+  1
 );
 
 -- Household

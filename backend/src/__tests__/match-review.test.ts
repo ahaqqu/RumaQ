@@ -350,13 +350,12 @@ describe('review routes', () => {
     DB: {
       prepare: vi.fn().mockReturnThis(),
       bind: vi.fn().mockReturnThis(),
-      first: vi.fn().mockResolvedValue({ email: 'admin@rumaq.dev' }),
+      first: vi.fn().mockResolvedValue({ email: 'admin@rumaq.dev', is_admin: 1 }),
       all: vi.fn().mockResolvedValue({ results: [] }),
       batch: vi.fn().mockResolvedValue([]),
       run: vi.fn().mockResolvedValue({ meta: { changes: 1 } }),
     },
     WORKER_JWT_SECRET: 'test-secret',
-    ADMIN_EMAILS: 'admin@rumaq.dev',
     props: { userId: 'admin-1', householdId: 'h1' },
   })
 
@@ -378,9 +377,8 @@ describe('review routes', () => {
       ...adminEnv(),
       DB: {
         ...adminEnv().DB,
-        first: vi.fn().mockResolvedValue({ email: 'shopper@rumaq.dev' }),
+        first: vi.fn().mockResolvedValue({ email: 'shopper@rumaq.dev', is_admin: 0 }),
       },
-      ADMIN_EMAILS: 'admin@rumaq.dev',
       props: { userId: 'u2', householdId: 'h1' },
     }
     const paths: Array<[string, RequestInit]> = [
@@ -427,7 +425,7 @@ describe('review routes', () => {
     // handler's row lookup then finds nothing.
     env.DB.first = vi
       .fn()
-      .mockResolvedValueOnce({ email: 'admin@rumaq.dev' })
+      .mockResolvedValueOnce({ email: 'admin@rumaq.dev', is_admin: 1 })
       .mockResolvedValue(null)
     const res = await apiApp.request(
       '/api/admin/review/rev-1/decision',

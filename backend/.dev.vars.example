@@ -20,10 +20,6 @@ WORKER_ENCRYPTION_KEY=change-me-to-a-random-64-char-hex-string
 # returns 503 and everything else keeps working.
 HAQITA_INGEST_SECRET=change-me-to-a-random-64-char-hex-string
 
-# Comma-separated admin allowlist for operator-only surfaces (the scraping
-# monitor at /admin/prices). Optional: when unset nobody is admin.
-ADMIN_EMAILS=you@example.com
-
 # Allow the local Vite dev server origin.
 PAGES_ORIGIN=http://localhost:5173
 

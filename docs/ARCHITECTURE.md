@@ -227,6 +227,21 @@ Seed test users are inserted by migration `0002_email_auth.sql`. All five share 
 | `charlie@rumaq.dev` | Charlie       |
 | `diana@rumaq.dev`   | Diana         |
 
+### Admin access
+
+Operator-only surfaces (`/api/admin/*`: the price monitor, Scrape Now queue, match review) are gated by the `requireAdmin` middleware, which reads `users.is_admin` (migration 0014) — the flag is the single source of truth and there is no environment fallback. `/api/me` exposes it as `isAdmin`.
+
+Grant or revoke with a one-statement SQL runbook against the production D1 database; no redeploy is needed because the flag is read per-request. Matching folds case (`lower(email)`) because the OAuth callback stores the Google-provided email verbatim:
+
+```bash
+# grant
+cf d1 execute rumaq --remote --command "UPDATE users SET is_admin = 1 WHERE lower(email) = lower('…');"
+# revoke
+cf d1 execute rumaq --remote --command "UPDATE users SET is_admin = 0 WHERE lower(email) = lower('…');"
+```
+
+One-time cleanup after this ships: the former `ADMIN_EMAILS` Worker secret stops being read but `scripts/deploy.sh` never deletes secrets — remove it manually with `cf workers secrets delete ADMIN_EMAILS`.
+
 ## 6. Database
 
 Cloudflare D1 runs SQLite at the edge. The schema is relational and normalized so the same Worker can serve a single household today and multiple households later without rewrites.
@@ -372,7 +387,6 @@ The legacy Pages project was deleted after the cutover; `rumaq.pages.dev` no lon
 | `WORKER_JWT_SECRET`        | Worker secret | HMAC key for session JWT                                                                                                                                                            |
 | `WORKER_ENCRYPTION_KEY`    | Worker secret | AES-GCM key for AI keys                                                                                                                                                             |
 | `HAQITA_INGEST_SECRET`     | Worker secret | Bearer secret for the internal price ingest endpoint (`POST /api/internal/ingest/prices`, pushed daily by the rumaq-scraper VPS job). Optional: when unset the endpoint returns 503 |
-| `ADMIN_EMAILS`             | Worker secret | Comma-separated admin allowlist for operator-only surfaces (the scraping monitor at `/admin/prices`, fed by `POST /api/internal/ingest/runs`). Optional: when unset nobody is admin |
 | `CLOUDFLARE_ACCOUNT_ID`    | Build/deploy  | Cloudflare account ID; used by Wrangler and the deploy script                                                                                                                       |
 | `CLOUDFLARE_DATABASE_ID`   | Build/deploy  | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed                                                                                          |
 | `CLOUDFLARE_API_TOKEN`     | Build/deploy  | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                                                                                            |
@@ -409,14 +423,13 @@ export WORKER_ENCRYPTION_KEY=...
 
 **Important:** Rotating `WORKER_ENCRYPTION_KEY` invalidates every stored AI API key because they are encrypted with the old key. After rotation, all users must re-enter their AI key in Settings. Rotating `WORKER_JWT_SECRET` only invalidates active sessions; users simply log in again.
 
-| Secret                  | Local | Test | Production | Rotation impact                                          |
-| ----------------------- | ----- | ---- | ---------- | -------------------------------------------------------- |
-| `GOOGLE_CLIENT_ID`      | yes   | no   | yes        | OAuth login only                                         |
-| `GOOGLE_CLIENT_SECRET`  | yes   | no   | yes        | OAuth login only                                         |
-| `WORKER_JWT_SECRET`     | yes   | yes  | yes        | Active sessions invalidated                              |
-| `WORKER_ENCRYPTION_KEY` | yes   | yes  | yes        | Stored AI keys must be re-entered                        |
-| `HAQITA_INGEST_SECRET`  | yes   | yes  | yes        | Scraper pushes rejected until its env is rotated         |
-| `ADMIN_EMAILS`          | yes   | yes  | yes        | Admin monitor access changes on next login/session check |
+| Secret                  | Local | Test | Production | Rotation impact                                  |
+| ----------------------- | ----- | ---- | ---------- | ------------------------------------------------ |
+| `GOOGLE_CLIENT_ID`      | yes   | no   | yes        | OAuth login only                                 |
+| `GOOGLE_CLIENT_SECRET`  | yes   | no   | yes        | OAuth login only                                 |
+| `WORKER_JWT_SECRET`     | yes   | yes  | yes        | Active sessions invalidated                      |
+| `WORKER_ENCRYPTION_KEY` | yes   | yes  | yes        | Stored AI keys must be re-entered                |
+| `HAQITA_INGEST_SECRET`  | yes   | yes  | yes        | Scraper pushes rejected until its env is rotated |
 
 ## 9. Free-tier headroom
 
