@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "2.0.0-beta.v.4",
-    "@cloudflare/workers-types": "^5.20261024.1"
+    "@cloudflare/workers-types": "^5.20261024.1",
+    "openapi-types": "^12.1.3"
   }
 }
