@@ -62,6 +62,7 @@ const TWO_PAIRS = [
 ]
 
 async function postRunReport(ctx, report, bearer = INGEST_SECRET) {
+  ctx.lastReport = report
   ctx.response = await fetch(`${ctx.baseUrl}/api/internal/ingest/runs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` },
@@ -364,6 +365,44 @@ defineFeature(feature, (test) => {
       expect(row.decidedBy).toBe(ctx.testUserId)
       expect(row.flagCount).toBe(2)
       expect(row.lastFlaggedAt).toBe('2026-10-30T23:00:05Z')
+    })
+  })
+
+  test('A replayed report is a no-op (the scraper retry is safe)', ({
+    given,
+    and,
+    when,
+    then,
+  }) => {
+    given('I am authenticated as an admin', async () => {
+      await ctx.resetAndSeed()
+      await ctx.authenticate()
+    })
+
+    and('the agent posted a run report carrying two flagged pairs', async () => {
+      await postRunReport(ctx, runReport('2026-10-29T23:00:05Z', TWO_PAIRS))
+      expect(ctx.response.status).toBe(200)
+    })
+
+    when('the agent replays the exact same report (same runStartedAt)', async () => {
+      // postRunReport retries once on any non-OK response, so a transient
+      // failure after a committed chunk re-runs the whole pair set. The
+      // same-run guard must keep flag_count at 1 — per-run flag semantics.
+      await postRunReport(ctx, ctx.lastReport)
+      expect(ctx.response.status).toBe(200)
+    })
+
+    and('I read the review queue', async () => {
+      await readQueue(ctx)
+    })
+
+    then('the pairs should still show one flag each with unchanged counts', () => {
+      ctx.expectStatus(200)
+      expect(ctx.queue.items).toHaveLength(2)
+      expect(ctx.queue.counts).toEqual({ pending: 2, approved: 0, rejected: 0 })
+      for (const item of ctx.queue.items) {
+        expect(item.flagCount).toBe(1)
+      }
     })
   })
 

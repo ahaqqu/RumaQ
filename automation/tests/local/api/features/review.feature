@@ -56,6 +56,13 @@ Feature: Match review queue
     And I read the review queue
     Then the pair should still be approved with a higher flag count
 
+  Scenario: A replayed report is a no-op (the scraper's report retry is safe)
+    Given I am authenticated as an admin
+    And the agent posted a run report carrying two flagged pairs
+    When the agent replays the exact same report (same runStartedAt)
+    And I read the review queue
+    Then the pairs should still show one flag each with unchanged counts
+
   Scenario: A run report without review pairs still records (old scraper)
     Given I am authenticated as an admin
     When the agent posts a run report without review pairs

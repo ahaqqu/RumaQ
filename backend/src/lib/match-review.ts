@@ -56,7 +56,14 @@ export async function recordReviewItems(
              confidence = excluded.confidence,
              run_started_at = excluded.run_started_at,
              last_flagged_at = excluded.last_flagged_at,
-             flag_count = flag_count + 1`
+             flag_count = flag_count + 1
+           -- Same-run replay no-op: the scraper's report retry (postRunReport
+           -- withRetries) re-runs the whole pair set, and an earlier chunk
+           -- may already be committed — without this guard those pairs get
+           -- flag_count + 1 again. A replay carries identical evidence, so
+           -- skipping the update loses nothing; a genuine re-flag from a
+           -- later run (different runStartedAt) still bumps.
+           WHERE match_review_items.run_started_at <> excluded.run_started_at`
         )
         .bind(
           crypto.randomUUID(),
