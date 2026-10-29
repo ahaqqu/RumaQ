@@ -440,6 +440,7 @@
     "methodEmbedding": "Embedding",
     "methodAi": "AI",
     "export": "Ekspor keputusan",
+    "exportFailed": "Ekspor gagal — periksa sesimu dan coba lagi.",
     "decisionsNote": "Keputusan dicatat untuk perbaikan matcher di masa depan; tidak mengubah data harga saat ini.",
     "empty": "Tidak ada item untuk ditinjau",
     "emptyDesc": "Pasangan kandidat akan muncul di sini setelah ada run yang menandai kecocokan yang tidak pasti.",

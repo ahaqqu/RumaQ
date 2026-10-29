@@ -232,4 +232,18 @@ describe('AdminReview', () => {
     await waitFor(() => expect(fetchReviewExport).toHaveBeenCalled())
     expect(URL.createObjectURL).toHaveBeenCalled()
   })
+
+  it('surfaces an inline error when the export fails, and clears it on retry (thermos A3)', async () => {
+    vi.mocked(fetchReviewExport)
+      .mockRejectedValueOnce(new Error('Export failed: 401'))
+      .mockResolvedValueOnce(new Blob(['{}']))
+    URL.createObjectURL = vi.fn(() => 'blob:mock')
+    URL.revokeObjectURL = vi.fn()
+    const { container, getByText } = renderAdmin()
+    fireEvent.click(getByText('review.export'))
+    // The failure must be visible — a silent no-op button is the A3 bug.
+    await waitFor(() => expect(container.textContent).toContain('review.exportFailed'))
+    fireEvent.click(getByText('review.export'))
+    await waitFor(() => expect(container.textContent).not.toContain('review.exportFailed'))
+  })
 })

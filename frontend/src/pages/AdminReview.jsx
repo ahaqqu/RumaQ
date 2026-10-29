@@ -151,6 +151,7 @@ export function AdminReview() {
     [sources]
   )
   const [exporting, setExporting] = useState(false)
+  const [exportFailed, setExportFailed] = useState(false)
   const busy = decide.isPending || undo.isPending
 
   if (!isAdmin) {
@@ -172,6 +173,7 @@ export function AdminReview() {
 
   async function handleExport() {
     setExporting(true)
+    setExportFailed(false)
     try {
       const blob = await fetchReviewExport()
       const url = URL.createObjectURL(blob)
@@ -180,6 +182,11 @@ export function AdminReview() {
       anchor.download = 'review_decisions.json'
       anchor.click()
       URL.revokeObjectURL(url)
+    } catch {
+      // No toast system in the app — an inline line next to the button is
+      // the codebase's surface for one-shot action failures. Without it a
+      // failed export (expired session, 5xx) would be completely silent.
+      setExportFailed(true)
     } finally {
       setExporting(false)
     }
@@ -192,9 +199,16 @@ export function AdminReview() {
           <p className="text-md text-text-muted leading-snug">{t('review.lead')}</p>
           <p className="text-xs text-text-muted mt-2">{t('review.decisionsNote')}</p>
         </div>
-        <Button variant="secondary" size="sm" onClick={handleExport} disabled={exporting}>
-          <IconDownload size={16} /> {t('review.export')}
-        </Button>
+        <div className="flex flex-col items-end gap-1.5">
+          <Button variant="secondary" size="sm" onClick={handleExport} disabled={exporting}>
+            <IconDownload size={16} /> {t('review.export')}
+          </Button>
+          {exportFailed && (
+            <p className="text-xs text-danger" role="alert">
+              {t('review.exportFailed')}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Exact server-computed counts — unaffected by paging or the filter. */}

@@ -440,6 +440,7 @@
     "methodEmbedding": "Embedding",
     "methodAi": "AI",
     "export": "Export decisions",
+    "exportFailed": "Export failed — check your session and try again.",
     "decisionsNote": "Decisions are recorded for future matcher improvements; they do not change current price data.",
     "empty": "No items to review",
     "emptyDesc": "Candidate pairs will appear here after a run flags uncertain matches.",
