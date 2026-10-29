@@ -37,6 +37,7 @@ endpoints (`shared.steps.js` `Before` hook), and scenarios run with
 | `add-receipt.feature`     | Upload → mock scan → review → confirm → stock updated; unsupported type rejected       |
 | `prices-explorer.feature` | Server-side sort, promo badges, freshness line, #productKey deep-link expand + scroll  |
 | `price-promos.feature`    | Promos segment: fixed-order cards, expand, example jump into the explorer, empty state |
+| `admin-review.feature`    | Match review queue: side-by-side pair, decide persists across reload, undo, versioned export download, monitor cross-link, forbidden state for non-admins |
 | `accessibility.feature`   | axe-core scan (wcag2a/2aa/21a/21aa) of every main page; fails on critical/serious      |
 
 Notes for writing new E2E scenarios:
