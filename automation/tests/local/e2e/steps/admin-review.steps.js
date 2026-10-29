@@ -71,22 +71,14 @@ Given('the queue holds one flagged pair', async () => {
   await seedReviewPair()
 })
 
-// A second, non-allowlisted account: same password hash as the seed's
-// password123, no ADMIN_EMAILS entry. Inserted through the TEST_MODE
-// direct-SQL endpoint after the shared Before hook's reset+seed.
+// The seed's second user (second@rumaq.dev, no ADMIN_EMAILS entry) is born
+// passwordless — give it the same password123 hash as the seeded admin so it
+// can log in through the UI and exercise the 403 surface. The shared Before
+// hook's reset+seed always recreates the row, so UPDATE, never INSERT.
 Given('I am logged in as a non-admin user', async ({ page }) => {
   const seedHash =
     'pbkdf2_sha256$100000$pGW_FQUWkZ4LWR5SAXwDbg$eavlQExxmqixP0sIhu9HM8OIZqaxNm5ngKDMQd7Ge3s'
-  const sql =
-    'INSERT INTO users (id, email, name, picture, google_id, password_hash) VALUES (' +
-    "'bbbbbbbb-cccc-dddd-eeee-ffffffffffff', '" +
-    NON_ADMIN_EMAIL +
-    "', 'Second User', NULL, NULL, '" +
-    seedHash +
-    "');" +
-    'INSERT INTO user_settings (id, user_id, active_household_id, ai_provider, encrypted_ai_key) VALUES (' +
-    "'ssssssss-0000-0000-0000-000000000002', 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff', " +
-    "'11111111-2222-3333-4444-555555555555', NULL, NULL);"
+  const sql = `UPDATE users SET password_hash = '${seedHash}' WHERE email = '${NON_ADMIN_EMAIL}';`
   const res = await fetch(`${BASE_URL}/api/__test/direct-sql`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -125,6 +117,11 @@ Then('the pair shows the approved verdict', async ({ page }) => {
 
 When('I reload the review page', async ({ page }) => {
   await page.reload()
+  // The queue's default filter is pending (a triage work queue), and the
+  // decided row left it — switch to its verdict's filter to see it again.
+  // The filter chips are the app's span-based Chip convention (no button
+  // role), so match the chip's exact text — the count chip reads "Approved N".
+  await page.getByText('Approved', { exact: true }).click()
   await expect(page.getByText('Matched item')).toBeVisible()
 })
 
@@ -152,10 +149,12 @@ Then('the download is named review_decisions.json', async () => {
   expect(reviewDownload.suggestedFilename()).toBe('review_decisions.json')
 })
 
-Then('the export body contains the decided row with schema 1', async ({ request }) => {
+Then('the export body contains the decided row with schema 1', async ({ page }) => {
   // The same-origin session fetch the button performs, replayed through the
-  // browser context's cookie jar — asserts the file's CONTENT end to end.
-  const res = await request.get(`${BASE_URL}/api/admin/review/export`)
+  // browser context's cookie jar — page.request shares it, while the
+  // isolated `request` fixture does not and 401s. Asserts the file's
+  // CONTENT end to end.
+  const res = await page.request.get(`${BASE_URL}/api/admin/review/export`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.schema).toBe(1)
