@@ -163,7 +163,10 @@ export async function listReviewItems(
          FROM match_review_items r
          LEFT JOIN price_runs p ON p.run_started_at = r.run_started_at
          WHERE (? = 'all' OR r.status = ?)
-         ORDER BY r.last_flagged_at DESC
+         -- Pairs flagged by the same run share last_flagged_at; the natural
+         -- key tie-break makes the total order deterministic so an offset
+         -- page walk cannot skip/repeat tied rows across reads.
+         ORDER BY r.last_flagged_at DESC, r.item_product_key ASC, r.entry_product_key ASC
          LIMIT ? OFFSET ?`
       )
       .bind(status, status, limit, offset),

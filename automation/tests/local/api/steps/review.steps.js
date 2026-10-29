@@ -231,6 +231,9 @@ defineFeature(feature, (test) => {
 
     when('I approve the first pair', async () => {
       ctx.pairId = ctx.queue.items[0].id
+      // Same-run pairs share last_flagged_at — carry the pair we actually
+      // approved instead of assuming which one sorts first.
+      ctx.approvedPair = ctx.queue.items[0]
       await sendJson(ctx, 'POST', `/api/admin/review/${ctx.pairId}/decision`, {
         decision: 'approved',
       })
@@ -308,8 +311,8 @@ defineFeature(feature, (test) => {
       expect(ctx.exportBody.schema).toBe(1)
       expect(ctx.exportBody.decisions).toHaveLength(1)
       expect(ctx.exportBody.decisions[0]).toMatchObject({
-        itemProductKey: TWO_PAIRS[1].itemProductKey,
-        entryProductKey: TWO_PAIRS[1].entryProductKey,
+        itemProductKey: ctx.approvedPair.itemProductKey,
+        entryProductKey: ctx.approvedPair.entryProductKey,
         decision: 'approved',
         decidedBy: ctx.testUserId,
         reason: 'price_ratio',
