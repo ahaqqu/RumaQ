@@ -389,6 +389,11 @@
     "banner": "You're offline — changes will sync when you reconnect",
     "disabledHint": "Available when you're back online"
   },
+  "pwa": {
+    "updateAvailable": "New version available",
+    "reload": "Reload",
+    "dismiss": "Dismiss"
+  },
   "common": {
     "from": "from",
     "today": "today",

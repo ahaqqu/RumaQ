@@ -22,39 +22,37 @@ describe('PwaUpdatePrompt', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('renders update banner when update is available', () => {
+  it('renders the update banner when a new version is ready', () => {
     mockUseRegisterSW.mockReturnValue({
       needRefresh: [true, vi.fn()],
       updateServiceWorker: vi.fn(),
     })
     const { container } = render(React.createElement(PwaUpdatePrompt))
-    expect(container.textContent).toContain('Update available')
-    expect(container.querySelectorAll('button').length).toBe(2)
+    expect(container.querySelector('[role="status"]')).toBeTruthy()
+    expect(container.textContent).toContain('pwa.updateAvailable')
+    expect(container.textContent).toContain('pwa.reload')
+    expect(container.textContent).toContain('pwa.dismiss')
   })
 
-  it('calls updateServiceWorker when update button clicked', () => {
+  it('activates the waiting worker via updateServiceWorker on Reload', () => {
     const updateServiceWorker = vi.fn()
-    const setNeedRefresh = vi.fn()
     mockUseRegisterSW.mockReturnValue({
-      needRefresh: [true, setNeedRefresh],
+      needRefresh: [true, vi.fn()],
       updateServiceWorker,
     })
     const { container } = render(React.createElement(PwaUpdatePrompt))
-    const buttons = container.querySelectorAll('button')
-    fireEvent.click(buttons[0])
+    fireEvent.click(container.querySelectorAll('button')[0])
     expect(updateServiceWorker).toHaveBeenCalledWith(true)
   })
 
-  it('dismisses banner when dismiss button clicked', () => {
-    const updateServiceWorker = vi.fn()
+  it('dismisses the banner until the next needRefresh event', () => {
     const setNeedRefresh = vi.fn()
     mockUseRegisterSW.mockReturnValue({
       needRefresh: [true, setNeedRefresh],
-      updateServiceWorker,
+      updateServiceWorker: vi.fn(),
     })
     const { container } = render(React.createElement(PwaUpdatePrompt))
-    const buttons = container.querySelectorAll('button')
-    fireEvent.click(buttons[1])
+    fireEvent.click(container.querySelectorAll('button')[1])
     expect(setNeedRefresh).toHaveBeenCalledWith(false)
   })
 })

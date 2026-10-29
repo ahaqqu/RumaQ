@@ -389,6 +389,11 @@
     "banner": "Kamu sedang offline — perubahan akan disinkronkan saat kembali online",
     "disabledHint": "Tersedia saat kembali online"
   },
+  "pwa": {
+    "updateAvailable": "Versi baru tersedia",
+    "reload": "Muat ulang",
+    "dismiss": "Abaikan"
+  },
   "common": {
     "from": "dari",
     "today": "hari ini",
