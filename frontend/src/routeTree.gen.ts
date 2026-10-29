@@ -17,6 +17,7 @@ import { Route as PlanRouteImport } from './routes/plan'
 import { Route as PricesRouteImport } from './routes/prices'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as AdminPricesRouteImport } from './routes/admin.prices'
+import { Route as AdminReviewRouteImport } from './routes/admin.review'
 import { Route as AdminScrapeRouteImport } from './routes/admin.scrape'
 
 const IndexRoute = IndexRouteImport.update({
@@ -59,6 +60,11 @@ const AdminPricesRoute = AdminPricesRouteImport.update({
   path: '/admin/prices',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminReviewRoute = AdminReviewRouteImport.update({
+  id: '/admin/review',
+  path: '/admin/review',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminScrapeRoute = AdminScrapeRouteImport.update({
   id: '/admin/scrape',
   path: '/admin/scrape',
@@ -74,6 +80,7 @@ export interface FileRoutesByFullPath {
   '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
   '/admin/prices': typeof AdminPricesRoute
+  '/admin/review': typeof AdminReviewRoute
   '/admin/scrape': typeof AdminScrapeRoute
 }
 export interface FileRoutesByTo {
@@ -85,6 +92,7 @@ export interface FileRoutesByTo {
   '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
   '/admin/prices': typeof AdminPricesRoute
+  '/admin/review': typeof AdminReviewRoute
   '/admin/scrape': typeof AdminScrapeRoute
 }
 export interface FileRoutesById {
@@ -97,6 +105,7 @@ export interface FileRoutesById {
   '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
   '/admin/prices': typeof AdminPricesRoute
+  '/admin/review': typeof AdminReviewRoute
   '/admin/scrape': typeof AdminScrapeRoute
 }
 export interface FileRouteTypes {
@@ -110,6 +119,7 @@ export interface FileRouteTypes {
     | '/prices'
     | '/settings'
     | '/admin/prices'
+    | '/admin/review'
     | '/admin/scrape'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -121,6 +131,7 @@ export interface FileRouteTypes {
     | '/prices'
     | '/settings'
     | '/admin/prices'
+    | '/admin/review'
     | '/admin/scrape'
   id:
     | '__root__'
@@ -132,6 +143,7 @@ export interface FileRouteTypes {
     | '/prices'
     | '/settings'
     | '/admin/prices'
+    | '/admin/review'
     | '/admin/scrape'
   fileRoutesById: FileRoutesById
 }
@@ -144,6 +156,7 @@ export interface RootRouteChildren {
   PricesRoute: typeof PricesRoute
   SettingsRoute: typeof SettingsRoute
   AdminPricesRoute: typeof AdminPricesRoute
+  AdminReviewRoute: typeof AdminReviewRoute
   AdminScrapeRoute: typeof AdminScrapeRoute
 }
 
@@ -205,6 +218,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminPricesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/review': {
+      id: '/admin/review'
+      path: '/admin/review'
+      fullPath: '/admin/review'
+      preLoaderRoute: typeof AdminReviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/scrape': {
       id: '/admin/scrape'
       path: '/admin/scrape'
@@ -224,6 +244,7 @@ const rootRouteChildren: RootRouteChildren = {
   PricesRoute: PricesRoute,
   SettingsRoute: SettingsRoute,
   AdminPricesRoute: AdminPricesRoute,
+  AdminReviewRoute: AdminReviewRoute,
   AdminScrapeRoute: AdminScrapeRoute,
 }
 export const routeTree = rootRouteImport
