@@ -135,6 +135,11 @@ When('I undo the verdict', async ({ page }) => {
 })
 
 Then('the pair is pending again', async ({ page }) => {
+  // The reload step left the Approved filter selected, and the undone row
+  // leaves that server-filtered list as soon as the undo refetch lands —
+  // asserting the buttons there raced the refetch. Switch to the Pending
+  // queue (the same chip interaction the reload step uses) and assert there.
+  await page.getByText('Pending', { exact: true }).click()
   await expect(page.getByRole('button', { name: 'Approve Match' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Reject Match' })).toBeVisible()
 })
