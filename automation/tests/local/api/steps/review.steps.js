@@ -368,12 +368,7 @@ defineFeature(feature, (test) => {
     })
   })
 
-  test('A replayed report is a no-op (the scraper retry is safe)', ({
-    given,
-    and,
-    when,
-    then,
-  }) => {
+  test('A replayed report is a no-op (the scraper retry is safe)', ({ given, and, when, then }) => {
     given('I am authenticated as an admin', async () => {
       await ctx.resetAndSeed()
       await ctx.authenticate()

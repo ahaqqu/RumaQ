@@ -118,9 +118,7 @@ describe('recordReviewItems', () => {
     expect(sql).toContain('last_flagged_at = excluded.last_flagged_at')
     // Same-run replay no-op (postRunReport retry): a report replayed with the
     // same runStartedAt must not bump flag_count for already-committed chunks.
-    expect(sql).toContain(
-      'WHERE match_review_items.run_started_at <> excluded.run_started_at'
-    )
+    expect(sql).toContain('WHERE match_review_items.run_started_at <> excluded.run_started_at')
     expect(sql).not.toMatch(/status\s*=/)
     expect(sql).not.toMatch(/decided_at\s*=/)
     expect(sql).not.toMatch(/decided_by\s*=/)
