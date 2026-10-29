@@ -307,10 +307,18 @@ function toExportRow(row: ExportRow): ReviewExportRow | null {
   }
 }
 
-async function listDecidedPage(
-  db: D1Database,
-  after: { decidedAt: string; id: string } | null
-): Promise<Array<{ id: string; row: ReviewExportRow }>> {
+type DecidedPage = {
+  /** Parsed, stream-ready rows — a malformed blob is dropped, never fatal. */
+  rows: Array<{ id: string; row: ReviewExportRow }>
+  /** Cursor from the last RAW row: pagination must jump past a dropped tail
+   * row too, or the next page would silently lose its undropped neighbors. */
+  cursor: { decidedAt: string; id: string } | null
+  /** Whether the RAW result filled the page — parse failures must never end
+   * the pagination loop early (the export's non-truncation guarantee). */
+  full: boolean
+}
+
+async function listDecidedPage(db: D1Database, after: { decidedAt: string; id: string } | null) {
   const { results } = await db
     .prepare(
       `SELECT r.id, r.pair_data, r.status, r.decided_at, r.decided_by, r.flag_count, r.run_started_at
@@ -327,12 +335,15 @@ async function listDecidedPage(
       after?.id ?? null
     )
     .all<ExportRow>()
-  const rows: Array<{ id: string; row: ReviewExportRow }> = []
-  for (const raw of results ?? []) {
-    const row = toExportRow(raw)
-    if (row) rows.push({ id: raw.id, row })
+  const raw = results ?? []
+  const page: DecidedPage = { rows: [], cursor: null, full: raw.length >= EXPORT_PAGE }
+  for (const row of raw) {
+    const parsed = toExportRow(row)
+    if (parsed) page.rows.push({ id: row.id, row: parsed })
   }
-  return rows
+  const last = raw[raw.length - 1]
+  if (last) page.cursor = { decidedAt: last.decided_at, id: last.id }
+  return page
 }
 
 /**
@@ -353,14 +364,14 @@ export function exportReviewDecisions(db: D1Database): ReadableStream {
       let after: { decidedAt: string; id: string } | null = null
       for (;;) {
         const page = await listDecidedPage(db, after)
-        if (page.length === 0) break
-        for (const { row } of page) {
+        for (const { row } of page.rows) {
           controller.enqueue(encoder.encode(`${first ? '' : ','}${JSON.stringify(row)}`))
           first = false
         }
-        const last = page[page.length - 1]!
-        after = { decidedAt: last.row.decidedAt, id: last.id }
-        if (page.length < EXPORT_PAGE) break
+        // Fullness and the cursor are RAW-row based: a malformed blob drops
+        // one stream entry but must not end the walk or skip its neighbors.
+        if (!page.full) break
+        after = page.cursor!
       }
       controller.enqueue(encoder.encode(']}'))
       controller.close()

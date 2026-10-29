@@ -313,6 +313,31 @@ describe('exportReviewDecisions', () => {
     expect(new Set(keys).size).toBe(450)
   })
 
+  it('continues past a malformed blob in a full page — pagination is RAW-row based (thermos A2)', async () => {
+    // Row 199 is the last row of the first full 200-row page and carries a
+    // corrupt blob. The walk must jump past it (cursor from the last RAW row)
+    // and keep paging — the pre-A2 loop ended at the 199 parsed rows and
+    // silently dropped every later decided row.
+    const exportRows = Array.from({ length: 450 }, (_, i) => ({
+      id: `rev-${String(i).padStart(4, '0')}`,
+      pair_data:
+        i === 199 ? '{not json' : JSON.stringify(pair({ itemProductKey: `item-${i}----` })),
+      status: 'approved',
+      decided_at: new Date(Date.UTC(2026, 9, 28, 0, 0, i)).toISOString(),
+      decided_by: 'admin-1',
+      flag_count: 1,
+      run_started_at: '2026-10-28T23:00:05Z',
+    }))
+    const { db } = createFakeDb({ exportRows })
+    const text = await new Response(exportReviewDecisions(db)).text()
+    const parsed = JSON.parse(text) as { decisions: Array<{ itemProductKey: string }> }
+    expect(parsed.decisions).toHaveLength(449)
+    const keys = parsed.decisions.map((row) => row.itemProductKey)
+    expect(keys).toContain('item-198----')
+    expect(keys).toContain('item-200----')
+    expect(keys).toContain('item-449----')
+  })
+
   it('streams an empty decisions array when nothing was decided', async () => {
     const { db } = createFakeDb({ exportRows: [] })
     const text = await new Response(exportReviewDecisions(db)).text()
