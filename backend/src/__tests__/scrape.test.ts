@@ -33,17 +33,20 @@ type EventRow = {
   message: string
 }
 
-function createScrapeDb(opts: { viewerEmail?: string | null } = {}) {
+function createScrapeDb(
+  opts: { viewerEmail?: string | null; viewerIsAdmin?: number } = {}
+) {
   const commands: CommandRow[] = []
   const events: EventRow[] = []
   const viewerEmail = opts.viewerEmail ?? 'admin@rumaq.dev'
+  const viewerIsAdmin = opts.viewerIsAdmin ?? 1
 
   const find = (id: string) => commands.find((row) => row.id === id)
 
   const handle = (sql: string, params: unknown[]): unknown => {
     // --- auth ---
-    if (sql.includes('SELECT email FROM users WHERE id = ?')) {
-      return viewerEmail === null ? [] : [{ email: viewerEmail }]
+    if (sql.includes('SELECT email, is_admin FROM users WHERE id = ?')) {
+      return viewerEmail === null ? [] : [{ email: viewerEmail, is_admin: viewerIsAdmin }]
     }
     // --- createScrapeCommand ---
     if (sql.includes("SELECT id FROM scrape_commands WHERE status IN ('pending', 'running')")) {
@@ -225,10 +228,9 @@ function createScrapeDb(opts: { viewerEmail?: string | null } = {}) {
         EMAIL_AUTH_ENABLED: 'false',
         ASSETS: undefined as unknown as Fetcher,
         // Authenticated viewer (props path — the cookie path is covered by
-        // the auth suite); email decides admin via the users SELECT above.
+        // the auth suite); users.is_admin decides admin via the SELECT above.
         props: { userId: 'user-1', householdId: 'h1' },
         TEST_MODE: 'true',
-        ADMIN_EMAILS: 'admin@rumaq.dev',
         HAQITA_INGEST_SECRET: 'ingest-secret',
         ...extra,
       }
@@ -252,7 +254,7 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
   })
 
   it('returns 403 for a non-admin user', async () => {
-    const fake = createScrapeDb({ viewerEmail: 'pleb@rumaq.dev' })
+    const fake = createScrapeDb({ viewerEmail: 'pleb@rumaq.dev', viewerIsAdmin: 0 })
     const res = await apiApp.request(
       '/api/admin/scrape',
       {

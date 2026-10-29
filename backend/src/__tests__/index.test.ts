@@ -52,6 +52,37 @@ describe('apiApp (cached routes)', () => {
     expect(res.headers.get('Cache-Control')).toMatch(/private, no-cache/)
   })
 
+  it('/api/me maps users.is_admin to isAdmin in both directions', async () => {
+    const makeEnv = (isAdmin: number) => {
+      const env = createMockEnv()
+      env.props = { userId: 'user-123', householdId: 'house-456' }
+      env.DB.prepare = vi.fn().mockReturnThis()
+      env.DB.bind = vi.fn().mockReturnThis()
+      env.DB.first = vi.fn().mockResolvedValueOnce({
+        id: 'user-123',
+        email: 'a@b.com',
+        name: 'Alice',
+        picture: null,
+        is_admin: isAdmin,
+      })
+      return env
+    }
+
+    const admin = await apiApp.request('/api/me', {}, makeEnv(1))
+    const adminBody = (await admin.json()) as { user: { isAdmin?: boolean; is_admin?: number } }
+    expect(adminBody.user.isAdmin).toBe(true)
+
+    const regular = await apiApp.request('/api/me', {}, makeEnv(0))
+    const regularBody = (await regular.json()) as {
+      user: { isAdmin?: boolean; is_admin?: number }
+    }
+    expect(regularBody.user.isAdmin).toBe(false)
+
+    // The raw column never leaks into the JSON.
+    expect(adminBody.user.is_admin).toBeUndefined()
+    expect(regularBody.user.is_admin).toBeUndefined()
+  })
+
   it('/api/stock returns stock list with valid props', async () => {
     const env = createMockEnv()
     env.props = { userId: 'user-123', householdId: 'house-456' }
