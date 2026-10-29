@@ -64,7 +64,7 @@ import {
   undoReviewDecision,
   exportReviewDecisions,
 } from '../lib/match-review.js'
-import { isAdminEmail, requireAdmin } from '../lib/admin.js'
+import { requireAdmin } from '../lib/admin.js'
 import { groundPlanItem } from '../lib/grounding.js'
 import { escapeLike } from '../lib/sql.js'
 import { getRateLimitConfig, isRateLimited } from '../lib/rate-limit.js'
@@ -470,11 +470,29 @@ apiApp.get(
     },
   }),
   async (c) => {
-    const user = await c.env.DB.prepare('SELECT id, email, name, picture FROM users WHERE id = ?')
+    const user = await c.env.DB.prepare(
+      'SELECT id, email, name, picture, is_admin FROM users WHERE id = ?'
+    )
       .bind(c.get('userId'))
-      .first<{ id: string; email: string | null; name: string | null; picture: string | null }>()
+      .first<{
+        id: string
+        email: string | null
+        name: string | null
+        picture: string | null
+        is_admin: number
+      }>()
+    // Response shape is the openapi contract — project the row explicitly so
+    // the raw is_admin column never leaks into the JSON.
     const res = c.json({
-      user: user ? { ...user, isAdmin: isAdminEmail(c.env.ADMIN_EMAILS, user.email) } : null,
+      user: user
+        ? {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            picture: user.picture,
+            isAdmin: user.is_admin === 1,
+          }
+        : null,
     })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
@@ -2398,7 +2416,7 @@ type PriceAggregateFields = {
 }
 
 // Admin scraping monitor (§7.1): run history with per-run detail and
-// last-success age. 403 for non-allowlisted users (requireAdmin); logs
+// last-success age. 403 for non-admin users (requireAdmin); logs
 // themselves stay in journald on the VPS.
 apiApp.get(
   '/api/admin/price-runs',
