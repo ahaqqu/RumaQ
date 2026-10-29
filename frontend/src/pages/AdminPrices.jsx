@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Link, useSearch } from '@tanstack/react-router'
 import { useMe } from '../lib/queries/me.js'
 import { usePriceRuns } from '../lib/queries/index.js'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
@@ -117,7 +118,16 @@ function RunDetail({ run }) {
                 {t('monitor.matchSolo', { count: run.match.solo })}
               </span>
               <span>
-                {t('monitor.matchReview', { count: run.match.reviewItems })}
+                {/* Issue #294: the flagged count links to the review queue —
+                the monitor answers "did a run report flags?", the review page
+                is where they get resolved. Plain text at zero. */}
+                {run.match.reviewItems > 0 ? (
+                  <Link to="/admin/review" className="text-accent hover:underline">
+                    {t('monitor.matchReview', { count: run.match.reviewItems })}
+                  </Link>
+                ) : (
+                  t('monitor.matchReview', { count: run.match.reviewItems })
+                )}
                 {run.match.embeddingsDegraded && ` · ${t('monitor.matchDegraded')}`}
               </span>
             </div>
@@ -148,9 +158,12 @@ function RunDetail({ run }) {
   )
 }
 
-function RunRow({ run }) {
+function RunRow({ run, initiallyExpanded = false }) {
   const { t, i18n } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
+  // ?run=<id> deep link (issue #294): the review queue's "View run" jumps
+  // here with the run pre-expanded. A run absent from the 50-run feed simply
+  // renders unexpanded.
+  const [expanded, setExpanded] = useState(initiallyExpanded)
   const failed = run.status !== 'success'
   // A green run can still carry a by-design needs-proxy skip — surface it on
   // the row so the gap is visible without expanding.
@@ -196,6 +209,8 @@ export function AdminPrices() {
   const { data: me } = useMe()
   const isAdmin = me?.user?.isAdmin === true
   const { data, isLoading, isError } = usePriceRuns()
+  // ?run=<id> from the review queue's "View run" link.
+  const { run: runParam } = useSearch({ strict: false }) ?? {}
 
   if (!isAdmin) {
     return (
@@ -239,7 +254,11 @@ export function AdminPrices() {
             <PanelBody className="!py-0 !px-0">
               <div className="flex flex-col">
                 {data.runs.map((run) => (
-                  <RunRow key={run.id} run={run} />
+                  <RunRow
+                    key={run.id}
+                    run={run}
+                    initiallyExpanded={Boolean(runParam) && run.id === runParam}
+                  />
                 ))}
               </div>
             </PanelBody>

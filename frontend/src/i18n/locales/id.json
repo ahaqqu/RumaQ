@@ -8,7 +8,8 @@
     "monitor": "Monitor Scraper",
     "settings": "Pengaturan",
     "addFromReceipt": "Tambah dari struk",
-    "scrape": "Scrape Sekarang"
+    "scrape": "Scrape Sekarang",
+    "review": "Review"
   },
   "home": {
     "lead": "Stok terpantau otomatis dari struk belanja. Sisa dihitung dari kebiasaanmu, bukan diisi manual.",
@@ -420,5 +421,33 @@
     "assistantQuestion": "Mau saya buatkan rencananya?",
     "systemPrompt": "Kamu adalah asisten inventaris dan belanja rumah tangga bernama RumaQ. Jawab dengan jelas, singkat, dan praktis.",
     "roleInstructionBase": "Bayangkan kamu adalah {{ai}} dan pengguna adalah {{user}}. Seluruh jawabanmu harus sesuai peran tersebut."
+  },
+  "review": {
+    "lead": "Kecocokan produk yang ditandai matcher untuk ditinjau manusia.",
+    "pending": "Menunggu",
+    "approved": "Disetujui",
+    "rejected": "Ditolak",
+    "all": "Semua",
+    "approve": "Setujui Match",
+    "reject": "Tolak Match",
+    "undo": "Batalkan",
+    "matchedItem": "Item yang cocok",
+    "catalogEntry": "Entri katalog (terakhir terlihat)",
+    "reasonPriceRatio": "Rasio harga",
+    "reasonVerifierUnresolved": "Verifier tidak tuntas",
+    "confidence": "Keyakinan",
+    "methodExact": "Exact",
+    "methodEmbedding": "Embedding",
+    "methodAi": "AI",
+    "export": "Ekspor keputusan",
+    "decisionsNote": "Keputusan dicatat untuk perbaikan matcher di masa depan; tidak mengubah data harga saat ini.",
+    "empty": "Tidak ada item untuk ditinjau",
+    "emptyDesc": "Pasangan kandidat akan muncul di sini setelah ada run yang menandai kecocokan yang tidak pasti.",
+    "noneFiltered": "Tidak ada item {{status}}",
+    "showing": "Menampilkan {{shown}} dari {{total}}",
+    "flagCount_one": "Ditandai {{count}} kali",
+    "flagCount_other": "Ditandai {{count}} kali",
+    "runDetail": "Lihat run",
+    "loadMore": "Muat lagi"
   }
 }

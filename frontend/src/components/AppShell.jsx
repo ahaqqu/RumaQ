@@ -11,6 +11,7 @@ import {
   IconPrices,
   IconMonitor,
   IconBolt,
+  IconReview,
   BrandMark,
 } from './icons.jsx'
 import { cn } from '../lib/cn.js'
@@ -60,6 +61,7 @@ export function AppShell({ children }) {
     ? [
         ...NAV,
         { id: 'monitor', key: 'nav.monitor', Icon: IconMonitor, to: '/admin/prices' },
+        { id: 'review', key: 'nav.review', Icon: IconReview, to: '/admin/review' },
         { id: 'scrape', key: 'nav.scrape', Icon: IconBolt, to: '/admin/scrape' },
       ]
     : NAV
