@@ -151,7 +151,10 @@ export const runReportSchema = strictObject({
       // reviewItems (above) keeps meaning "pre-slice total", so the monitor
       // number is unaffected by the cap; reviewItemsTotal is kept as an
       // explicit field to make the truncation arithmetic self-describing.
-      reviewItemPairs: nullish(array(reviewItemPairSchema)),
+      // The cap is a checked boundary here, not just a producer convention:
+      // the Worker rejects an over-cap array instead of letting
+      // recordReviewItems spend unbounded D1 batches on one request.
+      reviewItemPairs: nullish(pipe(array(reviewItemPairSchema), maxLength(200))),
       reviewItemsTotal: nullish(pipe(number(), integer(), minValue(0))),
       reviewItemsTruncated: nullish(boolean()),
     })

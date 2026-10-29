@@ -144,6 +144,23 @@ describe('runReportSchema', () => {
     ).toBe(false)
   })
 
+  it('rejects an over-cap pair array — the 200 transport cap is a checked boundary (thermos A4)', () => {
+    const atCap = {
+      ...sampleReport(),
+      match: {
+        ...sampleReport().match!,
+        reviewItemPairs: Array.from({ length: 200 }, () => sampleReviewPair()),
+      },
+    }
+    expect(safeParse(runReportSchema, atCap).success).toBe(true)
+    const overCap = {
+      ...atCap,
+      match: { ...atCap.match!, reviewItemPairs: [...atCap.match!.reviewItemPairs!] },
+    }
+    overCap.match!.reviewItemPairs!.push(sampleReviewPair())
+    expect(safeParse(runReportSchema, overCap).success).toBe(false)
+  })
+
   it('rejects an unknown exit code or stage', () => {
     expect(safeParse(runReportSchema, { ...sampleReport(), exitCode: 3 }).success).toBe(false)
     expect(safeParse(runReportSchema, { ...sampleReport(), stage: 'ocr' }).success).toBe(false)
