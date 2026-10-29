@@ -3,10 +3,7 @@ import { requireAdmin } from '../lib/admin.js'
 
 // Admin access is the users.is_admin column (migration 0014) — requireAdmin
 // reads it from the users SELECT it already runs; there is no env fallback.
-function createContext(overrides: {
-  userId?: string
-  userRow?: { is_admin?: number } | null
-}) {
+function createContext(overrides: { userId?: string; userRow?: { is_admin?: number } | null }) {
   const json = vi.fn(() => ({ headers: { set: vi.fn() } }))
   const c = {
     env: { DB: { prepare: vi.fn() } },

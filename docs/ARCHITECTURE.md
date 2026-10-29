@@ -240,6 +240,8 @@ cf d1 execute rumaq --remote --command "UPDATE users SET is_admin = 1 WHERE lowe
 cf d1 execute rumaq --remote --command "UPDATE users SET is_admin = 0 WHERE lower(email) = lower('…');"
 ```
 
+One-time cleanup after this ships: the former `ADMIN_EMAILS` Worker secret stops being read but `scripts/deploy.sh` never deletes secrets — remove it manually with `cf workers secrets delete ADMIN_EMAILS`.
+
 ## 6. Database
 
 Cloudflare D1 runs SQLite at the edge. The schema is relational and normalized so the same Worker can serve a single household today and multiple households later without rewrites.
