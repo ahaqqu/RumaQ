@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test'
-import { render, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
+import { render, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { AdminReview } from './AdminReview.jsx'
@@ -89,11 +89,6 @@ function renderAdmin() {
 
 // The suite's i18n mock returns raw keys, so assertions match keys.
 describe('AdminReview', () => {
-  // This project runs without vitest globals, so RTL cannot auto-register
-  // its afterEach cleanup — un-cleaned renders would leak into later
-  // getByText calls in this file.
-  afterEach(cleanup)
-
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
