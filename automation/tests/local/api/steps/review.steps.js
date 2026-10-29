@@ -252,7 +252,8 @@ defineFeature(feature, (test) => {
     })
 
     when('I read the review queue again', async () => {
-      await readQueue(ctx)
+      // The decided row left the pending filter — read the full queue.
+      await readQueue(ctx, '?status=all')
     })
 
     then('the verdict should still be approved', () => {
@@ -350,7 +351,7 @@ defineFeature(feature, (test) => {
     })
 
     and('I read the review queue', async () => {
-      await readQueue(ctx)
+      await readQueue(ctx, '?status=all')
     })
 
     then('the pair should still be approved with a higher flag count', () => {
