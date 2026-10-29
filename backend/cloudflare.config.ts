@@ -66,8 +66,8 @@ export default defineConfig({
       // dev runs on placeholder secrets from .dev.vars.
       RUN_SECRETS_CHECK: bindings.text(accountId === 'LOCAL' ? 'false' : 'true'),
       // Required by gateway.ts's startup check. Optional secrets
-      // (HAQITA_INGEST_SECRET, ADMIN_EMAILS, RUMAQ_SERVER_AI_*) stay
-      // undeclared so local dev without them does not warn.
+      // (HAQITA_INGEST_SECRET, RUMAQ_SERVER_AI_*) stay undeclared so local
+      // dev without them does not warn.
       GOOGLE_CLIENT_ID: bindings.secret(),
       GOOGLE_CLIENT_SECRET: bindings.secret(),
       WORKER_JWT_SECRET: bindings.secret(),

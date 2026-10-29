@@ -4,7 +4,7 @@ import { expect } from '@playwright/test'
 const { createBdd } = pkg
 const { When, Then } = createBdd()
 
-// The seeded stack runs with ADMIN_EMAILS=test@rumaq.dev, so the seeded user
+// The seeded stack grants the seeded user users.is_admin = 1 (#315), so it
 // sees the operator surfaces. The UI default locale is English.
 const scrapeNow = (page) => page.getByRole('button', { name: 'Scrape Now' })
 

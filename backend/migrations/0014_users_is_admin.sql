@@ -1,6 +1,6 @@
 -- Admin flag on the user row (issue #315): operator-only surfaces
--- (requireAdmin) read users.is_admin instead of the ADMIN_EMAILS env
--- allowlist, so grant/revoke is a one-statement SQL runbook and the flag
+-- (requireAdmin) read users.is_admin instead of the former email-allowlist
+-- Worker secret, so grant/revoke is a one-statement SQL runbook and the flag
 -- can never drift from the deploy environment (issue #314). SQLite boolean
 -- convention (log_truncated in 0012, flag_count in 0013): 1 = admin,
 -- 0 = regular user; new signups omit the column and default to 0.

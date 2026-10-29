@@ -71,7 +71,7 @@ Given('the queue holds one flagged pair', async () => {
   await seedReviewPair()
 })
 
-// The seed's second user (second@rumaq.dev, no ADMIN_EMAILS entry) is born
+// The seed's second user (second@rumaq.dev, no is_admin grant) is born
 // passwordless — give it the same password123 hash as the seeded admin so it
 // can log in through the UI and exercise the 403 surface. The shared Before
 // hook's reset+seed always recreates the row, so UPDATE, never INSERT.
