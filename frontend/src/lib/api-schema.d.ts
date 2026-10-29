@@ -450,6 +450,58 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/admin/review': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Match review queue: flagged candidate pairs with exact per-status counts (admin-only). Offset-paginated, newest flags first. */
+    get: operations['getApiAdminReview']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/admin/review/export': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Stream every decided review item as versioned JSON (admin-only) — ALL decided rows, independent of list pagination. */
+    get: operations['getApiAdminReviewExport']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/admin/review/{id}/decision': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** @description Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins. */
+    post: operations['postApiAdminReviewByIdDecision']
+    /** @description Undo a review verdict — the row returns to pending (admin-only). Idempotent on a pending row. */
+    delete: operations['deleteApiAdminReviewByIdDecision']
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/prices': {
     parameters: {
       query?: never
@@ -1736,6 +1788,280 @@ export interface operations {
         content?: never
       }
       /** @description Unknown command */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiAdminReview: {
+    parameters: {
+      query?: {
+        status?: 'pending' | 'approved' | 'rejected' | 'all'
+        limit?: number
+        offset?: number
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            items?: {
+              id?: string
+              itemProductKey?: string
+              itemName?: string
+              itemBrand?: string | null
+              itemUnit?: string | null
+              itemPrice?: number
+              itemEffectiveUnitPrice?: number | null
+              itemStore?: string
+              entryProductKey?: string
+              entryName?: string
+              entryBrand?: string | null
+              entryUnit?: string | null
+              entryPrice?: number
+              entryEffectiveUnitPrice?: number | null
+              entryStore?: string
+              /** @enum {string} */
+              matchMethod?: 'exact' | 'embedding' | 'ai'
+              confidence?: number
+              /** @enum {string} */
+              reason?: 'price_ratio' | 'verifier_unresolved'
+              /** @enum {string} */
+              status?: 'pending' | 'approved' | 'rejected'
+              decidedAt?: string | null
+              decidedBy?: string | null
+              flagCount?: number
+              firstFlaggedAt?: string
+              lastFlaggedAt?: string
+              runStartedAt?: string
+              runId?: string | null
+            }[]
+            counts?: {
+              pending?: number
+              approved?: number
+              rejected?: number
+            }
+            filteredTotal?: number
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiAdminReviewExport: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description JSON stream: {"schema":1,"exportedAt":"…","decisions":[…]} (Content-Disposition: attachment) */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': Record<string, never>
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  postApiAdminReviewByIdDecision: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          /** @enum {string} */
+          decision: 'approved' | 'rejected'
+        }
+      }
+    }
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            item?: {
+              id?: string
+              itemProductKey?: string
+              itemName?: string
+              itemBrand?: string | null
+              itemUnit?: string | null
+              itemPrice?: number
+              itemEffectiveUnitPrice?: number | null
+              itemStore?: string
+              entryProductKey?: string
+              entryName?: string
+              entryBrand?: string | null
+              entryUnit?: string | null
+              entryPrice?: number
+              entryEffectiveUnitPrice?: number | null
+              entryStore?: string
+              /** @enum {string} */
+              matchMethod?: 'exact' | 'embedding' | 'ai'
+              confidence?: number
+              /** @enum {string} */
+              reason?: 'price_ratio' | 'verifier_unresolved'
+              /** @enum {string} */
+              status?: 'pending' | 'approved' | 'rejected'
+              decidedAt?: string | null
+              decidedBy?: string | null
+              flagCount?: number
+              firstFlaggedAt?: string
+              lastFlaggedAt?: string
+              runStartedAt?: string
+              runId?: string | null
+            }
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unknown review item */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  deleteApiAdminReviewByIdDecision: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            item?: {
+              id?: string
+              itemProductKey?: string
+              itemName?: string
+              itemBrand?: string | null
+              itemUnit?: string | null
+              itemPrice?: number
+              itemEffectiveUnitPrice?: number | null
+              itemStore?: string
+              entryProductKey?: string
+              entryName?: string
+              entryBrand?: string | null
+              entryUnit?: string | null
+              entryPrice?: number
+              entryEffectiveUnitPrice?: number | null
+              entryStore?: string
+              /** @enum {string} */
+              matchMethod?: 'exact' | 'embedding' | 'ai'
+              confidence?: number
+              /** @enum {string} */
+              reason?: 'price_ratio' | 'verifier_unresolved'
+              /** @enum {string} */
+              status?: 'pending' | 'approved' | 'rejected'
+              decidedAt?: string | null
+              decidedBy?: string | null
+              flagCount?: number
+              firstFlaggedAt?: string
+              lastFlaggedAt?: string
+              runStartedAt?: string
+              runId?: string | null
+            }
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unknown review item */
       404: {
         headers: {
           [name: string]: unknown
