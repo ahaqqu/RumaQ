@@ -64,8 +64,14 @@ Research/design/plan docs live in the manager workspace, or under `docs/plan/` w
 ## Async discipline
 
 - Subagents run in background; NEVER poll — react to completion notifications; chat stays available to the user.
+- Cap concurrent background agents (this harness: ~2). When at cap, queue launches in the state file; on the next completion, relaunch queued work FIRST.
 - One in-flight implementation per worktree. PRs touching overlapping files merge serially; PRs touching unrelated files may overlap.
 - When bootstrapping this workflow, do not launch new implementation work before the manager skill itself exists in the repo.
+
+## Deploy and test discipline
+
+- CI auto-deploys every merge to main. Before any manual deploy or post-deploy probing, check the latest CI deploy run; must not re-deploy what CI already deployed.
+- `./scripts/test.sh automation-local` must run solo (no concurrent test/ci process) and with `--build` after any code change — Docker images bake code into the images.
 
 ## Subagent termination and recovery
 
@@ -107,3 +113,7 @@ When the conversation nears ~250k tokens, ensure the state file is fully current
 ## Repo primacy
 
 The project's `AGENTS.md` always wins over this skill where they conflict (e.g. PR-only flow, script entrypoints such as `scripts/deploy.sh` / `scripts/test.sh`, secrets handling — `.env` files are never read or displayed).
+
+## Skill & AGENTS.md writing style
+
+Write skill and AGENTS.md content as compact imperative instructions: must / should / must not. No historical facts, evidence, examples, or rationale prose. Prefer adding a script over writing a long instruction.
