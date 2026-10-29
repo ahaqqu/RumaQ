@@ -33,9 +33,7 @@ type EventRow = {
   message: string
 }
 
-function createScrapeDb(
-  opts: { viewerEmail?: string | null; viewerIsAdmin?: number } = {}
-) {
+function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: number } = {}) {
   const commands: CommandRow[] = []
   const events: EventRow[] = []
   const viewerEmail = opts.viewerEmail ?? 'admin@rumaq.dev'

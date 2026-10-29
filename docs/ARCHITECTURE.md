@@ -421,13 +421,13 @@ export WORKER_ENCRYPTION_KEY=...
 
 **Important:** Rotating `WORKER_ENCRYPTION_KEY` invalidates every stored AI API key because they are encrypted with the old key. After rotation, all users must re-enter their AI key in Settings. Rotating `WORKER_JWT_SECRET` only invalidates active sessions; users simply log in again.
 
-| Secret                  | Local | Test | Production | Rotation impact                                          |
-| ----------------------- | ----- | ---- | ---------- | -------------------------------------------------------- |
-| `GOOGLE_CLIENT_ID`      | yes   | no   | yes        | OAuth login only                                         |
-| `GOOGLE_CLIENT_SECRET`  | yes   | no   | yes        | OAuth login only                                         |
-| `WORKER_JWT_SECRET`     | yes   | yes  | yes        | Active sessions invalidated                              |
-| `WORKER_ENCRYPTION_KEY` | yes   | yes  | yes        | Stored AI keys must be re-entered                        |
-| `HAQITA_INGEST_SECRET`  | yes   | yes  | yes        | Scraper pushes rejected until its env is rotated         |
+| Secret                  | Local | Test | Production | Rotation impact                                  |
+| ----------------------- | ----- | ---- | ---------- | ------------------------------------------------ |
+| `GOOGLE_CLIENT_ID`      | yes   | no   | yes        | OAuth login only                                 |
+| `GOOGLE_CLIENT_SECRET`  | yes   | no   | yes        | OAuth login only                                 |
+| `WORKER_JWT_SECRET`     | yes   | yes  | yes        | Active sessions invalidated                      |
+| `WORKER_ENCRYPTION_KEY` | yes   | yes  | yes        | Stored AI keys must be re-entered                |
+| `HAQITA_INGEST_SECRET`  | yes   | yes  | yes        | Scraper pushes rejected until its env is rotated |
 
 ## 9. Free-tier headroom
 
