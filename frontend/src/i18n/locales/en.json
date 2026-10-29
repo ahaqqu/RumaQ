@@ -8,7 +8,8 @@
     "monitor": "Scraper Monitor",
     "settings": "Settings",
     "addFromReceipt": "Add from Receipt",
-    "scrape": "Scrape Now"
+    "scrape": "Scrape Now",
+    "review": "Review"
   },
   "home": {
     "lead": "Stock tracked automatically from grocery receipts. Remaining stock is calculated from your habits, not entered manually.",
@@ -420,5 +421,34 @@
     "assistantQuestion": "Shall I make a plan?",
     "systemPrompt": "You are RumaQ, a household inventory and shopping assistant. Answer clearly, concisely, and practically.",
     "roleInstructionBase": "Imagine you are {{ai}} and the user is {{user}}. Your entire response must match that role."
+  },
+  "review": {
+    "lead": "Candidate product matches the matcher flagged for human review.",
+    "pending": "Pending",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "all": "All",
+    "approve": "Approve Match",
+    "reject": "Reject Match",
+    "undo": "Undo",
+    "matchedItem": "Matched item",
+    "catalogEntry": "Catalog entry (last seen)",
+    "reasonPriceRatio": "Price ratio",
+    "reasonVerifierUnresolved": "Verifier unresolved",
+    "confidence": "Confidence",
+    "methodExact": "Exact",
+    "methodEmbedding": "Embedding",
+    "methodAi": "AI",
+    "export": "Export decisions",
+    "exportFailed": "Export failed — check your session and try again.",
+    "decisionsNote": "Decisions are recorded for future matcher improvements; they do not change current price data.",
+    "empty": "No items to review",
+    "emptyDesc": "Candidate pairs will appear here after a run flags uncertain matches.",
+    "noneFiltered": "No {{status}} items",
+    "showing": "Showing {{shown}} of {{total}}",
+    "flagCount_one": "Flagged {{count}} time",
+    "flagCount_other": "Flagged {{count}} times",
+    "runDetail": "View run",
+    "loadMore": "Load more"
   }
 }

@@ -1,4 +1,4 @@
-import type { RunReport } from '@rumaq/contract'
+import type { ReviewItemPair, RunReport } from '@rumaq/contract'
 
 // Storage for scraper run reports (haqita-integration.md §7.1). One row per
 // finished live run; the monitor reads these instead of journald. Detail
@@ -60,6 +60,12 @@ export type RunMatchSummary = {
   solo: number
   reviewItems: number
   embeddingsDegraded: boolean
+  // Issue #294 ride-alongs — stored verbatim in the match_stats blob and
+  // consumed by the runs ingest handler (recordReviewItems), never by the
+  // monitor, which keeps reading the reviewItems count.
+  reviewItemPairs?: ReviewItemPair[]
+  reviewItemsTotal?: number
+  reviewItemsTruncated?: boolean
 }
 
 export type RunPublishSummary = {

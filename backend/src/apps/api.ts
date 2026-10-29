@@ -4,6 +4,7 @@ import type { MiddlewareHandler } from 'hono'
 
 import { sValidator } from '@hono/standard-validator'
 import { openAPIRouteHandler, describeRoute } from 'hono-openapi'
+import type { OpenAPIV3_1 } from 'openapi-types'
 import {
   object,
   string,
@@ -56,6 +57,13 @@ import {
   ScrapeNotFoundError,
 } from '../lib/scrape.js'
 import { recordRunReport, listPriceRuns } from '../lib/price-runs.js'
+import {
+  recordReviewItems,
+  listReviewItems,
+  decideReviewItem,
+  undoReviewDecision,
+  exportReviewDecisions,
+} from '../lib/match-review.js'
 import { isAdminEmail, requireAdmin } from '../lib/admin.js'
 import { groundPlanItem } from '../lib/grounding.js'
 import { escapeLike } from '../lib/sql.js'
@@ -133,6 +141,21 @@ const scrapeCommandsQuery = object({
   limit: optional(
     pipe(string(), transform(Number), number(), integer(), minValue(1), maxValue(50))
   ),
+})
+
+const reviewQuery = object({
+  status: optional(picklist(['pending', 'approved', 'rejected', 'all'])),
+  limit: optional(
+    pipe(string(), transform(Number), number(), integer(), minValue(1), maxValue(200))
+  ),
+  offset: optional(pipe(string(), transform(Number), number(), integer(), minValue(0))),
+})
+
+// Admin review verdicts (issue #294): approve = "yes, same product, trust
+// this match"; reject = "no, split them". Recorded only — v1 decisions
+// change nothing downstream (docs/294-design-pm.md §4).
+const reviewDecisionSchema = object({
+  decision: picklist(['approved', 'rejected']),
 })
 
 const apiApp = new Hono<Env>()
@@ -271,7 +294,12 @@ apiApp.post(
   requireIngestSecret,
   sValidator('json', runReportSchema),
   async (c) => {
-    await recordRunReport(c.env.DB, c.req.valid('json'))
+    const report = c.req.valid('json')
+    await recordRunReport(c.env.DB, report)
+    // Issue #294 ride-along: persist the flagged pairs. Empty/absent (old
+    // scraper) is a no-op; a failed pair insert 500s the report so the
+    // scraper's retry re-runs the idempotent upserts (at-least-once).
+    await recordReviewItems(c.env.DB, report.runStartedAt, report.match?.reviewItemPairs ?? [])
     return c.json({ ok: true, status: 'recorded' })
   }
 )
@@ -403,6 +431,11 @@ apiApp.use('/api/admin/scrape', propsAuthMiddleware)
 apiApp.use('/api/admin/scrape/stores', propsAuthMiddleware)
 apiApp.use('/api/admin/scrape/commands', propsAuthMiddleware)
 apiApp.use('/api/admin/scrape/commands/:id/events', propsAuthMiddleware)
+// The review queue (issue #294): apiApp.use(path) does NOT cover subpaths
+// (#292 landmine) — every path gets its own line, statics before params.
+apiApp.use('/api/admin/review', propsAuthMiddleware)
+apiApp.use('/api/admin/review/export', propsAuthMiddleware)
+apiApp.use('/api/admin/review/:id/decision', propsAuthMiddleware)
 apiApp.use('/api/ai-key/*', propsAuthMiddleware)
 
 apiApp.get(
@@ -2603,6 +2636,224 @@ apiApp.get(
   }
 )
 
+// Match review queue (issue #294, docs/294-design.md §4): the admin triage
+// surface for pairs the matcher flagged. Decisions are recorded and
+// displayed only — they never rewrite catalog or price data (v1 cut). All
+// four routes: requireAdmin after the shared propsAuthMiddleware use() lines
+// above; statics (/export) registered before the :id/decision params.
+const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    itemProductKey: { type: 'string' },
+    itemName: { type: 'string' },
+    itemBrand: { type: ['string', 'null'] },
+    itemUnit: { type: ['string', 'null'] },
+    itemPrice: { type: 'integer' },
+    itemEffectiveUnitPrice: { type: ['number', 'null'] },
+    itemStore: { type: 'string' },
+    entryProductKey: { type: 'string' },
+    entryName: { type: 'string' },
+    entryBrand: { type: ['string', 'null'] },
+    entryUnit: { type: ['string', 'null'] },
+    entryPrice: { type: 'integer' },
+    entryEffectiveUnitPrice: { type: ['number', 'null'] },
+    entryStore: { type: 'string' },
+    matchMethod: { type: 'string', enum: ['exact', 'embedding', 'ai'] },
+    confidence: { type: 'number' },
+    reason: { type: 'string', enum: ['price_ratio', 'verifier_unresolved'] },
+    status: { type: 'string', enum: ['pending', 'approved', 'rejected'] },
+    decidedAt: { type: ['string', 'null'] },
+    decidedBy: { type: ['string', 'null'] },
+    flagCount: { type: 'integer' },
+    firstFlaggedAt: { type: 'string' },
+    lastFlaggedAt: { type: 'string' },
+    runStartedAt: { type: 'string' },
+    runId: { type: ['string', 'null'] },
+  },
+}
+
+apiApp.get(
+  '/api/admin/review',
+  describeRoute({
+    description:
+      'Match review queue: flagged candidate pairs with exact per-status counts (admin-only). Offset-paginated, newest flags first.',
+    security: [{ cookieAuth: [] }],
+    parameters: [
+      {
+        in: 'query',
+        name: 'status',
+        required: false,
+        schema: {
+          type: 'string',
+          enum: ['pending', 'approved', 'rejected', 'all'],
+          default: 'pending',
+        },
+      },
+      {
+        in: 'query',
+        name: 'limit',
+        required: false,
+        schema: { type: 'integer', minimum: 1, maximum: 200 },
+      },
+      { in: 'query', name: 'offset', required: false, schema: { type: 'integer', minimum: 0 } },
+    ],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                items: { type: 'array', items: REVIEW_ITEM_SCHEMA },
+                counts: {
+                  type: 'object',
+                  properties: {
+                    pending: { type: 'integer' },
+                    approved: { type: 'integer' },
+                    rejected: { type: 'integer' },
+                  },
+                },
+                filteredTotal: { type: 'integer' },
+              },
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  sValidator('query', reviewQuery),
+  async (c) => {
+    const { status, limit, offset } = c.req.valid('query')
+    const page = await listReviewItems(c.env.DB, {
+      status,
+      limit,
+      offset,
+    })
+    const res = c.json(page)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+apiApp.get(
+  '/api/admin/review/export',
+  describeRoute({
+    description:
+      'Stream every decided review item as versioned JSON (admin-only) — ALL decided rows, independent of list pagination.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description:
+          'JSON stream: {"schema":1,"exportedAt":"…","decisions":[…]} (Content-Disposition: attachment)',
+        content: { 'application/json': { schema: { type: 'object' } } },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  (c) => {
+    const res = new Response(exportReviewDecisions(c.env.DB), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Disposition': 'attachment; filename="review_decisions.json"',
+        'Cache-Control': 'private, no-cache',
+      },
+    })
+    return res
+  }
+)
+
+apiApp.post(
+  '/api/admin/review/:id/decision',
+  describeRoute({
+    description:
+      'Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins.',
+    security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['decision'],
+            properties: {
+              decision: { type: 'string', enum: ['approved', 'rejected'] },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: { type: 'object', properties: { item: REVIEW_ITEM_SCHEMA } },
+          },
+        },
+      },
+      400: { description: 'Validation error' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      404: { description: 'Unknown review item' },
+    },
+  }),
+  requireAdmin,
+  sValidator('json', reviewDecisionSchema),
+  async (c) => {
+    const item = await decideReviewItem(
+      c.env.DB,
+      c.req.param('id'),
+      c.req.valid('json').decision,
+      c.get('userId')
+    )
+    if (!item) {
+      return c.json({ error: 'Review item not found' }, 404)
+    }
+    const res = c.json({ item })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+apiApp.delete(
+  '/api/admin/review/:id/decision',
+  describeRoute({
+    description:
+      'Undo a review verdict — the row returns to pending (admin-only). Idempotent on a pending row.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: { type: 'object', properties: { item: REVIEW_ITEM_SCHEMA } },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      404: { description: 'Unknown review item' },
+    },
+  }),
+  requireAdmin,
+  async (c) => {
+    const item = await undoReviewDecision(c.env.DB, c.req.param('id'))
+    if (!item) {
+      return c.json({ error: 'Review item not found' }, 404)
+    }
+    const res = c.json({ item })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
 apiApp.get(
   '/api/prices',
   describeRoute({
@@ -2825,7 +3076,7 @@ apiApp.get(
                             source_slug: { type: 'string' },
                             source_name: { type: 'string' },
                             price: { type: 'number' },
-                            effective_unit_price: { type: 'number', nullable: true } as any,
+                            effective_unit_price: { type: ['number', 'null'] } as any,
                           },
                           required: [
                             'product_key',
@@ -2902,7 +3153,7 @@ apiApp.get(
                             brand: { type: 'string', nullable: true } as any,
                             unit: { type: 'string', nullable: true } as any,
                             price: { type: 'number' },
-                            effective_unit_price: { type: 'number', nullable: true } as any,
+                            effective_unit_price: { type: ['number', 'null'] } as any,
                           },
                           required: [
                             'product_key',

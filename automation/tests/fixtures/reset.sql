@@ -11,6 +11,9 @@ DELETE FROM price_runs;
 -- events go first; reset must reopen the one-run-at-a-time queue.
 DELETE FROM scrape_run_events;
 DELETE FROM scrape_commands;
+-- Match review queue (migration 0013) — no FK dependents; reset must return
+-- the triage queue to a clean slate between scenarios.
+DELETE FROM match_review_items;
 DELETE FROM plans;
 DELETE FROM purchase_items;
 DELETE FROM purchases;

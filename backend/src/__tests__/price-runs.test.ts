@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vite-plus/test'
-import { safeParse } from 'valibot'
+import { parse, safeParse } from 'valibot'
 import { runReportSchema } from '@rumaq/contract'
 import { recordRunReport, listPriceRuns } from '../lib/price-runs.js'
 
@@ -81,9 +81,84 @@ function sampleReport() {
   }
 }
 
+function sampleReviewPair() {
+  return {
+    itemProductKey: 'beras-ramos-5kg----5-kg',
+    itemName: 'Beras Ramos 5 kg',
+    itemBrand: null,
+    itemUnit: '5 kg',
+    itemPrice: 89000,
+    itemEffectiveUnitPrice: 89000,
+    itemStore: 'lotte-mart',
+    entryProductKey: 'beras-ramos-5kg----5-kg',
+    entryName: 'Beras Ramos 5kg',
+    entryBrand: null,
+    entryUnit: '5 kg',
+    entryPrice: 27000,
+    entryEffectiveUnitPrice: 27000,
+    entryStore: 'superindo',
+    matchMethod: 'exact' as const,
+    confidence: 1,
+    reason: 'price_ratio' as const,
+  }
+}
+
 describe('runReportSchema', () => {
   it('accepts a canonical report', () => {
     expect(safeParse(runReportSchema, sampleReport()).success).toBe(true)
+  })
+
+  it('accepts a report carrying review item pairs (issue #294)', () => {
+    const report = {
+      ...sampleReport(),
+      match: {
+        ...sampleReport().match!,
+        reviewItemPairs: [sampleReviewPair()],
+        reviewItemsTotal: 1,
+        reviewItemsTruncated: false,
+      },
+    }
+    expect(safeParse(runReportSchema, report).success).toBe(true)
+    expect(parse(runReportSchema, report).match?.reviewItemPairs).toEqual([sampleReviewPair()])
+  })
+
+  it('still accepts an old-scraper report without the review fields (additive)', () => {
+    // sampleReport() predates issue #294 — no review fields on match.
+    expect(sampleReport().match).not.toHaveProperty('reviewItemPairs')
+    expect(safeParse(runReportSchema, sampleReport()).success).toBe(true)
+  })
+
+  it('rejects a bad review reason, confidence, or truncation flag', () => {
+    const withPairs = (over: Record<string, unknown>) => ({
+      ...sampleReport(),
+      match: { ...sampleReport().match!, reviewItemPairs: [{ ...sampleReviewPair(), ...over }] },
+    })
+    expect(safeParse(runReportSchema, withPairs({ reason: 'vibes' })).success).toBe(false)
+    expect(safeParse(runReportSchema, withPairs({ confidence: 1.5 })).success).toBe(false)
+    expect(safeParse(runReportSchema, withPairs({ confidence: -0.1 })).success).toBe(false)
+    expect(
+      safeParse(runReportSchema, {
+        ...sampleReport(),
+        match: { ...sampleReport().match!, reviewItemsTruncated: 'yes' },
+      }).success
+    ).toBe(false)
+  })
+
+  it('rejects an over-cap pair array — the 200 transport cap is a checked boundary (thermos A4)', () => {
+    const atCap = {
+      ...sampleReport(),
+      match: {
+        ...sampleReport().match!,
+        reviewItemPairs: Array.from({ length: 200 }, () => sampleReviewPair()),
+      },
+    }
+    expect(safeParse(runReportSchema, atCap).success).toBe(true)
+    const overCap = {
+      ...atCap,
+      match: { ...atCap.match!, reviewItemPairs: [...atCap.match!.reviewItemPairs!] },
+    }
+    overCap.match!.reviewItemPairs!.push(sampleReviewPair())
+    expect(safeParse(runReportSchema, overCap).success).toBe(false)
   })
 
   it('rejects an unknown exit code or stage', () => {

@@ -28,6 +28,8 @@ import {
   WifiSlash as IconOffline,
   Tag as IconPrices,
   Pulse as IconMonitor,
+  ListChecks as IconReview,
+  DownloadSimple as IconDownload,
 } from '@phosphor-icons/react'
 
 export {
@@ -59,6 +61,8 @@ export {
   IconOffline,
   IconPrices,
   IconMonitor,
+  IconReview,
+  IconDownload,
 }
 
 export function BrandMark({ size = 32 }) {

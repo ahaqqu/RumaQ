@@ -24,6 +24,7 @@ import {
   type MatchInputItem,
   type MatchOutcome,
   type MatchStats,
+  type ReviewItemRecord,
 } from './match/matcher.js'
 import {
   classifyImages,
@@ -72,10 +73,23 @@ export class PipelineFailure extends Data.TaggedError('PipelineFailure')<{
 
 export type PipelineStage = 'scrape' | 'match' | 'publish' | 'done'
 
+/**
+ * Issue #294: at most this many review pairs ride one run report. Matches
+ * the ingest side's per-report pair upsert budget (a db.batch chunk).
+ */
+const REVIEW_ITEM_PAIRS_CAP = 200
+
 export interface PipelineStatus {
   runStartedAt: string
   stage: PipelineStage
   match?: MatchStats
+  /**
+   * Pairs the matcher flagged for human review (issue #294), frozen at flag
+   * time. Unset when the run had no items to match. The run report carries a
+   * 200-item slice of these (reportRun) — the full list lives here so the
+   * monitor number is unaffected by the payload cap.
+   */
+  reviewItems?: ReviewItemRecord[]
   /** Outcome of the publish stage — unset until publish was reached. */
   publish?: {
     mode: 'dry-run' | 'published'
@@ -609,6 +623,7 @@ export function runPipeline(
           scrapedAt
         )
         status.match = matched.stats
+        status.reviewItems = matched.reviewItems
         log(
           `[match] ${matched.stats.exact} exact, ${matched.stats.embedding} embedding, ` +
             `${matched.stats.ai} ai-verified, ${matched.stats.solo} new — ` +
@@ -735,6 +750,13 @@ export function runPipeline(
     if (options.dryRun) return Effect.void
     const finishedAt = (options.now ?? (() => new Date()))().toISOString()
     const match = status.match
+    // Issue #294: at most 200 review pairs ride the report — a degraded run
+    // (verifier quota exhausted on a big batch) can flag in the hundreds,
+    // and the cap bounds both the ingest payload and D1 growth per run.
+    // reviewItems (the monitor count) stays the pre-slice total; the
+    // truncation itself is visible data, never silent.
+    const reviewPairs = status.reviewItems ?? []
+    const reviewItemPairs = reviewPairs.slice(0, REVIEW_ITEM_PAIRS_CAP)
     // The store entries carry status.json-only fields (brochuresUploaded,
     // issue #293) that the strict run-report schema must never see — strip
     // them here so whichever side deploys second stays compatible.
@@ -759,6 +781,9 @@ export function runPipeline(
             solo: match.solo,
             reviewItems: match.reviewItems,
             embeddingsDegraded: match.embeddingsDegraded,
+            reviewItemPairs,
+            reviewItemsTotal: reviewPairs.length,
+            reviewItemsTruncated: reviewPairs.length > reviewItemPairs.length,
           }
         : null,
       publish: status.publish ?? null,

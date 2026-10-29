@@ -92,6 +92,32 @@ export const runReportStoreSchema = strictObject({
   needsProxy: nullish(boolean()),
 })
 
+// One flagged candidate pair the matcher reports for the admin review queue
+// (issue #294): A = the incoming item being matched, B = the catalog entry's
+// last sighting, both frozen at flag time. The run envelope owns
+// runStartedAt — pairs carry none, so the report replay key stays single.
+export const reviewItemPairSchema = strictObject({
+  itemProductKey: pipe(string(), minLength(1)),
+  itemName: pipe(string(), minLength(1)),
+  itemBrand: nullish(string()),
+  itemUnit: nullish(string()),
+  itemPrice: pipe(number(), integer(), minValue(0)),
+  itemEffectiveUnitPrice: nullish(number()),
+  itemStore: pipe(string(), minLength(1)),
+  entryProductKey: pipe(string(), minLength(1)),
+  entryName: pipe(string(), minLength(1)),
+  entryBrand: nullish(string()),
+  entryUnit: nullish(string()),
+  entryPrice: pipe(number(), integer(), minValue(0)),
+  entryEffectiveUnitPrice: nullish(number()),
+  entryStore: pipe(string(), minLength(1)),
+  matchMethod: picklist(['exact', 'embedding', 'ai']),
+  confidence: pipe(number(), minValue(0), maxValue(1)),
+  reason: picklist(['price_ratio', 'verifier_unresolved']),
+})
+
+export type ReviewItemPair = InferOutput<typeof reviewItemPairSchema>
+
 export const runReportSchema = strictObject({
   schemaVersion: literal(1),
   // Stable identity for the run (its scrapedAt) — replay-safe upsert key.
@@ -117,6 +143,20 @@ export const runReportSchema = strictObject({
       solo: pipe(number(), integer(), minValue(0)),
       reviewItems: pipe(number(), integer(), minValue(0)),
       embeddingsDegraded: boolean(),
+      // Issue #294: the flagged pairs themselves (capped at 200 per run by
+      // the publisher). All three are nullish so old scrapers' reports —
+      // which predate them — still validate; a NEW scraper's report with
+      // these fields hitting an OLD Worker fails loudly instead (the
+      // deploy order is Worker-first for exactly this reason).
+      // reviewItems (above) keeps meaning "pre-slice total", so the monitor
+      // number is unaffected by the cap; reviewItemsTotal is kept as an
+      // explicit field to make the truncation arithmetic self-describing.
+      // The cap is a checked boundary here, not just a producer convention:
+      // the Worker rejects an over-cap array instead of letting
+      // recordReviewItems spend unbounded D1 batches on one request.
+      reviewItemPairs: nullish(pipe(array(reviewItemPairSchema), maxLength(200))),
+      reviewItemsTotal: nullish(pipe(number(), integer(), minValue(0))),
+      reviewItemsTruncated: nullish(boolean()),
     })
   ),
   publish: nullish(

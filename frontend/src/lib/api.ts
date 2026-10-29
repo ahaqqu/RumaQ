@@ -341,3 +341,39 @@ export function getScrapeEvents(
     })
   )
 }
+
+// Match review queue (issue #294) — admin-only triage surface for pairs the
+// matcher flagged. Decisions are recorded only; they never change price data.
+
+export type ReviewStatusFilter = 'pending' | 'approved' | 'rejected' | 'all'
+export type ReviewDecision = 'approved' | 'rejected'
+
+export function getReviewItems(
+  { status, limit, offset }: { status?: ReviewStatusFilter; limit?: number; offset?: number } = {},
+  signal?: AbortSignal
+): Promise<unknown> {
+  return unwrap(
+    client.GET('/api/admin/review', { params: { query: { status, limit, offset } }, signal })
+  )
+}
+
+export function decideReviewItem(id: string, decision: ReviewDecision): Promise<unknown> {
+  return unwrap(
+    client.POST('/api/admin/review/{id}/decision', { params: { path: { id } }, body: { decision } })
+  )
+}
+
+export function undoReviewDecision(id: string): Promise<unknown> {
+  return unwrap(client.DELETE('/api/admin/review/{id}/decision', { params: { path: { id } } }))
+}
+
+// The export must bypass the typed client: it downloads a JSON attachment
+// (same-origin fetch → blob → anchor download, cookies ride automatically —
+// the R2/receipts streaming pattern), not a parsed JSON response.
+export async function fetchReviewExport(): Promise<Blob> {
+  const res = await fetch('/api/admin/review/export')
+  if (!res.ok) {
+    throw new ApiError(`Export failed: ${res.status}`, res.status)
+  }
+  return res.blob()
+}

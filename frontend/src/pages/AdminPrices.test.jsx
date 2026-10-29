@@ -1,8 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
-import { render } from '@testing-library/react'
+import { render, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { AdminPrices } from './AdminPrices.jsx'
+
+// The page reads ?run= via useSearch (issue #294 deep link); the global
+// setup's router mock does not provide it, so this file extends the mock.
+let mockSearch = {}
+vi.mock('@tanstack/react-router', async () => {
+  const actual = await vi.importActual('@tanstack/react-router')
+  return {
+    ...actual,
+    useSearch: () => mockSearch,
+    useMatches: () => [{ routeId: '/', pathname: '/' }],
+    useNavigate: () => vi.fn(),
+    Link: ({ children, to, className, ...props }) =>
+      React.createElement('a', { ...props, className, href: to, 'data-testid': 'link' }, children),
+    Outlet: () => null,
+  }
+})
 
 vi.mock('../lib/queries/me.js', () => ({
   useMe: vi.fn(),
@@ -180,5 +196,72 @@ describe('AdminPrices', () => {
     expect(container.textContent).toContain('monitor.error')
     expect(container.textContent).toContain('offline.banner')
     expect(container.textContent).not.toContain('monitor.noRuns')
+  })
+
+  it('links the flagged count to the review queue when a run reports flags', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        ...mockFeed,
+        runs: [
+          {
+            ...mockFeed.runs[0],
+            match: { ...mockFeed.runs[0].match, reviewItems: 3 },
+          },
+          ...mockFeed.runs.slice(1),
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    // The flagged line lives inside the run detail — expand the first row.
+    fireEvent.click(container.querySelector('button'))
+    const link = [...container.querySelectorAll('a')].find((a) =>
+      a.getAttribute('href')?.includes('/admin/review')
+    )
+    expect(link).toBeTruthy()
+    expect(link.textContent).toContain('monitor.matchReview')
+  })
+
+  it('keeps the flagged count plain text at zero', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [
+          {
+            ...mockFeed.runs[0],
+            match: {
+              ...mockFeed.runs[0].match,
+              reviewItems: 0,
+            },
+          },
+        ],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    expect(container.textContent).toContain('monitor.matchReview')
+    const links = [...container.querySelectorAll('a')].filter((a) =>
+      a.getAttribute('href')?.includes('/admin/review')
+    )
+    expect(links).toHaveLength(0)
+  })
+
+  it('pre-expands the run the ?run= deep link points at', () => {
+    mockSearch = { run: 'run-2' }
+    const { container } = renderAdmin()
+    // run-2's detail (publish section) is visible without clicking the row.
+    expect(container.textContent).toContain('monitor.publishDetail')
+    // run-1 stays collapsed.
+    expect(container.textContent).toContain('monitor.storesDetail')
+  })
+
+  it('renders normally when the ?run= id is not in the feed', () => {
+    mockSearch = { run: 'run-unknown' }
+    const { container } = renderAdmin()
+    expect(container.textContent).toContain('monitor.runHistory')
+    expect(container.textContent).not.toContain('monitor.publishDetail')
   })
 })

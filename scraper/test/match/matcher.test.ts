@@ -290,9 +290,223 @@ describe('runMatch — price plausibility (gate 5)', () => {
       storeSlug: 'lotte-mart',
       product: product({ price: 35000 }),
     }
-    const { outcomes, stats } = await run([expensive], deps(), seeded)
+    const { outcomes, stats, reviewItems } = await run([expensive], deps(), seeded)
     expect(outcomes[0]!.matchMethod).toBe('exact')
     expect(stats.reviewItems).toBe(1)
+    // Issue #294: the flag now carries the pair data (A = incoming item,
+    // B = the catalog entry's pre-attach last sighting).
+    expect(reviewItems).toHaveLength(1)
+    expect(reviewItems[0]).toMatchObject({
+      itemProductKey: 'indomie-goreng--indomie--85-g',
+      itemName: 'Indomie Goreng',
+      itemBrand: 'Indomie',
+      itemUnit: '85 g',
+      itemPrice: 35000,
+      itemEffectiveUnitPrice: 35000,
+      itemStore: 'lotte-mart',
+      entryProductKey: 'indomie-goreng--indomie--85-g',
+      entryName: 'Indomie Goreng',
+      entryPrice: 3500,
+      entryStore: 'superindo',
+      matchMethod: 'exact',
+      confidence: 1.0,
+      reason: 'price_ratio',
+    })
+  })
+
+  it('freezes the B-side evidence at flag time — a later attach in the same sweep does not leak in', async () => {
+    const vectors = {
+      'Indomie Goreng': [1, 0],
+      'Indomie Goreng Kuah': [1, 1], // cos = 0.707 → ambiguous band
+    }
+    const seeded = emptyCatalog()
+    const seed: MatchInputItem = {
+      storeSlug: 'superindo',
+      product: product({ price: 3500, promo: null }),
+    }
+    await run([seed], deps(), seeded)
+
+    // The flagged item holds for the verifier (snapshot taken at hold time),
+    // THEN an exact sighting attaches and rewrites the entry's lastPrice —
+    // by resolution time the entry says 2000, but the record must still show
+    // the 3500 the gate actually judged.
+    const flagged: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ name: 'Indomie Goreng Kuah', price: 35000 }),
+    }
+    const cheaper: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ price: 2000 }),
+    }
+    const { reviewItems } = await run(
+      [flagged, cheaper],
+      deps({ embedClient: embedClient(vectors), verifyClient: verifyClient(['YES']) }),
+      seeded
+    )
+    expect(reviewItems).toHaveLength(1)
+    expect(reviewItems[0]).toMatchObject({ entryPrice: 3500, itemPrice: 35000 })
+  })
+
+  it('emits an embedding-method flag with its score', async () => {
+    const vectors = {
+      'Indomie Goreng': [1, 0],
+      'Indomie Goreng Spesial': [1, 0],
+    }
+    const seeded = emptyCatalog()
+    const seed: MatchInputItem = {
+      storeSlug: 'superindo',
+      product: product({ name: 'Indomie Goreng Spesial', price: 3500 }),
+    }
+    await run([seed], deps({ embedClient: embedClient(vectors) }), seeded)
+
+    const fresh: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ price: 35000 }),
+    }
+    const { reviewItems, stats } = await run(
+      [fresh],
+      deps({ embedClient: embedClient(vectors) }),
+      seeded
+    )
+    expect(stats.reviewItems).toBe(1)
+    expect(reviewItems[0]).toMatchObject({
+      matchMethod: 'embedding',
+      reason: 'price_ratio',
+      entryProductKey: 'indomie-goreng-spesial--indomie--85-g',
+    })
+  })
+})
+
+describe('runMatch — review emission (issue #294)', () => {
+  const vectors = {
+    'Indomie Goreng': [1, 0],
+    'Indomie Goreng Kuah': [1, 1], // cos = 0.707 → ambiguous band
+  }
+
+  function seedCatalog() {
+    const seeded = emptyCatalog()
+    const seed: MatchInputItem = { storeSlug: 'superindo', product: product() }
+    return run([seed], deps({ embedClient: embedClient(vectors) }), seeded).then(() => seeded)
+  }
+
+  it('a gate-5 AI flag resolved YES emits one price_ratio record', async () => {
+    const seeded = await seedCatalog()
+    const item: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ name: 'Indomie Goreng Kuah', price: 35000 }),
+    }
+    const { reviewItems, stats } = await run(
+      [item],
+      deps({ embedClient: embedClient(vectors), verifyClient: verifyClient(['YES']) }),
+      seeded
+    )
+    expect(stats.reviewItems).toBe(1)
+    expect(reviewItems).toHaveLength(1)
+    expect(reviewItems[0]).toMatchObject({
+      matchMethod: 'ai',
+      reason: 'price_ratio',
+      itemPrice: 35000,
+      entryName: 'Indomie Goreng',
+      entryPrice: 3500,
+    })
+  })
+
+  it('a gate-5 AI flag resolved NO emits nothing — the pair was split', async () => {
+    const seeded = await seedCatalog()
+    const item: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ name: 'Indomie Goreng Kuah', price: 35000 }),
+    }
+    const { reviewItems, stats } = await run(
+      [item],
+      deps({ embedClient: embedClient(vectors), verifyClient: verifyClient(['NO']) }),
+      seeded
+    )
+    expect(stats.reviewItems).toBe(0)
+    expect(reviewItems).toHaveLength(0)
+  })
+
+  it('a verifier-null verdict on a gate-5-flagged pair counts ONCE as verifier_unresolved', async () => {
+    // Pins the double-count fix: the old code incremented reviewItems at the
+    // gate-5 site AND at the null resolution — one pair, two counts.
+    const seeded = await seedCatalog()
+    const item: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ name: 'Indomie Goreng Kuah', price: 35000 }),
+    }
+    const { reviewItems, stats } = await run(
+      [item],
+      deps({ embedClient: embedClient(vectors), verifyClient: verifyClient(['MAYBE']) }),
+      seeded
+    )
+    expect(stats.reviewItems).toBe(1)
+    expect(reviewItems).toHaveLength(1)
+    expect(reviewItems[0]).toMatchObject({ matchMethod: 'ai', reason: 'verifier_unresolved' })
+  })
+
+  it('a verifier-null verdict without a gate-5 flag emits verifier_unresolved', async () => {
+    const seeded = await seedCatalog()
+    const item: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ name: 'Indomie Goreng Kuah' }),
+    }
+    const { reviewItems, stats } = await run(
+      [item],
+      deps({ embedClient: embedClient(vectors), verifyClient: verifyClient(['MAYBE']) }),
+      seeded
+    )
+    expect(stats.reviewItems).toBe(1)
+    expect(reviewItems[0]).toMatchObject({ reason: 'verifier_unresolved' })
+  })
+
+  it('a gate-5 AI flag with gate 6 disabled emits price_ratio (the match stands unverified)', async () => {
+    const seeded = await seedCatalog()
+    const item: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ name: 'Indomie Goreng Kuah', price: 35000 }),
+    }
+    const cfg: MatchGateConfig = { ...CFG, gates: allGates({ gate6AiVerifier: false }) }
+    const { reviewItems, stats } = await run(
+      [item],
+      deps({ cfg, embedClient: embedClient(vectors) }),
+      seeded
+    )
+    expect(stats.reviewItems).toBe(1)
+    expect(reviewItems[0]).toMatchObject({ matchMethod: 'ai', reason: 'price_ratio' })
+  })
+
+  it('the derived count invariant holds across a mixed sweep', async () => {
+    const seeded = await seedCatalog()
+    const items: MatchInputItem[] = [
+      // Gate-5 exact flag (matched, attaches → entry price becomes 35000).
+      { storeSlug: 'lotte-mart', product: product({ price: 35000 }) },
+      // Ambiguous pair, gate-5-flagged against the mutated entry price,
+      // resolved null by the verifier (matched, unresolved).
+      { storeSlug: 'lotte-mart', product: product({ name: 'Indomie Goreng Kuah', price: 3500 }) },
+      // Ambiguous pair at a plausible price, rejected by the verifier
+      // (split — never emitted).
+      {
+        storeSlug: 'lotte-mart',
+        product: product({ name: 'Indomie Goreng Sedap', price: 3500 }),
+      },
+    ]
+    const { reviewItems, stats } = await run(
+      items,
+      deps({
+        embedClient: embedClient({
+          ...vectors,
+          'Indomie Goreng Sedap': [1, 1],
+        }),
+        verifyClient: verifyClient(['MAYBE', 'NO']),
+      }),
+      seeded
+    )
+    expect(reviewItems).toHaveLength(2)
+    expect(stats.reviewItems).toBe(reviewItems.length)
+    expect(reviewItems.map((record) => record.reason).sort()).toEqual([
+      'price_ratio',
+      'verifier_unresolved',
+    ])
   })
 })
 

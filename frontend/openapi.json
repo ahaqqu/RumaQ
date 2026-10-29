@@ -1252,6 +1252,481 @@
         }
       }
     },
+    "/api/admin/review": {
+      "get": {
+        "operationId": "getApiAdminReview",
+        "description": "Match review queue: flagged candidate pairs with exact per-status counts (admin-only). Offset-paginated, newest flags first.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["pending", "approved", "rejected", "all"],
+              "default": "pending"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "itemProductKey": {
+                            "type": "string"
+                          },
+                          "itemName": {
+                            "type": "string"
+                          },
+                          "itemBrand": {
+                            "type": ["string", "null"]
+                          },
+                          "itemUnit": {
+                            "type": ["string", "null"]
+                          },
+                          "itemPrice": {
+                            "type": "integer"
+                          },
+                          "itemEffectiveUnitPrice": {
+                            "type": ["number", "null"]
+                          },
+                          "itemStore": {
+                            "type": "string"
+                          },
+                          "entryProductKey": {
+                            "type": "string"
+                          },
+                          "entryName": {
+                            "type": "string"
+                          },
+                          "entryBrand": {
+                            "type": ["string", "null"]
+                          },
+                          "entryUnit": {
+                            "type": ["string", "null"]
+                          },
+                          "entryPrice": {
+                            "type": "integer"
+                          },
+                          "entryEffectiveUnitPrice": {
+                            "type": ["number", "null"]
+                          },
+                          "entryStore": {
+                            "type": "string"
+                          },
+                          "matchMethod": {
+                            "type": "string",
+                            "enum": ["exact", "embedding", "ai"]
+                          },
+                          "confidence": {
+                            "type": "number"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "enum": ["price_ratio", "verifier_unresolved"]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": ["pending", "approved", "rejected"]
+                          },
+                          "decidedAt": {
+                            "type": ["string", "null"]
+                          },
+                          "decidedBy": {
+                            "type": ["string", "null"]
+                          },
+                          "flagCount": {
+                            "type": "integer"
+                          },
+                          "firstFlaggedAt": {
+                            "type": "string"
+                          },
+                          "lastFlaggedAt": {
+                            "type": "string"
+                          },
+                          "runStartedAt": {
+                            "type": "string"
+                          },
+                          "runId": {
+                            "type": ["string", "null"]
+                          }
+                        }
+                      }
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "pending": {
+                          "type": "integer"
+                        },
+                        "approved": {
+                          "type": "integer"
+                        },
+                        "rejected": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "filteredTotal": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
+      }
+    },
+    "/api/admin/review/export": {
+      "get": {
+        "operationId": "getApiAdminReviewExport",
+        "description": "Stream every decided review item as versioned JSON (admin-only) — ALL decided rows, independent of list pagination.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "JSON stream: {\"schema\":1,\"exportedAt\":\"…\",\"decisions\":[…]} (Content-Disposition: attachment)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
+      }
+    },
+    "/api/admin/review/{id}/decision": {
+      "post": {
+        "operationId": "postApiAdminReviewByIdDecision",
+        "description": "Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["decision"],
+                "properties": {
+                  "decision": {
+                    "type": "string",
+                    "enum": ["approved", "rejected"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "item": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "itemProductKey": {
+                          "type": "string"
+                        },
+                        "itemName": {
+                          "type": "string"
+                        },
+                        "itemBrand": {
+                          "type": ["string", "null"]
+                        },
+                        "itemUnit": {
+                          "type": ["string", "null"]
+                        },
+                        "itemPrice": {
+                          "type": "integer"
+                        },
+                        "itemEffectiveUnitPrice": {
+                          "type": ["number", "null"]
+                        },
+                        "itemStore": {
+                          "type": "string"
+                        },
+                        "entryProductKey": {
+                          "type": "string"
+                        },
+                        "entryName": {
+                          "type": "string"
+                        },
+                        "entryBrand": {
+                          "type": ["string", "null"]
+                        },
+                        "entryUnit": {
+                          "type": ["string", "null"]
+                        },
+                        "entryPrice": {
+                          "type": "integer"
+                        },
+                        "entryEffectiveUnitPrice": {
+                          "type": ["number", "null"]
+                        },
+                        "entryStore": {
+                          "type": "string"
+                        },
+                        "matchMethod": {
+                          "type": "string",
+                          "enum": ["exact", "embedding", "ai"]
+                        },
+                        "confidence": {
+                          "type": "number"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": ["price_ratio", "verifier_unresolved"]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["pending", "approved", "rejected"]
+                        },
+                        "decidedAt": {
+                          "type": ["string", "null"]
+                        },
+                        "decidedBy": {
+                          "type": ["string", "null"]
+                        },
+                        "flagCount": {
+                          "type": "integer"
+                        },
+                        "firstFlaggedAt": {
+                          "type": "string"
+                        },
+                        "lastFlaggedAt": {
+                          "type": "string"
+                        },
+                        "runStartedAt": {
+                          "type": "string"
+                        },
+                        "runId": {
+                          "type": ["string", "null"]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Unknown review item"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteApiAdminReviewByIdDecision",
+        "description": "Undo a review verdict — the row returns to pending (admin-only). Idempotent on a pending row.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "item": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "itemProductKey": {
+                          "type": "string"
+                        },
+                        "itemName": {
+                          "type": "string"
+                        },
+                        "itemBrand": {
+                          "type": ["string", "null"]
+                        },
+                        "itemUnit": {
+                          "type": ["string", "null"]
+                        },
+                        "itemPrice": {
+                          "type": "integer"
+                        },
+                        "itemEffectiveUnitPrice": {
+                          "type": ["number", "null"]
+                        },
+                        "itemStore": {
+                          "type": "string"
+                        },
+                        "entryProductKey": {
+                          "type": "string"
+                        },
+                        "entryName": {
+                          "type": "string"
+                        },
+                        "entryBrand": {
+                          "type": ["string", "null"]
+                        },
+                        "entryUnit": {
+                          "type": ["string", "null"]
+                        },
+                        "entryPrice": {
+                          "type": "integer"
+                        },
+                        "entryEffectiveUnitPrice": {
+                          "type": ["number", "null"]
+                        },
+                        "entryStore": {
+                          "type": "string"
+                        },
+                        "matchMethod": {
+                          "type": "string",
+                          "enum": ["exact", "embedding", "ai"]
+                        },
+                        "confidence": {
+                          "type": "number"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": ["price_ratio", "verifier_unresolved"]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["pending", "approved", "rejected"]
+                        },
+                        "decidedAt": {
+                          "type": ["string", "null"]
+                        },
+                        "decidedBy": {
+                          "type": ["string", "null"]
+                        },
+                        "flagCount": {
+                          "type": "integer"
+                        },
+                        "firstFlaggedAt": {
+                          "type": "string"
+                        },
+                        "lastFlaggedAt": {
+                          "type": "string"
+                        },
+                        "runStartedAt": {
+                          "type": "string"
+                        },
+                        "runId": {
+                          "type": ["string", "null"]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Unknown review item"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ]
+      }
+    },
     "/api/prices": {
       "get": {
         "operationId": "getApiPrices",
@@ -1410,8 +1885,7 @@
                                   "type": "number"
                                 },
                                 "effective_unit_price": {
-                                  "type": "number",
-                                  "nullable": true
+                                  "type": ["number", "null"]
                                 }
                               },
                               "required": [
@@ -1505,8 +1979,7 @@
                                   "type": "number"
                                 },
                                 "effective_unit_price": {
-                                  "type": "number",
-                                  "nullable": true
+                                  "type": ["number", "null"]
                                 }
                               },
                               "required": [
