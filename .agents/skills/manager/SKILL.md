@@ -71,7 +71,7 @@ Research/design/plan docs live in the manager workspace, or under `docs/plan/` w
 
 Background subagents can die mid-task (quota exhaustion, provider error, harness crash). Recover in this order:
 
-1. **Try resume first** — `SendMessage` to the terminated agent's id. A live harness keeps the agent's session context, and a resumed agent must re-verify its own worktree (git status/log/diff against the plan) before continuing. Resume works for *completed* agents; a quota-exceeded task is dropped entirely (`No active local_agent task found`) and cannot be resumed.
+1. **Try resume first** — `SendMessage` to the terminated agent's id. A live harness keeps the agent's session context, and a resumed agent must re-verify its own worktree (git status/log/diff against the plan) before continuing. Resume works for _completed_ agents; a quota-exceeded task is dropped entirely (`No active local_agent task found`) and cannot be resumed.
 2. **Fallback: continuation agent** — when resume is refused, spawn a fresh agent whose prompt contains: the manager-verified arrival state (existing commits, dirty files — the manager inspects the worktree itself before writing the prompt), the binding artifact paths, an explicit "do not redo finished phases blindly", and disposition rules for uncommitted work (assess → commit if legitimate, discard only if clearly wrong, report the choice).
 3. **Push-after-every-commit is the recovery guarantee** — it bounds any termination's loss to uncommitted work only. Never relax it, and never batch pushes "to save time".
 4. Record the termination + recovery path in the state file and report log. If terminations recur or cluster (e.g. repeated quota exhaustion at the same phase), apply the Workflow monitoring duty.
