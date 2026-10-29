@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS match_review_items (
   id TEXT PRIMARY KEY,                 -- Worker UUID at ingest
   item_product_key TEXT NOT NULL,
   entry_product_key TEXT NOT NULL,
-  UNIQUE(item_product_key, entry_product_key),
   pair_data TEXT NOT NULL,             -- JSON: the validated contract pair, verbatim
   reason TEXT NOT NULL,                -- 'price_ratio' | 'verifier_unresolved'
   match_method TEXT NOT NULL,          -- 'exact' | 'embedding' | 'ai'
@@ -22,7 +21,10 @@ CREATE TABLE IF NOT EXISTS match_review_items (
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'approved', 'rejected')),
   decided_at TEXT,
-  decided_by TEXT                      -- admin user id
+  decided_by TEXT,                     -- admin user id
+  -- The natural key. SQLite requires table-level constraints after ALL
+  -- column definitions, so this sits at the tail.
+  UNIQUE(item_product_key, entry_product_key)
 );
 CREATE INDEX IF NOT EXISTS idx_review_status_flagged ON match_review_items(status, last_flagged_at DESC);
 CREATE INDEX IF NOT EXISTS idx_review_flagged ON match_review_items(last_flagged_at DESC);
