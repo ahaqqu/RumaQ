@@ -51,6 +51,8 @@ describe('locale files', () => {
       'common',
       'data',
       'persona',
+      'offline',
+      'pwa',
     ]
     for (const ns of expected) {
       expect(en).toHaveProperty(ns)
