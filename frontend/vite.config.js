@@ -3,7 +3,6 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
 import { VitePWA } from 'vite-plugin-pwa'
-import path from 'node:path'
 
 export default defineConfig({
   build: {
@@ -79,12 +78,8 @@ export default defineConfig({
       },
     },
   },
-  resolve: {
-    alias: {
-      'virtual:pwa-register/react': path.resolve(
-        __dirname,
-        'src/__mocks__/virtual-pwa-register-react.js'
-      ),
-    },
-  },
+  // No resolve.alias here: `virtual:pwa-register/react` must resolve to the
+  // REAL vite-plugin-pwa module in builds so the PwaUpdatePrompt banner sees
+  // actual service-worker state (the test-only mock alias lives in the root
+  // vite.config.ts vitest project).
 })
