@@ -1,8 +1,21 @@
-import { vi } from 'vite-plus/test'
+import { vi, afterEach } from 'vite-plus/test'
 import React from 'react'
 import { QueryClientProvider } from '@tanstack/react-query'
+import { cleanup } from '@testing-library/react'
 
 import en from './i18n/locales/en.json'
+
+// Vitest runs with globals disabled, so @testing-library/react cannot
+// self-register its automatic cleanup — without this, every rendered React
+// tree stays mounted after the file's tests end. A still-mounted root lets
+// stray updates (debounce timers, waitFor polling) commit after vitest has
+// torn down the jsdom environment; React 19 flushes the resulting passive
+// effects on a Node `setImmediate` (survives teardown) that reads the deleted
+// `window.event` global — the nondeterministic "ReferenceError: window is not
+// defined" unhandled error that fails CI on whichever file happens to be
+// running (issue #317). Unmounting here flushes that work while `window`
+// still exists.
+afterEach(() => cleanup())
 
 vi.mock('idb-keyval', () => ({
   get: vi.fn(),
