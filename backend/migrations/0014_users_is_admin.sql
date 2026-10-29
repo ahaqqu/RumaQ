@@ -13,6 +13,9 @@ ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0;
 -- before the grant runs). Grant/revoke runbook for future admins — no
 -- redeploy needed, the flag is read per-request:
 --   cf d1 execute rumaq --remote --command \
---     "UPDATE users SET is_admin = 1 WHERE email = '…';"
+--     "UPDATE users SET is_admin = 1 WHERE lower(email) = lower('…');"
+-- Matching folds case (lower(email)) because the OAuth callback stores
+-- googleUser.email verbatim and Google only canonicalizes @gmail.com — the
+-- former ADMIN_EMAILS allowlist was case-insensitive too.
 UPDATE users SET is_admin = 1
-WHERE email IN ('angga.haqqu@gmail.com', 'admin@rumaq.ahaqqu.com');
+WHERE lower(email) IN ('angga.haqqu@gmail.com', 'admin@rumaq.ahaqqu.com');

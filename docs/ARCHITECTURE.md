@@ -231,13 +231,13 @@ Seed test users are inserted by migration `0002_email_auth.sql`. All five share 
 
 Operator-only surfaces (`/api/admin/*`: the price monitor, Scrape Now queue, match review) are gated by the `requireAdmin` middleware, which reads `users.is_admin` (migration 0014) — the flag is the single source of truth and there is no environment fallback. `/api/me` exposes it as `isAdmin`.
 
-Grant or revoke with a one-statement SQL runbook against the production D1 database; no redeploy is needed because the flag is read per-request:
+Grant or revoke with a one-statement SQL runbook against the production D1 database; no redeploy is needed because the flag is read per-request. Matching folds case (`lower(email)`) because the OAuth callback stores the Google-provided email verbatim:
 
 ```bash
 # grant
-cf d1 execute rumaq --remote --command "UPDATE users SET is_admin = 1 WHERE email = '…';"
+cf d1 execute rumaq --remote --command "UPDATE users SET is_admin = 1 WHERE lower(email) = lower('…');"
 # revoke
-cf d1 execute rumaq --remote --command "UPDATE users SET is_admin = 0 WHERE email = '…';"
+cf d1 execute rumaq --remote --command "UPDATE users SET is_admin = 0 WHERE lower(email) = lower('…');"
 ```
 
 ## 6. Database
