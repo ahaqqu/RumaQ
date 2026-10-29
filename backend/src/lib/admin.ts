@@ -9,9 +9,9 @@ import type { Env } from '../types.js'
 //   cf d1 execute rumaq --remote --command \
 //     "UPDATE users SET is_admin = 1 WHERE lower(email) = lower('…');"
 export const requireAdmin: MiddlewareHandler<Env> = async (c, next) => {
-  const user = await c.env.DB.prepare('SELECT email, is_admin FROM users WHERE id = ?')
+  const user = await c.env.DB.prepare('SELECT is_admin FROM users WHERE id = ?')
     .bind(c.get('userId'))
-    .first<{ email: string | null; is_admin: number }>()
+    .first<{ is_admin: number }>()
   if (user?.is_admin !== 1) {
     return c.json({ error: 'Forbidden' }, 403)
   }

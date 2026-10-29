@@ -5,7 +5,7 @@ import { requireAdmin } from '../lib/admin.js'
 // reads it from the users SELECT it already runs; there is no env fallback.
 function createContext(overrides: {
   userId?: string
-  userRow?: { email: string | null; is_admin?: number } | null
+  userRow?: { is_admin?: number } | null
 }) {
   const json = vi.fn(() => ({ headers: { set: vi.fn() } }))
   const c = {
@@ -27,7 +27,7 @@ describe('requireAdmin', () => {
   it('calls next when users.is_admin is 1', async () => {
     const { c, next } = createContext({
       userId: 'user-1',
-      userRow: { email: 'angga.haqqu@gmail.com', is_admin: 1 },
+      userRow: { is_admin: 1 },
     })
     await requireAdmin(c, next)
     expect(next).toHaveBeenCalled()
@@ -36,7 +36,7 @@ describe('requireAdmin', () => {
   it('returns 403 when users.is_admin is 0', async () => {
     const { c, next, json } = createContext({
       userId: 'user-2',
-      userRow: { email: 'someone.else@gmail.com', is_admin: 0 },
+      userRow: { is_admin: 0 },
     })
     await requireAdmin(c, next)
     expect(next).not.toHaveBeenCalled()
@@ -46,7 +46,7 @@ describe('requireAdmin', () => {
   it('returns 403 when the row has no is_admin value', async () => {
     const { c, next, json } = createContext({
       userId: 'user-4',
-      userRow: { email: 'angga.haqqu@gmail.com' },
+      userRow: {},
     })
     await requireAdmin(c, next)
     expect(next).not.toHaveBeenCalled()

@@ -36,6 +36,8 @@ type EventRow = {
 function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: number } = {}) {
   const commands: CommandRow[] = []
   const events: EventRow[] = []
+  // requireAdmin only reads the flag; viewerEmail decides whether the row
+  // exists at all (null = user row missing).
   const viewerEmail = opts.viewerEmail ?? 'admin@rumaq.dev'
   const viewerIsAdmin = opts.viewerIsAdmin ?? 1
 
@@ -43,8 +45,8 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
 
   const handle = (sql: string, params: unknown[]): unknown => {
     // --- auth ---
-    if (sql.includes('SELECT email, is_admin FROM users WHERE id = ?')) {
-      return viewerEmail === null ? [] : [{ email: viewerEmail, is_admin: viewerIsAdmin }]
+    if (sql.includes('SELECT is_admin FROM users WHERE id = ?')) {
+      return viewerEmail === null ? [] : [{ is_admin: viewerIsAdmin }]
     }
     // --- createScrapeCommand ---
     if (sql.includes("SELECT id FROM scrape_commands WHERE status IN ('pending', 'running')")) {
