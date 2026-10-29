@@ -41,10 +41,13 @@ describe('loadConfig', () => {
       for (const name of overrideVars) delete process.env[name]
       const config = loadConfig()
       // gemini-2.5-flash 404'd for new key cohorts (issue #306 live run:
-      // NOT_FOUND "no longer available to new users"); Google's error names
-      // gemini-3.8-flash as the successor.
+      // NOT_FOUND "no longer available to new users") and plain
+      // gemini-3.5-flash has since dropped off Google's current model list —
+      // Google's error names gemini-3.8-flash as the successor. Both vision
+      // surfaces pin it; the exact pins below double as the no-dead-model
+      // guard over every shipped default.
+      expect(config.ocr.model).toBe('gemini-3.8-flash')
       expect(config.ocr.verifierModel).toBe('gemini-3.8-flash')
-      expect(config.ocr.model).toBe('gemini-3.5-flash')
       expect(config.consolidation.embeddingModel).toBe('gemini-embedding-001')
     } finally {
       overrideVars.forEach((name, i) => {
