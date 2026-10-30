@@ -61,10 +61,92 @@ Merges to `main` deploy production automatically: `.github/workflows/deploy.yml`
 ### Scraper (VPS) deploy
 
 ```bash
-./scripts/deploy.sh vps   # build → rsync → chromium → self-check → doctor
+./scripts/deploy.sh vps            # build → upload → vps-deploy rumaq
+./scripts/deploy.sh vps --dry-run  # build and verify the artifact; contacts no host
 ```
 
-Ships the `scraper/` bundle to the box behind the ingest endpoint. The same `deploy.yml` commit-based flow runs this job when the change touches the scraper's world (`scraper/`, `contract/`, deploy plumbing) — it stays **skipped until `vars.VPS_HOST` is set**, i.e. until the box is provisioned. One-time box bootstrap from a local checkout: `./scripts/provision-vps.sh` — it runs `scraper/provision/vps/apply.sh` (system user, systemd timer, scoped sudoers, root-only `/etc/rumaq-scraper/env`), fills the env, ships a pre-built tree, installs chromium and its apt libraries, and proves the setup with the self-check, all through one `ssh -t` sudo. The nightly timer itself is enabled at go-live with `apply.sh --enable-timer`.
+Ships the scraper as an artifact to the box behind the ingest endpoint. The
+script builds `dist/index.js`, `dist/agent.js` and the real
+`node_modules/playwright-core`, tars the tree's contents, verifies the archive
+(required entries, regular files only, no `browsers/`, within the contract's
+size caps), uploads it to `/srv/vps-incoming/rumaq.tar.gz` as `rumaq-deploy`,
+and runs:
+
+```sh
+ssh rumaq-deploy@<host> 'sudo -n /usr/local/sbin/vps-deploy rumaq'
+```
+
+`vps-deploy` — installed by the [`ahaqqu/vps`](https://github.com/ahaqqu/vps)
+bootstrap — verifies the artifact's owner and tar table, swaps the code tree,
+carries `browsers/` (Chromium revision state) across the swap, restarts the
+Scrape Now agent, and health-checks by starting
+`rumaq-scraper-selfcheck.service` as the service user with the real env. The
+nightly timer is live production and managed by `ahaqqu/vps` (`rumaq/`): this
+repo never enables, disables or rewrites it, and writes no unit, sudoers or env
+file.
+
+The deploy then runs the shared box sweep as `rumaq-deploy`:
+
+```sh
+ssh rumaq-deploy@<host> 'bash /srv/vps-ops/doctor.sh'
+```
+
+A non-zero sweep fails the deploy, and so does a box where the sweep is missing:
+a green deploy must not hide a broken nginx config, a failed unit or a filling
+disk. The sweep is read-only and needs no extra grant (the `rumaq-deploy`
+sudoers fragment carries `nginx -t` and `certbot certificates` for it).
+
+#### Chromium revision bumps
+
+`browsers/` is preserved across swaps and a deploy never installs a revision.
+A `playwright-core` bump changes the revision the self-check must launch, so the
+deploy fails and rolls back. Install the new revision from the uploaded
+artifact as `rumaq-deploy`, then re-deploy:
+
+```sh
+RUMAQ_VPS_HOST=<host> ./scripts/deploy/browser-revision.sh
+./scripts/deploy.sh vps
+```
+
+The helper runs the artifact's `node_modules/playwright-core/cli.js install
+chromium` with `PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers`, then
+heals the modes the installer can leave at 0700:
+
+```sh
+chmod 755 /srv/rumaq-scraper/browsers
+chmod -R go+rX /srv/rumaq-scraper/browsers
+```
+
+The service user (`rumaq-scraper`) is not the deploy identity (`rumaq-deploy`),
+so without the chmod the next self-check cannot read the revision and the
+deploy rolls back again. Those two paths are the `ahaqqu/vps` contract's fixed
+`/srv/rumaq-scraper/browsers`: a stale `RUMAQ_VPS_ROOT` from the retired
+bootstrap is rejected rather than followed.
+
+The same `deploy.yml` commit-based flow runs this when a main push touches the
+scraper's world (`scraper/`, `contract/`, deploy plumbing); it is skipped until
+`vars.VPS_HOST` is set. Configuration:
+
+| Name                 | Where    | Value                                                                                      |
+| -------------------- | -------- | ------------------------------------------------------------------------------------------ |
+| `VPS_USER`           | variable | `rumaq-deploy` (the only identity granted `vps-deploy rumaq`; the workflow defaults to it) |
+| `VPS_HOST`           | variable | the box                                                                                    |
+| `VPS_DEPLOY_SSH_KEY` | secret   | private half of the `rumaq-deploy` key                                                     |
+
+Deploys **fail closed** until the owner cuts the box over:
+
+1. install the `ahaqqu/vps` applier and run its first apply (creates
+   `rumaq-deploy`, installs `/usr/local/sbin/vps-deploy`, the contract and the
+   grant, and retires RumaQ's old sudoers fragment);
+2. append this repo's public key to
+   `/home/rumaq-deploy/.ssh/authorized_keys` and set `VPS_USER` to
+   `rumaq-deploy` (or delete it so the workflow default applies). The variable
+   currently still names the retired shared identity, and `VPS_ROOT` is no
+   longer read.
+
+The root-only env (`/etc/rumaq-scraper/env`) is operator-owned; `scraper/env.example`
+documents the variables the app reads but is non-authoritative. The host
+templates live in `ahaqqu/vps` `rumaq/env/`.
 
 ### Pull request previews
 
