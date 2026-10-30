@@ -13,8 +13,8 @@
 # on the box:
 #   1. extract /srv/vps-incoming/rumaq.tar.gz into a temp dir
 #   2. install that tree's chromium revision with
-#      PLAYWRIGHT_BROWSERS_PATH=<root>/browsers
-#   3. chmod 755 <root>/browsers && chmod -R go+rX <root>/browsers
+#      PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers
+#   3. chmod 755 /srv/rumaq-scraper/browsers && chmod -R go+rX /srv/rumaq-scraper/browsers
 # Chromium's installer manages its own directories and may tighten them to 0700.
 # The service user (rumaq-scraper) is not the deploy identity, so without step 3
 # the next self-check cannot read the revision and the deploy rolls back again.
@@ -24,7 +24,11 @@
 # Configuration:
 #   RUMAQ_VPS_HOST  required — the box (or an ~/.ssh/config alias)
 #   RUMAQ_VPS_USER  default rumaq-deploy — the only identity that may write browsers/
-#   RUMAQ_VPS_ROOT  default /srv/rumaq-scraper — must match rumaq/deploy.conf
+# The install root and the browsers path are the ahaqqu/vps contract's fixed
+# /srv/rumaq-scraper/browsers; this helper takes no path input. A stale
+# RUMAQ_VPS_ROOT from the retired in-repo bootstrap is rejected unless it names
+# exactly /srv/rumaq-scraper, so it can neither redirect the install nor widen
+# a different tree.
 # ============================================================
 
 usage() {
@@ -38,7 +42,8 @@ die() { printf 'deploy/browser-revision: %s\n' "$*" >&2; exit 1; }
 
 main() {
   set -euo pipefail
-  local root user host target remote_script
+  local user host target remote_script
+  local contract_root=/srv/rumaq-scraper
   case "${1:-}" in
     -h | --help)
       usage
@@ -53,33 +58,32 @@ main() {
   [ -n "${RUMAQ_VPS_HOST:-}" ] ||
     die "RUMAQ_VPS_HOST is required — the box (or an ssh alias) to install into"
   command -v ssh >/dev/null 2>&1 || die "ssh is required to reach the box"
-  root="${RUMAQ_VPS_ROOT:-/srv/rumaq-scraper}"
-  if [[ ! $root =~ ^/[A-Za-z0-9/._-]+$ ]]; then
-    die "RUMAQ_VPS_ROOT must be an absolute path matching [A-Za-z0-9/._-] only (got: '$root')"
+  if [ -n "${RUMAQ_VPS_ROOT:-}" ] && [ "${RUMAQ_VPS_ROOT}" != "$contract_root" ]; then
+    die "RUMAQ_VPS_ROOT='${RUMAQ_VPS_ROOT}' is not the ahaqqu/vps contract path ${contract_root} — unset it"
   fi
   user="${RUMAQ_VPS_USER:-rumaq-deploy}"
   host="$RUMAQ_VPS_HOST"
   target="${user}@${host}"
 
   # The deployed tree is not in place (the failed deploy rolled it back), so
-  # install from the artifact vps-deploy accepted at /srv/vps-incoming/.
+  # install from the artifact vps-deploy accepted at /srv/vps-incoming/. The
+  # paths are literal: the contract owns them, and the remote shell takes no
+  # argument that could point the install or the chmods elsewhere.
   remote_script="$(cat <<'REMOTE'
 set -euo pipefail
-root="$1"
-artifact="$2"
+artifact=/srv/vps-incoming/rumaq.tar.gz
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 tar -xzf "$artifact" -C "$tmp"
-PLAYWRIGHT_BROWSERS_PATH="$root/browsers" /usr/bin/bun "$tmp/node_modules/playwright-core/cli.js" install chromium
-chmod 755 "$root/browsers"
-chmod -R go+rX "$root/browsers"
+PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers /usr/bin/bun "$tmp/node_modules/playwright-core/cli.js" install chromium
+chmod 755 /srv/rumaq-scraper/browsers
+chmod -R go+rX /srv/rumaq-scraper/browsers
 REMOTE
 )"
 
   log "installing the uploaded artifact's chromium revision as ${target}"
-  log "browsers path: ${root}/browsers (chmod 755 + go+rX after install)"
-  ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$target" \
-    "bash -s -- '$root' '/srv/vps-incoming/rumaq.tar.gz'" <<<"$remote_script"
+  log "browsers path: ${contract_root}/browsers (chmod 755 + go+rX after install)"
+  ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$target" 'bash -s' <<<"$remote_script"
   log "done. re-run ./scripts/deploy.sh vps."
 }
 

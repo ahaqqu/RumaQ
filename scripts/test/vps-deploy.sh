@@ -245,31 +245,66 @@ grep -q 'shared doctor gate is missing' <<<"$out" ||
 pass "a missing doctor fails closed with a clear message"
 export FAKE_DOCTOR_EXIT=0
 
-# --- 9. the Chromium revision recovery installs and heals the modes ---------
+# --- 9. the Chromium revision recovery pins the contract path ---------------
 # A playwright-core bump installs a new revision into the preserved browsers/
 # cache; Chromium's installer can leave 0700 directories, and the service user
-# is not the deploy identity. The recovery must install the revision and chmod
-# the cache so the next self-check can read it.
+# is not the deploy identity. The recovery must run as rumaq-deploy, install
+# into the ahaqqu/vps contract's fixed browsers path and chmod that exact path
+# so the next self-check can read it. The helper takes no path input, and a
+# stale RUMAQ_VPS_ROOT must fail before it contacts the host.
+unset RUMAQ_VPS_ROOT RUMAQ_VPS_USER
 mkdir -p "$WORK/recover-bin"
 cat >"$WORK/recover-bin/ssh" <<'SH'
 #!/usr/bin/env bash
+printf '%s\n' "$@" >"${FAKE_SSH_ARGS:?}"
 cat >"${FAKE_SSH_STDIN:?}"
 exit 0
 SH
 chmod +x "$WORK/recover-bin/ssh"
 
-if ! PATH="$WORK/recover-bin:$PATH" FAKE_SSH_STDIN="$WORK/recover.stdin" \
-  RUMAQ_VPS_HOST="box.example" bash "$ROOT_DIR/scripts/deploy/browser-revision.sh" \
-  >"$WORK/recover.out" 2>&1; then
+recover=(
+  env
+  PATH="$WORK/recover-bin:$PATH"
+  FAKE_SSH_STDIN="$WORK/recover.stdin"
+  FAKE_SSH_ARGS="$WORK/recover.args"
+  RUMAQ_VPS_HOST="box.example"
+)
+recover_script="$ROOT_DIR/scripts/deploy/browser-revision.sh"
+browsers=/srv/rumaq-scraper/browsers
+
+if ! "${recover[@]}" bash "$recover_script" >"$WORK/recover.out" 2>&1; then
   cat "$WORK/recover.out" >&2
   fail "browser revision recovery failed against a fake host"
 fi
+grep -qxF -- 'rumaq-deploy@box.example' "$WORK/recover.args" ||
+  fail "browser revision recovery does not target rumaq-deploy@<host>"
 grep -qF 'install chromium' "$WORK/recover.stdin" ||
   fail "browser revision recovery does not install chromium"
-grep -qF 'chmod 755' "$WORK/recover.stdin" ||
-  fail "browser revision recovery does not widen the browsers/ directory"
-grep -qF 'chmod -R go+rX' "$WORK/recover.stdin" ||
-  fail "browser revision recovery does not heal the installer's modes"
-pass "browser revision recovery installs the revision and heals modes"
+grep -qF "PLAYWRIGHT_BROWSERS_PATH=$browsers" "$WORK/recover.stdin" ||
+  fail "browser revision recovery does not install into $browsers"
+grep -qF "chmod 755 $browsers" "$WORK/recover.stdin" ||
+  fail "browser revision recovery does not widen $browsers"
+grep -qF "chmod -R go+rX $browsers" "$WORK/recover.stdin" ||
+  fail "browser revision recovery does not heal the modes on $browsers"
+pass "browser revision recovery targets rumaq-deploy and heals $browsers"
+
+for stale in /tmp/rumaq-scraper /srv/rumaq-scraper/../etc "$browsers"; do
+  : >"$WORK/recover.args"
+  if out="$("${recover[@]}" RUMAQ_VPS_ROOT="$stale" bash "$recover_script" 2>&1)"; then
+    fail "browser revision recovery accepted RUMAQ_VPS_ROOT=$stale"
+  fi
+  grep -qF '/srv/rumaq-scraper' <<<"$out" ||
+    fail "a rejected RUMAQ_VPS_ROOT did not name the contract path: $out"
+  [ ! -s "$WORK/recover.args" ] ||
+    fail "a rejected RUMAQ_VPS_ROOT still contacted the host"
+done
+pass "a wrong or traversing RUMAQ_VPS_ROOT fails before any host contact"
+
+if ! "${recover[@]}" RUMAQ_VPS_ROOT=/srv/rumaq-scraper bash "$recover_script" \
+  >"$WORK/recover.out" 2>&1; then
+  cat "$WORK/recover.out" >&2
+  fail "browser revision recovery rejected the contract root as RUMAQ_VPS_ROOT"
+fi
+pass "the contract root is the only accepted RUMAQ_VPS_ROOT"
 
 printf '\n✓ vps deploy invariants hold\n'

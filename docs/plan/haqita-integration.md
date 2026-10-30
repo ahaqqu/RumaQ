@@ -418,13 +418,15 @@ green before merge. Suggested sequence:
 3. **PR3 — Lotte + matcher + VPS deploy**: Playwright Tier-2 strategy, lotte plugin, full matcher
    port (canonical catalog, Gemini embeddings, verifier). Port pytest fixtures
    verbatim; diff-test old Python outputs vs new TS on the same inputs before cutover.
-   Plus (folded from milestone 4, 2026-10-25): `scraper/provision/vps/` (apply.sh, units,
-   sudoers, env example), `scripts/deploy.sh vps` → `scripts/deploy/vps.sh` (bundle → rsync →
-   chromium → self-check → doctor), commit-based `deploy-vps` CI job gated on `vars.VPS_HOST`,
-   `--self-check` CLI. Timer ships installed-but-disabled; enabling is go-live (milestone 4).
-   Box bootstrap is `scripts/provision-vps.sh` (§7).
+   Plus (folded from milestone 4, 2026-10-25): `scripts/deploy.sh vps` → `scripts/deploy/vps.sh`
+   (build → verify → upload → `vps-deploy rumaq` → self-check → shared doctor gate),
+   commit-based `deploy-vps` CI job gated on `vars.VPS_HOST`, `--self-check` CLI. `browsers/`
+   is preserved state, never shipped in the artifact; a `playwright-core` bump installs the
+   new revision with `scripts/deploy/browser-revision.sh`. The nightly timer is
+   installed by the `ahaqqu/vps` applier; a deploy never enables or disables it.
 4. **PR4 — Go-live**: `ahaqqu/vps` host-config/applier PR, the timer-enable operator step +
-   `RUMAQ_PUBLISH=true` (exposed as `scripts/provision-vps.sh --enable-timer`), first
+   `RUMAQ_PUBLISH=true` (set in the `ahaqqu/vps` `rumaq/` root-only env and installed by its
+   applier — a deploy never resets it), first
    successful live ingest into prod D1 (manual run on the box), **smoke staleness check**
    (§7.1 — implemented as `GET /api/internal/prices/status` + a freshness step in the
    6-hourly smoke workflow; it skips while no observations exist so merging it does not

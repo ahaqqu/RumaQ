@@ -119,7 +119,9 @@ chmod -R go+rX /srv/rumaq-scraper/browsers
 
 The service user (`rumaq-scraper`) is not the deploy identity (`rumaq-deploy`),
 so without the chmod the next self-check cannot read the revision and the
-deploy rolls back again.
+deploy rolls back again. Those two paths are the `ahaqqu/vps` contract's fixed
+`/srv/rumaq-scraper/browsers`: a stale `RUMAQ_VPS_ROOT` from the retired
+bootstrap is rejected rather than followed.
 
 The same `deploy.yml` commit-based flow runs this when a main push touches the
 scraper's world (`scraper/`, `contract/`, deploy plumbing); it is skipped until
