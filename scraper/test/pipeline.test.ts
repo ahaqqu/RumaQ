@@ -68,6 +68,44 @@ function makeFetchMock(katalogHtml: string, koranHtml: string, jpeg: Uint8Array<
   }
 }
 
+/**
+ * Base options for the scoped scenarios (review B2): one factory owning the
+ * boilerplate the runPipeline call sites used to copy — the alfamart
+ * sentinel makes an empty listing red, so every non-alfamart scenario
+ * scopes `stores` and rides the silent indomaret chain through its fetch
+ * mock. The scope stays an explicit argument (it is the scenario's own
+ * semantic); everything else defaults here and is overridable via
+ * `overrides`. Whichever fetch wins (the empty-page default or an override)
+ * is wrapped with the serveIndomaret branches, so a scenario can no longer
+ * forget the chain — wrapping an already-wrapped mock is harmless.
+ */
+function scopedOptions(
+  stateDir: string,
+  stores: string[],
+  overrides: Partial<PipelineOptions> = {}
+): PipelineOptions {
+  const base: PipelineOptions = {
+    launcher: emptyLotte.launcher,
+    embedClient: stubEmbedClient,
+    verifyClient: stubVerifyClient,
+    stateDir,
+    stores,
+    dryRun: true,
+    renderPdf: silentIndomaretRender,
+    sleep: noSleep,
+    now: () => new Date('2026-10-24T23:00:05Z'),
+    log: () => {},
+    ...overrides,
+  }
+  // Whichever fetch wins (the empty-page default or an override) is wrapped
+  // with the serveIndomaret branches, so a scenario can no longer forget
+  // the chain — wrapping an already-wrapped mock is harmless.
+  const inner =
+    base.fetch ?? (async () => new Response('<html><body></body></html>', { status: 200 }))
+  base.fetch = (url, init) => Promise.resolve(serveIndomaret(url, () => inner(url, init)))
+  return base
+}
+
 // Shared arrange for the by-design needs-proxy scenarios: Lotte's browser
 // tier is served a persistent Incapsula challenge, and LOTTE_PROXY_URL is
 // guarded so every scenario restores the environment it started with.
@@ -100,21 +138,12 @@ async function setupChallengedLotte() {
       stateDir: string,
       overrides: Partial<PipelineOptions> & Pick<PipelineOptions, 'dryRun'>
     ): PipelineOptions {
-      return {
+      return scopedOptions(stateDir, ['lotte-mart', 'superindo'], {
         launcher: challengedLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        // Scoped to the two stores these scenarios assert (see above).
-        stores: ['lotte-mart', 'superindo'],
         fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
-        renderPdf: silentIndomaretRender,
         ocrClient,
-        sleep: noSleep,
-        now: () => new Date('2026-10-24T23:00:05Z'),
-        log: () => {},
         ...overrides,
-      }
+      })
     },
     browserClosed: () => challengedLotte.state.closed,
   }
@@ -147,22 +176,13 @@ describe('runPipeline', () => {
     }
 
     const status = await Effect.runPromise(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        // Scoped: alfamart's sentinel makes an empty listing red — this
-        // scenario exercises other stores (the unscoped full chain has its own).
-        stores: ['superindo'],
-        dryRun: true,
-        fetch: fetchMock,
-        renderPdf: silentIndomaretRender,
-        ocrClient,
-        sleep: noSleep,
-        now: () => new Date('2026-10-24T23:00:05Z'),
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['superindo'], {
+          dryRun: true,
+          fetch: fetchMock,
+          ocrClient,
+        })
+      )
     )
 
     expect(status.stage).toBe('done')
@@ -190,22 +210,14 @@ describe('runPipeline', () => {
 
     // Second run: novelty state marks the same bytes as existing → no new OCR…
     const status2 = await Effect.runPromise(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        // Scoped: alfamart's sentinel makes an empty listing red — this
-        // scenario exercises other stores (the unscoped full chain has its own).
-        stores: ['superindo'],
-        dryRun: true,
-        fetch: fetchMock,
-        renderPdf: silentIndomaretRender,
-        ocrClient,
-        sleep: noSleep,
-        now: () => new Date('2026-11-05T23:00:05Z'),
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['superindo'], {
+          dryRun: true,
+          fetch: fetchMock,
+          ocrClient,
+          now: () => new Date('2026-11-05T23:00:05Z'),
+        })
+      )
     )
     const entry2 = status2.stores['superindo']!
     expect(entry2.newImages).toBe(0)
@@ -276,25 +288,16 @@ describe('runPipeline', () => {
       return new Response('boom', { status: 500 })
     }
     const failure = await Effect.runPromiseExit(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        // Scoped: alfamart's sentinel makes an empty listing red — this
-        // scenario exercises other stores (the unscoped full chain has its own).
-        stores: ['superindo'],
-        dryRun: false,
-        fetch: fetchMock,
-        renderPdf: silentIndomaretRender,
-        ocrClient,
-        publishFetch: failingPublish,
-        ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
-        ingestSecret: 's3cret',
-        sleep: noSleep,
-        now: () => new Date('2026-10-24T23:00:05Z'),
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['superindo'], {
+          dryRun: false,
+          fetch: fetchMock,
+          ocrClient,
+          publishFetch: failingPublish,
+          ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+          ingestSecret: 's3cret',
+        })
+      )
     )
     expect(failure._tag).toBe('Failure')
     const error = exitError(failure) as Error & { exitCode?: number }
@@ -321,25 +324,17 @@ describe('runPipeline', () => {
       return new Response(JSON.stringify({ ok: true }), { status: 200 })
     }
     const status2 = await Effect.runPromise(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        // Scoped: alfamart's sentinel makes an empty listing red — this
-        // scenario exercises other stores (the unscoped full chain has its own).
-        stores: ['superindo'],
-        dryRun: false,
-        fetch: fetchMock,
-        renderPdf: silentIndomaretRender,
-        ocrClient: ocrClient,
-        publishFetch: okPublish,
-        ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
-        ingestSecret: 's3cret',
-        sleep: noSleep,
-        now: () => new Date('2026-10-25T23:00:05Z'),
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['superindo'], {
+          dryRun: false,
+          fetch: fetchMock,
+          ocrClient: ocrClient,
+          publishFetch: okPublish,
+          ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+          ingestSecret: 's3cret',
+          now: () => new Date('2026-10-25T23:00:05Z'),
+        })
+      )
     )
     expect(status2.stage).toBe('done')
     expect(status2.stores['superindo']!.itemsExtracted).toBe(0) // no re-OCR
@@ -386,14 +381,11 @@ describe('runPipeline', () => {
       if (!seenUrls.has(url)) {
         seenUrls.set(url, seenUrls.size === 0 ? jpegA : jpegB)
       }
-      return serveIndomaret(
-        url,
-        () =>
-          new Response(seenUrls.get(url)!, {
-            status: 200,
-            headers: { 'content-type': 'image/jpeg' },
-          })
-      )!
+      // scopedOptions wraps the indomaret branches around this mock.
+      return new Response(seenUrls.get(url)!, {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      })
     }
 
     const items = [
@@ -414,22 +406,14 @@ describe('runPipeline', () => {
 
     const now = () => new Date('2026-10-24T23:00:05Z')
     const failure = await Effect.runPromiseExit(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        // Scoped: alfamart's sentinel makes an empty listing red — this
-        // scenario exercises other stores (the unscoped full chain has its own).
-        stores: ['superindo'],
-        dryRun: true,
-        fetch: fetchMock,
-        renderPdf: silentIndomaretRender,
-        ocrClient,
-        sleep: noSleep,
-        now,
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['superindo'], {
+          dryRun: true,
+          fetch: fetchMock,
+          ocrClient,
+          now,
+        })
+      )
     )
 
     // Quota kill → exit code 2.
@@ -529,25 +513,16 @@ describe('runPipeline', () => {
     }
 
     const failure = await Effect.runPromiseExit(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        // Scoped: alfamart's sentinel makes an empty listing red — this
-        // scenario exercises other stores (the unscoped full chain has its own).
-        stores: ['superindo'],
-        dryRun: false,
-        fetch: fetchMock,
-        renderPdf: silentIndomaretRender,
-        ocrClient: flakyOcr,
-        publishFetch: okPublish,
-        ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
-        ingestSecret: 's3cret',
-        sleep: noSleep,
-        now: () => new Date('2026-10-24T23:00:05Z'),
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['superindo'], {
+          dryRun: false,
+          fetch: fetchMock,
+          ocrClient: flakyOcr,
+          publishFetch: okPublish,
+          ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+          ingestSecret: 's3cret',
+        })
+      )
     )
 
     expect(failure._tag).toBe('Failure')
@@ -578,25 +553,17 @@ describe('runPipeline', () => {
       models: { generateContent: async () => ({ text: JSON.stringify(items) }) },
     }
     await Effect.runPromise(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        // Scoped: alfamart's sentinel makes an empty listing red — this
-        // scenario exercises other stores (the unscoped full chain has its own).
-        stores: ['superindo'],
-        dryRun: false,
-        fetch: fetchMock,
-        renderPdf: silentIndomaretRender,
-        ocrClient: healthyOcr,
-        publishFetch: okPublish,
-        ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
-        ingestSecret: 's3cret',
-        sleep: noSleep,
-        now: () => new Date('2026-10-25T23:00:05Z'),
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['superindo'], {
+          dryRun: false,
+          fetch: fetchMock,
+          ocrClient: healthyOcr,
+          publishFetch: okPublish,
+          ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+          ingestSecret: 's3cret',
+          now: () => new Date('2026-10-25T23:00:05Z'),
+        })
+      )
     )
     expect(posted).toHaveLength(2)
     expect(posted[1]!.items.map((item) => item.productKey)).toContain('gula-pasir----1-kg')
@@ -648,22 +615,9 @@ describe('runPipeline', () => {
     }
 
     const failure = await Effect.runPromiseExit(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        // Scoped: alfamart's sentinel makes an empty listing red — this
-        // scenario exercises other stores (the unscoped full chain has its own).
-        stores: ['superindo'],
-        dryRun: true,
-        fetch: fetchMock,
-        renderPdf: silentIndomaretRender,
-        ocrClient,
-        sleep: noSleep,
-        now,
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['superindo'], { dryRun: true, fetch: fetchMock, ocrClient, now })
+      )
     )
     expect(failure._tag).toBe('Failure')
     const error = exitError(failure) as Error & { exitCode?: number }
@@ -679,22 +633,9 @@ describe('runPipeline', () => {
     // skipped as already-processed with its items stranded.
     await rm(runItemsFile, { force: true })
     const status2 = await Effect.runPromise(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        // Scoped: alfamart's sentinel makes an empty listing red — this
-        // scenario exercises other stores (the unscoped full chain has its own).
-        stores: ['superindo'],
-        dryRun: true,
-        fetch: fetchMock,
-        renderPdf: silentIndomaretRender,
-        ocrClient,
-        sleep: noSleep,
-        now,
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['superindo'], { dryRun: true, fetch: fetchMock, ocrClient, now })
+      )
     )
     expect(status2.stores['superindo']!.newImages).toBeGreaterThanOrEqual(1)
     expect(ocrCalls).toBe(2) // paid for twice, stranded never
@@ -710,30 +651,14 @@ describe('runPipeline', () => {
     ): Promise<Response> => {
       expect(init?.headers).toBeDefined()
       // Neither listing page has a matching gallery → zero pages, zero OCR.
-      return serveIndomaret(
-        url,
-        () => new Response('<html><body>No promos here</body></html>', { status: 200 })
-      )!
+      // (scopedOptions wraps the indomaret branches around this mock.)
+      return new Response('<html><body>No promos here</body></html>', { status: 200 })
     }
     const previous = process.env.GEMINI_API_KEY
     delete process.env.GEMINI_API_KEY
     try {
       const status = await Effect.runPromise(
-        runPipeline({
-          launcher: emptyLotte.launcher,
-          embedClient: stubEmbedClient,
-          verifyClient: stubVerifyClient,
-          stateDir,
-          // Scoped: alfamart's sentinel makes an empty listing red — this
-          // scenario exercises other stores (the unscoped full chain has its own).
-          stores: ['superindo'],
-          dryRun: true,
-          fetch: fetchMock,
-          renderPdf: silentIndomaretRender,
-          sleep: noSleep,
-          now: () => new Date('2026-10-24T23:00:05Z'),
-          log: () => {},
-        })
+        runPipeline(scopedOptions(stateDir, ['superindo'], { dryRun: true, fetch: fetchMock }))
       )
       expect(status.stage).toBe('done')
       const entry = status.stores['superindo']!
@@ -880,25 +805,18 @@ describe('runPipeline', () => {
       'utf8'
     )
     const status = await Effect.runPromise(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: bandEmbedClient,
-        verifyClient: maybeVerifier,
-        stateDir,
-        // Scoped: alfamart's sentinel makes an empty listing red — this
-        // scenario exercises other stores (the unscoped full chain has its own).
-        stores: ['superindo'],
-        dryRun: false,
-        fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
-        renderPdf: silentIndomaretRender,
-        ocrClient,
-        publishFetch,
-        ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
-        ingestSecret: 's3cret',
-        sleep: noSleep,
-        now: () => new Date('2026-10-24T23:00:05Z'),
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['superindo'], {
+          dryRun: false,
+          embedClient: bandEmbedClient,
+          verifyClient: maybeVerifier,
+          fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
+          ocrClient,
+          publishFetch,
+          ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+          ingestSecret: 's3cret',
+        })
+      )
     )
     expect(status.stage).toBe('done')
     expect(status.reviewItems!.length).toBe(status.match!.reviewItems)
@@ -1061,10 +979,8 @@ it('runs the lotte flow through the Tier-2 browser ladder and cross-matches with
     expect(init?.headers).toBeDefined()
     if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
     if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
-    return serveIndomaret(
-      url,
-      () => new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
-    )!
+    // (scopedOptions wraps the indomaret branches around this mock.)
+    return new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
   }
   const lotteBrowser = fakeBrowserLauncher(lotteHtml)
   const ocrClient: GeminiClient = {
@@ -1072,22 +988,14 @@ it('runs the lotte flow through the Tier-2 browser ladder and cross-matches with
   }
 
   const status = await Effect.runPromise(
-    runPipeline({
-      stateDir,
-      // Scoped: alfamart's sentinel makes an empty listing red — this
-      // scenario exercises other stores (the unscoped full chain has its own).
-      stores: ['superindo', 'lotte-mart'],
-      dryRun: true,
-      launcher: lotteBrowser.launcher,
-      embedClient: stubEmbedClient,
-      verifyClient: stubVerifyClient,
-      fetch: fetchMock,
-      renderPdf: silentIndomaretRender,
-      ocrClient,
-      sleep: noSleep,
-      now: () => new Date('2026-10-24T23:00:05Z'),
-      log: () => {},
-    })
+    runPipeline(
+      scopedOptions(stateDir, ['superindo', 'lotte-mart'], {
+        dryRun: true,
+        launcher: lotteBrowser.launcher,
+        fetch: fetchMock,
+        ocrClient,
+      })
+    )
   )
 
   expect(status.stage).toBe('done')
@@ -1128,36 +1036,27 @@ it('runs the astro catalog store end to end — no OCR, outbox like the brochure
     init?: RequestInit & { proxy?: string }
   ): Promise<Response> => {
     expect(init?.headers).toBeDefined()
-    // One astro category page serves the fixture; the others (and the
-    // brochure stores' listings) serve empty pages.
+    // One astro category page serves the fixture; the others serve empty
+    // pages. (scopedOptions wraps the indomaret branches around this mock.)
     if (url.includes('beras-lokal-5858')) return new Response(astroHtml, { status: 200 })
-    return serveIndomaret(url, () => new Response('<html><body></body></html>', { status: 200 }))!
+    return new Response('<html><body></body></html>', { status: 200 })
   }
 
   const status = await Effect.runPromise(
-    runPipeline({
-      stateDir,
-      // Scoped: alfamart's sentinel makes an empty listing red — this
-      // scenario exercises other stores (the unscoped full chain has its own).
-      stores: ['astro'],
-      dryRun: true,
-      launcher: emptyLotte.launcher,
-      embedClient: stubEmbedClient,
-      verifyClient: stubVerifyClient,
-      fetch: fetchMock,
-      renderPdf: silentIndomaretRender,
-      // The OCR client must never fire for a catalog-only run.
-      ocrClient: {
-        models: {
-          generateContent: async () => {
-            throw new Error('OCR must not run for catalog stores')
+    runPipeline(
+      scopedOptions(stateDir, ['astro'], {
+        dryRun: true,
+        fetch: fetchMock,
+        // The OCR client must never fire for a catalog-only run.
+        ocrClient: {
+          models: {
+            generateContent: async () => {
+              throw new Error('OCR must not run for catalog stores')
+            },
           },
         },
-      },
-      sleep: noSleep,
-      now: () => new Date('2026-10-24T23:00:05Z'),
-      log: () => {},
-    })
+      })
+    )
   )
 
   expect(status.stage).toBe('done')
@@ -1221,21 +1120,15 @@ describe('runPipeline --stores scoping (docs/plan/scrape-now.md §2)', () => {
       'utf8'
     )
     const status = await Effect.runPromise(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        dryRun: true,
-        stores: ['superindo'],
-        fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
-        ocrClient: {
-          models: { generateContent: async () => ({ text: JSON.stringify(ocrItems) }) },
-        },
-        sleep: noSleep,
-        now: () => new Date('2026-10-24T23:00:05Z'),
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['superindo'], {
+          dryRun: true,
+          fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
+          ocrClient: {
+            models: { generateContent: async () => ({ text: JSON.stringify(ocrItems) }) },
+          },
+        })
+      )
     )
     expect(Object.keys(status.stores)).toEqual(['superindo'])
     expect(status.stores['superindo']!.itemsExtracted).toBeGreaterThanOrEqual(1)
@@ -1247,19 +1140,13 @@ describe('runPipeline --stores scoping (docs/plan/scrape-now.md §2)', () => {
   it('fails a scope that matches nothing — never a "successful" empty run', async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
     const exit = await Effect.runPromiseExit(
-      runPipeline({
-        launcher: emptyLotte.launcher,
-        embedClient: stubEmbedClient,
-        verifyClient: stubVerifyClient,
-        stateDir,
-        dryRun: true,
-        stores: ['unknown-store'],
-        fetch: makeFetchMock('<html></html>', '<html></html>', fakeJpegBytes()),
-        ocrClient: { models: { generateContent: async () => ({ text: '[]' }) } },
-        sleep: noSleep,
-        now: () => new Date('2026-10-24T23:00:05Z'),
-        log: () => {},
-      })
+      runPipeline(
+        scopedOptions(stateDir, ['unknown-store'], {
+          dryRun: true,
+          fetch: makeFetchMock('<html></html>', '<html></html>', fakeJpegBytes()),
+          ocrClient: { models: { generateContent: async () => ({ text: '[]' }) } },
+        })
+      )
     )
     const failure = exitError(exit)
     expect(failure).not.toBeNull()
@@ -1305,23 +1192,13 @@ describe('brochure uploads (issue #293)', () => {
     const ocrClient: GeminiClient = {
       models: { generateContent: async () => ({ text: JSON.stringify(ocrItems) }) },
     }
-    const base = {
-      launcher: emptyLotte.launcher,
-      embedClient: stubEmbedClient,
-      verifyClient: stubVerifyClient,
-      stateDir,
-      // Scoped: alfamart's sentinel makes an empty listing red (see above).
-      stores: ['superindo'],
-      dryRun: false as const,
+    const base = scopedOptions(stateDir, ['superindo'], {
+      dryRun: false,
       fetch: makeFetchMock(katalogHtml, koranHtml, jpeg),
-      renderPdf: silentIndomaretRender,
       ocrClient,
-      sleep: noSleep,
-      now: () => new Date('2026-10-24T23:00:05Z'),
-      log: () => {},
       ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
       ingestSecret: 's3cret',
-    }
+    })
     return { stateDir, jpeg, base }
   }
 

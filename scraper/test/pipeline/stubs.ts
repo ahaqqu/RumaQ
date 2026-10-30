@@ -36,8 +36,15 @@ const indomaretPdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0
 export const silentIndomaretRender = () =>
   Effect.succeed([{ pageNo: 1, bytes: new Uint8Array(1024) }])
 
-/** The three indomaret branches every scenario fetch mock needs, in order. */
-export function serveIndomaret(url: string, mock: () => Response): Response | undefined {
+/**
+ * The three indomaret branches every scenario fetch mock needs, in order.
+ * The fallback mock may be sync or async (scopedOptions wraps async
+ * pipeline fetch mocks with this), so the result mirrors its return.
+ */
+export function serveIndomaret(
+  url: string,
+  mock: () => Response | Promise<Response>
+): Response | Promise<Response> {
   if (url === INDOMARET_HUB_URL) return new Response(indomaretHubHtml, { status: 200 })
   if (url === INDOMARET_PDF_URL) {
     return new Response(indomaretPdf, {
