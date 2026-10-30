@@ -51,6 +51,8 @@ export type RunStoreSummary = {
   error?: string
   /** By-design skip: Tier-2 store needs a Tier-3 proxy, none configured. */
   needsProxy?: boolean
+  /** Issue #322 (A4): non-fatal anomalies the store rode through, with URLs. */
+  warnings?: string[]
 }
 
 export type RunMatchSummary = {

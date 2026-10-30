@@ -18,12 +18,17 @@ export function exitError<E>(exit: Exit.Exit<unknown, E>): E | null {
  * plugins every capability (fetchHtml, fetchRendered, fetchDocument,
  * renderPdf); tests for stores that never touch a capability leave it out,
  * and the dead defaults here die loudly if one ever does — a tripwire
- * against silent capability drift.
+ * against silent capability drift. The warn channel (issue #322, A4) is the
+ * one non-dying default: it collects into the returned `warnings` array so
+ * a test can assert what the plugin warned about.
  */
 export function fullFetchContext(
   base: Pick<FetchContext, 'runStartedAt'> &
-    Partial<Pick<FetchContext, 'fetchHtml' | 'fetchRendered' | 'fetchDocument' | 'renderPdf'>>
-): FetchContext {
+    Partial<
+      Pick<FetchContext, 'fetchHtml' | 'fetchRendered' | 'fetchDocument' | 'renderPdf' | 'warn'>
+    >
+): FetchContext & { warnings: string[] } {
+  const warnings: string[] = []
   return {
     ...base,
     fetchHtml:
@@ -37,6 +42,8 @@ export function fullFetchContext(
       ((url) => Effect.die(new Error(`unexpected fetchDocument(${url}) in this store test`))),
     renderPdf:
       base.renderPdf ?? (() => Effect.die(new Error('unexpected renderPdf in this store test'))),
+    warn: base.warn ?? ((message: string) => void warnings.push(message)),
+    warnings,
   }
 }
 

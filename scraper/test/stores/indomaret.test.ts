@@ -156,6 +156,7 @@ function makeCtx(options: {
   const config = options.maxPages !== undefined ? { ...store, maxPages: options.maxPages } : store
   const fetchedHtml: string[] = []
   const fetchedDocuments: string[] = []
+  const warnings: string[] = []
   const plugin = createIndomaretPlugin(config)
   const ctx: FetchContext = {
     fetchHtml: (url) => {
@@ -171,9 +172,10 @@ function makeCtx(options: {
     },
     fetchRendered: (url) => Effect.die(new Error(`unexpected fetchRendered(${url})`)),
     renderPdf: options.render ?? fakeRender(3).render,
+    warn: (message) => void warnings.push(message),
     runStartedAt: '2026-10-30T00:00:00Z',
   }
-  return { plugin, ctx, fetchedHtml, fetchedDocuments }
+  return { plugin, ctx, fetchedHtml, fetchedDocuments, warnings }
 }
 
 describe('indomaret plugin — real hub and detail fixtures', () => {
@@ -243,7 +245,7 @@ describe('indomaret plugin — real hub and detail fixtures', () => {
     expect(fetchedHtml).toHaveLength(1)
   })
 
-  it('sentinels a detail page with no pdfUrl', async () => {
+  it('sentinels when every visited brochure page exposed no pdfUrl (the churn signature)', async () => {
     const { plugin, ctx } = makeCtx({
       fetchHtml: (url) =>
         Effect.succeed(url === PROMOSI_HUB_URL ? hub() : '<html><body>broken</body></html>'),
@@ -251,7 +253,92 @@ describe('indomaret plugin — real hub and detail fixtures', () => {
     const exit = await Effect.runPromiseExit(plugin.listBrochurePages(ctx))
     expect(exit._tag).toBe('Failure')
     const error = exitError(exit) as ScrapeStructureError
+    expect(error.message).toContain('10/10 visited brochure pages exposed no pdfUrl')
     expect(error.message).toContain('no pdfUrl')
+  })
+
+  it('keeps a single teaser page without a pdfUrl as a warning — the healthy brochures still render', async () => {
+    // A scheduled/future-dated brochure page legitimately exposes no pdfUrl
+    // today (issue #322, A4): one odd page must not discard the cycle.
+    const teaserUrl = expectedDetailUrls()[0]!
+    const { plugin, ctx, warnings, fetchedDocuments } = makeCtx({
+      fetchHtml: (url) =>
+        Effect.succeed(
+          url === PROMOSI_HUB_URL
+            ? hub()
+            : url === teaserUrl
+              ? '<html><body>teaser brochure, pdf coming later</body></html>'
+              : detailPage
+        ),
+      fetchDocument: (url) =>
+        Effect.succeed({
+          bytes: new TextEncoder().encode(`pdf:${url}`),
+          contentType: 'application/pdf',
+        }),
+    })
+    const pages = await Effect.runPromise(plugin.listBrochurePages(ctx))
+    // 9 healthy brochures × 3 pages; the teaser contributed none but the
+    // cycle continued past it.
+    expect(pages).toHaveLength(27)
+    expect(pages.every((page) => page.brochureUrl !== teaserUrl)).toBe(true)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain(teaserUrl)
+    // The churn sentinel never fired — no discard.
+    expect(fetchedDocuments).toHaveLength(9)
+  })
+
+  it('sentinels when at least half of the visited brochure pages exposed no pdfUrl', async () => {
+    // 5 of the 10 visited pages broken: 5 × 2 >= 10 — the churn signature,
+    // so the whole cycle discards. The signature is evaluated over the FULL
+    // cycle (the loop never aborts early on an empty page).
+    const broken = new Set(expectedDetailUrls().slice(0, 5))
+    const { plugin, ctx, warnings } = makeCtx({
+      fetchHtml: (url) =>
+        Effect.succeed(
+          url === PROMOSI_HUB_URL
+            ? hub()
+            : broken.has(url)
+              ? '<html><body>broken</body></html>'
+              : detailPage
+        ),
+      fetchDocument: (url) =>
+        Effect.succeed({
+          bytes: new TextEncoder().encode(`pdf:${url}`),
+          contentType: 'application/pdf',
+        }),
+    })
+    const exit = await Effect.runPromiseExit(plugin.listBrochurePages(ctx))
+    expect(exit._tag).toBe('Failure')
+    const error = exitError(exit) as ScrapeStructureError
+    expect(error.message).toContain('5/10 visited brochure pages exposed no pdfUrl')
+    expect(error.message).toContain('discarding the cycle')
+    expect(error.message).toContain(expectedDetailUrls()[0]!)
+    expect(warnings).toHaveLength(5)
+  })
+
+  it('publishes below the churn threshold — warnings surface, no sentinel', async () => {
+    // 4 of 10 visited pages broken: 4 × 2 < 10 — below the churn signature,
+    // so the 6 healthy brochures ride through with the warnings attached.
+    const broken = new Set(expectedDetailUrls().slice(0, 4))
+    const { plugin, ctx, warnings } = makeCtx({
+      fetchHtml: (url) =>
+        Effect.succeed(
+          url === PROMOSI_HUB_URL
+            ? hub()
+            : broken.has(url)
+              ? '<html><body>broken</body></html>'
+              : detailPage
+        ),
+      fetchDocument: (url) =>
+        Effect.succeed({
+          bytes: new TextEncoder().encode(`pdf:${url}`),
+          contentType: 'application/pdf',
+        }),
+    })
+    const pages = await Effect.runPromise(plugin.listBrochurePages(ctx))
+    expect(pages).toHaveLength(18) // 6 healthy × 3
+    expect(warnings).toHaveLength(4)
+    expect(warnings[0]).toContain(expectedDetailUrls()[0]!)
   })
 
   it('propagates a PdfRenderError from the renderer (missing binary rides per-store isolation)', async () => {

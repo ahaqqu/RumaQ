@@ -178,7 +178,7 @@ function makeCtx(options: {
       return options.fetchRendered(url)
     },
   })
-  return { plugin, ctx, fetched }
+  return { plugin, ctx, fetched, warnings: ctx.warnings }
 }
 
 describe('alfamart plugin — real listing and campaign fixtures', () => {
@@ -238,7 +238,7 @@ describe('alfamart plugin — real listing and campaign fixtures', () => {
     expect(error.message).toContain('0 promo campaigns')
   })
 
-  it('sentinels a campaign page with zero product cards (the gateway-401 alarm)', async () => {
+  it('sentinels when every visited campaign rendered zero cards (the gateway-401 churn signature)', async () => {
     const { plugin, ctx } = makeCtx({
       fetchRendered: (url) =>
         Effect.succeed(url === PROMO_LISTING_URL ? listing : '<html><body>empty</body></html>'),
@@ -247,7 +247,80 @@ describe('alfamart plugin — real listing and campaign fixtures', () => {
     expect(exit._tag).toBe('Failure')
     const error = exitError(exit) as ScrapeStructureError
     expect(error._tag).toBe('ScrapeStructureError')
-    expect(error.message).toContain('0 product cards')
+    expect(error.message).toContain('40/40 visited campaign pages rendered 0 product cards')
+    expect(error.message).toContain('discarding the cycle')
+  })
+
+  it('keeps a single zero-card teaser campaign as a warning — the healthy items still publish', async () => {
+    // A scheduled/future-dated teaser campaign legitimately renders zero
+    // cards today (issue #322, A4): one odd page must not discard the cycle.
+    const teaser = parsePromoCampaigns(listing)[0]!
+    const { plugin, ctx, warnings, fetched } = makeCtx({
+      fetchRendered: (url) =>
+        Effect.succeed(
+          url === PROMO_LISTING_URL
+            ? listing
+            : url === teaser
+              ? '<html><body>teaser</body></html>'
+              : detail
+        ),
+    })
+    const items = await Effect.runPromise(plugin.listItems(ctx))
+    // The 39 healthy campaigns still yielded the deduped 3 cards.
+    expect(items).toHaveLength(3)
+    expect(items.every((item) => item.pageUrl !== teaser)).toBe(true)
+    expect(warnings).toEqual([
+      expect.stringContaining(
+        `Alfamart campaign page rendered 0 product cards — skipped as a possible teaser: ${teaser}`
+      ),
+    ])
+    // The whole budget was walked — no early abort on the teaser.
+    expect(fetched).toHaveLength(41)
+  })
+
+  it('sentinels at the churn threshold — at least half the visited campaigns empty', async () => {
+    // maxPages 4, 2 of the 4 visited campaigns empty: 2 × 2 >= 4 — churn.
+    const campaigns = parsePromoCampaigns(listing)
+    const empty = new Set(campaigns.slice(1, 3))
+    const { plugin, ctx, warnings } = makeCtx({
+      fetchRendered: (url) =>
+        Effect.succeed(
+          url === PROMO_LISTING_URL
+            ? listing
+            : empty.has(url)
+              ? '<html><body>empty</body></html>'
+              : detail
+        ),
+      maxPages: 4,
+    })
+    const exit = await Effect.runPromiseExit(plugin.listItems(ctx))
+    expect(exit._tag).toBe('Failure')
+    const error = exitError(exit) as ScrapeStructureError
+    expect(error._tag).toBe('ScrapeStructureError')
+    expect(error.message).toContain('2/4 visited campaign pages rendered 0 product cards')
+    expect(warnings).toHaveLength(2)
+  })
+
+  it('publishes below the churn threshold — warnings surface, no sentinel', async () => {
+    // maxPages 4, 1 of the 4 visited campaigns empty: 1 × 2 < 4 — below the
+    // signature, so the healthy campaigns ride through with one warning.
+    const campaigns = parsePromoCampaigns(listing)
+    const empty = campaigns[2]!
+    const { plugin, ctx, warnings } = makeCtx({
+      fetchRendered: (url) =>
+        Effect.succeed(
+          url === PROMO_LISTING_URL
+            ? listing
+            : url === empty
+              ? '<html><body>empty</body></html>'
+              : detail
+        ),
+      maxPages: 4,
+    })
+    const items = await Effect.runPromise(plugin.listItems(ctx))
+    expect(items).toHaveLength(3) // deduped cards from the 3 healthy campaigns
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain(empty)
   })
 })
 

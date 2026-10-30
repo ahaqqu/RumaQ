@@ -56,6 +56,17 @@ export interface FetchContext {
     pdf: Uint8Array,
     opts?: { maxPages?: number }
   ): Effect.Effect<RenderedPage[], PdfRenderError>
+  /**
+   * Record a non-fatal anomaly for this store's run (issue #322, A4): an
+   * empty campaign/brochure page that the churn sentinel must NOT fire on
+   * by itself (a scheduled teaser page is a plausible non-churn state).
+   * The pipeline collects these into status.json and the run report with
+   * the offending URL, while the cycle continues. Structural churn is
+   * still the sentinel's job — the plugin fails ScrapeStructureError when
+   * the churn signature (≥ half the visited pages yielded nothing, or an
+   * empty listing) appears.
+   */
+  warn(message: string): void
   /** RFC-3331 timestamp of the current run (shared by all stages). */
   runStartedAt: string
 }

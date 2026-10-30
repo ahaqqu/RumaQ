@@ -1447,6 +1447,112 @@ it('runs the alfamart catalog store through the browser tier — launcher forwar
   )
 })
 
+it('publishes around a zero-card teaser campaign with its warning surfaced (issue #322 A4)', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+  const listingHtml = await readFile(path.join(__dirname, 'fixtures/alfamart/promo.html'), 'utf8')
+  const detailHtml = await readFile(
+    path.join(__dirname, 'fixtures/alfamart/promo-detail.html'),
+    'utf8'
+  )
+  // The first listed campaign (Nestle Super Brand Day) renders zero cards —
+  // the scheduled-teaser shape. Its fragment maps BEFORE '/promo/' so it
+  // wins the fake's per-URL serving.
+  const teaserBrowser = fakeBrowserLauncher({
+    'Nestle-Super-Brand-Day': '<html><body>teaser</body></html>',
+    '/promo/': detailHtml,
+    'alfagift.id/promo': listingHtml,
+  })
+  const { reported, posted, publishFetch } = makeReportCapture()
+
+  const status = await Effect.runPromise(
+    runPipeline({
+      launcher: teaserBrowser.launcher,
+      embedClient: stubEmbedClient,
+      verifyClient: stubVerifyClient,
+      stateDir,
+      stores: ['alfamart'],
+      dryRun: false,
+      fetch: async () => new Response('<html><body></body></html>', { status: 200 }),
+      renderPdf: silentIndomaretRender,
+      // The OCR client must never fire for a catalog-only run.
+      ocrClient: {
+        models: {
+          generateContent: async () => {
+            throw new Error('OCR must not run for catalog stores')
+          },
+        },
+      },
+      publishFetch,
+      ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+      ingestSecret: 's3cret',
+      sleep: noSleep,
+      now: () => new Date('2026-10-31T23:00:05Z'),
+      log: () => {},
+    })
+  )
+
+  // One teaser page did not red the cycle — the run is green.
+  expect(status.stage).toBe('done')
+  const alfamart = status.stores['alfamart']!
+  expect(alfamart.error).toBeUndefined()
+  expect(alfamart.itemsExtracted).toBe(3)
+  // The teaser is visible with its URL, never silently skipped.
+  expect(alfamart.warnings).toEqual([
+    expect.stringContaining('https://alfagift.id/promo/Nestle-Super-Brand-Day-29-31-Oktober-2026'),
+  ])
+  // The strict run-report schema carries the same warnings to the monitor.
+  expect(reported[0]!.status).toBe('success')
+  expect(reported[0]!.perStore['alfamart']!.warnings).toEqual(alfamart.warnings)
+  // The 3 healthy items published despite the teaser.
+  expect(posted[0]!.items.filter((item) => item.storeSlug === 'alfamart')).toHaveLength(3)
+})
+
+it('sentinels alfamart when the whole cycle renders zero cards — nothing published (issue #322 A4)', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+  const listingHtml = await readFile(path.join(__dirname, 'fixtures/alfamart/promo.html'), 'utf8')
+  // Only the listing serves content — every campaign page falls through to
+  // the fake's empty default (the gateway-401 shape, 40/40 empty).
+  const gatedBrowser = fakeBrowserLauncher({ 'alfagift.id/promo': listingHtml })
+  const { reported, posted, publishFetch } = makeReportCapture()
+
+  const failure = await Effect.runPromiseExit(
+    runPipeline({
+      launcher: gatedBrowser.launcher,
+      embedClient: stubEmbedClient,
+      verifyClient: stubVerifyClient,
+      stateDir,
+      stores: ['alfamart'],
+      dryRun: false,
+      fetch: async () => new Response('<html><body></body></html>', { status: 200 }),
+      renderPdf: silentIndomaretRender,
+      ocrClient: {
+        models: {
+          generateContent: async () => {
+            throw new Error('OCR must not run for catalog stores')
+          },
+        },
+      },
+      publishFetch,
+      ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+      ingestSecret: 's3cret',
+      sleep: noSleep,
+      now: () => new Date('2026-10-31T23:00:05Z'),
+      log: () => {},
+    })
+  )
+
+  // The churn signature (every visited campaign empty) still reds the store
+  // — partial data is untrustworthy, so the cycle discards.
+  expect(failure._tag).toBe('Failure')
+  const error = exitError(failure) as Error
+  expect(error.message).toContain('alfamart')
+  expect(error.message).toContain('40/40 visited campaign pages rendered 0 product cards')
+  // The publish went out (per-store isolation) with no alfamart items at all.
+  expect(posted[0]!.items).toHaveLength(0)
+  expect(reported[0]!.status).toBe('failed')
+  expect(reported[0]!.perStore['alfamart']!.error).toContain('ScrapeStructureError')
+})
+
 it('runs the astro catalog store end to end — no OCR, outbox like the brochure stores', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
   const astroHtml = await readFile(path.join(__dirname, 'fixtures/astro/category.html'), 'utf8')

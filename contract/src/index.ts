@@ -90,6 +90,12 @@ export const runReportStoreSchema = strictObject({
   // By-design skip (§2): a Tier-2 store the browser tier cannot reach while
   // its per-store proxy env var is unset — expected, not a nightly failure.
   needsProxy: nullish(boolean()),
+  // Issue #322 (A4): non-fatal anomalies a store ride through a cycle —
+  // e.g. a zero-card campaign (a scheduled/teaser page) or a brochure page
+  // without a usable pdfUrl — recorded with their URL so the anomaly is
+  // visible on the monitor without discarding the healthy items. Additive:
+  // old scrapers' reports (no field) still validate.
+  warnings: nullish(array(pipe(string(), maxLength(500)))),
 })
 
 // One flagged candidate pair the matcher reports for the admin review queue

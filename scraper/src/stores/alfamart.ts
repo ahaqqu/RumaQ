@@ -13,10 +13,15 @@
 //   - product links: anchors whose href matches /p/{slug}-{id}; each
 //     product anchor's card is found by a bounded ancestor climb (≤ 5
 //     levels) to the nearest container that also carries an Rp price.
-// Sentinels: zero campaign links on the listing and zero product anchors on
-// a campaign page fail with ScrapeStructureError — structural churn goes
-// red, never silently zero (a gateway 401 leaves no cards; the red store is
-// the ops signal, ALFAMART_PROXY_URL the day-one fix).
+// Sentinels (issue #322, A4): structural churn goes red, never silently
+// zero — the listing showing zero campaigns fails immediately, and so does
+// the cycle-wide churn signature (≥ half of the visited campaigns rendered
+// zero product cards, e.g. a gateway 401 leaving no cards anywhere; the red
+// store is the ops signal, ALFAMART_PROXY_URL the day-one fix). A single
+// zero-card campaign is NOT churn on its own — a scheduled/future-dated
+// teaser page legitimately renders zero cards today — so it is recorded as
+// a warning (URL in status.json + the run report) and the loop continues,
+// keeping the already-scraped items publishable.
 //
 // Probed 2026-10-30/31 (322-research §1): the shell and static assets serve
 // to plain curl, but promo content exists only post-hydration — browser
@@ -241,19 +246,23 @@ export function createAlfamartPlugin(config: StoreConfig): CatalogStorePlugin {
         // campaigns are live.
         const items: CatalogItem[] = []
         const seenHrefs = new Set<string>()
-        for (const campaignUrl of campaigns.slice(0, config.maxPages)) {
+        const visited = campaigns.slice(0, config.maxPages)
+        const emptyCampaignUrls: string[] = []
+        for (const campaignUrl of visited) {
           const detail = yield* ctx.fetchRendered(campaignUrl, {
             waitForSelector: PRODUCT_ANCHOR_SELECTOR,
           })
           const cards = parseProductCards(detail)
           if (cards.length === 0) {
-            return yield* new ScrapeStructureError({
-              url: campaignUrl,
-              message:
-                'Alfamart campaign page rendered 0 product cards — the site structure ' +
-                'changed or the gateway gated the browser ' +
-                '(issue #322 sentinel: never a silent zero)',
-            })
+            // Not a churn verdict on its own: a scheduled teaser campaign
+            // legitimately renders zero cards today. Record it, keep going —
+            // the churn signature below decides the cycle's fate (A4).
+            emptyCampaignUrls.push(campaignUrl)
+            ctx.warn(
+              `Alfamart campaign page rendered 0 product cards — skipped as a possible ` +
+                `teaser: ${campaignUrl}`
+            )
+            continue
           }
           for (const card of cards) {
             // Within-run dedupe key: the product href (astro's product_id
@@ -262,6 +271,22 @@ export function createAlfamartPlugin(config: StoreConfig): CatalogStorePlugin {
             seenHrefs.add(card.productHref)
             items.push(toCatalogItem(card, campaignUrl))
           }
+        }
+        // The churn signature: at least half of the visited campaigns in the
+        // cycle yielded nothing (e.g. a gateway 401 leaves no cards on any
+        // page). That is structural churn — partial data is untrustworthy —
+        // so the whole cycle discards and the store reddens (issue #322
+        // sentinel: never a silent zero). Below the threshold the healthy
+        // items publish with the empty campaigns surfaced as warnings.
+        if (visited.length > 0 && emptyCampaignUrls.length * 2 >= visited.length) {
+          return yield* new ScrapeStructureError({
+            url: PROMO_LISTING_URL,
+            message:
+              `Alfamart ${emptyCampaignUrls.length}/${visited.length} visited campaign pages ` +
+              'rendered 0 product cards — the site structure changed or the gateway gated ' +
+              `the browser; discarding the cycle (empty: ${emptyCampaignUrls.slice(0, 5).join(', ')}` +
+              `${emptyCampaignUrls.length > 5 ? ', …' : ''})`,
+          })
         }
         return items
       })

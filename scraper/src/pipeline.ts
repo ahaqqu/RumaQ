@@ -115,9 +115,16 @@ export interface PipelineStatus {
        */
       needsProxy?: boolean
       /**
+       * Non-fatal anomalies the store rode through (issue #322, A4): e.g. a
+       * zero-card teaser campaign, a brochure page without a usable pdfUrl.
+       * Each carries the offending URL; the healthy items still publish.
+       * Rides status.json AND the run report (the report schema carries it
+       * additively, unlike brochuresUploaded below).
+       */
+      warnings?: string[]
+      /**
        * Brochure images uploaded to R2 this run (issue #293). status.json
-       * only — the run-report store schema is strict and stays untouched
-       * (reportRun strips it before posting).
+       * only — reportRun strips it before posting.
        */
       brochuresUploaded?: number
     }
@@ -230,6 +237,7 @@ function processStore(
       fetchRendered: (url, opts) => fetcher.fetchRendered(url, opts),
       fetchDocument: (url) => fetcher.fetchDocument(url),
       renderPdf: options.renderPdf ?? renderPdfPages,
+      warn: warningChannel(store.slug, entry, log).warn,
       runStartedAt: scrapedAt,
     })
     entry.pagesFound = pages.length
@@ -403,6 +411,29 @@ function appendValidatedBatch(
 }
 
 /**
+ * The plugin warning channel (issue #322, A4): a zero-card teaser campaign
+ * (or a brochure page without a usable pdfUrl) is not structural churn on
+ * its own — the plugin records it via ctx.warn and keeps going, and the
+ * collected warnings attach to the store's status entry (push-time, so they
+ * survive a later failure) to ride status.json and the run report with the
+ * offending URL. Only the plugins' churn sentinels fail the store.
+ */
+function warningChannel(
+  slug: string,
+  entry: PipelineStatus['stores'][string],
+  log: LogFn
+): { warn: (message: string) => void } {
+  const collected: string[] = []
+  return {
+    warn: (message) => {
+      collected.push(message)
+      entry.warnings = collected
+      log(`[pipeline] ${slug}: ${message}`)
+    },
+  }
+}
+
+/**
  * Catalog stores (Astro): no images, no novelty state, no OCR — items go
  * straight to validation. Each source page becomes one outbox batch, the
  * same at-least-once file the brochure stores write, so a crash between
@@ -432,6 +463,7 @@ function processCatalogStore(
       fetchRendered: (url, opts) => fetcher.fetchRendered(url, opts),
       fetchDocument: (url) => fetcher.fetchDocument(url),
       renderPdf: options.renderPdf ?? renderPdfPages,
+      warn: warningChannel(store.slug, entry, log).warn,
       runStartedAt: scrapedAt,
     })
     // Pages that yielded at least one item; a page URL is optional on

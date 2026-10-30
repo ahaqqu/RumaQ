@@ -14,7 +14,13 @@
 //
 // Probed 2026-10-30 (322-research §2, D8): Cloudflare-fronted but
 // unchallenged; WP REST is locked — never relied on. Structural churn goes
-// red via ScrapeStructureError sentinels, never a silent zero.
+// red via ScrapeStructureError sentinels, never a silent zero: the hub
+// listing zero brochures fails immediately, and so does the cycle-wide churn
+// signature (≥ half of the visited brochure pages exposing no pdfUrl). One
+// page without a usable pdfUrl is NOT churn on its own — a scheduled teaser
+// brochure is a plausible non-churn state — so it is recorded as a warning
+// (URL in status.json + the run report) and the loop continues (issue #322,
+// A4).
 
 import * as cheerio from 'cheerio'
 import path from 'node:path'
@@ -177,17 +183,23 @@ export function createIndomaretPlugin(config: StoreConfig): BrochureStorePlugin 
         // pages would all be dropped is never downloaded or rasterized and
         // the last contributing brochure renders only the remaining pages.
         let budget = config.maxPages
+        const visited: string[] = []
+        const emptyPageUrls: string[] = []
         for (const detailUrl of detailUrls) {
           if (budget <= 0) break
           const detailHtml = yield* ctx.fetchHtml(detailUrl)
+          visited.push(detailUrl)
           const pdfUrl = extractPdfUrl(detailHtml)
           if (!pdfUrl) {
-            return yield* new ScrapeStructureError({
-              url: detailUrl,
-              message:
-                'Indomaret brochure page exposed no pdfUrl — the Real3D-Flipbook config ' +
-                'changed (issue #322 sentinel: structural churn goes red, never a silent zero)',
-            })
+            // Not a churn verdict on its own: a scheduled teaser brochure is
+            // a plausible non-churn state. Record it, keep going — the churn
+            // signature below decides the cycle's fate (issue #322, A4).
+            emptyPageUrls.push(detailUrl)
+            ctx.warn(
+              `Indomaret brochure page exposed no pdfUrl — skipped as a possible ` +
+                `teaser: ${detailUrl}`
+            )
+            continue
           }
           const pdf = yield* ctx.fetchDocument(pdfUrl)
           const renderedPages = yield* renderPdf(pdf.bytes, { maxPages: budget })
@@ -205,6 +217,22 @@ export function createIndomaretPlugin(config: StoreConfig): BrochureStorePlugin 
             })
           }
           budget -= rendered.length
+        }
+        // The churn signature: at least half of the visited brochure pages in
+        // the cycle exposed no pdfUrl (the Real3D-Flipbook config changed
+        // site-wide). That is structural churn — partial data is
+        // untrustworthy — so the whole cycle discards and the store reddens
+        // (issue #322 sentinel). Below the threshold the healthy pages
+        // publish with the empty ones surfaced as warnings.
+        if (visited.length > 0 && emptyPageUrls.length * 2 >= visited.length) {
+          return yield* new ScrapeStructureError({
+            url: PROMOSI_HUB_URL,
+            message:
+              `Indomaret ${emptyPageUrls.length}/${visited.length} visited brochure pages ` +
+              'exposed no pdfUrl — the Real3D-Flipbook config changed; discarding the cycle ' +
+              `(empty: ${emptyPageUrls.slice(0, 5).join(', ')}` +
+              `${emptyPageUrls.length > 5 ? ', …' : ''})`,
+          })
         }
         return pages
       })
