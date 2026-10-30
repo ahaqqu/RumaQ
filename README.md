@@ -141,7 +141,7 @@ no longer read.
 
 The root-only env (`/etc/rumaq/scraper.env`) is operator-owned; `scraper/env.example`
 documents the variables the app reads but is non-authoritative. The host
-templates live in `ahaqqu/vps` `rumaq/env/`.
+template is `ahaqqu/vps` `rumaq/env/scraper.env.example`.
 
 ### Pull request previews
 

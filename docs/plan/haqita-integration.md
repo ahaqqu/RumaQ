@@ -1,6 +1,6 @@
 # Haqita → RumaQ Integration — Architecture & Implementation Plan
 
-> Status: **PR1–PR4 merged; go-live (timer enable + first live ingest) pending.** Written 2026-10-24, updated 2026-10-26.
+> Status: **PR1–PR4 merged; go-live complete** — the nightly timer is enabled and active, the live env carries `RUMAQ_PUBLISH=true`, and production holds live price observations (the 6-hourly freshness check is armed and green). Written 2026-10-24, updated 2026-10-31.
 > PR1 (contract & backend) merged as #252, PR2 (scraper scaffold + Superindo + Gemini OCR +
 > dry-run publish) merged as #255, PR3 (Lotte Tier-2 + matcher + commit-based VPS deploy,
 > VPS scope folded from milestone 4) merged as #262, PR4 (go-live gate: freshness status
@@ -13,7 +13,7 @@
 > 2026-10-26 owner decision: **backfill dropped** — haqita never went live (prototype
 > data only), so no data migration: the canonical catalog self-seeds from the first
 > real runs and price history accrues from them. `haqita-database` can be archived
-> in PR6 once go-live is verified.
+> in PR6 now that go-live is verified.
 > This document is self-contained: a fresh session should be able to implement from it
 > without re-exploring the haqita repo. Source references to `/home/ahaqqu/Projects/haqita`
 > are included below; that repo still exists locally at time of writing.
