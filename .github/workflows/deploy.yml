@@ -8,9 +8,11 @@ name: Deploy production
 #
 # Two targets, each with its own path filter (needs-deploy.sh):
 #   deploy      — the Cloudflare Worker (everything except docs/workflows)
-#   deploy-vps  — the scraper box (scraper/, contract/, deploy plumbing);
-#                 opt-in via vars.VPS_HOST until the box is provisioned
-#                 (scraper/provision/vps/apply.sh)
+#   deploy-vps  — the scraper box through the shared vps-deploy contract in
+#                 ahaqqu/vps (rumaq/): build the artifact, upload it as
+#                 rumaq-deploy, run `vps-deploy rumaq`. Gated on vars.VPS_HOST;
+#                 until the owner appends this repo's key to the rumaq-deploy
+#                 identity the job fails closed at the helper, by design.
 on:
   push:
     branches: [main]
@@ -103,11 +105,11 @@ jobs:
     permissions:
       actions: read
       contents: read
-    # Opt-in until the box is provisioned: an unset VPS_HOST skips this job
-    # (visible as a skip on the commit) exactly like ci.sh skips Worker
-    # validation without CLOUDFLARE_API_TOKEN. A SET host with anything else
-    # missing fails by name in the Require step below — never a silent
-    # default destination.
+    # An unset VPS_HOST skips this job (visible as a skip on the commit),
+    # exactly like ci.sh skips Worker validation without CLOUDFLARE_API_TOKEN.
+    # A set host with anything else missing fails by name in the Require step
+    # below — never a silent default destination. VPS_USER defaults to
+    # rumaq-deploy, the only identity the contract grants `vps-deploy rumaq`.
     if: vars.VPS_HOST != ''
     steps:
       - uses: actions/checkout@v7
@@ -118,12 +120,10 @@ jobs:
         run: |
           test -n "$VPS_HOST" || { echo "::error::vars.VPS_HOST is unset"; exit 1; }
           test -n "$VPS_USER" || { echo "::error::vars.VPS_USER is unset"; exit 1; }
-          test -n "$VPS_ROOT" || { echo "::error::vars.VPS_ROOT is unset — the deploy has no tree to ship to"; exit 1; }
           test -n "$SSH_KEY" || { echo "::error::secrets.VPS_DEPLOY_SSH_KEY is unset — the runner has no key to reach the box"; exit 1; }
         env:
           VPS_HOST: ${{ vars.VPS_HOST }}
-          VPS_USER: ${{ vars.VPS_USER }}
-          VPS_ROOT: ${{ vars.VPS_ROOT }}
+          VPS_USER: ${{ vars.VPS_USER || 'rumaq-deploy' }}
           SSH_KEY: ${{ secrets.VPS_DEPLOY_SSH_KEY }}
 
       - name: Write the SSH key
@@ -171,5 +171,4 @@ jobs:
         run: bash ./scripts/deploy.sh vps
         env:
           RUMAQ_VPS_HOST: ${{ vars.VPS_HOST }}
-          RUMAQ_VPS_USER: ${{ vars.VPS_USER }}
-          RUMAQ_VPS_ROOT: ${{ vars.VPS_ROOT }}
+          RUMAQ_VPS_USER: ${{ vars.VPS_USER || 'rumaq-deploy' }}

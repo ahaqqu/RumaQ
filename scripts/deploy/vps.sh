@@ -2,170 +2,215 @@
 set -euo pipefail
 
 # ============================================================
-# scripts/deploy/vps.sh — ship the scraper to the VPS
+# scripts/deploy/vps.sh — ship the scraper through the box's shared
+# deploy contract
 # ============================================================
-# Invoked by scripts/deploy.sh (`./scripts/deploy.sh vps`) — the repo's
-# single deploy entrypoint — for commit-based deploys from CI and manual
-# operator runs. Five stages, first failure aborts:
+# Invoked by scripts/deploy.sh (`./scripts/deploy.sh vps`) for commit-based
+# deploys from CI and manual operator runs. Three stages, first failure aborts:
 #
-#   1. build   self-contained Bun bundles (playwright-core external —
-#              it spawns its driver from its own package dir, so it ships
-#              beside the bundles instead of inside them): dist/index.js
-#              (the scraper CLI) and dist/agent.js (the Scrape Now agent)
-#   2. ship    rsync --delete to /srv/rumaq-scraper (the deploy identity
-#              owns the tree; browsers/ is preserved — it is revision-
-#              locked to the shipped playwright-core, not to the code)
-#   3. browsers  install the chromium revision the shipped playwright-core
-#              wants into the deploy-owned PLAYWRIGHT_BROWSERS_PATH
-#              (idempotent — downloads only when the revision changed)
-#   4. selfcheck  sudo systemctl start rumaq-scraper-selfcheck.service
-#              (the deploy identity's ONLY root grant): runs the shipped
-#              CLI's --self-check as the service user with the real env —
-#              a deploy that cannot prove the nightly job runs has not
-#              deployed. Then restart the Scrape Now agent so it runs the
-#              code just shipped — non-fatal: the agent unit only exists
-#              after the root apply.sh run that installs it.
-#   5. doctor  the shared-box sweep from /srv/vps-ops (homepage-owned);
-#              unprivileged — without the nginx sudo diagnostics it warns
+#   1. build    self-contained Bun bundles with playwright-core external — it
+#               spawns its driver from its own package dir, so the real
+#               package ships beside the bundles instead of inside them:
+#               dist/index.js (the scraper CLI) and dist/agent.js (the
+#               Scrape Now agent), plus node_modules/playwright-core
+#   2. package  tar the stage's CONTENTS at the archive root and verify the
+#               archive locally: required entries, regular files/directories
+#               only, no browsers/, within the contract's size caps
+#   3. ship     upload to /srv/vps-incoming/rumaq.tar.gz as rumaq-deploy, then
+#               run `sudo -n /usr/local/sbin/vps-deploy rumaq`. The helper
+#               verifies the artifact, swaps the tree, carries browsers/
+#               (Chromium revision state) across the swap, restarts the Scrape
+#               Now agent and health-checks with rumaq-scraper-selfcheck.service
 #
-# Configuration (environment; .env is sourced by scripts/deploy.sh):
-#   RUMAQ_VPS_HOST   required — the box (or an ~/.ssh/config alias)
-#   RUMAQ_VPS_USER   default kajianq-deploy (the box-wide shared deploy
-#                    identity — homepage MACHINE.md)
-#   RUMAQ_VPS_ROOT   default /srv/rumaq-scraper — must match the units'
-#                    paths (provision/vps/apply.sh installs those)
+# The host side — units, timer, sudoers grant, deploy contract, root-only env
+# files — lives in ahaqqu/vps rumaq/ and is installed by that repo's root
+# applier. This script writes no unit, env, timer, nginx or sudoers file, and
+# never enables or disables the nightly timer (live production, managed there).
 #
-# No secrets flow through this script: the env file on the box is root-only
-# and is read by systemd, never by the deploy.
+# Configuration:
+#   RUMAQ_VPS_HOST  required to deploy — the box (or an ~/.ssh/config alias)
+#   RUMAQ_VPS_USER  default rumaq-deploy — the only identity granted
+#                   `vps-deploy rumaq`
+#
+# No secret flows through this script: the box's env file is root-only and read
+# by systemd, never by the deploy.
 # ============================================================
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRAPER_DIR="$ROOT_DIR/scraper"
 
+APP="rumaq"
+ARTIFACT="rumaq.tar.gz"
+REMOTE_ARTIFACT="/srv/vps-incoming/${ARTIFACT}"
+RUMAQ_VPS_USER="${RUMAQ_VPS_USER:-rumaq-deploy}"
+SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
+
+# Caps mirror rumaq/deploy.conf in ahaqqu/vps. vps-deploy re-checks both as
+# root before it extracts a byte; proving them here keeps an oversized build
+# from being uploaded first.
+MAX_COMPRESSED_BYTES=536870912
+MAX_UNPACKED_BYTES=1073741824
+
 DRY_RUN=0
-for arg in "$@"; do
-  case "$arg" in
-    --dry-run) DRY_RUN=1 ;;
-    *)
-      echo "deploy/vps.sh: unknown argument: $arg" >&2
-      exit 1
-      ;;
-  esac
-done
+# Global so the EXIT trap still sees it after main() returns (a function-local
+# would be unbound when the trap fires).
+WORKDIR=""
 
 log() { printf 'deploy/vps: %s\n' "$*"; }
+die() { printf 'deploy/vps: %s\n' "$*" >&2; exit 1; }
 
-run() {
-  if [ "$DRY_RUN" -eq 1 ]; then
-    log "would: $*"
-  else
-    "$@"
-  fi
+cleanup() {
+  [ -z "$WORKDIR" ] || rm -rf "$WORKDIR"
 }
 
-: "${RUMAQ_VPS_HOST:?RUMAQ_VPS_HOST is required — the box (or an ssh alias) to deploy to}"
-RUMAQ_VPS_USER="${RUMAQ_VPS_USER:-kajianq-deploy}"
-RUMAQ_VPS_ROOT="${RUMAQ_VPS_ROOT:-/srv/rumaq-scraper}"
-# RUMAQ_VPS_ROOT is interpolated inside single-quoted remote command strings
-# below — reject any value outside a conservative charset (no quotes,
-# spaces, or expansions) so the interpolation can never become injection as
-# the deploy identity. Fail fast with a clear message instead of a
-# confusing remote error.
-if [[ ! $RUMAQ_VPS_ROOT =~ ^/[A-Za-z0-9/._-]+$ ]]; then
-  echo "deploy/vps.sh: RUMAQ_VPS_ROOT must be an absolute path matching [A-Za-z0-9/._-] only (got: '${RUMAQ_VPS_ROOT}')" >&2
-  exit 1
-fi
-SSH_TARGET="${RUMAQ_VPS_USER}@${RUMAQ_VPS_HOST}"
-SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
-BROWSERS_PATH="${RUMAQ_VPS_ROOT}/browsers"
+usage() {
+  sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+}
 
-STAGE="$(mktemp -d "${TMPDIR:-/tmp}/rumaq-vps-deploy-XXXXXX")"
-trap 'rm -rf "${STAGE}"' EXIT
+# verify_artifact — the same shape vps-deploy insists on, checked locally so a
+# bad build fails before the upload instead of on the box. The failure modes it
+# makes visible:
+#   - a symlink in the node_modules tree (Bun's .bin links are symlinks) would
+#     be refused by the helper's tar table, after the artifact is uploaded;
+#   - browsers/ in the artifact would collide with the preserved Chromium cache
+#     (the helper's preserve preflight refuses it), and shipping a laptop's
+#     revision over the box's cache is never what a code deploy means;
+#   - a missing bundle or playwright-core package passes the upload and fails
+#     the self-check at 06:00 WIB (or leaves the agent idling on old code);
+#   - an oversized archive or entry is refused only after the upload.
+verify_artifact() {
+  local artifact="$1" listing line name rel size total=0
+  [ -s "$artifact" ] || die "artifact $artifact is empty"
 
-# --- 1. build ---------------------------------------------------------------
-# The build runs UNGATED (also in --dry-run): it is local and
-# side-effect-free, so `vps --dry-run` is the locally runnable smoke test
-# for the ship path — the one part (bundle + playwright-core copy) that can
-# fail locally must fail here, not on the box.
-log "building the scraper bundle (playwright-core external)"
-bun --version >/dev/null
-bun install --frozen-lockfile --cwd "$ROOT_DIR"
-bun build "$SCRAPER_DIR/src/main.ts" \
-  --target=bun \
-  --external playwright-core \
-  --outfile "$STAGE/dist/index.js"
-# The Scrape Now agent (docs/plan/scrape-now.md §2) ships beside the CLI —
-# same tree, same node_modules; it imports no playwright, nothing to mark
-# external.
-bun build "$SCRAPER_DIR/src/agent.ts" \
-  --target=bun \
-  --outfile "$STAGE/dist/agent.js"
-# The bundles must actually be bundles: a deploy that ships an empty stage
-# would pass rsync and fail at 06:00 WIB (or leave the agent idling on an
-# old bundle).
-if [[ ! -s $STAGE/dist/index.js || ! -s $STAGE/dist/agent.js ]]; then
-  echo "deploy/vps.sh: bundle is empty — the build produced nothing" >&2
-  exit 1
-fi
-# playwright-core resolves through the workspace to the .bun store (often
-# a symlink) — copy the real directory, not the link.
-mkdir -p "$STAGE/node_modules"
-cp -L -r "$SCRAPER_DIR/node_modules/playwright-core" "$STAGE/node_modules/playwright-core"
+  size="$(stat -c '%s' "$artifact")"
+  [ "$size" -le "$MAX_COMPRESSED_BYTES" ] ||
+    die "artifact is $size bytes, over the ${MAX_COMPRESSED_BYTES}-byte contract cap"
 
-# --- 2. ship -----------------------------------------------------------------
-log "shipping to ${SSH_TARGET}:${RUMAQ_VPS_ROOT}"
-run ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" "mkdir -p '${RUMAQ_VPS_ROOT}/dist' '${RUMAQ_VPS_ROOT}/node_modules'"
-# --delete with a filter that keeps browsers/ (revision-managed in stage 3,
-# not part of the code tree) and the state dir never lives here.
-# --chmod=go+rX: the stage is a mktemp dir (0700) and rsync -a would copy
-# that onto the tree root — after which the service user (rumaq-scraper)
-# can no longer traverse its own code and the self-check dies with
-# "Module not found". The service user only ever needs read/traverse.
-run rsync -az --delete \
-  --chmod=go+rX \
-  --filter='protect /browsers/' \
-  -e "ssh ${SSH_OPTS[*]}" \
-  "$STAGE/" "${SSH_TARGET}:${RUMAQ_VPS_ROOT}/"
+  listing="$(tar -tzf "$artifact")" || die "artifact $artifact is not a readable tar.gz"
+  [ -n "$listing" ] || die "artifact $artifact has no entries"
 
-# --- 3. browsers ---------------------------------------------------------------
-log "ensuring the chromium revision for the shipped playwright-core"
-run ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
-  "PLAYWRIGHT_BROWSERS_PATH='${BROWSERS_PATH}' /usr/bin/bun '${RUMAQ_VPS_ROOT}/node_modules/playwright-core/cli.js' install chromium"
-# The browser install manages its own directories and may tighten them
-# (0700), which locks the service user out of its chromium. Heal the
-# modes explicitly — cheap, idempotent, and the nightly job depends on it.
-run ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
-  "chmod 755 '${RUMAQ_VPS_ROOT}' '${BROWSERS_PATH}' && chmod -R go+rX '${BROWSERS_PATH}'"
+  for name in ./dist/index.js ./dist/agent.js ./node_modules/playwright-core/package.json; do
+    grep -qxF "$name" <<<"$listing" || die "artifact is missing $name"
+  done
 
-# --- 4. self-check ---------------------------------------------------------------
-# The one privileged call in the whole deploy (scoped sudoers grant). For a
-# oneshot unit, systemctl start blocks until ExecStart finishes and fails
-# with the unit — a red here means the tree on the box cannot run the job.
-log "running the post-deploy self-check as the service user"
-run ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
-  "sudo /usr/bin/systemctl start rumaq-scraper-selfcheck.service"
-if [ "$DRY_RUN" -eq 0 ]; then
-  if ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" "systemctl is-failed --quiet rumaq-scraper-selfcheck.service"; then
-    echo "deploy/vps.sh: self-check FAILED — read: journalctl -u rumaq-scraper-selfcheck.service" >&2
-    exit 1
+  if grep -qE '^\./browsers(/|$)' <<<"$listing"; then
+    die "artifact contains browsers/ — the Chromium cache is preserved state, not code"
   fi
-  log "self-check passed"
+
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    case "$name" in
+      /*) die "artifact entry is absolute: $name" ;;
+    esac
+    rel="${name#./}"
+    case "/${rel}/" in
+      *"/../"*) die "artifact entry traverses upward: $name" ;;
+    esac
+  done <<<"$listing"
+
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      [-d]*) ;;
+      *) die "artifact contains a non-regular entry (only files and directories are allowed): $line" ;;
+    esac
+    # GNU tar -tv: <type+mode> <owner>/<group> <size> <date> <time> <name>.
+    size="$(printf '%s\n' "$line" | awk '{print $3}')"
+    case "$size" in
+      '' | *[!0-9]*) die "artifact listing has no readable size: $line" ;;
+    esac
+    total=$((total + size))
+    [ "$total" -le "$MAX_UNPACKED_BYTES" ] ||
+      die "artifact unpacks to more than ${MAX_UNPACKED_BYTES} bytes; refusing to ship it"
+  done <<<"$(tar -tvzf "$artifact")"
+}
+
+build_artifact() {
+  local stage="$1" artifact="$2"
+  command -v bun >/dev/null 2>&1 || die "bun is required to build the scraper"
+  log "building the scraper bundle (playwright-core external)"
+  bun install --frozen-lockfile --cwd "$ROOT_DIR"
+  mkdir -p "$stage/dist" "$stage/node_modules"
+  bun build "$SCRAPER_DIR/src/main.ts" \
+    --target=bun \
+    --external playwright-core \
+    --outfile "$stage/dist/index.js"
+  # The Scrape Now agent ships beside the CLI — same tree, same node_modules;
+  # it imports no playwright, nothing to mark external.
+  bun build "$SCRAPER_DIR/src/agent.ts" \
+    --target=bun \
+    --outfile "$stage/dist/agent.js"
+  # A deploy that ships an empty stage would pass the upload and fail at 06:00
+  # WIB (or leave the agent idling on an old bundle).
+  if [ ! -s "$stage/dist/index.js" ] || [ ! -s "$stage/dist/agent.js" ]; then
+    die "bundle is empty — the build produced nothing"
+  fi
+  # playwright-core resolves through the workspace to the .bun store (a
+  # symlink) — copy the real directory, not the link. The helper refuses any
+  # symlink member, so this dereference is load-bearing, not cosmetic.
+  [ -d "$SCRAPER_DIR/node_modules/playwright-core" ] ||
+    die "scraper/node_modules/playwright-core is missing — run bun install"
+  cp -L -r "$SCRAPER_DIR/node_modules/playwright-core" "$stage/node_modules/playwright-core"
+  if [ -n "$(find "$stage" -type l -print -quit)" ]; then
+    die "the build produced a symlink; vps-deploy accepts only regular files and directories"
+  fi
+  tar -czf "$artifact" -C "$stage" .
+  # The helper refuses a group/other-writable upload; a developer umask of 002
+  # would otherwise turn the artifact into 0664 and fail after the upload.
+  chmod 0644 "$artifact"
+  verify_artifact "$artifact"
+}
+
+ship() {
+  local artifact="$1" target
+  [ -n "${RUMAQ_VPS_HOST:-}" ] ||
+    die "RUMAQ_VPS_HOST is required — the box (or an ssh alias) to deploy to"
+  target="${RUMAQ_VPS_USER}@${RUMAQ_VPS_HOST}"
+  command -v rsync >/dev/null 2>&1 || die "rsync is required to upload the artifact"
+  log "uploading $ARTIFACT to ${target}:${REMOTE_ARTIFACT}"
+  rsync -a --partial -e "ssh ${SSH_OPTS[*]}" "$artifact" "${target}:${REMOTE_ARTIFACT}"
+  log "deploying $APP through vps-deploy (swap, agent restart, self-check health)"
+  ssh "${SSH_OPTS[@]}" "$target" "sudo -n /usr/local/sbin/vps-deploy $APP"
+  log "done. deployed and self-check-verified."
+}
+
+main() {
+  local arg stage artifact
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run) DRY_RUN=1 ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "unknown argument: $arg (usage: $0 [--dry-run])"
+        ;;
+    esac
+  done
+
+  WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/rumaq-vps-deploy-XXXXXX")"
+  trap cleanup EXIT
+  stage="$WORKDIR/stage"
+  artifact="$WORKDIR/$ARTIFACT"
+  mkdir -p "$stage"
+
+  build_artifact "$stage" "$artifact"
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "dry run: built $artifact ($(stat -c '%s' "$artifact") bytes, $(tar -tzf "$artifact" | wc -l) entries)"
+    log "dry run: would upload to ${RUMAQ_VPS_USER}@<host>:${REMOTE_ARTIFACT} (RUMAQ_VPS_HOST)"
+    log "dry run: would run: ssh <host> 'sudo -n /usr/local/sbin/vps-deploy $APP'"
+    tar -tzf "$artifact" |
+      grep -E '^\./(dist/index\.js|dist/agent\.js|node_modules/playwright-core/package\.json)$'
+    exit 0
+  fi
+
+  ship "$artifact"
+}
+
+# Sourced by scripts/test/vps-deploy.sh so the verifier can be driven with
+# handcrafted archives; executed normally otherwise.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
 fi
-
-# The agent runs the tree the deploy just shipped — restart it so the new
-# bundle loads immediately. Non-fatal by design: the unit only exists after
-# the root apply.sh run installs it (a warning here is expected exactly once,
-# until the operator re-runs apply.sh).
-log "restarting the scrape agent (non-fatal until apply.sh installs the unit)"
-run ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
-  "sudo -n /usr/bin/systemctl restart rumaq-scraper-agent.service 2>/dev/null || echo 'deploy/vps: warning: rumaq-scraper-agent.service not installed yet — run provision/vps/apply.sh as root to enable Scrape Now' "
-
-# --- 5. doctor (shared-box gate) --------------------------------------------------
-# One copy on the box, owned by homepage; every app's deploy runs it so a
-# change that starves a neighbour turns THIS deploy red (KajianQ §5). Absent
-# file is a warning — it appears once homepage has deployed since bootstrap.
-log "running the shared-box doctor"
-run ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
-  'if [ -x /srv/vps-ops/doctor.sh ]; then bash /srv/vps-ops/doctor.sh; else echo "deploy/vps: warning: /srv/vps-ops/doctor.sh not present yet — has homepage deployed since the ops-dir bootstrap?" >&2; fi'
-
-log "done. deployed and self-check-verified."

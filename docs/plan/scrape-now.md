@@ -2,7 +2,9 @@
 
 Status: APPROVED by owner (2026-10-28). Decisions: manual runs always **publish live**; live output = **raw log stream**; button on a **new `/admin/scrape` page**. Manager handles merge; implementation agents must NOT merge.
 
-Status: APPROVED by owner (2026-10-28). Decisions: manual runs always **publish live**; live output = **raw log stream**; button on a **new `/admin/scrape` page**. Manager handles merge; implementation agents must NOT merge.
+> Host configuration for the units below now lives in `ahaqqu/vps` `rumaq/`. The
+> `scraper/provision/vps/` and `apply.sh` references below describe the retired
+> in-repo setup and are kept as history.
 
 ## Architecture (locked — do not revisit)
 

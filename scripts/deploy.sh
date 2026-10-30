@@ -487,14 +487,19 @@ case "$MODE" in
     fi
     ;;
   vps)
-    # Ship the scraper bundle to the box (build -> rsync -> browsers ->
-    # self-check -> shared-box doctor). Configuration via RUMAQ_VPS_*
-    # environment variables; see scripts/deploy/vps.sh.
-    bash "$ROOT_DIR/scripts/deploy/vps.sh" $(if $DRY_RUN; then echo --dry-run; fi)
+    # Ship the scraper artifact to the box (build -> verify -> upload ->
+    # vps-deploy rumaq). Host configuration lives in ahaqqu/vps rumaq/.
+    # Configuration via RUMAQ_VPS_* environment variables; see
+    # scripts/deploy/vps.sh.
+    if $DRY_RUN; then
+      bash "$ROOT_DIR/scripts/deploy/vps.sh" --dry-run
+    else
+      bash "$ROOT_DIR/scripts/deploy/vps.sh"
+    fi
     ;;
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: $0 [local|cloudflare|dry-run|frontend] [--dry-run]"
+    echo "Usage: $0 [local|cloudflare|dry-run|frontend|vps] [--dry-run]"
     exit 1
     ;;
 esac

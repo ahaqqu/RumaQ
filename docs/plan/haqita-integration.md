@@ -5,8 +5,9 @@
 > dry-run publish) merged as #255, PR3 (Lotte Tier-2 + matcher + commit-based VPS deploy,
 > VPS scope folded from milestone 4) merged as #262, PR4 (go-live gate: freshness status
 > endpoint + smoke staleness alert + `provision-vps.sh --enable-timer`) merged as #275; its
-> homepage manifest/doctor change merged as ahaqqu/homepage#13. Box bootstrap is
-> `scripts/provision-vps.sh` (§7). 2026-10-26 owner decision: a scraping **monitoring
+> homepage manifest/doctor change merged as ahaqqu/homepage#13. The box
+> bootstrap and host configuration have since moved to `ahaqqu/vps` (`rumaq/`);
+> §7 records the retired in-repo bootstrap. 2026-10-26 owner decision: a scraping **monitoring
 > admin screen** is wanted — folded into milestones 4 (staleness alert) and 5
 > (`price_runs` + admin screen, §7.1). PR6 (haqita cleanup) remains after that.
 > 2026-10-26 owner decision: **backfill dropped** — haqita never went live (prototype
@@ -348,7 +349,13 @@ probed live on 2026-10-28:
   - `product_grammation_label` ("5kg", "450-550gram") becomes `unit`; the
     listing carries only a numeric `brandId`, so `brand` is null.
 
-## 7. VPS operations (follow homepage MACHINE.md runbook)
+## 7. VPS operations (host config now lives in `ahaqqu/vps`)
+
+> The authoritative units, timer, deploy contract, deploy identity's grant and
+> env templates live in `ahaqqu/vps` `rumaq/` (`docs/DEPLOY.md`,
+> `docs/ACCESS.md`). The bullets below record the original in-repo bootstrap;
+> its scripts (`scraper/provision/vps/`, `scripts/provision-vps.sh`) were
+> retired when the scraper deploy switched to `vps-deploy rumaq`.
 
 - System user `rumaq-scraper`; code rsynced to `/srv/rumaq-scraper`;
   state in `/var/lib/rumaq-scraper`; secrets root-only in `/etc/rumaq-scraper/env`
@@ -357,19 +364,18 @@ probed live on 2026-10-28:
 - `rumaq-scraper.timer` at 23:00 UTC (= 06:00 WIB). No nginx, no cert, no listener.
   The unit pins the zone in `OnCalendar=*-*-* 23:00:00 UTC` — without the suffix
   systemd reads the time in the box's local zone (Europe/Berlin).
-- CI deploys as `kajianq-deploy` via new scoped sudoers rule for
-  `systemctl restart rumaq-scraper` (mirror `/etc/sudoers.d/gunbatte-deploy`).
-- RumaQ `scripts/deploy.sh` gains a `vps` mode (rsync + restart). **Add every new
+- CI deployed as the shared `kajianq-deploy` with a scoped sudoers rule for
+  `systemctl restart rumaq-scraper`; it now deploys as `rumaq-deploy` through
+  `sudo -n /usr/local/sbin/vps-deploy rumaq`.
+- RumaQ `scripts/deploy.sh` gains a `vps` mode (build + upload + `vps-deploy`). **Add every new
   shell script to `.gitattributes` with `mode=755`** (CI requirement).
 - `scripts/test.sh unit scraper` → new vitest project in root `vite.config.ts`.
 - homepage repo PR: MACHINE.md app-table row + card; doctor.sh awareness (timer unit).
-- **Operator bootstrap**: `scripts/provision-vps.sh` — one local run does the whole
-  box setup through a single `ssh -t` sudo (root SSH is disabled on the box): apply.sh,
-  env fill, pre-built tree ship, `--install-deps`, chromium, self-check. Idempotent.
-  Go-live is `--go-live`: it reuses the box's existing root-only env (no Gemini-key
-  prompt, no re-provision), reconciles units, gates on the self-check, then enables
-  the nightly timer and sets `RUMAQ_PUBLISH=true`. `--enable-timer` remains the
-  full re-provision-plus-go-live variant.
+- **Operator bootstrap**: retired — `scraper/provision/vps/` and
+  `scripts/provision-vps.sh` are gone. Install the host configuration with the
+  `ahaqqu/vps` applier, then append this repository's key to the `rumaq-deploy`
+  identity (`ahaqqu/vps` `docs/DEPLOY.md` § Bootstrap order). The nightly timer
+  and `RUMAQ_PUBLISH=true` are already live and are never reset by a deploy.
 
 ### 7.1 Monitoring (owner decision 2026-10-26: admin screen wanted)
 
