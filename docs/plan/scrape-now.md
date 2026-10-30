@@ -2,9 +2,13 @@
 
 Status: APPROVED by owner (2026-10-28). Decisions: manual runs always **publish live**; live output = **raw log stream**; button on a **new `/admin/scrape` page**. Manager handles merge; implementation agents must NOT merge.
 
-> Host configuration for the units below now lives in `ahaqqu/vps` `rumaq/`. The
-> `scraper/provision/vps/` and `apply.sh` references below describe the retired
-> in-repo setup and are kept as history.
+> Host configuration for the units and timer below now lives in `ahaqqu/vps`
+> `rumaq/`, installed by that repo's root applier. References below to
+> `scraper/provision/vps/`, `apply.sh`, rsync, the old non-fatal agent-unit
+> warning and an in-tree Chromium install describe the retired in-repo setup and
+> are kept as history. The live deploy is
+> `./scripts/deploy.sh vps`: build → verify → upload → `vps-deploy rumaq` (swap,
+> preserved `browsers/`, agent restart, self-check, shared doctor gate).
 
 ## Architecture (locked — do not revisit)
 
@@ -28,7 +32,7 @@ Nightly path untouched; a manual run lands in `price_runs` automatically via the
 - Backend: Hono app `backend/src/apps/api.ts`. Bearer middleware `requireIngestSecret` (lines 142–154, timing-safe, 503 when unset, 401 on mismatch; internal routes exempt from rate limiter, excluded from OpenAPI). Admin pattern: `apiApp.use('/api/admin/price-runs', propsAuthMiddleware)` (line 255) + `requireAdmin` from `backend/src/lib/admin.ts` on the route (lines 2087–2105). Run-record lib: `backend/src/lib/price-runs.ts` (`recordRunReport`, `listPriceRuns`). Migrations: `backend/migrations/` (latest 0010_price_runs.sql). Types: `backend/src/types.ts` (`HAQITA_INGEST_SECRET`).
 - Tests: backend `backend/src/__tests__/ingest.test.ts` (fake D1 `createFakeDb`, `apiApp.request(path, init, env)`), `price-runs.test.ts`, `admin.test.ts`; automation `automation/tests/local/api/features/prices.feature` + `steps/prices.steps.js` (admin auth via `signTestCookie`; since #315 the harness seeds the admin user's `users.is_admin` flag instead of an env allowlist). Frontend example: `frontend/src/pages/AdminPrices.test.jsx`. E2E: `automation/tests/local/e2e/AdminPrices.test.jsx`.
 - Frontend: TanStack Query v5; polling example `frontend/src/lib/queries/prices.js` `usePriceRuns` (refetchInterval 60s); api client `frontend/src/lib/api.ts` (`unwrap()`/`ApiError`); nav `frontend/src/components/AppShell.jsx` NAV + admin injection (lines 52–56); page pattern `frontend/src/pages/AdminPrices.jsx` (Panel/EmptyState/SkeletonRows, status dots, expandable rows); i18n `frontend/src/i18n/locales/en.json` + `id.json` (`nav.monitor`, `monitor.*`).
-- Provisioning: units in `scraper/provision/vps/systemd/` (`rumaq-scraper.service` oneshot with hardening, `EnvironmentFile=/etc/rumaq-scraper/env`, `PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers`); `apply.sh` installs units (root, idempotent, currently installs 3 units); deploy `scripts/deploy/vps.sh` — stage 1 builds `bun build scraper/src/main.ts → dist/index.js` (playwright-core external), rsync to /srv/rumaq-scraper, browsers, selfcheck gate.
+- Provisioning: host units, the live timer, the deploy contract and env templates live in `ahaqqu/vps` `rumaq/`; deploy `scripts/deploy/vps.sh` builds `dist/index.js` and `dist/agent.js` (playwright-core external), verifies the archive, uploads it, and runs `vps-deploy rumaq` — the helper preserves `browsers/`, restarts the agent, health-checks with `rumaq-scraper-selfcheck.service`, then the deploy runs the shared doctor gate. The retired in-repo `scraper/provision/vps/` and `apply.sh` setup is history below.
 
 ## 1. Contract — `contract/src/index.ts` (additive)
 
@@ -97,5 +101,5 @@ Nightly path untouched; a manual run lands in `price_runs` automatically via the
 ## 7. Verification (manager runs after merge; implementation agents skip)
 
 - Preview: PR branches get branch Workers (`rumaq-api-{branch}`) via the on-demand "Preview deployment" workflow.
-- Production: `./scripts/deploy.sh cloudflare` then `./scripts/deploy.sh vps` (non-fatal agent-unit warning expected until root apply.sh re-run). Root `scraper/provision/vps/apply.sh` + go-live timer enable = operator steps → surfaced to user, not blockers for code work.
+- Production: `./scripts/deploy.sh cloudflare` then `./scripts/deploy.sh vps` (the helper restarts the agent and runs the self-check, then the shared doctor gate). Host configuration and the live timer are managed by `ahaqqu/vps` `rumaq/`; no in-repo root step remains.
 - Verify: public SPA loads; admin page reachable; automation/e2e green; live scrape trigger (publishes real data — owner-sanctioned) once agent unit is installed.

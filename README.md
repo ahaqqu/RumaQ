@@ -85,6 +85,42 @@ nightly timer is live production and managed by `ahaqqu/vps` (`rumaq/`): this
 repo never enables, disables or rewrites it, and writes no unit, sudoers or env
 file.
 
+The deploy then runs the shared box sweep as `rumaq-deploy`:
+
+```sh
+ssh rumaq-deploy@<host> 'bash /srv/vps-ops/doctor.sh'
+```
+
+A non-zero sweep fails the deploy, and so does a box where the sweep is missing:
+a green deploy must not hide a broken nginx config, a failed unit or a filling
+disk. The sweep is read-only and needs no extra grant (the `rumaq-deploy`
+sudoers fragment carries `nginx -t` and `certbot certificates` for it).
+
+#### Chromium revision bumps
+
+`browsers/` is preserved across swaps and a deploy never installs a revision.
+A `playwright-core` bump changes the revision the self-check must launch, so the
+deploy fails and rolls back. Install the new revision from the uploaded
+artifact as `rumaq-deploy`, then re-deploy:
+
+```sh
+RUMAQ_VPS_HOST=<host> ./scripts/deploy/browser-revision.sh
+./scripts/deploy.sh vps
+```
+
+The helper runs the artifact's `node_modules/playwright-core/cli.js install
+chromium` with `PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers`, then
+heals the modes the installer can leave at 0700:
+
+```sh
+chmod 755 /srv/rumaq-scraper/browsers
+chmod -R go+rX /srv/rumaq-scraper/browsers
+```
+
+The service user (`rumaq-scraper`) is not the deploy identity (`rumaq-deploy`),
+so without the chmod the next self-check cannot read the revision and the
+deploy rolls back again.
+
 The same `deploy.yml` commit-based flow runs this when a main push touches the
 scraper's world (`scraper/`, `contract/`, deploy plumbing); it is skipped until
 `vars.VPS_HOST` is set. Configuration:

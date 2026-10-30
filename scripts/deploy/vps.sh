@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
 # ============================================================
 # scripts/deploy/vps.sh — ship the scraper through the box's shared
 # deploy contract
 # ============================================================
 # Invoked by scripts/deploy.sh (`./scripts/deploy.sh vps`) for commit-based
-# deploys from CI and manual operator runs. Three stages, first failure aborts:
+# deploys from CI and manual operator runs. Four stages, first failure aborts:
 #
 #   1. build    self-contained Bun bundles with playwright-core external — it
 #               spawns its driver from its own package dir, so the real
@@ -21,6 +19,10 @@ set -euo pipefail
 #               verifies the artifact, swaps the tree, carries browsers/
 #               (Chromium revision state) across the swap, restarts the Scrape
 #               Now agent and health-checks with rumaq-scraper-selfcheck.service
+#   4. doctor   run the shared box sweep (`bash /srv/vps-ops/doctor.sh`) as
+#               rumaq-deploy after the swap; a missing or failing sweep fails
+#               the deploy, so a green deploy cannot hide a broken nginx config,
+#               a failed unit or a filling disk
 #
 # The host side — units, timer, sudoers grant, deploy contract, root-only env
 # files — lives in ahaqqu/vps rumaq/ and is installed by that repo's root
@@ -36,108 +38,66 @@ set -euo pipefail
 # by systemd, never by the deploy.
 # ============================================================
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SCRAPER_DIR="$ROOT_DIR/scraper"
-
-APP="rumaq"
-ARTIFACT="rumaq.tar.gz"
-REMOTE_ARTIFACT="/srv/vps-incoming/${ARTIFACT}"
-RUMAQ_VPS_USER="${RUMAQ_VPS_USER:-rumaq-deploy}"
-SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
-
-# Caps mirror rumaq/deploy.conf in ahaqqu/vps. vps-deploy re-checks both as
-# root before it extracts a byte; proving them here keeps an oversized build
-# from being uploaded first.
-MAX_COMPRESSED_BYTES=536870912
-MAX_UNPACKED_BYTES=1073741824
-
-DRY_RUN=0
-# Global so the EXIT trap still sees it after main() returns (a function-local
-# would be unbound when the trap fires).
-WORKDIR=""
+# Sourced by scripts/test/vps-deploy.sh for run_doctor/ship. Sourcing must leave
+# the caller's shell options and variables alone: no top-level `set`, no
+# top-level assignments (the caps in artifact.sh are the only exception). The
+# direct-execution branch at the bottom starts the real run.
+usage() {
+  # The header is every leading comment line after the shebang; deriving it
+  # keeps --help from printing code or cutting the block when lines move.
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+}
 
 log() { printf 'deploy/vps: %s\n' "$*"; }
 die() { printf 'deploy/vps: %s\n' "$*" >&2; exit 1; }
 
 cleanup() {
-  [ -z "$WORKDIR" ] || rm -rf "$WORKDIR"
+  [ -z "${WORKDIR:-}" ] || rm -rf "$WORKDIR"
 }
 
-usage() {
-  sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+# shellcheck source=scripts/deploy/artifact.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/artifact.sh"
+
+# The deploy identity's only SSH options: never prompt, and accept a first-use
+# host key (CI has no known_hosts entry). Both stages use the same options.
+ssh_deploy() {
+  ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$@"
 }
 
-# verify_artifact — the same shape vps-deploy insists on, checked locally so a
-# bad build fails before the upload instead of on the box. The failure modes it
-# makes visible:
-#   - a symlink in the node_modules tree (Bun's .bin links are symlinks) would
-#     be refused by the helper's tar table, after the artifact is uploaded;
-#   - browsers/ in the artifact would collide with the preserved Chromium cache
-#     (the helper's preserve preflight refuses it), and shipping a laptop's
-#     revision over the box's cache is never what a code deploy means;
-#   - a missing bundle or playwright-core package passes the upload and fails
-#     the self-check at 06:00 WIB (or leaves the agent idling on old code);
-#   - an oversized archive or entry is refused only after the upload.
-verify_artifact() {
-  local artifact="$1" listing line name rel size total=0
-  [ -s "$artifact" ] || die "artifact $artifact is empty"
-
-  size="$(stat -c '%s' "$artifact")"
-  [ "$size" -le "$MAX_COMPRESSED_BYTES" ] ||
-    die "artifact is $size bytes, over the ${MAX_COMPRESSED_BYTES}-byte contract cap"
-
-  listing="$(tar -tzf "$artifact")" || die "artifact $artifact is not a readable tar.gz"
-  [ -n "$listing" ] || die "artifact $artifact has no entries"
-
-  for name in ./dist/index.js ./dist/agent.js ./node_modules/playwright-core/package.json; do
-    grep -qxF "$name" <<<"$listing" || die "artifact is missing $name"
-  done
-
-  if grep -qE '^\./browsers(/|$)' <<<"$listing"; then
-    die "artifact contains browsers/ — the Chromium cache is preserved state, not code"
-  fi
-
-  while IFS= read -r name; do
-    [ -n "$name" ] || continue
-    case "$name" in
-      /*) die "artifact entry is absolute: $name" ;;
-    esac
-    rel="${name#./}"
-    case "/${rel}/" in
-      *"/../"*) die "artifact entry traverses upward: $name" ;;
-    esac
-  done <<<"$listing"
-
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    case "$line" in
-      [-d]*) ;;
-      *) die "artifact contains a non-regular entry (only files and directories are allowed): $line" ;;
-    esac
-    # GNU tar -tv: <type+mode> <owner>/<group> <size> <date> <time> <name>.
-    size="$(printf '%s\n' "$line" | awk '{print $3}')"
-    case "$size" in
-      '' | *[!0-9]*) die "artifact listing has no readable size: $line" ;;
-    esac
-    total=$((total + size))
-    [ "$total" -le "$MAX_UNPACKED_BYTES" ] ||
-      die "artifact unpacks to more than ${MAX_UNPACKED_BYTES} bytes; refusing to ship it"
-  done <<<"$(tar -tvzf "$artifact")"
+# run_doctor — the shared box sweep every deploy ends with (ahaqqu/vps
+# ops/doctor.sh). Read-only, unprivileged, and the reason the grant carries
+# `nginx -t` / `certbot certificates`. It runs after vps-deploy returns, so it
+# checks the post-swap box. A missing or failing sweep fails the deploy: a green
+# deploy on a broken box is not a deploy.
+run_doctor() {
+  local target="$1" status=0
+  log "running the shared box sweep: bash /srv/vps-ops/doctor.sh"
+  ssh_deploy "$target" 'bash /srv/vps-ops/doctor.sh' || status=$?
+  case "$status" in
+    0) return 0 ;;
+    127)
+      die "the shared doctor gate is missing on ${target} (/srv/vps-ops/doctor.sh) — install it with the ahaqqu/vps applier, then redeploy"
+      ;;
+    *)
+      die "the shared doctor gate failed on ${target} (exit ${status}) — fix the box before redeploying; this deploy is not done"
+      ;;
+  esac
 }
 
 build_artifact() {
-  local stage="$1" artifact="$2"
+  local root_dir="$1" stage="$2" artifact="$3"
+  local scraper_dir="$root_dir/scraper"
   command -v bun >/dev/null 2>&1 || die "bun is required to build the scraper"
   log "building the scraper bundle (playwright-core external)"
-  bun install --frozen-lockfile --cwd "$ROOT_DIR"
+  bun install --frozen-lockfile --cwd "$root_dir"
   mkdir -p "$stage/dist" "$stage/node_modules"
-  bun build "$SCRAPER_DIR/src/main.ts" \
+  bun build "$scraper_dir/src/main.ts" \
     --target=bun \
     --external playwright-core \
     --outfile "$stage/dist/index.js"
   # The Scrape Now agent ships beside the CLI — same tree, same node_modules;
   # it imports no playwright, nothing to mark external.
-  bun build "$SCRAPER_DIR/src/agent.ts" \
+  bun build "$scraper_dir/src/agent.ts" \
     --target=bun \
     --outfile "$stage/dist/agent.js"
   # A deploy that ships an empty stage would pass the upload and fail at 06:00
@@ -148,9 +108,9 @@ build_artifact() {
   # playwright-core resolves through the workspace to the .bun store (a
   # symlink) — copy the real directory, not the link. The helper refuses any
   # symlink member, so this dereference is load-bearing, not cosmetic.
-  [ -d "$SCRAPER_DIR/node_modules/playwright-core" ] ||
+  [ -d "$scraper_dir/node_modules/playwright-core" ] ||
     die "scraper/node_modules/playwright-core is missing — run bun install"
-  cp -L -r "$SCRAPER_DIR/node_modules/playwright-core" "$stage/node_modules/playwright-core"
+  cp -L -r "$scraper_dir/node_modules/playwright-core" "$stage/node_modules/playwright-core"
   if [ -n "$(find "$stage" -type l -print -quit)" ]; then
     die "the build produced a symlink; vps-deploy accepts only regular files and directories"
   fi
@@ -162,23 +122,32 @@ build_artifact() {
 }
 
 ship() {
-  local artifact="$1" target
+  local artifact="$1" app="${2:-rumaq}"
+  local user host target remote_artifact
   [ -n "${RUMAQ_VPS_HOST:-}" ] ||
     die "RUMAQ_VPS_HOST is required — the box (or an ssh alias) to deploy to"
-  target="${RUMAQ_VPS_USER}@${RUMAQ_VPS_HOST}"
   command -v rsync >/dev/null 2>&1 || die "rsync is required to upload the artifact"
-  log "uploading $ARTIFACT to ${target}:${REMOTE_ARTIFACT}"
-  rsync -a --partial -e "ssh ${SSH_OPTS[*]}" "$artifact" "${target}:${REMOTE_ARTIFACT}"
-  log "deploying $APP through vps-deploy (swap, agent restart, self-check health)"
-  ssh "${SSH_OPTS[@]}" "$target" "sudo -n /usr/local/sbin/vps-deploy $APP"
-  log "done. deployed and self-check-verified."
+  command -v ssh >/dev/null 2>&1 || die "ssh is required to reach the box"
+  user="${RUMAQ_VPS_USER:-rumaq-deploy}"
+  host="$RUMAQ_VPS_HOST"
+  target="${user}@${host}"
+  remote_artifact="/srv/vps-incoming/${app}.tar.gz"
+
+  log "uploading $(basename "$artifact") to ${target}:${remote_artifact}"
+  rsync -a --partial -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+    "$artifact" "${target}:${remote_artifact}"
+  log "deploying $app through vps-deploy (swap, agent restart, self-check health)"
+  ssh_deploy "$target" "sudo -n /usr/local/sbin/vps-deploy $app"
+  run_doctor "$target"
+  log "done. deployed, self-check-verified, doctor-clean."
 }
 
 main() {
-  local arg stage artifact
+  set -euo pipefail
+  local arg dry_run=0 root_dir stage artifact
   for arg in "$@"; do
     case "$arg" in
-      --dry-run) DRY_RUN=1 ;;
+      --dry-run) dry_run=1 ;;
       -h | --help)
         usage
         exit 0
@@ -189,18 +158,20 @@ main() {
     esac
   done
 
+  root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/rumaq-vps-deploy-XXXXXX")"
   trap cleanup EXIT
   stage="$WORKDIR/stage"
-  artifact="$WORKDIR/$ARTIFACT"
+  artifact="$WORKDIR/rumaq.tar.gz"
   mkdir -p "$stage"
 
-  build_artifact "$stage" "$artifact"
+  build_artifact "$root_dir" "$stage" "$artifact"
 
-  if [ "$DRY_RUN" -eq 1 ]; then
+  if [ "$dry_run" -eq 1 ]; then
     log "dry run: built $artifact ($(stat -c '%s' "$artifact") bytes, $(tar -tzf "$artifact" | wc -l) entries)"
-    log "dry run: would upload to ${RUMAQ_VPS_USER}@<host>:${REMOTE_ARTIFACT} (RUMAQ_VPS_HOST)"
-    log "dry run: would run: ssh <host> 'sudo -n /usr/local/sbin/vps-deploy $APP'"
+    log "dry run: would upload to ${RUMAQ_VPS_USER:-rumaq-deploy}@<host>:/srv/vps-incoming/rumaq.tar.gz (RUMAQ_VPS_HOST)"
+    log "dry run: would run: ssh <host> 'sudo -n /usr/local/sbin/vps-deploy rumaq'"
+    log "dry run: would then run: ssh <host> 'bash /srv/vps-ops/doctor.sh'"
     tar -tzf "$artifact" |
       grep -E '^\./(dist/index\.js|dist/agent\.js|node_modules/playwright-core/package\.json)$'
     exit 0
@@ -209,8 +180,8 @@ main() {
   ship "$artifact"
 }
 
-# Sourced by scripts/test/vps-deploy.sh so the verifier can be driven with
-# handcrafted archives; executed normally otherwise.
+# Sourced by scripts/test/vps-deploy.sh to drive ship/run_doctor with fake
+# ssh/rsync shims; executed normally otherwise.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   main "$@"
 fi

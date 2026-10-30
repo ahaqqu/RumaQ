@@ -80,7 +80,7 @@ describe('runSelfCheck', () => {
     }
   })
 
-  it('a missing chromium revision fails the browser check with the fix hint', async () => {
+  it('a missing chromium revision fails the browser check with the current recovery hint', async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-selfcheck-'))
     try {
       const results = await Effect.runPromise(
@@ -88,7 +88,12 @@ describe('runSelfCheck', () => {
       )
       const browser = results.find((result) => result.name === 'browser')!
       expect(browser.ok).toBe(false)
-      expect(browser.detail).toContain('apply.sh --install-deps')
+      expect(browser.detail).toContain('vps-deploy rumaq')
+      expect(browser.detail).toContain('browser-revision.sh')
+      expect(browser.detail).toContain('PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers')
+      expect(browser.detail).toContain('chmod -R go+rX')
+      expect(browser.detail).not.toContain('apply.sh')
+      expect(browser.detail).not.toContain('deploy installs')
     } finally {
       await rm(stateDir, { recursive: true, force: true })
     }

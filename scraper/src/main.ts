@@ -7,7 +7,7 @@
 //
 // --publish may also come from RUMAQ_PUBLISH=true in the environment (the
 // systemd unit's go-live switch: no unit edit, one env line as root).
-// --self-check is the post-deploy gate (provision/vps/deploy path).
+// --self-check is the post-deploy gate (vps-deploy rumaq's health_unit).
 // --stores scopes a run to the given slugs (docs/plan/scrape-now.md §2) —
 // that is the on-demand path the scrape agent drives.
 //

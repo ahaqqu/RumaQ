@@ -119,7 +119,8 @@ jobs:
       - name: Require the deploy access
         run: |
           test -n "$VPS_HOST" || { echo "::error::vars.VPS_HOST is unset"; exit 1; }
-          test -n "$VPS_USER" || { echo "::error::vars.VPS_USER is unset"; exit 1; }
+          [ "$VPS_USER" = rumaq-deploy ] ||
+            { echo "::error::vars.VPS_USER is '$VPS_USER' — the contract grants only rumaq-deploy"; exit 1; }
           test -n "$SSH_KEY" || { echo "::error::secrets.VPS_DEPLOY_SSH_KEY is unset — the runner has no key to reach the box"; exit 1; }
         env:
           VPS_HOST: ${{ vars.VPS_HOST }}

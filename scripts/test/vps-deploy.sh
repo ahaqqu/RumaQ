@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/test/vps-deploy.sh — invariant test for the scraper deploy artifact.
+# scripts/test/vps-deploy.sh — invariant test for the scraper deploy.
 #
 # The deploy succeeds only if the archive is exactly what vps-deploy accepts:
 # relative regular files and directories, with both bundles and the real
@@ -14,9 +14,12 @@
 #   - an absolute or ../ member                                  -> helper refuses
 #   - an oversized archive or entry                              -> refused after upload
 #
-# It drives verify_artifact() with handcrafted tars, then runs the real build
-# in --dry-run with failing ssh/rsync shims on PATH: the produced archive must
-# pass the verifier and the dry run must contact no host.
+# It drives verify_artifact() from scripts/deploy/artifact.sh with handcrafted
+# tars, then runs the real build in --dry-run with failing ssh/rsync shims on
+# PATH: the produced archive must pass the verifier and the dry run must contact
+# no host. Finally it drives ship() with fake ssh/rsync shims: the shared doctor
+# gate must run after `vps-deploy rumaq` and every non-zero result must fail the
+# deploy. Sourcing the libraries must not change this shell.
 #
 # Run: bash scripts/test/vps-deploy.sh  (CI runs it from scripts/github/ci.sh)
 set -euo pipefail
@@ -25,11 +28,46 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/rumaq-vps-deploy-test-XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
-# shellcheck source=../deploy/vps.sh
-. "$ROOT_DIR/scripts/deploy/vps.sh"
-
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'ok   %s\n' "$*"; }
+
+artifact_lib="$ROOT_DIR/scripts/deploy/artifact.sh"
+vps_lib="$ROOT_DIR/scripts/deploy/vps.sh"
+
+# --- 0. the libraries are source-only and the caps are the contract's --------
+# vps.sh is both the CLI and the library this test sources for ship()/
+# run_doctor(); sourcing either file must leave this shell's options and
+# variables alone. The two caps are rumaq/deploy.conf's max_bytes /
+# max_unpacked_bytes in ahaqqu/vps.
+if (
+  set +e
+  set +u
+  set -o pipefail
+  unset ROOT_DIR APP ARTIFACT REMOTE_ARTIFACT RUMAQ_VPS_USER SSH_OPTS DRY_RUN WORKDIR
+  before="$(set +o)"
+  # shellcheck source=../deploy/artifact.sh
+  . "$artifact_lib"
+  # shellcheck source=../deploy/vps.sh
+  . "$vps_lib"
+  after="$(set +o)"
+  [ "$before" = "$after" ] || exit 1
+  for name in ROOT_DIR APP ARTIFACT REMOTE_ARTIFACT RUMAQ_VPS_USER SSH_OPTS DRY_RUN WORKDIR; do
+    [ -z "${!name:-}" ] || exit 1
+  done
+); then
+  pass "sourcing artifact.sh + vps.sh leaves the caller's shell alone"
+else
+  fail "sourcing a deploy library changed the caller's shell options or variables"
+fi
+
+# shellcheck source=../deploy/artifact.sh
+. "$artifact_lib"
+
+[ "$MAX_COMPRESSED_BYTES" -eq 536870912 ] ||
+  fail "MAX_COMPRESSED_BYTES is $MAX_COMPRESSED_BYTES, not the contract's 536870912"
+[ "$MAX_UNPACKED_BYTES" -eq 1073741824 ] ||
+  fail "MAX_UNPACKED_BYTES is $MAX_UNPACKED_BYTES, not the contract's 1073741824"
+pass "the caps match rumaq/deploy.conf"
 
 # make_stage <dir> — the minimum a deployable artifact carries.
 make_stage() {
@@ -131,6 +169,107 @@ done
 grep -q 'vps-deploy rumaq' <<<"$out" || fail "dry run did not report the deploy command"
 grep -q 'would upload to .*:/srv/vps-incoming/rumaq\.tar\.gz' <<<"$out" ||
   fail "dry run did not report the upload path"
+grep -q 'bash /srv/vps-ops/doctor\.sh' <<<"$out" ||
+  fail "dry run did not report the doctor gate"
 pass "real build passes the verifier; dry run contacts no host"
 
-printf '\n✓ vps deploy artifact invariants hold\n'
+# --- 7. --help prints the whole header, never code ---------------------------
+if ! help="$(bash "$ROOT_DIR/scripts/deploy/vps.sh" --help)"; then
+  fail "vps.sh --help exited non-zero"
+fi
+rule="$(sed -n '2s/^# //p' "$ROOT_DIR/scripts/deploy/vps.sh")"
+[ "$(printf '%s\n' "$help" | sed -n '1p')" = "$rule" ] ||
+  fail "--help does not start at the header rule"
+[ "$(printf '%s\n' "$help" | sed -n '$p')" = "$rule" ] ||
+  fail "--help stops before the end of the header"
+grep -q 'No secret flows through this script' <<<"$help" ||
+  fail "--help cuts off the header's last paragraph"
+if grep -q 'set -euo pipefail' <<<"$help"; then
+  fail "--help prints a code line"
+fi
+pass "--help prints the whole header, no code"
+
+# --- 8. the shared doctor gate runs after vps-deploy and fails closed --------
+# shellcheck source=../deploy/vps.sh
+. "$vps_lib"
+
+mkdir -p "$WORK/doctor-bin"
+cat >"$WORK/doctor-bin/ssh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_SSH_LOG"
+case " $* " in
+  *" bash /srv/vps-ops/doctor.sh "*) exit "${FAKE_DOCTOR_EXIT:-0}" ;;
+  *) exit "${FAKE_SSH_EXIT:-0}" ;;
+esac
+SH
+printf '#!/bin/sh\nexit 0\n' >"$WORK/doctor-bin/rsync"
+chmod +x "$WORK/doctor-bin/ssh" "$WORK/doctor-bin/rsync"
+
+export FAKE_SSH_LOG="$WORK/ssh.log"
+export FAKE_SSH_EXIT=0
+export FAKE_DOCTOR_EXIT=0
+export RUMAQ_VPS_HOST="box.example"
+export RUMAQ_VPS_USER="rumaq-deploy"
+: >"$FAKE_SSH_LOG"
+
+if ! PATH="$WORK/doctor-bin:$PATH" ship "$WORK/ok.tar.gz" >"$WORK/ship.out" 2>&1; then
+  cat "$WORK/ship.out" >&2
+  fail "ship failed against a fake healthy host"
+fi
+
+expected_doctor="-o BatchMode=yes -o StrictHostKeyChecking=accept-new rumaq-deploy@box.example bash /srv/vps-ops/doctor.sh"
+grep -qxF -- "$expected_doctor" "$FAKE_SSH_LOG" ||
+  fail "ship did not run the literal remote command: $expected_doctor"
+deploy_line="$(grep -nF 'sudo -n /usr/local/sbin/vps-deploy rumaq' "$FAKE_SSH_LOG" | head -n1 | cut -d: -f1)"
+doctor_line="$(grep -nF 'bash /srv/vps-ops/doctor.sh' "$FAKE_SSH_LOG" | head -n1 | cut -d: -f1)"
+[ -n "$deploy_line" ] || fail "ship did not run vps-deploy rumaq"
+[ "$doctor_line" -gt "$deploy_line" ] || fail "the doctor gate ran before vps-deploy"
+pass "ship runs the shared doctor gate after vps-deploy"
+
+: >"$FAKE_SSH_LOG"
+export FAKE_DOCTOR_EXIT=1
+if out="$(PATH="$WORK/doctor-bin:$PATH" ship "$WORK/ok.tar.gz" 2>&1)"; then
+  fail "ship accepted a non-zero doctor result"
+fi
+grep -q 'shared doctor gate failed' <<<"$out" ||
+  fail "a failing doctor did not explain the failure: $out"
+pass "a failing doctor fails the deploy"
+
+: >"$FAKE_SSH_LOG"
+export FAKE_DOCTOR_EXIT=127
+if out="$(PATH="$WORK/doctor-bin:$PATH" ship "$WORK/ok.tar.gz" 2>&1)"; then
+  fail "ship accepted a missing doctor gate"
+fi
+grep -q 'shared doctor gate is missing' <<<"$out" ||
+  fail "a missing doctor did not explain the failure: $out"
+pass "a missing doctor fails closed with a clear message"
+export FAKE_DOCTOR_EXIT=0
+
+# --- 9. the Chromium revision recovery installs and heals the modes ---------
+# A playwright-core bump installs a new revision into the preserved browsers/
+# cache; Chromium's installer can leave 0700 directories, and the service user
+# is not the deploy identity. The recovery must install the revision and chmod
+# the cache so the next self-check can read it.
+mkdir -p "$WORK/recover-bin"
+cat >"$WORK/recover-bin/ssh" <<'SH'
+#!/usr/bin/env bash
+cat >"${FAKE_SSH_STDIN:?}"
+exit 0
+SH
+chmod +x "$WORK/recover-bin/ssh"
+
+if ! PATH="$WORK/recover-bin:$PATH" FAKE_SSH_STDIN="$WORK/recover.stdin" \
+  RUMAQ_VPS_HOST="box.example" bash "$ROOT_DIR/scripts/deploy/browser-revision.sh" \
+  >"$WORK/recover.out" 2>&1; then
+  cat "$WORK/recover.out" >&2
+  fail "browser revision recovery failed against a fake host"
+fi
+grep -qF 'install chromium' "$WORK/recover.stdin" ||
+  fail "browser revision recovery does not install chromium"
+grep -qF 'chmod 755' "$WORK/recover.stdin" ||
+  fail "browser revision recovery does not widen the browsers/ directory"
+grep -qF 'chmod -R go+rX' "$WORK/recover.stdin" ||
+  fail "browser revision recovery does not heal the installer's modes"
+pass "browser revision recovery installs the revision and heals modes"
+
+printf '\n✓ vps deploy invariants hold\n'

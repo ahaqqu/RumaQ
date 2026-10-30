@@ -33,10 +33,12 @@
   No scheduler — manual runs. Big deletable surface (web UI, own REST API, 917-line
   deploy.py, 787-line sync_cloudflare.py, git-as-database repo, 651-line haqita.sh,
   agentic harness).
-- **VPS** (`/home/ahaqqu/Projects/homepage/provision/vps/MACHINE.md`): 2 vCPU / 4 GB
-  Debian, nginx + systemd per-app pattern, **no Docker**, disk is the scarce resource,
-  "no app trusts another app" (no shared DBs). New services follow the per-repo
-  `provision/vps/` runbook. CI deploys as `kajianq-deploy` with scoped sudoers.
+- **VPS** (`ahaqqu/vps` `docs/DEPLOY.md`): 2 vCPU / 4 GB Debian, nginx + systemd
+  per-app pattern, **no Docker**, disk is the scarce resource, "no app trusts
+  another app" (no shared DBs). Host configuration lives in that repo (`rumaq/`
+  for this service), installed by its root applier. CI deploys as `rumaq-deploy`
+  through `sudo -n /usr/local/sbin/vps-deploy rumaq`; the only root grants are
+  that helper and the read-only doctor diagnostics.
   Bun already runs on the box (kajianq).
 
 ## 1. Locked decisions (user-approved 2026-10-24)
@@ -276,9 +278,8 @@ scraper/
                           retry/backoff; --dry-run mode (write payload to state dir)
   src/util/               log, retry, image helpers
   scripts/run.sh          single-shot pipeline (systemd timer + manual use)
-  provision/vps/          apply.sh (idempotent bootstrap), rumaq-scraper.service
-                          (Type=oneshot, MemoryMax=1G, CPUQuota=100%), rumaq-scraper.timer
-                          (OnCalendar 23:00 UTC), logrotate stanza
+  provision/vps/          retired; host units, timer and deploy contract now live
+                          in ahaqqu/vps rumaq/ (installed by its root applier)
   test/                   port relevant pytest suites (scrapers/matching/ocr/payload/publish);
                           copy HTML/image fixtures from haqita data/test/
 ```
@@ -370,7 +371,7 @@ probed live on 2026-10-28:
 - RumaQ `scripts/deploy.sh` gains a `vps` mode (build + upload + `vps-deploy`). **Add every new
   shell script to `.gitattributes` with `mode=755`** (CI requirement).
 - `scripts/test.sh unit scraper` → new vitest project in root `vite.config.ts`.
-- homepage repo PR: MACHINE.md app-table row + card; doctor.sh awareness (timer unit).
+- `ahaqqu/vps` PR: `docs/RESOURCES.md` app-table row + inventory card; doctor.sh awareness (timer unit).
 - **Operator bootstrap**: retired — `scraper/provision/vps/` and
   `scripts/provision-vps.sh` are gone. Install the host configuration with the
   `ahaqqu/vps` applier, then append this repository's key to the `rumaq-deploy`
@@ -422,7 +423,7 @@ green before merge. Suggested sequence:
    chromium → self-check → doctor), commit-based `deploy-vps` CI job gated on `vars.VPS_HOST`,
    `--self-check` CLI. Timer ships installed-but-disabled; enabling is go-live (milestone 4).
    Box bootstrap is `scripts/provision-vps.sh` (§7).
-4. **PR4 — Go-live**: homepage MACHINE.md/doctor PR, `apply.sh --enable-timer` +
+4. **PR4 — Go-live**: `ahaqqu/vps` host-config/applier PR, the timer-enable operator step +
    `RUMAQ_PUBLISH=true` (exposed as `scripts/provision-vps.sh --enable-timer`), first
    successful live ingest into prod D1 (manual run on the box), **smoke staleness check**
    (§7.1 — implemented as `GET /api/internal/prices/status` + a freshness step in the

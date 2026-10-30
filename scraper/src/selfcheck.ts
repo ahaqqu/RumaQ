@@ -33,6 +33,21 @@ interface CheckResult {
   detail: string
 }
 
+/**
+ * The browser check is the deploy's health check — vps-deploy starts
+ * rumaq-scraper-selfcheck.service after every swap — so this hint is the
+ * operator's only explanation on the rollback path. The deploy never installs a
+ * Chromium revision: browsers/ is preserved state. A revision bump installs it
+ * from the uploaded artifact as the deploy identity, heals the modes Chromium's
+ * installer leaves at 0700 for the service user, and re-runs the deploy.
+ */
+const BROWSER_REVISION_RECOVERY =
+  'the deploy (`sudo -n /usr/local/sbin/vps-deploy rumaq`) does not install Chromium; ' +
+  'install the revision the uploaded playwright-core expects as rumaq-deploy ' +
+  '(scripts/deploy/browser-revision.sh sets PLAYWRIGHT_BROWSERS_PATH=/srv/rumaq-scraper/browsers), ' +
+  'heal the installer modes with `chmod 755 /srv/rumaq-scraper/browsers && chmod -R go+rX /srv/rumaq-scraper/browsers`, ' +
+  'then redeploy. Host config and applier: ahaqqu/vps'
+
 function checkEnv(options: SelfCheckOptions): CheckResult {
   const env = options.env ?? process.env
   const missing: string[] = []
@@ -85,7 +100,7 @@ async function checkBrowser(options: SelfCheckOptions): Promise<CheckResult> {
     return {
       name,
       ok: false,
-      detail: `${String(cause)} — run provision/vps/apply.sh --install-deps and redeploy (the deploy installs the browser revision)`,
+      detail: `${String(cause)} — ${BROWSER_REVISION_RECOVERY}`,
     }
   }
 }
