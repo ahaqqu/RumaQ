@@ -137,6 +137,36 @@ fi
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+# Issue #318: the first unauthenticated request after the stack starts can hit
+# a transient dispatch error in the local worker harness (Miniflare/workerd
+# warm-up) and return 500 where the API answers 401. The worker-side 401 path
+# never touches D1, so /api/health alone does not exercise it. Probe the exact
+# signature and retry briefly; a persistent non-401 fails the run before the
+# suites start, dumping the response body for diagnosis.
+canary_first_request() {
+  local body i code
+  body="$(mktemp)"
+  for i in 1 2 3 4 5; do
+    code="$(curl -s -o "$body" -w '%{http_code}' -X POST http://localhost:3000/api/purchases || true)"
+    if [[ "$code" == "401" ]]; then
+      if [[ "$i" -gt 1 ]]; then
+        ok "Canary recovered after cold start (attempt $i): unauthenticated POST /api/purchases -> 401."
+      else
+        ok "Canary: unauthenticated POST /api/purchases -> 401."
+      fi
+      rm -f "$body"
+      return 0
+    fi
+    fail "Canary attempt $i: unauthenticated POST /api/purchases -> ${code:-no-response} (expected 401). Body: $(head -c 300 "$body")"
+    sleep 1
+  done
+  rm -f "$body"
+  fail "First unauthenticated request keeps failing; harness cold start did not settle."
+  docker compose -f "$COMPOSE_FILE" logs proxy api
+  docker compose -f "$COMPOSE_FILE" down --volumes
+  exit 1
+}
+
 ensure_stack() {
   local build_flag=""
   if [[ "$BUILD_MODE" == "force" ]]; then
@@ -163,6 +193,7 @@ ensure_stack() {
   for i in $(seq 1 30); do
     if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
       ok "API is ready."
+      canary_first_request
       return 0
     fi
     sleep 1

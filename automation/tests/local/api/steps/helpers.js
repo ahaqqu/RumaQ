@@ -84,7 +84,9 @@ export class ApiContext {
   }
 
   expectStatus(code) {
-    expect(this.response.status).toBe(code)
+    // Issue #318: a status-only assertion hides the error body ({error: ...})
+    // that explains an unexpected 500 from the harness cold start. Include it.
+    expect(this.response.status, `response body: ${JSON.stringify(this.responseBody)}`).toBe(code)
   }
 
   expectBodyToMatch(expected) {
