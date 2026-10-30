@@ -1,19 +1,30 @@
 // renderPdfPages tests (issue #322, design-arch §1.2) — the injectable seam
 // (injected render, page ordering, budget clamp, zero-page sentinel) plus
 // opt-in live tests of the real pdftoppm on the tiny fixture PDF, skipped
-// where the binary is absent (CI-safe).
+// where the binary is absent (CI installs poppler-utils, so the live block
+// runs there too). The subprocess budgets (A1: no hung daily job) are
+// tested through the spawn seam — a fake child process, never a real
+// long-running process.
 
-import { spawnSync } from 'node:child_process'
+import { spawnSync, type ChildProcess, type spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vite-plus/test'
+import { describe, expect, it, vi } from 'vite-plus/test'
+import { EventEmitter } from 'node:events'
 import { Effect } from 'effect'
 
 import { PdfRenderError } from '../../src/fetch/errors.js'
 import { md5Hash } from '../../src/fetch/state.js'
-import { PDF_DPI, renderPdfPages, renderWithPdftoppm } from '../../src/util/pdf.js'
+import {
+  PDF_DPI,
+  PDF_MAX_OUTPUT_BYTES,
+  PDF_RENDER_TIMEOUT_MS,
+  renderPdfPages,
+  renderWithPdftoppm,
+} from '../../src/util/pdf.js'
 import { exitError } from '../helpers.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -145,5 +156,102 @@ describe('renderWithPdftoppm — missing binary', () => {
     expect(error._tag).toBe('PdfRenderError')
     expect(error.message).toContain('/nonexistent/pdftoppm-for-tests')
     expect(error.message).toContain('not found')
+  })
+})
+
+// The subprocess budgets (A1: a stuck or pathological PDF must settle the
+// Effect typed, never hang the nightly past per-store isolation's reach).
+// Both run through the spawn seam — a fake ChildProcess, so no test ever
+// waits on a real long-running process.
+describe('renderWithPdftoppm — subprocess budgets', () => {
+  /** A fake pdftoppm child: stderr pipe + event surface, kill spied. */
+  function fakeChild() {
+    const child = new EventEmitter() as EventEmitter & {
+      stderr: EventEmitter | null
+      kill: (signal?: string) => boolean
+    }
+    child.stderr = new EventEmitter()
+    const kill = vi.fn(() => true)
+    child.kill = kill
+    return { child: child as unknown as ChildProcess, kill }
+  }
+
+  it('ships budgets sized for the workload: generous timeout, cap above a full legal render', () => {
+    // ~120 s covers a ≤40-page 150 DPI render many times over; the byte cap
+    // sits above the ~409 MiB worst case (40 incompressible RGBA legal
+    // pages) so it can only trip on a pathological document.
+    expect(PDF_RENDER_TIMEOUT_MS).toBe(120_000)
+    expect(PDF_MAX_OUTPUT_BYTES).toBe(512 * 1024 * 1024)
+  })
+
+  it('kills a stuck pdftoppm at the timeout and fails typed with the partial stderr', async () => {
+    const { child, kill } = fakeChild()
+    const spawnFn = vi.fn(() => {
+      // Deferred one tick: the implementation attaches its stderr handler
+      // right after spawnFn returns.
+      setTimeout(() => child.stderr!.emit('data', Buffer.from('Syntax Error: page loop')), 0)
+      return child // never emits close — the stuck-process case
+    }) as unknown as typeof spawn
+    const exit = await Effect.runPromiseExit(
+      Effect.tryPromise({
+        try: () => renderWithPdftoppm(loadFixturePdf(), { dpi: 72, timeoutMs: 25, spawnFn }),
+        catch: (cause) => cause as PdfRenderError,
+      })
+    )
+    expect(exit._tag).toBe('Failure')
+    const error = exitError(exit) as PdfRenderError
+    expect(error._tag).toBe('PdfRenderError')
+    expect(error.message).toContain('timed out after 25ms')
+    expect(error.message).toContain('SIGKILL')
+    expect(error.message).toContain('page loop')
+    expect(kill).toHaveBeenCalledWith('SIGKILL')
+  })
+
+  it('fails typed when the cumulative rendered bytes pass the output cap', async () => {
+    const { child } = fakeChild()
+    const spawnFn = vi.fn((_bin: string, args: string[]) => {
+      // The page prefix is the spawn's last argument — write two 700 KiB
+      // pages there, then exit 0. The reader must stop at the 1 MiB cap.
+      const prefix = args.at(-1)!
+      void Promise.all([
+        writeFile(`${prefix}-1.png`, Buffer.alloc(700 * 1024, 1)),
+        writeFile(`${prefix}-2.png`, Buffer.alloc(700 * 1024, 2)),
+      ]).then(() => child.emit('close', 0))
+      return child
+    }) as unknown as typeof spawn
+    const exit = await Effect.runPromiseExit(
+      Effect.tryPromise({
+        try: () =>
+          renderWithPdftoppm(loadFixturePdf(), { dpi: 72, maxOutputBytes: 1024 * 1024, spawnFn }),
+        catch: (cause) => cause as PdfRenderError,
+      })
+    )
+    expect(exit._tag).toBe('Failure')
+    const error = exitError(exit) as PdfRenderError
+    expect(error._tag).toBe('PdfRenderError')
+    expect(error.message).toContain('output cap')
+    expect(error.message).toContain('1433600') // 2 × 700 KiB actually rendered
+  })
+
+  it('renders pages under the cap in order — a full legitimate render never trips it', async () => {
+    const { child } = fakeChild()
+    const spawnFn = vi.fn((_bin: string, args: string[]) => {
+      const prefix = args.at(-1)!
+      void Promise.all([
+        writeFile(`${prefix}-1.png`, Buffer.alloc(100 * 1024, 1)),
+        writeFile(`${prefix}-2.png`, Buffer.alloc(100 * 1024, 2)),
+      ]).then(() => child.emit('close', 0))
+      return child
+    }) as unknown as typeof spawn
+    const pages = await Effect.runPromise(
+      Effect.tryPromise({
+        try: () =>
+          renderWithPdftoppm(loadFixturePdf(), { dpi: 72, maxOutputBytes: 1024 * 1024, spawnFn }),
+        catch: (cause) => cause as PdfRenderError,
+      })
+    )
+    expect(pages.map((page) => page.pageNo)).toEqual([1, 2])
+    expect(pages[0]!.bytes[0]).toBe(1)
+    expect(pages[1]!.bytes[0]).toBe(2)
   })
 })

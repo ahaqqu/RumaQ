@@ -11,7 +11,13 @@
 // A missing binary is a typed red error naming `pdftoppm`, never a silent
 // zero (the same philosophy as the zero-cards sentinel): a deploy that
 // cannot render must fail its Indomaret cycle loudly until poppler-utils
-// lands on the VPS (deferred to the VPS migration, issue #322).
+// lands on the VPS (deferred to the VPS migration, issue #322). The
+// subprocess is also budgeted on both axes (C5: no hung daily job — the
+// fetch ladder's AbortSignal.timeout doctrine, applied to the child
+// process): a pdftoppm that never exits is SIGKILLed at the render timeout,
+// and the page bytes read back from disk are capped, so a stuck or
+// pathological document settles as a typed error instead of hanging the
+// nightly mid-run (where per-store isolation could not even fire).
 
 import { spawn } from 'node:child_process'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -26,6 +32,26 @@ import { Effect } from 'effect'
 import { PdfRenderError } from '../fetch/errors.js'
 
 export { PdfRenderError }
+
+/**
+ * The render subprocess's wall-clock budget, SIGKILL included. ~120 s is
+ * generous for the shipped workload — a ≤40-page brochure at 150 DPI renders
+ * in seconds — so only a stuck or pathological process (poppler has a
+ * documented history of pathological loops on malformed documents) can hit
+ * it. A hang here must never outlive the budget: the Effect settles typed,
+ * and the store's per-store isolation takes over.
+ */
+export const PDF_RENDER_TIMEOUT_MS = 120_000
+
+/**
+ * Cumulative cap on the rendered page bytes read back from disk. Sized
+ * against the shipped ceiling so it cannot false-positive on a full legal
+ * render: maxPages 40 × a 150 DPI legal page (1275×2100 px) whose PNG
+ * inflates to at most ~409 MiB even as pure incompressible RGBA —
+ * comfortably under the cap — while a crafted huge-page document fails
+ * typed instead of exhausting the box's memory.
+ */
+export const PDF_MAX_OUTPUT_BYTES = 512 * 1024 * 1024
 
 /** One rasterized PDF page, in document order (1-based). */
 export interface RenderedPage {
@@ -97,13 +123,27 @@ const PAGE_FILE = /^page-(\d+)\.png$/
  * `pdftoppm -png -r {dpi} [-l maxPages]`, and reads the page files in page
  * order. The temp dir is removed whatever the outcome. Spawn ENOENT — the
  * binary is absent — is a typed error naming the missing binary; a non-zero
- * exit (corrupt PDF) carries poppler's stderr.
+ * exit (corrupt PDF) carries poppler's stderr; a subprocess that outlives
+ * `timeoutMs` is SIGKILLed and fails typed; page bytes past
+ * `maxOutputBytes` cumulative fail typed. Both budgets default to the
+ * shipped constants above and are overridable at the seam for tests.
  */
 export async function renderWithPdftoppm(
   pdf: Uint8Array,
-  opts: { dpi: number; maxPages?: number; bin?: string }
+  opts: {
+    dpi: number
+    maxPages?: number
+    bin?: string
+    timeoutMs?: number
+    maxOutputBytes?: number
+    /** Test seam: the spawn call itself, so the budgets run without a real child. */
+    spawnFn?: typeof spawn
+  }
 ): Promise<RenderedPage[]> {
   const bin = opts.bin ?? 'pdftoppm'
+  const spawnFn = opts.spawnFn ?? spawn
+  const timeoutMs = opts.timeoutMs ?? PDF_RENDER_TIMEOUT_MS
+  const maxOutputBytes = opts.maxOutputBytes ?? PDF_MAX_OUTPUT_BYTES
   const dir = await mkdtemp(path.join(tmpdir(), 'rumaq-pdf-'))
   try {
     const input = path.join(dir, 'brochure.pdf')
@@ -112,12 +152,32 @@ export async function renderWithPdftoppm(
     if (opts.maxPages !== undefined) args.push('-l', String(opts.maxPages))
     args.push(input, path.join(dir, 'page'))
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+      const child = spawnFn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] })
       let stderr = ''
+      let timedOut = false
+      // C5: no hung daily job — nothing else in this module can hang the
+      // nightly, so the child must not either. The timer is cleared on
+      // every settling path; after the SIGKILL the later `close` event
+      // must not overwrite the timeout rejection (the flag guards it).
+      const timer = setTimeout(() => {
+        timedOut = true
+        child.kill('SIGKILL')
+        reject(
+          new PdfRenderError({
+            message:
+              `${bin} timed out after ${timeoutMs}ms and was killed (SIGKILL) — the document ` +
+              `is likely pathological (partial stderr: ${stderr.trim().slice(0, 500)})`,
+            cause: stderr,
+          })
+        )
+      }, timeoutMs)
       child.stderr?.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString()
+        // Bounded accumulation: a pathological document can spew stderr for
+        // the whole timeout window — only what a diagnostic message needs.
+        if (stderr.length < 8192) stderr += chunk.toString()
       })
       child.on('error', (cause) => {
+        clearTimeout(timer)
         const missing = (cause as NodeJS.ErrnoException)?.code === 'ENOENT'
         reject(
           new PdfRenderError({
@@ -129,6 +189,8 @@ export async function renderWithPdftoppm(
         )
       })
       child.on('close', (code) => {
+        clearTimeout(timer)
+        if (timedOut) return // the timeout rejection already settled the promise
         if (code === 0) {
           resolve()
         } else {
@@ -148,12 +210,24 @@ export async function renderWithPdftoppm(
       return match ? [{ name, pageNo: Number(match[1]) }] : []
     })
     entries.sort((a, b) => a.pageNo - b.pageNo)
-    return await Promise.all(
-      entries.map(async (entry) => ({
-        pageNo: entry.pageNo,
-        bytes: new Uint8Array(await readFile(path.join(dir, entry.name))),
-      }))
-    )
+    // Read back sequentially (not Promise.all) so the output cap bounds
+    // peak memory: the loop stops at the first page that crosses it, and
+    // the failure is typed — never a silent truncation.
+    const pages: RenderedPage[] = []
+    let totalBytes = 0
+    for (const entry of entries) {
+      const bytes = new Uint8Array(await readFile(path.join(dir, entry.name)))
+      totalBytes += bytes.byteLength
+      if (totalBytes > maxOutputBytes) {
+        throw new PdfRenderError({
+          message:
+            `${bin} rendered ${totalBytes} bytes of page images — past the ` +
+            `${maxOutputBytes}-byte output cap; the document is likely pathological`,
+        })
+      }
+      pages.push({ pageNo: entry.pageNo, bytes })
+    }
+    return pages
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined)
   }
