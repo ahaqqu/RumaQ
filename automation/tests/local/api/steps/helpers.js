@@ -85,8 +85,11 @@ export class ApiContext {
 
   expectStatus(code) {
     // Issue #318: a status-only assertion hides the error body ({error: ...})
-    // that explains an unexpected 500 from the harness cold start. Include it.
-    expect(this.response.status, `response body: ${JSON.stringify(this.responseBody)}`).toBe(code)
+    // that explains an unexpected 500 from the harness cold start. Include a
+    // bounded snippet; full bodies can be large list payloads.
+    const body = JSON.stringify(this.responseBody) ?? 'null'
+    const snippet = body.length > 300 ? `${body.slice(0, 300)}...(truncated)` : body
+    expect(this.response.status, `response body: ${snippet}`).toBe(code)
   }
 
   expectBodyToMatch(expected) {

@@ -137,12 +137,26 @@ fi
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+# Shared failure epilogue for stack start-up problems: dump logs, tear the
+# stack down, and fail the run loudly before any suite executes.
+stack_failure() {
+  fail "$1"
+  docker compose -f "$COMPOSE_FILE" logs proxy api
+  docker compose -f "$COMPOSE_FILE" down --volumes
+  exit 1
+}
+
 # Issue #318: the first unauthenticated request after the stack starts can hit
 # a transient dispatch error in the local worker harness (Miniflare/workerd
 # warm-up) and return 500 where the API answers 401. The worker-side 401 path
 # never touches D1, so /api/health alone does not exercise it. Probe the exact
 # signature and retry briefly; a persistent non-401 fails the run before the
 # suites start, dumping the response body for diagnosis.
+# This gate bounds only the stack-start window: both #318 occurrences struck at
+# a later test file's first request, after earlier files had already passed, so
+# a mid-suite one-off dispatch error is out of this canary's reach. On such a
+# recurrence the suite still fails, but expectStatus() now surfaces the 500's
+# body (automation/tests/local/api/steps/helpers.js).
 canary_first_request() {
   local body i code
   body="$(mktemp)"
@@ -157,14 +171,20 @@ canary_first_request() {
       rm -f "$body"
       return 0
     fi
+    # A 404 right after /api/health served 200 cannot be transient: routes
+    # register at bundle load, so the canary route must have been renamed or
+    # removed. Retry cannot help; point at the canary instead of cold start.
+    if [[ "$code" == "404" ]]; then
+      local snippet
+      snippet="$(head -c 300 "$body")"
+      rm -f "$body"
+      stack_failure "Canary route /api/purchases returned 404 - the route was renamed or removed; update canary_first_request() in $0. Body: $snippet"
+    fi
     fail "Canary attempt $i: unauthenticated POST /api/purchases -> ${code:-no-response} (expected 401). Body: $(head -c 300 "$body")"
     sleep 1
   done
   rm -f "$body"
-  fail "First unauthenticated request keeps failing; harness cold start did not settle."
-  docker compose -f "$COMPOSE_FILE" logs proxy api
-  docker compose -f "$COMPOSE_FILE" down --volumes
-  exit 1
+  stack_failure "First unauthenticated request keeps failing; harness cold start did not settle."
 }
 
 ensure_stack() {
@@ -199,10 +219,7 @@ ensure_stack() {
     sleep 1
   done
 
-  fail "API did not become ready. Check the proxy and api logs."
-  docker compose -f "$COMPOSE_FILE" logs proxy api
-  docker compose -f "$COMPOSE_FILE" down --volumes
-  exit 1
+  stack_failure "API did not become ready. Check the proxy and api logs."
 }
 
 cleanup() {
