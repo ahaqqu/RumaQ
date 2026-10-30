@@ -3,9 +3,12 @@
 - When chat to me, always start by "Ryōkai Mas-sama"
 - Never ask user to run CLI commands, except shell scripts under `scripts/`.
 - Do not read or display the contents of `.env` files.
-- `scripts/deploy.sh` is the single entrypoint for all deployments. Deploy to Cloudflare via `./scripts/deploy.sh cloudflare`.
+- `scripts/deploy.sh` is the single entrypoint for all deployments. Deploy to Cloudflare via `./scripts/deploy.sh cloudflare`; deploy the VPS scraper via `./scripts/deploy.sh vps`.
   - Preview deployments for PR branches are run on demand from the GitHub Actions "Preview deployment" workflow — they deploy a branch-specific Worker (`rumaq-api-{branch}`) serving both app and API. Production is never touched.
   - Branch Workers are cleaned up automatically via `scripts/github/cleanup-branch.sh` when the PR is closed.
+  - When deploying the scraper to the VPS, the script builds, uploads to `/srv/vps-incoming/rumaq.tar.gz`, and runs `sudo -n /usr/local/sbin/vps-deploy rumaq` as `rumaq-deploy`. That identity has only that grant plus bounded `start|stop|restart|status` on `rumaq-scraper-agent.service`; `rumaq-scraper.timer` is refused.
+  - When changing host configuration (nginx, units, env path, sudoers), change it in [ahaqqu/vps](https://github.com/ahaqqu/vps) under `rumaq/`; never edit the box directly or add a second bootstrap/apply path here.
+  - When you need the scraper's root-only env path or deploy contract, read the vps repo's `rumaq/manifest` and `docs/DEPLOY.md`; the env file never belongs in this repository.
 - `scripts/test.sh` is the single entrypoint for all tests (unit, automation-local, automation-live). Run `./scripts/test.sh unit frontend` etc.
 - `scripts/docs.sh` generates API documentation.
 - `scripts/github/` contains scripts used only by GitHub Actions, not for local developer use.
