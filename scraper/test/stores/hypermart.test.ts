@@ -19,6 +19,7 @@ import {
   parseKoranImages,
 } from '../../src/stores/hypermart.js'
 import { loadConfig, storeBySlug } from '../../src/config.js'
+import { fullFetchContext } from '../helpers.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -119,13 +120,15 @@ describe('hypermart plugin', () => {
     const config = storeBySlug(loadConfig(), 'hypermart')!
     const plugin = createHypermartPlugin(config)
     const pages = await Effect.runPromise(
-      plugin.listBrochurePages({
-        fetchHtml: (url) => {
-          expect(url).toBe(KORAN_HUB_URL)
-          return Effect.succeed(loadFixture('promo-koran.html'))
-        },
-        runStartedAt: '2026-10-30T00:00:00Z',
-      })
+      plugin.listBrochurePages(
+        fullFetchContext({
+          fetchHtml: (url) => {
+            expect(url).toBe(KORAN_HUB_URL)
+            return Effect.succeed(loadFixture('promo-koran.html'))
+          },
+          runStartedAt: '2026-10-30T00:00:00Z',
+        })
+      )
     )
     expect(pages).toHaveLength(11)
     expect(pages.map((page) => page.imageUrl)).toEqual(expectedKoranUrls())
@@ -138,10 +141,12 @@ describe('hypermart plugin', () => {
     const config = { ...storeBySlug(loadConfig(), 'hypermart')!, maxPages: 3 }
     const plugin = createHypermartPlugin(config)
     const pages = await Effect.runPromise(
-      plugin.listBrochurePages({
-        fetchHtml: () => Effect.succeed(loadFixture('promo-koran.html')),
-        runStartedAt: '2026-10-30T00:00:00Z',
-      })
+      plugin.listBrochurePages(
+        fullFetchContext({
+          fetchHtml: () => Effect.succeed(loadFixture('promo-koran.html')),
+          runStartedAt: '2026-10-30T00:00:00Z',
+        })
+      )
     )
     expect(pages.map((page) => page.imageUrl)).toEqual(expectedKoranUrls().slice(0, 3))
   })

@@ -38,6 +38,13 @@ export interface DownloadedImage {
 export interface StoreFetcher {
   fetchHtml(url: string): Effect.Effect<string, FetchError>
   fetchBytes(url: string): Effect.Effect<DownloadedImage, FetchError>
+  /**
+   * Raw-byte fetch with NO NonImageContent gate (issue #322, design-arch
+   * §1.2): a document fetch (Indomaret's brochure PDFs) is honest about
+   * being non-image — the gate exists to protect the OCR download path, not
+   * the document path. Same request/retry/cookie-jar machinery as above.
+   */
+  fetchDocument(url: string): Effect.Effect<DownloadedImage, FetchError>
   /** Releases tier resources (closes the browser session); never throws. */
   close(): Promise<void>
 }
@@ -214,6 +221,26 @@ export function createFetcher(
         )
       )
     },
+    fetchDocument(url: string): Effect.Effect<DownloadedImage, FetchError> {
+      // application/pdf is just another content type here: no image gate —
+      // fetchBytes' NonImageContent guard must not reject a document fetch.
+      return request(url, 'application/pdf,*/*').pipe(
+        Effect.flatMap((response) =>
+          Effect.tryPromise({
+            try: async () => ({
+              bytes: new Uint8Array(await response.arrayBuffer()),
+              contentType: response.headers.get('content-type'),
+            }),
+            catch: (cause: unknown) =>
+              new FetchTransport({
+                url,
+                cause,
+                message: `Body read failed for ${url}: ${String(cause)}`,
+              }),
+          })
+        )
+      )
+    },
     async close(): Promise<void> {
       // The plain tier holds no resources.
     },
@@ -250,6 +277,9 @@ export function createStoreFetcher(
     return {
       fetchHtml: (url) => browser.fetchHtml(url),
       fetchBytes: (url) => plain.fetchBytes(url),
+      // Document fetches ride the plain tier too (no browser store calls it
+      // today; the gate-free bytes path is a plain-tier capability).
+      fetchDocument: (url) => plain.fetchDocument(url),
       close: async () => {
         await browser.close()
         await plain.close()

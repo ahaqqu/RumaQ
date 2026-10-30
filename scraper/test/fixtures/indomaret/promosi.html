@@ -1,0 +1,128 @@
+<!-- Trimmed structural snapshot of https://www.indomaret.co.id/promosi/ (2026-10-30).
+     Keeps the 10 brochure section containers (ids), the per-brochure window.open
+     script blocks, the idToUrlMap block (the two real link carriers), and the
+     nav/off-host anchors the scraper must never follow. -->
+<html><head><title>Promosi &#8211; Indomaret</title></head><body>
+<div data-element_type="container" id="super-hemat">
+<div class="promotion-content"><h2>Periode : 29 Oktober &#8211; 4 November 2026</h2></div>
+</div>
+<div data-element_type="container" id="brosur-paling-murah">
+<div class="promotion-content"><h2>Periode : 29 Oktober &#8211; 4 November 2026</h2></div>
+</div>
+<div data-element_type="container" id="hemat-minggu-ini">
+<div class="promotion-content"><h2>Periode : 29 Oktober &#8211; 4 November 2026</h2></div>
+</div>
+<div data-element_type="container" id="brosur-tebus-heboh">
+<div class="promotion-content"><h2>Periode : 29 Oktober &#8211; 4 November 2026</h2></div>
+</div>
+<div data-element_type="container" id="brosur-promosi-berhadiah">
+<div class="promotion-content"><h2>Periode : 29 Oktober &#8211; 4 November 2026</h2></div>
+</div>
+<div data-element_type="container" id="brosur-promo-4-hari">
+<div class="promotion-content"><h2>Periode : 29 Oktober &#8211; 4 November 2026</h2></div>
+</div>
+<div data-element_type="container" id="brosur-promo-susu-perlengkapan-balita">
+<div class="promotion-content"><h2>Periode : 29 Oktober &#8211; 4 November 2026</h2></div>
+</div>
+<div data-element_type="container" id="harga-khusus-member">
+<div class="promotion-content"><h2>Periode : 29 Oktober &#8211; 4 November 2026</h2></div>
+</div>
+<div data-element_type="container" id="promo-bank-ewallet">
+<div class="promotion-content"><h2>Periode : 29 Oktober &#8211; 4 November 2026</h2></div>
+</div>
+<div data-element_type="container" id="pulsanya-sekalian-kakak">
+<div class="promotion-content"><h2>Periode : 29 Oktober &#8211; 4 November 2026</h2></div>
+</div>
+<script>
+        document.addEventListener("DOMContentLoaded", function() {
+            var elements = document.querySelectorAll("#brosur-paling-murah");
+            elements.forEach(function(element) {
+                element.addEventListener("click", function() {
+                    window.open("/paling-murah/", "_blank");
+                });
+            });
+        });
+    </script>
+<script>
+        document.addEventListener("DOMContentLoaded", function() {
+            var elements = document.querySelectorAll("#hemat-minggu-ini");
+            elements.forEach(function(element) {
+                element.addEventListener("click", function() {
+                    window.open("/hemat-minggu-ini/", "_blank");
+                });
+            });
+        });
+    </script>
+<script>
+        document.addEventListener("DOMContentLoaded", function() {
+            var elements = document.querySelectorAll("#brosur-tebus-heboh");
+            elements.forEach(function(element) {
+                element.addEventListener("click", function() {
+                    window.open("/tebus-heboh/", "_blank");
+                });
+            });
+        });
+    </script>
+<script>
+        document.addEventListener("DOMContentLoaded", function() {
+            var elements = document.querySelectorAll("#harga-khusus-member");
+            elements.forEach(function(element) {
+                element.addEventListener("click", function() {
+                    window.open("/harga-khusus-member/", "_blank");
+                });
+            });
+        });
+    </script>
+<script>
+        document.addEventListener("DOMContentLoaded", function() {
+            var elements = document.querySelectorAll("#promo-bank-ewallet");
+            elements.forEach(function(element) {
+                element.addEventListener("click", function() {
+                    window.open("/promo-bank-ewallet/", "_blank");
+                });
+            });
+        });
+    </script>
+<script>
+        document.addEventListener("DOMContentLoaded", function() {
+            var elements = document.querySelectorAll("#pulsanya-sekalian-kakak");
+            elements.forEach(function(element) {
+                element.addEventListener("click", function() {
+                    window.open("/pulsanya-sekalian-kakak/", "_blank");
+                });
+            });
+        });
+    </script>
+<script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const idToUrlMap = {
+                "brosur-promo-4-hari": "/p4h/",
+                "brosur-promo-susu-perlengkapan-balita": "/pspb/",
+                "brosur-promosi-berhadiah": "/promosi-berhadiah/"
+            };
+
+            Object.keys(idToUrlMap).forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener("click", function() {
+                        window.open(idToUrlMap[id], "_blank");
+                    });
+                }
+            });
+        });
+    </script>
+<script>
+        document.addEventListener("DOMContentLoaded", function() {
+            var elements = document.querySelectorAll("#super-hemat");
+            elements.forEach(function(element) {
+                element.addEventListener("click", function() {
+                    window.open("/super-hemat/", "_blank");
+                });
+            });
+        });
+    </script>
+<a href="/brand-kami">Brand Kami</a>
+<a href="https://www.klikindomaret.com/">Klik Indomaret</a>
+<a href="https://indomaretpoinku.com/">Poin Ku</a>
+<a href="/produk">Produk</a>
+</body></html>

@@ -16,6 +16,10 @@ export const FLOUR_KEY = 'tepung--segitiga-biru--1-kg'
 // sweep scenarios upload the corresponding R2 objects explicitly.
 export const BROCHURE_PAGE_LOTTE = '/api/brochures/lotte-mart/20261024/page_1_2ad1c95b.jpg'
 export const BROCHURE_KORAN_SUPERINDO = '/api/brochures/superindo/20261024/koran_a_1b2c3d4e.jpg'
+// Indomaret's rendered-PDF page (issue #322): the same servable shape, PNG
+// content type — OCR-flow parity proof for the render path.
+export const BROCHURE_PALINGMURAH_INDOMARET =
+  '/api/brochures/indomaret/20261024/PalingMurah-29Okt-page-01_a1b2c3d4.png'
 
 export function priceSnapshot() {
   return {
@@ -167,12 +171,15 @@ export function bulkCatalogueSnapshot(count) {
 
 // Brochure listing fixture (issue #293): items over the two servable object
 // URLs above, plus one legacy retailer-page URL row (the pre-#293 data shape)
-// that the servable-shape predicate must exclude from every group.
+// that the servable-shape predicate must exclude from every group. Issue
+// #322 adds an indomaret rendered-PNG page: a store whose pages never came
+// from a plain image download must group exactly like the OCR stores.
 export function brochureSnapshot() {
   return {
     schemaVersion: 1,
     scrapedAt: '2026-10-26T23:00:05Z',
     stores: [
+      { slug: 'indomaret', name: 'Indomaret', region: 'jakarta' },
       { slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' },
       { slug: 'superindo', name: 'Superindo', region: 'jakarta' },
     ],
@@ -210,6 +217,17 @@ export function brochureSnapshot() {
         matchMethod: 'exact',
         matchConfidence: 1.0,
         brochureUrl: BROCHURE_KORAN_SUPERINDO,
+      },
+      {
+        productKey: 'gula-pasir--gulaku--1-kg',
+        name: 'Gula Pasir Gulaku 1 kg',
+        brand: 'Gulaku',
+        unit: '1 kg',
+        storeSlug: 'indomaret',
+        price: 15500,
+        matchMethod: 'exact',
+        matchConfidence: 1.0,
+        brochureUrl: BROCHURE_PALINGMURAH_INDOMARET,
       },
     ],
   }

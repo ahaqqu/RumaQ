@@ -179,7 +179,13 @@ export type RunReportStore = InferOutput<typeof runReportStoreSchema>
 // terminal finish. Shared by the Worker (request validation) and the agent
 // (defense-in-depth re-validation of claimed slugs). Additive only.
 
-export const SCRAPE_STORE_SLUGS = ['superindo', 'lotte-mart', 'astro', 'hypermart'] as const
+export const SCRAPE_STORE_SLUGS = [
+  'superindo',
+  'lotte-mart',
+  'astro',
+  'hypermart',
+  'indomaret',
+] as const
 
 export const scrapeCommandCreateSchema = strictObject({
   stores: pipe(array(picklist(SCRAPE_STORE_SLUGS)), minLength(1)),

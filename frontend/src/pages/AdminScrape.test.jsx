@@ -73,7 +73,7 @@ describe('AdminScrape', () => {
     mutate = vi.fn()
     vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
     vi.mocked(useScrapeStores).mockReturnValue({
-      data: { stores: ['superindo', 'lotte-mart', 'astro', 'hypermart'] },
+      data: { stores: ['superindo', 'lotte-mart', 'astro', 'hypermart', 'indomaret'] },
       isLoading: false,
       isError: false,
     })

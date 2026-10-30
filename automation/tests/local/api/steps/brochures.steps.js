@@ -1,7 +1,11 @@
 import { describe, test as it, beforeEach, expect } from 'vite-plus/test'
 import { setJestCucumberConfiguration, loadFeature, defineFeature } from 'jest-cucumber'
 import { ApiContext } from './helpers.js'
-import { brochureSnapshot, priceSnapshot } from '../../../support/price-fixtures.js'
+import {
+  BROCHURE_PALINGMURAH_INDOMARET,
+  brochureSnapshot,
+  priceSnapshot,
+} from '../../../support/price-fixtures.js'
 
 setJestCucumberConfiguration({ runner: { describe, test: it } })
 
@@ -207,12 +211,19 @@ defineFeature(feature, (test) => {
 
     and('the brochure groups should appear in store-then-date order', () => {
       const groups = ctx.brochureBody.groups
-      // Store name asc, then date desc: Lotte's page before Superindo's.
-      expect(groups.map((g) => g.source_slug)).toEqual(['lotte-mart', 'superindo'])
+      // Store name asc, then date desc: Indomaret's rendered-PDF page
+      // (issue #322) groups exactly like the OCR stores', Lotte's page
+      // before Superindo's.
+      expect(groups.map((g) => g.source_slug)).toEqual(['indomaret', 'lotte-mart', 'superindo'])
       for (const group of groups) {
         expect(group.brochure_url).toMatch(/^\/api\/brochures\//)
         expect(group.observed_date).toBe('2026-10-26')
       }
+      // OCR-flow parity: the indomaret group's URL is the rendered PNG page
+      // object key, same servable shape the OCR stores emit.
+      const indomaret = groups.find((g) => g.source_slug === 'indomaret')
+      expect(indomaret.brochure_url).toBe(BROCHURE_PALINGMURAH_INDOMARET)
+      expect(indomaret.brochure_url.endsWith('.png')).toBe(true)
     })
 
     and('the brochure counts should match the explorer per brochure page', async () => {

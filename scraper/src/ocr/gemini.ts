@@ -38,6 +38,7 @@ const PROMPTS: Record<string, string> = {
   superindo: `Extract all product promotions from this Superindo supermarket brochure image.\n\n${PROMPT_BODY}`,
   'lotte-mart': `Extract all product promotions from this Lotte Mart supermarket brochure image.\n\n${PROMPT_BODY}`,
   hypermart: `Extract all product promotions from this Hypermart supermarket brochure image.\n\n${PROMPT_BODY}`,
+  indomaret: `Extract all product promotions from this Indomaret supermarket brochure image.\n\n${PROMPT_BODY}`,
 }
 
 export function getPrompt(storeSlug: string): string {

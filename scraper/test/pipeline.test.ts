@@ -45,6 +45,36 @@ const noSleep = async () => {}
 // focused.
 const emptyLotte = fakeBrowserLauncher('<html><body></body></html>')
 
+// Indomaret rides every unscoped run now (issue #322). Its zero-brochure
+// sentinel means an empty hub would redden any scenario that doesn't care
+// about it, so scenarios get this minimal working chain — one brochure →
+// detail with a pdfUrl → a tiny PDF — rendered by a stub into a page that
+// the novelty gates SKIP (under 50 KB): the store runs, stays green, and
+// contributes nothing, without a poppler dependency in CI.
+const INDOMARET_HUB_URL = 'https://www.indomaret.co.id/promosi/'
+const INDOMARET_PDF_URL = 'https://www.indomaret.co.id/wp-content/uploads/Fixture-29Okt.pdf'
+const indomaretHubHtml =
+  '<html><body><script>window.open("/paling-murah/", "_blank");</script></body></html>'
+const indomaretDetailHtml =
+  '<html><body><script>var flipbookOptions_0_x = ' +
+  '{"pdfUrl":"https:\\/\\/www.indomaret.co.id\\/wp-content\\/uploads\\/Fixture-29Okt.pdf"};' +
+  '</script></body></html>'
+const indomaretPdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34])
+const silentIndomaretRender = () => Effect.succeed([{ pageNo: 1, bytes: new Uint8Array(1024) }])
+
+/** The three indomaret branches every scenario fetch mock needs, in order. */
+function serveIndomaret(url: string, mock: () => Response): Response | undefined {
+  if (url === INDOMARET_HUB_URL) return new Response(indomaretHubHtml, { status: 200 })
+  if (url === INDOMARET_PDF_URL) {
+    return new Response(indomaretPdf, {
+      status: 200,
+      headers: { 'content-type': 'application/pdf' },
+    })
+  }
+  if (url.includes('indomaret.co.id')) return new Response(indomaretDetailHtml, { status: 200 })
+  return mock()
+}
+
 // Deterministic Gemini stubs — a dev machine with GEMINI_API_KEY in the
 // environment must never make the test suite call the real API.
 const stubEmbedClient: EmbeddingClient = {
@@ -66,7 +96,10 @@ function makeFetchMock(katalogHtml: string, koranHtml: string, jpeg: Uint8Array<
     if (url.includes('astronauts.id')) {
       return new Response('<html><body></body></html>', { status: 200 })
     }
-    return new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
+    return serveIndomaret(
+      url,
+      () => new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
+    )!
   }
 }
 
@@ -143,6 +176,7 @@ async function setupChallengedLotte() {
         verifyClient: stubVerifyClient,
         stateDir,
         fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
+        renderPdf: silentIndomaretRender,
         ocrClient,
         sleep: noSleep,
         now: () => new Date('2026-10-24T23:00:05Z'),
@@ -188,6 +222,7 @@ describe('runPipeline', () => {
         stateDir,
         dryRun: true,
         fetch: fetchMock,
+        renderPdf: silentIndomaretRender,
         ocrClient,
         sleep: noSleep,
         now: () => new Date('2026-10-24T23:00:05Z'),
@@ -227,6 +262,7 @@ describe('runPipeline', () => {
         stateDir,
         dryRun: true,
         fetch: fetchMock,
+        renderPdf: silentIndomaretRender,
         ocrClient,
         sleep: noSleep,
         now: () => new Date('2026-11-05T23:00:05Z'),
@@ -309,6 +345,7 @@ describe('runPipeline', () => {
         stateDir,
         dryRun: false,
         fetch: fetchMock,
+        renderPdf: silentIndomaretRender,
         ocrClient,
         publishFetch: failingPublish,
         ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
@@ -350,6 +387,7 @@ describe('runPipeline', () => {
         stateDir,
         dryRun: false,
         fetch: fetchMock,
+        renderPdf: silentIndomaretRender,
         ocrClient: ocrClient,
         publishFetch: okPublish,
         ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
@@ -404,10 +442,14 @@ describe('runPipeline', () => {
       if (!seenUrls.has(url)) {
         seenUrls.set(url, seenUrls.size === 0 ? jpegA : jpegB)
       }
-      return new Response(seenUrls.get(url)!, {
-        status: 200,
-        headers: { 'content-type': 'image/jpeg' },
-      })
+      return serveIndomaret(
+        url,
+        () =>
+          new Response(seenUrls.get(url)!, {
+            status: 200,
+            headers: { 'content-type': 'image/jpeg' },
+          })
+      )!
     }
 
     const items = [
@@ -435,6 +477,7 @@ describe('runPipeline', () => {
         stateDir,
         dryRun: true,
         fetch: fetchMock,
+        renderPdf: silentIndomaretRender,
         ocrClient,
         sleep: noSleep,
         now,
@@ -498,10 +541,14 @@ describe('runPipeline', () => {
       if (!seenUrls.has(url)) {
         seenUrls.set(url, seenUrls.size === 0 ? jpegA : jpegB)
       }
-      return new Response(seenUrls.get(url)!, {
-        status: 200,
-        headers: { 'content-type': 'image/jpeg' },
-      })
+      return serveIndomaret(
+        url,
+        () =>
+          new Response(seenUrls.get(url)!, {
+            status: 200,
+            headers: { 'content-type': 'image/jpeg' },
+          })
+      )!
     }
 
     const items = [
@@ -542,6 +589,7 @@ describe('runPipeline', () => {
         stateDir,
         dryRun: false,
         fetch: fetchMock,
+        renderPdf: silentIndomaretRender,
         ocrClient: flakyOcr,
         publishFetch: okPublish,
         ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
@@ -587,6 +635,7 @@ describe('runPipeline', () => {
         stateDir,
         dryRun: false,
         fetch: fetchMock,
+        renderPdf: silentIndomaretRender,
         ocrClient: healthyOcr,
         publishFetch: okPublish,
         ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
@@ -653,6 +702,7 @@ describe('runPipeline', () => {
         stateDir,
         dryRun: true,
         fetch: fetchMock,
+        renderPdf: silentIndomaretRender,
         ocrClient,
         sleep: noSleep,
         now,
@@ -680,6 +730,7 @@ describe('runPipeline', () => {
         stateDir,
         dryRun: true,
         fetch: fetchMock,
+        renderPdf: silentIndomaretRender,
         ocrClient,
         sleep: noSleep,
         now,
@@ -700,7 +751,10 @@ describe('runPipeline', () => {
     ): Promise<Response> => {
       expect(init?.headers).toBeDefined()
       // Neither listing page has a matching gallery → zero pages, zero OCR.
-      return new Response('<html><body>No promos here</body></html>', { status: 200 })
+      return serveIndomaret(
+        url,
+        () => new Response('<html><body>No promos here</body></html>', { status: 200 })
+      )!
     }
     const previous = process.env.GEMINI_API_KEY
     delete process.env.GEMINI_API_KEY
@@ -713,6 +767,7 @@ describe('runPipeline', () => {
           stateDir,
           dryRun: true,
           fetch: fetchMock,
+          renderPdf: silentIndomaretRender,
           sleep: noSleep,
           now: () => new Date('2026-10-24T23:00:05Z'),
           log: () => {},
@@ -870,6 +925,7 @@ describe('runPipeline', () => {
         stateDir,
         dryRun: false,
         fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
+        renderPdf: silentIndomaretRender,
         ocrClient,
         publishFetch,
         ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
@@ -1040,7 +1096,10 @@ it('runs the lotte flow through the Tier-2 browser ladder and cross-matches with
     expect(init?.headers).toBeDefined()
     if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
     if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
-    return new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
+    return serveIndomaret(
+      url,
+      () => new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
+    )!
   }
   const lotteBrowser = fakeBrowserLauncher(lotteHtml)
   const ocrClient: GeminiClient = {
@@ -1055,6 +1114,7 @@ it('runs the lotte flow through the Tier-2 browser ladder and cross-matches with
       embedClient: stubEmbedClient,
       verifyClient: stubVerifyClient,
       fetch: fetchMock,
+      renderPdf: silentIndomaretRender,
       ocrClient,
       sleep: noSleep,
       now: () => new Date('2026-10-24T23:00:05Z'),
@@ -1092,6 +1152,173 @@ it('runs the lotte flow through the Tier-2 browser ladder and cross-matches with
   expect(gulaItems.map((item) => item.matchMethod).sort()).toEqual(['exact', 'solo'])
 })
 
+it('runs the indomaret render path end to end — rendered bytes ride classify → OCR → outbox without a download (issue #322)', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+  const hubHtml = await readFile(path.join(__dirname, 'fixtures/indomaret/promosi.html'), 'utf8')
+  const detailHtml = await readFile(
+    path.join(__dirname, 'fixtures/indomaret/brochure-page.html'),
+    'utf8'
+  )
+  const pdfFetches: string[] = []
+  const fetchMock = async (
+    url: string,
+    init?: RequestInit & { proxy?: string }
+  ): Promise<Response> => {
+    expect(init?.headers).toBeDefined()
+    if (url === 'https://www.indomaret.co.id/promosi/') {
+      return new Response(hubHtml, { status: 200 })
+    }
+    if (url.includes('indomaret.co.id/')) {
+      // Detail pages serve the flipbook fixture renamed per slug, so the 10
+      // brochures carry 10 distinct PDFs; each PDF URL must be fetched
+      // exactly once — via fetchDocument (gate-free), never fetchBytes.
+      if (url.endsWith('.pdf')) {
+        pdfFetches.push(url)
+        const bytes = new Uint8Array(1024 + url.length)
+        bytes.set([0x25, 0x50, 0x44, 0x46], 0) // %PDF
+        let sum = 0
+        for (const ch of url) sum = (sum + ch.charCodeAt(0)) & 0xff
+        bytes.set([url.length & 0xff, sum], 8)
+        return new Response(bytes, {
+          status: 200,
+          headers: { 'content-type': 'application/pdf' },
+        })
+      }
+      const slug = new URL(url).pathname.split('/').filter(Boolean)[0]!
+      return new Response(detailHtml.replaceAll('PalingMurah-29Okt.pdf', `${slug}.pdf`), {
+        status: 200,
+      })
+    }
+    // Other stores' listings serve empty pages.
+    return new Response('<html><body></body></html>', { status: 200 })
+  }
+  // Fake render: 2 distinct PNG pages per PDF, sized past the 50 KB novelty
+  // gate with 1240x1754 IHDR dimensions (a 150 DPI A4-ish page shape). The
+  // salt is the PDF's own byte length — distinct across the 10 brochures,
+  // deterministic across runs (the property poppler's determinism gives the
+  // real renderer, which the live pdf.test.ts pins).
+  const renderCalls: { maxPages?: number }[] = []
+  const fakeRender = (pdfBytes: Uint8Array, opts?: { maxPages?: number }) => {
+    renderCalls.push({ maxPages: opts?.maxPages })
+    const salt = (pdfBytes[8]! + pdfBytes[9]!) & 0xff
+    return Effect.succeed(
+      [1, 2].map((pageNo) => {
+        const bytes = new Uint8Array(64 * 1024)
+        bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+        const view = new DataView(bytes.buffer)
+        view.setUint32(8, 13)
+        bytes.set([0x49, 0x48, 0x44, 0x52], 12)
+        view.setUint32(16, 1240)
+        view.setUint32(20, 1754)
+        bytes.fill(pageNo, 24)
+        bytes.fill(salt, 25)
+        return { pageNo, bytes }
+      })
+    )
+  }
+
+  const inlineMimes: string[] = []
+  const ocrClient: GeminiClient = {
+    models: {
+      generateContent: async (args) => {
+        for (const part of args.contents[0]!.parts) {
+          if (part.inlineData) inlineMimes.push(part.inlineData.mimeType)
+        }
+        return { text: JSON.stringify(ocrItems) }
+      },
+    },
+  }
+  // Live-publish fetch capturing brochure PUTs (content type + object key)
+  // and price payloads; run reports accepted silently.
+  const puts: Array<{ url: string; contentType: string | null }> = []
+  const posted: IngestPayload[] = []
+  const publishFetch = async (url: string, init?: RequestInit) => {
+    if (url.includes('/api/internal/brochures/')) {
+      puts.push({ url, contentType: new Headers(init?.headers).get('Content-Type') })
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }
+    if (url.endsWith('/api/internal/ingest/runs')) {
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }
+    posted.push(JSON.parse(init!.body as string))
+    return new Response(JSON.stringify({ accepted: 7, skipped: 0 }), { status: 200 })
+  }
+
+  const status = await Effect.runPromise(
+    runPipeline({
+      launcher: emptyLotte.launcher,
+      embedClient: stubEmbedClient,
+      verifyClient: stubVerifyClient,
+      stateDir,
+      dryRun: false,
+      fetch: fetchMock,
+      renderPdf: fakeRender,
+      ocrClient,
+      publishFetch,
+      ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+      ingestSecret: 's3cret',
+      sleep: noSleep,
+      now: () => new Date('2026-10-24T23:00:05Z'),
+      log: () => {},
+    })
+  )
+
+  expect(status.stage).toBe('done')
+  const indomaret = status.stores['indomaret']!
+  expect(indomaret.pagesFound).toBe(20) // 10 brochures × 2 rendered pages
+  expect(indomaret.newImages).toBe(20)
+  expect(indomaret.itemsExtracted).toBeGreaterThanOrEqual(1)
+  // The PDF went over the wire exactly once per brochure — via fetchDocument.
+  expect(pdfFetches).toHaveLength(10)
+  // The remaining budget rode every render call, decremented per brochure.
+  expect(renderCalls.map((call) => call.maxPages)).toEqual(
+    Array.from({ length: 10 }, (_, i) => 40 - i * 2)
+  )
+
+  // OCR saw real PNG declarations, never the PDF's application/pdf.
+  expect(inlineMimes.length).toBe(20)
+  expect(inlineMimes.every((mime) => mime === 'image/png')).toBe(true)
+
+  // The rendered pages were uploaded as R2 objects and the payload's
+  // brochure URLs are the same-origin object URLs (OCR-flow parity: the
+  // rendered PNG pages flow exactly like superindo's downloaded JPGs).
+  expect(puts).toHaveLength(20)
+  for (const put of puts) {
+    expect(put.contentType).toBe('image/png')
+    expect(put.url).toMatch(
+      /^https:\/\/api\.example\.com\/api\/internal\/brochures\/indomaret\/20261024\/[A-Za-z0-9._()-]+-page-\d{2}_[a-f0-9]{8}\.png$/
+    )
+  }
+  const indomaretItems = posted[0]!.items.filter((item) => item.storeSlug === 'indomaret')
+  expect(indomaretItems.length).toBeGreaterThanOrEqual(1)
+  for (const item of indomaretItems) {
+    expect(item.brochureUrl).toMatch(/^\/api\/brochures\/indomaret\/20261024\//)
+  }
+
+  // Second run: identical PDF → identical render → identical md5 → existing
+  // (poppler determinism is load-bearing for novelty; design-arch §3).
+  const status2 = await Effect.runPromise(
+    runPipeline({
+      launcher: emptyLotte.launcher,
+      embedClient: stubEmbedClient,
+      verifyClient: stubVerifyClient,
+      stateDir,
+      dryRun: false,
+      fetch: fetchMock,
+      renderPdf: fakeRender,
+      ocrClient,
+      publishFetch,
+      ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+      ingestSecret: 's3cret',
+      sleep: noSleep,
+      now: () => new Date('2026-10-25T23:00:05Z'),
+      log: () => {},
+    })
+  )
+  expect(status2.stores['indomaret']!.newImages).toBe(0)
+  expect(status2.stores['indomaret']!.existingImages).toBe(20)
+})
+
 it('runs the astro catalog store end to end — no OCR, outbox like the brochure stores', async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
   const astroHtml = await readFile(path.join(__dirname, 'fixtures/astro/category.html'), 'utf8')
@@ -1103,7 +1330,7 @@ it('runs the astro catalog store end to end — no OCR, outbox like the brochure
     // One astro category page serves the fixture; the others (and the
     // brochure stores' listings) serve empty pages.
     if (url.includes('beras-lokal-5858')) return new Response(astroHtml, { status: 200 })
-    return new Response('<html><body></body></html>', { status: 200 })
+    return serveIndomaret(url, () => new Response('<html><body></body></html>', { status: 200 }))!
   }
 
   const status = await Effect.runPromise(
@@ -1114,6 +1341,7 @@ it('runs the astro catalog store end to end — no OCR, outbox like the brochure
       embedClient: stubEmbedClient,
       verifyClient: stubVerifyClient,
       fetch: fetchMock,
+      renderPdf: silentIndomaretRender,
       // The OCR client must never fire for a catalog-only run.
       ocrClient: {
         models: {
@@ -1280,6 +1508,7 @@ describe('brochure uploads (issue #293)', () => {
       stateDir,
       dryRun: false as const,
       fetch: makeFetchMock(katalogHtml, koranHtml, jpeg),
+      renderPdf: silentIndomaretRender,
       ocrClient,
       sleep: noSleep,
       now: () => new Date('2026-10-24T23:00:05Z'),

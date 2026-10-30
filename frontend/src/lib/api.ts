@@ -308,7 +308,7 @@ export function getPriceRuns(signal?: AbortSignal): Promise<unknown> {
 // Scrape Now (docs/plan/scrape-now.md §4): admin-triggered, store-selectable
 // scraping. The POST queues a command the VPS agent claims; commands/events
 // feed the live log and the failure-log history.
-export type ScrapeStoreSlug = 'superindo' | 'lotte-mart' | 'astro' | 'hypermart'
+export type ScrapeStoreSlug = 'superindo' | 'lotte-mart' | 'astro' | 'hypermart' | 'indomaret'
 
 export function getScrapeStores(signal?: AbortSignal): Promise<unknown> {
   return unwrap(client.GET('/api/admin/scrape/stores', { signal }))

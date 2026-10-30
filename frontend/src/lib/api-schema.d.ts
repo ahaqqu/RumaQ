@@ -1648,7 +1648,7 @@ export interface operations {
     requestBody: {
       content: {
         'application/json': {
-          stores: ('superindo' | 'lotte-mart' | 'astro' | 'hypermart')[]
+          stores: ('superindo' | 'lotte-mart' | 'astro' | 'hypermart' | 'indomaret')[]
         }
       }
     }

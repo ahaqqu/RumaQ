@@ -64,6 +64,7 @@ import {
 } from './stores/types.js'
 import { wrapIo } from './util/io.js'
 import { createLog, logRejectedItem, type LogFn } from './util/log.js'
+import { renderPdfPages } from './util/pdf.js'
 import { QuotaExhausted } from './util/retry.js'
 
 export class PipelineFailure extends Data.TaggedError('PipelineFailure')<{
@@ -130,6 +131,12 @@ export interface PipelineOptions {
   fetch?: FetchLike
   /** Tier-2 browser launcher override (tests inject a fake). */
   launcher?: BrowserLauncher
+  /**
+   * PDF → page-image renderer override (issue #322): tests inject a fake so
+   * the suite never needs poppler's pdftoppm; the default is util/pdf.ts's
+   * real renderer at 150 DPI.
+   */
+  renderPdf?: typeof renderPdfPages
   ocrClient?: GeminiClient
   embedClient?: EmbeddingClient
   verifyClient?: GeminiClient
@@ -220,6 +227,8 @@ function processStore(
   return Effect.gen(function* () {
     const pages = yield* plugin.listBrochurePages({
       fetchHtml: (url) => fetcher.fetchHtml(url),
+      fetchDocument: (url) => fetcher.fetchDocument(url),
+      renderPdf: options.renderPdf ?? renderPdfPages,
       runStartedAt: scrapedAt,
     })
     entry.pagesFound = pages.length
@@ -415,6 +424,8 @@ function processCatalogStore(
   return Effect.gen(function* () {
     const items = yield* plugin.listItems({
       fetchHtml: (url) => fetcher.fetchHtml(url),
+      fetchDocument: (url) => fetcher.fetchDocument(url),
+      renderPdf: options.renderPdf ?? renderPdfPages,
       runStartedAt: scrapedAt,
     })
     // Pages that yielded at least one item; a page URL is optional on

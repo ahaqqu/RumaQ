@@ -15,6 +15,7 @@ import {
   parseSwiperImages,
 } from '../../src/stores/superindo.js'
 import { loadConfig, storeBySlug } from '../../src/config.js'
+import { fullFetchContext } from '../helpers.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -161,10 +162,12 @@ describe('superindo plugin', () => {
       'https://www.superindo.co.id/promosi/promo-koran/': loadFixture('promo-koran.html'),
     }
     const pages = await Effect.runPromise(
-      plugin.listBrochurePages({
-        fetchHtml: (url) => Effect.succeed(htmls[url] ?? ''),
-        runStartedAt: '2026-10-25T00:00:00Z',
-      })
+      plugin.listBrochurePages(
+        fullFetchContext({
+          fetchHtml: (url) => Effect.succeed(htmls[url] ?? ''),
+          runStartedAt: '2026-10-25T00:00:00Z',
+        })
+      )
     )
     expect(pages.length).toBeGreaterThanOrEqual(2)
     const brochureUrls = new Set(pages.map((page) => page.brochureUrl))
@@ -180,10 +183,12 @@ describe('superindo plugin', () => {
     const config = { ...storeBySlug(loadConfig(), 'superindo')!, maxPages: 1 }
     const plugin = createSuperindoPlugin(config)
     const pages = await Effect.runPromise(
-      plugin.listBrochurePages({
-        fetchHtml: () => Effect.succeed(loadFixture('katalog-super-hemat.html')),
-        runStartedAt: '2026-10-25T00:00:00Z',
-      })
+      plugin.listBrochurePages(
+        fullFetchContext({
+          fetchHtml: () => Effect.succeed(loadFixture('katalog-super-hemat.html')),
+          runStartedAt: '2026-10-25T00:00:00Z',
+        })
+      )
     )
     expect(pages.length).toBe(1)
   })

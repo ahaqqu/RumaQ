@@ -14,7 +14,7 @@ import {
   normalizeLotteSrc,
   parseLotteImages,
 } from '../../src/stores/lotte.js'
-import { fakeBrowserLauncher } from '../helpers.js'
+import { fakeBrowserLauncher, fullFetchContext } from '../helpers.js'
 import type { StoreConfig } from '../../src/config.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -104,10 +104,12 @@ describe('createLottePlugin', () => {
     ].join('')
     const plugin = createLottePlugin({ ...lotteStore, maxPages: 3 })
     const pages = await Effect.runPromise(
-      plugin.listBrochurePages({
-        fetchHtml: () => Effect.succeed(html),
-        runStartedAt: '2026-10-25T23:00:00Z',
-      })
+      plugin.listBrochurePages(
+        fullFetchContext({
+          fetchHtml: () => Effect.succeed(html),
+          runStartedAt: '2026-10-25T23:00:00Z',
+        })
+      )
     )
     expect(pages).toHaveLength(3)
     expect(pages[0]).toEqual({
@@ -119,10 +121,12 @@ describe('createLottePlugin', () => {
   it('returns zero pages when the listing yields nothing', async () => {
     const plugin = createLottePlugin(lotteStore)
     const pages = await Effect.runPromise(
-      plugin.listBrochurePages({
-        fetchHtml: () => Effect.succeed('<html><body></body></html>'),
-        runStartedAt: '2026-10-25T23:00:00Z',
-      })
+      plugin.listBrochurePages(
+        fullFetchContext({
+          fetchHtml: () => Effect.succeed('<html><body></body></html>'),
+          runStartedAt: '2026-10-25T23:00:00Z',
+        })
+      )
     )
     expect(pages).toEqual([])
   })

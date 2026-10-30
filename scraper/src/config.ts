@@ -142,6 +142,23 @@ export function loadConfig(): ScraperConfig {
         maxPages: 40,
         proxyEnv: 'HYPERMART_PROXY_URL',
       },
+      {
+        // Indomaret promosi — server-rendered WordPress hub; ~10 weekly
+        // brochure PDFs behind per-brochure static pages (pdfUrl in the
+        // Real3D-Flipbook config). Pages render to 150 DPI PNGs via poppler's
+        // pdftoppm (util/pdf.ts) and feed the unchanged OCR flow; maxPages
+        // clamps at render time in hub document order (design-arch §1.2).
+        // Cloudflare-fronted but unchallenged 2026-10-30; EU-DC IP untested →
+        // proxyEnv ready (by-design skip until configured).
+        slug: 'indomaret',
+        name: 'Indomaret',
+        kind: 'brochure',
+        strategy: 'plain',
+        region: 'jakarta',
+        website: 'https://www.indomaret.co.id/',
+        maxPages: 40,
+        proxyEnv: 'INDOMARET_PROXY_URL',
+      },
     ],
   }
 }
