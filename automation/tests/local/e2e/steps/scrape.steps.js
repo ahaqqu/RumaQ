@@ -17,7 +17,7 @@ When('I queue the selected scrape', async ({ page }) => {
 })
 
 Then('the scrape page lists the stores', async ({ page }) => {
-  for (const slug of ['superindo', 'lotte-mart', 'astro']) {
+  for (const slug of ['superindo', 'lotte-mart', 'astro', 'hypermart']) {
     await expect(page.getByRole('checkbox', { name: slug })).toBeVisible()
   }
 })

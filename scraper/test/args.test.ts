@@ -13,9 +13,9 @@ describe('parseArgs --stores (docs/plan/scrape-now.md §2)', () => {
     expect(args.publish).toBe(true)
   })
 
-  it('accepts every contract slug (astro included)', () => {
-    const args = parseArgs(['--stores=superindo,lotte-mart,astro'])
-    expect(args.stores).toEqual(['superindo', 'lotte-mart', 'astro'])
+  it('accepts every contract slug (hypermart included)', () => {
+    const args = parseArgs(['--stores=superindo,lotte-mart,astro,hypermart'])
+    expect(args.stores).toEqual(['superindo', 'lotte-mart', 'astro', 'hypermart'])
   })
 
   it('rejects an unknown slug with the known list in the error', () => {

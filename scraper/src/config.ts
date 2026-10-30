@@ -126,6 +126,22 @@ export function loadConfig(): ScraperConfig {
         website: 'https://www.astronauts.id/',
         maxPages: 10,
       },
+      {
+        // Hypermart promo-koran — plain WordPress/Elementor page; the weekly
+        // koran is ~11 full-page JPGs directly in the static HTML (superindo
+        // shape, no PDF step). Zero anti-bot observed 2026-10-30. Filenames
+        // (JAWA-N.jpg) are refreshed in place weekly → novelty keys on the
+        // content MD5 (fetch/state.ts), never on the URL (cache-control
+        // max-age=604800).
+        slug: 'hypermart',
+        name: 'Hypermart',
+        kind: 'brochure',
+        strategy: 'plain',
+        region: 'jakarta',
+        website: 'https://www.hypermart.co.id/',
+        maxPages: 40,
+        proxyEnv: 'HYPERMART_PROXY_URL',
+      },
     ],
   }
 }

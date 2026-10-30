@@ -363,6 +363,54 @@ describe('classifyImages', () => {
     // the original run stays the only one.
     expect(await readdir(imagesDir)).toEqual([])
   })
+
+  it('classifies same-URL-different-bytes as NEW — the Hypermart in-place refresh (issue #322)', async () => {
+    // Hypermart's weekly koran refreshes JAWA-N.jpg in place under the same
+    // URL (last-modified moves, cache-control max-age=604800). Novelty keys
+    // on the content MD5 — the URL only names the file — so the same URL
+    // with new bytes must classify NEW, and the second sighting of the new
+    // bytes must classify existing. URL-keyed dedup would serve the previous
+    // week's page for up to 7 days (322-design-arch §3; pinned, not built).
+    const imagesDir = await tempDir()
+    const weekly = fakeJpeg(800, 1000, 60 * 1024)
+    const refreshed = fakeJpeg(800, 1000, 61 * 1024)
+    let payload = weekly
+    const fetcher = {
+      fetchBytes: () => Effect.succeed({ bytes: payload, contentType: 'image/jpeg' } as const),
+    }
+    const state = { lastRun: null as string | null, processed: [] as string[] }
+    const page = {
+      imageUrl: 'https://www.hypermart.co.id/wp-content/uploads/2026/10/JAWA-1.jpg',
+      brochureUrl: 'https://www.hypermart.co.id/promo-koran/',
+    }
+
+    // Week 1: unseen bytes → NEW.
+    const first = await Effect.runPromise(
+      classifyImages([page], state, { ...opts, imagesDir, fetcher })
+    )
+    expect(first.newImages).toHaveLength(1)
+    expect(first.newImages[0]!.md5).toBe(md5Hash(weekly))
+
+    // Week 2: same URL, new bytes → NEW again, under a fresh md5-suffixed
+    // filename so last week's disk copy never collides or overwrites.
+    state.processed.push(md5Hash(weekly)) // what rememberProcessed would do
+    payload = refreshed
+    const second = await Effect.runPromise(
+      classifyImages([page], state, { ...opts, imagesDir, fetcher })
+    )
+    expect(second.newImages).toHaveLength(1)
+    expect(second.newImages[0]!.md5).toBe(md5Hash(refreshed))
+    expect(second.newImages[0]!.filename).not.toBe(first.newImages[0]!.filename)
+    expect(second.existingImages).toHaveLength(0)
+
+    // Week 3: same URL, unchanged bytes → existing (no re-OCR, no re-publish).
+    state.processed.push(md5Hash(refreshed))
+    const third = await Effect.runPromise(
+      classifyImages([page], state, { ...opts, imagesDir, fetcher })
+    )
+    expect(third.existingImages).toHaveLength(1)
+    expect(third.newImages).toHaveLength(0)
+  })
 })
 
 describe('pruneImages', () => {

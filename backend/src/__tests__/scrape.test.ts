@@ -343,13 +343,13 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
 })
 
 describe('GET /api/admin/scrape/stores', () => {
-  it('lists the contract store slugs (astro included)', async () => {
+  it('lists the contract store slugs (hypermart included)', async () => {
     const fake = createScrapeDb()
     const res = await apiApp.request('/api/admin/scrape/stores', {}, fake.env())
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
     const body = (await res.json()) as { stores: string[] }
-    expect(body.stores).toEqual(['superindo', 'lotte-mart', 'astro'])
+    expect(body.stores).toEqual(['superindo', 'lotte-mart', 'astro', 'hypermart'])
   })
 })
 

@@ -2,6 +2,7 @@
 
 import type { ScraperConfig, StoreConfig } from '../config.js'
 import { createAstroPlugin } from './astro.js'
+import { createHypermartPlugin } from './hypermart.js'
 import { createLottePlugin } from './lotte.js'
 import { createSuperindoPlugin } from './superindo.js'
 import type { StorePlugin } from './types.js'
@@ -10,6 +11,7 @@ export function createPlugin(config: StoreConfig): StorePlugin {
   if (config.slug === 'superindo') return createSuperindoPlugin(config)
   if (config.slug === 'lotte-mart') return createLottePlugin(config)
   if (config.slug === 'astro') return createAstroPlugin(config)
+  if (config.slug === 'hypermart') return createHypermartPlugin(config)
   // A config/registry mismatch — one guard for both.
   throw new Error(`No plugin registered for store "${config.slug}".`)
 }

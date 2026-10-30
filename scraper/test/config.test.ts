@@ -2,7 +2,10 @@
 
 import { describe, expect, it } from 'vite-plus/test'
 
+import { SCRAPE_STORE_SLUGS } from '@rumaq/contract'
+
 import { loadConfig, storeBySlug, storeProxyUrl } from '../src/config.js'
+import { createPlugin } from '../src/stores/index.js'
 
 describe('loadConfig', () => {
   it('carries the haqita consolidation thresholds verbatim', () => {
@@ -97,5 +100,27 @@ describe('loadConfig', () => {
       if (previous !== undefined) process.env.LOTTE_PROXY_URL = previous
       else delete process.env.LOTTE_PROXY_URL
     }
+  })
+})
+
+// Registration parity guards (issue #322, design-arch §4): a store must
+// never be triggerable before it can produce. createPlugin throws for a
+// config slug with no branch and activePlugins maps it over EVERY store
+// before scope filtering, so a config entry whose plugin was forgotten is a
+// whole-nightly crash — caught here, at PR time, on both axes.
+describe('registration parity (issue #322)', () => {
+  it('config ⇔ registry: every configured store builds a plugin', () => {
+    for (const store of loadConfig().stores) {
+      expect(() => createPlugin(store)).not.toThrow()
+    }
+  })
+
+  it('contract ⇔ config: SCRAPE_STORE_SLUGS equals the config slug set', () => {
+    // Array equality (not set equality) is deliberate: it also pins the two
+    // lists to one shared order, so a drift is visible in the diff, not just
+    // detectable. A slug in the contract without a producing store is
+    // triggerable-but-unimplemented; a store missing from the contract is
+    // untriggerable (its Scrape-Now and brochure keys would 404). Both fail.
+    expect([...SCRAPE_STORE_SLUGS]).toEqual(loadConfig().stores.map((store) => store.slug))
   })
 })
