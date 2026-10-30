@@ -169,6 +169,50 @@ export function bulkCatalogueSnapshot(count) {
   }
 }
 
+// Alfamart's campaign page deep link (issue #322): catalog items carry the
+// CAMPAIGN URL, not a servable /api/brochures/ object — the brochure view
+// must never group them (no OCR flow ever rendered a page image).
+export const ALFAMART_PROMO_PAGE =
+  'https://alfagift.id/promo/Murah-Banget-30-Oktober---5-November-2026'
+
+// Catalog-store fixture (issue #322): alfamart items land straight from the
+// rendered DOM — no OCR, no brochure object — with a parsed discount_pct
+// promo and a tier promo that stays label-only (the astro convention).
+export function catalogSnapshot() {
+  return {
+    schemaVersion: 1,
+    scrapedAt: '2026-10-26T23:00:05Z',
+    stores: [{ slug: 'alfamart', name: 'Alfamart', region: 'jakarta' }],
+    items: [
+      {
+        productKey: 'minyak-goreng--filma--2-l',
+        name: 'Minyak Goreng Filma Pouch 2 L',
+        brand: 'Filma',
+        unit: '2 L',
+        storeSlug: 'alfamart',
+        price: 43700,
+        promoType: 'discount_pct',
+        promoLabel: 'Diskon 5%',
+        matchMethod: 'solo',
+        matchConfidence: 1.0,
+        brochureUrl: ALFAMART_PROMO_PAGE,
+      },
+      {
+        productKey: 'detergen-cair--gentle-gen--700-g',
+        name: 'Detergen Cair Gentle Gen 700 g',
+        brand: 'Gentle Gen',
+        unit: '700 g',
+        storeSlug: 'alfamart',
+        price: 25000,
+        promoLabel: 'Beli 2 Disc.4%',
+        matchMethod: 'solo',
+        matchConfidence: 1.0,
+        brochureUrl: ALFAMART_PROMO_PAGE,
+      },
+    ],
+  }
+}
+
 // Brochure listing fixture (issue #293): items over the two servable object
 // URLs above, plus one legacy retailer-page URL row (the pre-#293 data shape)
 // that the servable-shape predicate must exclude from every group. Issue

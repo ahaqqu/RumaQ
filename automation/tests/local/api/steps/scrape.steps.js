@@ -175,6 +175,7 @@ defineFeature(feature, (test) => {
         'astro',
         'hypermart',
         'indomaret',
+        'alfamart',
       ])
       ctx.expectAuthenticatedCacheHeaders()
     })

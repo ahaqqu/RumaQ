@@ -185,6 +185,7 @@ export const SCRAPE_STORE_SLUGS = [
   'astro',
   'hypermart',
   'indomaret',
+  'alfamart',
 ] as const
 
 export const scrapeCommandCreateSchema = strictObject({

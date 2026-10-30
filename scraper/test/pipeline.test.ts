@@ -175,6 +175,8 @@ async function setupChallengedLotte() {
         embedClient: stubEmbedClient,
         verifyClient: stubVerifyClient,
         stateDir,
+        // Scoped to the two stores these scenarios assert (see above).
+        stores: ['lotte-mart', 'superindo'],
         fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
         renderPdf: silentIndomaretRender,
         ocrClient,
@@ -220,6 +222,9 @@ describe('runPipeline', () => {
         embedClient: stubEmbedClient,
         verifyClient: stubVerifyClient,
         stateDir,
+        // Scoped: alfamart's sentinel makes an empty listing red — this
+        // scenario exercises other stores (the unscoped full chain has its own).
+        stores: ['superindo'],
         dryRun: true,
         fetch: fetchMock,
         renderPdf: silentIndomaretRender,
@@ -260,6 +265,9 @@ describe('runPipeline', () => {
         embedClient: stubEmbedClient,
         verifyClient: stubVerifyClient,
         stateDir,
+        // Scoped: alfamart's sentinel makes an empty listing red — this
+        // scenario exercises other stores (the unscoped full chain has its own).
+        stores: ['superindo'],
         dryRun: true,
         fetch: fetchMock,
         renderPdf: silentIndomaretRender,
@@ -343,6 +351,9 @@ describe('runPipeline', () => {
         embedClient: stubEmbedClient,
         verifyClient: stubVerifyClient,
         stateDir,
+        // Scoped: alfamart's sentinel makes an empty listing red — this
+        // scenario exercises other stores (the unscoped full chain has its own).
+        stores: ['superindo'],
         dryRun: false,
         fetch: fetchMock,
         renderPdf: silentIndomaretRender,
@@ -385,6 +396,9 @@ describe('runPipeline', () => {
         embedClient: stubEmbedClient,
         verifyClient: stubVerifyClient,
         stateDir,
+        // Scoped: alfamart's sentinel makes an empty listing red — this
+        // scenario exercises other stores (the unscoped full chain has its own).
+        stores: ['superindo'],
         dryRun: false,
         fetch: fetchMock,
         renderPdf: silentIndomaretRender,
@@ -475,6 +489,9 @@ describe('runPipeline', () => {
         embedClient: stubEmbedClient,
         verifyClient: stubVerifyClient,
         stateDir,
+        // Scoped: alfamart's sentinel makes an empty listing red — this
+        // scenario exercises other stores (the unscoped full chain has its own).
+        stores: ['superindo'],
         dryRun: true,
         fetch: fetchMock,
         renderPdf: silentIndomaretRender,
@@ -587,6 +604,9 @@ describe('runPipeline', () => {
         embedClient: stubEmbedClient,
         verifyClient: stubVerifyClient,
         stateDir,
+        // Scoped: alfamart's sentinel makes an empty listing red — this
+        // scenario exercises other stores (the unscoped full chain has its own).
+        stores: ['superindo'],
         dryRun: false,
         fetch: fetchMock,
         renderPdf: silentIndomaretRender,
@@ -633,6 +653,9 @@ describe('runPipeline', () => {
         embedClient: stubEmbedClient,
         verifyClient: stubVerifyClient,
         stateDir,
+        // Scoped: alfamart's sentinel makes an empty listing red — this
+        // scenario exercises other stores (the unscoped full chain has its own).
+        stores: ['superindo'],
         dryRun: false,
         fetch: fetchMock,
         renderPdf: silentIndomaretRender,
@@ -700,6 +723,9 @@ describe('runPipeline', () => {
         embedClient: stubEmbedClient,
         verifyClient: stubVerifyClient,
         stateDir,
+        // Scoped: alfamart's sentinel makes an empty listing red — this
+        // scenario exercises other stores (the unscoped full chain has its own).
+        stores: ['superindo'],
         dryRun: true,
         fetch: fetchMock,
         renderPdf: silentIndomaretRender,
@@ -728,6 +754,9 @@ describe('runPipeline', () => {
         embedClient: stubEmbedClient,
         verifyClient: stubVerifyClient,
         stateDir,
+        // Scoped: alfamart's sentinel makes an empty listing red — this
+        // scenario exercises other stores (the unscoped full chain has its own).
+        stores: ['superindo'],
         dryRun: true,
         fetch: fetchMock,
         renderPdf: silentIndomaretRender,
@@ -765,6 +794,9 @@ describe('runPipeline', () => {
           embedClient: stubEmbedClient,
           verifyClient: stubVerifyClient,
           stateDir,
+          // Scoped: alfamart's sentinel makes an empty listing red — this
+          // scenario exercises other stores (the unscoped full chain has its own).
+          stores: ['superindo'],
           dryRun: true,
           fetch: fetchMock,
           renderPdf: silentIndomaretRender,
@@ -923,6 +955,9 @@ describe('runPipeline', () => {
         embedClient: bandEmbedClient,
         verifyClient: maybeVerifier,
         stateDir,
+        // Scoped: alfamart's sentinel makes an empty listing red — this
+        // scenario exercises other stores (the unscoped full chain has its own).
+        stores: ['superindo'],
         dryRun: false,
         fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
         renderPdf: silentIndomaretRender,
@@ -1109,6 +1144,9 @@ it('runs the lotte flow through the Tier-2 browser ladder and cross-matches with
   const status = await Effect.runPromise(
     runPipeline({
       stateDir,
+      // Scoped: alfamart's sentinel makes an empty listing red — this
+      // scenario exercises other stores (the unscoped full chain has its own).
+      stores: ['superindo', 'lotte-mart'],
       dryRun: true,
       launcher: lotteBrowser.launcher,
       embedClient: stubEmbedClient,
@@ -1250,6 +1288,9 @@ it('runs the indomaret render path end to end — rendered bytes ride classify �
       embedClient: stubEmbedClient,
       verifyClient: stubVerifyClient,
       stateDir,
+      // Scoped: alfamart's sentinel makes an empty listing red — this
+      // scenario exercises other stores (the unscoped full chain has its own).
+      stores: ['indomaret'],
       dryRun: false,
       fetch: fetchMock,
       renderPdf: fakeRender,
@@ -1303,6 +1344,9 @@ it('runs the indomaret render path end to end — rendered bytes ride classify �
       embedClient: stubEmbedClient,
       verifyClient: stubVerifyClient,
       stateDir,
+      // Scoped: alfamart's sentinel makes an empty listing red — this
+      // scenario exercises other stores (the unscoped full chain has its own).
+      stores: ['indomaret'],
       dryRun: false,
       fetch: fetchMock,
       renderPdf: fakeRender,
@@ -1317,6 +1361,90 @@ it('runs the indomaret render path end to end — rendered bytes ride classify �
   )
   expect(status2.stores['indomaret']!.newImages).toBe(0)
   expect(status2.stores['indomaret']!.existingImages).toBe(20)
+})
+
+it('runs the alfamart catalog store through the browser tier — launcher forwarded, items land without OCR (issue #322)', async () => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+  const listingHtml = await readFile(path.join(__dirname, 'fixtures/alfamart/promo.html'), 'utf8')
+  const detailHtml = await readFile(
+    path.join(__dirname, 'fixtures/alfamart/promo-detail.html'),
+    'utf8'
+  )
+  // Per-URL serving: every /promo/{slug} detail page vs the listing (whose
+  // URL has no trailing slash) — exercises fakeBrowserLauncher's
+  // URL-fragment mapping; the detail fragment must match first.
+  const alfamartBrowser = fakeBrowserLauncher({
+    '/promo/': detailHtml,
+    'alfagift.id/promo': listingHtml,
+  })
+  // The OCR client must never fire for a catalog-only run.
+  const noOcr: GeminiClient = {
+    models: {
+      generateContent: async () => {
+        throw new Error('OCR must not run for catalog stores')
+      },
+    },
+  }
+  const posted: IngestPayload[] = []
+  const publishFetch = async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/api/internal/ingest/runs')) {
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }
+    posted.push(JSON.parse(init!.body as string))
+    return new Response(JSON.stringify({ accepted: 3, skipped: 0 }), { status: 200 })
+  }
+
+  const status = await Effect.runPromise(
+    runPipeline({
+      launcher: alfamartBrowser.launcher,
+      embedClient: stubEmbedClient,
+      verifyClient: stubVerifyClient,
+      stateDir,
+      dryRun: false,
+      fetch: async (url: string) =>
+        // Indomaret rides its silent chain (see above); the other plain
+        // stores' listings serve empty pages.
+        serveIndomaret(url, () => new Response('<html><body></body></html>', { status: 200 }))!,
+      renderPdf: silentIndomaretRender,
+      ocrClient: noOcr,
+      publishFetch,
+      ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+      ingestSecret: 's3cret',
+      sleep: noSleep,
+      now: () => new Date('2026-10-31T23:00:05Z'),
+      log: () => {},
+    })
+  )
+
+  expect(status.stage).toBe('done')
+  const alfamart = status.stores['alfamart']!
+  // pagesFound counts distinct campaign pages with items (the deduped 3
+  // products all carry the first campaign's URL).
+  expect(alfamart.pagesFound).toBe(1)
+  expect(alfamart.itemsExtracted).toBe(3)
+  expect(alfamart.itemsRejected).toBe(0)
+  // The Chromium budget: 1 listing + maxPages 40 campaign visits for
+  // alfamart (lotte's one unwaited listing navigation rides the same fake).
+  const alfagiftNavigations = alfamartBrowser.state.navigations.filter((url) =>
+    url.includes('alfagift.id')
+  )
+  expect(alfagiftNavigations).toHaveLength(41)
+  expect(alfagiftNavigations[0]).toBe('https://alfagift.id/promo')
+  expect(alfamartBrowser.state.waits).toBe(41)
+  expect(alfamartBrowser.state.closed).toBe(true)
+
+  // The items validated straight from the rendered DOM — promo price,
+  // discount label parsed by the shared parsePromo, campaign deep link.
+  const items = posted[0]!.items.filter((item) => item.storeSlug === 'alfamart')
+  expect(items).toHaveLength(3)
+  const filma = items.find((item) => item.name === 'FILMA Minyak Goreng Pouch 2 L')!
+  expect(filma.price).toBe(43700)
+  expect(filma.promoType).toBe('discount_pct')
+  expect(filma.promoLabel).toBe('Diskon 5%')
+  expect(filma.effectiveUnitPrice).toBe(43700)
+  expect(filma.brochureUrl).toBe(
+    'https://alfagift.id/promo/Nestle-Super-Brand-Day-29-31-Oktober-2026'
+  )
 })
 
 it('runs the astro catalog store end to end — no OCR, outbox like the brochure stores', async () => {
@@ -1336,6 +1464,9 @@ it('runs the astro catalog store end to end — no OCR, outbox like the brochure
   const status = await Effect.runPromise(
     runPipeline({
       stateDir,
+      // Scoped: alfamart's sentinel makes an empty listing red — this
+      // scenario exercises other stores (the unscoped full chain has its own).
+      stores: ['astro'],
       dryRun: true,
       launcher: emptyLotte.launcher,
       embedClient: stubEmbedClient,
@@ -1506,6 +1637,8 @@ describe('brochure uploads (issue #293)', () => {
       embedClient: stubEmbedClient,
       verifyClient: stubVerifyClient,
       stateDir,
+      // Scoped: alfamart's sentinel makes an empty listing red (see above).
+      stores: ['superindo'],
       dryRun: false as const,
       fetch: makeFetchMock(katalogHtml, koranHtml, jpeg),
       renderPdf: silentIndomaretRender,

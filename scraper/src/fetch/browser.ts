@@ -12,9 +12,16 @@ import { storeProxyUrl } from '../config.js'
 import { isPermanentClientStatus, withRetries } from '../util/retry.js'
 import { BrowserTierRequired, FetchError, FetchHttpStatus, FetchTransport } from './errors.js'
 
-/** One browser tab: navigate, read rendered content. */
+/** One browser tab: navigate, wait for rendered anchors, read content. */
 export interface BrowserPage {
   goto(url: string, timeoutMs: number): Promise<void>
+  /**
+   * Wait for a rendered-DOM anchor (issue #322, design-arch §2.2): the real
+   * implementation is page.waitForSelector. A timeout rejects — the caller
+   * maps it to a retryable transport error so transient slowness rides the
+   * retry engine.
+   */
+  waitFor(selector: string, timeoutMs: number): Promise<void>
   content(): Promise<string>
   close(): Promise<void>
 }
@@ -95,6 +102,9 @@ export function playwrightLauncher(
             async goto(url: string, timeoutMs: number): Promise<void> {
               await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs })
             },
+            async waitFor(selector: string, timeoutMs: number): Promise<void> {
+              await page.waitForSelector(selector, { timeout: timeoutMs })
+            },
             async content(): Promise<string> {
               return page.content()
             },
@@ -114,6 +124,13 @@ export function playwrightLauncher(
 
 export interface BrowserFetcher {
   fetchHtml(url: string): Effect.Effect<string, FetchError>
+  /**
+   * Rendered-DOM fetch with an optional waitForSelector anchor (issue #322,
+   * design-arch §2.2 — Alfamart). The wait rides the same retry engine as
+   * the navigation: a selector timeout is a retryable transport error, so
+   * transient render slowness retries before failing.
+   */
+  fetchRendered(url: string, opts?: { waitForSelector?: string }): Effect.Effect<string, FetchError>
   /** Closes the browser session if one was launched; never throws. */
   close(): Promise<void>
 }
@@ -145,102 +162,117 @@ export function createBrowserFetcher(
     return session
   }
 
-  return {
-    fetchHtml(url: string): Effect.Effect<string, FetchError> {
-      return Effect.gen(function* () {
-        const active = yield* Effect.tryPromise({
-          try: () => ensureSession(),
+  const readRendered = (url: string, waitForSelector?: string): Effect.Effect<string, FetchError> =>
+    Effect.gen(function* () {
+      const active = yield* Effect.tryPromise({
+        try: () => ensureSession(),
+        catch: (cause: unknown) =>
+          new FetchTransport({
+            url,
+            cause,
+            message: `Browser launch failed for ${store.slug}: ${String(cause)}`,
+          }),
+      })
+      const page = yield* Effect.tryPromise({
+        try: () => active.newPage(),
+        catch: (cause: unknown) =>
+          new FetchTransport({
+            url,
+            cause,
+            message: `New page failed for ${url}: ${String(cause)}`,
+          }),
+      })
+      const readContent = (): Effect.Effect<string, FetchTransport> =>
+        Effect.tryPromise({
+          try: () => page.content(),
           catch: (cause: unknown) =>
             new FetchTransport({
               url,
               cause,
-              message: `Browser launch failed for ${store.slug}: ${String(cause)}`,
+              message: `Content read failed for ${url}: ${String(cause)}`,
             }),
         })
-        const page = yield* Effect.tryPromise({
-          try: () => active.newPage(),
-          catch: (cause: unknown) =>
-            new FetchTransport({
-              url,
-              cause,
-              message: `New page failed for ${url}: ${String(cause)}`,
-            }),
+      // Wait out an Incapsula interstitial that is still resolving: the
+      // challenge's own JS sets the incap cookies and triggers a reload
+      // AFTER domcontentloaded, so the first content() read can race it.
+      // Poll until the markers clear or the settle window closes — the
+      // caller then re-checks and escalates to Tier 3 only if the
+      // challenge persists.
+      const settleChallenge = (initial: string): Effect.Effect<string, FetchTransport> =>
+        Effect.gen(function* () {
+          let html = initial
+          for (let waited = 0; waited < challengeSettleMs; waited += CHALLENGE_POLL_INTERVAL_MS) {
+            yield* Effect.promise(() => sleep(CHALLENGE_POLL_INTERVAL_MS))
+            html = yield* readContent()
+            if (!looksLikeIncapsulaChallenge(html)) return html
+          }
+          return html
         })
-        const readContent = (): Effect.Effect<string, FetchTransport> =>
-          Effect.tryPromise({
-            try: () => page.content(),
+      const html = yield* withRetries(
+        Effect.gen(function* () {
+          yield* Effect.tryPromise({
+            try: () => page.goto(url, timeoutMs),
             catch: (cause: unknown) =>
               new FetchTransport({
                 url,
                 cause,
-                message: `Content read failed for ${url}: ${String(cause)}`,
+                message: `Navigation failed for ${url}: ${String(cause)}`,
               }),
           })
-        // Wait out an Incapsula interstitial that is still resolving: the
-        // challenge's own JS sets the incap cookies and triggers a reload
-        // AFTER domcontentloaded, so the first content() read can race it.
-        // Poll until the markers clear or the settle window closes — the
-        // caller then re-checks and escalates to Tier 3 only if the
-        // challenge persists.
-        const settleChallenge = (initial: string): Effect.Effect<string, FetchTransport> =>
-          Effect.gen(function* () {
-            let html = initial
-            for (let waited = 0; waited < challengeSettleMs; waited += CHALLENGE_POLL_INTERVAL_MS) {
-              yield* Effect.promise(() => sleep(CHALLENGE_POLL_INTERVAL_MS))
-              html = yield* readContent()
-              if (!looksLikeIncapsulaChallenge(html)) return html
-            }
-            return html
-          })
-        const html = yield* withRetries(
-          Effect.gen(function* () {
+          if (waitForSelector) {
             yield* Effect.tryPromise({
-              try: () => page.goto(url, timeoutMs),
+              try: () => page.waitFor(waitForSelector, timeoutMs),
               catch: (cause: unknown) =>
                 new FetchTransport({
                   url,
                   cause,
-                  message: `Navigation failed for ${url}: ${String(cause)}`,
+                  message:
+                    `Rendered anchor "${waitForSelector}" never appeared for ${url} ` +
+                    `within ${timeoutMs}ms: ${String(cause)}`,
                 }),
             })
-            let response = yield* readContent()
-            if (looksLikeIncapsulaChallenge(response)) {
-              log(
-                `[browser ${url}] Incapsula interstitial — waiting up to ` +
-                  `${challengeSettleMs}ms for the challenge to self-resolve`
-              )
-              response = yield* settleChallenge(response)
-            }
-            if (looksLikeIncapsulaChallenge(response)) {
-              return yield* new BrowserTierRequired({
-                url,
-                message:
-                  `Browser tier still served an Incapsula challenge for ${url} ` +
-                  `(waited ${challengeSettleMs}ms for self-resolution) — ` +
-                  'Tier 3 (per-store proxy) is required for this egress IP',
-              })
-            }
-            return response
-          }),
-          {
-            retries,
-            backoffMs,
-            sleep,
-            log,
-            context: `browser ${url}`,
-            isFatal: (error) =>
-              error instanceof BrowserTierRequired ||
-              (error instanceof FetchHttpStatus && isPermanentClientStatus(error.status)),
           }
-        ).pipe(
-          // The tab's lifecycle is local to this request: close it whatever
-          // the outcome (success, retries exhausted, or the fatal challenge
-          // verdict) — the session close at store end stays as the backstop.
-          Effect.onExit(() => Effect.promise(() => page.close().catch(() => undefined)))
-        )
-        return html
-      })
-    },
+          let response = yield* readContent()
+          if (looksLikeIncapsulaChallenge(response)) {
+            log(
+              `[browser ${url}] Incapsula interstitial — waiting up to ` +
+                `${challengeSettleMs}ms for the challenge to self-resolve`
+            )
+            response = yield* settleChallenge(response)
+          }
+          if (looksLikeIncapsulaChallenge(response)) {
+            return yield* new BrowserTierRequired({
+              url,
+              message:
+                `Browser tier still served an Incapsula challenge for ${url} ` +
+                `(waited ${challengeSettleMs}ms for self-resolution) — ` +
+                'Tier 3 (per-store proxy) is required for this egress IP',
+            })
+          }
+          return response
+        }),
+        {
+          retries,
+          backoffMs,
+          sleep,
+          log,
+          context: `browser ${url}`,
+          isFatal: (error) =>
+            error instanceof BrowserTierRequired ||
+            (error instanceof FetchHttpStatus && isPermanentClientStatus(error.status)),
+        }
+      ).pipe(
+        // The tab's lifecycle is local to this request: close it whatever
+        // the outcome (success, retries exhausted, or the fatal challenge
+        // verdict) — the session close at store end stays as the backstop.
+        Effect.onExit(() => Effect.promise(() => page.close().catch(() => undefined)))
+      )
+      return html
+    })
+
+  return {
+    fetchHtml: (url) => readRendered(url),
+    fetchRendered: (url, opts) => readRendered(url, opts?.waitForSelector),
     async close(): Promise<void> {
       try {
         await session?.close()

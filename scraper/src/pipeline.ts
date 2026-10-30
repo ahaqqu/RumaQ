@@ -227,6 +227,7 @@ function processStore(
   return Effect.gen(function* () {
     const pages = yield* plugin.listBrochurePages({
       fetchHtml: (url) => fetcher.fetchHtml(url),
+      fetchRendered: (url, opts) => fetcher.fetchRendered(url, opts),
       fetchDocument: (url) => fetcher.fetchDocument(url),
       renderPdf: options.renderPdf ?? renderPdfPages,
       runStartedAt: scrapedAt,
@@ -419,11 +420,16 @@ function processCatalogStore(
     fetch: options.fetch,
     log,
     sleep: options.sleep,
+    // The launcher must ride the catalog path too (issue #322, design-arch
+    // §2.1/D5): the first catalog+browser store would otherwise boot real
+    // Playwright inside tests and bypass every injected fake.
+    launcher: options.launcher,
   })
 
   return Effect.gen(function* () {
     const items = yield* plugin.listItems({
       fetchHtml: (url) => fetcher.fetchHtml(url),
+      fetchRendered: (url, opts) => fetcher.fetchRendered(url, opts),
       fetchDocument: (url) => fetcher.fetchDocument(url),
       renderPdf: options.renderPdf ?? renderPdfPages,
       runStartedAt: scrapedAt,

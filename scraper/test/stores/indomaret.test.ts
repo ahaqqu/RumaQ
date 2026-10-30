@@ -169,6 +169,7 @@ function makeCtx(options: {
         ? options.fetchDocument(url)
         : Effect.die(new Error(`unexpected fetchDocument(${url})`))
     },
+    fetchRendered: (url) => Effect.die(new Error(`unexpected fetchRendered(${url})`)),
     renderPdf: options.render ?? fakeRender(3).render,
     runStartedAt: '2026-10-30T00:00:00Z',
   }

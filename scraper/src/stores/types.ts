@@ -37,6 +37,12 @@ export interface FetchContext {
   /** Fetch a document through the store's strategy ladder (§2). */
   fetchHtml(url: string): Effect.Effect<string, FetchError>
   /**
+   * Rendered-DOM fetch with an optional waitForSelector anchor (issue #322,
+   * design-arch §2.2 — Alfamart). The plain tier aliases it to fetchHtml:
+   * nothing to wait for on Tier 1.
+   */
+  fetchRendered(url: string, opts?: { waitForSelector?: string }): Effect.Effect<string, FetchError>
+  /**
    * Raw-byte fetch with no image content gate (issue #322): a document
    * fetch (Indomaret's brochure PDFs) is honest about being non-image.
    */

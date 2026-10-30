@@ -46,6 +46,7 @@ function scriptedLauncher(script: (string | Error)[]): {
                 call++
                 if (step instanceof Error) throw step
               },
+              async waitFor() {},
               async content() {
                 const step = script[Math.min(call - 1, script.length - 1)]
                 return step instanceof Error ? '<html></html>' : step
@@ -132,6 +133,7 @@ describe('createBrowserFetcher', () => {
       launch: async () => ({
         newPage: async () => ({
           goto: async () => {},
+          waitFor: async () => {},
           content: async () => {
             reads++
             return reads <= 2 ? interstitial : real
@@ -207,6 +209,7 @@ describe('createBrowserFetcher', () => {
       launch: async () => ({
         newPage: async () => ({
           goto: async () => {},
+          waitFor: async () => {},
           content: async () => {
             throw new Error('detached frame')
           },

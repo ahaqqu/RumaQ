@@ -37,6 +37,13 @@ export interface DownloadedImage {
 
 export interface StoreFetcher {
   fetchHtml(url: string): Effect.Effect<string, FetchError>
+  /**
+   * Rendered-DOM fetch with an optional waitForSelector anchor (issue #322,
+   * design-arch §2.2 — Alfamart). The plain tier aliases it to fetchHtml:
+   * nothing to wait for on Tier 1. The browser tier waits for the anchor
+   * inside the navigation's retry engine.
+   */
+  fetchRendered(url: string, opts?: { waitForSelector?: string }): Effect.Effect<string, FetchError>
   fetchBytes(url: string): Effect.Effect<DownloadedImage, FetchError>
   /**
    * Raw-byte fetch with NO NonImageContent gate (issue #322, design-arch
@@ -170,22 +177,27 @@ export function createFetcher(
     )
   }
 
-  return {
-    fetchHtml(url: string): Effect.Effect<string, FetchError> {
-      return request(url, DEFAULT_HEADERS.Accept).pipe(
-        Effect.flatMap((response) =>
-          Effect.tryPromise({
-            try: () => response.text(),
-            catch: (cause: unknown) =>
-              new FetchTransport({
-                url,
-                cause,
-                message: `Body read failed for ${url}: ${String(cause)}`,
-              }),
-          })
-        )
+  const fetchHtmlEffect = (url: string): Effect.Effect<string, FetchError> =>
+    request(url, DEFAULT_HEADERS.Accept).pipe(
+      Effect.flatMap((response) =>
+        Effect.tryPromise({
+          try: () => response.text(),
+          catch: (cause: unknown) =>
+            new FetchTransport({
+              url,
+              cause,
+              message: `Body read failed for ${url}: ${String(cause)}`,
+            }),
+        })
       )
-    },
+    )
+
+  return {
+    fetchHtml: fetchHtmlEffect,
+    // Tier 1 renders nothing — the wait capability is a browser-tier
+    // concept, aliased away here (design-arch §2.2). The waitForSelector
+    // option is deliberately ignored: a plain GET has nothing to wait for.
+    fetchRendered: (url) => fetchHtmlEffect(url),
     fetchBytes(url: string): Effect.Effect<DownloadedImage, FetchError> {
       return request(url, '*/*').pipe(
         Effect.flatMap(
@@ -276,6 +288,7 @@ export function createStoreFetcher(
     const plain = createFetcher(store, options)
     return {
       fetchHtml: (url) => browser.fetchHtml(url),
+      fetchRendered: (url, opts) => browser.fetchRendered(url, opts),
       fetchBytes: (url) => plain.fetchBytes(url),
       // Document fetches ride the plain tier too (no browser store calls it
       // today; the gate-free bytes path is a plain-tier capability).

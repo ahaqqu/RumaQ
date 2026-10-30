@@ -159,6 +159,23 @@ export function loadConfig(): ScraperConfig {
         maxPages: 40,
         proxyEnv: 'INDOMARET_PROXY_URL',
       },
+      {
+        // Alfamart (alfagift.id) — Nuxt shell + fingerprint-gated gateway;
+        // nothing serves to plain fetch, but an anonymous headless browser
+        // renders structured promo product cards (catalog semantics: no
+        // OCR, no R2, no novelty state). First catalog+browser combination —
+        // maxPages caps campaign detail-page visits (Chromium budget =
+        // 1 + maxPages navigations/cycle, design-arch §5). Gateway API out
+        // of scope (FingerprintJS).
+        slug: 'alfamart',
+        name: 'Alfamart',
+        kind: 'catalog',
+        strategy: 'browser',
+        region: 'jakarta',
+        website: 'https://alfagift.id/',
+        maxPages: 40,
+        proxyEnv: 'ALFAMART_PROXY_URL',
+      },
     ],
   }
 }

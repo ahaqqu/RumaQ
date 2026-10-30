@@ -6,6 +6,8 @@ import {
   RICE_KEY,
   SUGAR_KEY,
   FLOUR_KEY,
+  ALFAMART_PROMO_PAGE,
+  catalogSnapshot,
   priceSnapshot,
   promoSnapshot,
   bulkCatalogueSnapshot,
@@ -273,6 +275,65 @@ defineFeature(feature, (test) => {
     and('the product should have history entries', () => {
       expect(Array.isArray(ctx.responseBody.history)).toBe(true)
       expect(ctx.responseBody.history.length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
+  test("A catalog store's promos land without the OCR flow (issue #322)", ({
+    given,
+    and,
+    when,
+    then,
+  }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a catalog snapshot has been pushed', async () => {
+      ctx.response = await fetch(`${ctx.baseUrl}/api/internal/ingest/prices`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${INGEST_SECRET}`,
+        },
+        body: JSON.stringify(catalogSnapshot()),
+      })
+      ctx.expectStatus(200)
+    })
+
+    and('I am authenticated as a test user', async () => {
+      await ctx.authenticate()
+    })
+
+    when('I request the price detail for the alfamart promo', async () => {
+      await ctx.sendRequest('GET', '/api/prices/minyak-goreng--filma--2-l')
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and('the alfamart discount should claim discount_pct at the promo price', () => {
+      // The rendered-DOM price IS the customer price: promo_type discount_pct
+      // with the effective unit price equal to the listed price (astro
+      // convention), label parsed by the shared parsePromo pattern.
+      expect(ctx.responseBody.product.product_key).toBe('minyak-goreng--filma--2-l')
+      const row = ctx.responseBody.current[0]
+      expect(row.source_slug).toBe('alfamart')
+      expect(row.price).toBe(43700)
+      expect(row.promo_type).toBe('discount_pct')
+      expect(row.promo_label).toBe('Diskon 5%')
+    })
+
+    and('the alfamart campaign page should appear in no brochure group', async () => {
+      // Catalog items carry the campaign URL — not a servable
+      // /api/brochures/ object — so the brochures view (the OCR-flow surface)
+      // must have no group for the store at all.
+      await ctx.sendRequest('GET', '/api/prices/brochures')
+      ctx.expectStatus(200)
+      for (const group of ctx.responseBody.groups) {
+        expect(group.source_slug).not.toBe('alfamart')
+        expect(group.brochure_url).not.toBe(ALFAMART_PROMO_PAGE)
+      }
     })
   })
 

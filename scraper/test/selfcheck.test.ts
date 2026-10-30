@@ -12,7 +12,12 @@ import type { BrowserLauncher } from '../src/fetch/browser.js'
 
 const okLauncher: BrowserLauncher = {
   launch: async () => ({
-    newPage: async () => ({ goto: async () => {}, content: async () => '', close: async () => {} }),
+    newPage: async () => ({
+      goto: async () => {},
+      waitFor: async () => {},
+      content: async () => '',
+      close: async () => {},
+    }),
     close: async () => {},
   }),
 }
