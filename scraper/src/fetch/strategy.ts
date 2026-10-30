@@ -18,7 +18,13 @@ import type { StoreConfig } from '../config.js'
 import { storeProxyUrl } from '../config.js'
 import { isPermanentClientStatus, withRetries } from '../util/retry.js'
 import { createBrowserFetcher, type BrowserLauncher } from './browser.js'
-import { type FetchError, FetchHttpStatus, FetchTransport, NonImageContent } from './errors.js'
+import {
+  type FetchError,
+  FetchHttpStatus,
+  FetchTransport,
+  NonImageContent,
+  NotPdfContent,
+} from './errors.js'
 
 export const DEFAULT_HEADERS: Record<string, string> = {
   'User-Agent':
@@ -97,6 +103,22 @@ function storeCookies(jar: CookieJar, url: string, response: Response): void {
 function isImageContentType(contentType: string): boolean {
   const mimeType = contentType.split(';')[0]!.trim().toLowerCase()
   return mimeType.startsWith('image/') || mimeType === 'application/octet-stream'
+}
+
+/** The PDF format's own marker — the check pdftoppm's input implies. */
+function isPdfBytes(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 4 &&
+    bytes[0] === 0x25 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x44 &&
+    bytes[3] === 0x46
+  )
+}
+
+/** First bytes as hex for the failure message — names what was received. */
+function leadingBytesHex(bytes: Uint8Array, count = 8): string {
+  return [...bytes.slice(0, count)].map((byte) => byte.toString(16).padStart(2, '0')).join(' ')
 }
 
 export interface CreateFetcherOptions {
@@ -250,7 +272,28 @@ export function createFetcher(
                 message: `Body read failed for ${url}: ${String(cause)}`,
               }),
           })
-        )
+        ),
+        // Magic-byte sanity (design-arch §1.2): these bytes flow straight to
+        // pdftoppm, and a 200 HTML challenge page served for the PDF URL
+        // (Cloudflare fronts indomaret.co.id) would otherwise surface as a
+        // misleading poppler "Syntax Error". The leading %PDF marker is
+        // checked on the bytes, not the declared header, so a real PDF with
+        // a wrong content-type still renders; anything else fails typed,
+        // naming what was actually received. Fatal by construction: wrong
+        // content never succeeds on retry.
+        Effect.flatMap((downloaded) => {
+          if (isPdfBytes(downloaded.bytes)) return Effect.succeed(downloaded)
+          return Effect.fail(
+            new NotPdfContent({
+              url,
+              contentType: downloaded.contentType,
+              message:
+                `Not a PDF: ${url} served ` +
+                `${downloaded.contentType ?? 'no content-type'} ` +
+                `(leading bytes: ${leadingBytesHex(downloaded.bytes)})`,
+            })
+          )
+        })
       )
     },
     async close(): Promise<void> {

@@ -31,6 +31,20 @@ export class NonImageContent extends Data.TaggedError('NonImageContent')<{
 }> {}
 
 /**
+ * A document fetch (fetchDocument, issue #322) returned bytes that are not
+ * a PDF — e.g. a 200 HTML challenge page served for the PDF URL (Cloudflare
+ * fronts indomaret.co.id). Typed so the store reddens with a precise
+ * "not a PDF" diagnosis instead of a misleading pdftoppm syntax error once
+ * the bytes reach the renderer. Fatal by construction, like NonImageContent:
+ * wrong content never succeeds on retry.
+ */
+export class NotPdfContent extends Data.TaggedError('NotPdfContent')<{
+  url: string
+  contentType: string | null
+  message: string
+}> {}
+
+/**
  * Structural churn on a scraped surface: the anchors/config the parser
  * contract keys on are gone (zero brochure links on a hub, zero product
  * cards on a campaign page). Goes red — never a silent zero — while riding
@@ -61,5 +75,6 @@ export type FetchError =
   | FetchTransport
   | FetchHttpStatus
   | NonImageContent
+  | NotPdfContent
   | ScrapeStructureError
   | PdfRenderError
