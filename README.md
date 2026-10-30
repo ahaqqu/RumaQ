@@ -124,8 +124,8 @@ deploy rolls back again. Those two paths are the `ahaqqu/vps` contract's fixed
 bootstrap is rejected rather than followed.
 
 The same `deploy.yml` commit-based flow runs this when a main push touches the
-scraper's world (`scraper/`, `contract/`, deploy plumbing); it is skipped until
-`vars.VPS_HOST` is set. Configuration:
+scraper's world (`scraper/`, `contract/`, deploy plumbing); the job is gated on
+`vars.VPS_HOST` (set to the box). Configuration:
 
 | Name                 | Where    | Value                                                                                      |
 | -------------------- | -------- | ------------------------------------------------------------------------------------------ |
@@ -133,20 +133,15 @@ scraper's world (`scraper/`, `contract/`, deploy plumbing); it is skipped until
 | `VPS_HOST`           | variable | the box                                                                                    |
 | `VPS_DEPLOY_SSH_KEY` | secret   | private half of the `rumaq-deploy` key                                                     |
 
-Deploys **fail closed** until the owner cuts the box over:
+The cutover is complete: the `ahaqqu/vps` applier is installed and its first
+apply has run, the `rumaq-deploy` identity holds this repository's key, and
+`VPS_USER` names `rumaq-deploy` (the only identity granted `vps-deploy rumaq`,
+and the workflow default). A deploy needs nothing from the owner; `VPS_ROOT` is
+no longer read.
 
-1. install the `ahaqqu/vps` applier and run its first apply (creates
-   `rumaq-deploy`, installs `/usr/local/sbin/vps-deploy`, the contract and the
-   grant, and retires RumaQ's old sudoers fragment);
-2. append this repo's public key to
-   `/home/rumaq-deploy/.ssh/authorized_keys` and set `VPS_USER` to
-   `rumaq-deploy` (or delete it so the workflow default applies). The variable
-   currently still names the retired shared identity, and `VPS_ROOT` is no
-   longer read.
-
-The root-only env (`/etc/rumaq-scraper/env`) is operator-owned; `scraper/env.example`
+The root-only env (`/etc/rumaq/scraper.env`) is operator-owned; `scraper/env.example`
 documents the variables the app reads but is non-authoritative. The host
-templates live in `ahaqqu/vps` `rumaq/env/`.
+template is `ahaqqu/vps` `rumaq/env/scraper.env.example`.
 
 ### Pull request previews
 
