@@ -8,7 +8,7 @@
  * backend and this client fails `vp check` / CI.
  */
 import createClient from 'openapi-fetch'
-import type { paths } from './api-schema.js'
+import type { operations, paths } from './api-schema.js'
 
 const client = createClient<paths>({ credentials: 'include' })
 
@@ -307,14 +307,13 @@ export function getPriceRuns(signal?: AbortSignal): Promise<unknown> {
 
 // Scrape Now (docs/plan/scrape-now.md §4): admin-triggered, store-selectable
 // scraping. The POST queues a command the VPS agent claims; commands/events
-// feed the live log and the failure-log history.
+// feed the live log and the failure-log history. The slug union is DERIVED
+// from the codegen'd scrape-command body rather than hand-copied (review
+// B3): a new store lands in api-schema.d.ts via `bun run api:codegen`, and
+// the existing codegen drift check in ci.sh then fails `vp check` here until
+// this type follows — the mirror is CI-guarded for free.
 export type ScrapeStoreSlug =
-  | 'superindo'
-  | 'lotte-mart'
-  | 'astro'
-  | 'hypermart'
-  | 'indomaret'
-  | 'alfamart'
+  operations['postApiAdminScrape']['requestBody']['content']['application/json']['stores'][number]
 
 export function getScrapeStores(signal?: AbortSignal): Promise<unknown> {
   return unwrap(client.GET('/api/admin/scrape/stores', { signal }))
