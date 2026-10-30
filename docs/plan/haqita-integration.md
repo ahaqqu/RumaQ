@@ -359,9 +359,9 @@ probed live on 2026-10-28:
 > retired when the scraper deploy switched to `vps-deploy rumaq`.
 
 - System user `rumaq-scraper`; code rsynced to `/srv/rumaq-scraper`;
-  state in `/var/lib/rumaq-scraper`; secrets root-only in `/etc/rumaq-scraper/env`
-  (KajianQ pattern: `GEMINI_API_KEY`, `RUMAQ_INGEST_URL`, `RUMAQ_INGEST_SECRET`,
-  optional per-store proxy vars).
+  state in `/var/lib/rumaq-scraper`; secrets root-only in `/etc/rumaq/scraper.env`
+  (owned by `ahaqqu/vps` `rumaq/`; KajianQ pattern: `GEMINI_API_KEY`,
+  `RUMAQ_INGEST_URL`, `RUMAQ_INGEST_SECRET`, optional per-store proxy vars).
 - `rumaq-scraper.timer` at 23:00 UTC (= 06:00 WIB). No nginx, no cert, no listener.
   The unit pins the zone in `OnCalendar=*-*-* 23:00:00 UTC` — without the suffix
   systemd reads the time in the box's local zone (Europe/Berlin).
@@ -374,9 +374,10 @@ probed live on 2026-10-28:
 - `ahaqqu/vps` PR: `docs/RESOURCES.md` app-table row + inventory card; doctor.sh awareness (timer unit).
 - **Operator bootstrap**: retired — `scraper/provision/vps/` and
   `scripts/provision-vps.sh` are gone. Install the host configuration with the
-  `ahaqqu/vps` applier, then append this repository's key to the `rumaq-deploy`
-  identity (`ahaqqu/vps` `docs/DEPLOY.md` § Bootstrap order). The nightly timer
-  and `RUMAQ_PUBLISH=true` are already live and are never reset by a deploy.
+  `ahaqqu/vps` applier (`runbook/BOOTSTRAP.md` § 6), then append this
+  repository's key to the `rumaq-deploy` identity (§ 9 Switch one project to
+  its deploy identity). The nightly timer and `RUMAQ_PUBLISH=true` are already
+  live and are never reset by a deploy.
 
 ### 7.1 Monitoring (owner decision 2026-10-26: admin screen wanted)
 

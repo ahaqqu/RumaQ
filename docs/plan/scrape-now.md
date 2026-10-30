@@ -53,11 +53,15 @@ Nightly path untouched; a manual run lands in `price_runs` automatically via the
   - Batch-post events (flush ~2s or 25 lines) to `POST /api/internal/scrape/commands/:id/events`; seq is agent-assigned monotonic per command; retries are idempotent (worker does ON CONFLICT DO NOTHING).
   - On child exit: `POST .../finish` with status/exitCode/error (last error line or PipelineFailure message). Kill child after 60min → finish failed 'timeout'.
   - Agent never exits on error (log + continue loop); systemd `Restart=always` as backstop.
-- Provisioning:
-  - New `scraper/provision/vps/systemd/rumaq-scraper-agent.service`: long-running (`Restart=always`, `RestartSec=5`), same user/hardening as `rumaq-scraper.service`, `ExecStart=/usr/bin/bun /srv/rumaq-scraper/dist/agent.js`, same `EnvironmentFile` + `PLAYWRIGHT_BROWSERS_PATH`.
-  - `apply.sh`: install the 4th unit; `systemctl enable --now rumaq-scraper-agent.service` (the agent is safe pre-go-live: it only acts on commands).
-  - `scripts/deploy/vps.sh`: stage 1 also bundles `scraper/src/agent.ts → dist/agent.js`; after rsync, restart the agent with `sudo -n systemctl restart rumaq-scraper-agent.service` — MUST be non-fatal when the unit isn't installed yet (print a warning, continue); extend the sudoers fragment (`scraper/provision/vps/sudoers/`) with restart rights for the agent unit and update `apply.sh` sudoers installation accordingly.
-  - Nightly `rumaq-scraper.service`: wrap `ExecStart` with `/usr/bin/flock -n /var/lib/rumaq-scraper/run.lock` so nightly and manual runs can never overlap (a skipped nightly soft-fails and retries tomorrow — consistent with existing philosophy).
+- Provisioning (current): the live `rumaq-scraper-agent.service` is installed by
+  `ahaqqu/vps` `rumaq/` (`systemd/rumaq-scraper-agent.service`): long-running
+  (`Restart=always`, `RestartSec=5`), same user/hardening as
+  `rumaq-scraper.service`, `ExecStart=/usr/bin/bun /srv/rumaq-scraper/dist/agent.js`,
+  same `EnvironmentFile` + `PLAYWRIGHT_BROWSERS_PATH`. The retired in-repo
+  `scraper/provision/vps/` and `apply.sh` install are gone; `scripts/deploy/vps.sh`
+  bundles `scraper/src/agent.ts → dist/agent.js` and `vps-deploy rumaq` restarts
+  the agent.
+- Nightly `rumaq-scraper.service`: wrap `ExecStart` with `/usr/bin/flock -n /var/lib/rumaq-scraper/run.lock` so nightly and manual runs can never overlap (a skipped nightly soft-fails and retries tomorrow — consistent with existing philosophy).
 
 ## 3. Backend
 
@@ -102,4 +106,4 @@ Nightly path untouched; a manual run lands in `price_runs` automatically via the
 
 - Preview: PR branches get branch Workers (`rumaq-api-{branch}`) via the on-demand "Preview deployment" workflow.
 - Production: `./scripts/deploy.sh cloudflare` then `./scripts/deploy.sh vps` (the helper restarts the agent and runs the self-check, then the shared doctor gate). Host configuration and the live timer are managed by `ahaqqu/vps` `rumaq/`; no in-repo root step remains.
-- Verify: public SPA loads; admin page reachable; automation/e2e green; live scrape trigger (publishes real data — owner-sanctioned) once agent unit is installed.
+- Verify: public SPA loads; admin page reachable; automation/e2e green; live scrape trigger (publishes real data — owner-sanctioned) — the agent unit is installed and live via `ahaqqu/vps` `rumaq/`.
