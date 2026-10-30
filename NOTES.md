@@ -63,13 +63,43 @@ proxy at the same moment as a healthcheck curl, and one gets an error.
 Key missing datum: the 500 BODY ({error: err.message} tells us exactly which
 layer threw). Reproduction must capture it.
 
-## Reproduction plan
+## Reproduction results (local, 8 vCPU, images from c63a307)
 
-R1: fresh stack (down -v, up --build), fire unauthenticated POST /api/purchases
-    immediately in a tight loop, capture bodies.
-R2: full automation-local run with temporary instrumentation to dump responseBody
-    on 500 (revert before final diff).
-R3: if nondeterministic, add the harness-level guard (readiness probe hitting an
-    UNAUTHENTICATED auth-protected endpoint expecting 401, retry-once on
-    cold-start signature) which is the mandated fix anyway; the guard itself
-    provides the evidence trail in CI logs.
+- Fresh stack cycle with in-container probe (400 rapid unauthenticated POSTs to
+  /api/purchases starting at container boot, before/around healthchecks):
+  0 anomalies, all 401.
+- Full `./scripts/test.sh automation-local` baseline: ALL GREEN (integration
+  120 + e2e 47), exit 0.
+- No natural repro locally. Flake is rare (2 occurrences in CI history).
+
+## Root-cause conclusion (static + empirical)
+
+The worker-side 401 path (propsAuthMiddleware with no cookie) is pure in-memory
+JS — it never touches D1, R2, or any I/O — so the issue's "D1 cold start"
+hypothesis cannot explain a 500 from the auth middleware itself. The 500 must
+originate in the harness dispatch layer (worker-server.mjs outer catch around
+mf.dispatchFetch, or a one-off Miniflare/workerd dispatch error under CI load):
+- reset+seed had SUCCEEDED seconds earlier in the failing CI run (failure was
+  at the `then` assertion, not the `given` step).
+- The request 42ms later 500'd once; the NEXT request 24ms after that passed.
+- workerd was warm (healthcheck dispatches every 2s before the suite).
+Without the response body we cannot pin the exact dispatch error (api container
+logs were torn down), so the fix must (a) absorb the one-off at the harness
+boundary and (b) capture the body if it ever recurs.
+
+## Fix design (harness-only)
+
+1. `automation/scripts/test-local.sh` ensure_stack(): after the /api/health
+   gate, a canary probe — unauthenticated POST /api/purchases via the proxy,
+   expecting 401 (the known cold-start signature). Retry up to 5x (1s apart)
+   on any non-401, logging each anomaly; on persistent failure dump the body
+   and fail the run BEFORE the suites start (with proxy/api logs, mirroring
+   the health-failure path). Covers full run, --api, and --e2e modes; CI
+   (scheduled Test Automation) goes through this script.
+2. `automation/tests/local/api/steps/helpers.js` expectStatus(): include the
+   stored response body in the assertion message, so any future 500 carries
+   the underlying `{error: ...}` message in vitest output (today's run proved
+   status-only assertions hide the root cause).
+3. Fault-injection validation: temporarily inject a one-shot 500 for the first
+   /api/purchases request in worker-server.mjs, verify the canary absorbs it
+   and the suite passes, then REVERT the injection and rebuild clean.
