@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { IconPin, IconClock, IconShop } from './icons.jsx'
-import { formatTokens, usageMeterModel } from '../lib/usage.js'
+import { formatTokens, formatCacheRate, usageMeterModel } from '../lib/usage.js'
 import { cn } from '../lib/cn.js'
 import { Chip } from './Chip.jsx'
 import { Badge } from './Badge.jsx'
@@ -69,8 +69,6 @@ export function UsageMeter({ usage }) {
   const { t } = useTranslation()
   const meter = usageMeterModel(usage)
   if (!meter) return null
-  const tone =
-    !meter.ownKey && meter.danger ? 'danger' : !meter.ownKey && meter.warn ? 'warn' : 'muted'
 
   return (
     <div className="flex flex-col gap-3 p-5">
@@ -78,55 +76,26 @@ export function UsageMeter({ usage }) {
         <div>
           <div className="font-semibold text-base">{usage.provider}</div>
           <div className="text-sm text-text-muted mt-0.5">
-            {meter.ownKey
-              ? t('ui.ownKeyTokensToday', {
-                  input: formatTokens(meter.inputTokens),
-                  output: formatTokens(meter.outputTokens),
-                })
-              : t('ui.requestsToday', {
-                  used: meter.used,
-                  limit: meter.limit,
-                })}
+            {t('ui.usageTokensToday', {
+              used: meter.used,
+              input: formatTokens(meter.inputTokens),
+              output: formatTokens(meter.outputTokens),
+            })}
           </div>
         </div>
-        {!meter.ownKey && (
-          <div
-            className={cn(
-              'font-bold text-lg tabular-nums',
-              tone === 'danger' && 'text-danger',
-              tone === 'warn' && 'text-warn'
-            )}
-          >
-            {meter.used}/{meter.limit}
+        {/* Hidden when the provider reports no cache data — unknown, not 0%. */}
+        {meter.cacheHitRate !== null && (
+          <div className="text-right shrink-0">
+            <div className="font-bold text-lg tabular-nums">
+              {formatCacheRate(meter.cacheHitRate)}
+            </div>
+            <div className="text-xs text-text-muted">{t('ui.cacheHitRate')}</div>
           </div>
         )}
       </div>
-      {!meter.ownKey && (
-        <>
-          <div className="h-2 rounded-pill bg-surface-inset overflow-hidden">
-            <div
-              className={cn(
-                'h-full rounded-pill bg-accent transition-[width] duration-300 ease-out',
-                tone === 'warn' && 'bg-warn',
-                tone === 'danger' && 'bg-danger'
-              )}
-              style={{ width: meter.pct + '%' }}
-            />
-          </div>
-          {meter.danger ? (
-            <div className="text-sm text-danger">{t('ui.dailyLimitReachedDesc')}</div>
-          ) : meter.warn ? (
-            <div className="text-sm text-warn font-medium">
-              {t('ui.closeToLimitDesc', { remaining: meter.remaining })}
-            </div>
-          ) : (
-            <div className="text-sm text-text-muted">
-              {t('ui.remainingRequests', { remaining: meter.remaining })}
-            </div>
-          )}
-        </>
-      )}
-      {meter.ownKey && <div className="text-sm text-text-muted">{t('ui.ownKeyUnlimited')}</div>}
+      <div className="text-sm text-text-muted">
+        {meter.ownKey ? t('ui.ownKeyUnlimited') : t('ui.serverKeyRecorded')}
+      </div>
     </div>
   )
 }

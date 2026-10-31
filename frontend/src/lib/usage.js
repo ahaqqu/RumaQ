@@ -1,6 +1,8 @@
-// Shared AI-usage display model. The daily request cap only applies to
-// RumaQ's shared server key; a user's own key is unmetered — what matters
-// for them is the token count their provider subscription bills.
+// Shared AI-usage display model. Usage is recorded but never capped — the
+// daily limit was removed unconditionally (issue #353): BYOK is the norm and
+// the shared server key is uncapped too. Every surface shows call counts and
+// the token totals the provider reports; no limit, percent, warn or danger is
+// ever fabricated.
 
 // Compact token counts: 950 → "950", 18230 → "18.2k", 234500 → "235k".
 export function formatTokens(n) {
@@ -10,28 +12,26 @@ export function formatTokens(n) {
   return `${Math.round(v / 1000)}k`
 }
 
-export function usageState(u) {
-  const pct = Math.min(100, Math.round((u.used / u.limit) * 100))
-  const remaining = Math.max(0, u.limit - u.used)
-  const warn = u.used >= Math.round(u.limit * 0.8) && u.used < u.limit
-  const danger = u.used >= u.limit
-  return { pct, remaining, warn, danger }
-}
-
-// One model for every usage surface (sidebar, Settings meter, Assistant):
-// server-key usage gets the cap meter, own-key usage the token counts.
-// Returns null without loaded data so callers can render nothing instead of
+// One model for every usage surface (Settings meter, Assistant). Returns
+// null without loaded data so callers can render nothing instead of
 // misreporting a mock as real usage.
 export function usageMeterModel(usage) {
   if (!usage) return null
-  const ownKey = usage.key_source === 'user'
-  const limit = usage.limit ?? usage.daily_limit ?? 20
+  const cachedTokens = usage.cached_tokens ?? null
+  const inputTokens = usage.input_tokens ?? 0
   return {
-    ownKey,
-    used: usage.used,
-    limit,
-    inputTokens: usage.input_tokens,
-    outputTokens: usage.output_tokens,
-    ...usageState({ used: usage.used, limit }),
+    ownKey: usage.key_source === 'user',
+    used: usage.used ?? 0,
+    inputTokens,
+    outputTokens: usage.output_tokens ?? 0,
+    // Mirrors the backend cache_hit_rate: cached/input, null when nothing
+    // was recorded or the provider reported no cache data — unknown, not 0.
+    cacheHitRate: cachedTokens === null || inputTokens <= 0 ? null : cachedTokens / inputTokens,
   }
+}
+
+// 0.42 → "42%"; null → null so callers render "—" instead of a fabricated 0%.
+export function formatCacheRate(rate) {
+  if (rate == null) return null
+  return `${Math.round(rate * 100)}%`
 }

@@ -122,6 +122,12 @@ export function getAiUsage(signal?: AbortSignal): Promise<unknown> {
   return unwrap(client.GET('/api/ai/usage', { signal }))
 }
 
+export type AiUsageRange = '24h' | '7d' | '30d'
+
+export function getAdminAiUsage(range: AiUsageRange, signal?: AbortSignal): Promise<unknown> {
+  return unwrap(client.GET('/api/admin/ai/usage', { params: { query: { range } }, signal }))
+}
+
 export function testAiKey(
   provider: 'opencode' | 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'custom',
   key?: string,
