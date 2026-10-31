@@ -14,7 +14,9 @@
     "planShort": "Rencana",
     "adminGroup": "Admin keluarga",
     "mainNav": "Navigasi utama",
-    "logout": "Keluar"
+    "logout": "Keluar",
+    "openMenu": "Buka menu",
+    "closeMenu": "Tutup menu"
   },
   "shell": {
     "yourHousehold": "Rumah tangga kamu"
@@ -54,7 +56,6 @@
     "badgeCritical": "Kritis",
     "badgeLowSoon": "Segera habis",
     "badgeWatch": "Pantau",
-    "estimateNote": "Perkiraan, bukan hitungan pasti. Buka item untuk mengubah.",
     "allSafe": "Semua aman",
     "allSafeDesc": "Tidak ada item yang kedaluwarsa atau habis dalam 7 hari.",
     "planTeaserLabel": "Belanja berikutnya",
@@ -364,7 +365,8 @@
       "aiRole": "Kamu adalah",
       "motion": "Preferensi gerakan"
     },
-    "save": "Simpan"
+    "save": "Simpan",
+    "account": "Akun"
   },
   "assistant": {
     "fabLabel": "Ask RumaQ",
@@ -396,7 +398,8 @@
     "error": "Kesalahan asisten: {{message}}",
     "usageLimit": "Batas penggunaan AI harian tercapai. Coba lagi besok.",
     "keyMissing": "Kunci AI belum dikonfigurasi. Tambahkan kunci di Pengaturan.",
-    "readyOwnKey": "siap membantu · kunci sendiri · {{input}} masuk · {{output}} keluar hari ini"
+    "readyOwnKey": "siap membantu · kunci sendiri · {{input}} masuk · {{output}} keluar hari ini",
+    "postPhotoDesc": "Pindai struk untuk memperbarui stok"
   },
   "ui": {
     "expiringTomorrow": "kedaluwarsa besok",

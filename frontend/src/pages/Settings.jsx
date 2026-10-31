@@ -4,7 +4,15 @@ import { i18n } from '../i18n/index.js'
 import { UsageMeter, SkeletonRows } from '../components/ui.jsx'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { personaText, deriveHue } from '../lib/persona.js'
-import { IconCheck, IconTrash, IconPin, IconBolt, IconPlus } from '../components/icons.jsx'
+import {
+  IconCheck,
+  IconTrash,
+  IconPin,
+  IconBolt,
+  IconPlus,
+  IconLogout,
+  IconUserRound,
+} from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
 import {
   useSettings,
@@ -18,6 +26,7 @@ import {
   useUsage,
 } from '../lib/queries/index.js'
 import { testAiKey } from '../lib/api'
+import { useMe, useLogout } from '../lib/queries/me.js'
 import { AI_PROVIDER_DEFAULTS } from '../lib/aiProviders.js'
 import { Button } from '../components/Button.jsx'
 import { Panel } from '../components/Panel.jsx'
@@ -34,11 +43,17 @@ const LANGUAGES = [
   { code: 'id', label: 'Bahasa Indonesia' },
 ]
 
-function Setting({ title, desc, children, className, highlight }) {
+function Setting({ title, desc, children, className, highlight, stack = false }) {
   return (
     <div
       className={cn(
-        'flex items-center justify-between gap-4 px-5 py-4 border-b border-border last:border-b-0',
+        'px-5 py-4 border-b border-border last:border-b-0',
+        // Rows with wide controls (selects, toggle pills, input+button) stack
+        // label-above-control on mobile and go side-by-side from sm. Compact
+        // rows (icon buttons, checkboxes) stay on one line at every width.
+        stack
+          ? 'flex flex-col items-start gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4'
+          : 'flex items-center justify-between gap-4',
         highlight === 'ok' && 'bg-ok-soft/50',
         highlight === 'warn' && 'bg-warn-soft/50',
         highlight === 'danger' && 'bg-danger-soft/50 border-danger-border',
@@ -57,7 +72,7 @@ function Setting({ title, desc, children, className, highlight }) {
 function ToggleGroup({ value, options, onChange, ariaLabel }) {
   return (
     <div
-      className="flex gap-1 bg-surface-inset rounded-pill p-1"
+      className="flex gap-1 bg-surface-inset rounded-pill p-1 max-w-full"
       role="group"
       aria-label={ariaLabel}
     >
@@ -97,8 +112,15 @@ function InlineInput({
         placeholder={placeholder}
         aria-label={ariaLabel}
         onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
+        className="flex-1 min-w-0"
       />
-      <Button size="sm" variant="secondary" onClick={onSubmit} disabled={disabled}>
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={onSubmit}
+        disabled={disabled}
+        className="shrink-0"
+      >
         {action}
       </Button>
     </div>
@@ -138,6 +160,9 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
   const createStore = useCreateStore()
   const deleteStore = useDeleteStore()
   const { data: usageData } = useUsage()
+  const { data: me } = useMe()
+  const logout = useLogout()
+  const user = me?.user
 
   const locs = locsData?.locations ?? []
   const stores = storesData?.stores ?? []
@@ -318,11 +343,11 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
             <SkeletonRows n={3} />
           ) : (
             <div className="flex flex-col">
-              <Setting title={t('settings.provider')} desc={t('settings.providerDesc')}>
+              <Setting title={t('settings.provider')} desc={t('settings.providerDesc')} stack>
                 <select
                   value={provider}
                   onChange={(e) => setProvider(e.target.value)}
-                  className="w-auto"
+                  className="w-full sm:w-auto"
                   aria-label={t('settings.aria.provider')}
                 >
                   <option value="opencode">OpenCode</option>
@@ -338,7 +363,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                 <Setting
                   title={t('settings.customBaseUrl')}
                   desc={t('settings.customBaseUrlDesc')}
-                  className="flex-wrap"
+                  stack
                 >
                   <InlineInput
                     value={customBaseUrl}
@@ -360,7 +385,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                 desc={
                   provider === 'custom' ? t('settings.customModelDesc') : t('settings.modelDesc')
                 }
-                className="flex-wrap"
+                stack
               >
                 <InlineInput
                   value={customModel}
@@ -376,11 +401,11 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                 />
               </Setting>
 
-              <Setting title={t('settings.thinking')} desc={t('settings.thinkingDesc')}>
+              <Setting title={t('settings.thinking')} desc={t('settings.thinkingDesc')} stack>
                 <select
                   value={thinkingLevel}
                   onChange={(e) => setThinkingLevel(e.target.value)}
-                  className="w-auto"
+                  className="w-full sm:w-auto"
                   aria-label={t('settings.thinking')}
                 >
                   <option value="">{t('settings.thinkingDefault')}</option>
@@ -390,11 +415,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                 </select>
               </Setting>
 
-              <Setting
-                title={t('settings.apiKey')}
-                desc={t('settings.apiKeyDesc')}
-                className="flex-wrap"
-              >
+              <Setting title={t('settings.apiKey')} desc={t('settings.apiKeyDesc')} stack>
                 <InlineInput
                   type="password"
                   value={draft}
@@ -488,11 +509,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
             <SkeletonRows n={3} />
           ) : (
             <div className="flex flex-col">
-              <Setting
-                title={t('settings.iAm')}
-                desc={t('settings.personalizationDesc')}
-                className="flex-wrap"
-              >
+              <Setting title={t('settings.iAm')} desc={t('settings.personalizationDesc')} stack>
                 <div className="flex flex-wrap gap-3 w-full">
                   <label className="flex-1 min-w-[160px]">
                     <span className="sr-only">{t('settings.aria.myRole')}</span>
@@ -619,7 +636,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                   </Button>
                 </Setting>
               ))}
-              <Setting title={t('settings.addLocation')} desc={t('settings.addLocationHint')}>
+              <Setting title={t('settings.addLocation')} desc={t('settings.addLocationHint')} stack>
                 <InlineInput
                   value={newLoc}
                   onChange={setNewLoc}
@@ -662,7 +679,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                   </Button>
                 </Setting>
               ))}
-              <Setting title={t('settings.addStore')} desc={t('settings.addStoreHint')}>
+              <Setting title={t('settings.addStore')} desc={t('settings.addStoreHint')} stack>
                 <InlineInput
                   value={newStore}
                   onChange={setNewStore}
@@ -691,7 +708,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
             <SkeletonRows n={3} />
           ) : (
             <div className="flex flex-col">
-              <Setting title={t('settings.motion')} desc={t('settings.motionDesc')}>
+              <Setting title={t('settings.motion')} desc={t('settings.motionDesc')} stack>
                 <ToggleGroup
                   value={motion}
                   options={MOTION_OPTS.map((m) => ({
@@ -706,7 +723,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                 />
               </Setting>
 
-              <Setting title={t('settings.language')} desc={t('settings.languageDesc')}>
+              <Setting title={t('settings.language')} desc={t('settings.languageDesc')} stack>
                 <ToggleGroup
                   value={currentLang}
                   options={LANGUAGES.map((l) => ({ id: l.code, label: l.label }))}
@@ -716,6 +733,34 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
               </Setting>
             </div>
           )}
+        </Panel>
+      </section>
+
+      <section className="mt-8">
+        <div className="flex items-baseline justify-between gap-4 mb-4">
+          <h2 className="text-base">{t('settings.account')}</h2>
+        </div>
+        <Panel>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl grid place-items-center bg-surface-inset text-text shrink-0">
+              <IconUserRound size={20} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold leading-[145%] text-text truncate">
+                {user?.name || user?.email || '—'}
+              </div>
+              {user?.name && user?.email && (
+                <div className="text-xs leading-[145%] text-text-muted truncate">{user.email}</div>
+              )}
+            </div>
+            <button
+              type="button"
+              className="flex items-center gap-2 text-sm font-medium text-danger hover:opacity-80 transition-opacity shrink-0"
+              onClick={() => logout.mutate()}
+            >
+              <IconLogout size={16} /> {t('nav.logout')}
+            </button>
+          </div>
         </Panel>
       </section>
     </>

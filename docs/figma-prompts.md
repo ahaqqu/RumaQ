@@ -13,11 +13,11 @@ RumaQ — household grocery assistant; never track stock manually — AI reads r
 
 Design language — apply to every RumaQ screen (established by the Home mockups):
 Colors: page bg #F7F7F0; cards/surfaces #FFFFFF; hairline borders #E2E6DC; primary green #245C43 (brand, selected nav, primary buttons, links); soft green tint #E9F0E5 (selected fills, banners, status chips, secondary buttons); inset tile #F0F2EA (avatar/account tiles); text #20352C primary, #69756C muted; white on green.
-Type: Inter. Page title 34/41 semibold -1px tracking; empty-state title 23 semibold; nav 14 (600 green selected / 500 muted); body 14/145%; secondary 12/145%; micro labels 10 semibold uppercase +1px; chip 11 semibold; links 13.
+Type: Inter. Page title 34/41 semibold -1px tracking; empty-state title 23 semibold; nav 14 (600 green selected / 500 muted); body 14/145%; secondary 12/145%; micro labels 10 semibold uppercase +1px; chip 11 semibold; links 13. Mobile bottom bar is icon-only (26px icons, no labels).
 Radius: frame 20 · cards 18 · buttons/nav/banners 10 · tiles 12 · illustration tile 28 · assistant pill 100.
-Spacing: sidebar 240 (padding 24, block gap 32); header 88 tall, 36 side padding; content padding 36, section gap 26; cards padding 16, row gap 24.
+Spacing: sidebar 240 (padding 24, block gap 32); header 88 tall (desktop), 53 (mobile), 36 side padding; content padding 36, section gap 26; cards padding 16, row gap 24. Page scrollbar hidden on all breakpoints.
 Icons: Lucide 1px stroke (sprout, house, package, calendar-days, receipt-text, chart-no-axes-combined, settings, sliders-horizontal, users, user-round, log-out, scan-line, cloud-check, check, arrow-right, sparkles).
-Components: selected nav = soft-green fill + 5px dot; primary button = green fill, white 600 label, h48; secondary = soft-green fill, green label; status chip = soft-green pill + icon; empty state = 88px soft-green illustration tile, centered title, muted desc, full-width soft-green action + 12px helper line; floating AI assistant = white pill with green border, bottom-right; connectivity banner = soft-green bar with cloud icon.
+Components: selected nav = soft-green fill + 5px dot; primary button = green fill, white 600 label, h48; secondary = soft-green fill, green label; status chip = soft-green pill + icon; empty state = 88px soft-green illustration tile, centered title, muted desc, full-width soft-green action + 12px helper line; AI assistant = raised solid-green sparkles tile centered in the mobile tab bar, floating white icon-pill with green border bottom-right on desktop; connectivity banner = soft-green bar with cloud icon. Mobile top + bottom bars slide away while scrolling and return ~1.2s after scrolling stops (X-app behavior).
 ```
 
 ## Prompt 1 — App context, shell & global states
@@ -26,8 +26,8 @@ Components: selected nav = soft-green fill + 5px dot; primary button = green fil
 RumaQ — a household grocery assistant for Indonesian families. Core promise: you never track stock manually. Snap a receipt photo, AI reads items/prices/store, inventory updates itself; run-out is estimated from your shopping habits. Design a completely fresh UI (do not copy any previous look). Platform: mobile-first responsive PWA (phone is the primary context: kitchen + supermarket), works offline, English + Bahasa Indonesia, prices in Rp (no decimals). Principle: AI suggestions are always editable, never silently applied.
 
 First, design the app shell (implemented in the Home redesign — match it):
-• Mobile: bottom tab bar — Home, Inventory, a raised center "Post photo" action, Plan, Prices; History moves to a header link; Settings via a header icon. Floating "Ask RumaQ" pill (white, green border, sparkles) above the tab bar.
-• Desktop: 240px sidebar — brand, household card, nav (selected = soft-green fill + small dot marker), a "Household admin" micro-label group for admin tools, account block + logout. Header: breadcrumb "Your household / {page}" + today's date, EN/ID switcher, primary "Add from Receipt".
+• Mobile: bottom tab bar — Home, Inventory, a raised solid-green center "Ask RumaQ" assistant action, Plan, Prices (icon-only, five equal slots). A Google-Calendar-style left drawer opens from the brand mark: household card, Home/Inventory/Plan/History/Prices, Settings, household-admin tools for admins, account block. Settings via a header icon too. The receipt capture ("Post photo") lives inside the assistant panel's action menu.
+• Desktop: 240px sidebar — brand, household card, nav (selected = soft-green fill + small dot marker), a "Household admin" micro-label group for admin tools, account block (logout lives in Settings). Header: breadcrumb "Your household / {page}" + today's date, EN/ID switcher, primary "Add from Receipt".
 • Global overlays: offline banner ("you're offline — changes sync when you reconnect"), app-update toast ("new version available — reload").
 • Every screen needs these states designed: loading (skeletons), empty (explain the next action, e.g. "scan your first receipt"), error (with retry), and an app-wide urgency color language: green = ok, amber = soon, red = critical.
 ```
@@ -123,10 +123,10 @@ Empty/error copy should say data comes from the daily brochure scan — check ba
 ```text
 RumaQ: Indonesian household grocery assistant; never track stock manually — AI reads receipts and inventory updates itself. Mobile-first PWA, offline-capable, EN/ID, Rp.
 
-Overlay: AI assistant — "ask anything about my household shopping". Reachable from every screen via a floating pill labeled "Ask RumaQ" (white with green border, sparkles icon; on mobile it sits above the tab bar).
+Overlay: AI assistant — "ask anything about my household shopping". Reachable from every screen: on mobile via the raised solid-green sparkles tile centered in the tab bar; on desktop via a floating white icon-pill with green border, bottom-right. The panel's action menu leads with the "Post photo" receipt-capture shortcut.
 Capabilities:
-• Status header: connected + today's quota ("12 of 20 requests today", amber near limit, red at limit) or own-key = "unlimited"; not connected → explain value + "add key" shortcut (the app still works without AI).
-• Three one-tap prompts: "plan this week", "cheapest store for my usual items", "recipes to use up expiring items".
+• Status header: title with a state dot (green ok / amber near limit / muted at limit) whose aria-label carries the quota; not connected → explain value + "add key" shortcut (the app still works without AI).
+• Action menu: "Post photo" capture shortcut + three one-tap prompts: "plan this week", "cheapest store for my usual items", "recipes to use up expiring items".
 • Free-text questions; answers are grounded in real household data (stock, history, prices).
 • Thinking state; graceful errors: quota reached (explain, offer key), no key, generic failure with retry.
 • Key action: turn an answer into a shopping plan in one tap ("apply to plan") — closes the assistant, lands on the Plan screen with the proposal previewed and dismissible.

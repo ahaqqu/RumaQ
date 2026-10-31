@@ -15,9 +15,9 @@ export function NavItem({ to, active, mobile = false, children, ...props }) {
           active &&
           "after:content-[''] after:w-[5px] after:h-[5px] after:rounded-full after:bg-accent after:ml-auto",
         // Mobile tabs are icon-only (label lives in aria-label): five equal
-        // flex-1 slots, a ≥56px tap target, icon centered in the slot.
+        // flex-1 slots, a ≥44px tap target, icon centered in the slot.
         mobile &&
-          'flex-1 flex-col items-center justify-center py-2 px-0 text-text-muted rounded-md min-h-14',
+          'flex-1 flex-col items-center justify-center py-2 px-0 text-text-muted rounded-md min-h-12',
         mobile && active && 'text-accent'
       )}
       aria-current={active ? 'page' : undefined}

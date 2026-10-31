@@ -125,16 +125,28 @@ describe('AppShell', () => {
     const { container } = renderWithProviders(React.createElement(AppShell, null, null))
     const bar = container.querySelector('nav.lg\\:hidden')
     expect(bar).toBeTruthy()
-    const tabs = [...bar.querySelectorAll('a')]
-    expect(tabs.map((a) => a.getAttribute('aria-label'))).toEqual([
+    const slots = [...bar.children]
+    expect(slots.map((a) => a.getAttribute('aria-label'))).toEqual([
       'Home',
       'Inventory',
-      'Post photo',
+      'Ask RumaQ',
       'Plan',
       'Prices',
     ])
     // Icon-only: no visible text labels inside the bar itself
     expect(bar.textContent.trim()).toBe('')
+  })
+
+  it('opens the mobile drawer from the brand mark and closes on Escape', () => {
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    expect(container.querySelector('aside[role="dialog"]')).toBeNull()
+    fireEvent.click(container.querySelector('button[aria-label="Open menu"]'))
+    const drawer = container.querySelector('aside[role="dialog"]')
+    expect(drawer).toBeTruthy()
+    // History lives in the drawer (moved out of the mobile header)
+    expect(drawer.querySelector('a[href="/history"]')).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(container.querySelector('aside[role="dialog"]')).toBeNull()
   })
 
   it('hides admin nav for regular users and shows it for admins', () => {
@@ -150,13 +162,10 @@ describe('AppShell', () => {
     expect(adminView.container.textContent).toContain('Scraper Monitor')
   })
 
-  it('renders the account block and calls logout', () => {
-    const mutate = vi.fn()
-    vi.mocked(useLogout).mockReturnValue({ mutate, data: null })
-    const { getByText } = renderWithProviders(React.createElement(AppShell, null, null))
+  it('renders the account block without a logout button (logout lives in Settings)', () => {
+    const { getByText, container } = renderWithProviders(React.createElement(AppShell, null, null))
     expect(getByText('Alice').textContent).toBe('Alice')
-    fireEvent.click(getByText('Logout'))
-    expect(mutate).toHaveBeenCalled()
+    expect(container.textContent).not.toContain('Logout')
   })
 
   it('renders the user avatar image when a picture is available', () => {

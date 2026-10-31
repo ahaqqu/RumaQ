@@ -228,7 +228,6 @@ export function Home({ setView, askAssistant }) {
                 />
               ))}
             </Panel>
-            <p className="mt-2 text-xs text-text-muted">{t('home.estimateNote')}</p>
           </>
         ) : (
           <Panel className="px-0 py-0">

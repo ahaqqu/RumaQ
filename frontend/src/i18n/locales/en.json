@@ -14,7 +14,9 @@
     "planShort": "Plan",
     "adminGroup": "Household admin",
     "mainNav": "Main navigation",
-    "logout": "Logout"
+    "logout": "Logout",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu"
   },
   "shell": {
     "yourHousehold": "Your household"
@@ -54,7 +56,6 @@
     "badgeCritical": "Critical",
     "badgeLowSoon": "Low soon",
     "badgeWatch": "Watch",
-    "estimateNote": "Estimates, not exact counts. Open any item to edit.",
     "allSafe": "All safe",
     "allSafeDesc": "No items expiring or running out in the next 7 days.",
     "planTeaserLabel": "Next trip",
@@ -364,7 +365,8 @@
       "aiRole": "You are",
       "motion": "Motion preference"
     },
-    "save": "Save"
+    "save": "Save",
+    "account": "Account"
   },
   "assistant": {
     "fabLabel": "Ask RumaQ",
@@ -396,7 +398,8 @@
     "error": "Assistant error: {{message}}",
     "usageLimit": "Daily AI usage limit reached. Try again tomorrow.",
     "keyMissing": "AI key not configured. Add a key in Settings.",
-    "readyOwnKey": "ready to help · your key · {{input}} in · {{output}} out today"
+    "readyOwnKey": "ready to help · your key · {{input}} in · {{output}} out today",
+    "postPhotoDesc": "Scan a receipt to update your stock"
   },
   "ui": {
     "expiringTomorrow": "expiring tomorrow",
