@@ -34,29 +34,125 @@ describe('loadConfig', () => {
     expect(loadConfig().novelty).toEqual({ minImageSizeKb: 50, minDimensionPx: 300 })
   })
 
-  it('pins live Gemini model ids — bumping one must be a conscious change', () => {
-    // Assert the shipped defaults, not the ambient shell: GEMINI_MODEL /
-    // GEMINI_VERIFIER_MODEL / GEMINI_EMBEDDING_MODEL are documented override
-    // knobs — the guard must stay meaningful (and quiet) when they are set.
-    const overrideVars = ['GEMINI_MODEL', 'GEMINI_VERIFIER_MODEL', 'GEMINI_EMBEDDING_MODEL']
+  it('ships the full ordered 5-rung vision chain on both surfaces (issue #347)', () => {
+    // Assert the shipped defaults, not the ambient shell: the GEMINI_* model
+    // vars are documented override knobs — the guard must stay meaningful
+    // (and quiet) when they are set.
+    const overrideVars = [
+      'GEMINI_MODEL',
+      'GEMINI_MODEL_CHAIN',
+      'GEMINI_VERIFIER_MODEL',
+      'GEMINI_VERIFIER_MODEL_CHAIN',
+      'GEMINI_EMBEDDING_MODEL',
+    ]
     const previous = overrideVars.map((name) => process.env[name])
     try {
       for (const name of overrideVars) delete process.env[name]
       const config = loadConfig()
-      // gemini-2.5-flash 404'd for new key cohorts (issue #306 live run:
-      // NOT_FOUND "no longer available to new users") and plain
-      // gemini-3.5-flash has since dropped off Google's current model list —
-      // Google's error names gemini-3.8-flash as the successor. Both vision
-      // surfaces pin it; the exact pins below double as the no-dead-model
-      // guard over every shipped default.
-      expect(config.ocr.model).toBe('gemini-3.8-flash')
-      expect(config.ocr.verifierModel).toBe('gemini-3.8-flash')
+      // The owner's binding chain (issue #347), IN ORDER — order is
+      // load-bearing: the head is the quality pin (gemini-3.8-flash, the
+      // successor Google's deprecation error named in issue #306), the rungs
+      // behind it are capacity, the lite tail carries the 500/day budget.
+      // Dead rungs skip on 404, so a cohort-absent id is harmless.
+      expect(config.ocr.modelChain).toEqual([
+        'gemini-3.8-flash',
+        'gemini-3.7-flash',
+        'gemini-3.6-flash',
+        'gemini-3.5-flash',
+        'gemini-3.5-flash-lite',
+      ])
+      expect(config.ocr.verifierModelChain).toEqual([
+        'gemini-3.8-flash',
+        'gemini-3.7-flash',
+        'gemini-3.6-flash',
+        'gemini-3.5-flash',
+        'gemini-3.5-flash-lite',
+      ])
       expect(config.consolidation.embeddingModel).toBe('gemini-embedding-001')
     } finally {
       overrideVars.forEach((name, i) => {
         if (previous[i] !== undefined) process.env[name] = previous[i]!
         else delete process.env[name]
       })
+    }
+  })
+
+  it('parses a GEMINI_MODEL_CHAIN override as a trimmed, ordered, wholesale replacement', () => {
+    const previous = {
+      chain: process.env.GEMINI_MODEL_CHAIN,
+      scalar: process.env.GEMINI_MODEL,
+    }
+    try {
+      delete process.env.GEMINI_MODEL
+      process.env.GEMINI_MODEL_CHAIN = 'model-a, model-b'
+      expect(loadConfig().ocr.modelChain).toEqual(['model-a', 'model-b'])
+    } finally {
+      if (previous.chain !== undefined) process.env.GEMINI_MODEL_CHAIN = previous.chain
+      else delete process.env.GEMINI_MODEL_CHAIN
+      if (previous.scalar !== undefined) process.env.GEMINI_MODEL = previous.scalar
+      else delete process.env.GEMINI_MODEL
+    }
+  })
+
+  it('collapses the chain to one rung on a scalar pin — failover off (pin means pin)', () => {
+    const previous = process.env.GEMINI_MODEL
+    try {
+      delete process.env.GEMINI_MODEL_CHAIN
+      process.env.GEMINI_MODEL = '  gemini-x  '
+      expect(loadConfig().ocr.modelChain).toEqual(['gemini-x'])
+    } finally {
+      if (previous !== undefined) process.env.GEMINI_MODEL = previous
+      else delete process.env.GEMINI_MODEL
+    }
+  })
+
+  it('chain env beats scalar env; a comma-only chain counts as unset', () => {
+    const previous = {
+      chain: process.env.GEMINI_MODEL_CHAIN,
+      scalar: process.env.GEMINI_MODEL,
+    }
+    try {
+      process.env.GEMINI_MODEL_CHAIN = 'chain-a,chain-b'
+      process.env.GEMINI_MODEL = 'scalar-x'
+      expect(loadConfig().ocr.modelChain).toEqual(['chain-a', 'chain-b'])
+      // A comma-only CHAIN parses to zero models = unset — the precedence
+      // falls through to the still-set scalar (chain-of-one), never an
+      // error and never a zero-rung chain.
+      process.env.GEMINI_MODEL_CHAIN = ','
+      expect(loadConfig().ocr.modelChain).toEqual(['scalar-x'])
+      // With no scalar either, the unset chain lands on the default.
+      delete process.env.GEMINI_MODEL
+      expect(loadConfig().ocr.modelChain).toEqual([
+        'gemini-3.8-flash',
+        'gemini-3.7-flash',
+        'gemini-3.6-flash',
+        'gemini-3.5-flash',
+        'gemini-3.5-flash-lite',
+      ])
+    } finally {
+      if (previous.chain !== undefined) process.env.GEMINI_MODEL_CHAIN = previous.chain
+      else delete process.env.GEMINI_MODEL_CHAIN
+      if (previous.scalar !== undefined) process.env.GEMINI_MODEL = previous.scalar
+      else delete process.env.GEMINI_MODEL
+    }
+  })
+
+  it('the verifier chain overrides independently of the OCR chain', () => {
+    const previous = {
+      verifierChain: process.env.GEMINI_VERIFIER_MODEL_CHAIN,
+      chain: process.env.GEMINI_MODEL_CHAIN,
+    }
+    try {
+      delete process.env.GEMINI_MODEL_CHAIN
+      process.env.GEMINI_VERIFIER_MODEL_CHAIN = 'verify-a'
+      const config = loadConfig()
+      expect(config.ocr.verifierModelChain).toEqual(['verify-a'])
+      expect(config.ocr.modelChain[0]).toBe('gemini-3.8-flash')
+    } finally {
+      for (const [name, value] of Object.entries(previous)) {
+        if (value !== undefined) process.env[name] = value
+        else delete process.env[name]
+      }
     }
   })
 

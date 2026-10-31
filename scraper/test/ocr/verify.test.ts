@@ -7,6 +7,7 @@ import { Effect } from 'effect'
 
 import { buildVerifyPrompt, verifyPairs, type VerifyPair } from '../../src/ocr/verify.js'
 import type { GeminiClient } from '../../src/ocr/gemini.js'
+import { createModelChain } from '../../src/util/model-chain.js'
 
 const PAIR: VerifyPair = {
   storeA: 'Lotte',
@@ -136,5 +137,104 @@ describe('verifyPairs', () => {
     )
     expect(outcome.answers).toEqual(['YES', 'NO', 'YES'])
     expect(c.calls).toBe(4)
+  })
+})
+
+// Verifier model chain (issue #347) — the sweep wraps each pair in the
+// fallback loop: a trigger error advances the verifier's own chain and the
+// pair is retried on the next rung instead of nulled; whole-chain quota
+// death keeps the existing stop-early degrade shape.
+
+describe('verifyPairs — model chain', () => {
+  const DAILY_429 = () =>
+    new Error('429 RESOURCE_EXHAUSTED: Quota exceeded for quota metric GenerateRequests per day')
+
+  function modelAwareClient(
+    respond: (call: { model: string }) => { text: string } | Error
+  ): GeminiClient & { calls: { model: string }[] } {
+    const state = { calls: [] as { model: string }[], n: 0 }
+    const raw = {
+      models: {
+        generateContent: async (args: { model: string }) => {
+          state.n++
+          const record = { model: args.model }
+          state.calls.push(record)
+          const result = respond(record)
+          if (result instanceof Error) throw result
+          return result
+        },
+      },
+    }
+    return Object.assign(raw, state)
+  }
+
+  it('advances mid-sweep and retries the pair on the next rung instead of nulling it', async () => {
+    const c = modelAwareClient(({ model }) => (model === 'v0' ? DAILY_429() : { text: 'YES' }))
+    const outcome = await Effect.runPromise(
+      verifyPairs([PAIR, { ...PAIR, nameA: 'Other' }], {
+        model: createModelChain(['v0', 'v1']),
+        retries: 2,
+        client: c,
+        sleep: async () => {},
+        log: () => {},
+      })
+    )
+    // Pair 1: rung 0 dies on the daily 429, retried on rung 1 → YES (not
+    // null); pair 2 rides rung 1 directly — the sweep never goes back.
+    expect(outcome).toEqual({ answers: ['YES', 'YES'], quotaExhausted: false })
+    expect(c.calls.map((call) => call.model)).toEqual(['v0', 'v1', 'v1'])
+  })
+
+  it('retries a model-fatal-404 pair on the next rung (not nulled)', async () => {
+    const MODEL_GONE_404 =
+      '{"error":{"code":404,"message":"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash …","status":"NOT_FOUND"}}'
+    const c = modelAwareClient(({ model }) =>
+      model === 'v0' ? new Error(MODEL_GONE_404) : { text: 'NO' }
+    )
+    const outcome = await Effect.runPromise(
+      verifyPairs([PAIR], {
+        model: createModelChain(['v0', 'v1']),
+        retries: 2,
+        client: c,
+        sleep: async () => {},
+        log: () => {},
+      })
+    )
+    expect(outcome.answers).toEqual(['NO'])
+    expect(c.calls.map((call) => call.model)).toEqual(['v0', 'v1'])
+  })
+
+  it('all rungs quota-dead: sweep stops, remaining pairs null, quotaExhausted true', async () => {
+    const c = modelAwareClient(() => DAILY_429())
+    const outcome = await Effect.runPromise(
+      verifyPairs([PAIR, { ...PAIR, nameA: 'Other' }], {
+        model: createModelChain(['v0', 'v1']),
+        retries: 2,
+        client: c,
+        sleep: async () => {},
+        log: () => {},
+      })
+    )
+    expect(outcome).toEqual({ answers: [null, null], quotaExhausted: true })
+    // One call per rung for pair 1 (quota never retries); pair 2 never calls.
+    expect(c.calls.map((call) => call.model)).toEqual(['v0', 'v1'])
+  })
+
+  it('a non-trigger VerifierError still degrades the pair to null without advancing', async () => {
+    const c = modelAwareClient(({ model }) =>
+      model === 'v0' ? new Error('500 INTERNAL') : { text: 'YES' }
+    )
+    const outcome = await Effect.runPromise(
+      verifyPairs([PAIR], {
+        model: createModelChain(['v0', 'v1']),
+        retries: 2,
+        client: c,
+        sleep: async () => {},
+        log: () => {},
+      })
+    )
+    expect(outcome.answers).toEqual([null])
+    // Ladder exhausted on rung 0 only (1 + 2 retries); rung 1 never called.
+    expect(c.calls.map((call) => call.model)).toEqual(['v0', 'v0', 'v0'])
   })
 })

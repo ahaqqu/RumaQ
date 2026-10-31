@@ -83,6 +83,21 @@ export function isModelFatalError(error: unknown): boolean {
   )
 }
 
+/**
+ * A 503 UNAVAILABLE that outlived the rung's transient ladder — the shape of
+ * the issue #335 saturation incident
+ * (`{"error":{"code":503,...,"status":"UNAVAILABLE"}}`). Like
+ * `isModelFatalError` it classifies on the embedded message text, so it sees
+ * through the typed call-site wrappers verbatim. It is only ever consulted
+ * on an error that escaped `withQuotaPolicy` — i.e. the rung's ladder already
+ * gave up — so a one-off 503 never advances the model chain; persistent
+ * saturation does (issue #347).
+ */
+export function isSaturationError(error: unknown): boolean {
+  const text = errorText(error)
+  return /\b503\b/.test(text) && /UNAVAILABLE/i.test(text)
+}
+
 export interface RetryOptions {
   /** Extra attempts after the first (default 3). */
   retries?: number
