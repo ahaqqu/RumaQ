@@ -257,7 +257,7 @@ Core entities:
 - `purchases` + `purchase_items` — receipt history; the substrate for all estimates.
 - `plans` + `plan_items` — AI-generated shopping trips.
 - `user_settings` — AI provider/key, motion preference, currency, and persona roles.
-- `ai_usage` — daily request counter per user.
+- `ai_usage_events` — one row per completed AI call (provider, model, input/output/cached tokens, key source); auto-deleted after one year by the daily retention cron.
 
 ## 7. AI integration
 
@@ -270,7 +270,7 @@ AI lanes (MVP):
 3. **Chat assistant.** The Worker proxies a chat request; the system prompt includes the user's persona setting.
    > **Tech debt:** Streaming is deferred. The current implementation returns the full response body. See `backend/src/lib/chat.ts` — `sendChatMessage` calls `completeText` (completion, not streaming). The persona system prompt is EN-only (single locale); see `backend/src/lib/persona.ts`.
 
-Daily usage is tracked in `ai_usage` so the app can show the meter. The 20/day cap applies only to requests served with RumaQ's shared server key (`RUMAQ_SERVER_AI_PROVIDER`/`RUMAQ_SERVER_AI_KEY`); users who configure their own provider key are unmetered. The user can pick the model (`ai_model`) and a thinking level (`ai_thinking_level`) per provider, mapped to each API's reasoning controls.
+Every completed AI call is recorded as one row in `ai_usage_events` (per-call granularity — what the 24h/7d/30d admin analytics and per-user cache hit rates need). Usage never caps a call: BYOK is the norm and the shared server key (`RUMAQ_SERVER_AI_PROVIDER`/`RUMAQ_SERVER_AI_KEY`) is uncapped too (issue #353). Retention: a daily cron (`gateway.scheduled`, `cloudflare.config.ts`) deletes events older than 365 days. The user can pick the model (`ai_model`) and a thinking level (`ai_thinking_level`) per provider, mapped to each API's reasoning controls.
 
 ## 8. Deployment
 
@@ -486,11 +486,11 @@ Two automated mechanisms keep dependencies secure:
 
 The following items are acknowledged as tech debt and left out of the current deployment scope:
 
-| Item                       | Reason                                                                                                               | Tracking                       |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| AI streaming               | `sendChatMessage` uses `completeText` (non-streaming). Streaming would require SSE from Worker → Hono → client.      | `backend/src/lib/chat.ts`      |
-| Persona locale             | `buildSystemPrompt` is EN-only. Multi-locale persona prompt requires i18n-aware prompt templates.                    | `backend/src/lib/persona.ts`   |
-| KV for rate-limit counters | Usage limits live in D1 (`ai_usage` table). KV would be more appropriate for per-second TTL counters.                | Left out of deployment scope   |
-| Cache routes config        | `exports.CachedApi` and cache directives are set up but route-level cache profiles are not finalised.                | `backend/cloudflare.config.ts` |
-| R2 presigned URLs          | Receipts are served through the Worker proxy (`GET /api/purchases/:id/receipt`) instead of time-limited signed URLs. | `backend/src/apps/api.ts:1277` |
-| Bulk run-out recalibration | `computeRunOutDays` extends in-place; no admin endpoint for full recalibration.                                      | `backend/src/lib/stock.ts`     |
+| Item                       | Reason                                                                                                                                   | Tracking                       |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| AI streaming               | `sendChatMessage` uses `completeText` (non-streaming). Streaming would require SSE from Worker → Hono → client.                          | `backend/src/lib/chat.ts`      |
+| Persona locale             | `buildSystemPrompt` is EN-only. Multi-locale persona prompt requires i18n-aware prompt templates.                                        | `backend/src/lib/persona.ts`   |
+| Usage analytics rollups    | Usage events live in D1 (`ai_usage_events`) and are aggregated by query. Pre-aggregated rollups would matter only at much higher volume. | Left out of deployment scope   |
+| Cache routes config        | `exports.CachedApi` and cache directives are set up but route-level cache profiles are not finalised.                                    | `backend/cloudflare.config.ts` |
+| R2 presigned URLs          | Receipts are served through the Worker proxy (`GET /api/purchases/:id/receipt`) instead of time-limited signed URLs.                     | `backend/src/apps/api.ts:1277` |
+| Bulk run-out recalibration | `computeRunOutDays` extends in-place; no admin endpoint for full recalibration.                                                          | `backend/src/lib/stock.ts`     |
