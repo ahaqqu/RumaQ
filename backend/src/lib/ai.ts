@@ -66,6 +66,9 @@ type OpenAIResponse = {
   usage?: {
     prompt_tokens?: number
     completion_tokens?: number
+    prompt_tokens_details?: {
+      cached_tokens?: number
+    }
   }
 }
 
@@ -81,6 +84,7 @@ type GeminiResponse = {
     promptTokenCount?: number
     candidatesTokenCount?: number
     thoughtsTokenCount?: number
+    cachedContentTokenCount?: number
   }
 }
 
@@ -102,13 +106,22 @@ export type ThinkingLevel = 'low' | 'medium' | 'high'
 export type TokenUsage = {
   input_tokens: number
   output_tokens: number
+  // Cached input tokens when the provider reports them (Gemini
+  // cachedContentTokenCount, OpenAI-compatible prompt_tokens_details);
+  // null means unreported — unknown, not zero.
+  cached_tokens: number | null
 }
 
 // Accumulate provider-reported usage into a caller-owned total across calls.
+// Unreported cache figures leave the running total as-is, so a series with
+// no cache data at all stays null.
 export function usageCollector(target: TokenUsage): (usage: TokenUsage) => void {
   return (usage) => {
     target.input_tokens += usage.input_tokens
     target.output_tokens += usage.output_tokens
+    if (usage.cached_tokens !== null) {
+      target.cached_tokens = (target.cached_tokens ?? 0) + usage.cached_tokens
+    }
   }
 }
 
@@ -186,6 +199,7 @@ async function callOpenAICompatible(
     opts.onUsage({
       input_tokens: data.usage.prompt_tokens ?? 0,
       output_tokens: data.usage.completion_tokens ?? 0,
+      cached_tokens: data.usage.prompt_tokens_details?.cached_tokens ?? null,
     })
   }
   const content = data.choices?.[0]?.message?.content
@@ -284,6 +298,7 @@ async function callGemini(
     opts.onUsage({
       input_tokens: meta.promptTokenCount ?? 0,
       output_tokens: (meta.candidatesTokenCount ?? 0) + (meta.thoughtsTokenCount ?? 0),
+      cached_tokens: meta.cachedContentTokenCount ?? null,
     })
   }
   const content = data.candidates?.[0]?.content?.parts?.[0]?.text
@@ -354,9 +369,13 @@ async function callAnthropic(
 
   const result = (await res.json()) as AnthropicResponse
   if (opts?.onUsage && result.usage) {
+    // cached_tokens stays null: Anthropic's cache_read_input_tokens are NOT
+    // part of input_tokens, so folding them into a cached/input ratio would
+    // exceed 1 and misstate the cache hit rate.
     opts.onUsage({
       input_tokens: result.usage.input_tokens ?? 0,
       output_tokens: result.usage.output_tokens ?? 0,
+      cached_tokens: null,
     })
   }
   const content = result.content?.[0]?.text

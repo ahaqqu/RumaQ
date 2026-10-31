@@ -253,19 +253,22 @@ describe('api routes', () => {
     expect(((await res.json()) as any).has_ai_key).toBe(true)
   })
 
-  it('/api/ai/chat returns 429 with Retry-After when the server key hits the daily cap', async () => {
-    // The daily usage cap applies to the shared server key only; BYO user
-    // keys are uncapped (ai-access.ts). This covers the HTTP wiring (status
-    // + header) that the integration suite no longer reaches end-to-end.
+  it('/api/ai/chat succeeds on the server key regardless of usage volume (cap removed, #353)', async () => {
+    // The daily cap was removed unconditionally: even the shared server key
+    // never gates a call. The call still records an ai_usage_events row.
     const env = createMockEnv({
       props: { userId: 'u1', householdId: 'h1' },
       RUMAQ_SERVER_AI_PROVIDER: 'openai',
       RUMAQ_SERVER_AI_KEY: 'sk-server',
     })
-    env.DB.first = vi
-      .fn()
-      .mockResolvedValueOnce(null) // user_settings: no user key -> server key path
-      .mockResolvedValueOnce({ id: 'usage-1', used: 20, daily_limit: 20 }) // ai_usage
+    env.DB.first = vi.fn().mockResolvedValueOnce({
+      ai_provider: null,
+      encrypted_ai_key: null,
+      persona_enabled: 0,
+      persona_user_role: null,
+      persona_ai_role: null,
+    })
+    env.DB.run = vi.fn().mockResolvedValue(undefined)
     const res = await apiApp.request(
       '/api/ai/chat',
       {
@@ -275,8 +278,10 @@ describe('api routes', () => {
       },
       env
     )
-    expect(res.status).toBe(429)
-    expect(res.headers.get('Retry-After')).toBeTruthy()
+    expect(res.status).toBe(200)
+    expect(
+      env.DB.prepare.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO ai_usage_events'))
+    ).toBe(true)
   })
 
   it('/api/locations lists locations', async () => {
@@ -351,25 +356,55 @@ describe('api routes', () => {
     expect(res.status).toBe(204)
   })
 
-  it('/api/ai/usage returns usage', async () => {
+  it('/api/ai/usage sums today events with no cap fields (#353)', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.first = vi
       .fn()
-      .mockResolvedValue({ id: 'u1', used: 5, daily_limit: 20, provider: 'gemini' })
+      .mockResolvedValueOnce({
+        ai_provider: 'gemini',
+        ai_base_url: null,
+        ai_model: null,
+        ai_thinking_level: null,
+        encrypted_ai_key: ENCRYPTED_KEY,
+      })
+      .mockResolvedValueOnce({
+        used: 4,
+        input_tokens: 1200,
+        output_tokens: 350,
+        cached_tokens: 700,
+      })
     const res = await apiApp.request('/api/ai/usage', {}, env)
-    expect(((await res.json()) as any).used).toBe(5)
+    const body = (await res.json()) as any
+    expect(body).toEqual({
+      used: 4,
+      input_tokens: 1200,
+      output_tokens: 350,
+      cached_tokens: 700,
+      provider: 'gemini',
+      key_source: 'user',
+    })
   })
 
-  it('/api/ai/usage creates new row when missing', async () => {
+  it('/api/ai/usage reports zeroed usage when there are no events today (no row creation)', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.first = vi
       .fn()
-      .mockResolvedValueOnce({ ai_provider: 'gemini', encrypted_ai_key: null })
+      .mockResolvedValueOnce({ ai_provider: 'gemini', encrypted_ai_key: ENCRYPTED_KEY })
       .mockResolvedValueOnce(null)
     const res = await apiApp.request('/api/ai/usage', {}, env)
     const body = (await res.json()) as any
-    expect(body.used).toBe(0)
-    expect(body.key_source).toBe('user')
+    expect(body).toEqual({
+      used: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cached_tokens: null,
+      provider: 'gemini',
+      key_source: 'user',
+    })
+    // Read-only: no counter row is inserted anymore.
+    expect(env.DB.prepare.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO'))).toBe(
+      false
+    )
   })
 
   it('/api/ai/usage reports server key source when user has no own key', async () => {
@@ -386,6 +421,106 @@ describe('api routes', () => {
     const body = (await res.json()) as any
     expect(body.key_source).toBe('server')
     expect(body.provider).toBe('gemini')
+  })
+
+  describe('/api/admin/ai/usage', () => {
+    it('returns 403 for non-admin users', async () => {
+      const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+      env.DB.first = vi.fn().mockResolvedValue({ is_admin: 0 })
+      const res = await apiApp.request('/api/admin/ai/usage?range=24h', {}, env)
+      expect(res.status).toBe(403)
+    })
+
+    it('returns 400 on an unknown or missing range', async () => {
+      for (const query of ['?range=90d', '?range=24hours', '']) {
+        const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+        env.DB.first = vi.fn().mockResolvedValue({ is_admin: 1 })
+        const res = await apiApp.request(`/api/admin/ai/usage${query}`, {}, env)
+        expect(res.status).toBe(400)
+      }
+    })
+
+    it('serves each documented range with totals and per-user rows', async () => {
+      for (const range of ['24h', '7d', '30d']) {
+        const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+        env.DB.first = vi.fn().mockResolvedValueOnce({ is_admin: 1 }).mockResolvedValueOnce({
+          calls: 12,
+          input_tokens: 3400,
+          output_tokens: 900,
+          cached_tokens: 2100,
+        })
+        env.DB.all = vi.fn().mockResolvedValue({
+          results: [
+            {
+              user_id: 'u2',
+              email: 'b@c.com',
+              calls: 7,
+              input_tokens: 2000,
+              output_tokens: 500,
+              cached_tokens: 1500,
+              last_used: '2026-11-01T02:00:00.000Z',
+            },
+            {
+              user_id: 'u3',
+              email: null,
+              calls: 5,
+              input_tokens: 1400,
+              output_tokens: 400,
+              cached_tokens: null,
+              last_used: '2026-10-30T01:00:00.000Z',
+            },
+          ],
+        })
+        const res = await apiApp.request(`/api/admin/ai/usage?range=${range}`, {}, env)
+        expect(res.status).toBe(200)
+        const body = (await res.json()) as any
+        expect(body.range).toBe(range)
+        expect(new Date(body.since).toISOString()).toBe(body.since)
+        expect(body.totals).toEqual({
+          calls: 12,
+          input_tokens: 3400,
+          output_tokens: 900,
+          cached_tokens: 2100,
+          cache_hit_rate: 2100 / 3400,
+        })
+        // Reported cache → the rate; unreported cache → null, never 0.
+        expect(body.users[0]).toEqual({
+          user_id: 'u2',
+          email: 'b@c.com',
+          calls: 7,
+          input_tokens: 2000,
+          output_tokens: 500,
+          cached_tokens: 1500,
+          cache_hit_rate: 1500 / 2000,
+          last_used: '2026-11-01T02:00:00.000Z',
+        })
+        expect(body.users[1].cache_hit_rate).toBeNull()
+        expect(body.users[1].email).toBeNull()
+      }
+    })
+
+    it('returns zeroed totals with null cache_hit_rate and no users when the range is empty', async () => {
+      const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+      env.DB.first = vi.fn().mockResolvedValueOnce({ is_admin: 1 }).mockResolvedValueOnce(null)
+      env.DB.all = vi.fn().mockResolvedValue({ results: [] })
+      const res = await apiApp.request('/api/admin/ai/usage?range=24h', {}, env)
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as any
+      expect(body.totals).toEqual({
+        calls: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_tokens: null,
+        cache_hit_rate: null,
+      })
+      expect(body.users).toEqual([])
+    })
+
+    it('returns 401 without auth props', async () => {
+      const env = createMockEnv()
+      const res = await apiApp.request('/api/admin/ai/usage?range=24h', {}, env)
+      expect(res.status).toBe(401)
+    })
   })
 
   it('/api/ai-key/test validates key from settings', async () => {
@@ -460,49 +595,20 @@ describe('api routes', () => {
     expect(res.status).toBe(402)
   })
 
-  it('/api/ai/chat returns 429 when server-key usage limit reached', async () => {
+  it('/api/ai/chat never caps server-key users (no usage gate, #353)', async () => {
     const env = createMockEnv({
       props: { userId: 'u1', householdId: 'h1' },
       RUMAQ_SERVER_AI_PROVIDER: 'gemini',
       RUMAQ_SERVER_AI_KEY: 'sk-server',
     })
-    env.DB.first = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ai_provider: null,
-        encrypted_ai_key: null,
-        persona_enabled: 0,
-        persona_user_role: null,
-        persona_ai_role: null,
-      })
-      .mockResolvedValueOnce({ id: 'u1', used: 20, daily_limit: 20 })
-    const res = await apiApp.request(
-      '/api/ai/chat',
-      {
-        method: 'POST',
-        body: JSON.stringify({ message: 'hi' }),
-        headers: { 'Content-Type': 'application/json' },
-      },
-      env
-    )
-    expect(res.status).toBe(429)
-  })
-
-  it('/api/ai/chat lets own-key users continue past the daily limit', async () => {
-    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ai_provider: 'gemini',
-        ai_base_url: null,
-        ai_model: null,
-        ai_thinking_level: null,
-        encrypted_ai_key: ENCRYPTED_KEY,
-        persona_enabled: 0,
-        persona_user_role: null,
-        persona_ai_role: null,
-      })
-      .mockResolvedValueOnce({ id: 'u1', used: 20, daily_limit: 20 })
+    env.DB.first = vi.fn().mockResolvedValueOnce({
+      ai_provider: null,
+      encrypted_ai_key: null,
+      persona_enabled: 0,
+      persona_user_role: null,
+      persona_ai_role: null,
+    })
+    env.DB.run = vi.fn().mockResolvedValue(undefined)
     const res = await apiApp.request(
       '/api/ai/chat',
       {
@@ -514,6 +620,35 @@ describe('api routes', () => {
     )
     expect(res.status).toBe(200)
     expect(((await res.json()) as any).reply).toContain('test')
+  })
+
+  it('/api/ai/chat lets own-key users chat with usage recorded as an event', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi.fn().mockResolvedValueOnce({
+      ai_provider: 'gemini',
+      ai_base_url: null,
+      ai_model: null,
+      ai_thinking_level: null,
+      encrypted_ai_key: ENCRYPTED_KEY,
+      persona_enabled: 0,
+      persona_user_role: null,
+      persona_ai_role: null,
+    })
+    env.DB.run = vi.fn().mockResolvedValue(undefined)
+    const res = await apiApp.request(
+      '/api/ai/chat',
+      {
+        method: 'POST',
+        body: JSON.stringify({ message: 'hi' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as any).reply).toContain('test')
+    expect(
+      env.DB.prepare.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO ai_usage_events'))
+    ).toBe(true)
   })
 
   it('/api/purchases/scan uses TEST_MODE fallback', async () => {
@@ -538,7 +673,6 @@ describe('api routes', () => {
     env.DB.first = vi
       .fn()
       .mockResolvedValueOnce({ ai_provider: 'ollama', encrypted_ai_key: ENCRYPTED_KEY })
-      .mockResolvedValueOnce({ id: 'usage-1', used: 0, daily_limit: 20 })
     env.DB.run = vi.fn().mockResolvedValue(undefined)
     // Provider responds with usage but empty content: the key owner is billed
     // for the input tokens even though the scan fails.
@@ -554,7 +688,11 @@ describe('api routes', () => {
     formData.append('image', file)
     const res = await apiApp.request('/api/purchases/scan', { method: 'POST', body: formData }, env)
     expect(res.status).toBe(502)
-    expect(env.DB.bind.mock.calls.flat()).toEqual(expect.arrayContaining([0, 100, 50, 'usage-1']))
+    // The failed call still records its event with the billed tokens.
+    expect(
+      env.DB.prepare.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO ai_usage_events'))
+    ).toBe(true)
+    expect(env.DB.bind.mock.calls.flat()).toEqual(expect.arrayContaining([100, 50, null, 'u1']))
   })
 
   it('/api/purchases/scan rejects missing image', async () => {

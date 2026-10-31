@@ -258,9 +258,25 @@ describe('api', () => {
   })
 
   it('getAiUsage calls /api/ai/usage', async () => {
-    clientMock.GET.mockResolvedValueOnce(ok({ used: 5, daily_limit: 20 }))
+    clientMock.GET.mockResolvedValueOnce(
+      ok({
+        used: 5,
+        input_tokens: 1200,
+        output_tokens: 350,
+        cached_tokens: null,
+        provider: 'gemini',
+        key_source: 'user',
+      })
+    )
     const result = await getAiUsage()
-    expect(result).toEqual({ used: 5, daily_limit: 20 })
+    expect(result).toEqual({
+      used: 5,
+      input_tokens: 1200,
+      output_tokens: 350,
+      cached_tokens: null,
+      provider: 'gemini',
+      key_source: 'user',
+    })
     expect(clientMock.GET).toHaveBeenCalledWith('/api/ai/usage', { signal: undefined })
   })
 

@@ -128,7 +128,14 @@ describe('UsageMeter', () => {
   it('renders usage info', () => {
     const { container } = render(
       React.createElement(UsageMeter, {
-        usage: { provider: 'Gemini', used: 5, limit: 20 },
+        usage: {
+          provider: 'Gemini',
+          used: 5,
+          input_tokens: 1200,
+          output_tokens: 350,
+          cached_tokens: 700,
+          key_source: 'user',
+        },
       })
     )
     expect(container.querySelector('[class*="flex flex-col gap-3 p-5"]')).toBeTruthy()
@@ -139,51 +146,48 @@ describe('UsageMeter', () => {
     expect(container.querySelector('[class*="flex flex-col gap-3 p-5"]')).toBeNull()
   })
 
-  it('shows warning for high usage', () => {
-    const { container } = render(
-      React.createElement(UsageMeter, {
-        usage: { provider: 'Gemini', used: 17, limit: 20 },
-      })
-    )
-    expect(container.querySelector('.text-warn')).toBeTruthy()
-  })
-
-  it('shows danger for maxed usage', () => {
-    const { container } = render(
-      React.createElement(UsageMeter, {
-        usage: { provider: 'Gemini', used: 20, limit: 20 },
-      })
-    )
-    expect(container.querySelector('.text-danger')).toBeTruthy()
-  })
-
-  it('shows remaining for normal usage', () => {
-    const { container } = render(
-      React.createElement(UsageMeter, {
-        usage: { provider: 'Gemini', used: 5, limit: 20 },
-      })
-    )
-    expect(container.querySelector('.text-text-muted')).toBeTruthy()
-  })
-
-  it('shows token usage for own-key users without a cap meter', () => {
+  it('shows calls, token counts and the cache hit rate', () => {
     const { container } = render(
       React.createElement(UsageMeter, {
         usage: {
-          provider: 'Ollama Cloud',
-          used: 3,
-          daily_limit: 20,
-          input_tokens: 18230,
-          output_tokens: 6100,
+          provider: 'Gemini',
+          used: 4,
+          input_tokens: 1200,
+          output_tokens: 350,
+          cached_tokens: 700,
           key_source: 'user',
         },
       })
     )
-    // Own key: no request cap meter, token counts still rendered.
+    expect(container.textContent).toContain('Gemini')
+    expect(container.textContent).toContain('4 calls today')
+    expect(container.textContent).toContain('1.2k in')
+    expect(container.textContent).toContain('350 out')
+    expect(container.textContent).toContain('58%')
+    expect(container.textContent).toContain('cache hit rate')
+  })
+
+  it('never renders a cap meter, limit, warn or danger (#353)', () => {
+    const { container } = render(
+      React.createElement(UsageMeter, {
+        usage: {
+          provider: 'Gemini',
+          used: 999,
+          input_tokens: 1200,
+          output_tokens: 350,
+          cached_tokens: null,
+          key_source: 'server',
+        },
+      })
+    )
     expect(container.querySelector('.h-2')).toBeNull()
-    expect(container.querySelector('.text-danger')).toBeNull()
-    expect(container.textContent).toContain('Ollama Cloud')
-    expect(container.textContent).toContain('18.2k in · 6.1k out today · your own key')
+    expect(container.textContent).not.toContain('/20')
+    expect(container.textContent).not.toContain('Daily limit')
+    expect(container.textContent).not.toContain('danger')
+    expect(container.textContent).toContain("RumaQ's shared server key")
+    // No cache data reported: no fabricated 0%, the rate block is absent.
+    expect(container.textContent).not.toContain('0%')
+    expect(container.textContent).not.toContain('cache hit rate')
   })
 })
 

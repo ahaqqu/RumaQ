@@ -27,7 +27,14 @@ const mockSettings = {
   has_ai_key: false,
 }
 
-const mockUsage = { used: 0, daily_limit: 20, provider: 'gemini' }
+const mockUsage = {
+  used: 2,
+  input_tokens: 640,
+  output_tokens: 150,
+  cached_tokens: null,
+  provider: 'gemini',
+  key_source: 'user',
+}
 
 const mockMutateAsync = vi.fn()
 

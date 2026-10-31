@@ -77,7 +77,15 @@ describe('AppShell', () => {
     })
     vi.mocked(useUpdateSettings).mockReturnValue({ mutate: vi.fn() })
     // Assistant is mounted by the shell; it consumes usage + chat hooks.
-    vi.mocked(useUsage).mockReturnValue({ data: { used: 3, daily_limit: 20 } })
+    vi.mocked(useUsage).mockReturnValue({
+      data: {
+        used: 3,
+        input_tokens: 900,
+        output_tokens: 200,
+        cached_tokens: null,
+        key_source: 'server',
+      },
+    })
     vi.mocked(useSendChatMessage).mockReturnValue({ mutateAsync: vi.fn(), isPending: false })
   })
 

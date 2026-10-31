@@ -11,7 +11,14 @@ const mockUseSettings = vi.fn(() => ({ data: { has_ai_key: false } }))
 
 vi.mock('../lib/queries/index.js', () => ({
   useUsage: () => ({
-    data: { used: 3, daily_limit: 20, provider: 'opencode' },
+    data: {
+      used: 3,
+      input_tokens: 900,
+      output_tokens: 200,
+      cached_tokens: 400,
+      provider: 'opencode',
+      key_source: 'server',
+    },
   }),
   useSendChatMessage: () => ({
     isPending: false,
@@ -136,8 +143,10 @@ describe('Assistant', () => {
     })
   })
 
-  it('displays usage-limit message on usage error', async () => {
-    mutateAsync.mockRejectedValueOnce(new Error('AI usage limit reached for today.'))
+  it('displays the provider error message on a failed call', async () => {
+    // The daily usage cap was removed (#353): no 429 usage-limit path exists,
+    // so errors surface as the provider message they are.
+    mutateAsync.mockRejectedValueOnce(new Error('AI chat failed: provider down.'))
     const { container } = renderWithProviders(
       React.createElement(Assistant, baseProps({ open: true, aiKey: 'sk-test' }))
     )
@@ -145,7 +154,10 @@ describe('Assistant', () => {
     fireEvent.change(input, { target: { value: 'hi' } })
     fireEvent.submit(container.querySelector('form'))
     await waitFor(() => {
-      expect(mutateAsync).toHaveBeenCalled()
+      // The suite's i18n mock returns raw keys: reaching the assistant.error
+      // branch (instead of a usage-limit branch) is the assertion.
+      expect(container.textContent).toContain('assistant.error')
+      expect(container.textContent).not.toContain('assistant.usageLimit')
     })
   })
 })

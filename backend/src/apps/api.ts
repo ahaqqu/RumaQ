@@ -80,9 +80,8 @@ import {
 import { extractReceiptItems, usageCollector, type TokenUsage } from '../lib/ai.js'
 import {
   resolveAiAccess,
-  getOrCreateAiUsage,
-  isAiUsageLimited,
-  recordAiUsage,
+  recordAiUsageEvent,
+  type AiAccess,
   type UserAiSettings,
 } from '../lib/ai-access.js'
 import { sendChatMessage } from '../lib/chat.js'
@@ -150,6 +149,24 @@ const reviewQuery = object({
   ),
   offset: optional(pipe(string(), transform(Number), number(), integer(), minValue(0))),
 })
+
+// Admin AI usage analytics (issue #353): ts-exact ranges, 400 on anything else.
+const aiUsageRangeQuery = object({
+  range: picklist(['24h', '7d', '30d']),
+})
+
+const AI_USAGE_RANGE_MS: Record<'24h' | '7d' | '30d', number> = {
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+}
+
+// cache_hit_rate = cached/input over the range. null when no input was
+// recorded or the provider(s) reported no cache data — unknown, not 0.
+function cacheHitRate(cachedTokens: number | null, inputTokens: number): number | null {
+  if (inputTokens <= 0 || cachedTokens === null) return null
+  return cachedTokens / inputTokens
+}
 
 // Admin review verdicts (issue #294): approve = "yes, same product, trust
 // this match"; reject = "no, split them". Recorded only — v1 decisions
@@ -427,6 +444,7 @@ apiApp.use('/api/plans/:id/items/:itemId', propsAuthMiddleware)
 apiApp.use('/api/prices', propsAuthMiddleware)
 apiApp.use('/api/prices/:productKey', propsAuthMiddleware)
 apiApp.use('/api/admin/price-runs', propsAuthMiddleware)
+apiApp.use('/api/admin/ai/usage', propsAuthMiddleware)
 apiApp.use('/api/admin/scrape', propsAuthMiddleware)
 apiApp.use('/api/admin/scrape/stores', propsAuthMiddleware)
 apiApp.use('/api/admin/scrape/commands', propsAuthMiddleware)
@@ -1129,13 +1147,62 @@ apiApp.post(
   }
 )
 
+// One completed AI call → one ai_usage_events row. Shared by the chat, scan
+// and plan-generate routes; usage is analytics only and never gates a call.
+function recordAiCallUsage(
+  env: Env['Bindings'],
+  userId: string,
+  access: AiAccess,
+  usage: TokenUsage
+): Promise<void> {
+  return recordAiUsageEvent(env, {
+    userId,
+    provider: access.provider,
+    model: access.model,
+    keySource: access.keySource,
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    cachedTokens: usage.cached_tokens,
+  })
+}
+
 apiApp.get(
   '/api/ai/usage',
   describeRoute({
-    description: 'Returns today AI usage for the current user.',
+    description:
+      'Returns today AI usage (UTC day) for the current user. Usage is recorded but never capped.',
     security: [{ cookieAuth: [] }],
     responses: {
-      200: { description: 'OK' },
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: [
+                'used',
+                'input_tokens',
+                'output_tokens',
+                'cached_tokens',
+                'provider',
+                'key_source',
+              ],
+              properties: {
+                used: { type: 'integer', description: 'Completed AI calls today (UTC)' },
+                input_tokens: { type: 'integer' },
+                output_tokens: { type: 'integer' },
+                cached_tokens: {
+                  type: ['integer', 'null'],
+                  description:
+                    'Provider-reported cached input tokens; null when the provider reports none',
+                },
+                provider: { type: ['string', 'null'] },
+                key_source: { type: 'string', enum: ['user', 'server'] },
+              },
+            },
+          },
+        },
+      },
       401: { description: 'Unauthorized' },
     },
   }),
@@ -1150,52 +1217,192 @@ apiApp.get(
       .bind(userId)
       .first<UserAiSettings>()
 
-    // Resolved fresh so it always reflects the user's current configuration,
-    // not the state when today's counter row was created.
+    // Resolved fresh so provider/key_source always reflect the user's current
+    // configuration, not the state when past events were recorded.
     const access = await resolveAiAccess(c.env, settings)
     const keySource = access?.keySource ?? 'user'
     const provider = access?.provider ?? settings?.ai_provider ?? null
 
-    const existing = await c.env.DB.prepare(
-      'SELECT id, used, daily_limit, provider, input_tokens, output_tokens FROM ai_usage WHERE user_id = ? AND date = ?'
+    const totals = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS used,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              SUM(cached_tokens) AS cached_tokens
+         FROM ai_usage_events
+        WHERE user_id = ? AND date = ?`
     )
       .bind(userId, today)
       .first<{
-        id: string
         used: number
-        daily_limit: number
-        provider: string | null
         input_tokens: number
         output_tokens: number
+        cached_tokens: number | null
       }>()
 
-    if (!existing) {
-      const id = crypto.randomUUID()
-      await c.env.DB.prepare(
-        'INSERT INTO ai_usage (id, user_id, date, provider, used, daily_limit) VALUES (?, ?, ?, ?, 0, 20)'
-      )
-        .bind(id, userId, today, provider)
-        .run()
+    const res = c.json({
+      used: totals?.used ?? 0,
+      input_tokens: totals?.input_tokens ?? 0,
+      output_tokens: totals?.output_tokens ?? 0,
+      // SUM over all-null cached figures is NULL: unreported, not zero.
+      cached_tokens: totals?.cached_tokens ?? null,
+      provider,
+      key_source: keySource,
+    })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
 
-      const res = c.json({
-        used: 0,
-        daily_limit: 20,
-        provider,
-        key_source: keySource,
-        input_tokens: 0,
-        output_tokens: 0,
-      })
-      res.headers.set('Cache-Control', 'private, no-cache')
-      return res
-    }
+// Admin AI usage analytics (issue #353): totals plus a per-user breakdown
+// over a ts-exact recent range. 403 for non-admin users (requireAdmin).
+apiApp.get(
+  '/api/admin/ai/usage',
+  describeRoute({
+    description: 'AI usage totals and per-user breakdown over a recent range (admin-only).',
+    security: [{ cookieAuth: [] }],
+    parameters: [
+      {
+        in: 'query',
+        name: 'range',
+        required: true,
+        schema: { type: 'string', enum: ['24h', '7d', '30d'] },
+      },
+    ],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['range', 'since', 'totals', 'users'],
+              properties: {
+                range: { type: 'string', enum: ['24h', '7d', '30d'] },
+                since: { type: 'string', description: 'ISO instant the range starts at' },
+                totals: {
+                  type: 'object',
+                  required: [
+                    'calls',
+                    'input_tokens',
+                    'output_tokens',
+                    'cached_tokens',
+                    'cache_hit_rate',
+                  ],
+                  properties: {
+                    calls: { type: 'integer' },
+                    input_tokens: { type: 'integer' },
+                    output_tokens: { type: 'integer' },
+                    cached_tokens: { type: ['integer', 'null'] },
+                    cache_hit_rate: {
+                      type: ['number', 'null'],
+                      description: 'cached/input; null when input is 0 or cache unreported',
+                    },
+                  },
+                },
+                users: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: [
+                      'user_id',
+                      'email',
+                      'calls',
+                      'input_tokens',
+                      'output_tokens',
+                      'cached_tokens',
+                      'cache_hit_rate',
+                      'last_used',
+                    ],
+                    properties: {
+                      user_id: { type: 'string' },
+                      email: { type: ['string', 'null'] },
+                      calls: { type: 'integer' },
+                      input_tokens: { type: 'integer' },
+                      output_tokens: { type: 'integer' },
+                      cached_tokens: { type: ['integer', 'null'] },
+                      cache_hit_rate: { type: ['number', 'null'] },
+                      last_used: { type: 'string' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      400: { description: 'Validation error (unknown range)' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  sValidator('query', aiUsageRangeQuery),
+  async (c) => {
+    const range = c.req.valid('query').range
+    const since = new Date(Date.now() - AI_USAGE_RANGE_MS[range]).toISOString()
+
+    const totals = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS calls,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              SUM(cached_tokens) AS cached_tokens
+         FROM ai_usage_events
+        WHERE ts >= ?`
+    )
+      .bind(since)
+      .first<{
+        calls: number
+        input_tokens: number
+        output_tokens: number
+        cached_tokens: number | null
+      }>()
+
+    const { results: userRows } = await c.env.DB.prepare(
+      `SELECT e.user_id,
+              u.email,
+              COUNT(*) AS calls,
+              COALESCE(SUM(e.input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(e.output_tokens), 0) AS output_tokens,
+              SUM(e.cached_tokens) AS cached_tokens,
+              MAX(e.ts) AS last_used
+         FROM ai_usage_events e
+         LEFT JOIN users u ON u.id = e.user_id
+        WHERE e.ts >= ?
+        GROUP BY e.user_id
+        -- user_id tiebreaks equal last_used stamps so the order is stable.
+        ORDER BY last_used DESC, user_id ASC`
+    )
+      .bind(since)
+      .all<{
+        user_id: string
+        email: string | null
+        calls: number
+        input_tokens: number
+        output_tokens: number
+        cached_tokens: number | null
+        last_used: string
+      }>()
 
     const res = c.json({
-      used: existing.used,
-      daily_limit: existing.daily_limit,
-      provider: existing.provider ?? provider,
-      key_source: keySource,
-      input_tokens: existing.input_tokens,
-      output_tokens: existing.output_tokens,
+      range,
+      since,
+      totals: {
+        calls: totals?.calls ?? 0,
+        input_tokens: totals?.input_tokens ?? 0,
+        output_tokens: totals?.output_tokens ?? 0,
+        cached_tokens: totals?.cached_tokens ?? null,
+        cache_hit_rate: cacheHitRate(totals?.cached_tokens ?? null, totals?.input_tokens ?? 0),
+      },
+      users: userRows.map((row) => ({
+        user_id: row.user_id,
+        email: row.email ?? null,
+        calls: row.calls,
+        input_tokens: row.input_tokens,
+        output_tokens: row.output_tokens,
+        cached_tokens: row.cached_tokens,
+        cache_hit_rate: cacheHitRate(row.cached_tokens, row.input_tokens),
+        last_used: row.last_used,
+      })),
     })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
@@ -1238,7 +1445,6 @@ apiApp.post(
       400: { description: 'Validation error' },
       401: { description: 'Unauthorized' },
       402: { description: 'AI key not configured' },
-      429: { description: 'AI usage limit exceeded' },
       502: { description: 'AI provider error' },
     },
   }),
@@ -1275,20 +1481,11 @@ apiApp.post(
       )
     }
 
-    const usageRow = await getOrCreateAiUsage(c.env, userId, access.provider)
-
-    if (isAiUsageLimited(access, usageRow)) {
-      return c.json(
-        {
-          error: 'AI usage limit reached for today. Upgrade or wait until tomorrow.',
-        },
-        429,
-        { 'Retry-After': '86400' }
-      )
-    }
+    // Usage is recorded per call but never gates it (issue #353 removed the
+    // daily cap; BYOK is the norm and the server key is uncapped too).
 
     let reply: string
-    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 }
+    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
     if (c.env.TEST_MODE === 'true') {
       reply = `(test) You asked: "${message}". Based on your household stock, consider checking your low items soon.`
     } else {
@@ -1381,12 +1578,9 @@ apiApp.post(
           }
         )
       } catch (err) {
-        // The provider billed the failed attempt's input tokens; meter them
-        // even though the request itself is not counted.
-        await recordAiUsage(c.env, usageRow, {
-          inputTokens: tokenUsage.input_tokens,
-          outputTokens: tokenUsage.output_tokens,
-        })
+        // The provider billed the failed attempt's input tokens; record them
+        // as the call's event even though no reply came back.
+        await recordAiCallUsage(c.env, userId, access, tokenUsage)
         return c.json(
           {
             error: `AI chat failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -1396,11 +1590,7 @@ apiApp.post(
       }
     }
 
-    await recordAiUsage(c.env, usageRow, {
-      requests: 1,
-      inputTokens: tokenUsage.input_tokens,
-      outputTokens: tokenUsage.output_tokens,
-    })
+    await recordAiCallUsage(c.env, userId, access, tokenUsage)
 
     const res = c.json({ reply })
     res.headers.set('Cache-Control', 'private, no-cache')
@@ -1418,7 +1608,7 @@ apiApp.post(
       400: { description: 'Invalid input' },
       401: { description: 'Unauthorized' },
       402: { description: 'AI key not configured' },
-      429: { description: 'AI usage limit exceeded' },
+      502: { description: 'AI provider error' },
     },
   }),
   async (c) => {
@@ -1478,18 +1668,6 @@ apiApp.post(
       )
     }
 
-    const usageRow = await getOrCreateAiUsage(c.env, userId, access.provider)
-
-    if (isAiUsageLimited(access, usageRow)) {
-      return c.json(
-        {
-          error: 'AI usage limit reached for today. Upgrade or wait until tomorrow.',
-        },
-        429,
-        { 'Retry-After': '86400' }
-      )
-    }
-
     const ext = extFromType(file.type)
     const key = buildKey(householdId, userId, ext)
 
@@ -1500,7 +1678,7 @@ apiApp.post(
     }
 
     let scanResult
-    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 }
+    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
     if (c.env.TEST_MODE === 'true') {
       scanResult = {
         store_name: 'Indomaret',
@@ -1526,12 +1704,9 @@ apiApp.post(
           }
         )
       } catch (err) {
-        // The provider billed the failed attempt's input tokens; meter them
-        // even though the request itself is not counted.
-        await recordAiUsage(c.env, usageRow, {
-          inputTokens: tokenUsage.input_tokens,
-          outputTokens: tokenUsage.output_tokens,
-        })
+        // The provider billed the failed attempt's input tokens; record them
+        // as the call's event even though no scan came back.
+        await recordAiCallUsage(c.env, userId, access, tokenUsage)
         return c.json(
           {
             error: `AI scan failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -1542,11 +1717,7 @@ apiApp.post(
       }
     }
 
-    await recordAiUsage(c.env, usageRow, {
-      requests: 1,
-      inputTokens: tokenUsage.input_tokens,
-      outputTokens: tokenUsage.output_tokens,
-    })
+    await recordAiCallUsage(c.env, userId, access, tokenUsage)
 
     const imageUrl: string | null = getSignedUrl()
 
@@ -3444,7 +3615,7 @@ apiApp.post(
     responses: {
       200: { description: 'Plan generated' },
       402: { description: 'AI key not configured' },
-      429: { description: 'AI usage limit exceeded' },
+      502: { description: 'AI provider error' },
     },
   }),
   async (c) => {
@@ -3472,18 +3643,6 @@ apiApp.post(
           error: 'AI provider not configured. Go to Settings to set up your AI key.',
         },
         402
-      )
-    }
-
-    const usageRow = await getOrCreateAiUsage(c.env, userId, access.provider)
-
-    if (isAiUsageLimited(access, usageRow)) {
-      return c.json(
-        {
-          error: 'AI usage limit reached for today. Upgrade or wait until tomorrow.',
-        },
-        429,
-        { 'Retry-After': '86400' }
       )
     }
 
@@ -3552,7 +3711,7 @@ apiApp.post(
       price_estimate: number | null
       why: string
     }>
-    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 }
+    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
 
     if (c.env.TEST_MODE === 'true') {
       generatedItems = [
@@ -3599,12 +3758,9 @@ apiApp.post(
           }
         )
       } catch (err) {
-        // The provider billed the failed attempt's input tokens; meter them
-        // even though the request itself is not counted.
-        await recordAiUsage(c.env, usageRow, {
-          inputTokens: tokenUsage.input_tokens,
-          outputTokens: tokenUsage.output_tokens,
-        })
+        // The provider billed the failed attempt's input tokens; record them
+        // as the call's event even though no plan came back.
+        await recordAiCallUsage(c.env, userId, access, tokenUsage)
         return c.json(
           {
             error: `AI plan generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -3614,11 +3770,7 @@ apiApp.post(
       }
     }
 
-    await recordAiUsage(c.env, usageRow, {
-      requests: 1,
-      inputTokens: tokenUsage.input_tokens,
-      outputTokens: tokenUsage.output_tokens,
-    })
+    await recordAiCallUsage(c.env, userId, access, tokenUsage)
 
     const storeLabels = new Map(stores.map((s) => [s.id, s.label]))
 

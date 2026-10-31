@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vite-plus/test'
-import { isAiUsageLimited, resolveAiAccess } from '../lib/ai-access.js'
+import { describe, it, expect, vi } from 'vite-plus/test'
+import {
+  deleteExpiredAiUsageEvents,
+  recordAiUsageEvent,
+  resolveAiAccess,
+} from '../lib/ai-access.js'
 
 // Same key pair the api-routes tests use, so encrypted_ai_key decrypts.
 const ENCRYPTED_KEY = 'v1:KIPkC6p1Fvnv4KoVsu-dx-GNoEqmm2kStaExhNbptUJ3lrE'
@@ -68,25 +72,96 @@ describe('resolveAiAccess', () => {
   })
 })
 
-describe('isAiUsageLimited', () => {
-  const access = (keySource: 'user' | 'server') => ({
-    provider: 'openai',
-    apiKey: 'sk-test',
-    baseUrl: null,
-    model: null,
-    thinkingLevel: null,
-    keySource,
-  })
-  const exceeded = { id: 'usage-1', used: 20, daily_limit: 20 }
-  const under = { id: 'usage-1', used: 3, daily_limit: 20 }
+describe('recordAiUsageEvent', () => {
+  function createEnv() {
+    const run = vi.fn().mockResolvedValue(undefined)
+    const bind = vi.fn().mockReturnValue({ run })
+    const prepare = vi.fn().mockReturnValue({ bind })
+    return {
+      env: { DB: { prepare } } as unknown as Parameters<typeof recordAiUsageEvent>[0],
+      prepare,
+      bind,
+    }
+  }
 
-  it('caps server-key traffic once the daily limit is reached', () => {
-    expect(isAiUsageLimited(access('server'), exceeded)).toBe(true)
-    expect(isAiUsageLimited(access('server'), under)).toBe(false)
+  it('inserts one event row with ts, UTC date and the call details', async () => {
+    const { env, prepare, bind } = createEnv()
+    await recordAiUsageEvent(
+      env,
+      {
+        userId: 'u1',
+        provider: 'gemini',
+        model: 'gemini-3.6-flash',
+        keySource: 'user',
+        inputTokens: 900,
+        outputTokens: 100,
+        cachedTokens: 640,
+      },
+      new Date('2026-11-01T07:15:30.400Z')
+    )
+
+    expect(prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO ai_usage_events'))
+    expect(bind).toHaveBeenCalledWith(
+      expect.any(String), // id
+      'u1',
+      '2026-11-01T07:15:30.400Z',
+      '2026-11-01',
+      'gemini',
+      'gemini-3.6-flash',
+      900,
+      100,
+      640,
+      'user'
+    )
   })
 
-  it('never caps user-key traffic', () => {
-    expect(isAiUsageLimited(access('user'), exceeded)).toBe(false)
-    expect(isAiUsageLimited(access('user'), under)).toBe(false)
+  it('records null cached tokens when the provider reports none', async () => {
+    const { env, bind } = createEnv()
+    await recordAiUsageEvent(
+      env,
+      {
+        userId: 'u1',
+        provider: 'openai',
+        model: null,
+        keySource: 'server',
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: null,
+      },
+      new Date('2026-11-01T23:59:59.000Z')
+    )
+    expect(bind).toHaveBeenCalledWith(
+      expect.any(String),
+      'u1',
+      '2026-11-01T23:59:59.000Z',
+      '2026-11-01',
+      'openai',
+      null,
+      0,
+      0,
+      null,
+      'server'
+    )
+  })
+})
+
+describe('deleteExpiredAiUsageEvents (1-year retention)', () => {
+  function createEnv() {
+    const run = vi.fn().mockResolvedValue(undefined)
+    const bind = vi.fn().mockReturnValue({ run })
+    const prepare = vi.fn().mockReturnValue({ bind })
+    return {
+      env: { DB: { prepare } } as unknown as Parameters<typeof deleteExpiredAiUsageEvents>[0],
+      prepare,
+      bind,
+    }
+  }
+
+  it('deletes events strictly older than 365 days at the injected instant', async () => {
+    const { env, prepare, bind } = createEnv()
+    await deleteExpiredAiUsageEvents(env, new Date('2026-11-01T03:17:00.000Z'))
+
+    expect(prepare).toHaveBeenCalledWith('DELETE FROM ai_usage_events WHERE ts < ?')
+    expect(bind).toHaveBeenCalledWith('2025-11-01T03:17:00.000Z')
   })
 })

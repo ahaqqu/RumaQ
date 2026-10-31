@@ -85,13 +85,13 @@ so you waste less food, shop in fewer trips, and spend less.
 
 - Chat with an AI assistant about your household shopping.
 - One-tap prompts: plan this week, recommend the cheapest store, recipes for expiring items.
-- See AI quota/usage status (shared key has a daily limit; own key = unlimited).
+- See AI usage status (calls today + token counts; usage is recorded but never capped, own key or shared server key alike).
 - Turn an assistant answer into a shopping plan in one tap.
 - The assistant answers use your household's real data (stock, history, prices).
 
 ### Personalize & configure (Settings)
 
-- Choose an AI provider (OpenCode/OpenAI/Anthropic/Gemini/Ollama Cloud/custom endpoint), set model, thinking level, and API key; test the connection; see usage against the daily limit.
+- Choose an AI provider (OpenCode/OpenAI/Anthropic/Gemini/Ollama Cloud/custom endpoint), set model, thinking level, and API key; test the connection; see usage (calls + tokens + cache hit rate).
 - Define a persona ("I am … , you are …") that AI-rewrites the app's tone and recolors the theme; preview and enable/disable it.
 - Manage storage locations (add/delete).
 - Manage recorded stores (add/delete).
@@ -102,6 +102,7 @@ so you waste less food, shop in fewer trips, and spend less.
 - **Scraper monitor:** see whether last night's price scrape succeeded, per-run outcomes (stores scraped, items matched, publish results, errors), and when the last success was.
 - **Review queue:** judge AI-flagged product matches side by side (approve/reject/undo), filter by status, export decisions.
 - **Scrape now:** trigger an on-demand scrape of selected stores and watch the live log until it finishes.
+- **AI usage:** totals (calls, input/output tokens, cache hit rate) and a per-user breakdown over the last 24 hours / 7 days / 30 days.
 
 ## 4. Information & behaviors any UI must support
 
@@ -111,7 +112,7 @@ so you waste less food, shop in fewer trips, and spend less.
 - **Plan item:** name, qty + unit, store, price estimate, reason, price source + validity, bought/pending status.
 - **Purchase:** date, store, total, line items (name, qty, unit, price), receipt availability.
 - **Price row:** product name/brand/unit, current price, tag price when discounted, promo labels, savings %, validity countdown, stores offering it, price freshness.
-- **AI usage:** requests used / daily limit (or token usage on own key), warning when near/over limit.
+- **AI usage:** calls today, input/output tokens, cache hit rate (only when the provider reports cached tokens); no limit meter.
 
 ### States that carry meaning (not just polish)
 
@@ -119,7 +120,7 @@ so you waste less food, shop in fewer trips, and spend less.
 - **Loading** for every async area; **empty** states that explain the next action (e.g. "scan your first receipt"); **error** with retry.
 - **Offline mode:** the app is a PWA and works offline with cached data; changes made offline must survive and sync.
 - **Optimistic feedback:** quantity changes, check-offs, and decisions should feel instant.
-- **AI availability:** the app is usable without any AI key (inventory works; AI features show how to enable them). Quota exhaustion must be visible, not silent.
+- **AI availability:** the app is usable without any AI key (inventory works; AI features show how to enable them). Usage is recorded but never capped, so there is no quota-exhaustion state; provider failures surface as errors.
 - **Two languages** (EN/ID) for all text; admin sections hidden from normal users.
 
 ### Hard functional flows to preserve

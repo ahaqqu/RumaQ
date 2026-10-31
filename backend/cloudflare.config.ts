@@ -1,4 +1,4 @@
-import { bindings, defineConfig } from 'cf/config'
+import { bindings, defineConfig, triggers } from 'cf/config'
 
 /**
  * Single source of truth for the Worker configuration (replaces the four
@@ -56,6 +56,9 @@ export default defineConfig({
       notFoundHandling: 'single-page-application',
       runWorkerFirst: ['/api/*'],
     },
+    // Daily AI-usage retention sweep (issue #353): scheduled handler in
+    // gateway.ts deletes ai_usage_events older than one year. Off-peak UTC.
+    triggers: [triggers.scheduled({ schedule: '17 3 * * *' })],
     env: {
       DB: bindings.d1({ name: databaseName, id: databaseId }),
       RECEIPTS: bindings.r2({ name: bucketName }),

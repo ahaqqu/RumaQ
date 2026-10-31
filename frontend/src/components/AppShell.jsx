@@ -46,6 +46,7 @@ const ADMIN_NAV = [
   { id: 'monitor', key: 'nav.monitor', Icon: IconSliders, to: '/admin/prices' },
   { id: 'review', key: 'nav.review', Icon: IconReview, to: '/admin/review' },
   { id: 'scrape', key: 'nav.scrape', Icon: IconBolt, to: '/admin/scrape' },
+  { id: 'aiUsage', key: 'nav.aiUsage', Icon: IconSpark, to: '/admin/ai-usage' },
 ]
 
 // The mobile drawer is the super-app menu: primary screens first — History

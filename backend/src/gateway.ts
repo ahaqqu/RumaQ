@@ -1,6 +1,7 @@
 import type { Env } from './types.js'
 import { authApp } from './apps/auth.js'
 import { apiApp } from './apps/api.js'
+import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
 
 const AUTH_ROUTES = new Set([
   '/api/auth/login',
@@ -75,5 +76,15 @@ export const gateway = {
       status: 404,
       headers: { 'Content-Type': 'application/json' },
     })
+  },
+
+  // Daily cron (triggers.scheduled in cloudflare.config.ts): usage records
+  // are deleted after one year (issue #353).
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env['Bindings'],
+    ctx: ExecutionContext
+  ): Promise<void> {
+    ctx.waitUntil(deleteExpiredAiUsageEvents(env))
   },
 }

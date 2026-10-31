@@ -12,7 +12,7 @@ import {
   IconReceipt,
 } from './icons.jsx'
 import { cn } from '../lib/cn.js'
-import { formatTokens, usageMeterModel } from '../lib/usage.js'
+import { usageMeterModel } from '../lib/usage.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { useApp } from '../context/AppContext.jsx'
 import { personaText } from '../lib/persona.js'
@@ -46,7 +46,6 @@ const QUICK = [
 
 function classifyError(err) {
   const msg = err instanceof Error ? err.message : String(err)
-  if (/usage limit/i.test(msg)) return { kind: 'usage', message: msg }
   if (/not configured|api key/i.test(msg)) return { kind: 'missing', message: msg }
   return { kind: 'other', message: msg }
 }
@@ -66,9 +65,10 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
   // with RumaQ's shared key when the user has none of their own.
   const isConnected = Boolean(aiKey) || hasBackendKey || settings?.server_ai_available === true
 
-  // Shared metering model; while the usage query loads, show the zeroed
-  // server-key default (same as before the data arrives).
-  const meter = usageMeterModel(usage) ?? usageMeterModel({ used: 0, daily_limit: 20 })
+  // Shared metering model; null while the usage query loads — the status dot
+  // still shows (connected is known), just without a usage count. No limit
+  // is ever fabricated: usage is recorded but never capped (#353).
+  const meter = usageMeterModel(usage)
 
   const send = async (text) => {
     if (!text.trim() || chat.isPending) return
@@ -159,19 +159,11 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
                     <span
                       role="img"
                       aria-label={
-                        meter.danger
-                          ? t('assistant.dailyLimitReached')
-                          : meter.ownKey
-                            ? t('assistant.readyOwnKey', {
-                                input: formatTokens(meter.inputTokens),
-                                output: formatTokens(meter.outputTokens),
-                              })
-                            : t('assistant.ready', { used: meter.used, limit: meter.limit })
+                        meter
+                          ? t('assistant.ready', { used: meter.used })
+                          : t('assistant.connected')
                       }
-                      className={cn(
-                        'w-2 h-2 rounded-full shrink-0',
-                        meter.danger ? 'bg-text-faint' : meter.warn ? 'bg-warn' : 'bg-ok'
-                      )}
+                      className="w-2 h-2 rounded-full shrink-0 bg-ok"
                     />
                   )}
                 </div>
@@ -264,15 +256,13 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
                   <div
                     className={cn(
                       'text-base leading-normal text-sm',
-                      errorState.kind === 'usage' ? 'text-text-muted' : 'text-danger'
+                      errorState.kind === 'other' ? 'text-danger' : 'text-text-muted'
                     )}
                   >
-                    {errorState.kind === 'usage'
-                      ? t('assistant.usageLimit')
-                      : errorState.kind === 'missing'
-                        ? t('assistant.keyMissing')
-                        : t('assistant.error', { message: errorState.message })}
-                    {(errorState.kind === 'usage' || errorState.kind === 'missing') && (
+                    {errorState.kind === 'missing'
+                      ? t('assistant.keyMissing')
+                      : t('assistant.error', { message: errorState.message })}
+                    {errorState.kind === 'missing' && (
                       <div className="mt-2">
                         <Button
                           size="sm"

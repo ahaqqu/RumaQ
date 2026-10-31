@@ -16,8 +16,9 @@ export type AiAccess = {
   baseUrl: string | null
   model: string | null
   thinkingLevel: ThinkingLevel | null
-  // 'user' = the caller's own key (no daily cap); 'server' = RumaQ's shared
-  // key, which is the only path the daily limit applies to.
+  // 'user' = the caller's own stored key; 'server' = RumaQ's shared key.
+  // Recorded for analytics (ai_usage_events) either way — neither source is
+  // capped: BYOK is the norm, and the shared key is uncapped too (issue #353).
   keySource: 'user' | 'server'
 }
 
@@ -38,8 +39,8 @@ function normalizeThinkingLevel(value: string | null): ThinkingLevel | null {
 }
 
 // Resolve which provider credentials serve this request. The user's own
-// stored key always wins; the server-provided key is a limited fallback for
-// users who have not configured one.
+// stored key always wins; the server-provided key is a fallback for users
+// who have not configured one.
 export async function resolveAiAccess(
   env: Env['Bindings'],
   settings: UserAiSettings | null
@@ -73,54 +74,54 @@ export async function resolveAiAccess(
   return null
 }
 
-export type AiUsageRow = {
-  id: string
-  used: number
-  daily_limit: number
+export type AiUsageEvent = {
+  userId: string
+  provider: string | null
+  // The model configured for the call; null means the provider default applied.
+  model: string | null
+  keySource: 'user' | 'server' | null
+  inputTokens: number
+  outputTokens: number
+  // null when the provider reported no cached-token figure.
+  cachedTokens: number | null
 }
 
-// Fetch today's usage counter for the user, creating a zeroed row on first
-// use. The daily_limit column only gates server-key traffic; user keys are
-// uncapped.
-export async function getOrCreateAiUsage(
+// Persist one completed AI call as its own event row. Usage is recorded for
+// analytics only — it never gates a call (the daily cap was removed #353).
+// `now` is injectable so tests can pin ts/date.
+export async function recordAiUsageEvent(
   env: Env['Bindings'],
-  userId: string,
-  provider: string
-): Promise<AiUsageRow> {
-  const today = new Date().toISOString().slice(0, 10)
-  const existing = await env.DB.prepare(
-    'SELECT id, used, daily_limit FROM ai_usage WHERE user_id = ? AND date = ?'
-  )
-    .bind(userId, today)
-    .first<AiUsageRow>()
-
-  if (existing) return existing
-
-  const id = crypto.randomUUID()
-  await env.DB.prepare(
-    'INSERT INTO ai_usage (id, user_id, date, provider, used, daily_limit) VALUES (?, ?, ?, ?, 0, 20)'
-  )
-    .bind(id, userId, today, provider)
-    .run()
-  return { id, used: 0, daily_limit: 20 }
-}
-
-export function isAiUsageLimited(access: AiAccess, usage: AiUsageRow): boolean {
-  return access.keySource === 'server' && usage.used >= usage.daily_limit
-}
-
-// Persist one call's metered usage against today's row. `requests` stays
-// success-only (callers omit it on the provider-error path); tokens are
-// recorded whenever the provider reported them, error or not — the key
-// owner is billed for failed calls too.
-export async function recordAiUsage(
-  env: Env['Bindings'],
-  usageRow: { id: string },
-  delta: { requests?: number; inputTokens?: number; outputTokens?: number }
+  event: AiUsageEvent,
+  now: Date = new Date()
 ): Promise<void> {
+  const ts = now.toISOString()
   await env.DB.prepare(
-    'UPDATE ai_usage SET used = used + ?, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?'
+    `INSERT INTO ai_usage_events
+       (id, user_id, ts, date, provider, model, input_tokens, output_tokens, cached_tokens, key_source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(delta.requests ?? 0, delta.inputTokens ?? 0, delta.outputTokens ?? 0, usageRow.id)
+    .bind(
+      crypto.randomUUID(),
+      event.userId,
+      ts,
+      ts.slice(0, 10),
+      event.provider,
+      event.model,
+      event.inputTokens,
+      event.outputTokens,
+      event.cachedTokens,
+      event.keySource
+    )
     .run()
+}
+
+// Usage records are deleted after one year (issue #353). Invoked daily by the
+// Worker's scheduled handler (cron in cloudflare.config.ts); `now` is
+// injectable so tests can exercise the boundary exactly.
+export async function deleteExpiredAiUsageEvents(
+  env: Env['Bindings'],
+  now: Date = new Date()
+): Promise<void> {
+  const cutoff = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000)
+  await env.DB.prepare('DELETE FROM ai_usage_events WHERE ts < ?').bind(cutoff.toISOString()).run()
 }
