@@ -96,6 +96,11 @@ export const runReportStoreSchema = strictObject({
   // visible on the monitor without discarding the healthy items. Additive:
   // old scrapers' reports (no field) still validate.
   warnings: nullish(array(pipe(string(), maxLength(500)))),
+  // Issue #347: the ordered model-chain rungs this store actually OCR'd
+  // with — the quality-drift audit trail when the chain advances mid-run.
+  // Absent when the store made no successful OCR call. Additive: old
+  // scrapers' reports (no field) still validate.
+  modelsUsed: nullish(array(pipe(string(), maxLength(100)))),
 })
 
 // One flagged candidate pair the matcher reports for the admin review queue

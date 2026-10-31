@@ -22,6 +22,7 @@ import { Effect } from 'effect'
 import { makeProductKey } from '../publish/payload.js'
 import type { ValidatedProduct } from '../ocr/parse.js'
 import type { GeminiClient } from '../ocr/gemini.js'
+import type { ModelChainState } from '../util/model-chain.js'
 import { verifyPairs, type VerifyOutcome, type VerifyPair } from '../ocr/verify.js'
 import {
   cosineSimilarity,
@@ -169,7 +170,8 @@ function reviewRecord(
 export interface MatchDeps {
   cfg: MatchGateConfig
   embeddingModel: string
-  verifierModel: string
+  /** The verifier's own per-run model chain (issue #347). */
+  verifierChain: ModelChainState
   verifierRetries: number
   /** slug → display name (for the verifier prompt's store labels). */
   storeNames: Record<string, string>
@@ -450,7 +452,7 @@ export function runMatch(
       }))
       const verdict = yield* verifyPairs(pairs, {
         apiKey: deps.apiKey,
-        model: deps.verifierModel,
+        model: deps.verifierChain,
         retries: deps.verifierRetries,
         client: deps.verifyClient,
         sleep: deps.sleep,

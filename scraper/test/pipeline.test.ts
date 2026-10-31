@@ -106,6 +106,28 @@ function scopedOptions(
   return base
 }
 
+/**
+ * Scrub the model-chain env vars so a scenario always rides the shipped
+ * 5-rung default regardless of the ambient shell (the config is read per
+ * runPipeline call). Returns the restore function — call it in `finally`.
+ */
+function scrubChainEnv(): () => void {
+  const names = [
+    'GEMINI_MODEL',
+    'GEMINI_MODEL_CHAIN',
+    'GEMINI_VERIFIER_MODEL',
+    'GEMINI_VERIFIER_MODEL_CHAIN',
+  ]
+  const previous = names.map((name) => process.env[name])
+  for (const name of names) delete process.env[name]
+  return () => {
+    names.forEach((name, i) => {
+      if (previous[i] !== undefined) process.env[name] = previous[i]!
+      else delete process.env[name]
+    })
+  }
+}
+
 // Shared arrange for the by-design needs-proxy scenarios: Lotte's browser
 // tier is served a persistent Incapsula challenge, and LOTTE_PROXY_URL is
 // guarded so every scenario restores the environment it started with.
@@ -352,7 +374,7 @@ describe('runPipeline', () => {
     ).toEqual([])
   })
 
-  it('checkpoints novelty state per image when the quota dies mid-run', async () => {
+  it('walks the whole model chain on daily quota, then isolates the store and still publishes (issue #347)', async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
     const katalogHtml = await readFile(
       path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
@@ -392,6 +414,8 @@ describe('runPipeline', () => {
       { name: 'Gula Pasir', brand: null, unit: '1 kg', price: 17000, promo: null, period: null },
     ]
     let ocrCalls = 0
+    // Every rung dies of daily quota — the whole chain walks (one call per
+    // rung; quota errors never retry), then the store isolates.
     const ocrClient: GeminiClient = {
       models: {
         generateContent: async () => {
@@ -405,42 +429,68 @@ describe('runPipeline', () => {
     }
 
     const now = () => new Date('2026-10-24T23:00:05Z')
-    const failure = await Effect.runPromiseExit(
-      runPipeline(
-        scopedOptions(stateDir, ['superindo'], {
-          dryRun: true,
-          fetch: fetchMock,
-          ocrClient,
-          now,
-        })
+    const logs: string[] = []
+    const restoreEnv = scrubChainEnv()
+    try {
+      const failure = await Effect.runPromiseExit(
+        runPipeline(
+          scopedOptions(stateDir, ['superindo'], {
+            dryRun: true,
+            fetch: fetchMock,
+            ocrClient,
+            now,
+            log: (message) => logs.push(message),
+          })
+        )
       )
-    )
 
-    // Quota kill → exit code 2.
-    expect(failure._tag).toBe('Failure')
-    const error = exitError(failure) as Error & { exitCode?: number }
-    expect(error.message).toMatch(/Daily quota exhausted/)
-    expect(error.exitCode).toBe(2)
-    expect(ocrCalls).toBe(2)
+      // Whole-chain quota death is a PER-STORE failure now (design C1): exit 1
+      // with the enumerated ChainExhaustedError — not the old run-aborting
+      // exit 2, which is unreachable from OCR once the chain exists.
+      expect(failure._tag).toBe('Failure')
+      const error = exitError(failure) as Error & { exitCode?: number }
+      expect(error.message).toContain('superindo')
+      expect(error.message).toMatch(/all 5 chain rungs exhausted/)
+      expect(error.message).toMatch(/gemini-3\.8-flash \(daily-quota 429\)/)
+      expect(error.exitCode).toBe(1)
+      // 1 success (image A) + 5 dead-rung detection calls for image B.
+      expect(ocrCalls).toBe(6)
+      expect(logs.filter((line) => line.includes('rung advanced'))).toHaveLength(4)
 
-    // The first image's progress survived: its hash is in state.json and its
-    // items are on disk, so the next run does not re-OCR (re-pay) it.
-    const stateJson = JSON.parse(
-      await readFile(path.join(stateDir, 'superindo', 'state.json'), 'utf8')
-    )
-    expect(stateJson.processed).toHaveLength(1)
-    expect(stateJson.processed[0]).toBe(md5Hash(jpegA))
+      // The run CONTINUED past the dead store: the first image's progress
+      // survived (its hash is in state.json, its items on disk)…
+      const stateJson = JSON.parse(
+        await readFile(path.join(stateDir, 'superindo', 'state.json'), 'utf8')
+      )
+      expect(stateJson.processed).toHaveLength(1)
+      expect(stateJson.processed[0]).toBe(md5Hash(jpegA))
 
-    const runItems = await readFile(
-      path.join(stateDir, 'superindo', 'run-2026-10-24T23-00-05-000Z.jsonl'),
-      'utf8'
-    )
-    const lines = runItems
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line))
-    expect(lines).toHaveLength(1)
-    expect(lines[0]!.products[0]!.name).toBe('Gula Pasir')
+      const runItems = await readFile(
+        path.join(stateDir, 'superindo', 'run-2026-10-24T23-00-05-000Z.jsonl'),
+        'utf8'
+      )
+      const lines = runItems
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      expect(lines).toHaveLength(1)
+      expect(lines[0]!.products[0]!.name).toBe('Gula Pasir')
+
+      // …the run CONTINUED to publish: the dry-run payload went out after
+      // the dead store — without its items (they ride its outbox file for
+      // the next run's replay, as with any failed store).
+      const payload = JSON.parse(
+        await readFile(path.join(stateDir, 'payload-2026-10-24T23-00-05-000Z.json'), 'utf8')
+      )
+      expect(payload.items).toEqual([])
+
+      // …and the store entry carries the audit trail: only rung 0 ever
+      // succeeded here; the failure path is where the other rungs died.
+      const statusFile = JSON.parse(await readFile(path.join(stateDir, 'status.json'), 'utf8'))
+      expect(statusFile.stores['superindo'].modelsUsed).toEqual(['gemini-3.8-flash'])
+    } finally {
+      restoreEnv()
+    }
   })
 
   it("keeps a failed store's mid-run OCR in the outbox despite the successful publish", async () => {
@@ -947,6 +997,240 @@ describe('runPipeline', () => {
       expect((await readdir(lotteDir)).filter((name) => name.startsWith('run-'))).toEqual([])
     } finally {
       harness.restoreProxy()
+    }
+  })
+
+  it('keeps rung state across stores — the quota is key-scoped, not per-store (issue #347)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    // Two brochure stores (config order: superindo first, hypermart second).
+    // Hypermart's hub serves its own JAWA-* carousel shape — the superindo
+    // fixture carries no hypermart-shaped images, so it needs its own HTML.
+    const hypermartHub =
+      '<html><body>' +
+      '<a href="https://www.hypermart.co.id/wp-content/uploads/2026/10/JAWA-1.jpg"></a>' +
+      '</body></html>'
+    const jpeg = fakeJpegBytes()
+    const fetchMock = async (url: string): Promise<Response> => {
+      if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
+      if (url.includes('superindo.co.id') && url.includes('promo-koran')) {
+        return new Response(koranHtml, { status: 200 })
+      }
+      if (url.includes('hypermart.co.id/promo-koran')) {
+        return new Response(hypermartHub, { status: 200 })
+      }
+      // Every image URL (either store) serves the same fake JPEG.
+      return new Response(jpeg, { status: 200, headers: { 'content-type': 'image/jpeg' } })
+    }
+    // Rung 0 is quota-dead for the WHOLE run; every later rung works. The
+    // identical bytes collapse to one new image per store, so the call
+    // sequence is fully deterministic: superindo pays the detection call,
+    // advances, OCRs on rung 1; hypermart starts straight on rung 1.
+    const calls: { model: string }[] = []
+    const ocrClient: GeminiClient = {
+      models: {
+        generateContent: async (args) => {
+          calls.push({ model: args.model })
+          if (args.model === 'gemini-3.8-flash') {
+            throw new Error('429 Quota exceeded for quota metric GenerateRequests per day')
+          }
+          return { text: JSON.stringify(ocrItems) }
+        },
+      },
+    }
+    const logs: string[] = []
+    const restoreEnv = scrubChainEnv()
+    try {
+      const status = await Effect.runPromise(
+        runPipeline(
+          scopedOptions(stateDir, ['superindo', 'hypermart'], {
+            dryRun: true,
+            fetch: fetchMock,
+            ocrClient,
+            log: (message) => logs.push(message),
+          })
+        )
+      )
+
+      // Store 1 paid the detection call and advanced before its first item…
+      expect(calls[0]).toEqual({ model: 'gemini-3.8-flash' })
+      expect(calls[1]).toEqual({ model: 'gemini-3.7-flash' })
+      // …store 2's first (and only) OCR call already carries rung 1 — the
+      // per-run state must NOT reset between stores. Rung 0 is attempted
+      // exactly once in the entire run: store 2 never re-detects it.
+      expect(calls).toEqual([
+        { model: 'gemini-3.8-flash' },
+        { model: 'gemini-3.7-flash' },
+        { model: 'gemini-3.7-flash' },
+      ])
+
+      // Exactly ONE advance line for the whole run.
+      expect(logs.filter((line) => line.includes('[chain] ocr rung advanced'))).toHaveLength(1)
+
+      // Exit 0 and both stores publish; the audit trail shows each store on
+      // rung 1 (superindo's rung-0 call failed, so it is not "used").
+      expect(status.stage).toBe('done')
+      expect(status.stores['superindo']!.modelsUsed).toEqual(['gemini-3.7-flash'])
+      expect(status.stores['hypermart']!.modelsUsed).toEqual(['gemini-3.7-flash'])
+      const payload: IngestPayload = JSON.parse(
+        await readFile(path.join(stateDir, 'payload-2026-10-24T23-00-05-000Z.json'), 'utf8')
+      )
+      expect(payload.items.map((item) => item.storeSlug)).toContain('superindo')
+      expect(payload.items.map((item) => item.storeSlug)).toContain('hypermart')
+    } finally {
+      restoreEnv()
+    }
+  })
+
+  it('a rung-0-only daily 429 advances and the run stays green with the audit trail (issue #347)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    // Two distinct brochure pages so the run has two NEW images.
+    const jpegA = fakeJpegBytes()
+    const jpegB = (() => {
+      const bytes = fakeJpegBytes()
+      bytes.fill(0xdd, 29)
+      return bytes
+    })()
+    const seenUrls = new Map<string, Uint8Array<ArrayBuffer>>()
+    const fetchMock = async (url: string): Promise<Response> => {
+      if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
+      if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
+      if (!seenUrls.has(url)) seenUrls.set(url, seenUrls.size === 0 ? jpegA : jpegB)
+      return new Response(seenUrls.get(url)!, {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      })
+    }
+    let ocrCalls = 0
+    const ocrClient: GeminiClient = {
+      models: {
+        generateContent: async (args) => {
+          ocrCalls++
+          // Image A (call 1, rung 0) succeeds; every later rung-0 call dies
+          // of daily quota — rung 1+ are healthy all run long.
+          if (ocrCalls > 1 && args.model === 'gemini-3.8-flash') {
+            throw new Error('429 Quota exceeded for quota metric GenerateRequests per day')
+          }
+          return { text: JSON.stringify(ocrItems) }
+        },
+      },
+    }
+    const restoreEnv = scrubChainEnv()
+    try {
+      const status = await Effect.runPromise(
+        runPipeline(
+          scopedOptions(stateDir, ['superindo'], {
+            dryRun: true,
+            fetch: fetchMock,
+            ocrClient,
+          })
+        )
+      )
+      // The headline #347 behavior: a daily-quota 429 no longer aborts —
+      // the run exits 0 and the payload publishes.
+      expect(status.stage).toBe('done')
+      const payload: IngestPayload = JSON.parse(
+        await readFile(path.join(stateDir, 'payload-2026-10-24T23-00-05-000Z.json'), 'utf8')
+      )
+      expect(payload.items.length).toBeGreaterThan(0)
+      // The store actually rode BOTH rungs (image A on 3.8, image B on 3.7)
+      // — the ordered audit trail, not per-page noise.
+      expect(status.stores['superindo']!.modelsUsed).toEqual([
+        'gemini-3.8-flash',
+        'gemini-3.7-flash',
+      ])
+      expect(ocrCalls).toBe(3)
+    } finally {
+      restoreEnv()
+    }
+  })
+
+  it('carries modelsUsed on the run report and leaves it absent where no OCR ran (issue #347)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    // Two distinct brochure pages: image A rides rung 0, image B advances
+    // to rung 1 (rung 0 dies of daily quota after the first success).
+    const jpegA = fakeJpegBytes()
+    const jpegB = (() => {
+      const bytes = fakeJpegBytes()
+      bytes.fill(0xdd, 29)
+      return bytes
+    })()
+    const seenUrls = new Map<string, Uint8Array<ArrayBuffer>>()
+    const fetchMock = async (url: string): Promise<Response> => {
+      if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
+      if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
+      // Astro (in scope) serves empty category pages — a no-OCR store.
+      if (url.includes('astronauts.id')) {
+        return new Response('<html><body></body></html>', { status: 200 })
+      }
+      if (!seenUrls.has(url)) seenUrls.set(url, seenUrls.size === 0 ? jpegA : jpegB)
+      return new Response(seenUrls.get(url)!, {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      })
+    }
+    let ocrCalls = 0
+    const ocrClient: GeminiClient = {
+      models: {
+        generateContent: async (args) => {
+          ocrCalls++
+          if (ocrCalls > 1 && args.model === 'gemini-3.8-flash') {
+            throw new Error('429 Quota exceeded for quota metric GenerateRequests per day')
+          }
+          return { text: JSON.stringify(ocrItems) }
+        },
+      },
+    }
+    const { reported, publishFetch } = makeReportCapture()
+    const restoreEnv = scrubChainEnv()
+    try {
+      await Effect.runPromise(
+        runPipeline(
+          scopedOptions(stateDir, ['superindo', 'astro'], {
+            dryRun: false,
+            fetch: fetchMock,
+            ocrClient,
+            publishFetch,
+            ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+            ingestSecret: 's3cret',
+          })
+        )
+      )
+      expect(ocrCalls).toBe(3)
+      // The strict report schema accepted the additive per-store field…
+      expect(reported).toHaveLength(1)
+      expect(reported[0]!.status).toBe('success')
+      expect(reported[0]!.perStore['superindo']!.modelsUsed).toEqual([
+        'gemini-3.8-flash',
+        'gemini-3.7-flash',
+      ])
+      // …and a catalog store (no OCR) carries no modelsUsed at all.
+      expect(reported[0]!.perStore['astro']!.modelsUsed).toBeUndefined()
+    } finally {
+      restoreEnv()
     }
   })
 })

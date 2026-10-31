@@ -10,6 +10,7 @@ import { Effect } from 'effect'
 
 import { createOcr, getPrompt, type GeminiClient } from '../../src/ocr/gemini.js'
 import type { RawOcrItem } from '../../src/ocr/parse.js'
+import { createModelChain } from '../../src/util/model-chain.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -173,5 +174,105 @@ describe('createOcr', () => {
     })
     await Effect.runPromise(ocr.ocrImage(new Uint8Array(4)))
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Rate limit hit'))
+  })
+})
+
+// Model-chain consumption (issue #347) — the OCR boundary advances the
+// per-run chain state on a ladder-escaped trigger error and isolates a
+// whole-dead chain as ChainExhaustedError. Fixture bodies verbatim from
+// retry.test.ts.
+
+describe('createOcr — model chain', () => {
+  const DAILY_429 = () =>
+    new Error(
+      '429 You have exhausted your daily quota. QuotaID: GenerateRequestsPerDayPerProjectPerModel-FreeTier'
+    )
+
+  function recordingClient(
+    respond: (call: { model: string }) => { text: string } | Error
+  ): GeminiClient & { calls: { model: string }[] } {
+    const state = { calls: [] as { model: string }[], n: 0 }
+    const client = {
+      models: {
+        generateContent: async (args: { model: string }) => {
+          state.n++
+          const record = { model: args.model }
+          state.calls.push(record)
+          const result = respond(record)
+          if (result instanceof Error) throw result
+          return result
+        },
+      },
+    }
+    return Object.assign(client, state)
+  }
+
+  it('advances the chain on a daily-quota 429 and retries the page on the next rung', async () => {
+    const client = recordingClient(({ model }) =>
+      model === 'gemini-a' ? DAILY_429() : { text: JSON.stringify(sampleItems) }
+    )
+    const ocr = createOcr({
+      model: createModelChain(['gemini-a', 'gemini-b']),
+      storeSlug: 'superindo',
+      client,
+      sleep: async () => {},
+    })
+    const items = await Effect.runPromise(ocr.ocrImage(new Uint8Array(4)))
+    expect(items).toEqual(sampleItems)
+    expect(client.calls.map((call) => call.model)).toEqual(['gemini-a', 'gemini-b'])
+  })
+
+  it('skips a model-fatal 404 rung at the cost of one call', async () => {
+    const MODEL_GONE_404 =
+      '{"error":{"code":404,"message":"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash …","status":"NOT_FOUND"}}'
+    const client = recordingClient(({ model }) =>
+      model === 'gemini-a' ? new Error(MODEL_GONE_404) : { text: JSON.stringify(sampleItems) }
+    )
+    const ocr = createOcr({
+      model: createModelChain(['gemini-a', 'gemini-b']),
+      storeSlug: 'superindo',
+      client,
+      sleep: async () => {},
+    })
+    const items = await Effect.runPromise(ocr.ocrImage(new Uint8Array(4)))
+    expect(items).toEqual(sampleItems)
+    expect(client.calls.map((call) => call.model)).toEqual(['gemini-a', 'gemini-b'])
+  })
+
+  it('never advances on a per-minute 429 — the error propagates, the next rung is untouched', async () => {
+    const client = recordingClient(() => new Error('429 RESOURCE_EXHAUSTED: retry in 30s'))
+    const ocr = createOcr({
+      model: createModelChain(['gemini-a', 'gemini-b']),
+      storeSlug: 'superindo',
+      client,
+      retries: 2,
+      sleep: async () => {},
+    })
+    await expect(Effect.runPromise(ocr.ocrImage(new Uint8Array(4)))).rejects.toThrow(/retry in 30s/)
+    // 1 initial + 2 ladder retries, all on rung 0 — rung 1 never called.
+    expect(client.calls.map((call) => call.model)).toEqual(['gemini-a', 'gemini-a', 'gemini-a'])
+  })
+
+  it('maps a whole-dead chain to ChainExhaustedError and short-circuits later calls with zero network', async () => {
+    const client = recordingClient(() => DAILY_429())
+    const chain = createModelChain(['gemini-a', 'gemini-b'], 'ocr')
+    const ocr = createOcr({
+      model: chain,
+      storeSlug: 'superindo',
+      client,
+      sleep: async () => {},
+    })
+    // One call per rung (quota errors never retry), then the typed
+    // all-dead error — not QuotaExhausted, so it rides per-store isolation.
+    await expect(Effect.runPromise(ocr.ocrImage(new Uint8Array(4)))).rejects.toThrow(
+      /all 2 chain rungs exhausted — gemini-a \(daily-quota 429\); gemini-b \(daily-quota 429\)/
+    )
+    expect(client.calls.map((call) => call.model)).toEqual(['gemini-a', 'gemini-b'])
+
+    // The next page (and every later store) short-circuits: zero calls.
+    await expect(Effect.runPromise(ocr.ocrImage(new Uint8Array(4)))).rejects.toThrow(
+      /all 2 chain rungs exhausted/
+    )
+    expect(client.calls).toHaveLength(2)
   })
 })

@@ -16,6 +16,7 @@ import {
 } from '../../src/match/matcher.js'
 import type { GeminiClient } from '../../src/ocr/gemini.js'
 import type { ValidatedProduct } from '../../src/ocr/parse.js'
+import { createModelChain } from '../../src/util/model-chain.js'
 
 function product(over: Partial<ValidatedProduct> = {}): ValidatedProduct {
   return {
@@ -69,7 +70,7 @@ function deps(over: Partial<MatchDeps> = {}): MatchDeps {
   return {
     cfg: CFG,
     embeddingModel: 'test-embedding',
-    verifierModel: 'test-verifier',
+    verifierChain: createModelChain(['test-verifier']),
     verifierRetries: 2,
     storeNames: { superindo: 'Superindo', 'lotte-mart': 'Lotte' },
     log: () => {},

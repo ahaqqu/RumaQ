@@ -38,7 +38,13 @@ import {
 import type { BrowserLauncher } from './fetch/browser.js'
 import { BrowserTierRequired, type FetchError } from './fetch/errors.js'
 import { createStoreFetcher, type FetchLike } from './fetch/strategy.js'
-import { createOcr, type GeminiClient, type Ocr, type OcrError } from './ocr/gemini.js'
+import {
+  ChainExhaustedError,
+  createOcr,
+  type GeminiClient,
+  type Ocr,
+  type OcrError,
+} from './ocr/gemini.js'
 import { validateProduct, type RawOcrItem, type ValidatedProduct } from './ocr/parse.js'
 import { assertPayloadValid, buildPayload, type ImageProducts } from './publish/payload.js'
 import { loadOutbox, retireOutbox, type OutboxIo } from './publish/outbox.js'
@@ -64,6 +70,7 @@ import {
 } from './stores/types.js'
 import { wrapIo } from './util/io.js'
 import { createLog, logRejectedItem, type LogFn } from './util/log.js'
+import { createModelChain, type ModelChainState } from './util/model-chain.js'
 import { renderPdfPages } from './util/pdf.js'
 import { QuotaExhausted } from './util/retry.js'
 
@@ -122,6 +129,14 @@ export interface PipelineStatus {
        * additively, unlike brochuresUploaded below).
        */
       warnings?: string[]
+      /**
+       * Ordered chain rungs this store actually OCR'd with (issue #347) —
+       * the quality-drift audit trail when the model chain advances mid-run.
+       * Absent when the store made no successful OCR call. Rides status.json
+       * AND the run report (the report schema carries it additively, like
+       * warnings).
+       */
+      modelsUsed?: string[]
       /**
        * Brochure images uploaded to R2 this run (issue #293). status.json
        * only — reportRun strips it before posting.
@@ -195,6 +210,7 @@ type StoreRunError =
   | FetchError
   | StateIo
   | OcrError
+  | ChainExhaustedError
   | QuotaExhausted
   | OutboxIo
   | CatalogIo
@@ -203,6 +219,7 @@ type StoreRunError =
 function processStore(
   plugin: BrochureStorePlugin,
   config: ScraperConfig,
+  ocrChain: ModelChainState,
   options: PipelineOptions,
   scrapedAt: string,
   entry: PipelineStatus['stores'][string],
@@ -221,7 +238,10 @@ function processStore(
     launcher: options.launcher,
   })
   const ocr: Ocr = createOcr({
-    model: config.ocr.model,
+    // The shared per-run chain state: rung advances made by this store are
+    // visible to the next image and the next store automatically (quota is
+    // key-scoped), while modelsUsed records what THIS store rode.
+    model: ocrChain,
     storeSlug: store.slug,
     // config.ocr.maxRetries counts retries (extra attempts), matching the
     // retry engine's naming — no total-vs-extra conversion needed.
@@ -272,6 +292,12 @@ function processStore(
         Effect.map((buffer) => new Uint8Array(buffer))
       )
       const rawItems = yield* ocr.ocrImage(bytes, image.contentType)
+      // Observability (issue #347): the rung that just succeeded is what this
+      // store actually OCR'd with — recorded store-scoped and de-duplicated,
+      // so the audit trail is the ordered set of rungs, not per-page noise.
+      const usedModel = ocrChain.current()
+      const used = entry.modelsUsed ?? []
+      if (used[used.length - 1] !== usedModel) entry.modelsUsed = [...used, usedModel]
       // Brochure object URL (issue #293): every OCR'd page gets its own
       // relative same-origin URL — the per-image grouping key for the
       // brochures view and the sweep's servable-shape predicate.
@@ -544,6 +570,13 @@ export function runPipeline(
   const log = options.log ?? createLog('pipeline')
   const config = loadConfig()
   const scrapedAt = (options.now ?? (() => new Date()))().toISOString()
+  // Per-run chain state (issue #347): one OCR chain + one verifier chain over
+  // the configured rungs. Created fresh per run — no cross-run memory; the
+  // state is shared across stores because the Gemini quota is key-scoped.
+  const ocrChain = createModelChain(config.ocr.modelChain, 'ocr')
+  const verifierChain = createModelChain(config.ocr.verifierModelChain, 'verifier')
+  log(`[chain] ocr (${ocrChain.chain.length} rungs): ${ocrChain.chain.join(' → ')}`)
+  log(`[chain] verifier (${verifierChain.chain.length} rungs): ${verifierChain.chain.join(' → ')}`)
   // scopedPlugins (→ activePlugins) is the single source of truth for which
   // stores run: both the work list and the status map come from it, so they
   // cannot drift. A scope that matches nothing fails before any IO.
@@ -593,16 +626,19 @@ export function runPipeline(
 
       for (const { plugin, entry } of runs) {
         // Per-store isolation: one store's fatal failure (a persistent
-        // Incapsula challenge, a dead listing route, a missing chromium)
-        // must not block the other stores' nightly publish — the healthy
-        // store's paid-for OCR rides the outbox and would otherwise replay
-        // (and fail again) for as long as the broken store stays broken.
-        // QuotaExhausted deliberately propagates: the Gemini quota is shared
-        // by every store, so there is nothing left to isolate.
+        // Incapsula challenge, a dead listing route, a missing chromium, a
+        // fully-dead model chain — ChainExhaustedError) must not block the
+        // other stores' nightly publish — the healthy store's paid-for OCR
+        // rides the outbox and would otherwise replay (and fail again) for
+        // as long as the broken store stays broken. QuotaExhausted still
+        // propagates as the pre-#347 backstop, but with the model chain the
+        // OCR surface maps whole-chain death to ChainExhaustedError, so a
+        // dead chain isolates per store (exit 1, run continues, monitor red)
+        // instead of aborting the run.
         const imageProducts = yield* (
           isCatalogPlugin(plugin)
             ? processCatalogStore(plugin, options, scrapedAt, entry, log)
-            : processStore(plugin, config, options, scrapedAt, entry, log)
+            : processStore(plugin, config, ocrChain, options, scrapedAt, entry, log)
         ).pipe(
           Effect.catchIf(
             (error) => !(error instanceof QuotaExhausted),
@@ -660,7 +696,7 @@ export function runPipeline(
           {
             cfg: config.consolidation,
             embeddingModel: config.consolidation.embeddingModel,
-            verifierModel: config.ocr.verifierModel,
+            verifierChain,
             verifierRetries: config.consolidation.verifierRetries,
             storeNames: Object.fromEntries(config.stores.map((store) => [store.slug, store.name])),
             apiKey: options.geminiApiKey,

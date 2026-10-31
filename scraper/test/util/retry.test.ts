@@ -8,6 +8,7 @@ import { Data, Effect } from 'effect'
 import {
   classifyQuotaError,
   isModelFatalError,
+  isSaturationError,
   parseRetryDelay,
   QuotaExhausted,
   withQuotaPolicy,
@@ -82,6 +83,24 @@ describe('isModelFatalError', () => {
   ])('keeps transient and non-model errors retryable: %s', (message) => {
     expect(isModelFatalError(new Error(message))).toBe(false)
   })
+})
+
+// Verbatim shape of the issue #335 saturation incident (code/message/status).
+const SATURATION_503 =
+  '{"error":{"code":503,"message":"The model is overloaded. Please try again later.","status":"UNAVAILABLE"}}'
+
+describe('isSaturationError', () => {
+  it('classifies the issue #335 verbatim 503 UNAVAILABLE body as saturation', () => {
+    expect(isSaturationError(new Error(SATURATION_503))).toBe(true)
+    expect(isSaturationError(new Error('503 Service Unavailable'))).toBe(true)
+  })
+
+  it.each(['500 INTERNAL', '429 RESOURCE_EXHAUSTED: retry in 30s', 'ECONNRESET', '503', '200 OK'])(
+    'keeps non-saturation errors out: %s',
+    (message) => {
+      expect(isSaturationError(new Error(message))).toBe(false)
+    }
+  )
 })
 
 describe('withRetries', () => {
