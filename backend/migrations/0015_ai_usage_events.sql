@@ -2,6 +2,14 @@
 -- aggregate: event granularity is what makes ts-exact 24h/7d/30d ranges and
 -- per-model cache hit rates possible. The daily cap dies with ai_usage —
 -- usage is recorded for analytics only and never gates a call.
+--
+-- The DROP below is destructive by design. Rollback is D1 Time Travel
+-- (`wrangler d1 time-travel restore`) within 30 days of the deploy that
+-- applies this file. Deploy order (scripts/deploy.sh applies migrations
+-- before `cf deploy`) means the old Worker briefly still queries ai_usage:
+-- transient 500s on the AI endpoints are expected until the new Worker lands.
+-- Legacy `used` request counts are not carried over — each legacy day seeds
+-- ONE synthetic call (tokens preserved, calls undercount for legacy days).
 
 CREATE TABLE ai_usage_events (
   id TEXT PRIMARY KEY,

@@ -1369,7 +1369,8 @@ apiApp.get(
          LEFT JOIN users u ON u.id = e.user_id
         WHERE e.ts >= ?
         GROUP BY e.user_id
-        ORDER BY last_used DESC`
+        -- user_id tiebreaks equal last_used stamps so the order is stable.
+        ORDER BY last_used DESC, user_id ASC`
     )
       .bind(since)
       .all<{
