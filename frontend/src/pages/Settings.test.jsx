@@ -40,6 +40,16 @@ vi.mock('../lib/api', () => ({
   testAiKey: vi.fn(),
 }))
 
+const logoutMutate = vi.fn()
+
+vi.mock('../lib/queries/me.js', () => ({
+  useMe: () => ({
+    data: { user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: null } },
+    isLoading: false,
+  }),
+  useLogout: () => ({ mutate: logoutMutate, isPending: false }),
+}))
+
 vi.mock('../lib/queries/index.js', () => ({
   useSettings: () => ({ data: mockSettings, isLoading: false }),
   useUpdateSettings: () => ({ mutateAsync: mockMutateAsync, isPending: false }),
@@ -258,5 +268,14 @@ describe('Settings', () => {
       fireEvent.change(locInput, { target: { value: 'Pantry' } })
       fireEvent.keyDown(locInput, { key: 'Enter' })
     }
+  })
+
+  it('renders the account section and calls logout from Settings', () => {
+    const { getByText } = renderWithQuery(React.createElement(Settings, baseProps))
+    // The global t() mock renders raw keys in tests
+    expect(getByText('settings.account')).toBeTruthy()
+    expect(getByText('Alice')).toBeTruthy()
+    fireEvent.click(getByText('nav.logout'))
+    expect(logoutMutate).toHaveBeenCalled()
   })
 })

@@ -15,6 +15,9 @@ export function AppProvider({ children }) {
   const [motion, setMotion] = useState('standard')
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantProposal, setAssistantProposal] = useState(null)
+  // One-shot prompt seeded by a caller (e.g. the Home recipe card); the
+  // assistant consumes it when it opens and clears it right after.
+  const [assistantSeed, setAssistantSeed] = useState(null)
 
   const setAiKey = (value) => {
     const next = value || null
@@ -45,6 +48,8 @@ export function AppProvider({ children }) {
         setAssistantOpen,
         assistantProposal,
         setAssistantProposal,
+        assistantSeed,
+        setAssistantSeed,
       }}
     >
       {children}

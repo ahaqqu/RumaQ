@@ -751,11 +751,34 @@ apiApp.get(
       .bind(householdId, today)
       .all()
 
+    const attentionResult = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS cnt FROM stock
+       WHERE household_id = ? AND qty > 0
+       AND (COALESCE(run_out_days, 999) <= 7
+         OR (expiry_date IS NOT NULL AND expiry_date <= date(?, '+7 days')))`
+    )
+      .bind(householdId, today)
+      .first<{ cnt: number }>()
+    const attentionCount = attentionResult?.cnt ?? 0
+
+    const spendResult = await c.env.DB.prepare(
+      `SELECT COALESCE(SUM(total), 0) AS spend, COUNT(*) AS receipts
+       FROM purchases
+       WHERE household_id = ? AND substr(date, 1, 7) = substr(?, 1, 7)`
+    )
+      .bind(householdId, today)
+      .first<{ spend: number; receipts: number }>()
+    const currentMonthSpend = spendResult?.spend ?? 0
+    const currentMonthReceipts = spendResult?.receipts ?? 0
+
     const res = c.json({
       total_items: totalItems,
       expiring_7d: expiring7d,
       running_out_7d: runningOut7d,
       low_stock: lowStock.results ?? [],
+      attention_count: attentionCount,
+      current_month_spend: currentMonthSpend,
+      current_month_receipts: currentMonthReceipts,
       expiring_soon: [],
       next_trip: null,
     })

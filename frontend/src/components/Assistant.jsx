@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   IconSpark,
@@ -9,6 +9,7 @@ import {
   IconBolt,
   IconCheck,
   IconKey,
+  IconReceipt,
 } from './icons.jsx'
 import { cn } from '../lib/cn.js'
 import { formatTokens, usageMeterModel } from '../lib/usage.js'
@@ -55,7 +56,7 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
   const [input, setInput] = useState('')
   const [reply, setReply] = useState(null)
   const { persona } = usePersona()
-  const { setAssistantProposal } = useApp()
+  const { setAssistantProposal, assistantSeed, setAssistantSeed } = useApp()
   const { data: usage } = useUsage()
   const { data: settings } = useSettings()
   const chat = useSendChatMessage()
@@ -88,6 +89,17 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
     send(q.prompt)
   }
 
+  // One-shot seeded prompt (e.g. the Home recipe card): send it when the
+  // panel opens, then clear it so it never re-fires.
+  useEffect(() => {
+    if (open && assistantSeed) {
+      const text = assistantSeed
+      setAssistantSeed(null)
+      if (isConnected) send(text)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, assistantSeed])
+
   const accept = () => {
     onClose()
     if (typeof reply === 'string' && reply.trim()) {
@@ -101,22 +113,21 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
 
   return (
     <>
+      {/* Desktop-only floating trigger: on mobile the assistant lives in the
+          bottom bar (AppShell), next to the Post photo slot. */}
       <button
         className={cn(
-          'fixed right-6 bottom-6 z-40 h-14 rounded-pill px-6 bg-accent text-on-accent shadow-lg',
-          'inline-flex items-center gap-2 font-semibold transition-all duration-150',
-          'hover:bg-accent-hover hover:-translate-y-px active:scale-[0.97]',
-          'max-sm:right-4 max-sm:bottom-[calc(104px+env(safe-area-inset-bottom))]'
+          'hidden lg:inline-flex fixed right-6 bottom-6 z-40 h-[46px] w-[46px] rounded-pill bg-surface-raised text-accent border border-accent shadow-lg',
+          'items-center justify-center transition-all duration-150',
+          'hover:bg-accent-soft hover:-translate-y-px active:scale-[0.97]'
         )}
         onClick={() => (open ? onClose() : onOpen())}
-        // The visible label doubles as the accessible name so voice-control
-        // users can reference the button by the text they see.
+        // Icon-only: the accessible name comes from aria-label so voice-control
+        // users can still reference the button as "Ask RumaQ".
         aria-label={t('assistant.fabLabel')}
         aria-expanded={open}
       >
-        <span className="w-[9px] h-[9px] rounded-full bg-on-accent animate-[pulse_2.4s_cubic-bezier(0.2,0.8,0.2,1)_infinite]" />
-        <IconSpark size={20} />
-        <span className="max-sm:hidden">{t('assistant.fabLabel')}</span>
+        <IconSpark size={22} />
       </button>
 
       {open && (
@@ -130,7 +141,7 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
               'fixed z-[51] right-6 bottom-6 w-[min(420px,calc(100vw-32px))] max-h-[min(680px,calc(100dvh-64px))]',
               'bg-surface-raised border border-border rounded-xl shadow-lg flex flex-col overflow-hidden',
               'origin-bottom-right animate-[pop_0.22s_cubic-bezier(0.2,0.8,0.2,1)]',
-              'max-sm:right-3 max-sm:left-3 max-sm:bottom-[calc(72px+env(safe-area-inset-bottom))] max-sm:w-auto'
+              'max-sm:right-3 max-sm:left-3 max-sm:bottom-[calc(62px+env(safe-area-inset-bottom))] max-sm:w-auto'
             )}
             role="dialog"
             aria-label={t('assistant.dialogAriaLabel')}
@@ -140,27 +151,28 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
                 <IconSpark size={18} />
               </div>
               <div>
-                <div className="font-semibold text-base">{t('assistant.title')}</div>
-                <div className="text-xs text-ok flex items-center gap-1">
-                  {isConnected ? (
-                    <>
-                      <span
-                        className={cn(
-                          'w-2 h-2 rounded-full',
-                          meter.danger ? 'bg-text-faint' : meter.warn ? 'bg-warn' : 'bg-ok'
-                        )}
-                      />
-                      {meter.danger
-                        ? t('assistant.dailyLimitReached')
-                        : meter.ownKey
-                          ? t('assistant.readyOwnKey', {
-                              input: formatTokens(meter.inputTokens),
-                              output: formatTokens(meter.outputTokens),
-                            })
-                          : t('assistant.ready', { used: meter.used, limit: meter.limit })}
-                    </>
-                  ) : (
-                    t('assistant.notConnected')
+                {/* Status text dropped (visual-only); the dot carries the same
+                    state via color plus an aria-label for screen readers. */}
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-base">{t('assistant.title')}</span>
+                  {isConnected && (
+                    <span
+                      role="img"
+                      aria-label={
+                        meter.danger
+                          ? t('assistant.dailyLimitReached')
+                          : meter.ownKey
+                            ? t('assistant.readyOwnKey', {
+                                input: formatTokens(meter.inputTokens),
+                                output: formatTokens(meter.outputTokens),
+                              })
+                            : t('assistant.ready', { used: meter.used, limit: meter.limit })
+                      }
+                      className={cn(
+                        'w-2 h-2 rounded-full shrink-0',
+                        meter.danger ? 'bg-text-faint' : meter.warn ? 'bg-warn' : 'bg-ok'
+                      )}
+                    />
                   )}
                 </div>
               </div>
@@ -201,6 +213,26 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
                 </p>
 
                 <div className="flex flex-col gap-2">
+                  {/* The capture action lives in the assistant menu (it left
+                      the bottom bar): navigates to the receipt flow. */}
+                  <button
+                    className={cn(
+                      'flex items-center gap-3 px-4 py-3 rounded-md bg-accent text-on-accent text-left text-sm font-semibold',
+                      'hover:bg-accent-hover transition-colors'
+                    )}
+                    onClick={() => {
+                      onClose()
+                      onNavigate?.('add')
+                    }}
+                  >
+                    <IconReceipt size={18} className="shrink-0" />
+                    <span>
+                      <div>{t('nav.postPhoto')}</div>
+                      <div className="text-[11px] font-medium opacity-80">
+                        {t('assistant.postPhotoDesc')}
+                      </div>
+                    </span>
+                  </button>
                   {QUICK.map(({ id, key, descKey, Icon, prompt }) => (
                     <button
                       key={id}

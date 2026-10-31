@@ -9,35 +9,64 @@
     "settings": "Settings",
     "addFromReceipt": "Add from Receipt",
     "scrape": "Scrape Now",
-    "review": "Review"
+    "review": "Review",
+    "postPhoto": "Post photo",
+    "planShort": "Plan",
+    "adminGroup": "Household admin",
+    "mainNav": "Main navigation",
+    "logout": "Logout",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu"
+  },
+  "shell": {
+    "yourHousehold": "Your household"
+  },
+  "household": {
+    "cardHint": "Your shared kitchen"
+  },
+  "greeting": {
+    "morning": "Good morning",
+    "afternoon": "Good afternoon",
+    "evening": "Good evening",
+    "pagi": "Selamat pagi",
+    "siang": "Selamat siang",
+    "sore": "Selamat sore",
+    "malam": "Selamat malam"
   },
   "home": {
-    "lead": "Stock tracked automatically from grocery receipts. Remaining stock is calculated from your habits, not entered manually.",
-    "stockStatus": "Stock Status",
-    "itemsMonitored": "items monitored",
-    "expiring": "expiring soon",
-    "nearlyOut": "nearly out",
-    "storesRecorded": "stores recorded",
-    "needsAttention": "Needs Attention",
-    "seeAll": "See all",
+    "companionChip": "Your kitchen companion",
+    "heroLabel": "Your kitchen, at a glance",
+    "heroRunningLow": "{{count}} may run low this week",
+    "essentialsCount": "{{count}} essential",
+    "essentialsCount_other": "{{count}} essentials",
+    "statKitchenLabel": "In your kitchen",
+    "statKitchenSub": "Confirmed inventory",
+    "statLookLabel": "Worth a look",
+    "runningLowCount": "{{count}} running low",
+    "statLookSub": "Estimated from your habits",
+    "statSpendingLabel": "{{month}} spending",
+    "receiptsCount": "{{count}} confirmed receipt",
+    "receiptsCount_other": "{{count}} confirmed receipts",
+    "attentionTitle": "A little attention today",
+    "useSoonTitle": "Use soon",
+    "viewInventory": "View inventory",
+    "estimateToday": "estimated less than a day left",
+    "estimateDaysLeft": "estimated {{count}} day left",
+    "estimateDaysLeft_other": "estimated {{count}} days left",
+    "badgeCritical": "Critical",
+    "badgeLowSoon": "Low soon",
+    "badgeWatch": "Watch",
     "allSafe": "All safe",
-    "allSafeDesc": "No items expiring or running out in the next 3 days.",
-    "nextTrip": "Next Trip",
-    "askPlan": "Ask for plan",
+    "allSafeDesc": "No items expiring or running out in the next 7 days.",
+    "planTeaserLabel": "Next trip",
+    "planTeaserTitle": "Shopping trip planned",
     "shopAt": "Shop at {{store}}",
     "itemCount": "{{count}} item",
-    "estimated": "est. {{amount}}",
-    "seePlan": "See plan",
-    "noPlanYet": "No trip planned",
-    "noPlanYetDesc": "Ask the assistant to plan your next shopping trip.",
-    "quickRefill": "Quick way to restock",
-    "quickRefillTitle": "Snap a receipt, stock is updated automatically",
-    "quickRefillDesc": "AI reads items, prices, and store. You just confirm.",
-    "addFromReceipt": "Add from receipt",
-    "savingsTip": "Savings tip",
-    "savingsTipText": "Spinach and bread expire tomorrow. Ask the assistant for recipe ideas to finish them.",
-    "askRecipe": "Ask recipe",
-    "itemCount_other": "{{count}} items"
+    "itemCount_other": "{{count}} items",
+    "viewPlan": "View plan",
+    "recipeTitle": "Tonight, keep it simple",
+    "recipeDesc": "The assistant can find a recipe on recipe websites using what's about to expire. Review before adding anything.",
+    "recipeCta": "Review meal suggestion"
   },
   "inventory": {
     "searchPlaceholder": "Search items, e.g. milk, rice",
@@ -336,10 +365,11 @@
       "aiRole": "You are",
       "motion": "Motion preference"
     },
-    "save": "Save"
+    "save": "Save",
+    "account": "Account"
   },
   "assistant": {
-    "fabLabel": "Ask assistant",
+    "fabLabel": "Ask RumaQ",
     "title": "RumaQ Assistant",
     "dialogAriaLabel": "AI Assistant RumaQ",
     "connected": "AI assistant connected",
@@ -368,7 +398,8 @@
     "error": "Assistant error: {{message}}",
     "usageLimit": "Daily AI usage limit reached. Try again tomorrow.",
     "keyMissing": "AI key not configured. Add a key in Settings.",
-    "readyOwnKey": "ready to help · your key · {{input}} in · {{output}} out today"
+    "readyOwnKey": "ready to help · your key · {{input}} in · {{output}} out today",
+    "postPhotoDesc": "Scan a receipt to update your stock"
   },
   "ui": {
     "expiringTomorrow": "expiring tomorrow",
@@ -415,7 +446,7 @@
     }
   },
   "persona": {
-    "homeLead": "Stock tracked automatically from grocery receipts. Remaining stock is calculated from your habits, not entered manually.",
+    "homeLead": "A calmer kitchen starts with what you already have. Stock is tracked automatically from your receipts.",
     "inventoryLead": "Browse and compare stock. Filter by storage location, automatically sorted by most urgent.",
     "planLeadNoKey": "Connect an API key first, then AI will create a shopping plan from items running low.",
     "planLead": "AI groups items by store into single trips. Check off what you've bought, the rest is tracked automatically.",

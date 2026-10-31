@@ -28,28 +28,29 @@ This plan lists every known work item for RumaQ, its current status, and its pri
 
 ## 2. Frontend (React + Vite)
 
-| Item                                                    | Status   | Priority | Notes                                                                                                                        |
-| ------------------------------------------------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Vite + React project scaffold                           | Done     | P0       | Existing prototype                                                                                                           |
-| Responsive app shell (rail + topbar + bottombar)        | Done     | P0       | `frontend/src/components/AppShell.jsx`                                                                                       |
-| Home / overview dashboard                               | Done     | P0       | `frontend/src/pages/Home.jsx`                                                                                                |
-| Inventory list with search and filter                   | Done     | P0       | `frontend/src/pages/Inventory.jsx`                                                                                           |
-| Add stock from receipt (UI flow)                        | Done     | P0       | `frontend/src/pages/AddFromReceipt.jsx`; wired via PR #63                                                                    |
-| Shopping plan UI                                        | Done     | P0       | `frontend/src/pages/Plan.jsx`; wired via PR #77                                                                              |
-| Purchase history UI                                     | Done     | P0       | `frontend/src/pages/History.jsx`                                                                                             |
-| Settings UI (AI key, locations, motion, currency)       | Done     | P0       | `frontend/src/pages/Settings.jsx`                                                                                            |
-| Persona personalization UI                              | Done     | P0       | `frontend/src/pages/Settings.jsx` persona section                                                                            |
-| Persona copy transformation                             | Done     | P0       | `frontend/src/lib/persona.js` `speak()`                                                                                      |
-| Persona theme color generator                           | Done     | P0       | `frontend/src/lib/persona.js` `applyTheme()`                                                                                 |
-| AI assistant chat panel                                 | Done     | P0       | `frontend/src/components/Assistant.jsx`; real chat via PR #81                                                                |
-| API client module                                       | Done     | P0       | Typed client via openapi-fetch (`frontend/src/lib/api.ts` + `api-schema.d.ts` from OpenAPI codegen; contract drift fails CI) |
-| Authentication UI (login / logout)                      | Done     | P0       | Login page, user avatar/name in rail, logout button                                                                          |
-| Error boundaries and loading states                     | Done     | P1       | Route-level `pendingComponent`/`errorComponent` on all routes; skeletons                                                     |
-| Offline / optimistic updates                            | Done     | P1       | PR #76 — query persistence + optimistic mutations                                                                            |
-| Frontend refactor (Kumo + TanStack + Tailwind v4 + PWA) | Done     | P1       | PR #34 — TanStack Router + Query + Kumo UI + Tailwind v4 + PWA                                                               |
-| PWA manifest & service worker                           | Done     | P2       | PR #34 — installable app, offline caching                                                                                    |
-| Push notifications                                      | Deferred | P2       | Decision recorded in `docs/PUSH_NOTIFICATIONS_DECISION.md`                                                                   |
-| Mobile native wrappers (iOS/Android)                    | Deferred | P2       | Decision recorded in `docs/MOBILE_WRAPPERS_DECISION.md`                                                                      |
+| Item                                                    | Status   | Priority | Notes                                                                                                                          |
+| ------------------------------------------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Vite + React project scaffold                           | Done     | P0       | Existing prototype                                                                                                             |
+| Responsive app shell (rail + topbar + bottombar)        | Done     | P0       | `frontend/src/components/AppShell.jsx`                                                                                         |
+| Home / overview dashboard                               | Done     | P0       | `frontend/src/pages/Home.jsx`                                                                                                  |
+| Inventory list with search and filter                   | Done     | P0       | `frontend/src/pages/Inventory.jsx`                                                                                             |
+| Add stock from receipt (UI flow)                        | Done     | P0       | `frontend/src/pages/AddFromReceipt.jsx`; wired via PR #63                                                                      |
+| Shopping plan UI                                        | Done     | P0       | `frontend/src/pages/Plan.jsx`; wired via PR #77                                                                                |
+| Purchase history UI                                     | Done     | P0       | `frontend/src/pages/History.jsx`                                                                                               |
+| Settings UI (AI key, locations, motion, currency)       | Done     | P0       | `frontend/src/pages/Settings.jsx`                                                                                              |
+| Persona personalization UI                              | Done     | P0       | `frontend/src/pages/Settings.jsx` persona section                                                                              |
+| Persona copy transformation                             | Done     | P0       | `frontend/src/lib/persona.js` `speak()`                                                                                        |
+| Persona theme color generator                           | Done     | P0       | `frontend/src/lib/persona.js` `applyTheme()`                                                                                   |
+| AI assistant chat panel                                 | Done     | P0       | `frontend/src/components/Assistant.jsx`; real chat via PR #81                                                                  |
+| API client module                                       | Done     | P0       | Typed client via openapi-fetch (`frontend/src/lib/api.ts` + `api-schema.d.ts` from OpenAPI codegen; contract drift fails CI)   |
+| Authentication UI (login / logout)                      | Done     | P0       | Login page, user avatar/name in rail, logout button                                                                            |
+| Error boundaries and loading states                     | Done     | P1       | Route-level `pendingComponent`/`errorComponent` on all routes; skeletons                                                       |
+| Offline / optimistic updates                            | Done     | P1       | PR #76 — query persistence + optimistic mutations                                                                              |
+| Frontend refactor (Kumo + TanStack + Tailwind v4 + PWA) | Done     | P1       | PR #34 — TanStack Router + Query + Kumo UI + Tailwind v4 + PWA                                                                 |
+| UI redesign (Figma direction): tokens + shell + Home    | Partial  | P1       | Green palette, Inter, Lucide, new shell + Home (`docs/design/tokens.md`); remaining screens inherit tokens, receipt queue next |
+| PWA manifest & service worker                           | Done     | P2       | PR #34 — installable app, offline caching                                                                                      |
+| Push notifications                                      | Deferred | P2       | Decision recorded in `docs/PUSH_NOTIFICATIONS_DECISION.md`                                                                     |
+| Mobile native wrappers (iOS/Android)                    | Deferred | P2       | Decision recorded in `docs/MOBILE_WRAPPERS_DECISION.md`                                                                        |
 
 ## 3. Backend (Cloudflare Workers + Hono)
 
