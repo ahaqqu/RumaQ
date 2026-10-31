@@ -83,7 +83,35 @@ export default defineConfig({
           name: 'frontend',
           root: 'frontend',
           environment: 'jsdom',
+          // jsdom environment creation dominates the suite (~60% of tracked
+          // time: one fresh jsdom per file under the default forks pool).
+          // vmThreads creates it once per worker and reuses it for every file
+          // that worker runs — vitest disables per-file isolation for vm
+          // pools (isolate is forced off), so globals and the module registry
+          // are shared across a worker's file batch; only mocks are reset
+          // between files. Verified leak-free for this suite (green under
+          // --sequence.shuffle.filesOnly), but new tests must not rely on
+          // fresh per-file global/module state. Scoped to this project only;
+          // backend/scraper are node envs and gain nothing.
+          // Exception: under vmThreads the jsdom window IS the VM global, so
+          // its unforgeable `window.location` cannot be redefined — api.test.js
+          // stubs it and therefore runs in the `frontend-dom` project below
+          // on the default forks pool, where vitest's copied globals stay
+          // redefinable (issue #351).
+          pool: 'vmThreads',
           include: ['src/**/*.test.{js,jsx}'],
+          exclude: ['**/node_modules/**', '**/dist/**', 'src/lib/api.test.js'],
+          setupFiles: ['src/test-setup.js'],
+          testTimeout: 15000,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'frontend-dom',
+          root: 'frontend',
+          environment: 'jsdom',
+          include: ['src/lib/api.test.js'],
           setupFiles: ['src/test-setup.js'],
           testTimeout: 15000,
         },
