@@ -43,12 +43,7 @@ defineFeature(feature, (test) => {
     })
   })
 
-  test('GET usage returns zeroed uncapped totals for a new user', ({
-    given,
-    when,
-    then,
-    and,
-  }) => {
+  test('GET usage returns zeroed uncapped totals for a new user', ({ given, when, then, and }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })

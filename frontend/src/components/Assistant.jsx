@@ -159,7 +159,9 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
                     <span
                       role="img"
                       aria-label={
-                        meter ? t('assistant.ready', { used: meter.used }) : t('assistant.connected')
+                        meter
+                          ? t('assistant.ready', { used: meter.used })
+                          : t('assistant.connected')
                       }
                       className="w-2 h-2 rounded-full shrink-0 bg-ok"
                     />
