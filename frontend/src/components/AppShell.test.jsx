@@ -121,9 +121,20 @@ describe('AppShell', () => {
     expect(mutate).toHaveBeenCalledWith({ language: 'id' })
   })
 
-  it('renders the mobile tab bar with the center Post photo action', () => {
+  it('renders the mobile tab bar icon-only with equal slots and accessible names', () => {
     const { container } = renderWithProviders(React.createElement(AppShell, null, null))
-    expect(container.querySelector('a[aria-label="Post photo"]')).toBeTruthy()
+    const bar = container.querySelector('nav.lg\\:hidden')
+    expect(bar).toBeTruthy()
+    const tabs = [...bar.querySelectorAll('a')]
+    expect(tabs.map((a) => a.getAttribute('aria-label'))).toEqual([
+      'Home',
+      'Inventory',
+      'Post photo',
+      'Plan',
+      'Prices',
+    ])
+    // Icon-only: no visible text labels inside the bar itself
+    expect(bar.textContent.trim()).toBe('')
   })
 
   it('hides admin nav for regular users and shows it for admins', () => {

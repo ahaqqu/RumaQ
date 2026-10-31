@@ -249,22 +249,25 @@ export function AppShell({ children }) {
         className="lg:hidden fixed bottom-0 left-0 right-0 z-30 flex items-end justify-around bg-surface-raised border-t border-border px-2 pt-1 pb-[env(safe-area-inset-bottom)]"
         aria-label={t('nav.mainNav')}
       >
+        {/* Icon-only tabs: five equal flex-1 slots, accessible name on each
+            link (axe requires one when there is no visible text). */}
         {MOBILE_TABS.slice(0, 2).map(({ id, key, Icon, to }) => (
-          <NavItem key={id} to={to} active={isActive(to)} mobile>
-            <Icon size={20} /> {t(key)}
+          <NavItem key={id} to={to} active={isActive(to)} mobile aria-label={t(key)}>
+            <Icon size={26} />
           </NavItem>
         ))}
         <Link
           to="/add"
-          className="flex flex-col items-center justify-center gap-1 w-16 h-16 -mt-5 rounded-2xl bg-accent text-on-accent shadow-md shrink-0"
+          className="flex-1 flex items-end justify-center min-h-14"
           aria-label={t('nav.postPhoto')}
         >
-          <IconReceipt size={22} />
-          <span className="text-[10px] font-semibold leading-none">{t('nav.postPhoto')}</span>
+          <span className="flex flex-col items-center justify-center w-16 h-16 -mt-5 rounded-2xl bg-accent text-on-accent shadow-md">
+            <IconReceipt size={26} />
+          </span>
         </Link>
         {MOBILE_TABS.slice(2).map(({ id, key, Icon, to }) => (
-          <NavItem key={id} to={to} active={isActive(to)} mobile>
-            <Icon size={20} /> {t(key)}
+          <NavItem key={id} to={to} active={isActive(to)} mobile aria-label={t(key)}>
+            <Icon size={26} />
           </NavItem>
         ))}
       </nav>
