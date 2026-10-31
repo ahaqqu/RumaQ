@@ -210,7 +210,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, testing, and PR pr
 - [`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md) — testing strategy
 - [`docs/SECURITY.md`](docs/SECURITY.md) — security model, secrets, rotation
 - [`docs/ONBOARDING.md`](docs/ONBOARDING.md) — first-time setup
-- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — work items and status
+- [Delivery Kanban](https://github.com/users/ahaqqu/projects/4) — work items and status (GitHub Issues)
 - [`docs/plan/`](docs/plan/) — per-phase implementation plans
 - [`docs/features/persona.md`](docs/features/persona.md) — persona personalisation
 - [`docs/features/internationalisation.md`](docs/features/internationalisation.md) — i18n

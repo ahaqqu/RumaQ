@@ -121,7 +121,6 @@ rumaq/
     ├── ARCHITECTURE.md     # this file
     ├── BACKEND_CONVENTIONS.md  # Backend coding conventions
     ├── FRONTEND_CONVENTIONS.md # Frontend coding conventions
-    ├── PROJECT_PLAN.md     # Work items and PR plan
     ├── TEST_STRATEGY.md    # Testing approach and acceptance criteria
     ├── features/           # Feature deep-dives
     │   ├── internationalisation.md

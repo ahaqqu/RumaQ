@@ -53,7 +53,7 @@ Default seed data (locations + stores) is created with the first household on si
 | `scraper/`            | Bun price-scraper workspace member (VPS systemd job)      |
 | `automation/`         | Docker-based API/E2E test harness                         |
 | `scripts/`            | `deploy.sh`, `test.sh`, `docs.sh`, `style.sh` entrypoints |
-| `docs/plan/`          | Phase plans; `docs/PROJECT_PLAN.md` for overall status    |
+| `docs/plan/`          | Phase plans; GitHub Issues + Delivery Kanban for status   |
 
 ## Common issues
 
