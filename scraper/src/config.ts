@@ -126,6 +126,56 @@ export function loadConfig(): ScraperConfig {
         website: 'https://www.astronauts.id/',
         maxPages: 10,
       },
+      {
+        // Hypermart promo-koran — plain WordPress/Elementor page; the weekly
+        // koran is ~11 full-page JPGs directly in the static HTML (superindo
+        // shape, no PDF step). Zero anti-bot observed 2026-10-30. Filenames
+        // (JAWA-N.jpg) are refreshed in place weekly → novelty keys on the
+        // content MD5 (fetch/state.ts), never on the URL (cache-control
+        // max-age=604800).
+        slug: 'hypermart',
+        name: 'Hypermart',
+        kind: 'brochure',
+        strategy: 'plain',
+        region: 'jakarta',
+        website: 'https://www.hypermart.co.id/',
+        maxPages: 40,
+        proxyEnv: 'HYPERMART_PROXY_URL',
+      },
+      {
+        // Indomaret promosi — server-rendered WordPress hub; ~10 weekly
+        // brochure PDFs behind per-brochure static pages (pdfUrl in the
+        // Real3D-Flipbook config). Pages render to 150 DPI PNGs via poppler's
+        // pdftoppm (util/pdf.ts) and feed the unchanged OCR flow; maxPages
+        // clamps at render time in hub document order (design-arch §1.2).
+        // Cloudflare-fronted but unchallenged 2026-10-30; EU-DC IP untested →
+        // proxyEnv ready (by-design skip until configured).
+        slug: 'indomaret',
+        name: 'Indomaret',
+        kind: 'brochure',
+        strategy: 'plain',
+        region: 'jakarta',
+        website: 'https://www.indomaret.co.id/',
+        maxPages: 40,
+        proxyEnv: 'INDOMARET_PROXY_URL',
+      },
+      {
+        // Alfamart (alfagift.id) — Nuxt shell + fingerprint-gated gateway;
+        // nothing serves to plain fetch, but an anonymous headless browser
+        // renders structured promo product cards (catalog semantics: no
+        // OCR, no R2, no novelty state). First catalog+browser combination —
+        // maxPages caps campaign detail-page visits (Chromium budget =
+        // 1 + maxPages navigations/cycle, design-arch §5). Gateway API out
+        // of scope (FingerprintJS).
+        slug: 'alfamart',
+        name: 'Alfamart',
+        kind: 'catalog',
+        strategy: 'browser',
+        region: 'jakarta',
+        website: 'https://alfagift.id/',
+        maxPages: 40,
+        proxyEnv: 'ALFAMART_PROXY_URL',
+      },
     ],
   }
 }

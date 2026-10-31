@@ -363,6 +363,133 @@ describe('classifyImages', () => {
     // the original run stays the only one.
     expect(await readdir(imagesDir)).toEqual([])
   })
+
+  it('classifies same-URL-different-bytes as NEW — the Hypermart in-place refresh (issue #322)', async () => {
+    // Hypermart's weekly koran refreshes JAWA-N.jpg in place under the same
+    // URL (last-modified moves, cache-control max-age=604800). Novelty keys
+    // on the content MD5 — the URL only names the file — so the same URL
+    // with new bytes must classify NEW, and the second sighting of the new
+    // bytes must classify existing. URL-keyed dedup would serve the previous
+    // week's page for up to 7 days (322-design-arch §3; pinned, not built).
+    const imagesDir = await tempDir()
+    const weekly = fakeJpeg(800, 1000, 60 * 1024)
+    const refreshed = fakeJpeg(800, 1000, 61 * 1024)
+    let payload = weekly
+    const fetcher = {
+      fetchBytes: () => Effect.succeed({ bytes: payload, contentType: 'image/jpeg' } as const),
+    }
+    const state = { lastRun: null as string | null, processed: [] as string[] }
+    const page = {
+      imageUrl: 'https://www.hypermart.co.id/wp-content/uploads/2026/10/JAWA-1.jpg',
+      brochureUrl: 'https://www.hypermart.co.id/promo-koran/',
+    }
+
+    // Week 1: unseen bytes → NEW.
+    const first = await Effect.runPromise(
+      classifyImages([page], state, { ...opts, imagesDir, fetcher })
+    )
+    expect(first.newImages).toHaveLength(1)
+    expect(first.newImages[0]!.md5).toBe(md5Hash(weekly))
+
+    // Week 2: same URL, new bytes → NEW again, under a fresh md5-suffixed
+    // filename so last week's disk copy never collides or overwrites.
+    state.processed.push(md5Hash(weekly)) // what rememberProcessed would do
+    payload = refreshed
+    const second = await Effect.runPromise(
+      classifyImages([page], state, { ...opts, imagesDir, fetcher })
+    )
+    expect(second.newImages).toHaveLength(1)
+    expect(second.newImages[0]!.md5).toBe(md5Hash(refreshed))
+    expect(second.newImages[0]!.filename).not.toBe(first.newImages[0]!.filename)
+    expect(second.existingImages).toHaveLength(0)
+
+    // Week 3: same URL, unchanged bytes → existing (no re-OCR, no re-publish).
+    state.processed.push(md5Hash(refreshed))
+    const third = await Effect.runPromise(
+      classifyImages([page], state, { ...opts, imagesDir, fetcher })
+    )
+    expect(third.existingImages).toHaveLength(1)
+    expect(third.newImages).toHaveLength(0)
+  })
+
+  it('classifies pre-fetched page bytes without downloading — the Indomaret render path (issue #322)', async () => {
+    // Indomaret's plugin yields rendered PNG bytes directly (pdfUrl →
+    // fetchDocument → pdftoppm); classifyImages must consume them in place —
+    // no fetchBytes (an image-gated download of the PDF URL would fail
+    // NonImageContent), novelty keyed on the rendered bytes, filename from
+    // page.filename with the md5 prefix, content type sniffed to image/png.
+    const imagesDir = await tempDir()
+    const rendered = fakePng(1240, 1754, 60 * 1024)
+    let downloads = 0
+    const fetcher = {
+      fetchBytes: () => {
+        downloads++
+        return Effect.succeed({ bytes: new Uint8Array(0), contentType: null } as const)
+      },
+    }
+    const state = { lastRun: null as string | null, processed: [] as string[] }
+    const page = {
+      imageUrl: 'https://www.indomaret.co.id/wp-content/uploads/PalingMurah-29Okt.pdf',
+      brochureUrl: 'https://www.indomaret.co.id/paling-murah/',
+      bytes: rendered,
+      filename: 'PalingMurah-29Okt-page-01.png',
+    }
+
+    const result = await Effect.runPromise(
+      classifyImages([page], state, { ...opts, imagesDir, fetcher })
+    )
+    expect(downloads).toBe(0)
+    expect(result.newImages).toHaveLength(1)
+    const entry = result.newImages[0]!
+    expect(entry.md5).toBe(md5Hash(rendered))
+    expect(entry.filename).toBe(
+      'PalingMurah-29Okt-page-01_' + md5Hash(rendered).slice(0, 8) + '.png'
+    )
+    expect(entry.contentType).toBe('image/png')
+    expect(entry.brochureUrl).toBe('https://www.indomaret.co.id/paling-murah/')
+    // The bytes were written to disk under the rendered filename — the OCR
+    // stage re-reads them from there, unchanged.
+    const onDisk = new Uint8Array(await readFile(path.join(imagesDir, entry.filename)))
+    expect(md5Hash(onDisk)).toBe(md5Hash(rendered))
+
+    // Second sighting of the same rendered bytes (poppler determinism) →
+    // existing, still without touching the fetcher.
+    state.processed.push(md5Hash(rendered))
+    const second = await Effect.runPromise(
+      classifyImages([page], state, { ...opts, imagesDir, fetcher })
+    )
+    expect(second.existingImages).toHaveLength(1)
+    expect(second.newImages).toHaveLength(0)
+    expect(downloads).toBe(0)
+  })
+
+  it('names an md5-suffixed file from page.filename so same-basename renders never collide', async () => {
+    // Week 2 refresh: same PDF URL, re-rendered bytes — the new md5 prefix
+    // lands the file under a fresh name, last week's copy intact.
+    const imagesDir = await tempDir()
+    const fetcher = {
+      fetchBytes: () => Effect.succeed({ bytes: new Uint8Array(0), contentType: null } as const),
+    }
+    const state = { lastRun: null as string | null, processed: [] as string[] }
+    const page = (bytes: Uint8Array) => ({
+      imageUrl: 'https://www.indomaret.co.id/wp-content/uploads/P4H-29Okt.pdf',
+      brochureUrl: 'https://www.indomaret.co.id/p4h/',
+      bytes,
+      filename: 'P4H-29Okt-page-01.png',
+    })
+    const week1 = fakePng(1240, 1754, 60 * 1024)
+    const week2 = fakePng(1240, 1754, 61 * 1024)
+
+    const first = await Effect.runPromise(
+      classifyImages([page(week1)], state, { ...opts, imagesDir, fetcher })
+    )
+    state.processed.push(md5Hash(week1))
+    const second = await Effect.runPromise(
+      classifyImages([page(week2)], state, { ...opts, imagesDir, fetcher })
+    )
+    expect(first.newImages[0]!.filename).not.toBe(second.newImages[0]!.filename)
+    expect(second.newImages[0]!.md5).toBe(md5Hash(week2))
+  })
 })
 
 describe('pruneImages', () => {

@@ -19,6 +19,7 @@ import {
   type AstroProduct,
 } from '../../src/stores/astro.js'
 import { loadConfig, storeBySlug } from '../../src/config.js'
+import { fullFetchContext } from '../helpers.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -195,14 +196,16 @@ describe('resolveCategoryPages', () => {
     const plugin = createAstroPlugin(storeBySlug(loadConfig(), 'astro')!)
     const fetched: string[] = []
     await Effect.runPromise(
-      plugin.listItems({
-        fetchHtml: (url) =>
-          Effect.sync(() => {
-            fetched.push(url)
-            return loadFixture('category.html')
-          }),
-        runStartedAt: '2026-10-28T00:00:00Z',
-      })
+      plugin.listItems(
+        fullFetchContext({
+          fetchHtml: (url) =>
+            Effect.sync(() => {
+              fetched.push(url)
+              return loadFixture('category.html')
+            }),
+          runStartedAt: '2026-10-28T00:00:00Z',
+        })
+      )
     )
     expect(fetched).toEqual([
       'https://www.astronauts.id/c/kebutuhan-pokok-2721/minyak-goreng-25060',
@@ -216,14 +219,16 @@ describe('astro plugin', () => {
     const plugin = createAstroPlugin(config)
     const fetched: string[] = []
     const items = await Effect.runPromise(
-      plugin.listItems({
-        fetchHtml: (url) =>
-          Effect.sync(() => {
-            fetched.push(url)
-            return loadFixture('category.html')
-          }),
-        runStartedAt: '2026-10-28T00:00:00Z',
-      })
+      plugin.listItems(
+        fullFetchContext({
+          fetchHtml: (url) =>
+            Effect.sync(() => {
+              fetched.push(url)
+              return loadFixture('category.html')
+            }),
+          runStartedAt: '2026-10-28T00:00:00Z',
+        })
+      )
     )
     // Every category page is fetched; the fixture's duplicate and truncated
     // object never surface, and the same product seen on several pages (the
@@ -239,14 +244,16 @@ describe('astro plugin', () => {
     const plugin = createAstroPlugin(config)
     const fetched: string[] = []
     await Effect.runPromise(
-      plugin.listItems({
-        fetchHtml: (url) =>
-          Effect.sync(() => {
-            fetched.push(url)
-            return loadFixture('category.html')
-          }),
-        runStartedAt: '2026-10-28T00:00:00Z',
-      })
+      plugin.listItems(
+        fullFetchContext({
+          fetchHtml: (url) =>
+            Effect.sync(() => {
+              fetched.push(url)
+              return loadFixture('category.html')
+            }),
+          runStartedAt: '2026-10-28T00:00:00Z',
+        })
+      )
     )
     expect(fetched).toHaveLength(2)
   })
@@ -254,10 +261,12 @@ describe('astro plugin', () => {
   it('yields [] when a page has no embedded inventory', async () => {
     const plugin = createAstroPlugin(storeBySlug(loadConfig(), 'astro')!)
     const items = await Effect.runPromise(
-      plugin.listItems({
-        fetchHtml: () => Effect.succeed('<html><body>challenge page</body></html>'),
-        runStartedAt: '2026-10-28T00:00:00Z',
-      })
+      plugin.listItems(
+        fullFetchContext({
+          fetchHtml: () => Effect.succeed('<html><body>challenge page</body></html>'),
+          runStartedAt: '2026-10-28T00:00:00Z',
+        })
+      )
     )
     expect(items).toEqual([])
   })

@@ -1048,7 +1048,14 @@
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["superindo", "lotte-mart", "astro"]
+                      "enum": [
+                        "superindo",
+                        "lotte-mart",
+                        "astro",
+                        "hypermart",
+                        "indomaret",
+                        "alfamart"
+                      ]
                     },
                     "minItems": 1
                   }

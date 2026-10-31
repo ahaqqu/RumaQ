@@ -30,4 +30,51 @@ export class NonImageContent extends Data.TaggedError('NonImageContent')<{
   message: string
 }> {}
 
-export type FetchError = BrowserTierRequired | FetchTransport | FetchHttpStatus | NonImageContent
+/**
+ * A document fetch (fetchDocument, issue #322) returned bytes that are not
+ * a PDF — e.g. a 200 HTML challenge page served for the PDF URL (Cloudflare
+ * fronts indomaret.co.id). Typed so the store reddens with a precise
+ * "not a PDF" diagnosis instead of a misleading pdftoppm syntax error once
+ * the bytes reach the renderer. Fatal by construction, like NonImageContent:
+ * wrong content never succeeds on retry.
+ */
+export class NotPdfContent extends Data.TaggedError('NotPdfContent')<{
+  url: string
+  contentType: string | null
+  message: string
+}> {}
+
+/**
+ * Structural churn on a scraped surface: the anchors/config the parser
+ * contract keys on are gone (zero brochure links on a hub, zero product
+ * cards on a campaign page). Goes red — never a silent zero — while riding
+ * the existing per-store isolation (the run's other stores keep publishing;
+ * the failed store reddens the run). Deliberately NOT BrowserTierRequired,
+ * so it never masquerades as a needs-proxy skip. Introduced with Indomaret's
+ * sentinels (issue #322 design-arch §1.2); the first catalog+browser store
+ * (Alfamart, §1.3) reuses the same tag.
+ */
+export class ScrapeStructureError extends Data.TaggedError('ScrapeStructureError')<{
+  url: string
+  message: string
+}> {}
+
+/**
+ * The PDF → page-image render step failed (issue #322 design-arch §1.2):
+ * poppler's pdftoppm missing from PATH (a typed red naming the binary,
+ * never a silent zero), a non-zero exit on a corrupt document, or a render
+ * that produced no pages.
+ */
+export class PdfRenderError extends Data.TaggedError('PdfRenderError')<{
+  message: string
+  cause?: unknown
+}> {}
+
+export type FetchError =
+  | BrowserTierRequired
+  | FetchTransport
+  | FetchHttpStatus
+  | NonImageContent
+  | NotPdfContent
+  | ScrapeStructureError
+  | PdfRenderError

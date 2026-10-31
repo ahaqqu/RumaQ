@@ -169,7 +169,14 @@ defineFeature(feature, (test) => {
     and('the stores endpoint should list every contract store', async () => {
       await ctx.sendRequest('GET', '/api/admin/scrape/stores')
       ctx.expectStatus(200)
-      expect(ctx.responseBody.stores).toEqual(['superindo', 'lotte-mart', 'astro'])
+      expect(ctx.responseBody.stores).toEqual([
+        'superindo',
+        'lotte-mart',
+        'astro',
+        'hypermart',
+        'indomaret',
+        'alfamart',
+      ])
       ctx.expectAuthenticatedCacheHeaders()
     })
 

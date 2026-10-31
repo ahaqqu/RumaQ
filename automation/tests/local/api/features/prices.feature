@@ -45,6 +45,15 @@ Feature: Price data ingest and explorer
     And the product should have current prices from both stores
     And the product should have history entries
 
+  Scenario: A catalog store's promos land without the OCR flow (issue #322)
+    Given the database has seed data
+    And a catalog snapshot has been pushed
+    And I am authenticated as a test user
+    When I request the price detail for the alfamart promo
+    Then the response status should be 200
+    And the alfamart discount should claim discount_pct at the promo price
+    And the alfamart campaign page should appear in no brochure group
+
   Scenario: Freshness status requires the ingest bearer secret
     Given the API is running
     When the scraper requests the price freshness status with a wrong bearer token

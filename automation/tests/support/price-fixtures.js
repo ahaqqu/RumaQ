@@ -16,6 +16,10 @@ export const FLOUR_KEY = 'tepung--segitiga-biru--1-kg'
 // sweep scenarios upload the corresponding R2 objects explicitly.
 export const BROCHURE_PAGE_LOTTE = '/api/brochures/lotte-mart/20261024/page_1_2ad1c95b.jpg'
 export const BROCHURE_KORAN_SUPERINDO = '/api/brochures/superindo/20261024/koran_a_1b2c3d4e.jpg'
+// Indomaret's rendered-PDF page (issue #322): the same servable shape, PNG
+// content type — OCR-flow parity proof for the render path.
+export const BROCHURE_PALINGMURAH_INDOMARET =
+  '/api/brochures/indomaret/20261024/PalingMurah-29Okt-page-01_a1b2c3d4.png'
 
 export function priceSnapshot() {
   return {
@@ -165,14 +169,61 @@ export function bulkCatalogueSnapshot(count) {
   }
 }
 
+// Alfamart's campaign page deep link (issue #322): catalog items carry the
+// CAMPAIGN URL, not a servable /api/brochures/ object — the brochure view
+// must never group them (no OCR flow ever rendered a page image).
+export const ALFAMART_PROMO_PAGE =
+  'https://alfagift.id/promo/Murah-Banget-30-Oktober---5-November-2026'
+
+// Catalog-store fixture (issue #322): alfamart items land straight from the
+// rendered DOM — no OCR, no brochure object — with a parsed discount_pct
+// promo and a tier promo that stays label-only (the astro convention).
+export function catalogSnapshot() {
+  return {
+    schemaVersion: 1,
+    scrapedAt: '2026-10-26T23:00:05Z',
+    stores: [{ slug: 'alfamart', name: 'Alfamart', region: 'jakarta' }],
+    items: [
+      {
+        productKey: 'minyak-goreng--filma--2-l',
+        name: 'Minyak Goreng Filma Pouch 2 L',
+        brand: 'Filma',
+        unit: '2 L',
+        storeSlug: 'alfamart',
+        price: 43700,
+        promoType: 'discount_pct',
+        promoLabel: 'Diskon 5%',
+        matchMethod: 'solo',
+        matchConfidence: 1.0,
+        brochureUrl: ALFAMART_PROMO_PAGE,
+      },
+      {
+        productKey: 'detergen-cair--gentle-gen--700-g',
+        name: 'Detergen Cair Gentle Gen 700 g',
+        brand: 'Gentle Gen',
+        unit: '700 g',
+        storeSlug: 'alfamart',
+        price: 25000,
+        promoLabel: 'Beli 2 Disc.4%',
+        matchMethod: 'solo',
+        matchConfidence: 1.0,
+        brochureUrl: ALFAMART_PROMO_PAGE,
+      },
+    ],
+  }
+}
+
 // Brochure listing fixture (issue #293): items over the two servable object
 // URLs above, plus one legacy retailer-page URL row (the pre-#293 data shape)
-// that the servable-shape predicate must exclude from every group.
+// that the servable-shape predicate must exclude from every group. Issue
+// #322 adds an indomaret rendered-PNG page: a store whose pages never came
+// from a plain image download must group exactly like the OCR stores.
 export function brochureSnapshot() {
   return {
     schemaVersion: 1,
     scrapedAt: '2026-10-26T23:00:05Z',
     stores: [
+      { slug: 'indomaret', name: 'Indomaret', region: 'jakarta' },
       { slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' },
       { slug: 'superindo', name: 'Superindo', region: 'jakarta' },
     ],
@@ -210,6 +261,17 @@ export function brochureSnapshot() {
         matchMethod: 'exact',
         matchConfidence: 1.0,
         brochureUrl: BROCHURE_KORAN_SUPERINDO,
+      },
+      {
+        productKey: 'gula-pasir--gulaku--1-kg',
+        name: 'Gula Pasir Gulaku 1 kg',
+        brand: 'Gulaku',
+        unit: '1 kg',
+        storeSlug: 'indomaret',
+        price: 15500,
+        matchMethod: 'exact',
+        matchConfidence: 1.0,
+        brochureUrl: BROCHURE_PALINGMURAH_INDOMARET,
       },
     ],
   }

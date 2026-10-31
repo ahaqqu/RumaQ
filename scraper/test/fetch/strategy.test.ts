@@ -8,6 +8,8 @@ import { Effect } from 'effect'
 import { fakeBrowserLauncher } from '../helpers.js'
 
 import { createFetcher, createStoreFetcher, DEFAULT_HEADERS } from '../../src/fetch/strategy.js'
+import { NotPdfContent } from '../../src/fetch/errors.js'
+import { exitError } from '../helpers.js'
 import type { StoreConfig } from '../../src/config.js'
 
 const plainStore: StoreConfig = {
@@ -245,6 +247,53 @@ describe('createFetcher', () => {
       expect(Array.from(downloaded.bytes)).toEqual([9])
       expect(downloaded.contentType).toBe(contentType)
     }
+  })
+
+  it('fetchDocument rejects a 200 HTML challenge page as a typed NotPdfContent', async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response('<html>Just a moment...</html>', {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        })
+    )
+    const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep: async () => {} })
+    const exit = await Effect.runPromiseExit(
+      fetcher.fetchDocument('https://www.indomaret.co.id/wp-content/uploads/brochure.pdf')
+    )
+    expect(exit._tag).toBe('Failure')
+    const error = exitError(exit) as NotPdfContent
+    expect(error._tag).toBe('NotPdfContent')
+    expect(error.message).toContain('Not a PDF')
+    expect(error.message).toContain('text/html')
+    expect(error.message).toContain('3c 68 74 6d 6c') // "<html" — names what was received
+    // Fatal by construction: a wrong-content response never retries.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('fetchDocument accepts a body by its %PDF magic even when mislabeled, and fails an empty one', async () => {
+    const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34])
+    let calls = 0
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => {
+      calls++
+      return calls === 1
+        ? new Response(pdf, { status: 200, headers: { 'content-type': 'text/html' } })
+        : new Response('', { status: 200 })
+    })
+    const fetcher = createFetcher(plainStore, { fetch: fetchMock, sleep: async () => {} })
+    // A real PDF behind a wrong content-type header still renders.
+    const doc = await Effect.runPromise(
+      fetcher.fetchDocument('https://www.indomaret.co.id/wp-content/uploads/brochure.pdf')
+    )
+    expect(Array.from(doc.bytes)).toEqual(Array.from(pdf))
+    // An empty 200 body is not a PDF either.
+    const exit = await Effect.runPromiseExit(
+      fetcher.fetchDocument('https://www.indomaret.co.id/wp-content/uploads/brochure.pdf')
+    )
+    expect(exit._tag).toBe('Failure')
+    const error = exitError(exit) as NotPdfContent
+    expect(error._tag).toBe('NotPdfContent')
+    expect(error.message).toContain('Not a PDF')
   })
 
   it('routes through the store proxy when the env var is set', async () => {

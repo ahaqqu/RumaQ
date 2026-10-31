@@ -110,11 +110,15 @@ export function saveState(state: ScraperState, stateFile: string): Effect.Effect
 }
 
 /**
- * Extract a safe filename from a URL. Adds an MD5 prefix so the same
- * basename with different content never overwrites.
+ * Extract a safe filename from a URL — or accept a bare filename outright
+ * (issue #322: Indomaret's rendered pages arrive named, not URL-addressed).
+ * Adds an MD5 prefix so the same basename with different content never
+ * overwrites.
  */
 export function filenameFromUrl(url: string, md5Prefix = ''): string {
-  let name = path.basename(new URL(url).pathname)
+  let name = /^[a-z][a-z0-9+.-]*:\/\//i.test(url)
+    ? path.basename(new URL(url).pathname)
+    : path.basename(url)
   if (!name || !name.includes('.')) {
     name = `promo_${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}.jpg`
   }
@@ -272,20 +276,25 @@ export function classifyImages(
   const log = options.log ?? (() => {})
 
   const download = (page: BrochurePage): Effect.Effect<DownloadedImage | null> =>
-    options.fetcher.fetchBytes(page.imageUrl).pipe(
-      // Total recovery: a failed download is a skip, never a run failure —
-      // one bad image must not block the daily snapshot.
-      Effect.catchCause((cause) =>
-        Effect.sync(() => {
-          const error = Cause.squash(cause)
-          result.skipped.push({
-            imageUrl: page.imageUrl,
-            reason: `download_failed: ${error instanceof Error ? error.message : String(error)}`,
-          })
-          return null
-        })
-      )
-    )
+    // Pre-fetched bytes (issue #322, Indomaret's rendered PDF pages) skip
+    // the download entirely — the bytes are already in hand, so novelty
+    // keys on them and no image-gated fetch ever sees the PDF URL.
+    page.bytes
+      ? Effect.succeed({ bytes: page.bytes, contentType: null })
+      : options.fetcher.fetchBytes(page.imageUrl).pipe(
+          // Total recovery: a failed download is a skip, never a run failure —
+          // one bad image must not block the daily snapshot.
+          Effect.catchCause((cause) =>
+            Effect.sync(() => {
+              const error = Cause.squash(cause)
+              result.skipped.push({
+                imageUrl: page.imageUrl,
+                reason: `download_failed: ${error instanceof Error ? error.message : String(error)}`,
+              })
+              return null
+            })
+          )
+        )
 
   const classifyBytes = (
     page: BrochurePage,
@@ -320,7 +329,7 @@ export function classifyImages(
       }
       seenThisRun.add(hash)
 
-      const filename = filenameFromUrl(page.imageUrl, hash)
+      const filename = filenameFromUrl(page.filename ?? page.imageUrl, hash)
       const filePath = path.join(options.imagesDir, filename)
       const entry: ClassifiedImage = {
         filename,
