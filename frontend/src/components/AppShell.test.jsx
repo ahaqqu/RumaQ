@@ -149,6 +149,20 @@ describe('AppShell', () => {
     expect(container.querySelector('aside[role="dialog"]')).toBeNull()
   })
 
+  it('moves focus into the drawer on open and keeps Tab inside it', () => {
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    fireEvent.click(container.querySelector('button[aria-label="Open menu"]'))
+    const drawer = container.querySelector('aside[role="dialog"]')
+    // The modal dialog receives focus when it opens (aria-modal contract)
+    expect(drawer.contains(document.activeElement)).toBe(true)
+    // Tab from the panel itself wraps to the drawer's first focusable control
+    fireEvent.keyDown(window, { key: 'Tab' })
+    expect(drawer.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement.getAttribute('aria-label')).toBe('Close menu')
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(container.querySelector('aside[role="dialog"]')).toBeNull()
+  })
+
   it('hides admin nav for regular users and shows it for admins', () => {
     const { container } = renderWithProviders(React.createElement(AppShell, null, null))
     expect(container.textContent).not.toContain('Household admin')

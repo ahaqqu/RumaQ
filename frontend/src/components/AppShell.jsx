@@ -114,14 +114,48 @@ export function AppShell({ children }) {
   // Mobile drawer (Google-Calendar style): opened from the brand mark. New
   // super-app surfaces belong in DRAWER_NAV sections, not the header.
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const drawerPanelRef = useRef(null)
 
+  // Modal-dialog focus contract for the drawer: focus enters the panel when it
+  // opens, Tab stays inside it while the scrim occludes the page, and closing
+  // hands focus back to whatever opened it.
   useEffect(() => {
     if (!drawerOpen) return
+    const panel = drawerPanelRef.current
+    const previouslyFocused = document.activeElement
+    panel?.focus()
     const onKey = (e) => {
-      if (e.key === 'Escape') setDrawerOpen(false)
+      if (e.key === 'Escape') {
+        setDrawerOpen(false)
+        return
+      }
+      if (e.key !== 'Tab' || !panel) return
+      const focusables = panel.querySelectorAll(
+        'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusables.length === 0) return
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement
+      const inside = active !== panel && panel.contains(active)
+      if (!inside) {
+        e.preventDefault()
+        ;(e.shiftKey ? last : first).focus()
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      if (previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body) {
+        previouslyFocused.focus()
+      }
+    }
   }, [drawerOpen])
 
   const user = me?.user
@@ -299,6 +333,8 @@ export function AppShell({ children }) {
             aria-hidden="true"
           />
           <aside
+            ref={drawerPanelRef}
+            tabIndex={-1}
             className="lg:hidden fixed top-0 bottom-0 left-0 z-[41] w-[300px] max-w-[84vw] bg-surface-raised border-r border-border flex flex-col gap-5 p-5 overflow-y-auto animate-[drawerIn_0.2s_ease-out]"
             role="dialog"
             aria-modal="true"
