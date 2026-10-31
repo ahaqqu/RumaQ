@@ -18,8 +18,11 @@ vi.mock('./lib/api', () => ({
   }),
   getAiUsage: vi.fn().mockResolvedValue({
     used: 0,
-    daily_limit: 20,
+    input_tokens: 0,
+    output_tokens: 0,
+    cached_tokens: null,
     provider: null,
+    key_source: 'user',
   }),
   getPlans: vi.fn().mockResolvedValue({ plans: [] }),
   getPurchases: vi.fn().mockResolvedValue({
