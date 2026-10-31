@@ -3,6 +3,11 @@
 // strand already-paid-for items: the next run loads every pending outbox
 // file, includes their items in the payload, and retires the files only
 // after a successful real publish (dry-runs never consume the outbox).
+// A store whose run dies mid-way (its model chain exhausted —
+// ChainExhaustedError) keeps its already-OCR'd items pending: they
+// deliberately do NOT ride the failing run's payload, they replay on the
+// next run, while the healthy stores' items still publish that same night
+// (pipeline.ts retires only the stores whose run did not fail).
 // Replaying is safe because the ingest endpoint upserts idempotently
 // (ON CONFLICT product_id, source_id, observed_date — PR1).
 
