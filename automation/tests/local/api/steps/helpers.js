@@ -212,11 +212,21 @@ export class ApiContext {
     expect(this.responseBody.store.label).toBe(label)
   }
 
+  // Usage is recorded but never capped (issue #353): the response carries
+  // call/token totals only — there is no daily_limit field to assert.
   expectUsageDefaults() {
-    expect(this.responseBody).toHaveProperty('used')
-    expect(this.responseBody).toHaveProperty('daily_limit')
-    expect(this.responseBody.used).toBe(0)
-    expect(this.responseBody.daily_limit).toBe(20)
+    expect(this.responseBody).toEqual({
+      used: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cached_tokens: null,
+      provider: null,
+      key_source: 'user',
+    })
+  }
+
+  expectUsageUsed(n) {
+    expect(this.responseBody.used).toBe(n)
   }
 
   expectStockUpdatedQty(qty) {

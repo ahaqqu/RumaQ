@@ -17,7 +17,9 @@ DELETE FROM match_review_items;
 DELETE FROM plans;
 DELETE FROM purchase_items;
 DELETE FROM purchases;
-DELETE FROM ai_usage;
+-- Per-call AI usage events (migration 0015) — the ai_usage aggregate was
+-- dropped by that migration, so reset must clear the events table instead.
+DELETE FROM ai_usage_events;
 DELETE FROM user_settings;
 DELETE FROM stock;
 DELETE FROM items;
