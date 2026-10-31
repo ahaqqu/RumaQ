@@ -235,7 +235,20 @@ export class ApiContext {
     expect(this.responseBody).toHaveProperty('expiring_7d')
     expect(this.responseBody).toHaveProperty('running_out_7d')
     expect(this.responseBody).toHaveProperty('low_stock')
+    expect(this.responseBody).toHaveProperty('attention_count')
+    expect(this.responseBody).toHaveProperty('current_month_spend')
+    expect(this.responseBody).toHaveProperty('current_month_receipts')
     expect(this.responseBody).toHaveProperty('next_trip')
+  }
+
+  expectHomeSpendingShape() {
+    expect(typeof this.responseBody.current_month_spend).toBe('number')
+    expect(this.responseBody.current_month_spend).toBeGreaterThanOrEqual(0)
+    expect(typeof this.responseBody.current_month_receipts).toBe('number')
+    expect(this.responseBody.current_month_receipts).toBeGreaterThanOrEqual(0)
+    expect(this.responseBody.attention_count).toBeGreaterThanOrEqual(
+      this.responseBody.low_stock.length
+    )
   }
 
   expectHomeTotalItems(n) {

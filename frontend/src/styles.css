@@ -1,3 +1,4 @@
+@import '@fontsource-variable/inter';
 @import 'tailwindcss';
 @import '@cloudflare/kumo/styles';
 
@@ -75,39 +76,41 @@
   --font-weight-bold: 700;
 
   /* Shadow */
-  --shadow-sm: 0 1px 2px oklch(0.3 0.02 230 / 0.07);
-  --shadow-md: 0 2px 4px oklch(0.3 0.02 230 / 0.06), 0 8px 16px oklch(0.3 0.02 230 / 0.07);
-  --shadow-lg: 0 4px 8px oklch(0.3 0.02 230 / 0.07), 0 16px 40px oklch(0.3 0.02 230 / 0.11);
+  --shadow-sm: 0 1px 2px oklch(0.3 0.02 150 / 0.07);
+  --shadow-md: 0 2px 4px oklch(0.3 0.02 150 / 0.06), 0 8px 16px oklch(0.3 0.02 150 / 0.07);
+  --shadow-lg: 0 4px 8px oklch(0.3 0.02 150 / 0.07), 0 16px 40px oklch(0.3 0.02 150 / 0.11);
 
   /* Layout */
-  --spacing-rail: 248px;
-  --spacing-content-max: 1080px;
+  --spacing-rail: 240px;
+  --spacing-content-max: 1128px;
 }
 
 :root,
 [data-theme='rumaq'] {
-  /* Surfaces: calm blue-gray so panels and backgrounds are clearly layered. */
-  --surface: oklch(0.945 0.028 230);
-  --surface-raised: oklch(0.975 0.018 230);
-  --surface-sunken: oklch(0.915 0.032 230);
-  --surface-inset: oklch(0.96 0.022 230);
+  /* Surfaces: warm off-white canvas with white cards and sage-green tints,
+     per the Figma redesign (docs/design/tokens.md). */
+  --surface: #f7f7f0;
+  --surface-raised: #ffffff;
+  --surface-sunken: #edeee3;
+  --surface-inset: #f0f2ea;
 
   /* Lines */
-  --border: oklch(0.88 0.025 230);
-  --border-strong: oklch(0.8 0.032 230);
+  --border: #e2e6dc;
+  --border-strong: #c9d0c0;
 
-  /* Text */
-  --text: oklch(0.28 0.03 235);
-  --text-muted: oklch(0.5 0.025 235);
-  --text-faint: oklch(0.62 0.022 235);
+  /* Text. --text-muted is darkened one step from the Figma value (#69756c)
+     so it clears 4.5:1 on every surface incl. inset/sunken (WCAG AA). */
+  --text: #20352c;
+  --text-muted: #5f6b62;
+  --text-faint: #98a297;
 
-  /* Accent: calm sky (deepened to 0.48 for AA contrast) */
-  --accent: oklch(0.48 0.13 230);
-  --accent-hover: oklch(0.42 0.14 230);
-  --accent-pressed: oklch(0.37 0.14 230);
-  --accent-soft: oklch(0.93 0.04 230);
-  --accent-soft-border: oklch(0.82 0.06 230);
-  --on-accent: oklch(0.99 0.01 230);
+  /* Accent: deep forest green (#245C43) for AA contrast on white */
+  --accent: #245c43;
+  --accent-hover: #1e4e38;
+  --accent-pressed: #19402d;
+  --accent-soft: #e9f0e5;
+  --accent-soft-border: #cbdcc4;
+  --on-accent: #ffffff;
 
   /* State. --warn sits on raised/sunken surfaces and warn-soft badges, so it
      is dark enough for 4.5:1 body-text contrast (WCAG AA) everywhere. */
@@ -149,7 +152,8 @@ html {
 
 body {
   font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
   font-size: var(--font-size-base);
   line-height: var(--line-height-normal);
   color: var(--text);
@@ -202,13 +206,18 @@ p {
   line-height: var(--line-height-normal);
 }
 
-a {
-  color: var(--accent);
-  text-decoration: none;
-}
+/* In @layer base so Tailwind color utilities (e.g. text-on-accent on the
+   Post photo action) can override the default link color — unlayered author
+   styles would beat every layered utility. */
+@layer base {
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
 
-a:hover {
-  text-decoration: underline;
+  a:hover {
+    text-decoration: underline;
+  }
 }
 
 button {

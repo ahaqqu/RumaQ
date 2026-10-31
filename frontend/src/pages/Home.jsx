@@ -1,13 +1,30 @@
 import { useTranslation } from 'react-i18next'
-import { TimeSignal, SkeletonRows } from '../components/ui.jsx'
-import { useHome } from '../lib/queries/index.js'
-import { usePersona } from '../context/PersonaContext.jsx'
+import { useHome, usePlans } from '../lib/queries/index.js'
+import { useMe } from '../lib/queries/me.js'
+import { getGreetingKey } from '../lib/greeting.js'
 import { personaText } from '../lib/persona.js'
-import { IconReceipt, IconSpark, IconLeaf, IconBox } from '../components/icons.jsx'
-import { cn } from '../lib/cn.js'
-import { Button } from '../components/Button.jsx'
-import { Chip } from '../components/Chip.jsx'
+import { usePersona } from '../context/PersonaContext.jsx'
+import { useApp } from '../context/AppContext.jsx'
+import { IconSprout, IconCheck, IconArrowRight, IconLeaf } from '../components/icons.jsx'
+import { Badge } from '../components/Badge.jsx'
 import { Panel } from '../components/Panel.jsx'
+import { EmptyState } from '../components/EmptyState.jsx'
+import { SkeletonRows } from '../components/Skeleton.jsx'
+import { Button } from '../components/Button.jsx'
+
+// Assistant seed prompt for the recipe card bridge (#332 replaces this with a
+// dedicated recipe-search endpoint later).
+const RECIPE_SEED_PROMPT =
+  'Find a recipe on recipe websites that uses up items I already have at home, prioritizing what expires soon. Suggest one recipe with its name, source website link, time, servings, and which of my pantry items it uses up.'
+
+// Figma money style: "Rp 1.245.000" regardless of UI language (same
+// convention as the Plan screen).
+const formatPrice = (amount) =>
+  new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+  }).format(amount ?? 0)
 
 function getDaysUntil(expiryDate) {
   if (!expiryDate) return null
@@ -16,10 +33,107 @@ function getDaysUntil(expiryDate) {
   return Math.round((expiry - now) / 86400000)
 }
 
+// Effective urgency in days for a low-stock row: whichever of expiry and
+// run-out estimate lands first.
+function urgencyDays(row) {
+  const expiryDays = getDaysUntil(row.expiry_date)
+  const runOut = typeof row.run_out_days === 'number' ? row.run_out_days : null
+  if (expiryDays == null && runOut == null) return null
+  if (expiryDays == null) return runOut
+  if (runOut == null) return expiryDays
+  return Math.min(expiryDays, runOut)
+}
+
+function urgencyTone(days) {
+  if (days == null) return 'muted'
+  if (days <= 1) return 'danger'
+  if (days <= 3) return 'warn'
+  return 'muted'
+}
+
+function StatCard({ label, value, sub, testid }) {
+  return (
+    <div
+      className="bg-surface-raised border border-border rounded-[18px] p-4 flex flex-col gap-1.5"
+      data-testid={testid}
+    >
+      <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
+        {label}
+      </div>
+      <div className="text-[34px] leading-[41px] font-semibold tracking-[-1px] text-text">
+        {value}
+      </div>
+      <div className="text-xs text-text-muted">{sub}</div>
+    </div>
+  )
+}
+
+function AttentionRow({ item, onOpenInventory, t }) {
+  const days = urgencyDays(item)
+  const tone = urgencyTone(days)
+  const initial = (item.name || '?').trim().charAt(0).toUpperCase()
+  const qtyLine = [item.qty, item.unit].filter(Boolean).join(' ')
+  const estimate =
+    days == null
+      ? null
+      : days <= 0
+        ? t('home.estimateToday')
+        : t('home.estimateDaysLeft', { count: days })
+
+  return (
+    <button
+      type="button"
+      onClick={onOpenInventory}
+      className="w-full flex items-center gap-4 px-5 py-4 border-b border-border last:border-b-0 hover:bg-surface-sunken/60 transition-colors text-left"
+    >
+      <span className="w-12 h-12 rounded-xl bg-surface-inset grid place-items-center text-sm font-semibold text-text-muted shrink-0">
+        {initial}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold text-text truncate">{item.name}</span>
+        <span className="block text-[13px] text-text-muted truncate">
+          {[qtyLine, estimate].filter(Boolean).join(' · ')}
+        </span>
+      </span>
+      <Badge tone={tone}>
+        {tone === 'danger'
+          ? t('home.badgeCritical')
+          : tone === 'warn'
+            ? t('home.badgeLowSoon')
+            : t('home.badgeWatch')}
+      </Badge>
+    </button>
+  )
+}
+
 export function Home({ setView, askAssistant }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { persona } = usePersona()
+  const { setAssistantSeed } = useApp()
   const { data, isLoading } = useHome()
+  const { data: meData } = useMe()
+  const { data: plansData } = usePlans('active')
+
+  const totalItems = data?.total_items ?? 0
+  const attentionCount = data?.attention_count ?? 0
+  const needs = data?.low_stock ?? []
+  const monthSpend = data?.current_month_spend ?? 0
+  const monthReceipts = data?.current_month_receipts ?? 0
+
+  const activePlan = plansData?.plans?.[0] ?? null
+  const planItems = activePlan?.items ?? []
+  const planStores = [...new Set(planItems.map((it) => it.store_label).filter(Boolean))]
+
+  const firstName = (meData?.user?.name || '').split(' ').filter(Boolean)[0]
+  const greeting = firstName
+    ? `${t(getGreetingKey(new Date(), i18n.language))}, ${firstName}`
+    : t(getGreetingKey(new Date(), i18n.language))
+  const monthName = new Intl.DateTimeFormat(i18n.language, { month: 'long' }).format(new Date())
+
+  const openRecipeAssistant = () => {
+    setAssistantSeed(RECIPE_SEED_PROMPT)
+    askAssistant?.()
+  }
 
   if (isLoading) {
     return (
@@ -29,160 +143,150 @@ export function Home({ setView, askAssistant }) {
     )
   }
 
-  const totalItems = data?.total_items ?? 0
-  const expiring7d = data?.expiring_7d ?? 0
-  const runningOut7d = data?.running_out_7d ?? 0
-  const needs = data?.low_stock ?? []
-  const nextTrip = data?.next_trip
-
   return (
-    <>
-      <div className="mb-6">
-        <p className="text-md text-text-muted leading-snug max-w-[62ch]">
-          {personaText('homeLead', persona, t)}
-        </p>
-      </div>
-
-      <div className="flex items-baseline justify-between gap-4 mb-4 mt-0.5">
-        <h2 className="text-base">{t('home.stockStatus')}</h2>
-      </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Stat num={totalItems} label={t('home.itemsMonitored')} />
-        <Stat num={expiring7d} label={t('home.expiring')} warn={expiring7d > 0} />
-        <Stat num={runningOut7d} label={t('home.nearlyOut')} warn={runningOut7d > 0} />
-        <Stat num="—" label={t('home.storesRecorded')} />
-      </div>
-
-      <section className="mt-8">
-        <div className="flex items-baseline justify-between gap-4 mb-4">
-          <h2 className="text-base">{t('home.needsAttention')}</h2>
-          <Button variant="ghost" size="sm" onClick={() => setView('inventory')}>
-            {t('home.seeAll')}
-          </Button>
+    <div className="flex flex-col gap-8">
+      {/* Greeting */}
+      <div className="flex items-start justify-between gap-4" data-testid="home-greeting">
+        <div className="min-w-0">
+          <h1 className="text-[28px] lg:text-[34px] leading-tight font-semibold tracking-[-1px] text-text">
+            {greeting}
+          </h1>
+          <p className="mt-2 text-sm text-text-muted leading-snug max-w-[62ch]">
+            {personaText('homeLead', persona, t)}
+          </p>
         </div>
-        <Panel>
-          {needs.length === 0 ? (
-            <Empty icon={IconBox} title={t('home.allSafe')} desc={t('home.allSafeDesc')} />
-          ) : (
-            <div className="flex flex-col">
-              {needs.map((s) => (
-                <div
-                  className="grid grid-cols-[1fr_auto] items-center gap-4 px-5 py-4 border-b border-border last:border-b-0 hover:bg-surface-sunken transition-colors"
-                  key={s.id}
-                >
-                  <div className="min-w-0">
-                    <div className="font-semibold text-base flex items-center gap-3 flex-wrap">
-                      {s.name}
-                    </div>
-                    <div className="flex items-center gap-4 mt-2 text-sm text-text-muted flex-wrap">
-                      <TimeSignal
-                        expiryDays={getDaysUntil(s.expiry_date)}
-                        runOut={s.run_out_days}
-                        basis={s.basis}
-                      />
-                    </div>
-                  </div>
-                  <div className="text-right flex flex-col items-end gap-1">
-                    <div className="font-semibold">
-                      {s.qty} {s.unit}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Panel>
-      </section>
+        <span className="hidden sm:inline-flex items-center gap-1.5 rounded-[10px] bg-accent-soft px-2 py-1 text-[11px] font-semibold text-accent shrink-0">
+          <IconCheck size={12} /> {t('home.companionChip')}
+        </span>
+      </div>
 
-      <section className="mt-9">
-        <div className="flex items-baseline justify-between gap-4 mb-4">
-          <h2 className="text-base">{t('home.nextTrip')}</h2>
-          <Button variant="ghost" size="sm" onClick={askAssistant}>
-            <IconSpark size={15} /> {t('home.askPlan')}
-          </Button>
-        </div>
-        {nextTrip ? (
-          <div className="bg-accent-soft border border-accent-soft-border rounded-lg p-6 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-6 items-center">
-            <div>
-              <div className="text-base font-semibold">
-                {t('home.shopAt', { store: nextTrip.store })}
-              </div>
-              <div className="text-text-muted mt-2">
-                {t('home.itemCount', { count: nextTrip.items?.length ?? 0 })}
-              </div>
-              <div className="flex flex-wrap gap-2 mt-4">
-                {nextTrip.items?.map((it) => (
-                  <Chip key={it.id}>{it.name}</Chip>
-                ))}
-              </div>
-            </div>
-            <Button onClick={() => setView('plan')}>{t('home.seePlan')}</Button>
+      {/* Stats: hero card on mobile, three cards on desktop (Figma) */}
+      <div
+        className="lg:hidden rounded-[18px] bg-accent text-on-accent p-6 flex items-center justify-between gap-4"
+        data-testid="home-hero"
+      >
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] opacity-80">
+            {t('home.heroLabel')}
           </div>
+          <div className="mt-1 text-[30px] font-semibold tracking-[-1px]">
+            {t('home.essentialsCount', { count: totalItems })}
+          </div>
+          <div className="mt-1 text-sm opacity-90">
+            {t('home.heroRunningLow', { count: attentionCount })}
+          </div>
+        </div>
+        <div className="rounded-xl bg-white/15 grid place-items-center w-16 h-16 shrink-0">
+          <IconSprout size={32} />
+        </div>
+      </div>
+      <div className="hidden lg:grid grid-cols-3 gap-6" data-testid="home-stats">
+        <StatCard
+          testid="stat-kitchen"
+          label={t('home.statKitchenLabel')}
+          value={t('home.essentialsCount', { count: totalItems })}
+          sub={t('home.statKitchenSub')}
+        />
+        <StatCard
+          testid="stat-attention"
+          label={t('home.statLookLabel')}
+          value={t('home.runningLowCount', { count: attentionCount })}
+          sub={t('home.statLookSub')}
+        />
+        <StatCard
+          testid="stat-spending"
+          label={t('home.statSpendingLabel', { month: monthName })}
+          value={formatPrice(monthSpend)}
+          sub={t('home.receiptsCount', { count: monthReceipts })}
+        />
+      </div>
+
+      {/* Needs attention */}
+      <section data-testid="home-attention">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-semibold text-text">
+            <span className="hidden lg:inline">{t('home.attentionTitle')}</span>
+            <span className="lg:hidden">{t('home.useSoonTitle')}</span>
+          </h2>
+          <button
+            type="button"
+            onClick={() => setView?.('inventory')}
+            className="inline-flex items-center gap-1 text-[13px] font-semibold text-accent hover:underline"
+          >
+            {t('home.viewInventory')} <IconArrowRight size={15} />
+          </button>
+        </div>
+        {needs.length > 0 ? (
+          <>
+            <Panel className="px-0 py-0">
+              {needs.slice(0, 5).map((item) => (
+                <AttentionRow
+                  key={item.id}
+                  item={item}
+                  t={t}
+                  onOpenInventory={() => setView?.('inventory')}
+                />
+              ))}
+            </Panel>
+            <p className="mt-2 text-xs text-text-muted">{t('home.estimateNote')}</p>
+          </>
         ) : (
-          <Panel>
-            <Empty
-              icon={IconBox}
-              title={t('home.noPlanYet') || 'No trip planned'}
-              desc={t('home.noPlanYetDesc') || 'Ask the assistant to plan your next shopping trip.'}
-            />
+          <Panel className="px-0 py-0">
+            <EmptyState icon={IconSprout} title={t('home.allSafe')} desc={t('home.allSafeDesc')} />
           </Panel>
         )}
       </section>
 
-      <section className="mt-9">
-        <h2 className="text-base mb-4">{t('home.quickRefill')}</h2>
-        <Panel className="p-6 flex flex-wrap gap-5 items-center">
-          <div className="w-12 h-12 rounded-lg bg-accent-soft grid place-items-center text-accent m-0">
-            <IconReceipt size={24} />
+      {/* Next trip teaser — only when there is an active plan */}
+      {activePlan && planItems.length > 0 && (
+        <section
+          className="rounded-[18px] bg-accent-soft border border-accent-soft-border p-5 grid gap-3 md:grid-cols-[1fr_auto] md:items-center"
+          data-testid="home-plan-teaser"
+        >
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-accent">
+              {t('home.planTeaserLabel')}
+            </div>
+            <div className="mt-1 text-sm font-semibold text-text truncate">
+              {planStores.length > 0
+                ? t('home.shopAt', { store: planStores.join(', ') })
+                : t('home.planTeaserTitle')}
+            </div>
+            <div className="mt-0.5 text-[13px] text-text-muted">
+              {t('home.itemCount', { count: planItems.length })}
+              {activePlan.total_estimate ? ` · ${formatPrice(activePlan.total_estimate)}` : ''}
+            </div>
           </div>
-          <div className="flex-1 min-w-[220px]">
-            <div className="font-semibold text-md">{t('home.quickRefillTitle')}</div>
-            <div className="text-text-muted text-sm mt-2">{t('home.quickRefillDesc')}</div>
-          </div>
-          <Button onClick={() => setView('add')}>
-            <IconReceipt size={18} /> {t('home.addFromReceipt')}
+          <Button size="sm" onClick={() => setView?.('plan')}>
+            {t('home.viewPlan')}
           </Button>
-        </Panel>
-      </section>
+        </section>
+      )}
 
-      <section className="mt-9">
-        <div className="bg-accent-soft border border-accent-soft-border border-l-[3px] border-l-accent rounded-lg p-5 grid grid-cols-[auto_1fr_auto] gap-4 items-center">
-          <div className="w-10 h-10 rounded-lg bg-surface-raised grid place-items-center text-accent">
+      {/* Recipe card — assistant bridge until #332 lands */}
+      {needs.length > 0 && (
+        <section
+          className="rounded-[18px] bg-surface-raised border border-border p-5 flex items-start gap-4"
+          data-testid="home-recipe-card"
+        >
+          <span className="w-10 h-10 rounded-xl bg-accent-soft grid place-items-center text-accent shrink-0">
             <IconLeaf size={20} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-text">{t('home.recipeTitle')}</div>
+            <p className="mt-1 text-[13px] text-text-muted leading-[145%]">
+              {t('home.recipeDesc')}
+            </p>
+            <button
+              type="button"
+              onClick={openRecipeAssistant}
+              className="mt-2 inline-flex items-center gap-1 text-[13px] font-semibold text-accent hover:underline"
+            >
+              {t('home.recipeCta')} <IconArrowRight size={15} />
+            </button>
           </div>
-          <div>
-            <div className="font-semibold text-md">{t('home.savingsTip')}</div>
-            <div className="text-sm mt-0.5">{t('home.savingsTipText')}</div>
-          </div>
-          <Button size="sm" onClick={askAssistant}>
-            <IconSpark size={15} /> {t('home.askRecipe')}
-          </Button>
-        </div>
-      </section>
-    </>
-  )
-}
-
-function Stat({ num, label, warn }) {
-  return (
-    <div className="bg-surface-raised border border-border rounded-lg p-5">
-      <div className={cn('text-xl font-bold tracking-tight', warn ? 'text-warn' : 'text-text')}>
-        {num}
-      </div>
-      <div className="text-sm text-text-muted mt-2 font-medium">{label}</div>
-    </div>
-  )
-}
-
-function Empty({ icon, title, desc }) {
-  const Icon = icon
-  return (
-    <div className="text-center px-6 py-12 text-text-muted">
-      <div className="w-12 h-12 mx-auto mb-4 text-text-faint">
-        <Icon size={48} />
-      </div>
-      <div className="font-semibold text-text text-base">{title}</div>
-      <div className="text-sm mt-2 max-w-[44ch] mx-auto">{desc}</div>
+        </section>
+      )}
     </div>
   )
 }

@@ -24,6 +24,14 @@ Feature: Home Dashboard
     And the low_stock array should have items
     And each low stock item should have id, name, qty, unit, and location
 
+  Scenario: Home returns current month spending
+    Given the database has seed data
+    And I am authenticated as a test user
+    When I send a GET request to /api/home
+    Then the response status should be 200
+    And the home response should have required stats
+    And the current month spending should be present
+
   Scenario: Home has authenticated cache headers
     Given the database has seed data
     And I am authenticated as a test user

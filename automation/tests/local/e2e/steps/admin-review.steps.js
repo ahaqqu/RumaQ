@@ -177,7 +177,12 @@ When('I expand the first run', async ({ page }) => {
 })
 
 Then('the flagged count links to the review queue', async ({ page }) => {
-  await expect(page.locator('a[href="/admin/review"]')).toBeVisible()
+  // The sidebar nav also carries an /admin/review anchor for admins, so an
+  // href-only locator strict-violates once the flagged link mounts. Assert
+  // the flagged-count link by role and verify its target instead.
+  const flaggedLink = page.getByRole('link', { name: /flagged/ })
+  await expect(flaggedLink).toBeVisible()
+  await expect(flaggedLink).toHaveAttribute('href', '/admin/review')
 })
 
 Then('the review page shows the forbidden state', async ({ page }) => {

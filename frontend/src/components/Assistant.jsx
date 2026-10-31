@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   IconSpark,
@@ -55,7 +55,7 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
   const [input, setInput] = useState('')
   const [reply, setReply] = useState(null)
   const { persona } = usePersona()
-  const { setAssistantProposal } = useApp()
+  const { setAssistantProposal, assistantSeed, setAssistantSeed } = useApp()
   const { data: usage } = useUsage()
   const { data: settings } = useSettings()
   const chat = useSendChatMessage()
@@ -88,6 +88,17 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
     send(q.prompt)
   }
 
+  // One-shot seeded prompt (e.g. the Home recipe card): send it when the
+  // panel opens, then clear it so it never re-fires.
+  useEffect(() => {
+    if (open && assistantSeed) {
+      const text = assistantSeed
+      setAssistantSeed(null)
+      if (isConnected) send(text)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, assistantSeed])
+
   const accept = () => {
     onClose()
     if (typeof reply === 'string' && reply.trim()) {
@@ -103,10 +114,10 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
     <>
       <button
         className={cn(
-          'fixed right-6 bottom-6 z-40 h-14 rounded-pill px-6 bg-accent text-on-accent shadow-lg',
-          'inline-flex items-center gap-2 font-semibold transition-all duration-150',
-          'hover:bg-accent-hover hover:-translate-y-px active:scale-[0.97]',
-          'max-sm:right-4 max-sm:bottom-[calc(104px+env(safe-area-inset-bottom))]'
+          'fixed right-6 bottom-6 z-40 h-[46px] rounded-pill px-[18px] bg-surface-raised text-accent border border-accent shadow-lg',
+          'inline-flex items-center gap-2 text-[13px] font-semibold transition-all duration-150',
+          'hover:bg-accent-soft hover:-translate-y-px active:scale-[0.97]',
+          'max-sm:right-4 max-sm:bottom-[calc(112px+env(safe-area-inset-bottom))]'
         )}
         onClick={() => (open ? onClose() : onOpen())}
         // The visible label doubles as the accessible name so voice-control
@@ -114,9 +125,8 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
         aria-label={t('assistant.fabLabel')}
         aria-expanded={open}
       >
-        <span className="w-[9px] h-[9px] rounded-full bg-on-accent animate-[pulse_2.4s_cubic-bezier(0.2,0.8,0.2,1)_infinite]" />
-        <IconSpark size={20} />
-        <span className="max-sm:hidden">{t('assistant.fabLabel')}</span>
+        <IconSpark size={19} />
+        <span>{t('assistant.fabLabel')}</span>
       </button>
 
       {open && (

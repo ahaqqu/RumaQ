@@ -63,8 +63,14 @@ describe('api routes', () => {
       .mockResolvedValueOnce({ cnt: 5 })
       .mockResolvedValueOnce({ cnt: 1 })
       .mockResolvedValueOnce({ cnt: 2 })
+      .mockResolvedValueOnce({ cnt: 3 })
+      .mockResolvedValueOnce({ spend: 1245000, receipts: 8 })
     const res = await apiApp.request('/api/home', {}, env)
-    expect(((await res.json()) as any).total_items).toBe(5)
+    const body = (await res.json()) as any
+    expect(body.total_items).toBe(5)
+    expect(body.attention_count).toBe(3)
+    expect(body.current_month_spend).toBe(1245000)
+    expect(body.current_month_receipts).toBe(8)
   })
 
   it('/api/settings returns settings', async () => {

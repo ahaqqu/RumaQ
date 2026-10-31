@@ -11,9 +11,9 @@ export function OfflineBanner() {
   return (
     <div
       role="status"
-      className="flex items-center justify-center gap-2 px-4 py-2 bg-surface-raised border-b border-border text-text-muted text-sm"
+      className="flex items-center gap-2 px-4 py-2 lg:px-9 bg-accent-soft text-accent text-xs lg:text-sm"
     >
-      <IconOffline size={16} />
+      <IconOffline size={15} className="shrink-0" />
       {t('offline.banner')}
     </div>
   )

@@ -47,6 +47,7 @@ This plan lists every known work item for RumaQ, its current status, and its pri
 | Error boundaries and loading states                     | Done     | P1       | Route-level `pendingComponent`/`errorComponent` on all routes; skeletons                                                     |
 | Offline / optimistic updates                            | Done     | P1       | PR #76 — query persistence + optimistic mutations                                                                            |
 | Frontend refactor (Kumo + TanStack + Tailwind v4 + PWA) | Done     | P1       | PR #34 — TanStack Router + Query + Kumo UI + Tailwind v4 + PWA                                                               |
+| UI redesign (Figma direction): tokens + shell + Home    | Partial  | P1       | Green palette, Inter, Lucide, new shell + Home (`docs/design/tokens.md`); remaining screens inherit tokens, receipt queue next |
 | PWA manifest & service worker                           | Done     | P2       | PR #34 — installable app, offline caching                                                                                    |
 | Push notifications                                      | Deferred | P2       | Decision recorded in `docs/PUSH_NOTIFICATIONS_DECISION.md`                                                                   |
 | Mobile native wrappers (iOS/Android)                    | Deferred | P2       | Decision recorded in `docs/MOBILE_WRAPPERS_DECISION.md`                                                                      |
