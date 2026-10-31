@@ -10,6 +10,9 @@ import path from 'node:path'
 import { Effect } from 'effect'
 
 import { playwrightLauncher } from './fetch/browser.js'
+import type { FetchLike } from './fetch/strategy.js'
+import { DEFAULT_VISION_MODEL_CHAIN } from './config.js'
+import { parseModelChain } from './util/model-chain.js'
 
 export class SelfCheckFailure extends Error {
   constructor(message: string) {
@@ -24,6 +27,12 @@ export interface SelfCheckOptions {
   publish: boolean
   env?: NodeJS.ProcessEnv
   launcher?: ReturnType<typeof playwrightLauncher>
+  /**
+   * Injectable ListModels probe (issue #347): returns the model names the
+   * key's cohort can see (`models/<id>`); the default fetches the catalog,
+   * following its pagination. Tests never touch the network.
+   */
+  listModels?: (apiKey: string) => Promise<string[]>
   log?: (message: string) => void
 }
 
@@ -106,6 +115,98 @@ async function checkBrowser(options: SelfCheckOptions): Promise<CheckResult> {
 }
 
 /**
+ * The default ListModels probe body: GETs the API version the SDK's
+ * generateContent actually hits (v1beta) — no generateContent call, selfcheck
+ * stays cheap — and follows `nextPageToken` until the catalog is exhausted.
+ * The endpoint pages its model list (~50 per page), so a single-page read
+ * would hide later chain rungs behind a spurious "not visible" — worst case a
+ * false zero-visible deploy FAIL (thermos A1, issue #347). Returns the raw
+ * `models/<id>` names.
+ */
+export async function listAllModelNames(doFetch: FetchLike, apiKey: string): Promise<string[]> {
+  const names: string[] = []
+  let pageToken: string | undefined
+  do {
+    const url =
+      'https://generativelanguage.googleapis.com/v1beta/models' +
+      `?key=${encodeURIComponent(apiKey)}` +
+      (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '')
+    const response = await doFetch(url)
+    if (!response.ok) throw new Error(`ListModels HTTP ${response.status}`)
+    const body = (await response.json()) as {
+      models?: { name?: string }[]
+      nextPageToken?: string
+    }
+    for (const model of body.models ?? []) {
+      if (model.name) names.push(model.name)
+    }
+    pageToken = body.nextPageToken
+  } while (pageToken)
+  return names
+}
+
+async function defaultListModels(apiKey: string): Promise<string[]> {
+  return listAllModelNames(fetch, apiKey)
+}
+
+/**
+ * The model-chain visibility probe (issue #347): cohort visibility of the
+ * configured vision chain varies per key — a missing rung is the DESIGNED
+ * case (it skips on 404), so only zero visible rungs or a probe transport
+ * failure fail the deploy (cannot-prove-it-runs, browser-check precedent).
+ * The effective chain is parsed from the injected env (never loadConfig(),
+ * which reads process.env directly and would break env injection).
+ */
+async function checkGeminiChain(options: SelfCheckOptions): Promise<CheckResult | null> {
+  const name = 'gemini-chain'
+  const env = options.env ?? process.env
+  const apiKey = env.GEMINI_API_KEY
+  // The env check already reports a missing key — the probe is skipped
+  // entirely (there is nothing to probe without a key).
+  if (!apiKey) return null
+  const chainEnv = env.GEMINI_MODEL_CHAIN
+  const scalar = env.GEMINI_MODEL?.trim() ?? ''
+  const chain = parseModelChain(chainEnv, scalar || undefined, DEFAULT_VISION_MODEL_CHAIN)
+  // The pin collapsed the chain to one rung (scalar set, CHAIN unset/empty).
+  const pinned = scalar.length > 0 && parseModelChain(chainEnv, undefined, []).length === 0
+
+  let visibleNames: string[]
+  try {
+    visibleNames = await (options.listModels ?? defaultListModels)(apiKey)
+  } catch (cause) {
+    return { name, ok: false, detail: `ListModels probe failed: ${String(cause)}` }
+  }
+  const missing = chain.filter((id) => !visibleNames.includes(`models/${id}`))
+
+  if (missing.length === chain.length) {
+    return {
+      name,
+      ok: false,
+      detail:
+        `none of the ${chain.length} chain ids are visible to this key — ` +
+        `the nightly OCR would be dead. Visible models: ` +
+        `${visibleNames.slice(0, 8).join(', ') || 'none returned'} — ` +
+        'override with GEMINI_MODEL_CHAIN',
+    }
+  }
+  if (pinned) {
+    return {
+      name,
+      ok: true,
+      detail: `GEMINI_MODEL pin: chain collapsed to 1 rung — failover disabled`,
+    }
+  }
+  if (missing.length > 0) {
+    return {
+      name,
+      ok: true,
+      detail: `key cannot see: ${missing.join(', ')} — these rungs will skip on 404`,
+    }
+  }
+  return { name, ok: true, detail: `all ${chain.length} chain ids visible for this key` }
+}
+
+/**
  * Run all checks; resolves with the results. The caller (main.ts) turns any
  * failed check into exit code 1 — a deploy that cannot prove the tree runs
  * has not deployed.
@@ -123,6 +224,11 @@ export function runSelfCheck(options: SelfCheckOptions): Effect.Effect<CheckResu
     const browser = await checkBrowser(options)
     results.push(browser)
     log(`selfcheck: ${browser.ok ? 'ok' : 'FAIL'} browser — ${browser.detail}`)
+    const chain = await checkGeminiChain(options)
+    if (chain) {
+      results.push(chain)
+      log(`selfcheck: ${chain.ok ? 'ok' : 'FAIL'} gemini-chain — ${chain.detail}`)
+    }
     return results
   })
 }

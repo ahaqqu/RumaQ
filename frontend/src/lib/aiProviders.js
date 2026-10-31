@@ -6,6 +6,6 @@ export const AI_PROVIDER_DEFAULTS = {
   openai: 'gpt-4o-mini',
   anthropic: 'claude-3-haiku-20240307',
   gemini: 'gemini-3.6-flash',
-  ollama: 'qwen3-vl:235b-instruct',
+  ollama: 'glm-5.3-flash',
   custom: 'llama3.3:70b',
 }

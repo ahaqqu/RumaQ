@@ -5,8 +5,9 @@
 // stories import it without importing a test file.
 
 import { Effect } from 'effect'
+import { parse } from 'valibot'
 
-import type { IngestPayload, RunReport } from '@rumaq/contract'
+import { runReportSchema, type IngestPayload, type RunReport } from '@rumaq/contract'
 
 import type { EmbeddingClient } from '../../src/match/embedding.js'
 import type { GeminiClient } from '../../src/ocr/gemini.js'
@@ -88,7 +89,12 @@ export function makeReportCapture() {
     posted,
     publishFetch: async (url: string, init?: RequestInit) => {
       if (url.endsWith('/api/internal/ingest/runs')) {
-        reported.push(JSON.parse(init!.body as string))
+        // Thermos B1 (issue #347): the real ingest route validates the body
+        // with this strict schema (backend/src/apps/api.ts) — parsing here
+        // makes the capture the no-drift proof, so a report field that drifts
+        // from the contract fails these tests instead of silently 400ing the
+        // report POST in production.
+        reported.push(parse(runReportSchema, JSON.parse(init!.body as string)))
         return new Response(JSON.stringify({ ok: true }), { status: 200 })
       }
       // Brochure image PUTs (issue #293) are accepted, never captured — the

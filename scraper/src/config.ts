@@ -4,6 +4,7 @@
 // ladder.
 
 import { allGates, type GateFlags } from './match/gates.js'
+import { parseModelChain } from './util/model-chain.js'
 
 export type FetchStrategy = 'plain' | 'browser'
 export type StoreKind = 'brochure' | 'catalog'
@@ -30,8 +31,8 @@ export interface StoreConfig {
 
 export interface ScraperConfig {
   ocr: {
-    model: string
-    verifierModel: string
+    modelChain: string[]
+    verifierModelChain: string[]
     maxRetries: number
   }
   consolidation: {
@@ -56,17 +57,40 @@ export interface ScraperConfig {
 
 const env = (name: string, fallback: string): string => process.env[name] ?? fallback
 
+/**
+ * The vision failover chain (issue #347), in order. The head is the quality
+ * pin — gemini-3.8-flash, the successor Google's own deprecation error named
+ * (issue #306). The rungs behind it are capacity: 3.7/3.5 exist per the
+ * owner's AI Studio cohort 2026-10-31 though absent from Google's public docs
+ * page — a dead rung costs one call and is skipped on 404 — and the lite tail
+ * carries the free tier's big 500/day budget. Embeddings keep their own
+ * scalar (GEMINI_EMBEDDING_MODEL): separate quota pool, out of scope.
+ */
+export const DEFAULT_VISION_MODEL_CHAIN = [
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+] as const
+
 export function loadConfig(): ScraperConfig {
   return {
     ocr: {
-      // haqita ran gemini-3.5-flash + gemini-2.5-flash verifier; the verifier
-      // id 404'd for new key cohorts (issue #306) — Google's error names
-      // gemini-3.8-flash as the successor, and plain gemini-3.5-flash has
-      // since dropped off Google's current model list too (same deprecation
-      // class). Both vision surfaces now pin that latest free Flash. Override
-      // with GEMINI_MODEL / GEMINI_VERIFIER_MODEL if these drift.
-      model: env('GEMINI_MODEL', 'gemini-3.8-flash'),
-      verifierModel: env('GEMINI_VERIFIER_MODEL', 'gemini-3.8-flash'),
+      // Chain precedence (parseModelChain): GEMINI_MODEL_CHAIN /
+      // GEMINI_VERIFIER_MODEL_CHAIN are the wholesale ordered override; an
+      // explicit scalar GEMINI_MODEL / GEMINI_VERIFIER_MODEL pins the chain
+      // to one rung — failover off, exactly the pre-#347 override behavior.
+      modelChain: parseModelChain(
+        process.env.GEMINI_MODEL_CHAIN,
+        process.env.GEMINI_MODEL,
+        DEFAULT_VISION_MODEL_CHAIN
+      ),
+      verifierModelChain: parseModelChain(
+        process.env.GEMINI_VERIFIER_MODEL_CHAIN,
+        process.env.GEMINI_VERIFIER_MODEL,
+        DEFAULT_VISION_MODEL_CHAIN
+      ),
       maxRetries: 2,
     },
     consolidation: {

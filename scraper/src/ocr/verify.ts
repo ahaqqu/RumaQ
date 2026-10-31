@@ -9,6 +9,8 @@ import { Data, Effect } from 'effect'
 
 import type { GeminiClient } from './gemini.js'
 import { lazyGeminiClient } from '../util/gemini.js'
+import type { ModelChainState } from '../util/model-chain.js'
+import { withModelFallback } from '../util/model-chain.js'
 import { classifyQuotaError, withQuotaPolicy, QuotaExhausted } from '../util/retry.js'
 
 // Ported verbatim from haqita matcher.py — the prompt is load-bearing for
@@ -62,7 +64,8 @@ export class VerifierError extends Data.TaggedError('VerifierError')<{
 
 export interface VerifyOptions {
   apiKey?: string
-  model: string
+  /** A single pinned id, or the verifier's own per-run chain state. */
+  model: string | ModelChainState
   /** Extra attempts after the first per pair (quota-aware policy). */
   retries?: number
   client?: GeminiClient
@@ -79,10 +82,14 @@ function parseAnswer(text: string | undefined | null): 'YES' | 'NO' | null {
 
 /**
  * Send pairs to Gemini for binary verification. One call per pair, retried
- * transiently; a pair that still fails yields null and the sweep continues.
- * Quota exhaustion is handled internally (the sweep stops, remaining pairs
- * report null, `quotaExhausted: true`) — the only failure that escapes is a
- * client bootstrap problem (missing API key).
+ * transiently, with the model-fallback chain wrapping each pair (issue
+ * #347): a model-fatal 404 or saturation advances the verifier's own chain
+ * and the pair is retried on the next rung instead of being nulled. A pair
+ * that still fails yields null and the sweep continues. Quota exhaustion is
+ * handled internally (the sweep stops, remaining pairs report null,
+ * `quotaExhausted: true` — now meaning the verifier's WHOLE chain is
+ * quota-dead) — the only failure that escapes is a client bootstrap problem
+ * (missing API key).
  */
 export function verifyPairs(
   pairs: VerifyPair[],
@@ -96,15 +103,19 @@ export function verifyPairs(
     tag: VerifierError,
   })
 
+  // The null-swallow lives in the sweep, not here: a model-fatal VerifierError
+  // must escape so withModelFallback can advance the chain before the pair is
+  // given up on (the text-based classifiers see through the wrapper verbatim).
   const verifyOne = (
     pair: VerifyPair,
-    client: GeminiClient
-  ): Effect.Effect<'YES' | 'NO' | null, QuotaExhausted> =>
+    client: GeminiClient,
+    model: string
+  ): Effect.Effect<'YES' | 'NO' | null, QuotaExhausted | VerifierError> =>
     withQuotaPolicy(
       Effect.tryPromise({
         try: () =>
           client.models.generateContent({
-            model: options.model,
+            model,
             contents: [{ parts: [{ text: buildVerifyPrompt(pair) }] }],
           }),
         catch: (cause: unknown) =>
@@ -121,16 +132,7 @@ export function verifyPairs(
         sleep: options.sleep,
         log: options.log,
       }
-    ).pipe(
-      Effect.map((response) => parseAnswer((response as { text?: string }).text)),
-      // Transient errors that outlived the ladder leave the pair unverifiable
-      // (null) — the matcher keeps the pair and flags it for review, exactly
-      // like haqita's _verify_one_pair returning None.
-      Effect.catchIf(
-        (error): error is VerifierError => error instanceof VerifierError,
-        () => Effect.succeed(null)
-      )
-    )
+    ).pipe(Effect.map((response) => parseAnswer((response as { text?: string }).text)))
 
   return Effect.gen(function* () {
     if (pairs.length === 0) return { answers: [], quotaExhausted: false }
@@ -138,13 +140,25 @@ export function verifyPairs(
 
     const answers: ('YES' | 'NO' | null)[] = []
     for (const pair of pairs) {
-      const answer = yield* verifyOne(pair, activeClient)
+      const answer = yield* withModelFallback(
+        options.model,
+        (model) => verifyOne(pair, activeClient, model),
+        options.log
+      ).pipe(
+        // Transient errors that outlived the ladder leave the pair
+        // unverifiable (null) — the matcher keeps the pair and flags it for
+        // review, exactly like haqita's _verify_one_pair returning None.
+        Effect.catchIf(
+          (error): error is VerifierError => error instanceof VerifierError,
+          () => Effect.succeed(null)
+        )
+      )
       answers.push(answer)
     }
     return { answers, quotaExhausted: false }
   }).pipe(
-    // Daily quota stops the sweep: remaining pairs get null and the run's
-    // paid-for OCR still publishes.
+    // Daily quota on the LAST rung stops the sweep: remaining pairs get null
+    // and the run's paid-for OCR still publishes.
     Effect.catchTag('QuotaExhausted', (error) =>
       Effect.sync(() => {
         options.log?.(`[ai_verifier] Stopping early: ${error.message}`)
