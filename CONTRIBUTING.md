@@ -50,7 +50,7 @@ Coverage thresholds are 50/50/50/50 for frontend and backend. New API endpoints 
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — full-stack architecture, request flow, auth, deployment, tech debt (§13)
 - [`docs/API.md`](docs/API.md) — REST API contract (generated)
-- [`docs/plan/`](docs/plan/) — phase and feature implementation plans; `docs/PROJECT_PLAN.md` tracks overall status
+- [`docs/plan/`](docs/plan/) — phase and feature implementation plans; GitHub Issues + the [Delivery Kanban](https://github.com/users/ahaqqu/projects/4) track overall status
 
 ## Deployment
 
