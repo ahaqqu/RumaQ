@@ -7,9 +7,10 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vite-plus/test'
 import { Effect } from 'effect'
 
-import { runSelfCheck } from '../src/selfcheck.js'
+import { listAllModelNames, runSelfCheck } from '../src/selfcheck.js'
 import { DEFAULT_VISION_MODEL_CHAIN } from '../src/config.js'
 import type { BrowserLauncher } from '../src/fetch/browser.js'
+import type { FetchLike } from '../src/fetch/strategy.js'
 
 const okLauncher: BrowserLauncher = {
   launch: async () => ({
@@ -263,5 +264,44 @@ describe('runSelfCheck — gemini-chain probe', () => {
     } finally {
       await rm(stateDir, { recursive: true, force: true })
     }
+  })
+})
+
+// The default probe's pagination (thermos A1): ListModels pages its catalog
+// (~50 per page), so a single-page read could hide chain rungs behind a
+// spurious "not visible" — up to a false zero-visible deploy FAIL. The helper
+// takes the fetch impl, so these stay offline.
+describe('listAllModelNames', () => {
+  function pagedFetch(pages: unknown[], urls: string[]): FetchLike {
+    return async (url: string) => {
+      urls.push(url)
+      return new Response(JSON.stringify(pages.shift() ?? {}), { status: 200 })
+    }
+  }
+
+  it('follows nextPageToken until the catalog is exhausted and carries the key on every page', async () => {
+    const urls: string[] = []
+    const doFetch = pagedFetch(
+      [
+        {
+          models: [{ name: 'models/gemini-a' }, { name: 'models/gemini-b' }, { name: '' }],
+          nextPageToken: 'page-2',
+        },
+        { models: [{ name: 'models/gemini-c' }] },
+      ],
+      urls
+    )
+    const names = await listAllModelNames(doFetch, 'k-or-ey')
+    // Blank names are dropped; both pages collected in order.
+    expect(names).toEqual(['models/gemini-a', 'models/gemini-b', 'models/gemini-c'])
+    expect(urls).toEqual([
+      'https://generativelanguage.googleapis.com/v1beta/models?key=k-or-ey',
+      'https://generativelanguage.googleapis.com/v1beta/models?key=k-or-ey&pageToken=page-2',
+    ])
+  })
+
+  it('a non-ok page throws the raw ListModels status (the transport-FAIL path)', async () => {
+    const doFetch: FetchLike = async () => new Response('{}', { status: 403 })
+    await expect(listAllModelNames(doFetch, 'k')).rejects.toThrow('ListModels HTTP 403')
   })
 })

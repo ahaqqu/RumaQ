@@ -10,6 +10,7 @@ import path from 'node:path'
 import { Effect } from 'effect'
 
 import { playwrightLauncher } from './fetch/browser.js'
+import type { FetchLike } from './fetch/strategy.js'
 import { DEFAULT_VISION_MODEL_CHAIN } from './config.js'
 import { parseModelChain } from './util/model-chain.js'
 
@@ -28,8 +29,8 @@ export interface SelfCheckOptions {
   launcher?: ReturnType<typeof playwrightLauncher>
   /**
    * Injectable ListModels probe (issue #347): returns the model names the
-   * key's cohort can see (`models/<id>`); the default performs the single
-   * GET. Tests never touch the network.
+   * key's cohort can see (`models/<id>`); the default fetches the catalog,
+   * following its pagination. Tests never touch the network.
    */
   listModels?: (apiKey: string) => Promise<string[]>
   log?: (message: string) => void
@@ -114,17 +115,38 @@ async function checkBrowser(options: SelfCheckOptions): Promise<CheckResult> {
 }
 
 /**
- * The default ListModels probe: exactly one GET against the API version the
- * SDK's generateContent actually hits (v1beta) — no generateContent call,
- * selfcheck stays cheap. Returns the raw `models/<id>` names.
+ * The default ListModels probe body: GETs the API version the SDK's
+ * generateContent actually hits (v1beta) — no generateContent call, selfcheck
+ * stays cheap — and follows `nextPageToken` until the catalog is exhausted.
+ * The endpoint pages its model list (~50 per page), so a single-page read
+ * would hide later chain rungs behind a spurious "not visible" — worst case a
+ * false zero-visible deploy FAIL (thermos A1, issue #347). Returns the raw
+ * `models/<id>` names.
  */
+export async function listAllModelNames(doFetch: FetchLike, apiKey: string): Promise<string[]> {
+  const names: string[] = []
+  let pageToken: string | undefined
+  do {
+    const url =
+      'https://generativelanguage.googleapis.com/v1beta/models' +
+      `?key=${encodeURIComponent(apiKey)}` +
+      (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '')
+    const response = await doFetch(url)
+    if (!response.ok) throw new Error(`ListModels HTTP ${response.status}`)
+    const body = (await response.json()) as {
+      models?: { name?: string }[]
+      nextPageToken?: string
+    }
+    for (const model of body.models ?? []) {
+      if (model.name) names.push(model.name)
+    }
+    pageToken = body.nextPageToken
+  } while (pageToken)
+  return names
+}
+
 async function defaultListModels(apiKey: string): Promise<string[]> {
-  const url =
-    'https://generativelanguage.googleapis.com/v1beta/models' + `?key=${encodeURIComponent(apiKey)}`
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`ListModels HTTP ${response.status}`)
-  const body = (await response.json()) as { models?: { name?: string }[] }
-  return (body.models ?? []).map((model) => model.name ?? '').filter((name) => name.length > 0)
+  return listAllModelNames(fetch, apiKey)
 }
 
 /**
