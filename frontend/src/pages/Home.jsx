@@ -3,6 +3,7 @@ import { useHome, usePlans } from '../lib/queries/index.js'
 import { useMe } from '../lib/queries/me.js'
 import { getGreetingKey } from '../lib/greeting.js'
 import { personaText } from '../lib/persona.js'
+import { formatPrice } from '../lib/pricesHelpers.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { useApp } from '../context/AppContext.jsx'
 import { IconSprout, IconCheck, IconArrowRight, IconLeaf } from '../components/icons.jsx'
@@ -16,15 +17,6 @@ import { Button } from '../components/Button.jsx'
 // dedicated recipe-search endpoint later).
 const RECIPE_SEED_PROMPT =
   'Find a recipe on recipe websites that uses up items I already have at home, prioritizing what expires soon. Suggest one recipe with its name, source website link, time, servings, and which of my pantry items it uses up.'
-
-// Figma money style: "Rp 1.245.000" regardless of UI language (same
-// convention as the Plan screen).
-const formatPrice = (amount) =>
-  new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0,
-  }).format(amount ?? 0)
 
 function getDaysUntil(expiryDate) {
   if (!expiryDate) return null
