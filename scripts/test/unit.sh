@@ -8,7 +8,10 @@ shift || true
 
 case "$WORKSPACE" in
   frontend)
-    cd "$ROOT_DIR" && bunx vp test --project frontend "$@"
+    # frontend-dom (api.test.js) runs on the default forks pool — see
+    # vite.config.ts (#351): under vmThreads the jsdom window is the VM
+    # global, so its unforgeable window.location cannot be redefined.
+    cd "$ROOT_DIR" && bunx vp test --project frontend --project frontend-dom "$@"
     ;;
   backend)
     cd "$ROOT_DIR" && bunx vp test --project backend "$@"
@@ -17,7 +20,7 @@ case "$WORKSPACE" in
     cd "$ROOT_DIR" && bunx vp test --project scraper "$@"
     ;;
   all)
-    cd "$ROOT_DIR" && bunx vp test --project frontend "$@"
+    cd "$ROOT_DIR" && bunx vp test --project frontend --project frontend-dom "$@"
     cd "$ROOT_DIR" && bunx vp test --project backend "$@"
     cd "$ROOT_DIR" && bunx vp test --project scraper "$@"
     ;;
