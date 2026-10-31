@@ -148,8 +148,25 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description Returns today AI usage for the current user. */
+    /** @description Returns today AI usage (UTC day) for the current user. Usage is recorded but never capped. */
     get: operations['getApiAiUsage']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/admin/ai/usage': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description AI usage totals and per-user breakdown over a recent range (admin-only). */
+    get: operations['getApiAdminAiUsage']
     put?: never
     post?: never
     delete?: never
@@ -1021,10 +1038,88 @@ export interface operations {
         headers: {
           [name: string]: unknown
         }
+        content: {
+          'application/json': {
+            /** @description Completed AI calls today (UTC) */
+            used: number
+            input_tokens: number
+            output_tokens: number
+            /** @description Provider-reported cached input tokens; null when the provider reports none */
+            cached_tokens: number | null
+            provider: string | null
+            /** @enum {string} */
+            key_source: 'user' | 'server'
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiAdminAiUsage: {
+    parameters: {
+      query: {
+        range: '24h' | '7d' | '30d'
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            /** @enum {string} */
+            range: '24h' | '7d' | '30d'
+            /** @description ISO instant the range starts at */
+            since: string
+            totals: {
+              calls: number
+              input_tokens: number
+              output_tokens: number
+              cached_tokens: number | null
+              /** @description cached/input; null when input is 0 or cache unreported */
+              cache_hit_rate: number | null
+            }
+            users: {
+              user_id: string
+              email: string | null
+              calls: number
+              input_tokens: number
+              output_tokens: number
+              cached_tokens: number | null
+              cache_hit_rate: number | null
+              last_used: string
+            }[]
+          }
+        }
+      }
+      /** @description Validation error (unknown range) */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
         content?: never
       }
       /** @description Unauthorized */
       401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
         headers: {
           [name: string]: unknown
         }
@@ -1080,13 +1175,6 @@ export interface operations {
         }
         content?: never
       }
-      /** @description AI usage limit exceeded */
-      429: {
-        headers: {
-          [name: string]: unknown
-        }
-        content?: never
-      }
       /** @description AI provider error */
       502: {
         headers: {
@@ -1133,8 +1221,8 @@ export interface operations {
         }
         content?: never
       }
-      /** @description AI usage limit exceeded */
-      429: {
+      /** @description AI provider error */
+      502: {
         headers: {
           [name: string]: unknown
         }
@@ -2356,8 +2444,8 @@ export interface operations {
         }
         content?: never
       }
-      /** @description AI usage limit exceeded */
-      429: {
+      /** @description AI provider error */
+      502: {
         headers: {
           [name: string]: unknown
         }

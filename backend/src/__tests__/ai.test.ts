@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
-import { buildScanPrompt, completeText, extractReceiptItems } from '../lib/ai.js'
+import { buildScanPrompt, completeText, extractReceiptItems, usageCollector } from '../lib/ai.js'
 
 beforeEach(() => {
   globalThis.fetch = vi.fn()
@@ -127,11 +127,84 @@ describe('completeText', () => {
       }),
     })
     globalThis.fetch = fetchMock
-    const seen: Array<{ input_tokens: number; output_tokens: number }> = []
+    const seen: Array<{
+      input_tokens: number
+      output_tokens: number
+      cached_tokens: number | null
+    }> = []
     await completeText('ollama', 'sk-test', 'system', 'user', {
       onUsage: (usage) => seen.push(usage),
     })
-    expect(seen).toEqual([{ input_tokens: 1055, output_tokens: 5059 }])
+    expect(seen).toEqual([{ input_tokens: 1055, output_tokens: 5059, cached_tokens: null }])
+  })
+
+  it('reports Gemini cachedContentTokenCount as cached tokens', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: 'Hello' }] } }],
+        usageMetadata: {
+          promptTokenCount: 1000,
+          candidatesTokenCount: 200,
+          cachedContentTokenCount: 700,
+        },
+      }),
+    })
+    const seen: Array<{
+      input_tokens: number
+      output_tokens: number
+      cached_tokens: number | null
+    }> = []
+    await completeText('gemini', 'sk-test', 'system', 'user', {
+      onUsage: (usage) => seen.push(usage),
+    })
+    expect(seen).toEqual([{ input_tokens: 1000, output_tokens: 200, cached_tokens: 700 }])
+  })
+
+  it('reports OpenAI-compatible prompt_tokens_details.cached_tokens as cached tokens', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Hello' } }],
+        usage: {
+          prompt_tokens: 900,
+          completion_tokens: 100,
+          prompt_tokens_details: { cached_tokens: 640 },
+        },
+      }),
+    })
+    const seen: Array<{
+      input_tokens: number
+      output_tokens: number
+      cached_tokens: number | null
+    }> = []
+    await completeText('openai', 'sk-test', 'system', 'user', {
+      onUsage: (usage) => seen.push(usage),
+    })
+    expect(seen).toEqual([{ input_tokens: 900, output_tokens: 100, cached_tokens: 640 }])
+  })
+
+  it('reports null cached tokens when the provider gives none, and usageCollector keeps them null', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        content: [{ text: 'Hello from Anthropic' }],
+        usage: { input_tokens: 300, output_tokens: 80 },
+      }),
+    })
+    const target = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
+    await completeText('anthropic', 'sk-test', 'system', 'user', {
+      onUsage: usageCollector(target),
+    })
+    expect(target).toEqual({ input_tokens: 300, output_tokens: 80, cached_tokens: null })
+  })
+
+  it('usageCollector sums reported cached tokens across calls and keeps input totals', () => {
+    const target = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
+    usageCollector(target)({ input_tokens: 500, output_tokens: 50, cached_tokens: 400 })
+    usageCollector(target)({ input_tokens: 200, output_tokens: 10, cached_tokens: null })
+    usageCollector(target)({ input_tokens: 100, output_tokens: 5, cached_tokens: 30 })
+    expect(target).toEqual({ input_tokens: 800, output_tokens: 65, cached_tokens: 430 })
   })
 
   it('reports no usage when the provider omits it', async () => {

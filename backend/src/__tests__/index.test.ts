@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { apiApp } from '../apps/api.js'
+import { gateway } from '../gateway.js'
 import { createMockEnv } from './support/env.js'
 
 describe('apiApp (cached routes)', () => {
@@ -137,5 +138,26 @@ describe('apiApp (cached routes)', () => {
     const res = await apiApp.request('/api/me', {}, env)
     expect(res.status).toBe(500)
     expect(res.headers.get('Cache-Control')).toMatch(/private, no-cache/)
+  })
+})
+
+describe('worker scheduled handler (1-year AI usage retention, #353)', () => {
+  it('sweeps ai_usage_events older than 365 days via waitUntil', async () => {
+    const env = createMockEnv()
+    env.DB.prepare = vi.fn().mockReturnThis()
+    env.DB.bind = vi.fn().mockReturnThis()
+    ;(env.DB as unknown as { run: unknown }).run = vi.fn().mockResolvedValue(undefined)
+    const waitUntil = vi.fn()
+    const ctx = { waitUntil } as unknown as ExecutionContext
+
+    await gateway.scheduled(
+      {} as ScheduledController,
+      env as unknown as Parameters<typeof gateway.scheduled>[1],
+      ctx
+    )
+
+    expect(waitUntil).toHaveBeenCalledOnce()
+    expect(env.DB.prepare).toHaveBeenCalledWith('DELETE FROM ai_usage_events WHERE ts < ?')
+    expect(env.DB.bind).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/))
   })
 })

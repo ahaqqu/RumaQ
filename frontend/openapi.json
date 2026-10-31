@@ -378,7 +378,7 @@
     "/api/ai/usage": {
       "get": {
         "operationId": "getApiAiUsage",
-        "description": "Returns today AI usage for the current user.",
+        "description": "Returns today AI usage (UTC day) for the current user. Usage is recorded but never capped.",
         "security": [
           {
             "cookieAuth": []
@@ -386,10 +386,172 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "used",
+                    "input_tokens",
+                    "output_tokens",
+                    "cached_tokens",
+                    "provider",
+                    "key_source"
+                  ],
+                  "properties": {
+                    "used": {
+                      "type": "integer",
+                      "description": "Completed AI calls today (UTC)"
+                    },
+                    "input_tokens": {
+                      "type": "integer"
+                    },
+                    "output_tokens": {
+                      "type": "integer"
+                    },
+                    "cached_tokens": {
+                      "type": ["integer", "null"],
+                      "description": "Provider-reported cached input tokens; null when the provider reports none"
+                    },
+                    "provider": {
+                      "type": ["string", "null"]
+                    },
+                    "key_source": {
+                      "type": "string",
+                      "enum": ["user", "server"]
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/admin/ai/usage": {
+      "get": {
+        "operationId": "getApiAdminAiUsage",
+        "description": "AI usage totals and per-user breakdown over a recent range (admin-only).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "range",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["24h", "7d", "30d"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["range", "since", "totals", "users"],
+                  "properties": {
+                    "range": {
+                      "type": "string",
+                      "enum": ["24h", "7d", "30d"]
+                    },
+                    "since": {
+                      "type": "string",
+                      "description": "ISO instant the range starts at"
+                    },
+                    "totals": {
+                      "type": "object",
+                      "required": [
+                        "calls",
+                        "input_tokens",
+                        "output_tokens",
+                        "cached_tokens",
+                        "cache_hit_rate"
+                      ],
+                      "properties": {
+                        "calls": {
+                          "type": "integer"
+                        },
+                        "input_tokens": {
+                          "type": "integer"
+                        },
+                        "output_tokens": {
+                          "type": "integer"
+                        },
+                        "cached_tokens": {
+                          "type": ["integer", "null"]
+                        },
+                        "cache_hit_rate": {
+                          "type": ["number", "null"],
+                          "description": "cached/input; null when input is 0 or cache unreported"
+                        }
+                      }
+                    },
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "user_id",
+                          "email",
+                          "calls",
+                          "input_tokens",
+                          "output_tokens",
+                          "cached_tokens",
+                          "cache_hit_rate",
+                          "last_used"
+                        ],
+                        "properties": {
+                          "user_id": {
+                            "type": "string"
+                          },
+                          "email": {
+                            "type": ["string", "null"]
+                          },
+                          "calls": {
+                            "type": "integer"
+                          },
+                          "input_tokens": {
+                            "type": "integer"
+                          },
+                          "output_tokens": {
+                            "type": "integer"
+                          },
+                          "cached_tokens": {
+                            "type": ["integer", "null"]
+                          },
+                          "cache_hit_rate": {
+                            "type": ["number", "null"]
+                          },
+                          "last_used": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (unknown range)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
           }
         }
       }
@@ -453,9 +615,6 @@
           "402": {
             "description": "AI key not configured"
           },
-          "429": {
-            "description": "AI usage limit exceeded"
-          },
           "502": {
             "description": "AI provider error"
           }
@@ -484,8 +643,8 @@
           "402": {
             "description": "AI key not configured"
           },
-          "429": {
-            "description": "AI usage limit exceeded"
+          "502": {
+            "description": "AI provider error"
           }
         }
       }
@@ -2166,8 +2325,8 @@
           "402": {
             "description": "AI key not configured"
           },
-          "429": {
-            "description": "AI usage limit exceeded"
+          "502": {
+            "description": "AI provider error"
           }
         }
       }
