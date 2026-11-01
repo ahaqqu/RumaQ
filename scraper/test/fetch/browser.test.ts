@@ -308,7 +308,9 @@ describe('createBrowserFetcher', () => {
       logs.some(
         (line) =>
           line.includes('anchor "a[href^="/p/"]" did not appear within 30000ms') &&
-          line.includes('reading the DOM as-is (optional wait)')
+          // The underlying wait failure is named too — a non-timeout cause
+          // must not masquerade as a full-window timeout.
+          line.includes('reading the DOM as-is (optional wait): Error: Timeout 30000ms exceeded')
       )
     ).toBe(true)
     await fetcher.close()

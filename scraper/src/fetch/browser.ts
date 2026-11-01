@@ -251,16 +251,19 @@ export function createBrowserFetcher(
             // attempt — log and read the DOM as-is so the caller's zero-card
             // machinery decides the page's fate; a swallowed wait never
             // re-enters the retry ladder, while the navigation failures
-            // above still retry as today.
+            // above still retry as today. The log names the underlying
+            // failure, not just the window: a mid-wait navigation or closed
+            // target must not read as a full-window timeout.
             yield* opts?.waitForSelectorOptional
               ? anchoredWait.pipe(
                   Effect.catchIf(
                     () => true,
-                    () =>
+                    (error) =>
                       Effect.sync(() =>
                         log(
                           `[browser ${url}] anchor "${waitForSelector}" did not appear within ` +
-                            `${timeoutMs}ms — reading the DOM as-is (optional wait)`
+                            `${timeoutMs}ms — reading the DOM as-is (optional wait): ` +
+                            `${String(error.cause)}`
                         )
                       )
                   )
