@@ -79,10 +79,22 @@ export type IngestItem = InferOutput<typeof ingestItemSchema>
 // trail). source = the OCR page filename, or the campaign/brochure URL for
 // catalog batches (the log's 3rd column); name is absent when the raw item
 // had no readable name.
+// The caps are runtime values (SCRAPE_STORE_SLUGS precedent) because the
+// reject strings are unbounded upstream (raw OCR/catalog names, the raw
+// price string a price_invalid reason embeds): the producer truncates its
+// report copy to exactly what this schema enforces — one definition, no
+// drift (thermos A1, PR #364). An over-cap field would 400 the whole
+// report at the strict ingest.
+export const REJECTED_ITEM_LIMITS = {
+  source: 300,
+  name: 300,
+  reason: 200,
+} as const
+
 export const rejectedItemSchema = strictObject({
-  source: pipe(string(), maxLength(300)),
-  name: nullish(pipe(string(), maxLength(300))),
-  reason: pipe(string(), maxLength(200)),
+  source: pipe(string(), maxLength(REJECTED_ITEM_LIMITS.source)),
+  name: nullish(pipe(string(), maxLength(REJECTED_ITEM_LIMITS.name))),
+  reason: pipe(string(), maxLength(REJECTED_ITEM_LIMITS.reason)),
 })
 
 export type RejectedItem = InferOutput<typeof rejectedItemSchema>

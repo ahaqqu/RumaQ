@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vite-plus/test'
 import { Effect } from 'effect'
 
-import { runPipeline, type PipelineOptions } from '../src/pipeline.js'
+import { runPipeline, type PipelineOptions, type PipelineStatus } from '../src/pipeline.js'
 import { exitError, fakeBrowserLauncher } from './helpers.js'
 import type { GeminiClient } from '../src/ocr/gemini.js'
 import type { EmbeddingClient } from '../src/match/embedding.js'
@@ -1508,6 +1508,117 @@ describe('runPipeline', () => {
       expect(reject.name).toMatch(/^Beras Overpriced Kampung \d+$/)
     }
     expect(rejects[0]!.name).toBe('Beras Overpriced Kampung 1')
+  })
+
+  it('truncates over-long reject strings to the contract caps (review A1, issue #362)', async () => {
+    // price_invalid rejects carry the raw name AND the raw price string —
+    // both unbounded upstream, and the ingest validates the whole report
+    // strictly (one over-cap field would 400 every store's run data off the
+    // monitor). The report copy truncates to the schema's 300/300/200; the
+    // rejected-items.log line below keeps the full strings.
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const longName = 'B'.repeat(400)
+    const longPrice = '9'.repeat(250)
+    const allBad = Array.from({ length: 12 }, () => ({
+      name: longName,
+      brand: null,
+      unit: null,
+      // A raw OCR price string: cleanPrice nulls it and the reason embeds
+      // it verbatim — 15 + 250 chars, over the reason cap of 200.
+      price: longPrice,
+      promo: null,
+      period: null,
+    }))
+    const ocrClient: GeminiClient = {
+      models: { generateContent: async () => ({ text: JSON.stringify(allBad) }) },
+    }
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    // The catalog path proves the source cap: a category URL longer than
+    // the schema's 300 rides as the reject's source (via the env override,
+    // restored after the run).
+    const longUrl = 'https://www.astronauts.id/c/' + 'x'.repeat(350)
+    const flight = Array.from({ length: 12 }, (_, i) =>
+      JSON.stringify({
+        variantRelativeProductIds: [],
+        product_id: 9500 + i,
+        product_name: longName,
+        product_price: '2000000',
+      })
+    ).join('')
+    const astroHtml =
+      '<html><body><script>self.__next_f.push([1,' +
+      JSON.stringify(flight) +
+      '])</script></body></html>'
+    const fetchMock = async (url: string): Promise<Response> => {
+      if (url === longUrl) return new Response(astroHtml, { status: 200 })
+      if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
+      if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
+      return serveIndomaret(
+        url,
+        () =>
+          new Response(fakeJpegBytes(), {
+            status: 200,
+            headers: { 'content-type': 'image/jpeg' },
+          })
+      )!
+    }
+    const { reported, publishFetch } = makeReportCapture()
+    const previousPages = process.env.ASTRO_CATEGORY_PAGES
+    process.env.ASTRO_CATEGORY_PAGES = longUrl
+    let status: PipelineStatus
+    try {
+      status = await Effect.runPromise(
+        runPipeline(
+          scopedOptions(stateDir, ['superindo', 'astro'], {
+            dryRun: false,
+            fetch: fetchMock,
+            ocrClient,
+            publishFetch,
+            ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+            ingestSecret: 's3cret',
+          })
+        )
+      )
+    } finally {
+      if (previousPages === undefined) delete process.env.ASTRO_CATEGORY_PAGES
+      else process.env.ASTRO_CATEGORY_PAGES = previousPages
+    }
+    // The capture parses every report with the strict schema — these
+    // assertions only run because nothing over-cap left the scraper.
+    expect(reported).toHaveLength(1)
+    // OCR path: name 400 → 300, reason 265 → 200; the short source filename
+    // rides untouched.
+    const ocrRejects = status.stores['superindo']!.rejectedItems!
+    expect(ocrRejects).toHaveLength(10)
+    for (const reject of ocrRejects) {
+      expect(reject.name).toHaveLength(300)
+      expect(reject.reason).toHaveLength(200)
+      expect(reject.reason.startsWith('price_invalid: ')).toBe(true)
+      expect(reject.source).toMatch(/HEMAT_E_20_\(\d\)_DKI_[0-9a-f]{8}\.jpg$/)
+    }
+    // Catalog path: the 378-char page URL truncates to 300, the name to
+    // 300; a short reason rides verbatim.
+    const catalogRejects = status.stores['astro']!.rejectedItems!
+    expect(catalogRejects).toHaveLength(10)
+    for (const reject of catalogRejects) {
+      expect(reject.source).toHaveLength(300)
+      expect(reject.source.startsWith('https://www.astronauts.id/c/')).toBe(true)
+      expect(reject.name).toHaveLength(300)
+      expect(reject.reason).toBe('price_invalid: 2000000')
+    }
+    // The log is the full audit trail — its lines keep the untruncated
+    // strings the report copy elided.
+    const log = await readFile(path.join(stateDir, 'rejected-items.log'), 'utf8')
+    expect(log).toContain(longName)
+    expect(log).toContain(longPrice)
+    expect(log).toContain(longUrl)
   })
 })
 

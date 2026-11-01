@@ -54,7 +54,7 @@ import {
   uploadBrochure,
   type BrochureUploadOptions,
 } from './publish/brochures.js'
-import type { RejectedItem, RunReport } from '@rumaq/contract'
+import { REJECTED_ITEM_LIMITS, type RejectedItem, type RunReport } from '@rumaq/contract'
 import {
   publishPayload,
   type FetchLike as PublishFetch,
@@ -425,21 +425,27 @@ function appendValidatedBatch(
         products.push(product)
       } else {
         entry.itemsRejected++
+        const name = raw.name ? String(raw.name) : undefined
         // Issue #362: the first 10 rejects ride the run report (same data the
         // log line below carries); the count increments for every reject
-        // regardless, and the log stays the full audit trail.
+        // regardless, and the log stays the full audit trail. The report copy
+        // truncates each field to the contract caps (thermos A1, PR #364):
+        // the strings are unbounded upstream (an OCR/catalog name can be any
+        // length, and a price_invalid reason embeds the raw price string) and
+        // one over-cap field would 400 the ENTIRE report at the strict
+        // ingest — silently losing every store's run data.
         if ((entry.rejectedItems?.length ?? 0) < REJECTED_ITEMS_CAP) {
           ;(entry.rejectedItems ??= []).push({
-            source: batch.imageFilename,
-            name: raw.name ? String(raw.name) : undefined,
-            reason: rejectReason!,
+            source: batch.imageFilename.slice(0, REJECTED_ITEM_LIMITS.source),
+            name: name?.slice(0, REJECTED_ITEM_LIMITS.name),
+            reason: rejectReason!.slice(0, REJECTED_ITEM_LIMITS.reason),
           })
         }
         yield* ioTry('append', path.join(options.stateDir, 'rejected-items.log'), () =>
           logRejectedItem(options.stateDir, {
             storeSlug,
             imageFilename: batch.imageFilename,
-            name: raw.name ? String(raw.name) : undefined,
+            name,
             reason: rejectReason!,
           })
         )
