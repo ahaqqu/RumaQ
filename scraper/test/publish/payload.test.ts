@@ -5,10 +5,11 @@ import { describe, expect, it } from 'vite-plus/test'
 import * as v from 'valibot'
 
 import { loadConfig, storeBySlug } from '../../src/config.js'
-import { validateProduct } from '../../src/ocr/parse.js'
+import { validateProduct, type RawOcrItem } from '../../src/ocr/parse.js'
 import {
   assertPayloadValid,
   buildPayload,
+  ingestItemSchema,
   ingestPayloadSchema,
   makeProductKey,
   parsePeriod,
@@ -184,5 +185,96 @@ describe('buildPayload', () => {
         items: [{ ...payload.items[0]!, matchConfidence: 1.5 }],
       })
     ).toThrow(/failed schema validation/)
+  })
+})
+
+describe('buildPayload — unit normalization (issue #368 phase A)', () => {
+  const config = loadConfig()
+  const superindo = storeBySlug(config, 'superindo')!
+
+  const build = (products: RawOcrItem[]) =>
+    buildPayload({
+      stores: [superindo],
+      images: [
+        {
+          storeSlug: 'superindo',
+          brochureUrl: null,
+          products: products
+            .map((raw) => validateProduct(raw, 'promo.jpg')[0])
+            .filter((p) => p != null),
+        },
+      ],
+      scrapedAt: '2026-11-01T23:00:05Z',
+    })
+
+  it('carries unitQty/unitQtyUnit/unitPrice when the unit normalizes (owner example)', () => {
+    const payload = build([
+      { name: 'Beras Pandan Wangi 5kg', brand: null, unit: null, price: 550000 },
+    ])
+    const item = payload.items[0]!
+    expect(item.unitQty).toBe(5000)
+    expect(item.unitQtyUnit).toBe('g')
+    expect(item.unitPrice).toBe(110000)
+    // same-category comparison is the point: 1kg vs 5kg beras share a scale
+    const ramos = build([{ name: 'Beras Ramos 1kg', brand: null, unit: null, price: 100000 }])
+    expect(ramos.items[0]!.unitPrice).toBe(100000)
+  })
+
+  it('derives both the field-parsed and name-fallback paths plus the per-gram math', () => {
+    const payload = build([
+      { name: 'IKAN SHISAMO PCK 150GR', brand: null, unit: '150 g', price: 36900 },
+      { name: 'BIG SOFT DRINK LEMON LIME BTL 1L', brand: null, unit: '1 L', price: 21500 },
+      { name: 'AYAM PEJANTAN', brand: null, unit: 'pcs', price: 60000 },
+    ])
+    expect(payload.items[0]!.unitQty).toBe(150)
+    expect(payload.items[0]!.unitPrice).toBe(246000)
+    expect(payload.items[1]!.unitQtyUnit).toBe('ml')
+    expect(payload.items[1]!.unitPrice).toBe(21500)
+    expect(payload.items[2]!.unitQty).toBe(1)
+    expect(payload.items[2]!.unitPrice).toBe(60000)
+  })
+
+  it('carries explicit nulls when nothing normalizes — never blocks the payload', () => {
+    const payload = build([
+      { name: "APEL ROCKIT 2'S PCK", brand: null, unit: "2'S", price: 25000 },
+      { name: 'CABE PAPRIKA HIJAU PCK', brand: null, unit: null, price: 30000 },
+    ])
+    for (const item of payload.items) {
+      expect(item.unitQty).toBeNull()
+      expect(item.unitQtyUnit).toBeNull()
+      expect(item.unitPrice).toBeNull()
+    }
+    expect(() => assertPayloadValid(payload)).not.toThrow()
+  })
+
+  it('the derived fields validate against the shared schema', () => {
+    const payload = build([{ name: 'Beras Pandan Wangi 5kg', brand: null, unit: null, price: 550000 }])
+    expect(() => v.parse(ingestPayloadSchema, payload)).not.toThrow()
+  })
+
+  it('contract stays additive: an old-scraper item without the fields validates', () => {
+    const payload = build([{ name: 'Minyak Goreng Bimoli', brand: null, unit: '1 L', price: 21500 }])
+    const oldItem = { ...payload.items[0]! }
+    delete (oldItem as Record<string, unknown>).unitQty
+    delete (oldItem as Record<string, unknown>).unitQtyUnit
+    delete (oldItem as Record<string, unknown>).unitPrice
+    expect(v.parse(ingestItemSchema, oldItem)).toMatchObject({
+      productKey: oldItem.productKey,
+      price: 21500,
+    })
+  })
+
+  it('rejects out-of-domain derived values (strictObject contract drift)', () => {
+    const payload = build([{ name: 'Beras Pandan Wangi 5kg', brand: null, unit: null, price: 550000 }])
+    for (const override of [
+      { unitQty: 0 },
+      { unitQty: -5 },
+      { unitQtyUnit: 'kg' },
+      { unitPrice: -1 },
+    ]) {
+      expect(
+        v.safeParse(ingestItemSchema, { ...payload.items[0]!, ...override }).success
+      ).toBe(false)
+    }
   })
 })
