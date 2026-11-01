@@ -13,6 +13,9 @@
 //   - product links: anchors whose href matches /p/{slug}-{id}; each
 //     product anchor's card is found by a bounded ancestor climb (≤ 5
 //     levels) to the nearest container that also carries an Rp price.
+// Teaser/event campaigns render zero product anchors by design (issue
+// #360) — the detail-page anchor wait is optional, so they ride the
+// zero-card warning channel below, never a transport kill.
 // Sentinels (issue #322, A4): structural churn goes red, never silently
 // zero — the listing showing zero campaigns fails immediately, and so does
 // the cycle-wide churn signature (≥ half of the visited campaigns rendered
@@ -257,12 +260,19 @@ export function createAlfamartPlugin(config: StoreConfig): CatalogStorePlugin {
         for (const campaignUrl of visited) {
           const detail = yield* ctx.fetchRendered(campaignUrl, {
             waitForSelector: PRODUCT_ANCHOR_SELECTOR,
+            waitForSelectorOptional: true,
           })
           const cards = parseProductCards(detail)
           if (cards.length === 0) {
-            // Not a churn verdict on its own: a scheduled teaser campaign
-            // legitimately renders zero cards today. Record it, keep going —
-            // the churn signature below decides the cycle's fate (A4).
+            // Not a churn verdict on its own — and genuinely reachable since
+            // issue #360: teaser/event campaigns (e.g. /promo/UCOllect, whose
+            // gateway call is literally `v2/products/promotions/undefined`)
+            // held 0 /p/ anchors for 93s+ observed 2026-11-01, while real
+            // campaigns render 50 anchors in ~25s through the tunnel. The
+            // optional detail wait reads the DOM anyway, so an anchor-less
+            // teaser lands here instead of killing the store as FetchTransport.
+            // Record it, keep going — the churn signature below decides the
+            // cycle's fate (A4).
             emptyCampaignUrls.push(campaignUrl)
             ctx.warn(
               `Alfamart campaign page rendered 0 product cards — skipped as a possible ` +

@@ -129,8 +129,20 @@ export interface BrowserFetcher {
    * design-arch §2.2 — Alfamart). The wait rides the same retry engine as
    * the navigation: a selector timeout is a retryable transport error, so
    * transient render slowness retries before failing.
+   *
+   * `waitForSelectorOptional` (issue #360) downgrades that anchor timeout to
+   * a logged note — the DOM is read as-is instead of failing the fetch.
+   * Alfamart teaser/event campaigns (e.g. /promo/UCOllect, whose gateway
+   * call is literally `v2/products/promotions/undefined`) hydrate with zero
+   * product anchors forever, and the plugin's zero-card warning branch (A4)
+   * can only decide the page's fate when fetchRendered returns. Default
+   * false: navigation failures still ride the retry ladder, and every
+   * existing wait stays strict.
    */
-  fetchRendered(url: string, opts?: { waitForSelector?: string }): Effect.Effect<string, FetchError>
+  fetchRendered(
+    url: string,
+    opts?: { waitForSelector?: string; waitForSelectorOptional?: boolean }
+  ): Effect.Effect<string, FetchError>
   /** Closes the browser session if one was launched; never throws. */
   close(): Promise<void>
 }
@@ -162,7 +174,10 @@ export function createBrowserFetcher(
     return session
   }
 
-  const readRendered = (url: string, waitForSelector?: string): Effect.Effect<string, FetchError> =>
+  const readRendered = (
+    url: string,
+    opts?: { waitForSelector?: string; waitForSelectorOptional?: boolean }
+  ): Effect.Effect<string, FetchError> =>
     Effect.gen(function* () {
       const active = yield* Effect.tryPromise({
         try: () => ensureSession(),
@@ -219,8 +234,9 @@ export function createBrowserFetcher(
                 message: `Navigation failed for ${url}: ${String(cause)}`,
               }),
           })
+          const waitForSelector = opts?.waitForSelector
           if (waitForSelector) {
-            yield* Effect.tryPromise({
+            const anchoredWait = Effect.tryPromise({
               try: () => page.waitFor(waitForSelector, timeoutMs),
               catch: (cause: unknown) =>
                 new FetchTransport({
@@ -231,6 +247,25 @@ export function createBrowserFetcher(
                     `within ${timeoutMs}ms: ${String(cause)}`,
                 }),
             })
+            // An optional wait (issue #360) swallows the anchor timeout per
+            // attempt — log and read the DOM as-is so the caller's zero-card
+            // machinery decides the page's fate; a swallowed wait never
+            // re-enters the retry ladder, while the navigation failures
+            // above still retry as today.
+            yield* opts?.waitForSelectorOptional
+              ? anchoredWait.pipe(
+                  Effect.catchIf(
+                    () => true,
+                    () =>
+                      Effect.sync(() =>
+                        log(
+                          `[browser ${url}] anchor "${waitForSelector}" did not appear within ` +
+                            `${timeoutMs}ms — reading the DOM as-is (optional wait)`
+                        )
+                      )
+                  )
+                )
+              : anchoredWait
           }
           let response = yield* readContent()
           if (looksLikeIncapsulaChallenge(response)) {
@@ -272,7 +307,7 @@ export function createBrowserFetcher(
 
   return {
     fetchHtml: (url) => readRendered(url),
-    fetchRendered: (url, opts) => readRendered(url, opts?.waitForSelector),
+    fetchRendered: (url, opts) => readRendered(url, opts),
     async close(): Promise<void> {
       try {
         await session?.close()
