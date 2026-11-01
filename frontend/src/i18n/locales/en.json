@@ -203,6 +203,8 @@
     "newImages": "{{count}} new images",
     "items": "{{count}} items",
     "rejected": "{{count}} rejected",
+    "rejectReasons": "Reject reasons",
+    "moreRejected": "+{{count}} more — full list in rejected-items.log",
     "ocrDegraded": "OCR degraded",
     "matchExact": "{{count}} exact",
     "matchEmbedding": "{{count}} embedding",

@@ -319,6 +319,65 @@ describe('AdminPrices', () => {
     expect(container.textContent).not.toContain('3.8-flash')
   })
 
+  it('renders the per-item reject reasons under the store row (issue #362)', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [
+          {
+            ...mockFeed.runs[0],
+            perStore: {
+              superindo: {
+                ...mockFeed.runs[0].perStore.superindo,
+                itemsRejected: 12,
+                rejectedItems: [
+                  {
+                    source: 'promo-2026-11-01-1.jpg',
+                    name: 'Beras Ramos 5kg',
+                    reason: 'price_invalid: 1274900',
+                  },
+                  { source: 'promo-2026-11-01-2.jpg', reason: 'name_too_short' },
+                ],
+              },
+            },
+          },
+        ],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    // The list rides under the counts: name — reason per line (the suite's
+    // i18n mock returns raw keys, so the label asserts the key).
+    expect(container.textContent).toContain('monitor.rejectReasons')
+    expect(container.textContent).toContain('Beras Ramos 5kg — price_invalid: 1274900')
+    // A reject without a readable name renders the reason alone.
+    expect(container.textContent).toContain('name_too_short')
+    // 12 rejected but only 2 carried → the truncation marker; itemsRejected
+    // stays the count the row already showed.
+    expect(container.textContent).toContain('monitor.moreRejected')
+    expect(container.textContent).toContain('monitor.rejected')
+    // The source rides as the tooltip on each line.
+    const tipped = [...container.querySelectorAll('[title]')]
+    expect(tipped.map((el) => el.getAttribute('title'))).toEqual([
+      'promo-2026-11-01-1.jpg',
+      'promo-2026-11-01-2.jpg',
+    ])
+    // Warn-toned, consistent with the OCR-degradation lines.
+    const warnLines = [...container.querySelectorAll('.text-warn')]
+    expect(warnLines.some((el) => el.textContent.includes('price_invalid: 1274900'))).toBe(true)
+  })
+
+  it('renders nothing new when a store reports no rejectedItems (issue #362)', () => {
+    // mockFeed.runs[0] has itemsRejected: 0 and no rejectedItems field — the
+    // old-report shape must render exactly as before.
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    expect(container.textContent).not.toContain('monitor.rejectReasons')
+    expect(container.textContent).not.toContain('monitor.moreRejected')
+  })
+
   it('pre-expands the run the ?run= deep link points at', () => {
     mockSearch = { run: 'run-2' }
     const { container } = renderAdmin()

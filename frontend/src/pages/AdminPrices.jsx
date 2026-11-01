@@ -120,6 +120,28 @@ function RunDetail({ run }) {
                       )}
                     </>
                   )}
+                  {/* Issue #362: the first rejects ride the report with
+                  their reasons — compact warn-toned lines under the counts
+                  (source as the tooltip), the "+N more" marker keeping the
+                  cap honest (itemsRejected stays the true count). Raw scraper
+                  strings, like the warnings below. */}
+                  {stats.rejectedItems?.length > 0 && (
+                    <div className="text-warn mt-0.5 break-words">
+                      <div>{t('monitor.rejectReasons')}</div>
+                      {stats.rejectedItems.map((item, i) => (
+                        <div key={i} title={item.source}>
+                          {item.name ? `${item.name} — ${item.reason}` : item.reason}
+                        </div>
+                      ))}
+                      {stats.itemsRejected > stats.rejectedItems.length && (
+                        <div>
+                          {t('monitor.moreRejected', {
+                            count: stats.itemsRejected - stats.rejectedItems.length,
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {/* Issue #322 (A4), #357: the scraper-side warnings
                   (plugin anomalies, OCR-chain degradation) never had a
                   display channel — each rides its own line here. Raw scraper
