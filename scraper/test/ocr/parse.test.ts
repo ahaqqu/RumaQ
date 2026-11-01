@@ -237,6 +237,36 @@ describe('validateProduct', () => {
     ).toBe('price_invalid: 50')
   })
 
+  it('keeps exact-bound prices valid on both paths (review B1, PR #366)', () => {
+    // The bounds are strict comparisons (value < MIN_PRICE, value >
+    // MAX_PRICE): exactly 100 and exactly 1_000_000 were valid before #363
+    // and must stay valid on BOTH paths — a future </<= or >/>= slip would
+    // otherwise pass every strictly-inside-or-outside case.
+    expect(validateProduct({ name: 'Product A', price: 100 }, 't.jpg')[0]!.price).toBe(100)
+    expect(validateProduct({ name: 'Product A', price: 1_000_000 }, 't.jpg')[0]!.price).toBe(
+      1_000_000
+    )
+    expect(
+      validateProduct({ name: 'Product A', price: 100, priceFromDom: true }, 't.jpg')[0]!.price
+    ).toBe(100)
+    expect(
+      validateProduct({ name: 'Product A', price: 1_000_000, priceFromDom: true }, 't.jpg')[0]!
+        .price
+    ).toBe(1_000_000)
+    // One step outside either bound rejects on the OCR path…
+    expect(validateProduct({ name: 'Product A', price: 99 }, 't.jpg')[1]).toBe('price_invalid: 99')
+    expect(validateProduct({ name: 'Product A', price: 1_000_001 }, 't.jpg')[1]).toBe(
+      'price_invalid: 1000001'
+    )
+    // …and on the DOM path only the floor still rejects.
+    expect(
+      validateProduct({ name: 'Product A', price: 1_000_001, priceFromDom: true }, 't.jpg')[1]
+    ).toBeNull()
+    expect(
+      validateProduct({ name: 'Product A', price: 99, priceFromDom: true }, 't.jpg')[1]
+    ).toBe('price_invalid: 99')
+  })
+
   it('preserves brand and defaults missing brand to null', () => {
     expect(
       validateProduct({ name: 'ABC Kecap', brand: 'ABC', price: 5000 }, 't.jpg')[0]!.brand
