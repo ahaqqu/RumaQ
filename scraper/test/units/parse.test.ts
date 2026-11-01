@@ -174,6 +174,21 @@ describe('parseUnit — unparseable → null (never a qty, never a throw)', () =
       }
     }
   })
+
+  // Thermos A1 (PR #372): the number+unit patterns backtrack digit runs, so
+  // an unbounded all-digits name degrades quadratically (14s at 50k chars
+  // before the cap). scan() bounds its window at MAX_SCAN = 1024 — ~7.7x the
+  // longest live catalog name (132 chars); quantities past the window are
+  // already best-effort. These assertions complete in milliseconds only
+  // while the cap holds.
+  it('bounds the scan window on oversized input', () => {
+    expect(parseUnit(null, '9'.repeat(50_000))).toBeNull()
+    expect(parseUnit(null, '9'.repeat(50_000) + ' kg')).toBeNull()
+    expect(parseUnit('9'.repeat(50_000), 'Anything')).toBeNull()
+    // within the window the parser still works; past it the tail is dropped
+    expect(parseUnit(null, `${'x'.repeat(900)} 5 kg`)).toEqual({ qty: 5000, unit: 'g' })
+    expect(parseUnit(null, `${'x'.repeat(2000)} 5 kg`)).toBeNull()
+  })
 })
 
 describe('computeUnitPrice — listed price per display unit', () => {

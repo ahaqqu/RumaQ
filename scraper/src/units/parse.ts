@@ -105,10 +105,17 @@ type MatchOutcome =
   | { status: 'blocked' }
   | { status: 'ok'; parsed: ParsedUnit }
 
+// Scan window bound: the number+unit patterns backtrack digit runs, so a
+// pathological all-digits string degrades quadratically (thermos A1, PR
+// #372). 1024 is ~7.7x the longest name in the live catalog (132 chars);
+// quantities beyond the window are ignored — already best-effort by design.
+const MAX_SCAN = 1024
+
 // Scan one string for the first (leftmost) quantity it carries. bareMode:
 // 'all' allows a bare unit token to mean qty 1 (curated unit fields),
 // 'count' only the count family (product names).
 function scan(text: string, bareMode: 'all' | 'count'): ParsedUnit | null {
+  if (text.length > MAX_SCAN) text = text.slice(0, MAX_SCAN)
   const valid: Array<{ index: number; priority: number; parsed: ParsedUnit }> = []
   let blockedIndex = Number.POSITIVE_INFINITY
 
@@ -131,7 +138,13 @@ function scan(text: string, bareMode: 'all' | 'count'): ParsedUnit | null {
   // become phantom piece counts.
   consider(NX_M_RE, 0, (m) => {
     const a = usableQty(m[1]!, text, m.index)
-    const b = usableQty(m[2]!, text, m.index + m[1]!.length)
+    // The second operand's real offset: the first digit run after the
+    // separator (searching from past m[1] cannot land inside it). The
+    // pattern already guarantees a separator there, so its minus check is
+    // structurally inert — the honest anchor keeps usableQty's contract
+    // uniform (thermos B1, PR #372).
+    const bStart = m.index + m[0].indexOf(m[2]!, m[1]!.length)
+    const b = usableQty(m[2]!, text, bStart)
     if (a.kind === 'blocked' || b.kind === 'blocked') return { status: 'blocked' }
     if (a.kind === 'absent' || b.kind === 'absent') return { status: 'absent' }
     const parsed = tokenToParsed(m[3]!, a.qty * b.qty)
