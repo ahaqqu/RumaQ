@@ -2041,8 +2041,13 @@ describe('brochure uploads (issue #293)', () => {
     const replayed = posted2[0]!.items.find((item) => item.observedDate === '2026-10-24')!
     expect(replayed.brochureUrl).toMatch(/^\/api\/brochures\/superindo\/20261024\//)
   })
+})
 
-  // Issue #367 shadow-audit scenarios: two distinct fresh pages riding the
+// Issue #367 shadow-audit scenarios, in their own describe (thermos B1,
+// PR #369) — the gate-off proof and the gate-on flows are not
+// brochure-upload concerns.
+describe('shadow-OCR audit (issue #367)', () => {
+  // Two distinct fresh pages riding the
   // shipped default chain — the primary rung is gemini-3.8-flash and the
   // shadow model defaults to the chain's SECOND rung (gemini-3.7-flash), so
   // the client stub tells the calls apart by args.model.
