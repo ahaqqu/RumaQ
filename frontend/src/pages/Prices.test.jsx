@@ -180,6 +180,43 @@ describe('Prices', () => {
     expect(container.textContent).not.toContain('prices.lowConfidence')
   })
 
+  // --- Canonical per-unit hint (issue #368 phase A) ---
+
+  it('shows the per-unit hint from the cheapest offer when normalized', () => {
+    // The owner example: 5 kg beras at Rp 550.000 → Rp 110.000/kg, shown
+    // next to the store count on the product row; the hint follows the
+    // cheapest offer (the 600.000 store's 120.000 must not win). The suite's
+    // i18n mock returns raw keys, so the unit key IS the assertion surface.
+    vi.mocked(usePrices).mockReturnValue({
+      data: {
+        items: [
+          {
+            ...mockItems[2],
+            price: 550000,
+            unit_qty: 5000,
+            unit_qty_unit: 'g',
+            unit_price: 110000,
+            low_confidence: false,
+          },
+          { ...mockItems[2], price: 600000, unit_qty: 5000, unit_qty_unit: 'g', unit_price: 120000 },
+        ],
+        total: 2,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderPrices()
+    expect(container.textContent).toContain('prices.unitPrice.g')
+    expect(container.textContent).not.toContain('prices.unitPrice.ml')
+    expect(container.textContent).not.toContain('prices.unitPrice.pcs')
+  })
+
+  it('renders no per-unit hint when the observation was not normalized', () => {
+    // mockItems carry no unit fields at all — the hint must stay absent.
+    const { container } = renderPrices()
+    expect(container.textContent).not.toContain('prices.unitPrice')
+  })
+
   it('expands a product into per-store detail', () => {
     vi.mocked(usePriceDetail).mockReturnValue({
       data: {
