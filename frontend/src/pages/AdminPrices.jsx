@@ -37,6 +37,12 @@ function ageHours(iso) {
   return (Date.now() - new Date(iso).getTime()) / 3_600_000
 }
 
+// Issue #357: the degradation chain line reads as a story, not a model
+// catalog — the gemini- prefix is dead weight at this width.
+function shortModel(model) {
+  return model.replace(/^gemini-/, '')
+}
+
 function LastSuccessCard({ lastSuccessAt }) {
   const { t, i18n } = useTranslation()
   if (!lastSuccessAt) {
@@ -91,15 +97,38 @@ function RunDetail({ run }) {
                       — {t('monitor.storeError')}: {stats.error}
                     </span>
                   ) : (
-                    <span className="text-text-muted">
-                      {' '}
-                      — {t('monitor.pages', { count: stats.pagesFound })},{' '}
-                      {t('monitor.newImages', { count: stats.newImages })},{' '}
-                      {t('monitor.items', { count: stats.itemsExtracted })}
-                      {stats.itemsRejected > 0 &&
-                        `, ${t('monitor.rejected', { count: stats.itemsRejected })}`}
-                    </span>
+                    <>
+                      <span className="text-text-muted">
+                        {' '}
+                        — {t('monitor.pages', { count: stats.pagesFound })},{' '}
+                        {t('monitor.newImages', { count: stats.newImages })},{' '}
+                        {t('monitor.items', { count: stats.itemsExtracted })}
+                        {stats.itemsRejected > 0 &&
+                          `, ${t('monitor.rejected', { count: stats.itemsRejected })}`}
+                      </span>
+                      {/* Issue #357: a store that rode more than one OCR
+                      rung rode a degraded chain — the compact chain (final
+                      rung last) sits next to the counts so "N rejected ·
+                      OCR degraded: …" reads as one story. Raw data outside
+                      t(), like the store error above. */}
+                      {stats.modelsUsed?.length > 1 && (
+                        <span className="text-warn">
+                          {' '}
+                          · {t('monitor.ocrDegraded')}:{' '}
+                          {stats.modelsUsed.map(shortModel).join(' → ')}
+                        </span>
+                      )}
+                    </>
                   )}
+                  {/* Issue #322 (A4), #357: the scraper-side warnings
+                  (plugin anomalies, OCR-chain degradation) never had a
+                  display channel — each rides its own line here. Raw scraper
+                  strings, like the run error below. */}
+                  {stats.warnings?.map((warning, i) => (
+                    <div key={i} className="text-warn mt-0.5 break-words">
+                      {warning}
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>

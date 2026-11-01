@@ -203,6 +203,7 @@
     "newImages": "{{count}} new images",
     "items": "{{count}} items",
     "rejected": "{{count}} rejected",
+    "ocrDegraded": "OCR degraded",
     "matchExact": "{{count}} exact",
     "matchEmbedding": "{{count}} embedding",
     "matchAi": "{{count}} AI-verified",
