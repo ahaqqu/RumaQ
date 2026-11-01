@@ -34,14 +34,18 @@ import { PdfRenderError } from '../fetch/errors.js'
 export { PdfRenderError }
 
 /**
- * The render subprocess's wall-clock budget, SIGKILL included. ~120 s is
- * generous for the shipped workload — a ≤40-page brochure at 150 DPI renders
- * in seconds — so only a stuck or pathological process (poppler has a
- * documented history of pathological loops on malformed documents) can hit
- * it. A hang here must never outlive the budget: the Effect settles typed,
- * and the store's per-store isolation takes over.
+ * The render subprocess's wall-clock budget, SIGKILL included. Sized on
+ * measured evidence, not CI-class hardware (issue #335 probes on the idle
+ * 2-vCPU VPS, 2026-11-01): the real 20-page super-hemat brochure renders
+ * clean in 134 s at 150 DPI (~6.7 s/page; the rest of the fleet 3–24 s) —
+ * the original ~120 s budget SIGKILLed a healthy render. 300 s covers a
+ * 40-page brochure at ~7 s/page with load headroom, so only a stuck or
+ * pathological process (poppler has a documented history of pathological
+ * loops on malformed documents) can hit it. A hang here must never outlive
+ * the budget: the Effect settles typed, and the store's per-store isolation
+ * takes over.
  */
-export const PDF_RENDER_TIMEOUT_MS = 120_000
+export const PDF_RENDER_TIMEOUT_MS = 300_000
 
 /**
  * Cumulative cap on the rendered page bytes read back from disk. Sized
