@@ -203,6 +203,7 @@
     "newImages": "{{count}} gambar baru",
     "items": "{{count}} item",
     "rejected": "{{count}} ditolak",
+    "ocrDegraded": "OCR terdegradasi",
     "matchExact": "{{count}} eksak",
     "matchEmbedding": "{{count}} embedding",
     "matchAi": "{{count}} terverifikasi AI",

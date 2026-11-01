@@ -70,7 +70,7 @@ import {
 } from './stores/types.js'
 import { wrapIo } from './util/io.js'
 import { createLog, logRejectedItem, type LogFn } from './util/log.js'
-import { createModelChain, type ModelChainState } from './util/model-chain.js'
+import { createModelChain, type ModelChainState, type RungDeath } from './util/model-chain.js'
 import { renderPdfPages } from './util/pdf.js'
 import { QuotaExhausted } from './util/retry.js'
 
@@ -126,7 +126,9 @@ export interface PipelineStatus {
        * zero-card teaser campaign, a brochure page without a usable pdfUrl.
        * Each carries the offending URL; the healthy items still publish.
        * Rides status.json AND the run report (the report schema carries it
-       * additively, unlike brochuresUploaded below).
+       * additively, unlike brochuresUploaded below); reportRun additionally
+       * appends the OCR-chain degradation summary (issue #357) to the report
+       * copy when the store rode more than one chain rung.
        */
       warnings?: string[]
       /**
@@ -457,6 +459,36 @@ function warningChannel(
       log(`[pipeline] ${slug}: ${message}`)
     },
   }
+}
+
+/**
+ * The per-store OCR-degradation summary (issue #357): a store whose
+ * modelsUsed spans more than one rung rode a chain dying under it — name
+ * each dead rung with its advanceReason so the monitor explains a reject
+ * count without journald (the #335 ride: 3.8-flash 503 → 3.7-flash 429,
+ * items on 3.6-flash). Pure from (modelsUsed, deaths) — reportRun
+ * recomputes it per call, so a repeated report can never double-append.
+ * The contract caps one warning at 500 chars: the death list yields, the
+ * oldest deaths (the quality pin's — the headline) are kept and the elided
+ * tail is counted honestly.
+ */
+function ocrDegradationSummary(
+  modelsUsed: readonly string[],
+  deaths: readonly RungDeath[]
+): string {
+  const finalRung = modelsUsed[modelsUsed.length - 1]!
+  const render = (kept: readonly RungDeath[], moreDeaths: number): string =>
+    'OCR chain degraded: ' +
+    kept.map((death) => `${death.model} (${death.reason})`).join(' → ') +
+    (moreDeaths > 0 ? ` … (+${moreDeaths} more deaths)` : '') +
+    `; final rung ${finalRung}`
+  // One kept death always renders well under the cap (contract-bounded
+  // model ids), so the loop lands; the zero-death render stays for totality.
+  for (let kept = deaths.length; kept > 0; kept--) {
+    const text = render(deaths.slice(0, kept), deaths.length - kept)
+    if (text.length <= 500) return text
+  }
+  return render([], deaths.length).slice(0, 500)
 }
 
 /**
@@ -850,6 +882,18 @@ export function runPipeline(
         ([slug, { brochuresUploaded: _brochuresUploaded, ...store }]) => [slug, store]
       )
     ) as RunReport['perStore']
+    // Issue #357: a store that rode more than one OCR rung gets ONE warning
+    // naming the dead rungs. Deaths come from the shared per-run OCR chain
+    // (the verifier chain is out of scope here) — the summary is recomputed
+    // fresh into a new array so the status.json entry is never mutated, and
+    // the last-warning check keeps a hypothetical second report call from
+    // doubling it.
+    for (const entry of Object.values(perStore)) {
+      if (!entry.modelsUsed || entry.modelsUsed.length <= 1) continue
+      const summary = ocrDegradationSummary(entry.modelsUsed, ocrChain.deaths)
+      if (entry.warnings?.[entry.warnings.length - 1] === summary) continue
+      entry.warnings = [...(entry.warnings ?? []), summary]
+    }
     const report: RunReport = {
       schemaVersion: 1,
       runStartedAt: status.runStartedAt,

@@ -1233,6 +1233,176 @@ describe('runPipeline', () => {
       restoreEnv()
     }
   })
+
+  it('appends one OCR-degradation warning to the report for multi-rung stores only (issue #357)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    const lotteHtml = (
+      await readFile(path.join(__dirname, 'fixtures/lotte/all-promo-mart.html'), 'utf8')
+    ).replaceAll('./All Promo Mart_files/', 'https://www.lottemart.co.id/assets/')
+    // Distinct bytes per image URL — identical bytes would collapse into one
+    // image at the novelty gate (shared md5), leaving nothing to advance on.
+    const seenUrls = new Map<string, Uint8Array<ArrayBuffer>>()
+    const fetchMock = async (url: string): Promise<Response> => {
+      if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
+      if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
+      // Astro (in scope) serves empty category pages — a no-OCR store.
+      if (url.includes('astronauts.id')) {
+        return new Response('<html><body></body></html>', { status: 200 })
+      }
+      // Lotte's listing rides the browser tier; every image URL serves its
+      // own distinct fake JPEG.
+      if (!seenUrls.has(url)) {
+        const bytes = fakeJpegBytes()
+        bytes.fill(0x10 + seenUrls.size, 29)
+        seenUrls.set(url, bytes)
+      }
+      return new Response(seenUrls.get(url)!, {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      })
+    }
+    let ocrCalls = 0
+    const ocrClient: GeminiClient = {
+      models: {
+        generateContent: async (args) => {
+          ocrCalls++
+          // Image A (call 1, rung 0) succeeds; every later rung-0 call dies
+          // of daily quota — rung 1+ are healthy all run long.
+          if (ocrCalls > 1 && args.model === 'gemini-3.8-flash') {
+            throw new Error('429 Quota exceeded for quota metric GenerateRequests per day')
+          }
+          return { text: JSON.stringify(ocrItems) }
+        },
+      },
+    }
+    const lotteBrowser = fakeBrowserLauncher(lotteHtml)
+    const { reported, publishFetch } = makeReportCapture()
+    const restoreEnv = scrubChainEnv()
+    try {
+      await Effect.runPromise(
+        runPipeline(
+          scopedOptions(stateDir, ['superindo', 'lotte-mart', 'astro'], {
+            dryRun: false,
+            launcher: lotteBrowser.launcher,
+            fetch: fetchMock,
+            ocrClient,
+            publishFetch,
+            ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+            ingestSecret: 's3cret',
+          })
+        )
+      )
+      // Superindo rode BOTH rungs (image A on 3.8, image B on 3.7) — exactly
+      // ONE warning naming the dead rung, its reason, and the final rung.
+      const superindo = reported[0]!.perStore['superindo']!
+      expect(superindo.modelsUsed).toEqual(['gemini-3.8-flash', 'gemini-3.7-flash'])
+      expect(superindo.warnings).toEqual([
+        'OCR chain degraded: gemini-3.8-flash (daily-quota 429); final rung gemini-3.7-flash',
+      ])
+      // Lotte started after the advance, so its own OCR rode a single rung —
+      // no false attribution: one rung is not a degraded ride (issue #357).
+      const lotte = reported[0]!.perStore['lotte-mart']!
+      expect(lotte.modelsUsed).toEqual(['gemini-3.7-flash'])
+      expect(lotte.warnings).toBeUndefined()
+      // The catalog store never OCR'd — no modelsUsed, no warning.
+      expect(reported[0]!.perStore['astro']!.modelsUsed).toBeUndefined()
+      expect(reported[0]!.perStore['astro']!.warnings).toBeUndefined()
+    } finally {
+      restoreEnv()
+    }
+  })
+
+  it('keeps the degradation warning inside the 500-char contract cap, counting elided deaths (issue #357)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    // A 12-rung chain of long ids: image A rides rung 0; image B burns
+    // rungs 0-10 (each 503-saturated past its ladder) before rung 11 lands —
+    // eleven deaths, far past what one 500-char warning can enumerate.
+    const longChain = Array.from(
+      { length: 12 },
+      (_, i) => `gemini-3.8-flash-saturation-ride-${String(i).padStart(2, '0')}`
+    )
+    let ocrCalls = 0
+    const ocrClient: GeminiClient = {
+      models: {
+        generateContent: async (args) => {
+          ocrCalls++
+          // Image A (the first call) lands on rung 0; every LATER rung-0
+          // attempt 503-saturates, as do rungs 1-10; the tail rung lands.
+          if (args.model === longChain[0] && ocrCalls === 1) {
+            return { text: JSON.stringify(ocrItems) }
+          }
+          if (args.model === longChain[11]) {
+            return { text: JSON.stringify(ocrItems) }
+          }
+          throw new Error(
+            '{"error":{"code":503,"message":"The model is overloaded. Please try again later.","status":"UNAVAILABLE"}}'
+          )
+        },
+      },
+    }
+    const { reported, publishFetch } = makeReportCapture()
+    const restoreEnv = scrubChainEnv()
+    // Distinct bytes per image URL (the novelty gate) — two new images, so
+    // image B exists to burn the dead rungs on.
+    const seenUrls = new Map<string, Uint8Array<ArrayBuffer>>()
+    const fetchMock = async (url: string): Promise<Response> => {
+      if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
+      if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
+      if (!seenUrls.has(url)) {
+        const bytes = fakeJpegBytes()
+        bytes.fill(0x20 + seenUrls.size, 29)
+        seenUrls.set(url, bytes)
+      }
+      return new Response(seenUrls.get(url)!, {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      })
+    }
+    try {
+      process.env.GEMINI_MODEL_CHAIN = longChain.join(',')
+      await Effect.runPromise(
+        runPipeline(
+          scopedOptions(stateDir, ['superindo'], {
+            dryRun: false,
+            fetch: fetchMock,
+            ocrClient,
+            publishFetch,
+            ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+            ingestSecret: 's3cret',
+          })
+        )
+      )
+      const warning = reported[0]!.perStore['superindo']!.warnings![0]!
+      // The report capture already parses the strict schema — this assertion
+      // states the cap the parse would otherwise only imply.
+      expect(warning.length).toBeLessThanOrEqual(500)
+      // The headline (the pin's death) is kept; the elided tail is counted…
+      expect(warning).toMatch(
+        /^OCR chain degraded: gemini-3\.8-flash-saturation-ride-00 \(503 saturation after ladder\)/
+      )
+      expect(warning).toMatch(/ … \(\+\d+ more deaths\)/)
+      // …and the store's final rung is named, never elided.
+      expect(warning.endsWith('; final rung gemini-3.8-flash-saturation-ride-11')).toBe(true)
+    } finally {
+      restoreEnv()
+    }
+  })
 })
 
 it('runs the lotte flow through the Tier-2 browser ladder and cross-matches with superindo', async () => {

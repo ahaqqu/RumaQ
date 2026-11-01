@@ -249,6 +249,74 @@ describe('AdminPrices', () => {
     expect(links).toHaveLength(0)
   })
 
+  it('renders the OCR degradation chain and store warnings in run detail (issue #357)', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [
+          {
+            ...mockFeed.runs[0],
+            perStore: {
+              superindo: {
+                ...mockFeed.runs[0].perStore.superindo,
+                itemsRejected: 19,
+                modelsUsed: ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash'],
+                warnings: [
+                  'OCR chain degraded: gemini-3.8-flash (503 saturation after ladder) → gemini-3.7-flash (daily-quota 429); final rung gemini-3.6-flash',
+                ],
+              },
+            },
+          },
+        ],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    // The chain reads compactly next to the counts — gemini- prefix stripped,
+    // final rung last — so "N rejected · OCR degraded: …" is one story. (The
+    // suite's i18n mock returns raw keys, so the counts line asserts keys.)
+    expect(container.textContent).toContain('monitor.rejected')
+    expect(container.textContent).toContain('monitor.ocrDegraded')
+    expect(container.textContent).toContain('3.8-flash → 3.7-flash → 3.6-flash')
+    // The scraper's warning rides its own line, verbatim.
+    expect(container.textContent).toContain(
+      'OCR chain degraded: gemini-3.8-flash (503 saturation after ladder)'
+    )
+    // Both the chain line and the warning render warn-toned.
+    const warnLines = [...container.querySelectorAll('.text-warn')]
+    expect(warnLines.some((el) => el.textContent.includes('3.8-flash → 3.7-flash'))).toBe(true)
+    expect(warnLines.some((el) => el.textContent.includes('OCR chain degraded:'))).toBe(true)
+  })
+
+  it('renders nothing new for a store with a single OCR rung and no warnings (issue #357)', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [
+          {
+            ...mockFeed.runs[0],
+            perStore: {
+              superindo: {
+                ...mockFeed.runs[0].perStore.superindo,
+                modelsUsed: ['gemini-3.8-flash'],
+              },
+            },
+          },
+        ],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    // One rung is not a degraded ride (no false attribution) and absent
+    // warnings render no extra lines.
+    expect(container.textContent).not.toContain('monitor.ocrDegraded')
+    expect(container.textContent).not.toContain('3.8-flash')
+  })
+
   it('pre-expands the run the ?run= deep link points at', () => {
     mockSearch = { run: 'run-2' }
     const { container } = renderAdmin()
