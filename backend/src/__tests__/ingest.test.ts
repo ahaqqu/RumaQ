@@ -153,6 +153,49 @@ describe('ingestPayloadSchema', () => {
       expect(result.success).toBe(false)
     }
   })
+
+  // Issue #368 phase A: the canonical unit fields are additive-nullish — an
+  // old scraper's payload (fields absent) validates, a new scraper's derived
+  // values validate, and out-of-domain values fail loudly.
+  it('accepts payloads without the unit fields (old scraper, additive)', () => {
+    // samplePayload items carry no unitQty/unitQtyUnit/unitPrice at all.
+    expect(samplePayload().success).toBe(true)
+  })
+
+  it('accepts derived unit fields and rejects out-of-domain ones', () => {
+    const base = samplePayload()
+    expect(base.success).toBe(true)
+    if (!base.success) return
+
+    const derived = safeParse(ingestPayloadSchema, {
+      ...base.output,
+      items: [
+        ...base.output.items,
+        {
+          ...base.output.items[1]!,
+          productKey: 'beras--pandan-wangi--5-kg-normalized',
+          unitQty: 5000,
+          unitQtyUnit: 'g',
+          unitPrice: 110000,
+        },
+      ],
+    })
+    expect(derived.success).toBe(true)
+
+    for (const override of [
+      { unitQty: 0 },
+      { unitQty: -5 },
+      { unitQtyUnit: 'kg' },
+      { unitPrice: -1 },
+      { unitPrice: 110000.5 },
+    ]) {
+      const result = safeParse(ingestPayloadSchema, {
+        ...base.output,
+        items: [{ ...base.output.items[0]!, ...override }],
+      })
+      expect(result.success).toBe(false)
+    }
+  })
 })
 
 describe('ingestPrices', () => {
@@ -323,6 +366,42 @@ describe('ingestPrices', () => {
       .filter((s) => s.sql.includes('INSERT INTO price_observations'))
     expect(observationStmts[0]!.params).toContain('2026-09-01')
     expect(observationStmts[0]!.params).not.toContain('2026-10-24')
+  })
+
+  it('persists the canonical unit fields and leaves them null when absent', async () => {
+    const { db, executedBatches } = createFakeDb([
+      { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
+      {
+        match: /^SELECT id, product_key FROM price_products/,
+        rows: [{ id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' }],
+      },
+    ])
+
+    const parsed = samplePayload()
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+
+    // Rice with a derived canonical qty/price; the oil item stays field-less.
+    await ingestPrices(db, {
+      ...parsed.output,
+      items: [
+        { ...parsed.output.items[1]!, unitQty: 5000, unitQtyUnit: 'g', unitPrice: 110000 },
+        ...parsed.output.items.slice(0, 1),
+      ],
+    })
+
+    const observationStmts = executedBatches
+      .flat()
+      .filter((s) => s.sql.includes('INSERT INTO price_observations'))
+    expect(observationStmts).toHaveLength(2)
+    // Columns ride right after effective_unit_price: binds 7/8/9 are
+    // unit_qty, unit_qty_unit, unit_price.
+    expect(observationStmts[0]!.sql).toContain('unit_qty, unit_qty_unit, unit_price')
+    const riceParams = observationStmts[0]!.params as unknown[]
+    expect(riceParams.slice(6, 9)).toEqual([5000, 'g', 110000])
+    // …and the field-less oil item binds explicit nulls (old payload, additive).
+    const oilParams = observationStmts[1]!.params as unknown[]
+    expect(oilParams.slice(6, 9)).toEqual([null, null, null])
   })
 })
 
