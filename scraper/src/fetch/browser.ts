@@ -122,6 +122,22 @@ export function playwrightLauncher(
   }
 }
 
+/**
+ * Options for a rendered-DOM fetch that can wait for a DOM anchor before the
+ * read — one shape shared by every `fetchRendered` signature (BrowserFetcher,
+ * the strategy ladder's StoreFetcher, and the plugin-facing FetchContext), so
+ * the options never drift between tiers.
+ */
+export interface RenderedFetchOptions {
+  /** Selector the wait must see before the DOM is read (URL-grammar anchors). */
+  waitForSelector?: string
+  /**
+   * Downgrade an anchor timeout to a logged note — the DOM is read as-is
+   * instead of failing the fetch (issue #360; see fetchRendered below).
+   */
+  waitForSelectorOptional?: boolean
+}
+
 export interface BrowserFetcher {
   fetchHtml(url: string): Effect.Effect<string, FetchError>
   /**
@@ -139,10 +155,7 @@ export interface BrowserFetcher {
    * false: navigation failures still ride the retry ladder, and every
    * existing wait stays strict.
    */
-  fetchRendered(
-    url: string,
-    opts?: { waitForSelector?: string; waitForSelectorOptional?: boolean }
-  ): Effect.Effect<string, FetchError>
+  fetchRendered(url: string, opts?: RenderedFetchOptions): Effect.Effect<string, FetchError>
   /** Closes the browser session if one was launched; never throws. */
   close(): Promise<void>
 }
@@ -176,7 +189,7 @@ export function createBrowserFetcher(
 
   const readRendered = (
     url: string,
-    opts?: { waitForSelector?: string; waitForSelectorOptional?: boolean }
+    opts?: RenderedFetchOptions
   ): Effect.Effect<string, FetchError> =>
     Effect.gen(function* () {
       const active = yield* Effect.tryPromise({

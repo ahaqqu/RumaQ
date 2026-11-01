@@ -25,6 +25,7 @@ import {
   toCatalogItem,
 } from '../../src/stores/alfamart.js'
 import { ScrapeStructureError, type FetchError } from '../../src/fetch/errors.js'
+import type { RenderedFetchOptions } from '../../src/fetch/browser.js'
 import { exitError, fullFetchContext } from '../helpers.js'
 import { loadConfig, storeBySlug } from '../../src/config.js'
 
@@ -233,7 +234,7 @@ describe('alfamart plugin — real listing and campaign fixtures', () => {
     // forever: a strict detail wait would kill the store as FetchTransport
     // before the zero-card warning branch can run. Only the detail calls opt
     // in — zero campaigns on the listing is still structure churn.
-    const opts: ({ waitForSelector?: string; waitForSelectorOptional?: boolean } | undefined)[] = []
+    const opts: (RenderedFetchOptions | undefined)[] = []
     const { plugin } = makeCtx({
       fetchRendered: (url) => Effect.succeed(serveAlfamart(url)),
     })

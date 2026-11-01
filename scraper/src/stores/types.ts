@@ -7,6 +7,7 @@
 // errors (FetchError from the strategy ladder) instead of exceptions.
 
 import type { StoreConfig } from '../config.js'
+import type { RenderedFetchOptions } from '../fetch/browser.js'
 import type { FetchError, PdfRenderError } from '../fetch/errors.js'
 import type { DownloadedImage } from '../fetch/strategy.js'
 import type { RenderedPage } from '../util/pdf.js'
@@ -43,10 +44,7 @@ export interface FetchContext {
    * downgrades an anchor timeout to a logged note — the DOM is read as-is
    * (teaser campaigns never render the anchor).
    */
-  fetchRendered(
-    url: string,
-    opts?: { waitForSelector?: string; waitForSelectorOptional?: boolean }
-  ): Effect.Effect<string, FetchError>
+  fetchRendered(url: string, opts?: RenderedFetchOptions): Effect.Effect<string, FetchError>
   /**
    * Raw-byte fetch with no image content gate (issue #322): a document
    * fetch (Indomaret's brochure PDFs) is honest about being non-image.

@@ -17,7 +17,7 @@ import { Effect } from 'effect'
 import type { StoreConfig } from '../config.js'
 import { storeProxyUrl } from '../config.js'
 import { isPermanentClientStatus, withRetries } from '../util/retry.js'
-import { createBrowserFetcher, type BrowserLauncher } from './browser.js'
+import { createBrowserFetcher, type BrowserLauncher, type RenderedFetchOptions } from './browser.js'
 import {
   type FetchError,
   FetchHttpStatus,
@@ -51,10 +51,7 @@ export interface StoreFetcher {
    * #360) downgrades an anchor timeout to a logged note — the DOM is read
    * as-is (teaser campaigns never render the anchor).
    */
-  fetchRendered(
-    url: string,
-    opts?: { waitForSelector?: string; waitForSelectorOptional?: boolean }
-  ): Effect.Effect<string, FetchError>
+  fetchRendered(url: string, opts?: RenderedFetchOptions): Effect.Effect<string, FetchError>
   fetchBytes(url: string): Effect.Effect<DownloadedImage, FetchError>
   /**
    * Raw-byte fetch with NO NonImageContent gate (issue #322, design-arch
