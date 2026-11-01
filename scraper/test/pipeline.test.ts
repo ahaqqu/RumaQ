@@ -1405,6 +1405,110 @@ describe('runPipeline', () => {
       restoreEnv()
     }
   })
+
+  it('caps the per-item reject reasons on the report at 10 with the count honest (issue #362)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    // Every OCR batch rejects: twelve 1-char names (name_too_short) per
+    // image — the report list caps at 10, the count keeps the truth.
+    const allBad = Array.from({ length: 12 }, () => ({
+      name: 'B',
+      brand: null,
+      unit: null,
+      price: 5000,
+      promo: null,
+      period: null,
+    }))
+    const ocrClient: GeminiClient = {
+      models: { generateContent: async () => ({ text: JSON.stringify(allBad) }) },
+    }
+    const { reported, publishFetch } = makeReportCapture()
+    const status = await Effect.runPromise(
+      runPipeline(
+        scopedOptions(stateDir, ['superindo', 'astro'], {
+          dryRun: false,
+          fetch: makeFetchMock(katalogHtml, koranHtml, fakeJpegBytes()),
+          ocrClient,
+          publishFetch,
+          ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+          ingestSecret: 's3cret',
+        })
+      )
+    )
+    const entry = status.stores['superindo']!
+    expect(entry.itemsRejected).toBeGreaterThanOrEqual(12)
+    expect(entry.rejectedItems).toHaveLength(10)
+    for (const reject of entry.rejectedItems!) {
+      expect(reject.reason).toBe('name_too_short')
+      // The source is the OCR page filename (the log's 3rd column).
+      expect(reject.source).toMatch(/HEMAT_E_20_\(\d\)_DKI_[0-9a-f]{8}\.jpg$/)
+      expect(reject.name).toBe('B')
+    }
+    // The report POST passed the strict schema (the capture parses it) and
+    // carries the same capped list; itemsRejected stays the true count…
+    expect(reported).toHaveLength(1)
+    expect(reported[0]!.perStore['superindo']!.itemsRejected).toBe(entry.itemsRejected)
+    expect(reported[0]!.perStore['superindo']!.rejectedItems).toEqual(entry.rejectedItems)
+    // …and a store with zero rejects carries no field at all (additive).
+    expect(reported[0]!.perStore['astro']!.rejectedItems).toBeUndefined()
+  })
+
+  it('carries catalog-path rejects with the campaign URL as source (issue #362)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const pageUrl = 'https://www.astronauts.id/c/kebutuhan-pokok-2721/beras-lokal-5858'
+    // Twelve over-MAX_PRICE prices: the plugin's own gate (toRupiah) accepts
+    // them, the shared validator (cleanPrice) rejects — proving the catalog
+    // path rides the same reject branch, with the page URL (not a filename)
+    // as the source.
+    const flight = Array.from({ length: 12 }, (_, i) =>
+      JSON.stringify({
+        variantRelativeProductIds: [],
+        product_id: 9000 + i,
+        product_name: `Beras Overpriced Kampung ${i + 1}`,
+        product_price: '2000000',
+      })
+    ).join('')
+    const astroHtml =
+      '<html><body><script>self.__next_f.push([1,' +
+      JSON.stringify(flight) +
+      '])</script></body></html>'
+    const fetchMock = async (url: string): Promise<Response> => {
+      if (url === pageUrl) return new Response(astroHtml, { status: 200 })
+      return new Response('<html><body></body></html>', { status: 200 })
+    }
+    const { reported, publishFetch } = makeReportCapture()
+    const status = await Effect.runPromise(
+      runPipeline(
+        scopedOptions(stateDir, ['astro'], {
+          dryRun: false,
+          fetch: fetchMock,
+          publishFetch,
+          ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+          ingestSecret: 's3cret',
+        })
+      )
+    )
+    const entry = status.stores['astro']!
+    expect(entry.itemsExtracted).toBe(0)
+    expect(entry.itemsRejected).toBe(12)
+    // The report list caps at 10; every line mirrors the log's shape with the
+    // campaign/category URL as the source.
+    const rejects = reported[0]!.perStore['astro']!.rejectedItems!
+    expect(rejects).toHaveLength(10)
+    for (const reject of rejects) {
+      expect(reject.source).toBe(pageUrl)
+      expect(reject.reason).toBe('price_invalid: 2000000')
+      expect(reject.name).toMatch(/^Beras Overpriced Kampung \d+$/)
+    }
+    expect(rejects[0]!.name).toBe('Beras Overpriced Kampung 1')
+  })
 })
 
 it('runs the lotte flow through the Tier-2 browser ladder and cross-matches with superindo', async () => {

@@ -54,7 +54,7 @@ import {
   uploadBrochure,
   type BrochureUploadOptions,
 } from './publish/brochures.js'
-import type { RunReport } from '@rumaq/contract'
+import type { RejectedItem, RunReport } from '@rumaq/contract'
 import {
   publishPayload,
   type FetchLike as PublishFetch,
@@ -86,6 +86,14 @@ export type PipelineStage = 'scrape' | 'match' | 'publish' | 'done'
  * the ingest side's per-report pair upsert budget (a db.batch chunk).
  */
 const REVIEW_ITEM_PAIRS_CAP = 200
+
+/**
+ * Issue #362: at most this many per-item reject reasons ride one store's run
+ * report — a bounded sample of "which items, why" (a catastrophic OCR page
+ * can reject dozens). itemsRejected keeps the true count; the log keeps the
+ * full audit trail.
+ */
+const REJECTED_ITEMS_CAP = 10
 
 export interface PipelineStatus {
   runStartedAt: string
@@ -139,6 +147,14 @@ export interface PipelineStatus {
        * warnings).
        */
       modelsUsed?: string[]
+      /**
+       * The first REJECTED_ITEMS_CAP rejects with their reasons (issue #362),
+       * mirroring rejected-items.log so the monitor answers "which items,
+       * why" without ssh. Unset when nothing was rejected. Rides status.json
+       * AND the run report (the report schema carries it additively, like
+       * modelsUsed); itemsRejected keeps counting past the cap.
+       */
+      rejectedItems?: RejectedItem[]
       /**
        * Brochure images uploaded to R2 this run (issue #293). status.json
        * only — reportRun strips it before posting.
@@ -409,6 +425,16 @@ function appendValidatedBatch(
         products.push(product)
       } else {
         entry.itemsRejected++
+        // Issue #362: the first 10 rejects ride the run report (same data the
+        // log line below carries); the count increments for every reject
+        // regardless, and the log stays the full audit trail.
+        if ((entry.rejectedItems?.length ?? 0) < REJECTED_ITEMS_CAP) {
+          ;(entry.rejectedItems ??= []).push({
+            source: batch.imageFilename,
+            name: raw.name ? String(raw.name) : undefined,
+            reason: rejectReason!,
+          })
+        }
         yield* ioTry('append', path.join(options.stateDir, 'rejected-items.log'), () =>
           logRejectedItem(options.stateDir, {
             storeSlug,

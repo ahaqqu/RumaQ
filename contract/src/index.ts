@@ -74,6 +74,19 @@ export type IngestPayload = InferOutput<typeof ingestPayloadSchema>
 export type IngestStore = InferOutput<typeof ingestStoreSchema>
 export type IngestItem = InferOutput<typeof ingestItemSchema>
 
+// Issue #362: one per-item reject the report carries — the monitor's direct
+// answer to "which items, why" without ssh (the log keeps the full audit
+// trail). source = the OCR page filename, or the campaign/brochure URL for
+// catalog batches (the log's 3rd column); name is absent when the raw item
+// had no readable name.
+export const rejectedItemSchema = strictObject({
+  source: pipe(string(), maxLength(300)),
+  name: nullish(pipe(string(), maxLength(300))),
+  reason: pipe(string(), maxLength(200)),
+})
+
+export type RejectedItem = InferOutput<typeof rejectedItemSchema>
+
 // Run report (haqita-integration.md §7.1): the scraper reports each live run
 // to the backend so the admin scraping monitor can show run history without
 // reading journald. One POST per finished run — including failed runs, which
@@ -101,6 +114,12 @@ export const runReportStoreSchema = strictObject({
   // Absent when the store made no successful OCR call. Additive: old
   // scrapers' reports (no field) still validate.
   modelsUsed: nullish(array(pipe(string(), maxLength(100)))),
+  // Issue #362: the first 10 rejects with their reasons, mirroring
+  // rejected-items.log so the monitor answers "which items, why" directly.
+  // itemsRejected (above) keeps the true count when the list is truncated.
+  // Additive: old scrapers' reports (no field) still validate; a new
+  // scraper's report on an OLD Worker fails loudly (Worker deploys first).
+  rejectedItems: nullish(array(rejectedItemSchema)),
 })
 
 // One flagged candidate pair the matcher reports for the admin review queue

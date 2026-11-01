@@ -203,6 +203,8 @@
     "newImages": "{{count}} gambar baru",
     "items": "{{count}} item",
     "rejected": "{{count}} ditolak",
+    "rejectReasons": "Alasan penolakan",
+    "moreRejected": "+{{count}} lagi — daftar lengkap di rejected-items.log",
     "ocrDegraded": "OCR terdegradasi",
     "matchExact": "{{count}} eksak",
     "matchEmbedding": "{{count}} embedding",
