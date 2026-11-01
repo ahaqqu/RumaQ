@@ -25,7 +25,13 @@
 //
 // Probed 2026-10-30/31 (322-research §1): the shell and static assets serve
 // to plain curl, but promo content exists only post-hydration — browser
-// tier only; no anti-bot on the web shell itself.
+// tier only; no anti-bot on the web shell itself. Re-probed 2026-11-01
+// (issue #335): the gateway API (webcommerce-gw.alfagift.id) now hard-403s
+// datacenter IPs before FingerprintJS — both plain GET and CORS preflight,
+// so zero promo anchors render from the VPS — while the web shell itself
+// still serves 200 to any IP. Scraping therefore requires residential
+// egress: ALFAMART_PROXY_URL (validated through the lotte tunnel,
+// http://127.0.0.1:18080 from the box — 109 anchors in ~18 s).
 
 import * as cheerio from 'cheerio'
 
