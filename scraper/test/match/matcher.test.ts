@@ -24,6 +24,7 @@ function product(over: Partial<ValidatedProduct> = {}): ValidatedProduct {
     brand: 'Indomie',
     unit: '85 g',
     price: 3500,
+    originalPrice: null,
     promo: null,
     period: null,
     ocrRawPrice: '3500',

@@ -221,7 +221,9 @@
     "error": "Gagal memuat riwayat run",
     "storeError": "toko gagal",
     "needsProxy": "perlu proxy Tier-3 — sengaja dilewati sampai kredensial diisi",
-    "needsProxyChip": "perlu proxy"
+    "needsProxyChip": "perlu proxy",
+    "auditSummary": "Audit ekstraksi — {{count}} halaman diekstrak ulang: nama {{name}}%, harga {{price}}%, harga awal {{original}}%, promo {{promo}}%",
+    "auditMore": "+{{count}} ketidaksesuaian lainnya"
   },
   "scrape": {
     "activeRun": "Run aktif",
