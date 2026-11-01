@@ -354,6 +354,15 @@ export function ProductsView({ search, setSearch, source, setSource }) {
                   const badges = cheapest
                     ? promoBadges(cheapest.promo_label, cheapest.promo_type)
                     : []
+                  // Canonical per-unit hint (issue #368 phase A): the
+                  // cheapest offer's listed price per kg / liter / piece,
+                  // when the scraper could normalize the observation.
+                  const perUnitHint =
+                    cheapest?.unit_price != null && cheapest?.unit_qty_unit
+                      ? t(`prices.unitPrice.${cheapest.unit_qty_unit}`, {
+                          price: formatPrice(cheapest.unit_price),
+                        })
+                      : null
                   const expanded = expandedKey === product.product_key
                   return (
                     <div
@@ -373,6 +382,7 @@ export function ProductsView({ search, setSearch, source, setSource }) {
                           <div className="text-xs text-text-muted mt-0.5">
                             {product.unit ? `${product.unit} · ` : ''}
                             {t('prices.storesCount', { count: product.offers.length })}
+                            {perUnitHint && <span> · {perUnitHint}</span>}
                             {product.offers.some((o) => o.low_confidence) && (
                               <span className="text-warn"> · {t('prices.lowConfidence')}</span>
                             )}

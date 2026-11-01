@@ -181,7 +181,12 @@
     "brochuresLead": "Halaman brosur asli di balik harga berjalan, dikelompokkan per toko.",
     "brochuresEmpty": "Belum ada brosur",
     "brochuresEmptyDesc": "Halaman brosur akan muncul di sini setelah scraping berikutnya memublikasikannya.",
-    "brochureAlt": "Halaman brosur {{store}}"
+    "brochureAlt": "Halaman brosur {{store}}",
+    "unitPrice": {
+      "g": "{{price}}/kg",
+      "ml": "{{price}}/L",
+      "pcs": "{{price}}/pcs"
+    }
   },
   "monitor": {
     "lead": "Proses scraping harian di VPS. Log tersimpan di journald pada server; layar ini menampilkan hasil yang dilaporkan.",

@@ -181,7 +181,12 @@
     "brochuresLead": "The actual brochure pages behind the current prices, grouped by store.",
     "brochuresEmpty": "No brochures yet",
     "brochuresEmptyDesc": "Brochure pages will appear here after the next scrape publishes them.",
-    "brochureAlt": "{{store}} brochure page"
+    "brochureAlt": "{{store}} brochure page",
+    "unitPrice": {
+      "g": "{{price}}/kg",
+      "ml": "{{price}}/L",
+      "pcs": "{{price}}/pc"
+    }
   },
   "monitor": {
     "lead": "Nightly scraper runs on the VPS. Logs live in journald on the box; this screen shows reported outcomes.",

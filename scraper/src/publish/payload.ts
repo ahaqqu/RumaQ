@@ -18,6 +18,7 @@ import type { StoreConfig } from '../config.js'
 import type { ValidatedProduct } from '../ocr/parse.js'
 import { parsePeriod, parsePromo } from '../match/promo.js'
 import type { MatchOutcome } from '../match/matcher.js'
+import { computeUnitPrice, parseUnit } from '../units/parse.js'
 
 /** Stable, URL-safe product key — port of haqita make_product_key. */
 export function makeProductKey(name: string, brand: string | null, unit: string | null): string {
@@ -61,7 +62,10 @@ export interface ImageProducts {
  * the ported promo parser; identity fields come from the matcher's outcome
  * for each product — the canonical catalog key when matched, the item's own
  * key when it founded an entry (matchMethod 'solo': no cross-store identity
- * claim is being made, so its confidence is trivially 1.0).
+ * claim is being made, so its confidence is trivially 1.0). Unit
+ * normalization (unitQty/unitQtyUnit/unitPrice, issue #368 phase A) rides
+ * the validated item: derived here from the listed price via the pure unit
+ * parser, null when not normalizable — never a validation failure.
  */
 export function buildPayload(input: {
   stores: StoreConfig[]
@@ -80,6 +84,7 @@ export function buildPayload(input: {
       const [validFrom, validUntil] = parsePeriod(product.period)
       const promo = parsePromo(product.promo, product.price)
       const outcome = input.outcomes?.get(product)
+      const parsedUnit = parseUnit(product.unit, product.name)
       items.push({
         productKey:
           outcome?.productKey ?? makeProductKey(product.name, product.brand, product.unit),
@@ -90,6 +95,9 @@ export function buildPayload(input: {
         storeSlug: image.storeSlug,
         price: product.price,
         effectiveUnitPrice: promo.promoType === 'single' ? null : promo.effectiveUnitPrice,
+        unitQty: parsedUnit?.qty ?? null,
+        unitQtyUnit: parsedUnit?.unit ?? null,
+        unitPrice: parsedUnit ? computeUnitPrice(product.price, parsedUnit) : null,
         promoType: promo.promoType === 'single' ? null : promo.promoType,
         promoLabel: product.promo ? product.promo.join('; ') : null,
         validFrom,
