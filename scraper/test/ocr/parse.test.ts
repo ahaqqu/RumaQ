@@ -3,7 +3,6 @@
 import { describe, expect, it } from 'vite-plus/test'
 
 import {
-  cleanPrice,
   cleanUnit,
   normalizePromo,
   parseIdrValue,
@@ -12,11 +11,21 @@ import {
 } from '../../src/ocr/parse.js'
 
 describe('parseIdrValue', () => {
+  // Review B2 (PR #366): the bounds wrapper cleanPrice had no production
+  // callers left and was removed — its parsing cases merged here, its bounds
+  // cases live on in the validateProduct tests below.
   it.each([
     ['Rp 8.500', 8500],
+    ['Rp8.500', 8500],
+    ['8500', 8500],
+    ['8,500', 8500],
+    ['8 500', 8500],
+    ['Rp 150.000', 150000],
+    ['rp 5.000', 5000],
+    ['Rp. 15.500', 15500],
+    ['1000', 1000],
     ['Rp 1.275.000', 1275000],
     ['2000000', 2000000],
-    ['8,500', 8500],
     ['50', 50],
     [15500, 15500],
   ])('parses %s → %i with no bounds', (input, expected) => {
@@ -29,36 +38,6 @@ describe('parseIdrValue', () => {
     [undefined, null],
   ])('rejects %s', (input, expected) => {
     expect(parseIdrValue(input as string | null)).toBe(expected)
-  })
-})
-
-describe('cleanPrice', () => {
-  it.each([
-    ['Rp 8.500', 8500],
-    ['Rp8.500', 8500],
-    ['8500', 8500],
-    ['8,500', 8500],
-    ['8 500', 8500],
-    ['Rp 150.000', 150000],
-    ['rp 5.000', 5000],
-    ['Rp. 15.500', 15500],
-    ['1000', 1000],
-  ])('parses %s → %i', (input, expected) => {
-    expect(cleanPrice(input)).toBe(expected)
-  })
-
-  it.each([
-    ['???', null],
-    [null, null],
-    [undefined, null],
-    ['50', null], // below minimum
-    ['2000000', null], // above maximum
-  ])('rejects %s', (input, expected) => {
-    expect(cleanPrice(input as string | null)).toBe(expected)
-  })
-
-  it('accepts integer input directly', () => {
-    expect(cleanPrice(15500)).toBe(15500)
   })
 })
 
@@ -262,9 +241,9 @@ describe('validateProduct', () => {
     expect(
       validateProduct({ name: 'Product A', price: 1_000_001, priceFromDom: true }, 't.jpg')[1]
     ).toBeNull()
-    expect(
-      validateProduct({ name: 'Product A', price: 99, priceFromDom: true }, 't.jpg')[1]
-    ).toBe('price_invalid: 99')
+    expect(validateProduct({ name: 'Product A', price: 99, priceFromDom: true }, 't.jpg')[1]).toBe(
+      'price_invalid: 99'
+    )
   })
 
   it('preserves brand and defaults missing brand to null', () => {

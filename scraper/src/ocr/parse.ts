@@ -65,15 +65,6 @@ export function parseIdrValue(raw: number | string | null | undefined): number |
   return Math.trunc(value)
 }
 
-/**
- * Normalize an OCR'd price string to integer IDR (haqita clean_price),
- * rejecting values outside the OCR-misread bounds.
- */
-export function cleanPrice(raw: number | string | null | undefined): number | null {
-  const int = parseIdrValue(raw)
-  return int !== null && int >= MIN_PRICE && int <= MAX_PRICE ? int : null
-}
-
 // Common OCR corruptions of unit strings (haqita _UNIT_CORRECTIONS). The
 // standalone-l rule is refined vs haqita: "l g" (misread 1) becomes "1 g",
 // but a genuine liter after a number — "1 L" — is left alone, per the
