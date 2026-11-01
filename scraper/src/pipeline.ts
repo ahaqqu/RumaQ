@@ -397,6 +397,10 @@ function catalogItemToRaw(item: CatalogItem): RawOcrItem {
     brand: item.brand,
     unit: item.unit,
     price: item.price,
+    // Issue #363: a catalog price comes from the site's rendered card text,
+    // not OCR, so the OCR misread bounds (the 1M cap) must not apply — only
+    // the parse-level gates stay shared.
+    priceFromDom: true,
     promo: item.promoLabels ?? null,
     period: null,
   }

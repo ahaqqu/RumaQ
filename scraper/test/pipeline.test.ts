@@ -1460,18 +1460,60 @@ describe('runPipeline', () => {
     expect(reported[0]!.perStore['astro']!.rejectedItems).toBeUndefined()
   })
 
-  it('carries catalog-path rejects with the campaign URL as source (issue #362)', async () => {
+  it('publishes catalog prices above the OCR misread cap (issue #363)', async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
     const pageUrl = 'https://www.astronauts.id/c/kebutuhan-pokok-2721/beras-lokal-5858'
-    // Twelve over-MAX_PRICE prices: the plugin's own gate (toRupiah) accepts
-    // them, the shared validator (cleanPrice) rejects — proving the catalog
-    // path rides the same reject branch, with the page URL (not a filename)
-    // as the source.
+    // Twelve genuine premium prices above MAX_PRICE (1M): the OCR misread cap
+    // used to reject every one at validation. A catalog price comes from the
+    // rendered DOM card text (priceFromDom), where the misread failure mode
+    // does not exist — real premium SKUs must publish.
     const flight = Array.from({ length: 12 }, (_, i) =>
       JSON.stringify({
         variantRelativeProductIds: [],
         product_id: 9000 + i,
-        product_name: `Beras Overpriced Kampung ${i + 1}`,
+        product_name: `Beras Premium Kampung ${i + 1}`,
+        product_price: '2000000',
+      })
+    ).join('')
+    const astroHtml =
+      '<html><body><script>self.__next_f.push([1,' +
+      JSON.stringify(flight) +
+      '])</script></body></html>'
+    const fetchMock = async (url: string): Promise<Response> => {
+      if (url === pageUrl) return new Response(astroHtml, { status: 200 })
+      return new Response('<html><body></body></html>', { status: 200 })
+    }
+    const status = await Effect.runPromise(
+      runPipeline(scopedOptions(stateDir, ['astro'], { dryRun: true, fetch: fetchMock }))
+    )
+    const entry = status.stores['astro']!
+    expect(entry.itemsExtracted).toBe(12)
+    expect(entry.itemsRejected).toBe(0)
+    expect(entry.rejectedItems).toBeUndefined()
+    // The publishable payload carries every item at its full DOM price.
+    const payload: IngestPayload = JSON.parse(
+      await readFile(path.join(stateDir, 'payload-2026-10-24T23-00-05-000Z.json'), 'utf8')
+    )
+    const astroItems = payload.items.filter((item) => item.storeSlug === 'astro')
+    expect(astroItems).toHaveLength(12)
+    for (const item of astroItems) expect(item.price).toBe(2000000)
+  })
+
+  it('carries catalog-path rejects with the campaign URL as source (issue #362)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const pageUrl = 'https://www.astronauts.id/c/kebutuhan-pokok-2721/beras-lokal-5858'
+    // Twelve too-short names: the plugin's own gate (toCatalogItem) accepts
+    // them, the shared validator rejects — proving the catalog path rides the
+    // same reject branch, with the page URL (not a filename) as the source.
+    // (name_too_short is the reachable shared-gate reject here: since #363
+    // the DOM price skips the 1M cap, and toCatalogItem already drops an
+    // unusable price before validation, so price_missing cannot surface
+    // through this plugin.)
+    const flight = Array.from({ length: 12 }, (_, i) =>
+      JSON.stringify({
+        variantRelativeProductIds: [],
+        product_id: 9000 + i,
+        product_name: `B`,
         product_price: '2000000',
       })
     ).join('')
@@ -1504,10 +1546,9 @@ describe('runPipeline', () => {
     expect(rejects).toHaveLength(10)
     for (const reject of rejects) {
       expect(reject.source).toBe(pageUrl)
-      expect(reject.reason).toBe('price_invalid: 2000000')
-      expect(reject.name).toMatch(/^Beras Overpriced Kampung \d+$/)
+      expect(reject.reason).toBe('name_too_short')
+      expect(reject.name).toBe('B')
     }
-    expect(rejects[0]!.name).toBe('Beras Overpriced Kampung 1')
   })
 
   it('truncates over-long reject strings to the contract caps (review A1, issue #362)', async () => {
@@ -1523,8 +1564,9 @@ describe('runPipeline', () => {
       name: longName,
       brand: null,
       unit: null,
-      // A raw OCR price string: cleanPrice nulls it and the reason embeds
-      // it verbatim — 15 + 250 chars, over the reason cap of 200.
+      // A raw OCR price string: the OCR bounds null it (parseIdrValue parses
+      // it, the > MAX_PRICE cap rejects) and the reason embeds it verbatim —
+      // 15 + 250 chars, over the reason cap of 200.
       price: longPrice,
       promo: null,
       period: null,
@@ -1542,14 +1584,17 @@ describe('runPipeline', () => {
     )
     // The catalog path proves the source cap: a category URL longer than
     // the schema's 300 rides as the reject's source (via the env override,
-    // restored after the run).
+    // restored after the run). The price is sub-MIN ('50' survives the
+    // plugin's toRupiah >0 gate): since #363 a DOM price skips the 1M cap,
+    // so the sub-MIN floor is the branch that still rejects here while the
+    // long name stays the field under truncation test.
     const longUrl = 'https://www.astronauts.id/c/' + 'x'.repeat(350)
     const flight = Array.from({ length: 12 }, (_, i) =>
       JSON.stringify({
         variantRelativeProductIds: [],
         product_id: 9500 + i,
         product_name: longName,
-        product_price: '2000000',
+        product_price: '50',
       })
     ).join('')
     const astroHtml =
@@ -1611,7 +1656,7 @@ describe('runPipeline', () => {
       expect(reject.source).toHaveLength(300)
       expect(reject.source.startsWith('https://www.astronauts.id/c/')).toBe(true)
       expect(reject.name).toHaveLength(300)
-      expect(reject.reason).toBe('price_invalid: 2000000')
+      expect(reject.reason).toBe('price_invalid: 50')
     }
     // The log is the full audit trail — its lines keep the untruncated
     // strings the report copy elided.
