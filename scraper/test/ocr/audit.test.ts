@@ -134,6 +134,35 @@ describe('diffOcrItems (issue #367)', () => {
     expect(acc.matchedPairs).toBe(1)
   })
 
+  it('assigns Jaccard candidates best-first — the stronger claim wins its partner (thermos A1, PR #369)', () => {
+    const acc = newAuditAccumulator()
+    // "Teh Pucuk Harum" scores 0.75 against the shadow item, "Teh Pucuk Harum
+    // Melati" scores 1.0 (the "350 ml" unit token is stripped by the
+    // normalizer). A per-primary greedy pass would let the earlier 0.75 claim
+    // steal the item — mis-pairing the price diff and inventing a second name
+    // disagreement; the global best-first pass pairs it with the 1.0 claim.
+    diffOcrItems(
+      [
+        primary({ name: 'Teh Pucuk Harum', price: 5000 }),
+        primary({ name: 'Teh Pucuk Harum Melati', price: 12000 }),
+      ],
+      [{ name: 'Teh Pucuk Harum Melati 350 ml', price: 12000 }],
+      'page-001.jpg',
+      acc
+    )
+    expect(acc.matchedPairs).toBe(1)
+    expect(acc.nameAgree).toBe(1)
+    expect(acc.priceAgree).toBe(1)
+    expect(acc.disagreements).toEqual([
+      {
+        imageFilename: 'page-001.jpg',
+        field: 'name',
+        primary: 'Teh Pucuk Harum',
+        shadow: '(no match)',
+      },
+    ])
+  })
+
   it('records a name disagreement when nothing matches (below the Jaccard floor)', () => {
     const acc = newAuditAccumulator()
     diffOcrItems(

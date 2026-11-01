@@ -198,8 +198,10 @@ function truncate(disagreement: AuditDisagreement): AuditDisagreement {
 
 /**
  * Diff one sampled page's primary items against the shadow items, mutating
- * the accumulator. Matching: lower-cased exact name first, then the best
- * token-Jaccard ≥ 0.6 partner among the leftovers (issue #367). Matched
+ * the accumulator. Matching: lower-cased exact name first, then the globally
+ * best token-Jaccard ≥ 0.6 partners among the leftovers (strongest claim
+ * wins, so an early weak match cannot steal a better one — thermos A1,
+ * PR #369). Matched
  * pairs compare price (parsed equality), originalPrice (null-safe equality),
  * and promo PRESENCE (wording differs too freely to diff); unmatched primary
  * items are name disagreements. Promo disagreement lines render the present
@@ -228,23 +230,26 @@ export function diffOcrItems(
       }
     }
   }
-  // Pass 2 — best token-Jaccard ≥ 0.6 among the leftovers (first-best on tie).
+  // Pass 2 — best token-Jaccard ≥ 0.6 among the leftovers, assigned globally
+  // best-first (thermos A1, PR #369): a per-primary greedy pass would let an
+  // early weak claim (0.6) steal a shadow item a later primary matches far
+  // more strongly (0.9), mis-pairing the diff and skewing the percentages.
+  // The stable sort keeps first-primary-wins on ties, so unambiguous pages
+  // pair exactly as before.
+  const candidates: { i: number; j: number; score: number }[] = []
   for (let i = 0; i < primary.length; i++) {
     if (partner.has(i)) continue
-    let best = -1
-    let bestScore = NAME_MATCH_JACCARD_MIN
     for (let j = 0; j < shadow.length; j++) {
       if (taken.has(j)) continue
       const score = tokenOverlap(primary[i]!.name, shadow[j]!.name)
-      if (score >= NAME_MATCH_JACCARD_MIN && (best === -1 || score > bestScore)) {
-        best = j
-        bestScore = score
-      }
+      if (score >= NAME_MATCH_JACCARD_MIN) candidates.push({ i, j, score })
     }
-    if (best !== -1) {
-      partner.set(i, best)
-      taken.add(best)
-    }
+  }
+  candidates.sort((a, b) => b.score - a.score)
+  for (const { i, j } of candidates) {
+    if (partner.has(i) || taken.has(j)) continue
+    partner.set(i, j)
+    taken.add(j)
   }
 
   acc.primaryItems += primary.length
