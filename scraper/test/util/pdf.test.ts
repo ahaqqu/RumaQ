@@ -177,10 +177,12 @@ describe('renderWithPdftoppm — subprocess budgets', () => {
   }
 
   it('ships budgets sized for the workload: generous timeout, cap above a full legal render', () => {
-    // ~120 s covers a ≤40-page 150 DPI render many times over; the byte cap
-    // sits above the ~409 MiB worst case (40 incompressible RGBA legal
-    // pages) so it can only trip on a pathological document.
-    expect(PDF_RENDER_TIMEOUT_MS).toBe(120_000)
+    // 300 s covers the measured worst case on the 2-vCPU box (a real 20-page
+    // brochure rendered clean in 134 s at 150 DPI, ~6.7 s/page — issue #335
+    // probes); the byte cap sits above the ~409 MiB worst case (40
+    // incompressible RGBA legal pages) so it can only trip on a pathological
+    // document.
+    expect(PDF_RENDER_TIMEOUT_MS).toBe(300_000)
     expect(PDF_MAX_OUTPUT_BYTES).toBe(512 * 1024 * 1024)
   })
 
