@@ -112,11 +112,7 @@ function scan(text: string, bareMode: 'all' | 'count'): ParsedUnit | null {
   const valid: Array<{ index: number; priority: number; parsed: ParsedUnit }> = []
   let blockedIndex = Number.POSITIVE_INFINITY
 
-  const consider = (
-    re: RegExp,
-    priority: number,
-    build: (m: RegExpExecArray) => MatchOutcome
-  ) => {
+  const consider = (re: RegExp, priority: number, build: (m: RegExpExecArray) => MatchOutcome) => {
     // Iterate past 'absent' matches (a model number is not a quantity) and
     // past 'blocked' ones ("0 g, 500 ml" keeps its later quantity) while
     // remembering blocked positions for the bare-token rule below.

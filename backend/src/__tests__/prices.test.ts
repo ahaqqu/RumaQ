@@ -154,7 +154,13 @@ describe('GET /api/prices', () => {
         list: [
           listRow,
           // a not-normalized row rides through with nulls
-          { ...listRow, product_key: 'misteri--item----', unit_qty: null, unit_qty_unit: null, unit_price: null },
+          {
+            ...listRow,
+            product_key: 'misteri--item----',
+            unit_qty: null,
+            unit_qty_unit: null,
+            unit_price: null,
+          },
         ],
       })
       const res = await apiApp.request(`/api/prices${sort ? `?sort=${sort}` : ''}`, {}, env)

@@ -41,7 +41,11 @@ describe('parseUnit — unit field first (real catalog entries)', () => {
     ['KAPAL API SUPER INSTANT BLACK COFFEE SCT 10X2.2GR', '10 x 2.2 g', { qty: 22, unit: 'g' }],
     ['BEBEK IN-TANK PEMBERSIH TOILET BLUEY TWIN PCK 2X40G', '2 x 40 g', { qty: 80, unit: 'g' }],
     ['MAMA SUKA RUMPUT LAUT PANGGANG', '6 x 4.5 g', { qty: 27, unit: 'g' }],
-    ['NUSANTARA MADU SUPER, MADUJAE MADU JAHE MERAH DAN SEREH BOX 10X20GR', '10 x 20 g', { qty: 200, unit: 'g' }],
+    [
+      'NUSANTARA MADU SUPER, MADUJAE MADU JAHE MERAH DAN SEREH BOX 10X20GR',
+      '10 x 20 g',
+      { qty: 200, unit: 'g' },
+    ],
     ['PAKAIAN DALAM WANITA isi 3', 'isi 3', { qty: 3, unit: 'pcs' }],
     ['SURI Bakso jumbo isi 400gr', '400gr', { qty: 400, unit: 'g' }],
     // count units; bare token in a curated field means one piece
@@ -82,7 +86,10 @@ describe('parseUnit — name fallback (unit field absent)', () => {
       { qty: 350, unit: 'g' },
     ],
     ['AQUA AIR MINERAL BTL 330ML, KARTON ISI : 24 BTL', { qty: 330, unit: 'ml' }],
-    ['FRISIAN FLAG SUSU UHT NUTRIBRAIN OMEGA TPK 110ML, KARTON ISI : 40 TPK', { qty: 110, unit: 'ml' }],
+    [
+      'FRISIAN FLAG SUSU UHT NUTRIBRAIN OMEGA TPK 110ML, KARTON ISI : 40 TPK',
+      { qty: 110, unit: 'ml' },
+    ],
     // "isi N" without a unit → pieces; "3in1"/"0562" are not quantities
     ['SURI Bakso jumbo isi 400gr', { qty: 400, unit: 'g' }],
     ['PAKAIAN DALAM WANITA isi 3', { qty: 3, unit: 'pcs' }],
@@ -108,7 +115,9 @@ describe('parseUnit — name fallback (unit field absent)', () => {
 
   it('prefers the unit field over the name when both carry a quantity', () => {
     // the name's "5kg + 2liter" must not override the curated pcs unit
-    expect(parseUnit('1pcs', 'Bundle Beras Setra Ramos Astro Goods 5kg + Minyak Goreng 2liter')).toEqual({
+    expect(
+      parseUnit('1pcs', 'Bundle Beras Setra Ramos Astro Goods 5kg + Minyak Goreng 2liter')
+    ).toEqual({
       qty: 1,
       unit: 'pcs',
     })
@@ -146,7 +155,18 @@ describe('parseUnit — unparseable → null (never a qty, never a throw)', () =
   })
 
   it('is total and deterministic on hostile input', () => {
-    const hostile = ['', '   ', null, '😀 1 kg', 'x'.repeat(10_000), '1.2.3 kg', 'kg kg kg', '÷×±', '2x', 'x2']
+    const hostile = [
+      '',
+      '   ',
+      null,
+      '😀 1 kg',
+      'x'.repeat(10_000),
+      '1.2.3 kg',
+      'kg kg kg',
+      '÷×±',
+      '2x',
+      'x2',
+    ]
     for (const unit of hostile) {
       for (const name of ['', 'KG', '😀', 'x'.repeat(10_000), '2 x 2 x 2 g']) {
         const first = parseUnit(unit as string | null, name)
@@ -169,7 +189,9 @@ describe('computeUnitPrice — listed price per display unit', () => {
     [21500, { qty: 7920, unit: 'ml' }, 2715],
     [0, { qty: 5000, unit: 'g' }, 0],
   ])('%d over %j → %d', (price, parsed, expected) => {
-    expect(computeUnitPrice(price, parsed as { qty: number; unit: 'g' | 'ml' | 'pcs' })).toBe(expected)
+    expect(computeUnitPrice(price, parsed as { qty: number; unit: 'g' | 'ml' | 'pcs' })).toBe(
+      expected
+    )
   })
 
   it('returns null when the quantity cannot carry a division', () => {

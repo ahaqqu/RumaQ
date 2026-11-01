@@ -248,12 +248,16 @@ describe('buildPayload — unit normalization (issue #368 phase A)', () => {
   })
 
   it('the derived fields validate against the shared schema', () => {
-    const payload = build([{ name: 'Beras Pandan Wangi 5kg', brand: null, unit: null, price: 550000 }])
+    const payload = build([
+      { name: 'Beras Pandan Wangi 5kg', brand: null, unit: null, price: 550000 },
+    ])
     expect(() => v.parse(ingestPayloadSchema, payload)).not.toThrow()
   })
 
   it('contract stays additive: an old-scraper item without the fields validates', () => {
-    const payload = build([{ name: 'Minyak Goreng Bimoli', brand: null, unit: '1 L', price: 21500 }])
+    const payload = build([
+      { name: 'Minyak Goreng Bimoli', brand: null, unit: '1 L', price: 21500 },
+    ])
     const oldItem = { ...payload.items[0]! }
     delete (oldItem as Record<string, unknown>).unitQty
     delete (oldItem as Record<string, unknown>).unitQtyUnit
@@ -265,16 +269,18 @@ describe('buildPayload — unit normalization (issue #368 phase A)', () => {
   })
 
   it('rejects out-of-domain derived values (strictObject contract drift)', () => {
-    const payload = build([{ name: 'Beras Pandan Wangi 5kg', brand: null, unit: null, price: 550000 }])
+    const payload = build([
+      { name: 'Beras Pandan Wangi 5kg', brand: null, unit: null, price: 550000 },
+    ])
     for (const override of [
       { unitQty: 0 },
       { unitQty: -5 },
       { unitQtyUnit: 'kg' },
       { unitPrice: -1 },
     ]) {
-      expect(
-        v.safeParse(ingestItemSchema, { ...payload.items[0]!, ...override }).success
-      ).toBe(false)
+      expect(v.safeParse(ingestItemSchema, { ...payload.items[0]!, ...override }).success).toBe(
+        false
+      )
     }
   })
 })
