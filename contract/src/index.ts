@@ -47,6 +47,11 @@ export const ingestItemSchema = strictObject({
   category: nullish(string()),
   storeSlug: pipe(string(), minLength(1)),
   price: pipe(number(), integer(), minValue(0)),
+  // Issue #367: the strikethrough/original price when the source shows one —
+  // what extraction accuracy is measured against. Additive: old payloads
+  // (no field) still validate; a NEW payload hitting an OLD Worker fails
+  // loudly (strictObject — the Worker-first deploy order exists for this).
+  originalPrice: nullish(pipe(number(), integer(), minValue(0))),
   effectiveUnitPrice: nullish(number()),
   promoType: nullish(string()),
   promoLabel: nullish(string()),
@@ -99,6 +104,48 @@ export const rejectedItemSchema = strictObject({
 
 export type RejectedItem = InferOutput<typeof rejectedItemSchema>
 
+// Issue #367 (phase 1): one field disagreement between the primary OCR
+// extraction and the shadow re-extraction, frozen at diff time. primary/shadow
+// are rendered values ('none' when a side saw no value); the caps are
+// exported runtime values (the REJECTED_ITEM_LIMITS pattern) because the
+// producer truncates its report copy to exactly what this schema enforces —
+// one definition, no drift; an over-cap string would 400 the whole report.
+export const AUDIT_DISAGREEMENT_LIMITS = {
+  imageFilename: 120,
+  field: 120,
+  primary: 120,
+  shadow: 120,
+} as const
+
+/** Max disagreements riding one store's report (the log-free sample). */
+export const AUDIT_DISAGREEMENTS_LIMIT = 10
+
+export const auditDisagreementSchema = strictObject({
+  imageFilename: pipe(string(), maxLength(AUDIT_DISAGREEMENT_LIMITS.imageFilename)),
+  field: pipe(string(), maxLength(AUDIT_DISAGREEMENT_LIMITS.field)),
+  primary: pipe(string(), maxLength(AUDIT_DISAGREEMENT_LIMITS.primary)),
+  shadow: pipe(string(), maxLength(AUDIT_DISAGREEMENT_LIMITS.shadow)),
+})
+
+export type AuditDisagreement = InferOutput<typeof auditDisagreementSchema>
+
+// Issue #367 (phase 1): per-store shadow-OCR agreement metrics. The four
+// percentages are 0–100 rounded integers; a zero denominator (nothing
+// sampled/matched) reports 100 — vacuous agreement, no observed
+// disagreement — with sampledPages carrying the real sample size.
+// Additive like rejectedItems above: old scrapers' reports still validate;
+// a new scraper's report on an OLD Worker fails loudly (Worker-first).
+export const runAuditSchema = strictObject({
+  sampledPages: pipe(number(), integer(), minValue(0)),
+  nameAgreePct: pipe(number(), integer(), minValue(0), maxValue(100)),
+  priceAgreePct: pipe(number(), integer(), minValue(0), maxValue(100)),
+  originalAgreePct: pipe(number(), integer(), minValue(0), maxValue(100)),
+  promoAgreePct: pipe(number(), integer(), minValue(0), maxValue(100)),
+  disagreements: pipe(array(auditDisagreementSchema), maxLength(AUDIT_DISAGREEMENTS_LIMIT)),
+})
+
+export type RunAudit = InferOutput<typeof runAuditSchema>
+
 // Run report (haqita-integration.md §7.1): the scraper reports each live run
 // to the backend so the admin scraping monitor can show run history without
 // reading journald. One POST per finished run — including failed runs, which
@@ -132,6 +179,12 @@ export const runReportStoreSchema = strictObject({
   // Additive: old scrapers' reports (no field) still validate; a new
   // scraper's report on an OLD Worker fails loudly (Worker deploys first).
   rejectedItems: nullish(array(rejectedItemSchema)),
+  // Issue #367: shadow-OCR agreement metrics for the sampled fresh pages —
+  // the dual-rung diff's monitor surface (phase 1). Absent when the audit
+  // gate is off or nothing was sampled. Additive: old scrapers' reports (no
+  // field) still validate; a new scraper's report on an OLD Worker fails
+  // loudly (Worker deploys first).
+  audit: nullish(runAuditSchema),
 })
 
 // One flagged candidate pair the matcher reports for the admin review queue
