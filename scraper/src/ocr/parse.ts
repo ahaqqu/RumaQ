@@ -6,6 +6,12 @@ export interface RawOcrItem {
   brand?: string | null
   unit?: string | null
   price?: number | string | null
+  /**
+   * Set by the catalog stores (issue #363): the price comes from the site's
+   * rendered card text, not OCR, so the OCR digit-misread bounds (MAX_PRICE)
+   * do not apply — a genuine premium SKU above 1M IDR validates.
+   */
+  priceFromDom?: boolean
   promo?: unknown
   period?: string | null
 }
@@ -36,8 +42,12 @@ export function parseOcrJson(rawText: string): RawOcrItem[] {
 const MIN_PRICE = 100
 const MAX_PRICE = 1_000_000
 
-/** Normalize an OCR'd price string to integer IDR (haqita clean_price). */
-export function cleanPrice(raw: number | string | null | undefined): number | null {
+/**
+ * Normalize a price string to integer IDR (haqita clean_price) with NO range
+ * bounds — pure parsing, shared by the OCR path and the DOM-priced catalog
+ * path (issue #363). Bounds are applied by the callers that own them.
+ */
+export function parseIdrValue(raw: number | string | null | undefined): number | null {
   if (raw === null || raw === undefined) return null
   let s = String(raw)
     .replace(/[Rr][Pp]\.?\s*/g, '')
@@ -46,8 +56,16 @@ export function cleanPrice(raw: number | string | null | undefined): number | nu
   s = s.replace(/,/g, '').replace(/ /g, '').replace(/\./g, '')
   const value = Number.parseFloat(s)
   if (!Number.isFinite(value)) return null
-  const int = Math.trunc(value)
-  return int >= MIN_PRICE && int <= MAX_PRICE ? int : null
+  return Math.trunc(value)
+}
+
+/**
+ * Normalize an OCR'd price string to integer IDR (haqita clean_price),
+ * rejecting values outside the OCR-misread bounds.
+ */
+export function cleanPrice(raw: number | string | null | undefined): number | null {
+  const int = parseIdrValue(raw)
+  return int !== null && int >= MIN_PRICE && int <= MAX_PRICE ? int : null
 }
 
 // Common OCR corruptions of unit strings (haqita _UNIT_CORRECTIONS). The
@@ -91,7 +109,7 @@ export type ValidatedProduct = OcrItem & { imageSource: string }
 
 /**
  * Validate one raw OCR item. Returns [null, reason] when the item must be
- * rejected (short name, unusable price).
+ * rejected (short name, missing price, unusable price).
  */
 export function validateProduct(
   raw: RawOcrItem,
@@ -100,8 +118,27 @@ export function validateProduct(
   const name = String(raw.name ?? '').trim()
   if (name.length < 3) return [null, 'name_too_short']
 
-  const price = cleanPrice(raw.price)
-  if (price === null) return [null, `price_invalid: ${String(raw.price)}`]
+  // Issue #365: an absent price (null/undefined/blank — the no-price lineup
+  // entries some sources carry) is expected and benign, not a misread, so it
+  // classifies as price_missing and leaves price_invalid for actual bad
+  // values. The item is still dropped: a product without a price cannot
+  // publish.
+  if (raw.price === null || raw.price === undefined || String(raw.price).trim() === '') {
+    return [null, 'price_missing']
+  }
+
+  const value = parseIdrValue(raw.price)
+  // Issue #363: the bounds are an OCR digit-misread guard. The sub-MIN floor
+  // applies to every path; the 1M ceiling only guards the OCR path — a
+  // DOM-priced catalog item (priceFromDom) has no misread failure mode, so a
+  // genuine premium SKU above 1M IDR validates.
+  if (value === null || value < MIN_PRICE) {
+    return [null, `price_invalid: ${String(raw.price)}`]
+  }
+  if (value > MAX_PRICE && !raw.priceFromDom) {
+    return [null, `price_invalid: ${String(raw.price)}`]
+  }
+  const price = value
 
   const brand = raw.brand ? String(raw.brand).trim() : null
   return [

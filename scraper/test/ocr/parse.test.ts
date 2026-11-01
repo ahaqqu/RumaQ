@@ -6,9 +6,31 @@ import {
   cleanPrice,
   cleanUnit,
   normalizePromo,
+  parseIdrValue,
   parseOcrJson,
   validateProduct,
 } from '../../src/ocr/parse.js'
+
+describe('parseIdrValue', () => {
+  it.each([
+    ['Rp 8.500', 8500],
+    ['Rp 1.275.000', 1275000],
+    ['2000000', 2000000],
+    ['8,500', 8500],
+    ['50', 50],
+    [15500, 15500],
+  ])('parses %s → %i with no bounds', (input, expected) => {
+    expect(parseIdrValue(input as string | number)).toBe(expected)
+  })
+
+  it.each([
+    ['???', null],
+    [null, null],
+    [undefined, null],
+  ])('rejects %s', (input, expected) => {
+    expect(parseIdrValue(input as string | null)).toBe(expected)
+  })
+})
 
 describe('cleanPrice', () => {
   it.each([
@@ -154,10 +176,55 @@ describe('validateProduct', () => {
     expect(validateProduct({ name: '', price: 5000 }, 'test.jpg')).toEqual([null, 'name_too_short'])
   })
 
-  it('rejects missing, null, zero, and out-of-range prices', () => {
-    expect(validateProduct({ name: 'Product A' }, 'test.jpg')[1]).toContain('price')
-    expect(validateProduct({ name: 'Product A', price: null }, 'test.jpg')[1]).toContain('price')
-    expect(validateProduct({ name: 'Product A', price: 0 }, 'test.jpg')[1]).toContain('price')
+  it('classifies an absent price as price_missing (issue #365)', () => {
+    // The no-price lineup entries (hypermart) — expected and benign, not a
+    // misread. The item is still dropped, only the reason differs.
+    expect(validateProduct({ name: 'Product A' }, 'test.jpg')).toEqual([null, 'price_missing'])
+    expect(validateProduct({ name: 'Product A', price: null }, 'test.jpg')).toEqual([
+      null,
+      'price_missing',
+    ])
+    expect(validateProduct({ name: 'Product A', price: '' }, 'test.jpg')).toEqual([
+      null,
+      'price_missing',
+    ])
+    expect(validateProduct({ name: 'Product A', price: '   ' }, 'test.jpg')).toEqual([
+      null,
+      'price_missing',
+    ])
+  })
+
+  it('rejects garbage, zero, and sub-MIN prices as price_invalid', () => {
+    expect(validateProduct({ name: 'Product A', price: '???' }, 'test.jpg')[1]).toBe(
+      'price_invalid: ???'
+    )
+    expect(validateProduct({ name: 'Product A', price: 0 }, 'test.jpg')[1]).toBe('price_invalid: 0')
+    expect(validateProduct({ name: 'Product A', price: '50' }, 'test.jpg')[1]).toBe(
+      'price_invalid: 50'
+    )
+  })
+
+  it('keeps the OCR misread cap on the OCR path (issue #363)', () => {
+    expect(validateProduct({ name: 'Product A', price: 2000000 }, 'test.jpg')).toEqual([
+      null,
+      'price_invalid: 2000000',
+    ])
+  })
+
+  it('accepts a DOM price above the OCR cap, still below MIN (issue #363)', () => {
+    const [product, reason] = validateProduct(
+      { name: 'Enfagrow A+ Neurapro 3 3.6 kg', price: 1685900, priceFromDom: true },
+      't.jpg'
+    )
+    expect(reason).toBeNull()
+    expect(product!.price).toBe(1685900)
+    expect(
+      validateProduct({ name: 'Product A', price: 'Rp 2.000.000', priceFromDom: true }, 't.jpg')[1]
+    ).toBeNull()
+    // Only the 1M ceiling is waived — the parse-level floor still rejects.
+    expect(
+      validateProduct({ name: 'Product A', price: '50', priceFromDom: true }, 't.jpg')[1]
+    ).toBe('price_invalid: 50')
   })
 
   it('preserves brand and defaults missing brand to null', () => {
