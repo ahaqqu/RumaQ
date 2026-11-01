@@ -66,6 +66,23 @@ function scriptedLauncher(script: (string | Error)[]): {
   }
 }
 
+/** Launcher whose pages navigate fine but never render the wait anchor. */
+function anchorlessLauncher(content: () => Promise<string>): BrowserLauncher {
+  return {
+    launch: async () => ({
+      newPage: async () => ({
+        goto: async () => {},
+        waitFor: async () => {
+          throw new Error('Timeout 30000ms exceeded')
+        },
+        content,
+        close: async () => {},
+      }),
+      close: async () => {},
+    }),
+  }
+}
+
 describe('createBrowserFetcher', () => {
   it('returns rendered content through one lazily-launched session', async () => {
     const { launcher, sessions } = scriptedLauncher(['<html><body>promo listing</body></html>'])
@@ -226,6 +243,98 @@ describe('createBrowserFetcher', () => {
     const failure = await Effect.runPromiseExit(fetcher.fetchHtml('https://www.lottemart.co.id/'))
     expect(failure._tag).toBe('Failure')
     expect(exitError(failure)).toBeInstanceOf(FetchTransport)
+    await fetcher.close()
+  })
+
+  it('a strict anchor wait maps the timeout to FetchTransport (default, no flag)', async () => {
+    // The listing wait and every waitForSelector call site without the flag
+    // keep today's strictness: an anchor timeout rides the retry ladder and
+    // fails the fetch when exhausted.
+    const fetcher = createBrowserFetcher(browserStore, {
+      launcher: anchorlessLauncher(async () => '<html><body>never read</body></html>'),
+      retries: 0,
+      backoffMs: 1,
+      sleep: async () => {},
+    })
+    const failure = await Effect.runPromiseExit(
+      fetcher.fetchRendered('https://alfagift.id/promo', {
+        waitForSelector: 'a[href^="/promo/"]',
+      })
+    )
+    expect(failure._tag).toBe('Failure')
+    expect(exitError(failure)).toMatchObject({ _tag: 'FetchTransport' })
+    await fetcher.close()
+  })
+
+  it('an optional anchor wait reads the DOM as-is instead of failing (issue #360)', async () => {
+    // Alfamart teaser/event campaigns (e.g. /promo/UCOllect) hydrate with
+    // ZERO product anchors forever — a strict wait kills the store as
+    // FetchTransport before the plugin's zero-card warning branch (A4) can
+    // decide. With the flag the timeout is swallowed per attempt: logged,
+    // then the content is read anyway (one wait, no retry ladder — a
+    // swallowed wait never re-enters it).
+    const logs: string[] = []
+    let waits = 0
+    const launcher: BrowserLauncher = {
+      launch: async () => ({
+        newPage: async () => ({
+          goto: async () => {},
+          waitFor: async () => {
+            waits++
+            throw new Error('Timeout 30000ms exceeded')
+          },
+          content: async () => '<html><body>teaser shell, zero /p/ anchors</body></html>',
+          close: async () => {},
+        }),
+        close: async () => {},
+      }),
+    }
+    const fetcher = createBrowserFetcher(browserStore, {
+      launcher,
+      retries: 2,
+      backoffMs: 1,
+      sleep: async () => {},
+      log: (message) => logs.push(message),
+    })
+    const html = await Effect.runPromise(
+      fetcher.fetchRendered('https://alfagift.id/promo/UCOllect', {
+        waitForSelector: 'a[href^="/p/"]',
+        waitForSelectorOptional: true,
+      })
+    )
+    expect(html).toContain('teaser shell')
+    expect(waits).toBe(1)
+    expect(
+      logs.some(
+        (line) =>
+          line.includes('anchor "a[href^="/p/"]" did not appear within 30000ms') &&
+          // The underlying wait failure is named too — a non-timeout cause
+          // must not masquerade as a full-window timeout.
+          line.includes('reading the DOM as-is (optional wait): Error: Timeout 30000ms exceeded')
+      )
+    ).toBe(true)
+    await fetcher.close()
+  })
+
+  it('an optional anchor wait still escalates challenge content to Tier 3', async () => {
+    // The flag only downgrades the anchor timeout — the Incapsula verdict
+    // after the content read stays fatal, exactly as on strict waits.
+    const interstitial = '<html><script src="/_Incapsula_Resource?SWHDLEDF"></script></html>'
+    const fetcher = createBrowserFetcher(browserStore, {
+      launcher: anchorlessLauncher(async () => interstitial),
+      retries: 2,
+      backoffMs: 1,
+      challengeSettleMs: 2_000,
+      sleep: async () => {},
+    })
+    const failure = await Effect.runPromiseExit(
+      fetcher.fetchRendered('https://alfagift.id/promo/UCOllect', {
+        waitForSelector: 'a[href^="/p/"]',
+        waitForSelectorOptional: true,
+      })
+    )
+    expect(failure._tag).toBe('Failure')
+    expect(exitError(failure)).toMatchObject({ _tag: 'BrowserTierRequired' })
     await fetcher.close()
   })
 })

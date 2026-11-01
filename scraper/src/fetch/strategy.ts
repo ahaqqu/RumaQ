@@ -17,7 +17,7 @@ import { Effect } from 'effect'
 import type { StoreConfig } from '../config.js'
 import { storeProxyUrl } from '../config.js'
 import { isPermanentClientStatus, withRetries } from '../util/retry.js'
-import { createBrowserFetcher, type BrowserLauncher } from './browser.js'
+import { createBrowserFetcher, type BrowserLauncher, type RenderedFetchOptions } from './browser.js'
 import {
   type FetchError,
   FetchHttpStatus,
@@ -47,9 +47,11 @@ export interface StoreFetcher {
    * Rendered-DOM fetch with an optional waitForSelector anchor (issue #322,
    * design-arch §2.2 — Alfamart). The plain tier aliases it to fetchHtml:
    * nothing to wait for on Tier 1. The browser tier waits for the anchor
-   * inside the navigation's retry engine.
+   * inside the navigation's retry engine; `waitForSelectorOptional` (issue
+   * #360) downgrades an anchor timeout to a logged note — the DOM is read
+   * as-is (teaser campaigns never render the anchor).
    */
-  fetchRendered(url: string, opts?: { waitForSelector?: string }): Effect.Effect<string, FetchError>
+  fetchRendered(url: string, opts?: RenderedFetchOptions): Effect.Effect<string, FetchError>
   fetchBytes(url: string): Effect.Effect<DownloadedImage, FetchError>
   /**
    * Raw-byte fetch with NO NonImageContent gate (issue #322, design-arch

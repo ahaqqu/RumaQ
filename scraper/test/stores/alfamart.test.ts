@@ -25,6 +25,7 @@ import {
   toCatalogItem,
 } from '../../src/stores/alfamart.js'
 import { ScrapeStructureError, type FetchError } from '../../src/fetch/errors.js'
+import type { RenderedFetchOptions } from '../../src/fetch/browser.js'
 import { exitError, fullFetchContext } from '../helpers.js'
 import { loadConfig, storeBySlug } from '../../src/config.js'
 
@@ -225,6 +226,35 @@ describe('alfamart plugin — real listing and campaign fixtures', () => {
     await Effect.runPromise(plugin.listItems(ctx))
     expect(waits[0]).toBe(CAMPAIGN_ANCHOR_SELECTOR)
     for (const wait of waits.slice(1)) expect(wait).toBe(PRODUCT_ANCHOR_SELECTOR)
+  })
+
+  it('opts the campaign-detail fetch into the optional anchor wait — the listing stays strict (issue #360)', async () => {
+    // Teaser/event campaigns (e.g. /promo/UCOllect, gateway call literally
+    // `v2/products/promotions/undefined`) hydrate with zero /p/ anchors
+    // forever: a strict detail wait would kill the store as FetchTransport
+    // before the zero-card warning branch can run. Only the detail calls opt
+    // in — zero campaigns on the listing is still structure churn.
+    const opts: (RenderedFetchOptions | undefined)[] = []
+    const { plugin } = makeCtx({
+      fetchRendered: (url) => Effect.succeed(serveAlfamart(url)),
+    })
+    const ctx = fullFetchContext({
+      runStartedAt: '2026-10-31T00:00:00Z',
+      fetchRendered: (url, o) => {
+        opts.push(o)
+        return Effect.succeed(serveAlfamart(url))
+      },
+    })
+    await Effect.runPromise(plugin.listItems(ctx))
+    // 1 listing + 40 campaign visits at the shipped maxPages.
+    expect(opts).toHaveLength(41)
+    expect(opts[0]).toEqual({ waitForSelector: CAMPAIGN_ANCHOR_SELECTOR })
+    for (const detailOpts of opts.slice(1)) {
+      expect(detailOpts).toEqual({
+        waitForSelector: PRODUCT_ANCHOR_SELECTOR,
+        waitForSelectorOptional: true,
+      })
+    }
   })
 
   it('sentinels a listing with zero campaigns', async () => {
