@@ -8,8 +8,14 @@ import { SCRAPE_STORE_SLUGS } from '@rumaq/contract'
 
 import { LATEST_OBSERVATION_PREDICATE } from './prices.js'
 
-/** Unreferenced objects younger than this grace period survive the sweep. */
-export const BROCHURE_GRACE_DAYS = 14
+/**
+ * Unreferenced objects younger than this grace period survive the sweep.
+ * One year (owner directive, 2026-11-01): page images are the ground truth
+ * for manual extraction review, and a review session may revisit a page
+ * weeks after its run — 14 days swept evidence out from under it. R2 cost
+ * is pennies at brochure volumes (~a few GB/year, 10 GB free tier).
+ */
+export const BROCHURE_GRACE_DAYS = 365
 
 /** The servable shape every stored brochure_url must match. */
 export const BROCHURE_URL_PREFIX = '/api/brochures/'
