@@ -1305,7 +1305,7 @@ describe('runPipeline', () => {
       const superindo = reported[0]!.perStore['superindo']!
       expect(superindo.modelsUsed).toEqual(['gemini-3.8-flash', 'gemini-3.7-flash'])
       expect(superindo.warnings).toEqual([
-        'OCR chain degraded: gemini-3.8-flash (daily-quota 429); final rung gemini-3.7-flash',
+        'OCR chain degraded this run: gemini-3.8-flash (daily-quota 429); this store ended on gemini-3.7-flash',
       ])
       // Lotte started after the advance, so its own OCR rode a single rung —
       // no false attribution: one rung is not a degraded ride (issue #357).
@@ -1394,11 +1394,13 @@ describe('runPipeline', () => {
       expect(warning.length).toBeLessThanOrEqual(500)
       // The headline (the pin's death) is kept; the elided tail is counted…
       expect(warning).toMatch(
-        /^OCR chain degraded: gemini-3\.8-flash-saturation-ride-00 \(503 saturation after ladder\)/
+        /^OCR chain degraded this run: gemini-3\.8-flash-saturation-ride-00 \(503 saturation after ladder\)/
       )
       expect(warning).toMatch(/ … \(\+\d+ more deaths\)/)
       // …and the store's final rung is named, never elided.
-      expect(warning.endsWith('; final rung gemini-3.8-flash-saturation-ride-11')).toBe(true)
+      expect(warning.endsWith('; this store ended on gemini-3.8-flash-saturation-ride-11')).toBe(
+        true
+      )
     } finally {
       restoreEnv()
     }

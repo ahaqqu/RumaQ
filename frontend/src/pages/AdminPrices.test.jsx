@@ -261,7 +261,7 @@ describe('AdminPrices', () => {
                 itemsRejected: 19,
                 modelsUsed: ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash'],
                 warnings: [
-                  'OCR chain degraded: gemini-3.8-flash (503 saturation after ladder) → gemini-3.7-flash (daily-quota 429); final rung gemini-3.6-flash',
+                  'OCR chain degraded this run: gemini-3.8-flash (503 saturation after ladder) → gemini-3.7-flash (daily-quota 429); this store ended on gemini-3.6-flash',
                 ],
               },
             },
@@ -282,12 +282,14 @@ describe('AdminPrices', () => {
     expect(container.textContent).toContain('3.8-flash → 3.7-flash → 3.6-flash')
     // The scraper's warning rides its own line, verbatim.
     expect(container.textContent).toContain(
-      'OCR chain degraded: gemini-3.8-flash (503 saturation after ladder)'
+      'OCR chain degraded this run: gemini-3.8-flash (503 saturation after ladder)'
     )
     // Both the chain line and the warning render warn-toned.
     const warnLines = [...container.querySelectorAll('.text-warn')]
     expect(warnLines.some((el) => el.textContent.includes('3.8-flash → 3.7-flash'))).toBe(true)
-    expect(warnLines.some((el) => el.textContent.includes('OCR chain degraded:'))).toBe(true)
+    expect(warnLines.some((el) => el.textContent.includes('OCR chain degraded this run:'))).toBe(
+      true
+    )
   })
 
   it('renders nothing new for a store with a single OCR rung and no warnings (issue #357)', () => {
