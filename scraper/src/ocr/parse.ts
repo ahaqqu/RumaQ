@@ -36,7 +36,13 @@ export function parseOcrJson(rawText: string): RawOcrItem[] {
   if (!match) {
     throw new Error(`No JSON array found in OCR response: ${clean.slice(0, 200)}`)
   }
-  return JSON.parse(match[0]) as RawOcrItem[]
+  const items = JSON.parse(match[0]) as RawOcrItem[]
+  // Review A1 (PR #366): priceFromDom is set by the catalog adaptation only
+  // (pipeline.ts catalogItemToRaw). The OCR path parses MODEL output here, so
+  // a hallucinated flag must not survive — it would let the OCR path waive
+  // its own MAX_PRICE misread guard.
+  for (const item of items) delete item.priceFromDom
+  return items
 }
 
 const MIN_PRICE = 100

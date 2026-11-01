@@ -146,6 +146,16 @@ describe('parseOcrJson', () => {
   it('throws on invalid JSON inside the array', () => {
     expect(() => parseOcrJson('[invalid json]')).toThrow()
   })
+
+  it('strips a model-emitted priceFromDom (review A1, PR #366)', () => {
+    // priceFromDom is the catalog path's cap exemption (issue #363) — it is
+    // set by pipeline.ts catalogItemToRaw ONLY. The OCR path parses model
+    // output, so a hallucinated flag must never survive: it would let the
+    // OCR path waive its own MAX_PRICE misread guard.
+    expect(parseOcrJson('[{"name": "E", "price": 2000000, "priceFromDom": true}]')).toEqual([
+      { name: 'E', price: 2000000 },
+    ])
+  })
 })
 
 describe('validateProduct', () => {
