@@ -257,7 +257,9 @@ describe('replay-backfill (#373)', () => {
         // Present category + already-stamped-elsewhere observations: the
         // guards must leave them alone.
         { productKey: 'gula--gulaku--1-kg', category: 'lainnya' },
-        // Unknown key: counted, never fatal.
+        // Unknown keys: counted (once per DISTINCT key — the duplicate
+        // below is the same unknown product, not two), never fatal.
+        { productKey: 'hilang--x--y', category: 'lainnya' },
         { productKey: 'hilang--x--y', category: 'lainnya' },
       ],
     })

@@ -258,7 +258,7 @@ describe('ingestPrices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         // Only the rice already exists — the oil is created by this ingest.
         rows: [{ id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' }],
       },
@@ -335,7 +335,7 @@ describe('ingestPrices', () => {
     const { db } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: (params) =>
           params.map((key) => ({ id: `p-${String(key)}`, product_key: key as string })),
       },
@@ -354,7 +354,7 @@ describe('ingestPrices', () => {
     const { db } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' }],
       },
     ])
@@ -379,7 +379,7 @@ describe('ingestPrices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [
           { id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' },
           { id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' },
@@ -402,7 +402,7 @@ describe('ingestPrices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' }],
       },
     ])
@@ -427,7 +427,7 @@ describe('ingestPrices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' }],
       },
     ])
@@ -465,7 +465,7 @@ describe('ingestPrices — source_url (issue #380)', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'beras--pandan-wangi--5-kg' }],
       },
     ])
@@ -498,7 +498,7 @@ describe('ingestPrices — source_url (issue #380)', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'beras--pandan-wangi--5-kg' }],
       },
     ])
@@ -591,7 +591,7 @@ describe('POST /api/internal/ingest/prices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         // Only the rice already exists — the oil is created by this ingest.
         rows: [{ id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' }],
       },
@@ -814,7 +814,7 @@ describe('requireIngestSecret — dual accept (#376)', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' }],
       },
     ])
@@ -942,5 +942,77 @@ describe('additive contract fields (issue #367)', () => {
       error: null,
     })
     expect(result.success).toBe(true)
+  })
+})
+
+describe('ingestPrices — category fill budget (issue #373, thermos A1)', () => {
+  const sampleParsed = () => {
+    const parsed = samplePayload()
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) throw new Error('fixture invalid')
+    return parsed
+  }
+
+  it('emits zero category-fill statements at the gate=on steady state (existing + already categorized)', async () => {
+    const { db, executedBatches } = createFakeDb([
+      { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
+      {
+        match: /^SELECT id, product_key, category FROM price_products/,
+        // Both products exist and are already classified — the gate=on
+        // steady state. The fill must cost zero statements: the per-
+        // invocation D1 query budget (50 on the free plan) has to keep its
+        // pre-taxonomy headroom at catalog scale (the lookup's category
+        // column is what makes the gate cheap — no extra pass over the
+        // catalog).
+        rows: [
+          { id: 'prod-1', product_key: 'beras--pandan-wangi--5-kg', category: 'beras' },
+          { id: 'prod-2', product_key: 'minyak-goreng--bimoli--1-l', category: 'minyak-goreng' },
+        ],
+      },
+    ])
+
+    const parsed = sampleParsed()
+    await ingestPrices(db, {
+      ...parsed.output,
+      items: parsed.output.items.map((item) => ({
+        ...item,
+        category: 'beras',
+        taxoVersion: 'v0.2',
+      })),
+    })
+
+    const fillStmts = executedBatches.flat().filter((s) => s.sql.includes('UPDATE price_products'))
+    expect(fillStmts).toHaveLength(0)
+  })
+
+  it('still fills NULL-category existing products — one deduped UPDATE per product', async () => {
+    const { db, executedBatches } = createFakeDb([
+      { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
+      {
+        match: /^SELECT id, product_key, category FROM price_products/,
+        rows: [
+          { id: 'prod-1', product_key: 'beras--pandan-wangi--5-kg', category: null },
+          { id: 'prod-2', product_key: 'minyak-goreng--bimoli--1-l', category: null },
+        ],
+      },
+    ])
+
+    const parsed = sampleParsed()
+    // The rice rides twice (the same product at two items) — one UPDATE.
+    await ingestPrices(db, {
+      ...parsed.output,
+      items: [
+        ...parsed.output.items.map((item) => ({
+          ...item,
+          category: 'beras',
+          taxoVersion: 'v0.2',
+        })),
+        { ...parsed.output.items[0]!, category: 'beras', taxoVersion: 'v0.2' },
+      ],
+    })
+
+    const fillStmts = executedBatches.flat().filter((s) => s.sql.includes('UPDATE price_products'))
+    expect(fillStmts).toHaveLength(2)
+    expect(fillStmts[0]!.sql).toContain('category IS NULL')
   })
 })

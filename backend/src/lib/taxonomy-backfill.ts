@@ -99,7 +99,9 @@ export async function applyCategoryBackfill(
   }
   const productIdByKey = new Map(knownRows.map((row) => [row.product_key, row.id]))
   const knownItems = payload.items.filter((item) => productIdByKey.has(item.productKey))
-  const unknownProducts = payload.items.length - knownItems.length
+  // Distinct unknown keys — a duplicated unknown key is one unknown product,
+  // not two (the counter rides the response body; keep it honest).
+  const unknownProducts = keys.filter((key) => !productIdByKey.has(key)).length
 
   if (knownItems.length === 0) {
     return { productsUpdated: 0, observationsStamped: 0, unknownProducts }

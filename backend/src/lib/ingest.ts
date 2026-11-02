@@ -97,16 +97,17 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
 
   const keys = [...new Set(usable.map((item) => item.productKey))]
   const itemByKey = new Map(usable.map((item) => [item.productKey, item]))
-  // One lookup serves both purposes: its rows decide which products need an
-  // insert, and their ids seed the observation pass. New products get their
-  // ids here (bound in the INSERT below), so a second IN-list round trip is
-  // never needed — at catalog scale the per-invocation query budget (50 on
-  // the free plan) is D1's tightest limit, and each extra chunked pass is
-  // ceil(N/90) queries.
+  // One lookup serves three purposes: its rows decide which products need an
+  // insert, their ids seed the observation pass, and their current category
+  // gates the issue-#373 fill below. New products get their ids here (bound
+  // in the INSERT below), so a second IN-list round trip is never needed —
+  // at catalog scale the per-invocation query budget (50 on the free plan)
+  // is D1's tightest limit, and each extra chunked pass is ceil(N/90)
+  // queries.
   const existingRows = keys.length
-    ? await selectIn<{ id: string; product_key: string }>(
+    ? await selectIn<{ id: string; product_key: string; category: string | null }>(
         db,
-        'SELECT id, product_key FROM price_products WHERE product_key IN',
+        'SELECT id, product_key, category FROM price_products WHERE product_key IN',
         keys
       )
     : []
@@ -149,13 +150,20 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
   // category (the gate=on classifier) fills its NULL category — the
   // backfill/live classification owns the column, so a present value is
   // never clobbered and old payloads (category null) change nothing. Only
-  // items actually carrying a category produce a statement (deduped per
-  // product — the same product seen at N stores is one UPDATE), so today's
-  // uncategorized payloads add zero statements.
+  // products the lookup above says are STILL NULL-categorized produce a
+  // statement (deduped per product — the same product seen at N stores is
+  // one UPDATE), so today's uncategorized payloads add zero statements AND
+  // the gate=on steady state (everything already classified) adds zero too —
+  // without that second zero the per-invocation D1 query budget (50 on the
+  // free plan) would sit at ~49-50 every categorized run at catalog scale,
+  // one new product past ~950 items failing the whole publish.
+  const existingUncategorizedKeys = new Set(
+    existingRows.filter((row) => row.category === null).map((row) => row.product_key)
+  )
   const categorizedExistingKeys = [
     ...new Set(
       usable
-        .filter((item) => item.category && existingKeys.has(item.productKey))
+        .filter((item) => item.category && existingUncategorizedKeys.has(item.productKey))
         .map((item) => item.productKey)
     ),
   ]
