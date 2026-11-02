@@ -169,3 +169,43 @@ describe('migration 0017: price_observations.source_url (#380)', () => {
     expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('source_url')
   })
 })
+
+describe('migration 0018: user_plans (#376)', () => {
+  it('creates the additive plan table; rows default to free, keyed by user_id', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    // No writer exists yet (assignment is a future ticket) — the table must
+    // still accept a bare row and default it to the everyone-free baseline.
+    db.prepare(`INSERT INTO user_plans (user_id) VALUES ('u1')`).run()
+    expect(db.prepare('SELECT * FROM user_plans WHERE user_id = ?').get('u1')).toEqual({
+      user_id: 'u1',
+      plan: 'free',
+      updated_at: null,
+    })
+
+    // user_id is the PRIMARY KEY — one plan per user.
+    expect(() =>
+      db.prepare(`INSERT INTO user_plans (user_id, plan) VALUES ('u1', 'premium')`).run()
+    ).toThrow()
+
+    // plan is free-form TEXT (no CHECK): a future plan enum grows without
+    // another migration; unknown values resolve to 'free' in resolvePlan.
+    db.prepare(
+      `INSERT INTO user_plans (user_id, plan, updated_at) VALUES ('u2', 'premium', ?)`
+    ).run('2026-11-03T00:00:00Z')
+    expect(db.prepare('SELECT * FROM user_plans WHERE user_id = ?').get('u2')).toMatchObject({
+      plan: 'premium',
+      updated_at: '2026-11-03T00:00:00Z',
+    })
+  })
+
+  it('keeps the full chain green on a fresh database (additive, nothing dropped)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'user_plans'")
+      .all()
+    expect(tables.map((r: Record<string, unknown>) => r.name)).toEqual(['user_plans'])
+  })
+})

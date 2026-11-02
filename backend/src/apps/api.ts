@@ -46,6 +46,7 @@ import {
   parseBrochureKey,
   sweepUnreferencedBrochures,
 } from '../lib/brochures.js'
+import { requireEntitlement, type Entitlement } from '../lib/entitlements.js'
 import {
   appendScrapeEvents,
   claimNextScrapeCommand,
@@ -436,6 +437,21 @@ apiApp.get(
   }
 )
 
+// Premium entitlement guard factory (ahaqqu/RumaQ#376): one Entitlement per
+// prices route, resolved through lib/entitlements.ts. Runs after the session
+// guard (registration order), so userId is always set; a denial is a bare
+// 403 that never names the user's plan.
+const requirePricesEntitlement =
+  (entitlement: Entitlement): MiddlewareHandler<Env> =>
+  async (c, next) => {
+    const verdict = await requireEntitlement(c.env, c.get('userId'), entitlement)
+    if (verdict.ok) {
+      await next()
+      return
+    }
+    return c.json({ error: verdict.error }, verdict.status)
+  }
+
 apiApp.use('/api/me', propsAuthMiddleware)
 apiApp.use('/api/stock', propsAuthMiddleware)
 apiApp.use('/api/stock/:id', propsAuthMiddleware)
@@ -458,6 +474,18 @@ apiApp.use('/api/plans/generate', propsAuthMiddleware)
 apiApp.use('/api/plans/:id/items/:itemId', propsAuthMiddleware)
 apiApp.use('/api/prices', propsAuthMiddleware)
 apiApp.use('/api/prices/:productKey', propsAuthMiddleware)
+// Premium gating hooks (ahaqqu/RumaQ#376): one entitlement check per prices
+// route, wired right behind the session guards. Behavior-neutral tonight —
+// the 'free' plan carries every entitlement and user_plans has no writer
+// (lib/entitlements.ts). The explore routes get their own use lines (the
+// #292 discipline: apiApp.use(path) does not cover subpaths); the history
+// check rides the /api/prices/:productKey route registration itself, because
+// a use-line on that param pattern would also match the three static leaves
+// above and double-gate them with prices.history.
+apiApp.use('/api/prices', requirePricesEntitlement('prices.explore'))
+apiApp.use('/api/prices/meta', requirePricesEntitlement('prices.explore'))
+apiApp.use('/api/prices/promos', requirePricesEntitlement('prices.explore'))
+apiApp.use('/api/prices/brochures', requirePricesEntitlement('prices.explore'))
 apiApp.use('/api/admin/price-runs', propsAuthMiddleware)
 apiApp.use('/api/admin/ai/usage', propsAuthMiddleware)
 apiApp.use('/api/admin/scrape', propsAuthMiddleware)
@@ -3117,6 +3145,7 @@ apiApp.get(
     responses: {
       200: { description: 'OK' },
       401: { description: 'Unauthorized' },
+      403: { description: 'Forbidden' },
     },
   }),
   sValidator('query', pricesQuery),
@@ -3261,6 +3290,7 @@ apiApp.get(
         },
       },
       401: { description: 'Unauthorized' },
+      403: { description: 'Forbidden' },
     },
   }),
   async (c) => {
@@ -3346,6 +3376,7 @@ apiApp.get(
         },
       },
       401: { description: 'Unauthorized' },
+      403: { description: 'Forbidden' },
     },
   }),
   async (c) => {
@@ -3427,6 +3458,7 @@ apiApp.get(
         },
       },
       401: { description: 'Unauthorized' },
+      403: { description: 'Forbidden' },
     },
   }),
   async (c) => {
@@ -3439,6 +3471,9 @@ apiApp.get(
 
 apiApp.get(
   '/api/prices/:productKey',
+  // Route-level (not a use-line) so the static leaves above are never
+  // captured as product keys and double-gated with prices.history.
+  requirePricesEntitlement('prices.history'),
   describeRoute({
     description: 'Price detail for one product: per-store current prices and full history.',
     security: [{ cookieAuth: [] }],
@@ -3446,6 +3481,7 @@ apiApp.get(
     responses: {
       200: { description: 'OK' },
       401: { description: 'Unauthorized' },
+      403: { description: 'Forbidden' },
       404: { description: 'Product not found' },
     },
   }),
