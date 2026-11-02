@@ -6,7 +6,6 @@
 | --------------------------------- | ------ | ----------- | ---------------------------------------------------------------------------------- |
 | `frontend/src/**/*.test.{js,jsx}` | Vitest | jsdom       | 50/50/50/50                                                                        |
 | `backend/src/**/*.test.ts`        | Vitest | Node        | 50/50/50/50 (D1 mocked)                                                            |
-| `scraper/{src,test}/**/*.test.ts` | Vitest | Node        | no threshold yet (new workspace; all IO injected, haqita fixtures ported verbatim) |
 
 ```
 ./scripts/test.sh unit
@@ -93,7 +92,6 @@ heavy deps over raising the budget.
 
 - [x] Frontend unit test coverage thresholds met (50/50/50/50) — `./scripts/test.sh unit frontend --coverage`
 - [x] Backend unit test coverage thresholds met (50/50/50/50) — `./scripts/test.sh unit backend --coverage`
-- [x] Scraper unit tests pass — `./scripts/test.sh unit scraper`
 - [x] New API endpoint has automation test scenario — `automation/tests/local/api/`
 - [x] New UI flow has automation test scenario — `automation/tests/local/e2e/`
 - [x] Local automation tests pass — `./scripts/test.sh automation-local`

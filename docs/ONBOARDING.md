@@ -39,7 +39,7 @@ Default seed data (locations + stores) is created with the first household on si
 ## 4. Verify your setup
 
 ```bash
-./scripts/test.sh unit backend    # or: unit frontend, unit scraper, unit
+./scripts/test.sh unit backend    # or: unit frontend, unit
 ./scripts/style.sh --check        # format + lint + typecheck
 ```
 
@@ -50,7 +50,6 @@ Default seed data (locations + stores) is created with the first household on si
 | `frontend/src/`       | React SPA (routes, pages, queries, i18n)                  |
 | `backend/src/`        | Hono Worker (apps per domain in `apps/`, logic in `lib/`) |
 | `backend/migrations/` | D1 migrations, applied by deploy / setup-db               |
-| `scraper/`            | Bun price-scraper workspace member (VPS systemd job)      |
 | `automation/`         | Docker-based API/E2E test harness                         |
 | `scripts/`            | `deploy.sh`, `test.sh`, `docs.sh`, `style.sh` entrypoints |
 | `docs/plan/`          | Phase plans; GitHub Issues + Delivery Kanban for status   |

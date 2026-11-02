@@ -34,7 +34,7 @@ Single entrypoint: `./scripts/test.sh` — see [`docs/TEST_STRATEGY.md`](docs/TE
 | Suite              | Command                                                   |
 | ------------------ | --------------------------------------------------------- |
 | Unit (all)         | `./scripts/test.sh unit`                                  |
-| Unit (one project) | `./scripts/test.sh unit frontend` / `backend` / `scraper` |
+| Unit (one project) | `./scripts/test.sh unit frontend` / `backend`             |
 | Local integration  | `./scripts/test.sh automation-local`                      |
 | Production smoke   | `./scripts/test.sh automation-live`                       |
 
