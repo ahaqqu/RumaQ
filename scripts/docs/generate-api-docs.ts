@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs'
 import { generateSpecs } from 'hono-openapi'
 import { apiApp } from '../../backend/src/apps/api.js'
+import { householdsApp } from '../../backend/src/apps/households.js'
 import { authApp } from '../../backend/src/apps/auth.js'
 
 const DOCS_OPTIONS = {
@@ -123,18 +124,19 @@ Errors use \`{ "error": "..." }\`.
     md += `| ${method} | ${path} | ${auth} | ${query} | ${body} | ${e.description} |\n`
   }
 
-  md += `\n## Planned endpoints\n\nThe following contracts are planned but not yet implemented:\n\n### Households\n\n- \`GET /households\` \u2014 list households for the current user.\n- \`POST /households\` \u2014 create a household.\n- \`PATCH /households/:id\` \u2014 update household name or active status.\n\n### Purchases\n\n- \`GET /purchases?store=&from=&to=\` \u2014 purchase history grouped by month.\n\n### Plans\n\n- \`GET /plans?status=active\` \u2014 list shopping plans.\n- \`POST /plans/generate\` \u2014 ask AI to generate a shopping plan.\n- \`POST /plans\` \u2014 save a generated plan as active.\n- \`PATCH /plans/:id/items/:itemId\` \u2014 mark a plan item as bought or skipped.\n\n### AI Assistant\n\n- \`POST /ai/chat\` \u2014 send a message to the AI assistant.\n`
+  md += `\n## Planned endpoints\n\nThe following contracts are planned but not yet implemented:\n\n### Purchases\n\n- \`GET /purchases?store=&from=&to=\` \u2014 purchase history grouped by month.\n\n### Plans\n\n- \`GET /plans?status=active\` \u2014 list shopping plans.\n- \`POST /plans/generate\` \u2014 ask AI to generate a shopping plan.\n- \`POST /plans\` \u2014 save a generated plan as active.\n- \`PATCH /plans/:id/items/:itemId\` \u2014 mark a plan item as bought or skipped.\n\n### AI Assistant\n\n- \`POST /ai/chat\` \u2014 send a message to the AI assistant.\n`
 
   return md
 }
 
 async function main() {
-  const [apiSpec, authSpec] = await Promise.all([
+  const [apiSpec, householdsSpec, authSpec] = await Promise.all([
     generateSpecs(apiApp, DOCS_OPTIONS),
+    generateSpecs(householdsApp, DOCS_OPTIONS),
     generateSpecs(authApp, DOCS_OPTIONS),
   ])
 
-  const allPaths: Record<string, any> = { ...apiSpec.paths }
+  const allPaths: Record<string, any> = { ...apiSpec.paths, ...householdsSpec.paths }
   for (const [authPath, methods] of Object.entries(authSpec.paths)) {
     allPaths[authPath] = methods
   }

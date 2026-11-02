@@ -1,6 +1,7 @@
 import type { Env } from './types.js'
 import { authApp } from './apps/auth.js'
 import { apiApp } from './apps/api.js'
+import { householdsApp } from './apps/households.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
 
 const AUTH_ROUTES = new Set([
@@ -55,6 +56,13 @@ export const gateway = {
         adjustedUrl.pathname = path.replace(/^\/api\/auth/, '')
         const adjustedRequest = new Request(adjustedUrl.toString(), request)
         return authApp.fetch(adjustedRequest, env, ctx)
+      }
+
+      // Household member management (ahaqqu/RumaQ#331) is its own domain app
+      // (backend conventions: one app per domain) — dispatched before the
+      // general apiApp fallthrough.
+      if (path === '/api/households' || path.startsWith('/api/households/')) {
+        return householdsApp.fetch(request, env, ctx)
       }
 
       try {

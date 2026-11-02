@@ -73,7 +73,7 @@ import {
 import { requireAdmin } from '../lib/admin.js'
 import { groundPlanItem } from '../lib/grounding.js'
 import { escapeLike } from '../lib/sql.js'
-import { getRateLimitConfig, isRateLimited } from '../lib/rate-limit.js'
+import { ipRateLimitMiddleware } from '../lib/rate-limit.js'
 import { computeRunOutDays } from '../lib/stock.js'
 import { computePatterns } from '../lib/patterns.js'
 import {
@@ -189,33 +189,16 @@ const apiApp = new Hono<Env>()
 apiApp.use(logger())
 apiApp.use('*', createCors())
 
-// General per-user/per-IP API rate limiting. Applied after CORS but before auth
-// so that unauthenticated bursts are also throttled. Keys are in-memory only;
-// move to KV for multi-instance deployments.
-apiApp.use('*', async (c, next) => {
+// General per-user/per-IP API rate limiting (shared middleware in
+// lib/rate-limit.ts — the households app runs the identical stack). Applied
+// after CORS but before auth so that unauthenticated bursts are throttled too.
+apiApp.use('*', (c, next) => {
   // Service-to-service ingest authenticates with a bearer secret and runs
   // once daily — exempt it from the per-IP limiter.
   if (c.req.path.startsWith('/api/internal/')) {
-    await next()
-    return
+    return next()
   }
-  // Rate-limit by client IP. In production, Cloudflare sets CF-Connecting-IP,
-  // which is authoritative. The X-Forwarded-For fallback is only for the
-  // local Docker test stack, where the reverse proxy supplies a synthetic IP
-  // per test scenario. A browser client cannot spoof CF-Connecting-IP.
-  const clientIp =
-    c.req.header('CF-Connecting-IP') ||
-    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
-    'unknown'
-  const key = `api:${clientIp}`
-  const { windowMs, maxRequests } = getRateLimitConfig(c.env)
-  const { limited, retryAfter } = isRateLimited(key, windowMs, maxRequests)
-  if (limited) {
-    return c.json({ error: 'Too many requests. Please slow down.' }, 429, {
-      'Retry-After': String(retryAfter),
-    })
-  }
-  await next()
+  return ipRateLimitMiddleware(c, next)
 })
 
 apiApp.onError((err, c) => {

@@ -134,19 +134,32 @@ export const propsAuthMiddleware = createMiddleware<Env>(async (c, next) => {
     return c.json({ error: 'Unauthorized' }, 401)
   }
 
-  const user = await c.env.DB.prepare(
-    'SELECT active_household_id FROM user_settings WHERE user_id = ?'
+  // Active-household resolution (ahaqqu/RumaQ#331): user_settings
+  // .active_household_id wins ONLY while the user is still a member of that
+  // household — a stale pointer (the member was removed) must not keep
+  // granting access. Otherwise the oldest membership is the baseline. One
+  // COALESCE round trip; the fallback is deterministic (joined_at then id)
+  // where the old LIMIT 1 picked an arbitrary row. If neither yields a
+  // household the session is unauthorized — the login flows (re)create a
+  // baseline household for membership-less users.
+  const row = await c.env.DB.prepare(
+    `SELECT COALESCE(
+       (SELECT m.household_id
+          FROM household_members m
+          JOIN user_settings s ON s.user_id = m.user_id AND s.active_household_id = m.household_id
+         WHERE m.user_id = ?
+         LIMIT 1),
+       (SELECT household_id
+          FROM household_members
+         WHERE user_id = ?
+         ORDER BY joined_at, household_id
+         LIMIT 1)
+     ) AS household_id`
   )
-    .bind(payload.sub)
-    .first<{ active_household_id: string | null }>()
+    .bind(payload.sub, payload.sub)
+    .first<{ household_id: string | null }>()
 
-  const householdId =
-    user?.active_household_id ||
-    (
-      await c.env.DB.prepare('SELECT household_id FROM household_members WHERE user_id = ? LIMIT 1')
-        .bind(payload.sub)
-        .first<{ household_id: string }>()
-    )?.household_id
+  const householdId = row?.household_id
 
   if (!householdId) {
     return c.json({ error: 'Unauthorized' }, 401)
