@@ -406,6 +406,68 @@ describe('ingestPrices', () => {
   })
 })
 
+describe('ingestPrices — source_url (issue #380)', () => {
+  it('persists the retailer campaign/listing page and refreshes it on conflict', async () => {
+    const { db, executedBatches } = createFakeDb([
+      { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
+      {
+        match: /^SELECT id, product_key FROM price_products/,
+        rows: [{ id: 'prod-1', product_key: 'beras--pandan-wangi--5-kg' }],
+      },
+    ])
+
+    const parsed = samplePayload()
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+
+    await ingestPrices(db, {
+      ...parsed.output,
+      items: parsed.output.items.map((item) => ({
+        ...item,
+        sourceUrl: 'https://www.lottemart.co.id/promosi/katalog',
+      })),
+    })
+
+    const observationStmts = executedBatches
+      .flat()
+      .filter((s) => s.sql.includes('INSERT INTO price_observations'))
+    expect(observationStmts).toHaveLength(2)
+    // The column rides beside brochure_url and refreshes with the rest of
+    // the evidence columns on the upsert conflict.
+    expect(observationStmts[0]!.sql).toContain('brochure_url, source_url, scraped_at')
+    expect(observationStmts[0]!.sql).toContain('source_url = excluded.source_url')
+    expect(observationStmts[0]!.params).toContain('https://www.lottemart.co.id/promosi/katalog')
+  })
+
+  it('binds an explicit null for old payloads without the field (additive, no backfill)', async () => {
+    const { db, executedBatches } = createFakeDb([
+      { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
+      {
+        match: /^SELECT id, product_key FROM price_products/,
+        rows: [{ id: 'prod-1', product_key: 'beras--pandan-wangi--5-kg' }],
+      },
+    ])
+
+    const parsed = samplePayload()
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+
+    // The fixture items carry no sourceUrl at all — the pre-#380 shape.
+    for (const item of parsed.output.items) expect(item.sourceUrl).toBeUndefined()
+    await ingestPrices(db, parsed.output)
+
+    const observationStmts = executedBatches
+      .flat()
+      .filter((s) => s.sql.includes('INSERT INTO price_observations'))
+    for (const stmt of observationStmts) {
+      // brochure_url is bind 15 (0-based), source_url bind 16 right after
+      // it: positional, because the fixture's brochureUrl values differ.
+      expect((stmt.params as unknown[])[16]).toBeNull()
+      expect((stmt.params as unknown[])[17]).toBe(parsed.output.scrapedAt)
+    }
+  })
+})
+
 describe('POST /api/internal/ingest/prices', () => {
   const validPayload = () => {
     const parsed = samplePayload()

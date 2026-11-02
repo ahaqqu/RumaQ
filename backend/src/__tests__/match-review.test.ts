@@ -20,6 +20,13 @@ function createFakeDb(
     batchResults?: Array<{ results?: unknown[] }>
     firstRow?: unknown
     exportRows?: Array<Record<string, unknown>>
+    /** Issue #380: observations answering the entry-evidence lookup. */
+    observationRows?: Array<{
+      product_key: string
+      brochure_url: string | null
+      source_url: string | null
+      observed_date: string
+    }>
   } = {}
 ) {
   const statements: FakeStatement[] = []
@@ -51,6 +58,16 @@ function createFakeDb(
               return (row.id as string) > (afterId as string)
             })
             return { results: filtered.slice(0, 200) }
+          }
+          // Entry-evidence enrichment (issue #380): answer with the fixture
+          // rows whose product_key is in the bound IN-chunk.
+          if (sql.includes('FROM price_observations o') && sql.includes('p.product_key IN')) {
+            const keys = stmt.params as string[]
+            return {
+              results: (config.observationRows ?? []).filter((row) =>
+                keys.includes(row.product_key)
+              ),
+            }
           }
           return { results: [] }
         },
@@ -211,6 +228,108 @@ describe('listReviewItems', () => {
   })
 })
 
+describe('entry-side evidence enrichment (issue #380)', () => {
+  const rowFor = (over: Record<string, unknown>) => ({
+    id: 'rev-1',
+    pair_data: JSON.stringify(pair()),
+    status: 'pending',
+    decided_at: null,
+    decided_by: null,
+    flag_count: 1,
+    first_flagged_at: '2026-10-28T23:00:05Z',
+    last_flagged_at: '2026-10-28T23:00:05Z',
+    run_started_at: '2026-10-28T23:00:05Z',
+    run_id: null,
+    ...over,
+  })
+
+  const observation = {
+    product_key: 'beras-ramos-5kg--ramos--5-kg',
+    brochure_url: '/api/brochures/superindo/20261028/page-3.jpg',
+    source_url: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+    observed_date: '2026-10-28',
+  }
+
+  function pageOf(rows: unknown[]) {
+    return [
+      { results: rows },
+      { results: [{ status: 'pending', count: rows.length }] },
+      { results: [{ count: rows.length }] },
+    ]
+  }
+
+  it('enriches every listed row with the latest observation of its entry', async () => {
+    const { db } = createFakeDb({
+      batchResults: pageOf([rowFor({})]),
+      observationRows: [observation],
+    })
+    const page = await listReviewItems(db)
+    expect(page.items[0]).toMatchObject({
+      entryBrochureUrl: '/api/brochures/superindo/20261028/page-3.jpg',
+      entrySourceUrl: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+      entryObservedAt: '2026-10-28',
+    })
+  })
+
+  it('enriches DECIDED rows too — after-the-fact review is the point', async () => {
+    const { db } = createFakeDb({
+      batchResults: pageOf([rowFor({ id: 'rev-2', status: 'approved' })]),
+      observationRows: [observation],
+    })
+    const page = await listReviewItems(db, { status: 'approved' })
+    expect(page.items[0]!.status).toBe('approved')
+    expect(page.items[0]!.entryObservedAt).toBe('2026-10-28')
+  })
+
+  it('stays null when the entry has no observation (or none survived retention)', async () => {
+    const { db } = createFakeDb({ batchResults: pageOf([rowFor({})]), observationRows: [] })
+    const page = await listReviewItems(db)
+    expect(page.items[0]).toMatchObject({
+      entryBrochureUrl: null,
+      entrySourceUrl: null,
+      entryObservedAt: null,
+    })
+  })
+
+  it('chunks the IN-list at 90 keys — a 120-entry page still reads every observation', async () => {
+    const entries = Array.from({ length: 120 }, (_, i) => `entry-key-${i}--brand--unit`)
+    const rows = entries.map((key, i) =>
+      rowFor({ id: `rev-${i}`, pair_data: JSON.stringify(pair({ entryProductKey: key })) })
+    )
+    const observationRows = entries.map((key) => ({
+      product_key: key,
+      brochure_url: null,
+      source_url: null,
+      observed_date: '2026-10-28',
+    }))
+    const { db, statements } = createFakeDb({
+      batchResults: pageOf(rows),
+      observationRows,
+    })
+    const page = await listReviewItems(db, { limit: 120 })
+    expect(page.items).toHaveLength(120)
+    const enrichment = statements.filter(
+      (s) => s.sql.includes('FROM price_observations o') && s.sql.includes('p.product_key IN')
+    )
+    expect(enrichment).toHaveLength(2) // 90 + 30
+    expect(enrichment[0]!.params).toHaveLength(90)
+    expect(enrichment[1]!.params).toHaveLength(30)
+    // Every row got its evidence — no key lost between chunks.
+    for (const item of page.items) expect(item.entryObservedAt).toBe('2026-10-28')
+  })
+
+  it('carries the same evidence through decide/undo responses', async () => {
+    const decidedRow = rowFor({
+      status: 'approved',
+      decided_at: '2026-10-29T10:00:00.000Z',
+      decided_by: 'admin-1',
+    })
+    const { db } = createFakeDb({ firstRow: decidedRow, observationRows: [observation] })
+    const item = await decideReviewItem(db, 'rev-1', 'approved', 'admin-1')
+    expect(item).toMatchObject({ status: 'approved', entryObservedAt: '2026-10-28' })
+  })
+})
+
 describe('decideReviewItem / undoReviewDecision', () => {
   const decidedRow = {
     id: 'rev-1',
@@ -239,11 +358,13 @@ describe('decideReviewItem / undoReviewDecision', () => {
     const { db, statements } = createFakeDb({ firstRow: decidedRow })
     await decideReviewItem(db, 'rev-1', 'approved', 'admin-1')
     await decideReviewItem(db, 'rev-1', 'rejected', 'admin-2')
-    // Each decide = UPDATE then re-SELECT; the second UPDATE carries the
-    // newer verdict and admin.
-    expect(statements[0]!.params[0]).toBe('approved')
-    expect(statements[2]!.params[0]).toBe('rejected')
-    expect(statements[2]!.params[2]).toBe('admin-2')
+    // Each decide = UPDATE then re-SELECT (+ the #380 evidence enrichment
+    // read); the second UPDATE carries the newer verdict and admin.
+    const updates = statements.filter((s) => s.sql.startsWith('UPDATE match_review_items'))
+    expect(updates).toHaveLength(2)
+    expect(updates[0]!.params[0]).toBe('approved')
+    expect(updates[1]!.params[0]).toBe('rejected')
+    expect(updates[1]!.params[2]).toBe('admin-2')
   })
 
   it('returns null for an unknown id (the route 404s)', async () => {
@@ -342,6 +463,38 @@ describe('exportReviewDecisions', () => {
     const parsed = JSON.parse(text) as { schema: number; decisions: unknown[] }
     expect(parsed.schema).toBe(1)
     expect(parsed.decisions).toEqual([])
+  })
+
+  it('carries the entry-side evidence on every export row (issue #380)', async () => {
+    const exportRows = [
+      {
+        id: 'rev-1',
+        pair_data: JSON.stringify(pair()),
+        status: 'approved',
+        decided_at: new Date(Date.UTC(2026, 9, 28, 0, 0, 0)).toISOString(),
+        decided_by: 'admin-1',
+        flag_count: 1,
+        run_started_at: '2026-10-28T23:00:05Z',
+      },
+    ]
+    const { db } = createFakeDb({
+      exportRows,
+      observationRows: [
+        {
+          product_key: 'beras-ramos-5kg--ramos--5-kg',
+          brochure_url: '/api/brochures/superindo/20261028/page-3.jpg',
+          source_url: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+          observed_date: '2026-10-28',
+        },
+      ],
+    })
+    const text = await new Response(exportReviewDecisions(db)).text()
+    const parsed = JSON.parse(text) as { decisions: Array<Record<string, unknown>> }
+    expect(parsed.decisions[0]).toMatchObject({
+      entryBrochureUrl: '/api/brochures/superindo/20261028/page-3.jpg',
+      entrySourceUrl: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+      entryObservedAt: '2026-10-28',
+    })
   })
 })
 
