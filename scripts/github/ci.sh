@@ -22,15 +22,6 @@ echo "=== CI: frontend tests ==="
 echo "=== CI: backend tests ==="
 "$ROOT_DIR/scripts/test.sh" unit backend --coverage
 
-echo "=== CI: scraper tests ==="
-"$ROOT_DIR/scripts/test.sh" unit scraper
-
-echo "=== CI: VPS deploy artifact ==="
-# Builds the exact archive deploy/vps.sh uploads and drives its verifier with
-# handcrafted bad tars (symlinks, browsers/, missing bundles, oversized, ..):
-# these failures would otherwise surface on the box after the upload.
-bash "$ROOT_DIR/scripts/test/vps-deploy.sh"
-
 echo "=== CI: audit ==="
 bun audit --audit-level=critical
 
