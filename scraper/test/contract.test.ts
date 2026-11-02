@@ -11,6 +11,7 @@ import { parse, safeParse } from 'valibot'
 import {
   ingestItemSchema,
   ingestPayloadSchema,
+  reviewItemPairSchema,
   runAuditSchema,
   runReportSchema,
 } from '@rumaq/contract'
@@ -246,5 +247,99 @@ describe('ingestItemSchema originalPrice (issue #367)', () => {
       ],
     })
     expect(result.success).toBe(true)
+  })
+})
+
+describe('ingestItemSchema sourceUrl (issue #380)', () => {
+  function sampleItem(over: Record<string, unknown>) {
+    return safeParse(ingestItemSchema, {
+      productKey: 'teh-kotak--null--250-ml',
+      name: 'Teh Kotak 250ml',
+      storeSlug: 'superindo',
+      price: 5000,
+      matchConfidence: 1.0,
+      ...over,
+    })
+  }
+
+  it('accepts an item carrying the retailer campaign/listing page', () => {
+    const result = sampleItem({
+      sourceUrl: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('accepts an explicit null and an absent field — old payloads still validate', () => {
+    expect(sampleItem({ sourceUrl: null }).success).toBe(true)
+    expect(sampleItem({}).success).toBe(true)
+  })
+
+  it('rejects a sourceUrl over the 500-char cap', () => {
+    expect(sampleItem({ sourceUrl: 'a'.repeat(501) }).success).toBe(false)
+    expect(sampleItem({ sourceUrl: 'a'.repeat(500) }).success).toBe(true)
+  })
+
+  it('keeps the whole-payload strict shape — old payloads on the new schema pass', () => {
+    const result = safeParse(ingestPayloadSchema, {
+      schemaVersion: 1,
+      scrapedAt: '2026-10-24T23:00:05Z',
+      stores: [{ slug: 'superindo', name: 'Superindo', region: 'jakarta' }],
+      items: [
+        {
+          productKey: 'teh-kotak--null--250-ml',
+          name: 'Teh Kotak 250ml',
+          storeSlug: 'superindo',
+          price: 5000,
+          matchConfidence: 1.0,
+        },
+      ],
+    })
+    expect(result.success).toBe(true)
+  })
+})
+
+describe('reviewItemPairSchema evidence fields (issue #380)', () => {
+  function samplePair(over: Record<string, unknown>) {
+    return safeParse(reviewItemPairSchema, {
+      itemProductKey: 'beras-ramos-5kg----5-kg',
+      itemName: 'Beras Ramos 5 kg',
+      itemBrand: null,
+      itemUnit: '5 kg',
+      itemPrice: 89000,
+      itemEffectiveUnitPrice: 89000,
+      itemStore: 'lotte-mart',
+      entryProductKey: 'beras-ramos-5kg--ramos--5-kg',
+      entryName: 'Beras Ramos 5kg',
+      entryBrand: 'Ramos',
+      entryUnit: '5 kg',
+      entryPrice: 27000,
+      entryEffectiveUnitPrice: 27000,
+      entryStore: 'superindo',
+      matchMethod: 'exact',
+      confidence: 1,
+      reason: 'price_ratio',
+      ...over,
+    })
+  }
+
+  it('accepts pairs carrying both evidence URLs', () => {
+    const result = samplePair({
+      itemBrochureUrl: '/api/brochures/superindo/20261101/page-1.jpg',
+      itemSourceUrl: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('accepts explicit nulls and absent fields — pairs frozen before #380 still validate', () => {
+    expect(samplePair({ itemBrochureUrl: null, itemSourceUrl: null }).success).toBe(true)
+    expect(samplePair({}).success).toBe(true)
+  })
+
+  it('rejects an evidence URL over the 500-char cap', () => {
+    expect(samplePair({ itemBrochureUrl: `/api/brochures/${'a'.repeat(500)}` }).success).toBe(false)
+  })
+
+  it('rejects unknown keys — strictObject, so a NEW report fails loudly on an OLD Worker', () => {
+    expect(samplePair({ itemEvidence: 'nope' }).success).toBe(false)
   })
 })

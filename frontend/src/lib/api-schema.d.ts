@@ -1913,6 +1913,8 @@ export interface operations {
               itemPrice?: number
               itemEffectiveUnitPrice?: number | null
               itemStore?: string
+              itemBrochureUrl?: string | null
+              itemSourceUrl?: string | null
               entryProductKey?: string
               entryName?: string
               entryBrand?: string | null
@@ -1920,6 +1922,9 @@ export interface operations {
               entryPrice?: number
               entryEffectiveUnitPrice?: number | null
               entryStore?: string
+              entryBrochureUrl?: string | null
+              entrySourceUrl?: string | null
+              entryObservedAt?: string | null
               /** @enum {string} */
               matchMethod?: 'exact' | 'embedding' | 'ai'
               confidence?: number
@@ -2028,6 +2033,8 @@ export interface operations {
               itemPrice?: number
               itemEffectiveUnitPrice?: number | null
               itemStore?: string
+              itemBrochureUrl?: string | null
+              itemSourceUrl?: string | null
               entryProductKey?: string
               entryName?: string
               entryBrand?: string | null
@@ -2035,6 +2042,9 @@ export interface operations {
               entryPrice?: number
               entryEffectiveUnitPrice?: number | null
               entryStore?: string
+              entryBrochureUrl?: string | null
+              entrySourceUrl?: string | null
+              entryObservedAt?: string | null
               /** @enum {string} */
               matchMethod?: 'exact' | 'embedding' | 'ai'
               confidence?: number
@@ -2110,6 +2120,8 @@ export interface operations {
               itemPrice?: number
               itemEffectiveUnitPrice?: number | null
               itemStore?: string
+              itemBrochureUrl?: string | null
+              itemSourceUrl?: string | null
               entryProductKey?: string
               entryName?: string
               entryBrand?: string | null
@@ -2117,6 +2129,9 @@ export interface operations {
               entryPrice?: number
               entryEffectiveUnitPrice?: number | null
               entryStore?: string
+              entryBrochureUrl?: string | null
+              entrySourceUrl?: string | null
+              entryObservedAt?: string | null
               /** @enum {string} */
               matchMethod?: 'exact' | 'embedding' | 'ai'
               confidence?: number

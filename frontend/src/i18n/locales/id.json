@@ -509,6 +509,10 @@
     "flagCount_one": "Ditandai {{count}} kali",
     "flagCount_other": "Ditandai {{count}} kali",
     "runDetail": "Lihat run",
-    "loadMore": "Muat lagi"
+    "loadMore": "Muat lagi",
+    "evidenceNoImage": "Tidak ada gambar halaman (sumber katalog)",
+    "evidenceOpenSource": "Buka halaman sumber",
+    "evidenceLastSeen": "Terakhir terlihat {{date}}",
+    "evidenceImageAlt": "Gambar halaman brosur"
   }
 }

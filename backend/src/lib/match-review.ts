@@ -108,6 +108,13 @@ export type ReviewItem = ReviewItemPair & {
   runStartedAt: string
   /** price_runs.id for the monitor deep-link; null when the run aged out. */
   runId: string | null
+  // Issue #380: the RIGHT side's evidence, enriched from the entry's latest
+  // price_observations row at read time (pairs froze only the entry's
+  // name/price/store). Null when the entry has no observation — or an old
+  // one that predates source_url (no backfill).
+  entryBrochureUrl: string | null
+  entrySourceUrl: string | null
+  entryObservedAt: string | null
 }
 
 export type ReviewCounts = { pending: number; approved: number; rejected: number }
@@ -143,6 +150,112 @@ function toReviewItem(row: ReviewRow): ReviewItem | null {
     lastFlaggedAt: row.last_flagged_at,
     runStartedAt: row.run_started_at,
     runId: row.run_id ?? null,
+    // Filled in by enrichEntryEvidence right after the rows land; a path
+    // that skips enrichment (or an entry with no observation) stays null.
+    entryBrochureUrl: null,
+    entrySourceUrl: null,
+    entryObservedAt: null,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Entry-side evidence enrichment (issue #380): the review card's RIGHT side
+// must show what the catalog entry looked like when last seen — page image
+// (price_observations.brochure_url, the R2 object URL for brochure stores /
+// the listing page for catalog stores), retailer page (source_url, null for
+// rows ingested before the column) and observed_date. Keyed on the entry's
+// product key alone (the pair's B side is a canonical product, not a
+// product×store pair): latest observation across sources, ordered like the
+// prices read paths' LATEST_OBSERVATION_SUBQUERY (observed date, then scrape
+// time). Deliberately NO confidence floor — evidence for a human verdict
+// must not hide rows the explorer hides.
+
+const ENTRY_EVIDENCE_CHUNK = 90
+
+type EntryEvidenceRow = {
+  product_key: string
+  brochure_url: string | null
+  source_url: string | null
+  observed_date: string | null
+}
+
+type EntryEvidence = {
+  entryBrochureUrl: string | null
+  entrySourceUrl: string | null
+  entryObservedAt: string | null
+}
+
+/**
+ * One chunked lookup per ≤90 entry keys (the ingest SELECT_IN_CHUNK budget —
+ * D1 caps bound parameters per query at 100). A review page is ≤200 rows, so
+ * this is at most 3 queries; an empty key list skips the round trip entirely.
+ * Exported for the real-SQLite semantics test (the string-matching fake db
+ * cannot pin ordering/tie-break behavior).
+ */
+export async function fetchEntryEvidence(
+  db: D1Database,
+  keys: string[]
+): Promise<Map<string, EntryEvidence>> {
+  const evidence = new Map<string, EntryEvidence>()
+  const unique = [...new Set(keys)]
+  for (let i = 0; i < unique.length; i += ENTRY_EVIDENCE_CHUNK) {
+    const chunk = unique.slice(i, i + ENTRY_EVIDENCE_CHUNK)
+    const placeholders = chunk.map(() => '?').join(',')
+    const { results } = await db
+      .prepare(
+        `SELECT p.product_key AS product_key,
+                o.brochure_url AS brochure_url,
+                o.source_url AS source_url,
+                o.observed_date AS observed_date
+         FROM price_observations o
+         JOIN price_products p ON p.id = o.product_id
+         WHERE p.product_key IN (${placeholders})
+           AND o.id = (
+             SELECT o2.id FROM price_observations o2
+             JOIN price_products p2 ON p2.id = o2.product_id
+             WHERE p2.product_key = p.product_key
+             -- Thermos A2 (issue #380): scraped_at binds per-payload, so two
+             -- sources observing the same entry on the same date tie EXACTLY
+             -- on (observed_date, scraped_at) — the final id tie-break pins
+             -- which one's evidence wins, deterministically on any engine.
+             ORDER BY o2.observed_date DESC, o2.scraped_at DESC, o2.id DESC
+             LIMIT 1
+           )`
+      )
+      .bind(...chunk)
+      .all<EntryEvidenceRow>()
+    for (const row of results ?? []) {
+      evidence.set(row.product_key, {
+        entryBrochureUrl: row.brochure_url ?? null,
+        entrySourceUrl: row.source_url ?? null,
+        entryObservedAt: row.observed_date ?? null,
+      })
+    }
+  }
+  return evidence
+}
+
+// Thermos B1 (issue #380): any row shape carrying the four evidence fields —
+// ReviewItem and ReviewExportRow both qualify structurally, so ONE loop serves
+// the queue list, the decide/undo responses, and the export pages alike; the
+// export rows cannot silently diverge from the card's evidence shape.
+type EvidenceCarrier = {
+  entryProductKey: string
+  entryBrochureUrl: string | null
+  entrySourceUrl: string | null
+  entryObservedAt: string | null
+}
+
+function enrichEntryEvidence<T extends EvidenceCarrier>(
+  items: T[],
+  evidence: Map<string, EntryEvidence>
+): void {
+  for (const item of items) {
+    const found = evidence.get(item.entryProductKey)
+    if (!found) continue
+    item.entryBrochureUrl = found.entryBrochureUrl
+    item.entrySourceUrl = found.entrySourceUrl
+    item.entryObservedAt = found.entryObservedAt
   }
 }
 
@@ -188,6 +301,15 @@ export async function listReviewItems(
     const item = toReviewItem(row)
     if (item) items.push(item)
   }
+  // Issue #380: the RIGHT side's evidence rides every list read — pending,
+  // decided, and `all` alike (after-the-fact review is the point).
+  enrichEntryEvidence(
+    items,
+    await fetchEntryEvidence(
+      db,
+      items.map((i) => i.entryProductKey)
+    )
+  )
 
   const counts: ReviewCounts = { pending: 0, approved: 0, rejected: 0 }
   for (const row of (countResult.results ?? []) as unknown as { status: string; count: number }[]) {
@@ -211,7 +333,13 @@ async function getReviewRow(db: D1Database, id: string): Promise<ReviewItem | nu
     )
     .bind(id)
     .first<ReviewRow>()
-  return row ? toReviewItem(row) : null
+  if (!row) return null
+  const item = toReviewItem(row)
+  if (!item) return null
+  // Same enrichment as the list — the decide/undo response carries the same
+  // evidence shape the queue rows do.
+  enrichEntryEvidence([item], await fetchEntryEvidence(db, [item.entryProductKey]))
+  return item
 }
 
 /**
@@ -270,6 +398,13 @@ export type ReviewExportRow = {
   matchMethod: string
   reason: string
   flagCount: number
+  // Issue #380: the entry-side evidence at export time, same shape as the
+  // queue rows — what the catalog side looked like when last seen. Additive
+  // on the rows; the envelope stays schema:1 (JSON consumers read what they
+  // know).
+  entryBrochureUrl: string | null
+  entrySourceUrl: string | null
+  entryObservedAt: string | null
 }
 
 const EXPORT_PAGE = 200
@@ -304,6 +439,10 @@ function toExportRow(row: ExportRow): ReviewExportRow | null {
     matchMethod: pair.matchMethod,
     reason: pair.reason,
     flagCount: row.flag_count,
+    // Filled per page by the enrichment below.
+    entryBrochureUrl: null,
+    entrySourceUrl: null,
+    entryObservedAt: null,
   }
 }
 
@@ -341,6 +480,17 @@ async function listDecidedPage(db: D1Database, after: { decidedAt: string; id: s
     const parsed = toExportRow(row)
     if (parsed) page.rows.push({ id: row.id, row: parsed })
   }
+  // Issue #380: export rows carry the entry-side evidence too — per keyset
+  // page, so the stream's memory stays flat. Same enrichment helper as the
+  // queue rows (thermos B1).
+  const evidence = await fetchEntryEvidence(
+    db,
+    page.rows.map(({ row }) => row.entryProductKey)
+  )
+  enrichEntryEvidence(
+    page.rows.map(({ row }) => row),
+    evidence
+  )
   const last = raw[raw.length - 1]
   if (last) page.cursor = { decidedAt: last.decided_at, id: last.id }
   return page

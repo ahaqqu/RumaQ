@@ -24,7 +24,7 @@ export type IngestResult = {
 
 // A db.batch() call counts as ONE query against D1's per-invocation budget
 // (50 on the free plan); within it, the per-query limits (100 bound
-// parameters) apply to each statement — an observation binds 17. 50
+// parameters) apply to each statement — an observation binds 18. 50
 // statements per batch keeps both limits comfortable.
 const BATCH_CHUNK = 50
 // D1 also caps bound parameters per QUERY at 100 — an IN list must ride
@@ -154,8 +154,8 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
              (id, product_id, source_id, observed_date, price, effective_unit_price,
               unit_qty, unit_qty_unit, unit_price,
               promo_type, promo_label, valid_from, valid_until, match_method,
-              match_confidence, brochure_url, scraped_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              match_confidence, brochure_url, source_url, scraped_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(product_id, source_id, observed_date) DO UPDATE SET
              price = excluded.price,
              effective_unit_price = excluded.effective_unit_price,
@@ -169,6 +169,7 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
              match_method = excluded.match_method,
              match_confidence = excluded.match_confidence,
              brochure_url = excluded.brochure_url,
+             source_url = excluded.source_url,
              scraped_at = excluded.scraped_at`
         )
         .bind(
@@ -190,6 +191,10 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
           item.matchMethod ?? null,
           item.matchConfidence,
           item.brochureUrl ?? null,
+          // The retailer campaign/listing page (issue #380) — the evidence
+          // link the review card's entry side enriches from. Null for old
+          // scrapers' payloads (additive field, no backfill).
+          item.sourceUrl ?? null,
           payload.scrapedAt
         )
     )

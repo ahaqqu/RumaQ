@@ -122,3 +122,50 @@ describe('migration 0015: ai_usage_events (#353)', () => {
     })
   })
 })
+
+describe('migration 0017: price_observations.source_url (#380)', () => {
+  it('adds the nullable evidence column on top of the pre-0017 schema; old rows stay null', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0017')
+    )
+
+    db.prepare(
+      `INSERT INTO price_sources (id, slug, name) VALUES ('src-1', 'lotte-mart', 'Lotte Mart')`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_products (id, product_key, name) VALUES ('prod-1', 'beras--ramos--5-kg', 'Beras Ramos 5kg')`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_observations
+         (id, product_id, source_id, observed_date, price, match_confidence, scraped_at)
+       VALUES ('obs-1', 'prod-1', 'src-1', '2026-10-24', 27000, 1.0, '2026-10-24T23:00:05Z')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0017_observation_source_url.sql'), 'utf8'))
+
+    // The pre-existing row survives with source_url NULL — no backfill.
+    const old = db.prepare('SELECT * FROM price_observations WHERE id = ?').get('obs-1')
+    expect(old).toMatchObject({ id: 'obs-1', source_url: null })
+
+    // New rows carry the retailer campaign/listing page.
+    db.prepare(
+      `INSERT INTO price_observations
+         (id, product_id, source_id, observed_date, price, match_confidence, scraped_at, source_url)
+       VALUES ('obs-2', 'prod-1', 'src-1', '2026-10-25', 27000, 1.0, '2026-10-25T23:00:05Z',
+               'https://www.lottemart.co.id/promosi/katalog')`
+    ).run()
+    const fresh = db.prepare('SELECT * FROM price_observations WHERE id = ?').get('obs-2')
+    expect(fresh).toMatchObject({
+      source_url: 'https://www.lottemart.co.id/promosi/katalog',
+    })
+  })
+
+  it('keeps the full chain green on a fresh database', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(price_observations)').all()
+    expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('source_url')
+  })
+})

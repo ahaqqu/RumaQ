@@ -375,8 +375,15 @@ function processStore(
         runItemsFile,
         entry,
         // The outbox line carries the OBJECT URL: a replayed batch must emit
-        // the R2-backed URL, not the retailer listing page.
-        { brochureUrl: objectUrl, imageFilename: image.filename, rawItems },
+        // the R2-backed URL, not the retailer listing page. sourceUrl (issue
+        // #380) rides alongside — the retailer campaign page, so a replayed
+        // batch keeps its "open source page" evidence.
+        {
+          brochureUrl: objectUrl,
+          sourceUrl: image.brochureUrl,
+          imageFilename: image.filename,
+          rawItems,
+        },
         scrapedAt
       )
       // Shadow-OCR audit (issue #367): only fresh pages ever reach this loop
@@ -402,6 +409,10 @@ function processStore(
         storeSlug: store.slug,
         brochureUrl: image.brochureUrl,
         brochureObjectUrl: objectUrl,
+        // Issue #380: the retailer campaign page — the review pair's LEFT
+        // "open source page" link. Distinct from brochureObjectUrl (the R2
+        // page image), which the payload's brochureUrl already carries.
+        sourceUrl: image.brochureUrl,
         products,
       })
 
@@ -480,7 +491,13 @@ function appendValidatedBatch(
   storeSlug: string,
   runItemsFile: string,
   entry: PipelineStatus['stores'][string],
-  batch: { brochureUrl: string | null; imageFilename: string; rawItems: RawOcrItem[] },
+  batch: {
+    brochureUrl: string | null
+    /** Issue #380: the retailer campaign/listing page, riding the outbox line. */
+    sourceUrl: string | null
+    imageFilename: string
+    rawItems: RawOcrItem[]
+  },
   scrapedAt: string
 ): Effect.Effect<ValidatedProduct[], StoreRunError> {
   return Effect.gen(function* () {
@@ -519,13 +536,16 @@ function appendValidatedBatch(
     }
     entry.itemsExtracted += products.length
     // The line carries this run's scrapedAt so a later replay keeps the
-    // original observed date.
+    // original observed date, and sourceUrl (#380) so the replayed batch
+    // keeps the retailer campaign/listing page evidence. Legacy lines
+    // predate the field and replay without it — no backfill.
     yield* ioTry('append', runItemsFile, () =>
       appendFile(
         runItemsFile,
         JSON.stringify({
           storeSlug,
           brochureUrl: batch.brochureUrl,
+          sourceUrl: batch.sourceUrl,
           products,
           scrapedAt,
         }) + '\n',
@@ -653,15 +673,19 @@ function processCatalogStore(
 
     const imageProducts: ImageProducts[] = []
     for (const [pageUrl, pageItems] of byPage) {
+      // A catalog item without a source page carries no deep-link rather
+      // than an empty URL — the same value is the observation's brochureUrl
+      // AND the review pair's sourceUrl (#380): for catalog stores the
+      // listing page is the only source evidence there is.
+      const sourceUrl = pageUrl.length > 0 ? pageUrl : null
       const products = yield* appendValidatedBatch(
         options,
         store.slug,
         runItemsFile,
         entry,
         {
-          // A catalog item without a source page carries no deep-link
-          // rather than an empty URL.
-          brochureUrl: pageUrl.length > 0 ? pageUrl : null,
+          brochureUrl: sourceUrl,
+          sourceUrl,
           imageFilename: pageUrl,
           rawItems: pageItems.map(catalogItemToRaw),
         },
@@ -669,7 +693,8 @@ function processCatalogStore(
       )
       imageProducts.push({
         storeSlug: store.slug,
-        brochureUrl: pageUrl.length > 0 ? pageUrl : null,
+        brochureUrl: sourceUrl,
+        sourceUrl,
         products,
         scrapedAt,
       })
@@ -832,7 +857,20 @@ export function runPipeline(
       const matchInput: MatchInputItem[] = []
       for (const batch of allImageProducts) {
         for (const product of batch.products) {
-          matchInput.push({ storeSlug: batch.storeSlug, product })
+          matchInput.push({
+            storeSlug: batch.storeSlug,
+            product,
+            // Issue #380: the LEFT side's evidence, frozen into every review
+            // pair the matcher emits for this item. The page image is the
+            // exact URL the observation's brochure_url will store (the R2
+            // object URL for brochure stores — current-run batches carry it
+            // in brochureObjectUrl, replayed ones already in brochureUrl);
+            // the source page rides sourceUrl. Catalog batches carry their
+            // listing page in both — the card's servable-shape check sorts
+            // image vs page out.
+            itemBrochureUrl: batch.brochureObjectUrl ?? batch.brochureUrl ?? null,
+            itemSourceUrl: batch.sourceUrl ?? null,
+          })
         }
       }
       const outcomeByProduct = new Map<ValidatedProduct, MatchOutcome>()

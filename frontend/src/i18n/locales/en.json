@@ -509,6 +509,10 @@
     "flagCount_one": "Flagged {{count}} time",
     "flagCount_other": "Flagged {{count}} times",
     "runDetail": "View run",
-    "loadMore": "Load more"
+    "loadMore": "Load more",
+    "evidenceNoImage": "No page image (catalog source)",
+    "evidenceOpenSource": "Open source page",
+    "evidenceLastSeen": "Last seen {{date}}",
+    "evidenceImageAlt": "Brochure page image"
   }
 }

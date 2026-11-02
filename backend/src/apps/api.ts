@@ -2869,6 +2869,10 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
     itemPrice: { type: 'integer' },
     itemEffectiveUnitPrice: { type: ['number', 'null'] },
     itemStore: { type: 'string' },
+    // Issue #380: the LEFT side's evidence, frozen in the pair blob (null
+    // for pairs flagged before the fields existed — no backfill).
+    itemBrochureUrl: { type: ['string', 'null'] },
+    itemSourceUrl: { type: ['string', 'null'] },
     entryProductKey: { type: 'string' },
     entryName: { type: 'string' },
     entryBrand: { type: ['string', 'null'] },
@@ -2876,6 +2880,11 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
     entryPrice: { type: 'integer' },
     entryEffectiveUnitPrice: { type: ['number', 'null'] },
     entryStore: { type: 'string' },
+    // Issue #380: the RIGHT side's evidence, enriched from the entry's
+    // latest observation at read time (pending AND decided rows).
+    entryBrochureUrl: { type: ['string', 'null'] },
+    entrySourceUrl: { type: ['string', 'null'] },
+    entryObservedAt: { type: ['string', 'null'] },
     matchMethod: { type: 'string', enum: ['exact', 'embedding', 'ai'] },
     confidence: { type: 'number' },
     reason: { type: 'string', enum: ['price_ratio', 'verifier_unresolved'] },

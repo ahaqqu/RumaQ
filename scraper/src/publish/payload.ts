@@ -45,6 +45,15 @@ export interface ImageProducts {
    * no producer ever sets null, so the type is optional-string only.
    */
   brochureObjectUrl?: string
+  /**
+   * The retailer campaign/listing page the items were extracted from
+   * (issue #380): a brochure store's campaign page, a catalog store's
+   * listing page — the same string rejectedItems already emit as `source`.
+   * Rides the outbox line so a replayed batch keeps it, and lands on the
+   * payload items (`sourceUrl`) and the review pairs (`itemSourceUrl`).
+   * Legacy outbox lines predate the field and replay as null — no backfill.
+   */
+  sourceUrl?: string | null
   products: ValidatedProduct[]
   /**
    * ISO scrapedAt of the run that extracted these items. Outbox lines carry
@@ -112,6 +121,11 @@ export function buildPayload(input: {
         // Issue #293 repoint: brochure-store items reference the R2-backed
         // same-origin object URL; catalog stores keep the page URL.
         brochureUrl: image.brochureObjectUrl ?? image.brochureUrl,
+        // Issue #380: the retailer campaign/listing page, distinct from the
+        // R2 object URL above so the review card can offer both the page
+        // image and the retailer page. Null (not undefined) per the payload
+        // convention — explicit nulls for absent values.
+        sourceUrl: image.sourceUrl ?? null,
       })
     }
   }
