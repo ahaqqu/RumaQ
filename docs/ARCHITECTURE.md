@@ -1,6 +1,6 @@
 # RumaQ — Full-Stack Architecture
 
-This document describes the production architecture for RumaQ on Cloudflare's free tier. It is designed for a single household (MVP) but keeps the data model ready for multi-household expansion.
+This document describes the production architecture for RumaQ on Cloudflare's free tier. The data model is multi-household: users can belong to several households (issue #331 adds the member-management endpoints), while inventory, plans, purchases, and history scope to the active household.
 
 > **Testing strategy has moved** → [`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md)
 
@@ -199,7 +199,8 @@ Google OAuth 2.0 is implemented inside the Worker using the [Authorization Code 
 
 4. Protected-route middleware
    - The **gateway** (`backend/src/gateway.ts`) routes `/api/*` non-auth requests to the `CachedApi` entrypoint (which wraps `apiApp`).
-   - Inside `apiApp` (`backend/src/apps/api.ts`), the `propsAuthMiddleware` first checks `c.env.props` (fast path when props are provided), then falls back to reading the `rumaq_session` cookie, verifying the JWT, and looking up the active household from `user_settings.active_household_id`. It sets Hono `Variables` (`userId`, `householdId`) for downstream route handlers. Routes that require authentication register this middleware; public routes skip it entirely.
+   - Inside `apiApp` (`backend/src/apps/api.ts`), the `propsAuthMiddleware` first checks `c.env.props` (fast path when props are provided), then falls back to reading the `rumaq_session` cookie, verifying the JWT, and resolving the active household: `user_settings.active_household_id` wins only while the user is still a member of that household (a stale pointer after a removal must not grant access), otherwise the oldest `household_members` row. It sets Hono `Variables` (`userId`, `householdId`) for downstream route handlers. Routes that require authentication register this middleware; public routes skip it entirely.
+   - Household member management (issue #331) is a separate domain app (`backend/src/apps/households.ts` + `backend/src/lib/households.ts`) the gateway dispatches for `/api/households*` before the `apiApp` fallthrough — same CORS/per-IP rate-limit/auth stack, plus owner/last-owner rules and expiring invite codes in `household_invites` (migration 0020).
 
 **Why not Cloudflare Access?** Access is simpler, but in-app OAuth keeps the API self-contained, lets us store the user record in D1 for personalization, and makes local development straightforward with the Cloudflare Vite plugin.
 

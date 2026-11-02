@@ -134,7 +134,7 @@ so you waste less food, shop in fewer trips, and spend less.
 ## 5. Constraints & scope notes for the rewrite
 
 - **Platform:** responsive web PWA (mobile-first; installable; offline-capable). No native apps.
-- **Single household per user** for now (multi-household is planned backend work — design must not paint us into a corner, but no UI needed yet).
+- **Multi-household is live** (issue #331): the sidebar household card links into a "Household members" screen under Household Admin (member list, owner-issued invite codes, join by code, active-household switching, create household). The redesign's household card ("Keluarga Putri · 4 people") is backed by real data; every data view stays scoped to the active household.
 - **No push notifications** (deferred product decision).
 - **Mobile is the primary context:** scanning receipts and checking off a plan happen in a supermarket.
 - **Trust matters:** AI-suggested data is always presented as editable suggestions, never silently applied; estimates are shown with their basis.
