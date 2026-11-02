@@ -19,6 +19,15 @@ The manager is an orchestrator. It NEVER modifies product code; it may read code
 
 All code changes are done by subagents.
 
+## Two repos (RumaQ + RumaQ-pipeline)
+
+- The user always talks to the RumaQ project; it is the conversation home and the publish backend.
+- Route scraper/data-pipeline work (store plugins, scraping, OCR, matching, publish, groceries) to `/home/ahaqqu/Projects/RumaQ-pipeline`; execute it under that repo's AGENTS.md.
+- File scraper-specific technique issues in the pipeline repo, not RumaQ.
+- Run pipeline PRs through the same issue → research → design → plan → implement → review → merge loop; the board is each repo's Delivery Kanban.
+- One manager state file covers both repos (`<home>/.zcode/manager/RumaQ/state.md`).
+- When a change touches both sides (contract/ in RumaQ + pipeline consumption), ship the RumaQ PR first, then `./scripts/sync-contract.sh <sha>` in a pipeline PR.
+
 ## Backlog: GitHub issues + kanban board
 
 Every work unit — feature OR bug — is a GitHub issue. The board is a GitHub Projects V2 project (default name "Delivery Kanban"; create once per repo, reuse if present) whose single-select Status field has exactly these options, in order:
