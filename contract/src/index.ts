@@ -380,6 +380,7 @@ export const SCRAPE_STORE_SLUGS = [
   'alfamart',
   'tip-top',
   'hari-hari',
+  'yogya',
 ] as const
 
 export const scrapeCommandCreateSchema = strictObject({
