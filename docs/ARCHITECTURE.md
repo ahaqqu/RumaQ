@@ -370,7 +370,7 @@ The legacy Pages project was deleted after the cutover; `rumaq.pages.dev` no lon
 
    The deploy script creates the buckets if missing.
 
-   The buckets are private by default. Verify privacy in the Cloudflare dashboard under R2 > `rumaq-receipts` and R2 > `rumaq-brochures` > Settings: "Object access" should be "Private". Receipts are keep-forever user documents; brochures (issue #293) are rotating marketing images swept once no current observation references them (14-day grace), served only through the authenticated Worker proxy `GET /api/brochures/*`.
+   The buckets are private by default. Verify privacy in the Cloudflare dashboard under R2 > `rumaq-receipts` and R2 > `rumaq-brochures` > Settings: "Object access" should be "Private". Receipts are keep-forever user documents; brochures (issue #293) are rotating marketing images swept once no current observation references them and the object is past a one-year review-evidence grace (BROCHURE_GRACE_DAYS), served only through the authenticated Worker proxy `GET /api/brochures/*`.
 
 4. Set Worker secrets:
 

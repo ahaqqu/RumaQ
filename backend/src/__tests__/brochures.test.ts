@@ -422,15 +422,16 @@ describe('sweepUnreferencedBrochures', () => {
   it('deletes unreferenced objects past the grace period and keeps fresh ones', async () => {
     const { db } = dbWithReferenced([])
     const brochures = createBrochuresStub()
-    await brochures.put('lotte-mart/20250101/old.jpg', pngBytes)
+    await brochures.put('lotte-mart/20250101/old.jpg', pngBytes) // ~2 years old
     await brochures.put('lotte-mart/20261020/recent.jpg', pngBytes) // 9 days old
-    await brochures.put('lotte-mart/20261001/stale.jpg', pngBytes) // 28 days old
+    // 28 days old — inside the one-year review-evidence grace, so kept.
+    await brochures.put('lotte-mart/20261001/stale.jpg', pngBytes)
 
     const { deleted } = await sweep(db, brochures)
-    expect(deleted).toBe(2)
+    expect(deleted).toBe(1)
     expect(brochures.objects.has('lotte-mart/20250101/old.jpg')).toBe(false)
     expect(brochures.objects.has('lotte-mart/20261020/recent.jpg')).toBe(true)
-    expect(brochures.objects.has('lotte-mart/20261001/stale.jpg')).toBe(false)
+    expect(brochures.objects.has('lotte-mart/20261001/stale.jpg')).toBe(true)
   })
 
   it('keeps a referenced object at any age', async () => {
@@ -483,8 +484,9 @@ describe('sweepUnreferencedBrochures', () => {
   })
 
   it('piggybacks on the ingest POST: fires with the real clock and never fails the response', async () => {
-    // Old key-date fixture — no clock mocking: 20250101 is always past the
-    // 14-day grace relative to any realistic now.
+    // Old key-date fixture — no clock mocking: 20250101 is already past the
+    // one-year grace (since 2026-01-02) and only ages further, so it is
+    // swept relative to any realistic now.
     const payload = {
       schemaVersion: 1,
       scrapedAt: '2026-10-24T23:00:05Z',
