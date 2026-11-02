@@ -221,7 +221,9 @@
     "error": "Couldn't load run history",
     "storeError": "store failed",
     "needsProxy": "needs a Tier-3 proxy — skipped by design until credentials are configured",
-    "needsProxyChip": "needs proxy"
+    "needsProxyChip": "needs proxy",
+    "auditSummary": "Extraction audit — {{count}} pages re-extracted: names {{name}}%, prices {{price}}%, original prices {{original}}%, promos {{promo}}%",
+    "auditMore": "+{{count}} more disagreements"
   },
   "scrape": {
     "activeRun": "Active run",

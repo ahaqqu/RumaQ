@@ -259,3 +259,51 @@ describe('validateProduct', () => {
     expect(product!.ocrRawPrice).toBe('Rp 5.000')
   })
 })
+
+describe('originalPrice sanitize (issue #367)', () => {
+  it('flows through parseOcrJson untouched (model-controlled, unlike priceFromDom)', () => {
+    expect(parseOcrJson('[{"name": "Teh Kotak", "price": 5000, "originalPrice": 6500}]')).toEqual([
+      { name: 'Teh Kotak', price: 5000, originalPrice: 6500 },
+    ])
+  })
+
+  it('keeps a valid original price on the validated product', () => {
+    const [product] = validateProduct(
+      { name: 'Teh Kotak 250ml', price: 5000, originalPrice: 'Rp 6.500' },
+      'test.jpg'
+    )
+    expect(product!.originalPrice).toBe(6500)
+  })
+
+  it('defaults to null when the source shows no original price', () => {
+    const [product] = validateProduct({ name: 'Teh Kotak 250ml', price: 5000 }, 'test.jpg')
+    expect(product!.originalPrice).toBeNull()
+  })
+
+  it('maps garbage to null without rejecting the item', () => {
+    const [product, reason] = validateProduct(
+      { name: 'Teh Kotak 250ml', price: 5000, originalPrice: 'N/A' },
+      'test.jpg'
+    )
+    expect(reason).toBeNull()
+    expect(product!.originalPrice).toBeNull()
+  })
+
+  it('maps a negative value to null (domain guard, not a bounds check)', () => {
+    const [product] = validateProduct(
+      { name: 'Teh Kotak 250ml', price: 5000, originalPrice: -6500 },
+      'test.jpg'
+    )
+    expect(product!.originalPrice).toBeNull()
+  })
+
+  it('is never bounds-checked — an absurd original price still rides', () => {
+    // The MIN/MAX misread guards exist to protect the PAID price; a weird
+    // strikethrough must never reject an otherwise valid item (issue #367).
+    const [product] = validateProduct(
+      { name: 'Teh Kotak 250ml', price: 5000, originalPrice: 99_999_999 },
+      'test.jpg'
+    )
+    expect(product!.originalPrice).toBe(99_999_999)
+  })
+})

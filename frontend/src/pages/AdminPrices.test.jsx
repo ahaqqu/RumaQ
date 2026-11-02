@@ -393,4 +393,87 @@ describe('AdminPrices', () => {
     expect(container.textContent).toContain('monitor.runHistory')
     expect(container.textContent).not.toContain('monitor.publishDetail')
   })
+
+  it('renders the shadow-audit agreement row under the store row (issue #367)', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [
+          {
+            ...mockFeed.runs[0],
+            perStore: {
+              superindo: {
+                ...mockFeed.runs[0].perStore.superindo,
+                audit: {
+                  sampledPages: 2,
+                  nameAgreePct: 98,
+                  priceAgreePct: 100,
+                  originalAgreePct: 95,
+                  promoAgreePct: 100,
+                  disagreements: [
+                    {
+                      imageFilename: 'promo-2026-11-01-1.jpg',
+                      field: 'price',
+                      primary: '17000',
+                      shadow: '17500',
+                    },
+                    {
+                      imageFilename: 'promo-2026-11-01-2.jpg',
+                      field: 'originalPrice',
+                      primary: '25000',
+                      shadow: 'none',
+                    },
+                    {
+                      imageFilename: 'promo-2026-11-01-3.jpg',
+                      field: 'promo',
+                      primary: 'MAX 1',
+                      shadow: 'none',
+                    },
+                    {
+                      imageFilename: 'promo-2026-11-01-4.jpg',
+                      field: 'name',
+                      primary: 'Beras Ramos 5kg',
+                      shadow: '(no match)',
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    // The summary line: sampled pages + the four agreement percentages (the
+    // suite's i18n mock returns raw keys without interpolating, so the label
+    // asserts the key; the values render through the real catalog).
+    expect(container.textContent).toContain('monitor.auditSummary')
+    // The first 3 disagreements render inline (field: primary → shadow).
+    expect(container.textContent).toContain('price: 17000 → 17500')
+    expect(container.textContent).toContain('originalPrice: 25000 → none')
+    expect(container.textContent).toContain('promo: MAX 1 → none')
+    // The 4th disagreement is counted by the +N marker, never rendered — the
+    // cap stays honest, like the reject list above.
+    expect(container.textContent).toContain('monitor.auditMore')
+    expect(container.textContent).not.toContain('name: Beras Ramos 5kg → (no match)')
+    // Each rendered line carries its page filename as the tooltip.
+    const tipped = [...container.querySelectorAll('[title]')].map((el) => el.getAttribute('title'))
+    expect(tipped).toContain('promo-2026-11-01-1.jpg')
+    expect(tipped).not.toContain('promo-2026-11-01-4.jpg')
+    // Warn-toned, consistent with the reject/degradation lines.
+    const warnLines = [...container.querySelectorAll('.text-warn')]
+    expect(warnLines.some((el) => el.textContent.includes('price: 17000 → 17500'))).toBe(true)
+  })
+
+  it('renders nothing new when a store reports no audit object (issue #367)', () => {
+    // mockFeed.runs[0] has no audit field — the gate-off report shape must
+    // render exactly as before.
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    expect(container.textContent).not.toContain('monitor.auditSummary')
+    expect(container.textContent).not.toContain('monitor.auditMore')
+  })
 })

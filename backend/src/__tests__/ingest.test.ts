@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { safeParse } from 'valibot'
 import { apiApp } from '../apps/api.js'
+import { runReportSchema } from '@rumaq/contract'
 import { ingestPayloadSchema, ingestPrices, getPricesStatus } from '../lib/ingest.js'
 
 type FakeRow = Record<string, unknown>
@@ -505,5 +506,79 @@ describe('GET /api/internal/prices/status', () => {
       latestScrapedAt: '2026-10-25T23:00:05Z',
       observationCount: 42,
     })
+  })
+})
+
+// Issue #367 (phase 1): the additive contract fields validate through the
+// WORKER's own schema import — a scraper report carrying the shadow-audit
+// object and a payload item carrying originalPrice are accepted by the
+// unchanged backend logic (the fields are measurement data; phase 2 decides
+// about persistence).
+
+describe('additive contract fields (issue #367)', () => {
+  it('accepts an ingest payload whose items carry originalPrice', () => {
+    const result = safeParse(ingestPayloadSchema, {
+      schemaVersion: 1,
+      scrapedAt: '2026-11-01T23:00:05Z',
+      stores: [{ slug: 'superindo', name: 'Superindo', region: 'jakarta' }],
+      items: [
+        {
+          productKey: 'teh-kotak--null--250-ml',
+          name: 'Teh Kotak 250ml',
+          storeSlug: 'superindo',
+          price: 5000,
+          originalPrice: 6500,
+          matchConfidence: 1.0,
+        },
+        {
+          productKey: 'beras--pandan-wangi--5-kg',
+          name: 'Beras Pandan Wangi 5 kg',
+          storeSlug: 'superindo',
+          price: 72000,
+          matchConfidence: 0.9,
+        },
+      ],
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('accepts a run report whose stores carry the shadow-audit object', () => {
+    const result = safeParse(runReportSchema, {
+      schemaVersion: 1,
+      runStartedAt: '2026-11-01T23:00:05Z',
+      finishedAt: '2026-11-01T23:04:11Z',
+      exitCode: 0,
+      status: 'success',
+      stage: 'done',
+      perStore: {
+        superindo: {
+          pagesFound: 2,
+          newImages: 2,
+          existingImages: 0,
+          skipped: 0,
+          itemsExtracted: 7,
+          itemsRejected: 0,
+          audit: {
+            sampledPages: 2,
+            nameAgreePct: 98,
+            priceAgreePct: 100,
+            originalAgreePct: 95,
+            promoAgreePct: 100,
+            disagreements: [
+              {
+                imageFilename: 'promo-2026-11-01-1.jpg',
+                field: 'price',
+                primary: '17000',
+                shadow: '17500',
+              },
+            ],
+          },
+        },
+      },
+      match: null,
+      publish: null,
+      error: null,
+    })
+    expect(result.success).toBe(true)
   })
 })

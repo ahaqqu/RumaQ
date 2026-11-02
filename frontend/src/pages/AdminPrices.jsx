@@ -151,6 +151,37 @@ function RunDetail({ run }) {
                       {warning}
                     </div>
                   ))}
+                  {/* Issue #367: the shadow-OCR agreement metrics ride the
+                  report only when the audit gate sampled pages — the row
+                  answers "do two models read the same thing?" without
+                  journald. Warn-toned like the reject/degradation lines;
+                  the first 3 disagreements inline (source as the tooltip),
+                  the rest counted. Raw scraper strings. */}
+                  {stats.audit && (
+                    <div className="text-warn mt-0.5 break-words">
+                      <div>
+                        {t('monitor.auditSummary', {
+                          count: stats.audit.sampledPages,
+                          name: stats.audit.nameAgreePct,
+                          price: stats.audit.priceAgreePct,
+                          original: stats.audit.originalAgreePct,
+                          promo: stats.audit.promoAgreePct,
+                        })}
+                      </div>
+                      {stats.audit.disagreements.slice(0, 3).map((d, i) => (
+                        <div key={i} title={d.imageFilename}>
+                          {d.field}: {d.primary} → {d.shadow}
+                        </div>
+                      ))}
+                      {stats.audit.disagreements.length > 3 && (
+                        <div>
+                          {t('monitor.auditMore', {
+                            count: stats.audit.disagreements.length - 3,
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

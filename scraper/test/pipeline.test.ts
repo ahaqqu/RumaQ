@@ -2042,3 +2042,246 @@ describe('brochure uploads (issue #293)', () => {
     expect(replayed.brochureUrl).toMatch(/^\/api\/brochures\/superindo\/20261024\//)
   })
 })
+
+// Issue #367 shadow-audit scenarios, in their own describe (thermos B1,
+// PR #369) — the gate-off proof and the gate-on flows are not
+// brochure-upload concerns.
+describe('shadow-OCR audit (issue #367)', () => {
+  // Two distinct fresh pages riding the
+  // shipped default chain — the primary rung is gemini-3.8-flash and the
+  // shadow model defaults to the chain's SECOND rung (gemini-3.7-flash), so
+  // the client stub tells the calls apart by args.model.
+  function scrubAuditEnv(): () => void {
+    const names = ['RUMAQ_OCR_AUDIT', 'RUMAQ_OCR_AUDIT_MODEL']
+    const previous = names.map((name) => process.env[name])
+    for (const name of names) delete process.env[name]
+    return () => {
+      names.forEach((name, i) => {
+        if (previous[i] !== undefined) process.env[name] = previous[i]!
+        else delete process.env[name]
+      })
+    }
+  }
+
+  async function twoFreshPagesFetch(): Promise<(url: string) => Promise<Response>> {
+    const katalogHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/katalog-super-hemat.html'),
+      'utf8'
+    )
+    const koranHtml = await readFile(
+      path.join(__dirname, 'fixtures/superindo/promo-koran.html'),
+      'utf8'
+    )
+    const jpegA = fakeJpegBytes()
+    const jpegB = (() => {
+      const bytes = fakeJpegBytes()
+      bytes.fill(0xdd, 29)
+      return bytes
+    })()
+    const seenUrls = new Map<string, Uint8Array<ArrayBuffer>>()
+    return async (url: string): Promise<Response> => {
+      if (url.includes('katalog-super-hemat')) return new Response(katalogHtml, { status: 200 })
+      if (url.includes('promo-koran')) return new Response(koranHtml, { status: 200 })
+      // Astro (in scope) serves empty category pages — a no-OCR store.
+      if (url.includes('astronauts.id')) {
+        return new Response('<html><body></body></html>', { status: 200 })
+      }
+      if (!seenUrls.has(url)) seenUrls.set(url, seenUrls.size === 0 ? jpegA : jpegB)
+      return new Response(seenUrls.get(url)!, {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      })
+    }
+  }
+
+  const primaryOcrItems = [
+    {
+      name: 'Gula Pasir',
+      brand: null,
+      unit: '1 kg',
+      price: 17000,
+      originalPrice: 25000,
+      promo: null,
+      period: '22 - 28 Okt 2026',
+    },
+  ]
+
+  it('makes ZERO shadow calls and reports no audit when the gate is unset (issue #367)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const fetchMock = await twoFreshPagesFetch()
+    let ocrCalls = 0
+    const ocrClient: GeminiClient = {
+      models: {
+        generateContent: async (args) => {
+          ocrCalls++
+          expect(args.model).toBe('gemini-3.8-flash')
+          return { text: JSON.stringify(primaryOcrItems) }
+        },
+      },
+    }
+    const { reported, publishFetch } = makeReportCapture()
+    const restoreAudit = scrubAuditEnv()
+    try {
+      const status = await Effect.runPromise(
+        runPipeline(
+          scopedOptions(stateDir, ['superindo', 'astro'], {
+            dryRun: false,
+            fetch: fetchMock,
+            ocrClient,
+            publishFetch,
+            ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+            ingestSecret: 's3cret',
+          })
+        )
+      )
+      // Exactly one call per fresh page — the default run is byte-for-byte
+      // the pre-audit behavior (hard requirement, issue #367).
+      expect(ocrCalls).toBe(2)
+      expect(status.stores['superindo']!.audit).toBeUndefined()
+      expect(reported).toHaveLength(1)
+      expect(reported[0]!.perStore['superindo']!.audit).toBeUndefined()
+    } finally {
+      restoreAudit()
+    }
+  })
+
+  it('runs the shadow diff on every fresh page when RUMAQ_OCR_AUDIT=all and rides the report (issue #367)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const fetchMock = await twoFreshPagesFetch()
+    let ocrCalls = 0
+    const ocrClient: GeminiClient = {
+      models: {
+        generateContent: async (args) => {
+          ocrCalls++
+          if (args.model === 'gemini-3.7-flash') {
+            // The shadow rung: same name (matches), misread price, identical
+            // original — one disagreement per sampled page.
+            return {
+              text: JSON.stringify([{ ...primaryOcrItems[0], price: 17500 }]),
+            }
+          }
+          return { text: JSON.stringify(primaryOcrItems) }
+        },
+      },
+    }
+    const { reported, posted, publishFetch } = makeReportCapture()
+    const restoreAudit = scrubAuditEnv()
+    process.env.RUMAQ_OCR_AUDIT = 'all'
+    try {
+      const status = await Effect.runPromise(
+        runPipeline(
+          scopedOptions(stateDir, ['superindo', 'astro'], {
+            dryRun: false,
+            fetch: fetchMock,
+            ocrClient,
+            publishFetch,
+            ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+            ingestSecret: 's3cret',
+          })
+        )
+      )
+      // Two primary + two shadow calls — the shadow rides the SAME injected
+      // client but a DIFFERENT (second-rung) model, never the chain.
+      expect(ocrCalls).toBe(4)
+      const audit = status.stores['superindo']!.audit!
+      expect(audit.sampledPages).toBe(2)
+      expect(audit.nameAgreePct).toBe(100)
+      expect(audit.priceAgreePct).toBe(0)
+      expect(audit.originalAgreePct).toBe(100)
+      expect(audit.promoAgreePct).toBe(100)
+      expect(audit.disagreements).toHaveLength(2)
+      expect(audit.disagreements[0]).toMatchObject({
+        field: 'price',
+        primary: '17000',
+        shadow: '17500',
+      })
+      // The report copy carries the same object (strict schema in the
+      // capture accepted it — the no-drift proof).
+      expect(reported[0]!.perStore['superindo']!.audit).toEqual(audit)
+      // The payload carries the PRIMARY extraction only — the sanitized
+      // originalPrice rides, the shadow's misread price never does.
+      const item = posted[0]!.items.find((entry) => entry.name === 'Gula Pasir')!
+      expect(item.price).toBe(17000)
+      expect(item.originalPrice).toBe(25000)
+    } finally {
+      restoreAudit()
+    }
+  })
+
+  it('keeps the store green when the shadow model fails and reports no audit (issue #367)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const fetchMock = await twoFreshPagesFetch()
+    let ocrCalls = 0
+    const ocrClient: GeminiClient = {
+      models: {
+        generateContent: async (args) => {
+          ocrCalls++
+          if (args.model === 'gemini-3.7-flash') {
+            throw new Error('503 UNAVAILABLE')
+          }
+          return { text: JSON.stringify(primaryOcrItems) }
+        },
+      },
+    }
+    const { reported, publishFetch } = makeReportCapture()
+    const restoreAudit = scrubAuditEnv()
+    process.env.RUMAQ_OCR_AUDIT = 'all'
+    try {
+      const status = await Effect.runPromise(
+        runPipeline(
+          scopedOptions(stateDir, ['superindo', 'astro'], {
+            dryRun: false,
+            fetch: fetchMock,
+            ocrClient,
+            publishFetch,
+            ingestUrl: 'https://api.example.com/api/internal/ingest/prices',
+            ingestSecret: 's3cret',
+          })
+        )
+      )
+      // Two primary + two one-shot shadow attempts (no retries, no rung
+      // advancing — the primary chain never saw the 503), and the store's
+      // outcome is untouched.
+      expect(ocrCalls).toBe(4)
+      expect(status.stage).toBe('done')
+      expect(reported[0]!.status).toBe('success')
+      expect(reported[0]!.perStore['superindo']!.audit).toBeUndefined()
+      expect(reported[0]!.perStore['superindo']!.error).toBeUndefined()
+    } finally {
+      restoreAudit()
+    }
+  })
+
+  it('samples 1-in-N fresh pages when RUMAQ_OCR_AUDIT=sample:N (issue #367)', async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
+    const fetchMock = await twoFreshPagesFetch()
+    let ocrCalls = 0
+    const ocrClient: GeminiClient = {
+      models: {
+        generateContent: async () => {
+          ocrCalls++
+          return { text: JSON.stringify(primaryOcrItems) }
+        },
+      },
+    }
+    const restoreAudit = scrubAuditEnv()
+    process.env.RUMAQ_OCR_AUDIT = 'sample:2'
+    try {
+      const status = await Effect.runPromise(
+        runPipeline(
+          scopedOptions(stateDir, ['superindo'], {
+            dryRun: true,
+            fetch: fetchMock,
+            ocrClient,
+          })
+        )
+      )
+      // Two fresh pages, page 0 sampled only (positional 1-in-2): 2 primary
+      // + 1 shadow call.
+      expect(ocrCalls).toBe(3)
+      expect(status.stores['superindo']!.audit!.sampledPages).toBe(1)
+    } finally {
+      restoreAudit()
+    }
+  })
+})
