@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vite-plus/test'
+import { describe, it, expect, vi } from 'vite-plus/test'
 import { apiApp } from '../apps/api.js'
 import {
   appendScrapeEvents,
@@ -362,49 +362,61 @@ describe('GET /api/admin/scrape/stores', () => {
 
 describe('GET /api/admin/scrape/commands + events', () => {
   it('feeds commands newest first with parsed stores', async () => {
-    const fake = createScrapeDb()
-    const env = fake.env()
-    const a = await apiApp.request(
-      '/api/admin/scrape',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{"stores":["superindo"]}',
-      },
-      env
-    )
-    const firstId = ((await a.json()) as { id: string }).id
-    // Terminalize the first (agent lifecycle: claim → finish) so the second
-    // create passes the one-run-at-a-time guard.
-    await claimNextScrapeCommand(fake.db)
-    await finishScrapeCommand(fake.db, firstId, { status: 'success', exitCode: 0 })
-    const b = await apiApp.request(
-      '/api/admin/scrape',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{"stores":["lotte-mart"]}',
-      },
-      env
-    )
-    expect(b.status).toBe(201)
-    const res = await apiApp.request('/api/admin/scrape/commands', {}, env)
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as {
-      commands: Array<{ id: string; stores: string[]; status: string; logTruncated: boolean }>
+    // Date-only fake timers: the feed orders by created_at DESC with an id
+    // (random UUID) tiebreak, so two same-millisecond creations would leave
+    // the order to UUID chance on a fast CI runner (observed on #383's CI).
+    // A strictly later clock for the second command makes newest-first
+    // deterministic.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const fake = createScrapeDb()
+      const env = fake.env()
+      const a = await apiApp.request(
+        '/api/admin/scrape',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{"stores":["superindo"]}',
+        },
+        env
+      )
+      const firstId = ((await a.json()) as { id: string }).id
+      // Terminalize the first (agent lifecycle: claim → finish) so the second
+      // create passes the one-run-at-a-time guard.
+      await claimNextScrapeCommand(fake.db)
+      await finishScrapeCommand(fake.db, firstId, { status: 'success', exitCode: 0 })
+      vi.setSystemTime(new Date('2026-01-01T00:00:01Z'))
+      const b = await apiApp.request(
+        '/api/admin/scrape',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{"stores":["lotte-mart"]}',
+        },
+        env
+      )
+      expect(b.status).toBe(201)
+      const res = await apiApp.request('/api/admin/scrape/commands', {}, env)
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        commands: Array<{ id: string; stores: string[]; status: string; logTruncated: boolean }>
+      }
+      expect(body.commands).toHaveLength(2)
+      expect(body.commands[0]!.stores).toEqual(['lotte-mart'])
+      expect(body.commands[1]!.id).toBe(firstId)
+      expect(body.commands[1]!.status).toBe('success')
+      // The browser client sends limit as a digit string (query params have no
+      // types on the wire) — it must coerce, not 400 (regression: the SPA's
+      // history panel failed to load when this validator rejected strings).
+      const limited = await apiApp.request('/api/admin/scrape/commands?limit=20', {}, env)
+      expect(limited.status).toBe(200)
+      expect(((await limited.json()) as { commands: unknown[] }).commands).toHaveLength(2)
+      const badLimit = await apiApp.request('/api/admin/scrape/commands?limit=0', {}, env)
+      expect(badLimit.status).toBe(400)
+    } finally {
+      vi.useRealTimers()
     }
-    expect(body.commands).toHaveLength(2)
-    expect(body.commands[0]!.stores).toEqual(['lotte-mart'])
-    expect(body.commands[1]!.id).toBe(firstId)
-    expect(body.commands[1]!.status).toBe('success')
-    // The browser client sends limit as a digit string (query params have no
-    // types on the wire) — it must coerce, not 400 (regression: the SPA's
-    // history panel failed to load when this validator rejected strings).
-    const limited = await apiApp.request('/api/admin/scrape/commands?limit=20', {}, env)
-    expect(limited.status).toBe(200)
-    expect(((await limited.json()) as { commands: unknown[] }).commands).toHaveLength(2)
-    const badLimit = await apiApp.request('/api/admin/scrape/commands?limit=0', {}, env)
-    expect(badLimit.status).toBe(400)
   })
 
   it('404s events for an unknown command', async () => {
