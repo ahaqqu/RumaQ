@@ -29,6 +29,14 @@ function formatClock(iso, locale) {
   })
 }
 
+// observed_date is a bare YYYY-MM-DD; render it as a calendar date like the
+// brochures view does (BrochuresView's observedDateLabel precedent).
+function formatObservedDate(date, locale) {
+  const parsed = new Date(`${date}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return date
+  return parsed.toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' })
+}
+
 function reasonKey(reason) {
   return reason === 'price_ratio' ? 'review.reasonPriceRatio' : 'review.reasonVerifierUnresolved'
 }
@@ -38,10 +46,56 @@ function methodKey(method) {
   return `review.method${cap}`
 }
 
+// Issue #380: only the scraper's same-origin object URLs are page IMAGES.
+// The stored brochure_url doubles as the listing page for catalog stores,
+// so anything else (or null — old rows, no backfill) is the muted
+// "catalog source" empty state, never a broken <img>.
+function servableImage(url) {
+  return typeof url === 'string' && url.startsWith('/api/brochures/') ? url : null
+}
+
+// Only http(s) ever renders as a retailer page link — the value comes from
+// the scraper's store plugins, and the guard keeps a hostile `javascript:`
+// string out of an href.
+function externalPageUrl(url) {
+  return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null
+}
+
+// The evidence block's image slot: a lazy 3:4 thumbnail that opens the full
+// page image in a new tab (same-origin proxy, cookie-authenticated), and a
+// fallback in the same frame when the object is gone (404) — never a
+// broken-image glyph (the BrochuresView precedent).
+function EvidenceImage({ url }) {
+  const { t } = useTranslation()
+  const [failed, setFailed] = useState(false)
+  if (failed) {
+    return (
+      <div className="flex h-20 w-16 items-center justify-center rounded-md border border-border bg-surface-sunken/40 p-1 text-center text-[10px] leading-tight text-text-muted">
+        {t('review.evidenceNoImage')}
+      </div>
+    )
+  }
+  return (
+    <a href={url} target="_blank" rel="noreferrer" aria-label={t('review.evidenceImageAlt')}>
+      <img
+        src={url}
+        alt={t('review.evidenceImageAlt')}
+        loading="lazy"
+        onError={() => setFailed(true)}
+        className="h-20 w-16 rounded-md border border-border object-cover"
+      />
+    </a>
+  )
+}
+
 // PM asymmetry note (§2): B is NOT a parallel observation of the same
 // instant — it is the canonical entry's most recent sighting. The honest
 // column labels ("Matched item" / "Catalog entry (last seen)") carry that.
-function SideCard({ label, name, brand, unit, price, store }) {
+// Issue #380: each side also carries its evidence block — the page image
+// behind the extraction, the retailer page it came from, and (right side)
+// when the entry was last seen.
+function SideCard({ label, name, brand, unit, price, store, imageUrl, sourceUrl, observedAt }) {
+  const { t, i18n } = useTranslation()
   return (
     <div className="min-w-0 flex-1">
       <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-1.5">
@@ -53,6 +107,34 @@ function SideCard({ label, name, brand, unit, price, store }) {
       </div>
       <div className="text-sm mt-1.5">{formatPrice(price)}</div>
       <div className="text-xs text-text-muted mt-0.5">{store}</div>
+      <div className="mt-2.5 flex items-start gap-2">
+        {imageUrl ? (
+          <EvidenceImage url={imageUrl} />
+        ) : (
+          <div className="flex h-20 w-16 items-center justify-center rounded-md border border-dashed border-border p-1 text-center text-[10px] leading-tight text-text-muted">
+            {t('review.evidenceNoImage')}
+          </div>
+        )}
+        <div className="flex min-w-0 flex-col gap-1 text-xs">
+          {sourceUrl && (
+            <a
+              href={sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent hover:underline"
+            >
+              {t('review.evidenceOpenSource')}
+            </a>
+          )}
+          {observedAt && (
+            <span className="text-text-muted">
+              {t('review.evidenceLastSeen', {
+                date: formatObservedDate(observedAt, i18n.language),
+              })}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -61,6 +143,13 @@ function ReviewRow({ item, sourceNames, busy, onDecide, onUndo }) {
   const { t, i18n } = useTranslation()
   const decided = item.status !== 'pending'
   const runTo = item.runId ? `/admin/prices?run=${encodeURIComponent(item.runId)}` : '/admin/prices'
+  // Issue #380: per-side evidence — the page image only renders for the
+  // scraper's same-origin object URLs; the retailer page link only for
+  // http(s).
+  const itemImageUrl = servableImage(item.itemBrochureUrl)
+  const itemPageUrl = externalPageUrl(item.itemSourceUrl)
+  const entryImageUrl = servableImage(item.entryBrochureUrl)
+  const entryPageUrl = externalPageUrl(item.entrySourceUrl)
   return (
     <div className="border-b border-border last:border-b-0 px-5 py-4">
       <div className="flex items-stretch gap-4">
@@ -71,6 +160,8 @@ function ReviewRow({ item, sourceNames, busy, onDecide, onUndo }) {
           unit={item.itemUnit}
           price={item.itemPrice}
           store={sourceNames[item.itemStore] ?? item.itemStore}
+          imageUrl={itemImageUrl}
+          sourceUrl={itemPageUrl}
         />
         <div className="self-stretch w-px bg-border" aria-hidden="true" />
         <SideCard
@@ -80,6 +171,9 @@ function ReviewRow({ item, sourceNames, busy, onDecide, onUndo }) {
           unit={item.entryUnit}
           price={item.entryPrice}
           store={sourceNames[item.entryStore] ?? item.entryStore}
+          imageUrl={entryImageUrl}
+          sourceUrl={entryPageUrl}
+          observedAt={item.entryObservedAt ?? null}
         />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-text-muted">

@@ -167,6 +167,88 @@ describe('AdminReview', () => {
     expect(link.textContent).toContain('review.runDetail')
   })
 
+  describe('per-side evidence blocks (issue #380)', () => {
+    const itemWithEvidence = {
+      ...reviewItem,
+      // LEFT: the R2 page image + the retailer campaign page.
+      itemBrochureUrl: '/api/brochures/lotte-mart/20261028/page-1.jpg',
+      itemSourceUrl: 'https://www.lottemart.co.id/koran-promo/',
+      // RIGHT: what the catalog entry's last observation carried.
+      entryBrochureUrl: '/api/brochures/superindo/20261028/page-3.jpg',
+      entrySourceUrl: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+      entryObservedAt: '2026-10-28',
+    }
+
+    it('renders the page image thumbnails and the retailer page links on both sides', () => {
+      vi.mocked(useReviewItems).mockReturnValue(mockReviewData({ items: [itemWithEvidence] }))
+      const { container } = renderAdmin()
+      const images = [...container.querySelectorAll('img')]
+      expect(images.map((img) => img.getAttribute('src'))).toEqual([
+        '/api/brochures/lotte-mart/20261028/page-1.jpg',
+        '/api/brochures/superindo/20261028/page-3.jpg',
+      ])
+      // Lazy thumbnails, opening the full image (same-origin proxy) in a new tab.
+      for (const img of images) expect(img.getAttribute('loading')).toBe('lazy')
+      for (const img of images) {
+        const thumb = img.closest('a')
+        expect(thumb.getAttribute('target')).toBe('_blank')
+        expect(thumb.getAttribute('href')).toBe(img.getAttribute('src'))
+      }
+      const links = container.querySelectorAll('a[href^="https://"]')
+      expect([...links].map((a) => a.getAttribute('href'))).toEqual([
+        'https://www.lottemart.co.id/koran-promo/',
+        'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+      ])
+      expect(container.textContent).toContain('review.evidenceOpenSource')
+    })
+
+    it('shows "last seen" with the observed date on the RIGHT side only', () => {
+      vi.mocked(useReviewItems).mockReturnValue(mockReviewData({ items: [itemWithEvidence] }))
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('review.evidenceLastSeen')
+      expect(container.textContent.match(/review\.evidenceLastSeen/g) ?? []).toHaveLength(1)
+    })
+
+    it('renders the muted catalog-source empty state and no links when evidence is null (old rows)', () => {
+      // The base fixture predates the fields — every evidence slot is null.
+      const { container } = renderAdmin()
+      const empties = container.textContent.match(/review\.evidenceNoImage/g) ?? []
+      expect(empties.length).toBe(2) // both sides
+      expect(container.querySelector('img')).toBeNull()
+      expect(container.textContent).not.toContain('review.evidenceOpenSource')
+      expect(container.textContent).not.toContain('review.evidenceLastSeen')
+    })
+
+    it('treats a stored catalog page URL as no page image — the source link still shows', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            {
+              ...reviewItem,
+              // Old catalog rows: brochure_url IS the listing page, never an
+              // <img>; source_url did not exist yet.
+              entryBrochureUrl: 'https://www.astro.co.id/katalog',
+              entrySourceUrl: null,
+            },
+          ],
+        })
+      )
+      const { container } = renderAdmin()
+      expect(container.querySelector('img')).toBeNull()
+      expect(container.textContent).toContain('review.evidenceNoImage')
+    })
+
+    it('never renders a non-http(s) sourceUrl as a link', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [{ ...reviewItem, itemSourceUrl: 'javascript:alert(1)' }],
+        })
+      )
+      const { container } = renderAdmin()
+      expect(container.querySelector('a[href^="javascript:"]')).toBeNull()
+    })
+  })
+
   it('offers Approve/Reject on a pending row and fires the decide mutation', () => {
     const { container, getByText } = renderAdmin()
     expect(container.textContent).not.toContain('review.undo')
