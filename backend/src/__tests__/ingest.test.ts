@@ -94,7 +94,7 @@ function samplePayload() {
   })
 }
 
-function createEnv(db: D1Database, secret?: string) {
+function createEnv(db: D1Database, secret?: string, nextSecret?: string) {
   return {
     DB: db,
     RECEIPTS: { put: vi.fn(), get: vi.fn() },
@@ -107,6 +107,7 @@ function createEnv(db: D1Database, secret?: string) {
     props: undefined,
     TEST_MODE: 'true',
     HAQITA_INGEST_SECRET: secret,
+    HAQITA_INGEST_SECRET_NEXT: nextSecret,
   }
 }
 
@@ -647,6 +648,113 @@ describe('GET /api/internal/prices/status', () => {
       latestScrapedAt: '2026-10-25T23:00:05Z',
       observationCount: 42,
     })
+  })
+})
+
+// Dual-accept rotation window (ahaqqu/RumaQ#376): while the owner rotates the
+// ingest secret, the Worker holds both the current (HAQITA_INGEST_SECRET) and
+// the successor (HAQITA_INGEST_SECRET_NEXT); either authenticates. The
+// middleware compares every non-empty candidate on every request — no
+// precedence, no early exit — and 503s only when BOTH slots are empty.
+describe('requireIngestSecret — dual accept (#376)', () => {
+  const statusRows = [
+    {
+      match: /FROM price_observations/,
+      rows: [
+        {
+          latest_observed_date: '2026-11-02',
+          latest_scraped_at: '2026-11-02T23:00:05Z',
+          observation_count: 7,
+        },
+      ],
+    },
+  ]
+
+  const requestStatus = async (env: ReturnType<typeof createEnv>, token?: string) => {
+    return apiApp.request(
+      '/api/internal/prices/status',
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      env
+    )
+  }
+
+  it('accepts the primary secret while both are set (rotation window start)', async () => {
+    const { db } = createFakeDb(statusRows)
+    const res = await requestStatus(createEnv(db, 'old-secret', 'new-secret'), 'old-secret')
+    expect(res.status).toBe(200)
+  })
+
+  it('accepts the _NEXT secret while both are set (rotation window end)', async () => {
+    const { db } = createFakeDb(statusRows)
+    const res = await requestStatus(createEnv(db, 'old-secret', 'new-secret'), 'new-secret')
+    expect(res.status).toBe(200)
+  })
+
+  it("keeps today's behavior when _NEXT is unset: primary accepts, unknown rejects", async () => {
+    const { db } = createFakeDb(statusRows)
+    const ok = await requestStatus(createEnv(db, 'old-secret'), 'old-secret')
+    expect(ok.status).toBe(200)
+
+    const unknown = await requestStatus(createEnv(db, 'old-secret'), 'not-the-secret')
+    expect(unknown.status).toBe(401)
+    expect(unknown.headers.get('WWW-Authenticate')).toBe('Bearer realm="rumaq-ingest"')
+  })
+
+  it('returns 503 only when both slots are unset', async () => {
+    const { db } = createFakeDb()
+    const res = await requestStatus(createEnv(db), 'anything')
+    expect(res.status).toBe(503)
+  })
+
+  it('returns 503 when both slots are empty strings (filtered as unset)', async () => {
+    const { db } = createFakeDb()
+    const res = await requestStatus(createEnv(db, '', ''), 'anything')
+    expect(res.status).toBe(503)
+  })
+
+  it('returns 401 when only one secret is set and the token is the other, unset one', async () => {
+    const { db } = createFakeDb()
+    const res = await requestStatus(createEnv(db, 'old-secret'), 'new-secret')
+    expect(res.status).toBe(401)
+  })
+
+  it('accepts when the primary slot is unset but _NEXT is set (no 503)', async () => {
+    const { db } = createFakeDb(statusRows)
+    const res = await requestStatus(createEnv(db, undefined, 'new-secret'), 'new-secret')
+    expect(res.status).toBe(200)
+  })
+
+  it('accepts an empty-string primary filtered out while _NEXT is set', async () => {
+    const { db } = createFakeDb(statusRows)
+    const res = await requestStatus(createEnv(db, '', 'new-secret'), 'new-secret')
+    expect(res.status).toBe(200)
+  })
+
+  it('compares both candidates on the same request (the guarded surface is shared)', async () => {
+    // The ingest POST rides the same middleware: the successor secret must
+    // carry a full snapshot through, not just the cheap status probe.
+    const { db, executedBatches } = createFakeDb([
+      { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
+      {
+        match: /^SELECT id, product_key FROM price_products/,
+        rows: [{ id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' }],
+      },
+    ])
+    const parsed = samplePayload()
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+
+    const res = await apiApp.request(
+      '/api/internal/ingest/prices',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer new-secret' },
+        body: JSON.stringify(parsed.output),
+      },
+      createEnv(db, 'old-secret', 'new-secret')
+    )
+    expect(res.status).toBe(200)
+    expect(executedBatches.length).toBeGreaterThan(0)
   })
 })
 

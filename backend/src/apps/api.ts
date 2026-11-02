@@ -238,12 +238,27 @@ apiApp.get(
 // bearer-secret auth instead of a session, exempt from the per-IP rate
 // limiter above, and excluded from the generated OpenAPI/docs surface.
 const requireIngestSecret: MiddlewareHandler<Env> = async (c, next) => {
-  if (!c.env.HAQITA_INGEST_SECRET) {
+  // Dual-accept rotation window (ahaqqu/RumaQ#376): while rotating, the
+  // Worker briefly holds both the current secret (HAQITA_INGEST_SECRET) and
+  // its successor (HAQITA_INGEST_SECRET_NEXT) so the scraper's cutover never
+  // 401s the nightly. Every non-empty candidate is compared on every request
+  // — no precedence, no early exit — so a match on one secret cannot be
+  // timed apart from the other.
+  const candidates = [c.env.HAQITA_INGEST_SECRET, c.env.HAQITA_INGEST_SECRET_NEXT].filter(
+    (secret): secret is string => typeof secret === 'string' && secret.length > 0
+  )
+  if (candidates.length === 0) {
     return c.json({ error: 'Ingest endpoint not configured' }, 503)
   }
   const header = c.req.header('Authorization') || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : ''
-  if (!token || !(await timingSafeEqualStrings(token, c.env.HAQITA_INGEST_SECRET))) {
+  let accepted = false
+  for (const secret of candidates) {
+    if (token && (await timingSafeEqualStrings(token, secret))) {
+      accepted = true
+    }
+  }
+  if (!accepted) {
     return c.json({ error: 'Unauthorized' }, 401, {
       'WWW-Authenticate': 'Bearer realm="rumaq-ingest"',
     })

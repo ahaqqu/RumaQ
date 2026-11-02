@@ -19,6 +19,10 @@ export type Env = {
     WORKER_JWT_SECRET: string
     WORKER_ENCRYPTION_KEY: string
     HAQITA_INGEST_SECRET?: string
+    /** Rotation successor accepted alongside the primary during a secret
+     *  rotation window (ahaqqu/RumaQ#376); cleared on the deploy that
+     *  promotes it into HAQITA_INGEST_SECRET. */
+    HAQITA_INGEST_SECRET_NEXT?: string
     PAGES_ORIGIN?: string
     EMAIL_AUTH_ENABLED: string
     ASSETS: Fetcher
