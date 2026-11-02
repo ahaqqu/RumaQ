@@ -2592,6 +2592,11 @@ type PriceListRow = {
   observed_date: string
   price: number
   effective_unit_price: number | null
+  // Canonical unit normalization (issue #368 phase A): null when the
+  // observation was not normalizable.
+  unit_qty: number | null
+  unit_qty_unit: 'g' | 'ml' | 'pcs' | null
+  unit_price: number | null
   promo_type: string | null
   promo_label: string | null
   valid_from: string | null
@@ -3103,6 +3108,7 @@ apiApp.get(
       let sql = `SELECT p.product_key, p.name, p.brand, p.unit, p.category,
                       s.slug AS source_slug, s.name AS source_name,
                       o.observed_date, o.price, o.effective_unit_price,
+                      o.unit_qty, o.unit_qty_unit, o.unit_price,
                       o.promo_type, o.promo_label, o.valid_from, o.valid_until,
                       o.match_method, o.match_confidence, o.brochure_url
                FROM price_observations o
@@ -3136,6 +3142,7 @@ apiApp.get(
   SELECT p.product_key, p.name, p.brand, p.unit, p.category,
          s.slug AS source_slug, s.name AS source_name,
          o.observed_date, o.price, o.effective_unit_price,
+         o.unit_qty, o.unit_qty_unit, o.unit_price,
          o.promo_type, o.promo_label, o.valid_from, o.valid_until,
          o.match_method, o.match_confidence, o.brochure_url,
          COALESCE(o.effective_unit_price, o.price) AS effective_price
@@ -3175,6 +3182,7 @@ page AS (
 SELECT l.product_key, l.name, l.brand, l.unit, l.category,
        l.source_slug, l.source_name,
        l.observed_date, l.price, l.effective_unit_price,
+       l.unit_qty, l.unit_qty_unit, l.unit_price,
        l.promo_type, l.promo_label, l.valid_from, l.valid_until,
        l.match_method, l.match_confidence, l.brochure_url,
        a.price_min, a.price_max, a.savings_pct,

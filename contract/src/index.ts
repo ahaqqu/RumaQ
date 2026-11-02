@@ -1,6 +1,7 @@
 import {
   array,
   boolean,
+  gtValue,
   integer,
   literal,
   maxLength,
@@ -53,6 +54,16 @@ export const ingestItemSchema = strictObject({
   // loudly (strictObject — the Worker-first deploy order exists for this).
   originalPrice: nullish(pipe(number(), integer(), minValue(0))),
   effectiveUnitPrice: nullish(number()),
+  // Issue #368 phase A: canonical normalized quantity (qty in the base unit
+  // — g/ml/pcs) and the listed price per display unit (per kg / per liter /
+  // per piece, rounded integer). Both are derived by the producer's unit
+  // parser; null simply means "not normalized", so old scrapers' payloads
+  // (fields absent) still validate — additive, Worker-first deploy order
+  // holds.
+  // valibot 1.5 has no `positive()` action — gtValue(0) is the same "qty > 0".
+  unitQty: nullish(pipe(number(), gtValue(0))),
+  unitQtyUnit: nullish(picklist(['g', 'ml', 'pcs'])),
+  unitPrice: nullish(pipe(number(), integer(), minValue(0))),
   promoType: nullish(string()),
   promoLabel: nullish(string()),
   validFrom: nullish(isoDate()),

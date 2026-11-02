@@ -105,6 +105,11 @@ const listRow = {
   observed_date: '2026-10-24',
   price: 21500,
   effective_unit_price: 21500,
+  // Canonical unit normalization (issue #368 phase A) — null on rows the
+  // producer could not normalize.
+  unit_qty: 2000,
+  unit_qty_unit: 'ml',
+  unit_price: 10750,
   promo_type: 'discount_pct',
   promo_label: 'Diskon 15%',
   valid_from: '2026-10-22',
@@ -139,6 +144,33 @@ describe('GET /api/prices', () => {
     expect(body.total).toBe(2)
     expect(body.items[0]!.low_confidence).toBe(false)
     expect(body.items[1]!.low_confidence).toBe(true)
+  })
+
+  // Issue #368 phase A: the canonical unit fields mirror the observation
+  // columns additively on both the flat and the sorted list paths.
+  it('carries the canonical unit fields on the flat and sorted list paths', async () => {
+    for (const sort of [undefined, 'cheapest'] as const) {
+      const { env } = createPricesEnv({
+        list: [
+          listRow,
+          // a not-normalized row rides through with nulls
+          {
+            ...listRow,
+            product_key: 'misteri--item----',
+            unit_qty: null,
+            unit_qty_unit: null,
+            unit_price: null,
+          },
+        ],
+      })
+      const res = await apiApp.request(`/api/prices${sort ? `?sort=${sort}` : ''}`, {}, env)
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { items: Array<typeof listRow> }
+      expect(body.items[0]!.unit_qty).toBe(2000)
+      expect(body.items[0]!.unit_qty_unit).toBe('ml')
+      expect(body.items[0]!.unit_price).toBe(10750)
+      expect(body.items[1]!.unit_price).toBeNull()
+    }
   })
 
   it('escapes LIKE wildcards in the q filter', async () => {

@@ -24,7 +24,7 @@ export type IngestResult = {
 
 // A db.batch() call counts as ONE query against D1's per-invocation budget
 // (50 on the free plan); within it, the per-query limits (100 bound
-// parameters) apply to each statement — an observation binds 14. 50
+// parameters) apply to each statement — an observation binds 17. 50
 // statements per batch keeps both limits comfortable.
 const BATCH_CHUNK = 50
 // D1 also caps bound parameters per QUERY at 100 — an IN list must ride
@@ -152,12 +152,16 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
         .prepare(
           `INSERT INTO price_observations
              (id, product_id, source_id, observed_date, price, effective_unit_price,
+              unit_qty, unit_qty_unit, unit_price,
               promo_type, promo_label, valid_from, valid_until, match_method,
               match_confidence, brochure_url, scraped_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(product_id, source_id, observed_date) DO UPDATE SET
              price = excluded.price,
              effective_unit_price = excluded.effective_unit_price,
+             unit_qty = excluded.unit_qty,
+             unit_qty_unit = excluded.unit_qty_unit,
+             unit_price = excluded.unit_price,
              promo_type = excluded.promo_type,
              promo_label = excluded.promo_label,
              valid_from = excluded.valid_from,
@@ -174,6 +178,11 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
           item.observedDate ?? observedDefault,
           item.price,
           item.effectiveUnitPrice ?? null,
+          // Canonical unit normalization (issue #368 phase A) — null when
+          // the producer could not normalize the item.
+          item.unitQty ?? null,
+          item.unitQtyUnit ?? null,
+          item.unitPrice ?? null,
           item.promoType ?? null,
           item.promoLabel ?? null,
           item.validFrom ?? null,
