@@ -67,8 +67,12 @@ function externalPageUrl(url) {
 // broken-image glyph (the BrochuresView precedent).
 function EvidenceImage({ url }) {
   const { t } = useTranslation()
-  const [failed, setFailed] = useState(false)
-  if (failed) {
+  // Thermos A1 (issue #380): remember WHICH url failed, not a boolean — the
+  // same mounted instance can see its url change (decide/undo → refetch → a
+  // newer observation swaps entryBrochureUrl), and a boolean would pin the
+  // old failure over a url that was never tried.
+  const [failedUrl, setFailedUrl] = useState(null)
+  if (failedUrl === url) {
     return (
       <div className="flex h-20 w-16 items-center justify-center rounded-md border border-border bg-surface-sunken/40 p-1 text-center text-[10px] leading-tight text-text-muted">
         {t('review.evidenceNoImage')}
@@ -81,7 +85,7 @@ function EvidenceImage({ url }) {
         src={url}
         alt={t('review.evidenceImageAlt')}
         loading="lazy"
-        onError={() => setFailed(true)}
+        onError={() => setFailedUrl(url)}
         className="h-20 w-16 rounded-md border border-border object-cover"
       />
     </a>

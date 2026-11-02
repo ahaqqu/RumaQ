@@ -247,6 +247,38 @@ describe('AdminReview', () => {
       const { container } = renderAdmin()
       expect(container.querySelector('a[href^="javascript:"]')).toBeNull()
     })
+
+    it('retries the image when the row gains a different URL after a failure (thermos A1)', () => {
+      // The decide/undo refetch can swap a row's entryBrochureUrl under the
+      // same mounted component — the old failure must not pin the fallback.
+      const stale = {
+        ...reviewItem,
+        entryBrochureUrl: '/api/brochures/superindo/20261028/page-3.jpg',
+      }
+      vi.mocked(useReviewItems).mockReturnValue(mockReviewData({ items: [stale] }))
+      const { container, rerender } = renderAdmin()
+      fireEvent.error(container.querySelector('img'))
+      expect(container.querySelector('img')).toBeNull()
+      expect(container.textContent).toContain('review.evidenceNoImage')
+
+      // A newer observation lands; the same mounted row now carries a fresh
+      // URL — the thumbnail must be retried, not inherit the old failure.
+      const refreshed = {
+        ...stale,
+        entryBrochureUrl: '/api/brochures/superindo/20261030/page-1.jpg',
+      }
+      vi.mocked(useReviewItems).mockReturnValue(mockReviewData({ items: [refreshed] }))
+      rerender(
+        React.createElement(
+          QueryClientProvider,
+          { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+          React.createElement(AdminReview, null)
+        )
+      )
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(
+        '/api/brochures/superindo/20261030/page-1.jpg'
+      )
+    })
   })
 
   it('offers Approve/Reject on a pending row and fires the decide mutation', () => {
