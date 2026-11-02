@@ -72,6 +72,15 @@ export function emptyCatalog(): Catalog {
 export interface MatchInputItem {
   storeSlug: string
   product: ValidatedProduct
+  /**
+   * Issue #380: the batch's LEFT-side evidence, frozen into review pairs —
+   * the page image URL (the R2 object URL the observation's brochure_url
+   * stores; null/absent when the batch has no page image) and the retailer
+   * campaign/listing page. Optional so existing callers (and tests) stay
+   * valid; reviewRecord normalizes absent to null.
+   */
+  itemBrochureUrl?: string | null
+  itemSourceUrl?: string | null
 }
 
 export type MatchMethod = 'exact' | 'embedding' | 'ai' | 'solo'
@@ -112,6 +121,13 @@ export interface ReviewItemRecord {
   itemPrice: number
   itemEffectiveUnitPrice: number
   itemStore: string
+  // Issue #380: the LEFT side's evidence a verdict needs — the page image
+  // (the R2 object URL per OCR'd image; null for catalog items, which have
+  // none) and the retailer campaign/listing page. Frozen with the rest of
+  // the record at flag time; pairs frozen before #380 carry null (the
+  // contract fields are additive-nullish, no backfill).
+  itemBrochureUrl: string | null
+  itemSourceUrl: string | null
   entryProductKey: string
   entryName: string
   entryBrand: string | null
@@ -154,6 +170,8 @@ function reviewRecord(
     itemPrice: product.price,
     itemEffectiveUnitPrice: itemEffective,
     itemStore: item.storeSlug,
+    itemBrochureUrl: item.itemBrochureUrl ?? null,
+    itemSourceUrl: item.itemSourceUrl ?? null,
     entryProductKey: entry.productKey,
     entryName: entry.name,
     entryBrand: entry.brand,

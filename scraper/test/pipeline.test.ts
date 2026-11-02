@@ -221,6 +221,12 @@ describe('runPipeline', () => {
     expect(payload.items.length).toBe(entry.itemsExtracted)
     expect(payload.items[0]!.productKey).toBe('gula-pasir----1-kg')
     expect(payload.items[0]!.validFrom).toBe('2026-10-22')
+    // Issue #380: items carry the retailer campaign page alongside the R2
+    // object URL in brochureUrl.
+    expect(payload.items[0]!.brochureUrl).toMatch(/^\/api\/brochures\/superindo\/20261024\//)
+    expect(payload.items[0]!.sourceUrl).toMatch(
+      /^https:\/\/www\.superindo\.co\.id\/promosi\/(katalog-super-hemat|promo-koran)\/$/
+    )
 
     // Rejected item logged for VPS inspection.
     const rejected = await readFile(path.join(stateDir, 'rejected-items.log'), 'utf8')
@@ -252,6 +258,11 @@ describe('runPipeline', () => {
       await readFile(path.join(stateDir, 'payload-2026-11-05T23-00-05-000Z.json'), 'utf8')
     )
     expect(payload2.items.map((item) => item.productKey)).toContain('gula-pasir----1-kg')
+    // The replayed item keeps the retailer page its outbox line carried.
+    const replayed = payload2.items.find((item) => item.productKey === 'gula-pasir----1-kg')!
+    expect(replayed.sourceUrl).toMatch(
+      /^https:\/\/www\.superindo\.co\.id\/promosi\/(katalog-super-hemat|promo-koran)\/$/
+    )
 
     // Post-publish prune: the first run's image dir is 12 days old → removed
     // (plan §6 keeps images 7 days after the run that published them).
@@ -278,6 +289,12 @@ describe('runPipeline', () => {
     expect(lines[0]!.storeSlug).toBe('superindo')
     expect(lines[0]!.products[0]!.name).toBe('Gula Pasir')
     expect(lines[0]!.scrapedAt).toBe('2026-10-24T23:00:05.000Z')
+    // Issue #380: the line carries the campaign page next to the object URL
+    // so a replayed batch keeps the retailer-page evidence.
+    expect(lines[0]!.brochureUrl).toMatch(/^\/api\/brochures\/superindo\/20261024\//)
+    expect(lines[0]!.sourceUrl).toMatch(
+      /^https:\/\/www\.superindo\.co\.id\/promosi\/(katalog-super-hemat|promo-koran)\/$/
+    )
 
     // The mock serves image/jpeg — the inlineData declaration must match.
     expect(inlineMimes.length).toBeGreaterThanOrEqual(1)
@@ -812,7 +829,7 @@ describe('runPipeline', () => {
 
   it('caps the review pairs on the run report at 200 with the truncation visible (issue #294)', async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), 'rumaq-pipeline-'))
-    const { reported, publishFetch } = makeReportCapture()
+    const { reported, posted, publishFetch } = makeReportCapture()
     // Enough unique ambiguous names that a single image's sweep holds more
     // than 200 pairs: the first item founds the entry, the rest hold against
     // it (its name carries the same tokens, so gate 2 passes).
@@ -882,6 +899,21 @@ describe('runPipeline', () => {
     for (const pair of report.match!.reviewItemPairs!) {
       expect(pair.reason).toBe('verifier_unresolved')
       expect(pair.matchMethod).toBe('ai')
+      // Issue #380: every pair freezes its batch's evidence — the R2 object
+      // URL as the page image and the superindo campaign page (katalog or
+      // koran — the OCR client returns the same items for both) as the
+      // retailer page.
+      expect(pair.itemBrochureUrl).toMatch(/^\/api\/brochures\/superindo\/20261024\//)
+      expect(pair.itemSourceUrl).toMatch(
+        /^https:\/\/www\.superindo\.co\.id\/promosi\/(katalog-super-hemat|promo-koran)\/$/
+      )
+    }
+    // The payload items carry the same evidence split: brochureUrl stays the
+    // object URL, sourceUrl the retailer campaign page.
+    for (const item of posted[0]!.items) {
+      expect(item.sourceUrl).toMatch(
+        /^https:\/\/www\.superindo\.co\.id\/promosi\/(katalog-super-hemat|promo-koran)\/$/
+      )
     }
   })
 

@@ -74,6 +74,15 @@ export const ingestItemSchema = strictObject({
   matchMethod: nullish(picklist(['exact', 'embedding', 'ai', 'solo'])),
   matchConfidence: pipe(number(), minValue(0), maxValue(1)),
   brochureUrl: nullish(string()),
+  // Issue #380: the retailer campaign/listing page the item was extracted
+  // from — the same string rejectedItems already emit as `source` (a
+  // brochure store's campaign page, a catalog store's listing page), kept
+  // alongside the R2-backed brochureUrl so the review card can link the
+  // retailer page AND the page image. Additive-nullish (#294 pattern): old
+  // payloads (no field) still validate; a NEW payload hitting an OLD Worker
+  // fails loudly (strictObject — the Worker-first deploy order exists for
+  // this). No backfill: observations predating the field stay null.
+  sourceUrl: nullish(pipe(string(), maxLength(500))),
 })
 
 export const ingestPayloadSchema = strictObject({
@@ -210,6 +219,15 @@ export const reviewItemPairSchema = strictObject({
   itemPrice: pipe(number(), integer(), minValue(0)),
   itemEffectiveUnitPrice: nullish(number()),
   itemStore: pipe(string(), minLength(1)),
+  // Issue #380: the LEFT side's evidence — the page image URL (the R2-backed
+  // same-origin object URL per OCR'd image, the same value the observation's
+  // brochure_url stores; catalog items have no page image) and the retailer
+  // campaign/listing page the item was extracted from. Both are additive-
+  // nullish (#294 pattern): pairs frozen before the field exist do not carry
+  // it (no backfill — old rows stay null), and a NEW report hitting an OLD
+  // Worker fails loudly (Worker-first deploy order).
+  itemBrochureUrl: nullish(pipe(string(), maxLength(500))),
+  itemSourceUrl: nullish(pipe(string(), maxLength(500))),
   entryProductKey: pipe(string(), minLength(1)),
   entryName: pipe(string(), minLength(1)),
   entryBrand: nullish(string()),

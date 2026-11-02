@@ -520,3 +520,74 @@ describe('cosineSimilarity', () => {
     expect(cosineSimilarity([0, 0], [1, 1])).toBe(0)
   })
 })
+
+describe('runMatch — review record evidence (issue #380)', () => {
+  function seedCatalog() {
+    const seeded = emptyCatalog()
+    const seed: MatchInputItem = { storeSlug: 'superindo', product: product() }
+    return run([seed], deps(), seeded).then(() => seeded)
+  }
+
+  it('freezes the batch page image and retailer page into the LEFT side of the record', async () => {
+    const seeded = await seedCatalog()
+    // Same name/brand/unit as the seeded entry — an exact match whose price
+    // ratio (10x) trips gate 5, so a price_ratio record rides out with the
+    // item's batch evidence attached.
+    const incoming: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ price: 35000 }),
+      itemBrochureUrl: '/api/brochures/lotte-mart/20261024/page-1.jpg',
+      itemSourceUrl: 'https://www.lottemart.co.id/koran-promo/',
+    }
+    const { reviewItems } = await run([incoming], deps(), seeded)
+    expect(reviewItems).toHaveLength(1)
+    expect(reviewItems[0]).toMatchObject({
+      reason: 'price_ratio',
+      matchMethod: 'exact',
+      itemBrochureUrl: '/api/brochures/lotte-mart/20261024/page-1.jpg',
+      itemSourceUrl: 'https://www.lottemart.co.id/koran-promo/',
+    })
+  })
+
+  it('normalizes absent batch evidence to null — old callers and tests stay valid', async () => {
+    const seeded = await seedCatalog()
+    const incoming: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ price: 35000 }),
+    }
+    const { reviewItems } = await run([incoming], deps(), seeded)
+    expect(reviewItems).toHaveLength(1)
+    expect(reviewItems[0]!.itemBrochureUrl).toBeNull()
+    expect(reviewItems[0]!.itemSourceUrl).toBeNull()
+  })
+
+  it('carries the evidence through verifier-resolved pairs too (held path)', async () => {
+    const vectors = {
+      'Indomie Goreng': [1, 0],
+      'Indomie Goreng Kuah': [1, 1], // cos = 0.707 → ambiguous band
+    }
+    const seeded = emptyCatalog()
+    await run(
+      [{ storeSlug: 'superindo', product: product() }],
+      deps({ embedClient: embedClient(vectors) }),
+      seeded
+    )
+    const incoming: MatchInputItem = {
+      storeSlug: 'lotte-mart',
+      product: product({ name: 'Indomie Goreng Kuah', price: 35000 }),
+      itemBrochureUrl: '/api/brochures/lotte-mart/20261024/page-2.jpg',
+      itemSourceUrl: 'https://www.lottemart.co.id/koran-promo/',
+    }
+    const { reviewItems } = await run(
+      [incoming],
+      deps({ embedClient: embedClient(vectors), verifyClient: verifyClient(['MAYBE']) }),
+      seeded
+    )
+    expect(reviewItems).toHaveLength(1)
+    expect(reviewItems[0]).toMatchObject({
+      reason: 'verifier_unresolved',
+      itemBrochureUrl: '/api/brochures/lotte-mart/20261024/page-2.jpg',
+      itemSourceUrl: 'https://www.lottemart.co.id/koran-promo/',
+    })
+  })
+})

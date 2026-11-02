@@ -284,3 +284,47 @@ describe('buildPayload — unit normalization (issue #368 phase A)', () => {
     }
   })
 })
+
+describe('buildPayload — sourceUrl (issue #380)', () => {
+  const config = loadConfig()
+  const superindo = storeBySlug(config, 'superindo')!
+
+  const [product] = validateProduct(
+    { name: 'Beras Ramos 5 kg', brand: null, unit: '5 kg', price: 89000 },
+    'promo_abc.jpg'
+  )
+
+  it('carries the batch sourceUrl onto every item', () => {
+    const payload = buildPayload({
+      stores: [superindo],
+      images: [
+        {
+          storeSlug: 'superindo',
+          brochureUrl: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+          brochureObjectUrl: '/api/brochures/superindo/20261024/page-1.jpg',
+          // The retailer campaign page — distinct from the R2 object URL
+          // the observation's brochureUrl stores.
+          sourceUrl: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+          products: [product!],
+        },
+      ],
+      scrapedAt: '2026-10-24T23:00:05Z',
+    })
+    const item = payload.items[0]!
+    expect(item.sourceUrl).toBe('https://www.superindo.co.id/promosi/katalog-super-hemat/')
+    expect(item.brochureUrl).toBe('/api/brochures/superindo/20261024/page-1.jpg')
+  })
+
+  it('emits explicit null (never undefined) when the batch has no source page', () => {
+    // Legacy outbox lines predate the field — the replay must still build a
+    // valid payload, and the absent value serializes as null per the
+    // payload convention.
+    const payload = buildPayload({
+      stores: [superindo],
+      images: [{ storeSlug: 'superindo', brochureUrl: null, products: [product!] }],
+      scrapedAt: '2026-10-24T23:00:05Z',
+    })
+    expect(payload.items[0]!.sourceUrl).toBeNull()
+    expect(() => assertPayloadValid(payload)).not.toThrow()
+  })
+})
