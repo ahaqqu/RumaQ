@@ -144,7 +144,13 @@ describe('Prices', () => {
       ],
     })
     vi.mocked(usePriceMeta).mockReturnValue({
-      data: { latestScrapedAt: isoDaysFromNow(-5 * 60_000), observationCount: 3 },
+      data: {
+        latestScrapedAt: isoDaysFromNow(-5 * 60_000),
+        observationCount: 3,
+        // Issue #373: empty until the classifier fills a category — the
+        // filter stays hidden.
+        categories: [],
+      },
     })
     vi.mocked(usePriceDetail).mockReturnValue({ data: null, isLoading: false })
     vi.mocked(usePrices).mockReturnValue({
@@ -255,6 +261,62 @@ describe('Prices', () => {
       source: 'lotte-mart',
       sort: 'cheapest',
     })
+  })
+
+  // Issue #373: the category filter — hidden until meta carries categories,
+  // exact-slug chips, badge on classified cards.
+  it('hides the category filter until meta carries categories', () => {
+    const { container } = renderPrices()
+    expect(container.querySelector('[data-testid="prices-category-filter"]')).toBeNull()
+  })
+
+  it('renders category chips and reacts to a category filter', () => {
+    vi.mocked(usePriceMeta).mockReturnValue({
+      data: {
+        latestScrapedAt: isoDaysFromNow(-5 * 60_000),
+        observationCount: 3,
+        categories: ['beras', 'minyak-goreng'],
+      },
+    })
+    const { container } = renderPrices()
+    const filter = container.querySelector('[data-testid="prices-category-filter"]')
+    expect(filter).not.toBeNull()
+    expect(filter.textContent).toContain('prices.allCategories')
+    expect(filter.textContent).toContain('beras')
+
+    fireEvent.click(findClickable(container, 'beras'))
+    expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
+      q: undefined,
+      source: null,
+      category: 'beras',
+      sort: 'cheapest',
+    })
+    // Clicking the active chip again clears it (the hook maps null →
+    // undefined before the query call, like the absent value).
+    fireEvent.click(findClickable(container, 'beras'))
+    expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
+      q: undefined,
+      source: null,
+      category: undefined,
+      sort: 'cheapest',
+    })
+  })
+
+  it('shows the category badge on classified products', () => {
+    vi.mocked(usePrices).mockReturnValue({
+      data: {
+        items: [{ ...mockItems[0], category: 'minyak-goreng' }, ...mockItems.slice(1)],
+        total: 3,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderPrices()
+    expect(container.querySelector('[data-testid="prices-category-badge"]').textContent).toBe(
+      'minyak-goreng'
+    )
+    // Only the classified card carries one.
+    expect(container.querySelectorAll('[data-testid="prices-category-badge"]')).toHaveLength(1)
   })
 
   it('renders the empty state when nothing matches', () => {
@@ -533,6 +595,14 @@ describe('Prices', () => {
     })
 
     it('clicking an example jumps: clears filters and deep-links the product', () => {
+      // The category filter (issue #373) must be present to be primed.
+      vi.mocked(usePriceMeta).mockReturnValue({
+        data: {
+          latestScrapedAt: isoDaysFromNow(-5 * 60_000),
+          observationCount: 3,
+          categories: ['beras', 'minyak-goreng'],
+        },
+      })
       const utils = renderPrices()
       const { container } = utils
       // Prime the shell's local filters through the products view first —
@@ -542,9 +612,11 @@ describe('Prices', () => {
         target: { value: 'minyak' },
       })
       fireEvent.click(findClickable(container, 'Lotte Mart'))
+      fireEvent.click(findClickable(container, 'minyak-goreng'))
       expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
         q: undefined,
         source: 'lotte-mart',
+        category: 'minyak-goreng',
         sort: 'cheapest',
       })
 
@@ -572,6 +644,7 @@ describe('Prices', () => {
       expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
         q: undefined,
         source: null,
+        category: undefined,
         sort: 'cheapest',
       })
     })

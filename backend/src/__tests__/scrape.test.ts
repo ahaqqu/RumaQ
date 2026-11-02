@@ -356,6 +356,9 @@ describe('GET /api/admin/scrape/stores', () => {
       'hypermart',
       'indomaret',
       'alfamart',
+      'tip-top',
+      'hari-hari',
+      'yogya',
     ])
   })
 })

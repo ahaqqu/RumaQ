@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { safeParse } from 'valibot'
 import { apiApp } from '../apps/api.js'
-import { runReportSchema } from '@rumaq/contract'
+import { reviewItemPairSchema, runReportSchema } from '@rumaq/contract'
 import { ingestPayloadSchema, ingestPrices, getPricesStatus } from '../lib/ingest.js'
 
 type FakeRow = Record<string, unknown>
@@ -198,6 +198,59 @@ describe('ingestPayloadSchema', () => {
       expect(result.success).toBe(false)
     }
   })
+
+  // Issue #373: the taxonomy stamp rides the item additively — old payloads
+  // (field absent) validate; the classified shape validates; junk shapes
+  // fail loudly at the strict ingest.
+  it('accepts payloads without taxoVersion (old scraper, additive) and with it', () => {
+    expect(samplePayload().success).toBe(true)
+
+    const base = samplePayload()
+    expect(base.success).toBe(true)
+    if (!base.success) return
+
+    const stamped = safeParse(ingestPayloadSchema, {
+      ...base.output,
+      items: [{ ...base.output.items[0]!, taxoVersion: 'v0.2' }],
+    })
+    expect(stamped.success).toBe(true)
+    if (!stamped.success) return
+    expect(stamped.output.items[0]!.taxoVersion).toBe('v0.2')
+
+    // The cap rejects an over-cap version string ('' stays valid — the
+    // schema's other additive string fields treat empty the same way).
+    for (const override of [{ taxoVersion: 'x'.repeat(51) }]) {
+      const result = safeParse(ingestPayloadSchema, {
+        ...base.output,
+        items: [{ ...base.output.items[0]!, ...override }],
+      })
+      expect(result.success).toBe(false)
+    }
+  })
+
+  it('accepts the reason "taxonomy" on review pairs (issue #373) and junk reasons still fail', () => {
+    const pair = {
+      itemProductKey: 'a--b--c',
+      itemName: 'A B C',
+      itemBrand: null,
+      itemUnit: null,
+      itemPrice: 10000,
+      itemEffectiveUnitPrice: null,
+      itemStore: 'lotte-mart',
+      entryProductKey: 'a--b--c',
+      entryName: 'A B C',
+      entryBrand: null,
+      entryUnit: null,
+      entryPrice: 10000,
+      entryEffectiveUnitPrice: null,
+      entryStore: 'lotte-mart',
+      matchMethod: 'ai',
+      confidence: 0.42,
+      reason: 'taxonomy',
+    } as const
+    expect(safeParse(reviewItemPairSchema, pair).success).toBe(true)
+    expect(safeParse(reviewItemPairSchema, { ...pair, reason: 'not-a-reason' }).success).toBe(false)
+  })
 })
 
 describe('ingestPrices', () => {
@@ -205,7 +258,7 @@ describe('ingestPrices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         // Only the rice already exists — the oil is created by this ingest.
         rows: [{ id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' }],
       },
@@ -282,7 +335,7 @@ describe('ingestPrices', () => {
     const { db } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: (params) =>
           params.map((key) => ({ id: `p-${String(key)}`, product_key: key as string })),
       },
@@ -301,7 +354,7 @@ describe('ingestPrices', () => {
     const { db } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' }],
       },
     ])
@@ -326,7 +379,7 @@ describe('ingestPrices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [
           { id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' },
           { id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' },
@@ -349,7 +402,7 @@ describe('ingestPrices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' }],
       },
     ])
@@ -374,7 +427,7 @@ describe('ingestPrices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' }],
       },
     ])
@@ -412,7 +465,7 @@ describe('ingestPrices — source_url (issue #380)', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'beras--pandan-wangi--5-kg' }],
       },
     ])
@@ -434,8 +487,9 @@ describe('ingestPrices — source_url (issue #380)', () => {
       .filter((s) => s.sql.includes('INSERT INTO price_observations'))
     expect(observationStmts).toHaveLength(2)
     // The column rides beside brochure_url and refreshes with the rest of
-    // the evidence columns on the upsert conflict.
-    expect(observationStmts[0]!.sql).toContain('brochure_url, source_url, scraped_at')
+    // the evidence columns on the upsert conflict (taxo_version, issue
+    // #373, sits between source_url and scraped_at).
+    expect(observationStmts[0]!.sql).toContain('brochure_url, source_url, taxo_version, scraped_at')
     expect(observationStmts[0]!.sql).toContain('source_url = excluded.source_url')
     expect(observationStmts[0]!.params).toContain('https://www.lottemart.co.id/promosi/katalog')
   })
@@ -444,7 +498,7 @@ describe('ingestPrices — source_url (issue #380)', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-1', product_key: 'beras--pandan-wangi--5-kg' }],
       },
     ])
@@ -462,9 +516,11 @@ describe('ingestPrices — source_url (issue #380)', () => {
       .filter((s) => s.sql.includes('INSERT INTO price_observations'))
     for (const stmt of observationStmts) {
       // brochure_url is bind 15 (0-based), source_url bind 16 right after
-      // it: positional, because the fixture's brochureUrl values differ.
+      // it, taxo_version bind 17 (issue #373) — positional, because the
+      // fixture's brochureUrl values differ.
       expect((stmt.params as unknown[])[16]).toBeNull()
-      expect((stmt.params as unknown[])[17]).toBe(parsed.output.scrapedAt)
+      expect((stmt.params as unknown[])[17]).toBeNull()
+      expect((stmt.params as unknown[])[18]).toBe(parsed.output.scrapedAt)
     }
   })
 })
@@ -535,7 +591,7 @@ describe('POST /api/internal/ingest/prices', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         // Only the rice already exists — the oil is created by this ingest.
         rows: [{ id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' }],
       },
@@ -758,7 +814,7 @@ describe('requireIngestSecret — dual accept (#376)', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key FROM price_products/,
+        match: /^SELECT id, product_key, category FROM price_products/,
         rows: [{ id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' }],
       },
     ])
@@ -851,5 +907,112 @@ describe('additive contract fields (issue #367)', () => {
       error: null,
     })
     expect(result.success).toBe(true)
+  })
+
+  // Issue #373: the per-store taxonomy object rides the report additively —
+  // absent on old scrapers' reports, present once RUMAQ_CATEGORY classifies.
+  it('accepts a run report whose stores carry the taxonomy object', () => {
+    const result = safeParse(runReportSchema, {
+      schemaVersion: 1,
+      runStartedAt: '2026-11-01T23:00:05Z',
+      finishedAt: '2026-11-01T23:04:11Z',
+      exitCode: 0,
+      status: 'success',
+      stage: 'done',
+      perStore: {
+        superindo: {
+          pagesFound: 2,
+          newImages: 2,
+          existingImages: 0,
+          skipped: 0,
+          itemsExtracted: 7,
+          itemsRejected: 0,
+          taxonomy: {
+            taxoVersion: 'v0.2',
+            classified: 7,
+            cacheHits: 5,
+            fallbackRules: 1,
+            lowConfidence: 1,
+            disagreements: 0,
+          },
+        },
+      },
+      match: null,
+      publish: null,
+      error: null,
+    })
+    expect(result.success).toBe(true)
+  })
+})
+
+describe('ingestPrices — category fill budget (issue #373, thermos A1)', () => {
+  const sampleParsed = () => {
+    const parsed = samplePayload()
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) throw new Error('fixture invalid')
+    return parsed
+  }
+
+  it('emits zero category-fill statements at the gate=on steady state (existing + already categorized)', async () => {
+    const { db, executedBatches } = createFakeDb([
+      { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
+      {
+        match: /^SELECT id, product_key, category FROM price_products/,
+        // Both products exist and are already classified — the gate=on
+        // steady state. The fill must cost zero statements: the per-
+        // invocation D1 query budget (50 on the free plan) has to keep its
+        // pre-taxonomy headroom at catalog scale (the lookup's category
+        // column is what makes the gate cheap — no extra pass over the
+        // catalog).
+        rows: [
+          { id: 'prod-1', product_key: 'beras--pandan-wangi--5-kg', category: 'beras' },
+          { id: 'prod-2', product_key: 'minyak-goreng--bimoli--1-l', category: 'minyak-goreng' },
+        ],
+      },
+    ])
+
+    const parsed = sampleParsed()
+    await ingestPrices(db, {
+      ...parsed.output,
+      items: parsed.output.items.map((item) => ({
+        ...item,
+        category: 'beras',
+        taxoVersion: 'v0.2',
+      })),
+    })
+
+    const fillStmts = executedBatches.flat().filter((s) => s.sql.includes('UPDATE price_products'))
+    expect(fillStmts).toHaveLength(0)
+  })
+
+  it('still fills NULL-category existing products — one deduped UPDATE per product', async () => {
+    const { db, executedBatches } = createFakeDb([
+      { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
+      {
+        match: /^SELECT id, product_key, category FROM price_products/,
+        rows: [
+          { id: 'prod-1', product_key: 'beras--pandan-wangi--5-kg', category: null },
+          { id: 'prod-2', product_key: 'minyak-goreng--bimoli--1-l', category: null },
+        ],
+      },
+    ])
+
+    const parsed = sampleParsed()
+    // The rice rides twice (the same product at two items) — one UPDATE.
+    await ingestPrices(db, {
+      ...parsed.output,
+      items: [
+        ...parsed.output.items.map((item) => ({
+          ...item,
+          category: 'beras',
+          taxoVersion: 'v0.2',
+        })),
+        { ...parsed.output.items[0]!, category: 'beras', taxoVersion: 'v0.2' },
+      ],
+    })
+
+    const fillStmts = executedBatches.flat().filter((s) => s.sql.includes('UPDATE price_products'))
+    expect(fillStmts).toHaveLength(2)
+    expect(fillStmts[0]!.sql).toContain('category IS NULL')
   })
 })

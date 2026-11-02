@@ -245,6 +245,9 @@ describe('prices routes — entitlement wiring, behavior-neutral tonight', () =>
       latestObservedDate: '2026-11-02',
       latestScrapedAt: '2026-11-02T23:00:05Z',
       observationCount: 1,
+      // Issue #373: the category filter's value domain rides meta; empty
+      // until the classifier (or the backfill) fills a product's category.
+      categories: [],
     })
 
     const promos = await apiApp.request('/api/prices/promos', {}, env)

@@ -36,21 +36,20 @@ describe('usePrices', () => {
     getPrices.mockResolvedValue({ items: [], total: 0 })
   })
 
-  it('threads q, source, and sort into the query and the cache key', async () => {
+  it('threads q, source, category, and sort into the query and the cache key', async () => {
     const { result } = renderHook(
-      () => usePrices({ q: 'beras', source: 'superindo', sort: 'cheapest' }),
+      () => usePrices({ q: 'beras', source: 'superindo', category: 'beras', sort: 'cheapest' }),
       { wrapper: createWrapper(queryClient) }
     )
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(getPrices).toHaveBeenCalledWith(
-      { q: 'beras', source: 'superindo', sort: 'cheapest' },
+      { q: 'beras', source: 'superindo', category: 'beras', sort: 'cheapest' },
       expect.anything()
     )
-    expect(queryClient.getQueryData(['prices', 'beras', 'superindo', 'cheapest'])).toEqual({
-      items: [],
-      total: 0,
-    })
+    expect(queryClient.getQueryData(['prices', 'beras', 'superindo', 'beras', 'cheapest'])).toEqual(
+      { items: [], total: 0 }
+    )
   })
 
   it('defaults the sort key slot so unsorted and sorted queries cache apart', async () => {
@@ -61,10 +60,10 @@ describe('usePrices', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     // No sort sent — this is the slot usePriceSources also hits.
     expect(getPrices).toHaveBeenCalledWith(
-      { q: undefined, source: undefined, sort: undefined },
+      { q: undefined, source: undefined, category: undefined, sort: undefined },
       expect.anything()
     )
-    expect(queryClient.getQueryData(['prices', '', '', ''])).toEqual({ items: [], total: 0 })
+    expect(queryClient.getQueryData(['prices', '', '', '', ''])).toEqual({ items: [], total: 0 })
   })
 
   it('auto-refreshes every 5 minutes while the tab is visible', async () => {

@@ -23,6 +23,7 @@ export function Prices() {
   const location = useLocation()
   const [search, setSearch] = useState('')
   const [source, setSource] = useState(null)
+  const [category, setCategory] = useState(null)
 
   // ?view=promos|brochures selects a catalog view; a #productKey hash is the
   // stronger intent and forces the Products view regardless of the param
@@ -41,6 +42,7 @@ export function Prices() {
   const jump = (productKey) => {
     setSearch('')
     setSource(null)
+    setCategory(null)
     navigate({ to: '/prices', search: {}, hash: productKey, replace: false })
   }
 
@@ -77,7 +79,14 @@ export function Prices() {
       </div>
 
       {activeView === 'products' ? (
-        <ProductsView search={search} setSearch={setSearch} source={source} setSource={setSource} />
+        <ProductsView
+          search={search}
+          setSearch={setSearch}
+          source={source}
+          setSource={setSource}
+          category={category}
+          setCategory={setCategory}
+        />
       ) : activeView === 'promos' ? (
         <PromosView onJump={jump} />
       ) : (

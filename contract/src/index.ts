@@ -83,6 +83,16 @@ export const ingestItemSchema = strictObject({
   // fails loudly (strictObject — the Worker-first deploy order exists for
   // this). No backfill: observations predating the field stay null.
   sourceUrl: nullish(pipe(string(), maxLength(500))),
+  // Issue #373: the frozen taxonomy version that classified this item's name
+  // ("v0.2", …) — stamped on the price_observations row so late taxonomy
+  // bumps (v0.3+) can replay-backfill without drift. `category` itself has
+  // ridden the schema since day one (null until the classifier publishes
+  // one). Additive-nullish (#294 pattern): old payloads (no field) still
+  // validate; a NEW payload hitting an OLD Worker fails loudly (strictObject
+  // — the Worker-first deploy order exists for this). The cap mirrors
+  // sourceUrl's: the value is producer-controlled, and one definition
+  // (producer truncation = schema bound) keeps the strict ingest safe.
+  taxoVersion: nullish(pipe(string(), maxLength(50))),
 })
 
 export const ingestPayloadSchema = strictObject({
@@ -166,6 +176,53 @@ export const runAuditSchema = strictObject({
 
 export type RunAudit = InferOutput<typeof runAuditSchema>
 
+// Issue #373: per-store taxonomy-classification metrics for a run — the
+// shadow-mode audit surface (audit week-1), mirroring runAuditSchema above.
+// Absent when the RUMAQ_CATEGORY gate is off or the store made no
+// classification work. classified counts the distinct names that got a
+// category this run (Jev + rules fallback); cacheHits is the name-hash cache
+// share of them; fallbackRules counts names the rules head answered (Jev
+// unavailable); lowConfidence (<0.5) and disagreements (rules↔Jev) count the
+// flags routed to the match-review queue (reason 'taxonomy') — always also
+// members of classified, never silent failures. Additive: old scrapers'
+// reports (no field) still validate; a new scraper's report on an OLD Worker
+// fails loudly (Worker deploys first).
+export const runTaxonomySchema = strictObject({
+  taxoVersion: pipe(string(), minLength(1), maxLength(50)),
+  classified: pipe(number(), integer(), minValue(0)),
+  cacheHits: pipe(number(), integer(), minValue(0)),
+  fallbackRules: pipe(number(), integer(), minValue(0)),
+  lowConfidence: pipe(number(), integer(), minValue(0)),
+  disagreements: pipe(number(), integer(), minValue(0)),
+})
+
+export type RunTaxonomy = InferOutput<typeof runTaxonomySchema>
+
+// Issue #373: one replay-backfill write — the product key and the frozen
+// taxonomy version's classification of its name. Derived layer only: the
+// backfill job classifies names it reads from the Worker and writes the
+// answers back; it never re-scrapes. The cap mirrors the ingest item's
+// taxoVersion (producer and contract ship together — one definition, no
+// drift).
+export const backfillCategoryItemSchema = strictObject({
+  productKey: pipe(string(), minLength(1)),
+  category: pipe(string(), minLength(1), maxLength(100)),
+})
+
+export type BackfillCategoryItem = InferOutput<typeof backfillCategoryItemSchema>
+
+// The backfill POST's envelope: which taxonomy version produced the answers,
+// and the classified products. Bounded (500 items ≤ 2 batch chunks) so one
+// request can never spend unbounded D1 budget. Additive-new endpoint: old
+// scrapers never call it.
+export const backfillCategoriesPayloadSchema = strictObject({
+  schemaVersion: literal(1),
+  taxoVersion: pipe(string(), minLength(1), maxLength(50)),
+  items: pipe(array(backfillCategoryItemSchema), maxLength(500)),
+})
+
+export type BackfillCategoriesPayload = InferOutput<typeof backfillCategoriesPayloadSchema>
+
 // Run report (haqita-integration.md §7.1): the scraper reports each live run
 // to the backend so the admin scraping monitor can show run history without
 // reading journald. One POST per finished run — including failed runs, which
@@ -205,6 +262,10 @@ export const runReportStoreSchema = strictObject({
   // field) still validate; a new scraper's report on an OLD Worker fails
   // loudly (Worker deploys first).
   audit: nullish(runAuditSchema),
+  // Issue #373: taxonomy-classification metrics for this store's items —
+  // the RUMAQ_CATEGORY shadow-mode audit surface. Absent when the gate is
+  // off or the store had no items. Same additive contract as audit above.
+  taxonomy: nullish(runTaxonomySchema),
 })
 
 // One flagged candidate pair the matcher reports for the admin review queue
@@ -237,7 +298,14 @@ export const reviewItemPairSchema = strictObject({
   entryStore: pipe(string(), minLength(1)),
   matchMethod: picklist(['exact', 'embedding', 'ai']),
   confidence: pipe(number(), minValue(0), maxValue(1)),
-  reason: picklist(['price_ratio', 'verifier_unresolved']),
+  // Issue #373: 'taxonomy' flags a classification, not a match — the item and
+  // entry sides reference the SAME catalog product (a self-pair), and the
+  // confidence is the Jev classification confidence. Low-confidence (<0.5)
+  // and rules↔Jev disagreement land here so a classification is never
+  // silently wrong (the match queue is the existing human-review channel).
+  // Additive: old scrapers' reports still validate; a new scraper's report
+  // hitting an OLD Worker fails loudly (Worker-first deploy order).
+  reason: picklist(['price_ratio', 'verifier_unresolved', 'taxonomy']),
 })
 
 export type ReviewItemPair = InferOutput<typeof reviewItemPairSchema>
@@ -310,6 +378,9 @@ export const SCRAPE_STORE_SLUGS = [
   'hypermart',
   'indomaret',
   'alfamart',
+  'tip-top',
+  'hari-hari',
+  'yogya',
 ] as const
 
 export const scrapeCommandCreateSchema = strictObject({

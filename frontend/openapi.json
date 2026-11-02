@@ -1213,7 +1213,10 @@
                         "astro",
                         "hypermart",
                         "indomaret",
-                        "alfamart"
+                        "alfamart",
+                        "tip-top",
+                        "hari-hari",
+                        "yogya"
                       ]
                     },
                     "minItems": 1
@@ -1966,6 +1969,16 @@
           },
           {
             "in": "query",
+            "name": "category",
+            "required": false,
+            "description": "Exact category-slug filter (issue #373); values from /api/prices/meta.",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "query",
             "name": "sort",
             "required": false,
             "schema": {
@@ -1991,7 +2004,7 @@
     "/api/prices/meta": {
       "get": {
         "operationId": "getApiPricesMeta",
-        "description": "Price data freshness: latest scrape time, latest observed date, and observation count.",
+        "description": "Price data freshness: latest scrape time, latest observed date, observation count, and the category slugs available for the explorer filter (issue #373).",
         "security": [
           {
             "cookieAuth": []
@@ -2015,9 +2028,20 @@
                     },
                     "observationCount": {
                       "type": "integer"
+                    },
+                    "categories": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   },
-                  "required": ["latestScrapedAt", "latestObservedDate", "observationCount"]
+                  "required": [
+                    "latestScrapedAt",
+                    "latestObservedDate",
+                    "observationCount",
+                    "categories"
+                  ]
                 }
               }
             }

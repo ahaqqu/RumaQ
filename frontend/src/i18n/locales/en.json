@@ -133,6 +133,8 @@
     "searchPlaceholder": "Search products, e.g. rice, oil",
     "searchAriaLabel": "Search prices",
     "allSources": "All stores",
+    "allCategories": "All categories",
+    "categoryFilterLabel": "Filter by category",
     "noMatch": "No matching prices",
     "noMatchDesc": "Prices come from the daily brochure scan — try different keywords or check back tomorrow.",
     "storesCount": "{{count}} store",
@@ -228,7 +230,8 @@
     "needsProxy": "needs a Tier-3 proxy — skipped by design until credentials are configured",
     "needsProxyChip": "needs proxy",
     "auditSummary": "Extraction audit — {{count}} pages re-extracted: names {{name}}%, prices {{price}}%, original prices {{original}}%, promos {{promo}}%",
-    "auditMore": "+{{count}} more disagreements"
+    "auditMore": "+{{count}} more disagreements",
+    "taxonomySummary": "Taxonomy {{version}} — classified {{classified}} (cache {{cache}}, rules {{rules}}); low-confidence {{lowConfidence}}, disagreements {{disagreements}} → review"
   },
   "scrape": {
     "activeRun": "Active run",

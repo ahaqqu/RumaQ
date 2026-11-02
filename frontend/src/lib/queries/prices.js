@@ -13,10 +13,10 @@ import {
 // tab is visible (react-query skips refetchIntervalInBackground by default).
 const PRICES_REFETCH_MS = 1000 * 60 * 5
 
-export function usePrices({ q, source, sort } = {}) {
+export function usePrices({ q, source, category, sort } = {}) {
   return useQuery({
-    queryKey: ['prices', q ?? '', source ?? '', sort ?? ''],
-    queryFn: ({ signal }) => getPrices({ q, source, sort }, signal),
+    queryKey: ['prices', q ?? '', source ?? '', category ?? '', sort ?? ''],
+    queryFn: ({ signal }) => getPrices({ q, source, category, sort }, signal),
     staleTime: 1000 * 60 * 5,
     refetchInterval: PRICES_REFETCH_MS,
   })

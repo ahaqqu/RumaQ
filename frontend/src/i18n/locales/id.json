@@ -133,6 +133,8 @@
     "searchPlaceholder": "Cari produk, mis. beras, minyak",
     "searchAriaLabel": "Cari harga",
     "allSources": "Semua toko",
+    "allCategories": "Semua kategori",
+    "categoryFilterLabel": "Saring menurut kategori",
     "noMatch": "Tidak ada harga yang cocok",
     "noMatchDesc": "Harga berasal dari pemindaian brosur harian — coba kata kunci lain atau periksa lagi besok.",
     "storesCount": "{{count}} toko",
@@ -228,7 +230,8 @@
     "needsProxy": "perlu proxy Tier-3 — sengaja dilewati sampai kredensial diisi",
     "needsProxyChip": "perlu proxy",
     "auditSummary": "Audit ekstraksi — {{count}} halaman diekstrak ulang: nama {{name}}%, harga {{price}}%, harga awal {{original}}%, promo {{promo}}%",
-    "auditMore": "+{{count}} ketidaksesuaian lainnya"
+    "auditMore": "+{{count}} ketidaksesuaian lainnya",
+    "taxonomySummary": "Taksonomi {{version}} — terklasifikasi {{classified}} (cache {{cache}}, aturan {{rules}}); keyakinan rendah {{lowConfidence}}, ketidaksesuaian {{disagreements}} → tinjau"
   },
   "scrape": {
     "activeRun": "Run aktif",

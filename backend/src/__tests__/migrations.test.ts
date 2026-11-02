@@ -209,3 +209,48 @@ describe('migration 0018: user_plans (#376)', () => {
     expect(tables.map((r: Record<string, unknown>) => r.name)).toEqual(['user_plans'])
   })
 })
+
+describe('migration 0019: price_observations.taxo_version (#373)', () => {
+  it('adds the nullable taxonomy stamp on top of the pre-0019 schema; old rows stay null', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0019')
+    )
+
+    db.prepare(
+      `INSERT INTO price_sources (id, slug, name) VALUES ('src-1', 'lotte-mart', 'Lotte Mart')`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_products (id, product_key, name) VALUES ('prod-1', 'beras--ramos--5-kg', 'Beras Ramos 5kg')`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_observations
+         (id, product_id, source_id, observed_date, price, match_confidence, scraped_at)
+       VALUES ('obs-1', 'prod-1', 'src-1', '2026-11-01', 27000, 1.0, '2026-11-01T23:00:05Z')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0019_observation_taxonomy.sql'), 'utf8'))
+
+    // The pre-existing row survives with taxo_version NULL — the backfill
+    // owns stamping it later.
+    const old = db.prepare('SELECT * FROM price_observations WHERE id = ?').get('obs-1')
+    expect(old).toMatchObject({ id: 'obs-1', taxo_version: null })
+
+    // New rows carry the classifying taxonomy version.
+    db.prepare(
+      `INSERT INTO price_observations
+         (id, product_id, source_id, observed_date, price, match_confidence, scraped_at, taxo_version)
+       VALUES ('obs-2', 'prod-1', 'src-1', '2026-11-02', 27000, 1.0, '2026-11-02T23:00:05Z', 'v0.2')`
+    ).run()
+    const fresh = db.prepare('SELECT * FROM price_observations WHERE id = ?').get('obs-2')
+    expect(fresh).toMatchObject({ taxo_version: 'v0.2' })
+  })
+
+  it('keeps the full chain green on a fresh database', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(price_observations)').all()
+    expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('taxo_version')
+  })
+})
