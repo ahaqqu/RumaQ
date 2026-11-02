@@ -1,4 +1,4 @@
-import type { ReviewItemPair, RunReport } from '@rumaq/contract'
+import type { ReviewItemPair, RunReport, RunTaxonomy } from '@rumaq/contract'
 
 // Storage for scraper run reports (haqita-integration.md §7.1). One row per
 // finished live run; the monitor reads these instead of journald. Detail
@@ -53,6 +53,9 @@ export type RunStoreSummary = {
   needsProxy?: boolean
   /** Issue #322 (A4): non-fatal anomalies the store rode through, with URLs. */
   warnings?: string[]
+  /** Issue #373: taxonomy-classification metrics (RUMAQ_CATEGORY shadow/on);
+   * absent when the gate is off or the store had no items. */
+  taxonomy?: RunTaxonomy
 }
 
 export type RunMatchSummary = {

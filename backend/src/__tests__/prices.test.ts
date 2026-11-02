@@ -15,6 +15,8 @@ function createPricesEnv(
     promoSources?: FakeRow[]
     promoExamples?: FakeRow[]
     promoTotal?: FakeRow[]
+    /** Issue #373: rows answering the meta endpoint's DISTINCT categories. */
+    categories?: FakeRow[]
   },
   opts: { authenticated?: boolean } = {}
 ) {
@@ -35,6 +37,9 @@ function createPricesEnv(
           }
           if (sql.includes('ORDER BY COALESCE(o.effective_unit_price, o.price) ASC, s.slug ASC')) {
             return { results: rows.current ?? [] }
+          }
+          if (sql.includes('SELECT DISTINCT p.category')) {
+            return { results: rows.categories ?? [] }
           }
           return { results: rows.list ?? [] }
         },
@@ -191,6 +196,30 @@ describe('GET /api/prices', () => {
     const listCall = prepareCalls.find((call) => call.sql.includes('s.slug = ?'))
     expect(listCall).toBeDefined()
     expect(listCall!.params).toContain('lotte-mart')
+  })
+
+  // Issue #373: exact category-slug equality with a bound parameter, on the
+  // flat and the sorted paths alike (the filter rides buildPriceFilters).
+  it('filters by category slug with a bound parameter on both list paths', async () => {
+    for (const sort of [undefined, 'cheapest'] as const) {
+      const { env, prepareCalls } = createPricesEnv({ list: [] })
+      const query = new URLSearchParams({ category: 'beras' })
+      if (sort) query.set('sort', sort)
+      const res = await apiApp.request(`/api/prices?${query}`, {}, env)
+      expect(res.status).toBe(200)
+
+      const listCall = prepareCalls.find((call) => call.sql.includes('p.category = ?'))
+      expect(listCall).toBeDefined()
+      expect(listCall!.params).toContain('beras')
+    }
+  })
+
+  it('rejects an out-of-domain category value shape (empty, over-cap)', async () => {
+    const { env } = createPricesEnv({ list: [] })
+    const empty = await apiApp.request('/api/prices?category=', {}, env)
+    expect(empty.status).toBe(400)
+    const overCap = await apiApp.request(`/api/prices?category=${'x'.repeat(101)}`, {}, env)
+    expect(overCap.status).toBe(400)
   })
 })
 
@@ -367,6 +396,9 @@ describe('GET /api/prices/meta', () => {
       latestObservedDate: '2026-10-24',
       latestScrapedAt: '2026-10-24T23:00:05Z',
       observationCount: 3,
+      // Issue #373: the category filter's value domain rides meta; empty
+      // until the classifier (or the backfill) fills a product's category.
+      categories: [],
     })
     // "meta" must never be treated as a productKey by the detail handler.
     expect(
@@ -380,7 +412,26 @@ describe('GET /api/prices/meta', () => {
     expect(res.status).toBe(200)
 
     const body = (await res.json()) as Record<string, unknown>
-    expect(body).toEqual({ latestObservedDate: null, latestScrapedAt: null, observationCount: 0 })
+    expect(body).toEqual({
+      latestObservedDate: null,
+      latestScrapedAt: null,
+      observationCount: 0,
+      categories: [],
+    })
+  })
+
+  // Issue #373: the meta response carries the distinct category slugs,
+  // ordered, as the explorer filter's value domain.
+  it('lists the distinct category slugs on meta', async () => {
+    const { env } = createPricesEnv({
+      status,
+      categories: [{ category: 'beras' }, { category: 'sayuran' }, { category: 'teh-kopi' }],
+    })
+    const res = await apiApp.request('/api/prices/meta', {}, env)
+    expect(res.status).toBe(200)
+
+    const body = (await res.json()) as { categories: string[] }
+    expect(body.categories).toEqual(['beras', 'sayuran', 'teh-kopi'])
   })
 })
 

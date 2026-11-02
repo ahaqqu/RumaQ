@@ -14,12 +14,15 @@ import {
   integer,
   minValue,
   maxValue,
+  maxLength,
+  minLength,
   pipe,
   regex,
   transform,
 } from 'valibot'
 import {
   SCRAPE_STORE_SLUGS,
+  backfillCategoriesPayloadSchema,
   scrapeCommandCreateSchema,
   scrapeEventsPostSchema,
   scrapeFinishSchema,
@@ -38,7 +41,9 @@ import {
   LATEST_OBSERVATION_SUBQUERY,
   LATEST_OBSERVATION_PREDICATE,
   getPromoCatalog,
+  listPriceCategories,
 } from '../lib/prices.js'
+import { applyCategoryBackfill, listUncategorizedProducts } from '../lib/taxonomy-backfill.js'
 import {
   BROCHURE_CONTENT_TYPES,
   BROCHURE_MAX_BYTES,
@@ -110,6 +115,9 @@ const stockQuery = object({
 const pricesQuery = object({
   q: optional(string()),
   source: optional(string()),
+  // Issue #373: exact category-slug filter (the meta endpoint's categories
+  // list is the value domain). Absent = unfiltered, the historical shape.
+  category: optional(pipe(string(), minLength(1), maxLength(100))),
   // Absent sort keeps the legacy flat name-ordered query and its exact
   // response shape, so unsorted consumers (usePriceSources) never regress.
   sort: optional(picklist(['name', 'cheapest', 'savings', 'expiry'])),
@@ -391,6 +399,51 @@ apiApp.get('/api/internal/prices/status', requireIngestSecret, async (c) => {
   res.headers.set('Cache-Control', 'private, no-cache')
   return res
 })
+
+// Replay-backfill work list (issue #373, checklist item 5): pages the
+// product keys + names still missing a category so the scraper-side offline
+// job can classify them (derived layer — read, classify, write back; never a
+// re-scrape). The job re-reads page 0 until it returns hasMore=false, which
+// keeps the walk honest against the shrinking list AND makes it
+// restart-safe.
+const backfillQueueQuery = object({
+  // Hono delivers query params as strings — accept a digit string and coerce
+  // (the scrapeCommandsQuery precedent). The lib clamps limit to its page
+  // ceiling, so only the floor is validated here.
+  limit: optional(pipe(string(), transform(Number), number(), integer(), minValue(1))),
+  offset: optional(pipe(string(), transform(Number), number(), integer(), minValue(0))),
+})
+
+apiApp.get(
+  '/api/internal/prices/backfill/queue',
+  requireIngestSecret,
+  sValidator('query', backfillQueueQuery),
+  async (c) => {
+    const page = await listUncategorizedProducts(c.env.DB, {
+      limit: c.req.valid('query').limit,
+      offset: c.req.valid('query').offset,
+    })
+    const res = c.json(page)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+// Replay-backfill write-back (issue #373): the classified answers. Both
+// writes are guarded by IS NULL (lib/taxonomy-backfill.ts) so a retry or a
+// whole-job replay is an idempotent no-op and a live gate=on value is never
+// clobbered. Unknown keys are counted in the response, never fatal.
+apiApp.post(
+  '/api/internal/prices/backfill/categories',
+  requireIngestSecret,
+  sValidator('json', backfillCategoriesPayloadSchema),
+  async (c) => {
+    const result = await applyCategoryBackfill(c.env.DB, c.req.valid('json'))
+    const res = c.json(result)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
 
 apiApp.get(
   '/api/health',
@@ -2606,10 +2659,14 @@ const PRICE_SORTS = {
   },
 } as const
 
-// Optional q / source filters shared by the legacy flat query and the sorted
-// CTE pipeline. Inside the CTE the aggregates (price_min, savings_pct, …)
-// reflect exactly the filtered set the user is looking at.
-function buildPriceFilters(q: string | undefined, source: string | undefined) {
+// Optional q / source / category filters shared by the legacy flat query and
+// the sorted CTE pipeline. Inside the CTE the aggregates (price_min,
+// savings_pct, …) reflect exactly the filtered set the user is looking at.
+function buildPriceFilters(
+  q: string | undefined,
+  source: string | undefined,
+  category: string | undefined
+) {
   let sql = ''
   const params: unknown[] = []
   if (q) {
@@ -2620,6 +2677,12 @@ function buildPriceFilters(q: string | undefined, source: string | undefined) {
   if (source) {
     sql += ' AND s.slug = ?'
     params.push(source)
+  }
+  // Issue #373: exact slug equality — the value domain is the meta
+  // endpoint's categories list, so a LIKE here would blur slug boundaries.
+  if (category) {
+    sql += ' AND p.category = ?'
+    params.push(category)
   }
   return { sql, params }
 }
@@ -3133,6 +3196,13 @@ apiApp.get(
       { in: 'query', name: 'source', required: false, schema: { type: 'string' } },
       {
         in: 'query',
+        name: 'category',
+        required: false,
+        description: 'Exact category-slug filter (issue #373); values from /api/prices/meta.',
+        schema: { type: 'string', maxLength: 100 },
+      },
+      {
+        in: 'query',
         name: 'sort',
         required: false,
         schema: {
@@ -3150,9 +3220,9 @@ apiApp.get(
   }),
   sValidator('query', pricesQuery),
   async (c) => {
-    const { q, source, sort } = c.req.valid('query')
+    const { q, source, category, sort } = c.req.valid('query')
 
-    const filters = buildPriceFilters(q, source)
+    const filters = buildPriceFilters(q, source, category)
 
     // No sort param → the legacy flat name-ordered query and its exact
     // response: usePriceSources builds the source-chip bar from this path and
@@ -3270,7 +3340,7 @@ apiApp.get(
   '/api/prices/meta',
   describeRoute({
     description:
-      'Price data freshness: latest scrape time, latest observed date, and observation count.',
+      'Price data freshness: latest scrape time, latest observed date, observation count, and the category slugs available for the explorer filter (issue #373).',
     security: [{ cookieAuth: [] }],
     responses: {
       200: {
@@ -3283,8 +3353,9 @@ apiApp.get(
                 latestScrapedAt: { type: 'string', nullable: true } as any,
                 latestObservedDate: { type: 'string', nullable: true } as any,
                 observationCount: { type: 'integer' },
+                categories: { type: 'array', items: { type: 'string' } },
               },
-              required: ['latestScrapedAt', 'latestObservedDate', 'observationCount'],
+              required: ['latestScrapedAt', 'latestObservedDate', 'observationCount', 'categories'],
             },
           },
         },
@@ -3294,8 +3365,14 @@ apiApp.get(
     },
   }),
   async (c) => {
-    const status = await getPricesStatus(c.env.DB)
-    const res = c.json(status)
+    // Issue #373: the category filter's value domain rides meta so the
+    // explorer needs no second round trip; empty until the classifier (or
+    // the backfill) fills price_products.category.
+    const [status, categories] = await Promise.all([
+      getPricesStatus(c.env.DB),
+      listPriceCategories(c.env.DB),
+    ])
+    const res = c.json({ ...status, categories })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }

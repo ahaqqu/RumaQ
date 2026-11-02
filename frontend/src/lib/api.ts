@@ -276,10 +276,17 @@ export function updatePlanItem(
 export type PriceSort = 'name' | 'cheapest' | 'savings' | 'expiry'
 
 export function getPrices(
-  { q, source, sort }: { q?: string; source?: string; sort?: PriceSort } = {},
+  {
+    q,
+    source,
+    category,
+    sort,
+  }: { q?: string; source?: string; category?: string; sort?: PriceSort } = {},
   signal?: AbortSignal
 ): Promise<unknown> {
-  return unwrap(client.GET('/api/prices', { params: { query: { q, source, sort } }, signal }))
+  return unwrap(
+    client.GET('/api/prices', { params: { query: { q, source, category, sort } }, signal })
+  )
 }
 
 // Sorted lists are product-level pages with a `truncated` flag (issue #291);

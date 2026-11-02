@@ -24,8 +24,9 @@ export type IngestResult = {
 
 // A db.batch() call counts as ONE query against D1's per-invocation budget
 // (50 on the free plan); within it, the per-query limits (100 bound
-// parameters) apply to each statement — an observation binds 18. 50
-// statements per batch keeps both limits comfortable.
+// parameters) apply to each statement — an observation binds 19 (the
+// taxonomy stamp, issue #373, added the 19th). 50 statements per batch keeps
+// both limits comfortable.
 const BATCH_CHUNK = 50
 // D1 also caps bound parameters per QUERY at 100 — an IN list must ride
 // under that ceiling, or a catalog of ≥100 products fails the whole ingest
@@ -144,6 +145,21 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
     ...newIdByKey,
   ])
 
+  // Issue #373: an already-known product whose payload now carries a
+  // category (the gate=on classifier) fills its NULL category — the
+  // backfill/live classification owns the column, so a present value is
+  // never clobbered and old payloads (category null) change nothing. Only
+  // items actually carrying a category produce a statement (deduped per
+  // product — the same product seen at N stores is one UPDATE), so today's
+  // uncategorized payloads add zero statements.
+  const categorizedExistingKeys = [
+    ...new Set(
+      usable
+        .filter((item) => item.category && existingKeys.has(item.productKey))
+        .map((item) => item.productKey)
+    ),
+  ]
+
   const observedDefault = payload.scrapedAt.slice(0, 10)
   await runBatch(
     db,
@@ -154,8 +170,8 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
              (id, product_id, source_id, observed_date, price, effective_unit_price,
               unit_qty, unit_qty_unit, unit_price,
               promo_type, promo_label, valid_from, valid_until, match_method,
-              match_confidence, brochure_url, source_url, scraped_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              match_confidence, brochure_url, source_url, taxo_version, scraped_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(product_id, source_id, observed_date) DO UPDATE SET
              price = excluded.price,
              effective_unit_price = excluded.effective_unit_price,
@@ -170,6 +186,10 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
              match_confidence = excluded.match_confidence,
              brochure_url = excluded.brochure_url,
              source_url = excluded.source_url,
+             -- COALESCE (issue #373): an old scraper's replay (no
+             -- taxoVersion) must never erase a stamp the backfill or a
+             -- categorized run already left on the row.
+             taxo_version = COALESCE(excluded.taxo_version, price_observations.taxo_version),
              scraped_at = excluded.scraped_at`
         )
         .bind(
@@ -195,10 +215,26 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
           // link the review card's entry side enriches from. Null for old
           // scrapers' payloads (additive field, no backfill).
           item.sourceUrl ?? null,
+          // The classifying taxonomy version (issue #373) — null for old
+          // scrapers' payloads (additive field, no backfill).
+          item.taxoVersion ?? null,
           payload.scrapedAt
         )
     )
   )
+
+  if (categorizedExistingKeys.length > 0) {
+    await runBatch(
+      db,
+      categorizedExistingKeys.map((key) =>
+        db
+          .prepare(
+            'UPDATE price_products SET category = ? WHERE product_key = ? AND category IS NULL'
+          )
+          .bind(itemByKey.get(key)!.category, key)
+      )
+    )
+  }
 
   return {
     accepted: usable.length,
