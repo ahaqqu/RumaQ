@@ -718,6 +718,28 @@ describe('requireIngestSecret — dual accept (#376)', () => {
     expect(res.status).toBe(401)
   })
 
+  it('returns 401 when both secrets are set and the token matches neither', async () => {
+    // The reject twin of "both compared on every request": the two-iteration
+    // loop runs both compares and still lands on the identical 401 shape.
+    const { db } = createFakeDb()
+    const res = await requestStatus(createEnv(db, 'old-secret', 'new-secret'), 'neither-secret')
+    expect(res.status).toBe(401)
+    expect(res.headers.get('WWW-Authenticate')).toBe('Bearer realm="rumaq-ingest"')
+  })
+
+  it('returns 401 for a non-Bearer Authorization header while both secrets are set', async () => {
+    // Malformed scheme: no token is extracted, so no candidate is compared
+    // and the response is the same 401 as a missing header.
+    const { db } = createFakeDb()
+    const res = await apiApp.request(
+      '/api/internal/prices/status',
+      { headers: { Authorization: 'Basic dXNlcjpwYXNz' } },
+      createEnv(db, 'old-secret', 'new-secret')
+    )
+    expect(res.status).toBe(401)
+    expect(res.headers.get('WWW-Authenticate')).toBe('Bearer realm="rumaq-ingest"')
+  })
+
   it('accepts when the primary slot is unset but _NEXT is set (no 503)', async () => {
     const { db } = createFakeDb(statusRows)
     const res = await requestStatus(createEnv(db, undefined, 'new-secret'), 'new-secret')
