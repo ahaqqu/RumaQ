@@ -1213,7 +1213,8 @@
                         "astro",
                         "hypermart",
                         "indomaret",
-                        "alfamart"
+                        "alfamart",
+                        "tip-top"
                       ]
                     },
                     "minItems": 1

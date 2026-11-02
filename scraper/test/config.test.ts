@@ -211,12 +211,20 @@ describe('registration parity (issue #322)', () => {
     }
   })
 
-  it('contract ⇔ config: SCRAPE_STORE_SLUGS equals the config slug set', () => {
-    // Array equality (not set equality) is deliberate: it also pins the two
-    // lists to one shared order, so a drift is visible in the diff, not just
-    // detectable. A slug in the contract without a producing store is
-    // triggerable-but-unimplemented; a store missing from the contract is
-    // untriggerable (its Scrape-Now and brochure keys would 404). Both fail.
-    expect([...SCRAPE_STORE_SLUGS]).toEqual(loadConfig().stores.map((store) => store.slug))
+  it('contract ⊇ config: SCRAPE_STORE_SLUGS contains every configured slug, in order', () => {
+    // Since the scraper split (issue #376) the private rumaq-pipeline repo
+    // owns the live scraper, and wave-2 stores land there directly — this
+    // in-repo copy is a frozen mirror that lags until its next sync. The
+    // contract therefore may LEAD the frozen config (a leading slug's
+    // producing store lives in the private repo — the mirror would 404
+    // nothing operationally: the nightly runs the private scraper), while a
+    // configured store missing from the contract stays untriggerable (its
+    // Scrape-Now and brochure keys would 404) and still fails. Subset in
+    // order: relative order must match so the shared lists stay comparable.
+    const configSlugs = loadConfig().stores.map((store) => store.slug)
+    const contractSlugs: readonly string[] = [...SCRAPE_STORE_SLUGS]
+    expect(contractSlugs).toEqual(expect.arrayContaining(configSlugs))
+    const positions = configSlugs.map((slug) => contractSlugs.indexOf(slug))
+    expect(positions).toEqual([...positions].sort((a, b) => a - b))
   })
 })
