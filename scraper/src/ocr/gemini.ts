@@ -16,6 +16,7 @@ import { classifyQuotaError, QuotaExhausted, withQuotaPolicy } from '../util/ret
 
 // Ported verbatim from haqita scripts/ocr/prompts/gemini.py — the prompt is
 // load-bearing for extraction quality; change it deliberately, not casually.
+// Sole deliberate change (issue #367): one added originalPrice rule below.
 const PROMPT_BODY = `Return ONLY a valid JSON array. No explanation. No markdown. Start with [ and end with ].
 
 Each item must follow this exact structure:
@@ -34,6 +35,7 @@ Rules:
 - "original_price" usually black font, but not always.
 - If both prices shown, put "discounted_price" in "price" field.
 - If only one price is shown, put it in "price" field.
+- If an original (strikethrough) price is shown, also emit it as "originalPrice" (integer in IDR, same rule as "price"), else "originalPrice" is null.
 - DO NOT include both "original_price" and "discounted_price" in "promo"
 - Field "price" MUST be an integer. Indonesian '.' separator: "Rp 8.500" → 8500. Exactly as shown in brochure, do not convert to per-unit price or apply any discount calculation.
 - Extract EVERY product visible, including small items.`

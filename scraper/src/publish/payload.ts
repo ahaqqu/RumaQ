@@ -94,6 +94,10 @@ export function buildPayload(input: {
         category: null,
         storeSlug: image.storeSlug,
         price: product.price,
+        // Issue #367: the sanitized strikethrough/original price rides the
+        // payload additively (null when the source showed none) — measurement
+        // data; the backend stores nothing for it yet (phase 2 decision).
+        originalPrice: product.originalPrice,
         effectiveUnitPrice: promo.promoType === 'single' ? null : promo.effectiveUnitPrice,
         unitQty: parsedUnit?.qty ?? null,
         unitQtyUnit: parsedUnit?.unit ?? null,

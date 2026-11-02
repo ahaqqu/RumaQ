@@ -7,6 +7,12 @@ export interface RawOcrItem {
   unit?: string | null
   price?: number | string | null
   /**
+   * Issue #367: the strikethrough/original price the model emits when the
+   * source shows one. Model-controlled output (unlike priceFromDom below) —
+   * it flows through parseOcrJson untouched and sanitize in validateProduct.
+   */
+  originalPrice?: number | string | null
+  /**
    * Set by the catalog stores (issue #363): the price comes from the site's
    * rendered card text, not OCR, so the OCR digit-misread bounds (MAX_PRICE)
    * do not apply — a genuine premium SKU above 1M IDR validates.
@@ -21,6 +27,7 @@ export interface OcrItem {
   brand: string | null
   unit: string | null
   price: number
+  originalPrice: number | null
   promo: string[] | null
   period: string | null
   ocrRawPrice: string
@@ -40,7 +47,9 @@ export function parseOcrJson(rawText: string): RawOcrItem[] {
   // Review A1 (PR #366): priceFromDom is set by the catalog adaptation only
   // (pipeline.ts catalogItemToRaw). The OCR path parses MODEL output here, so
   // a hallucinated flag must not survive — it would let the OCR path waive
-  // its own MAX_PRICE misread guard.
+  // its own MAX_PRICE misread guard. originalPrice (issue #367) is
+  // model-controlled too but must FLOW THROUGH — it is the measured field,
+  // sanitized downstream in validateProduct.
   for (const item of items) delete item.priceFromDom
   return items
 }
@@ -137,6 +146,14 @@ export function validateProduct(
   }
   const price = value
 
+  // Issue #367: sanitize the strikethrough/original price — pure parse, NO
+  // bounds (the misread guards above exist to protect the paid price that
+  // publishes; a junk originalPrice must never reject an otherwise valid
+  // item), garbage/unparseable/negative → null. Rides the product onto the
+  // payload as measurement data only (the shadow diff's validation vehicle).
+  const originalValue = parseIdrValue(raw.originalPrice ?? null)
+  const originalPrice = originalValue !== null && originalValue >= 0 ? originalValue : null
+
   const brand = raw.brand ? String(raw.brand).trim() : null
   return [
     {
@@ -144,6 +161,7 @@ export function validateProduct(
       brand: brand && brand.length > 0 ? brand : null,
       unit: cleanUnit(raw.unit),
       price,
+      originalPrice,
       promo: normalizePromo(raw.promo),
       period: raw.period ? String(raw.period).trim() : null,
       ocrRawPrice: String(raw.price ?? ''),

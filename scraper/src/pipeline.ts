@@ -45,6 +45,17 @@ import {
   type Ocr,
   type OcrError,
 } from './ocr/gemini.js'
+import {
+  createShadowOcr,
+  diffOcrItems,
+  newAuditAccumulator,
+  parseAuditGate,
+  resolveShadowModel,
+  runShadowAudit,
+  shouldSamplePage,
+  summarizeAudit,
+  type AuditPlan,
+} from './ocr/audit.js'
 import { validateProduct, type RawOcrItem, type ValidatedProduct } from './ocr/parse.js'
 import { assertPayloadValid, buildPayload, type ImageProducts } from './publish/payload.js'
 import { loadOutbox, retireOutbox, type OutboxIo } from './publish/outbox.js'
@@ -54,7 +65,12 @@ import {
   uploadBrochure,
   type BrochureUploadOptions,
 } from './publish/brochures.js'
-import { REJECTED_ITEM_LIMITS, type RejectedItem, type RunReport } from '@rumaq/contract'
+import {
+  REJECTED_ITEM_LIMITS,
+  type RejectedItem,
+  type RunAudit,
+  type RunReport,
+} from '@rumaq/contract'
 import {
   publishPayload,
   type FetchLike as PublishFetch,
@@ -156,6 +172,15 @@ export interface PipelineStatus {
        */
       rejectedItems?: RejectedItem[]
       /**
+       * Shadow-OCR agreement metrics for the sampled fresh pages (issue #367,
+       * phase 1), recomputed after each sampled page lands. Absent when the
+       * RUMAQ_OCR_AUDIT gate is off or nothing was sampled. Rides status.json
+       * AND the run report (the report schema carries it additively, like
+       * rejectedItems); the shadow results themselves never re-enter
+       * products, matching, or publishing.
+       */
+      audit?: RunAudit
+      /**
        * Brochure images uploaded to R2 this run (issue #293). status.json
        * only — reportRun strips it before posting.
        */
@@ -241,6 +266,7 @@ function processStore(
   options: PipelineOptions,
   scrapedAt: string,
   entry: PipelineStatus['stores'][string],
+  audit: AuditPlan,
   log: LogFn
 ): Effect.Effect<ImageProducts[], StoreRunError> {
   const store = plugin.config
@@ -268,6 +294,23 @@ function processStore(
     sleep: options.sleep,
     log,
   })
+  // Shadow OCR (issue #367): created per store (the prompt is per-store) only
+  // when the audit gate is active — an off gate builds nothing and makes zero
+  // calls. The prompt mirrors the primary's (with the originalPrice rule).
+  const shadowOcr: Ocr | null =
+    audit.gate.mode === 'off'
+      ? null
+      : createShadowOcr({
+          model: audit.shadowModel,
+          storeSlug: store.slug,
+          client: options.ocrClient,
+          sleep: options.sleep,
+          log,
+        })
+  // The store's running audit state (issue #367), folded into entry.audit
+  // after each sampled page so a later failure keeps what was measured.
+  const auditAcc = newAuditAccumulator()
+  let freshPageIndex = 0
 
   return Effect.gen(function* () {
     const pages = yield* plugin.listBrochurePages({
@@ -336,6 +379,25 @@ function processStore(
         { brochureUrl: objectUrl, imageFilename: image.filename, rawItems },
         scrapedAt
       )
+      // Shadow-OCR audit (issue #367): only fresh pages ever reach this loop
+      // (MD5-cached images are existingImages), so the gate here can never
+      // re-OCR a page that was already paid for. One one-shot shadow call —
+      // failures are swallowed inside runShadowAudit (sample skipped, store
+      // never fails) — and the diff lands in entry.audit as measurement only.
+      if (shadowOcr && shouldSamplePage(audit.gate, freshPageIndex)) {
+        const shadowItems = yield* runShadowAudit(
+          shadowOcr,
+          store.slug,
+          bytes,
+          image.contentType,
+          log
+        )
+        if (shadowItems) {
+          diffOcrItems(products, shadowItems, image.filename, auditAcc)
+          entry.audit = summarizeAudit(auditAcc)
+        }
+      }
+      freshPageIndex += 1
       imageProducts.push({
         storeSlug: store.slug,
         brochureUrl: image.brochureUrl,
@@ -649,6 +711,22 @@ export function runPipeline(
   const verifierChain = createModelChain(config.ocr.verifierModelChain, 'verifier')
   log(`[chain] ocr (${ocrChain.chain.length} rungs): ${ocrChain.chain.join(' → ')}`)
   log(`[chain] verifier (${verifierChain.chain.length} rungs): ${verifierChain.chain.join(' → ')}`)
+  // Shadow-audit gate (issue #367): off by default — with RUMAQ_OCR_AUDIT
+  // unset every store makes zero shadow calls and the run report carries no
+  // audit object. The shadow model defaults to the OCR chain's SECOND rung
+  // (a different model is the point); a one-rung chain falls back to its
+  // only rung, and RUMAQ_OCR_AUDIT_MODEL overrides both.
+  const auditGate = parseAuditGate(process.env.RUMAQ_OCR_AUDIT)
+  const auditEnv = process.env.RUMAQ_OCR_AUDIT
+  if (auditEnv && auditGate.mode === 'off' && auditEnv.trim().toLowerCase() !== 'off') {
+    log(
+      `[audit] RUMAQ_OCR_AUDIT='${auditEnv}' not recognized (off | all | sample:N) — audit stays off`
+    )
+  }
+  const audit: AuditPlan = {
+    gate: auditGate,
+    shadowModel: resolveShadowModel(ocrChain.chain, process.env.RUMAQ_OCR_AUDIT_MODEL),
+  }
   // scopedPlugins (→ activePlugins) is the single source of truth for which
   // stores run: both the work list and the status map come from it, so they
   // cannot drift. A scope that matches nothing fails before any IO.
@@ -710,7 +788,7 @@ export function runPipeline(
         const imageProducts = yield* (
           isCatalogPlugin(plugin)
             ? processCatalogStore(plugin, options, scrapedAt, entry, log)
-            : processStore(plugin, config, ocrChain, options, scrapedAt, entry, log)
+            : processStore(plugin, config, ocrChain, options, scrapedAt, entry, audit, log)
         ).pipe(
           Effect.catchIf(
             (error) => !(error instanceof QuotaExhausted),

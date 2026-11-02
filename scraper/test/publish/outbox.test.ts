@@ -19,6 +19,7 @@ const batch: ImageProducts = {
       brand: null,
       unit: '1 kg',
       price: 17000,
+      originalPrice: null,
       promo: null,
       period: null,
       ocrRawPrice: '17000',
