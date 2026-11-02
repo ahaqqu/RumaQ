@@ -1495,6 +1495,12 @@
                           "itemStore": {
                             "type": "string"
                           },
+                          "itemBrochureUrl": {
+                            "type": ["string", "null"]
+                          },
+                          "itemSourceUrl": {
+                            "type": ["string", "null"]
+                          },
                           "entryProductKey": {
                             "type": "string"
                           },
@@ -1515,6 +1521,15 @@
                           },
                           "entryStore": {
                             "type": "string"
+                          },
+                          "entryBrochureUrl": {
+                            "type": ["string", "null"]
+                          },
+                          "entrySourceUrl": {
+                            "type": ["string", "null"]
+                          },
+                          "entryObservedAt": {
+                            "type": ["string", "null"]
                           },
                           "matchMethod": {
                             "type": "string",
@@ -1676,6 +1691,12 @@
                         "itemStore": {
                           "type": "string"
                         },
+                        "itemBrochureUrl": {
+                          "type": ["string", "null"]
+                        },
+                        "itemSourceUrl": {
+                          "type": ["string", "null"]
+                        },
                         "entryProductKey": {
                           "type": "string"
                         },
@@ -1696,6 +1717,15 @@
                         },
                         "entryStore": {
                           "type": "string"
+                        },
+                        "entryBrochureUrl": {
+                          "type": ["string", "null"]
+                        },
+                        "entrySourceUrl": {
+                          "type": ["string", "null"]
+                        },
+                        "entryObservedAt": {
+                          "type": ["string", "null"]
                         },
                         "matchMethod": {
                           "type": "string",
@@ -1807,6 +1837,12 @@
                         "itemStore": {
                           "type": "string"
                         },
+                        "itemBrochureUrl": {
+                          "type": ["string", "null"]
+                        },
+                        "itemSourceUrl": {
+                          "type": ["string", "null"]
+                        },
                         "entryProductKey": {
                           "type": "string"
                         },
@@ -1827,6 +1863,15 @@
                         },
                         "entryStore": {
                           "type": "string"
+                        },
+                        "entryBrochureUrl": {
+                          "type": ["string", "null"]
+                        },
+                        "entrySourceUrl": {
+                          "type": ["string", "null"]
+                        },
+                        "entryObservedAt": {
+                          "type": ["string", "null"]
                         },
                         "matchMethod": {
                           "type": "string",
