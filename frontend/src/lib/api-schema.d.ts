@@ -2200,6 +2200,13 @@ export interface operations {
         }
         content?: never
       }
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
     }
   }
   getApiPricesMeta: {
@@ -2226,6 +2233,13 @@ export interface operations {
       }
       /** @description Unauthorized */
       401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Forbidden */
+      403: {
         headers: {
           [name: string]: unknown
         }
@@ -2284,6 +2298,13 @@ export interface operations {
         }
         content?: never
       }
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
     }
   }
   getApiPricesBrochures: {
@@ -2327,6 +2348,13 @@ export interface operations {
         }
         content?: never
       }
+      /** @description Forbidden */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
     }
   }
   getApiPricesByProductKey: {
@@ -2349,6 +2377,13 @@ export interface operations {
       }
       /** @description Unauthorized */
       401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Forbidden */
+      403: {
         headers: {
           [name: string]: unknown
         }
