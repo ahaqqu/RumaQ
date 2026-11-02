@@ -2,10 +2,10 @@
 
 ## Unit test
 
-| Location                          | Runner | Environment | Coverage                                                                           |
-| --------------------------------- | ------ | ----------- | ---------------------------------------------------------------------------------- |
-| `frontend/src/**/*.test.{js,jsx}` | Vitest | jsdom       | 50/50/50/50                                                                        |
-| `backend/src/**/*.test.ts`        | Vitest | Node        | 50/50/50/50 (D1 mocked)                                                            |
+| Location                          | Runner | Environment | Coverage                |
+| --------------------------------- | ------ | ----------- | ----------------------- |
+| `frontend/src/**/*.test.{js,jsx}` | Vitest | jsdom       | 50/50/50/50             |
+| `backend/src/**/*.test.ts`        | Vitest | Node        | 50/50/50/50 (D1 mocked) |
 
 ```
 ./scripts/test.sh unit
