@@ -357,6 +357,7 @@ describe('GET /api/admin/scrape/stores', () => {
       'indomaret',
       'alfamart',
       'tip-top',
+      'hari-hari',
     ])
   })
 })

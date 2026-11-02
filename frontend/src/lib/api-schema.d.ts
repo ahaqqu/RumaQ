@@ -1744,6 +1744,7 @@ export interface operations {
             | 'indomaret'
             | 'alfamart'
             | 'tip-top'
+            | 'hari-hari'
           )[]
         }
       }
