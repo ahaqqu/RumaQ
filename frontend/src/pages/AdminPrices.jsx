@@ -182,6 +182,23 @@ function RunDetail({ run }) {
                       )}
                     </div>
                   )}
+                  {/* Issue #373: the taxonomy classification metrics ride the
+                  report only when the RUMAQ_CATEGORY gate classified this
+                  store's items (shadow or on) — the row answers "what did the
+                  classifier do at what cost" without journald. Same
+                  warn-toned convention as the audit block above. */}
+                  {stats.taxonomy && (
+                    <div className="text-warn mt-0.5 break-words">
+                      {t('monitor.taxonomySummary', {
+                        version: stats.taxonomy.taxoVersion,
+                        classified: stats.taxonomy.classified,
+                        cache: stats.taxonomy.cacheHits,
+                        rules: stats.taxonomy.fallbackRules,
+                        lowConfidence: stats.taxonomy.lowConfidence,
+                        disagreements: stats.taxonomy.disagreements,
+                      })}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

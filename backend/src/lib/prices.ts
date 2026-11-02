@@ -182,3 +182,20 @@ ${PROMO_LATEST_BASE}
 
   return { types, total }
 }
+
+// The distinct categories the explorer can filter by (issue #373): the
+// classified product slugs, A→Z; categories nothing currently observes are
+// absent by construction. Grows as the classifier (RUMAQ_CATEGORY gate=on)
+// and the backfill fill price_products.category; empty until then — the
+// explorer hides its category filter when the list is empty.
+export async function listPriceCategories(db: D1Database): Promise<string[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT DISTINCT p.category AS category
+       FROM price_products p
+       WHERE p.category IS NOT NULL
+       ORDER BY p.category ASC`
+    )
+    .all<{ category: string }>()
+  return (results ?? []).map((row) => row.category)
+}

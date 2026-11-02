@@ -543,7 +543,7 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description Price data freshness: latest scrape time, latest observed date, and observation count. */
+    /** @description Price data freshness: latest scrape time, latest observed date, observation count, and the category slugs available for the explorer filter (issue #373). */
     get: operations['getApiPricesMeta']
     put?: never
     post?: never
@@ -2178,6 +2178,8 @@ export interface operations {
       query?: {
         q?: string
         source?: string
+        /** @description Exact category-slug filter (issue #373); values from /api/prices/meta. */
+        category?: string
         sort?: 'name' | 'cheapest' | 'savings' | 'expiry'
       }
       header?: never
@@ -2228,6 +2230,7 @@ export interface operations {
             latestScrapedAt: string | null
             latestObservedDate: string | null
             observationCount: number
+            categories: string[]
           }
         }
       }

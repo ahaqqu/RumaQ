@@ -201,11 +201,14 @@ function PriceDetail({ productKey }) {
   )
 }
 
-// The Products explorer: search, source chips, sort, per-product cards with
-// #productKey deep links. Extracted verbatim from Prices.jsx when the page
-// became a Products|Promos shell (issue #292) — search text and the selected
-// source live in the shell so the promo view's example jump can clear them.
-export function ProductsView({ search, setSearch, source, setSource }) {
+// The Products explorer: search, source chips, category chips (issue #373),
+// sort, per-product cards with #productKey deep links. Extracted verbatim
+// from Prices.jsx when the page became a Products|Promos shell (issue #292)
+// — search text and the selected source live in the shell so the promo
+// view's example jump can clear them (the category filter rides along for
+// the same reason: a jump is a fresh browse context that must land inside
+// the unfiltered 200).
+export function ProductsView({ search, setSearch, source, setSource, category, setCategory }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
@@ -216,9 +219,15 @@ export function ProductsView({ search, setSearch, source, setSource }) {
   const { data, isLoading, isError } = usePrices({
     q: debouncedSearch || undefined,
     source,
+    category: category ?? undefined,
     sort,
   })
   const { data: sources } = usePriceSources()
+  // Issue #373: the category filter's value domain rides /api/prices/meta —
+  // hidden entirely until the classifier (or the backfill) has filled at
+  // least one product's category.
+  const { data: meta } = usePriceMeta()
+  const categories = meta?.categories ?? []
 
   const products = useMemo(() => groupByProduct(data?.items), [data])
   const storeCount = useMemo(
@@ -307,6 +316,32 @@ export function ProductsView({ search, setSearch, source, setSource }) {
         </div>
       )}
 
+      {/* Issue #373: the category filter — same chip pattern as the source
+      bar, fed by meta.categories (the sealed taxonomy slugs, shown as-is;
+      only the chrome is translated). Hidden until a category exists. */}
+      {categories.length > 0 && (
+        <div
+          className="flex flex-wrap gap-2 mb-5"
+          role="group"
+          aria-label={t('prices.categoryFilterLabel')}
+          data-testid="prices-category-filter"
+        >
+          <Chip variant="filter" pressed={!category} onClick={() => setCategory(null)}>
+            {t('prices.allCategories')}
+          </Chip>
+          {categories.map((slug) => (
+            <Chip
+              key={slug}
+              variant="filter"
+              pressed={category === slug}
+              onClick={() => setCategory(category === slug ? null : slug)}
+            >
+              {slug}
+            </Chip>
+          ))}
+        </div>
+      )}
+
       {isLoading ? (
         <Panel>
           <SkeletonRows n={5} />
@@ -387,13 +422,21 @@ export function ProductsView({ search, setSearch, source, setSource }) {
                               <span className="text-warn"> · {t('prices.lowConfidence')}</span>
                             )}
                           </div>
-                          {badges.length > 0 && (
+                          {(badges.length > 0 || product.category) && (
                             <div className="flex flex-wrap items-center gap-1 mt-1">
                               {badges.map((badge) => (
                                 <Badge key={badge.text} tone={badge.tone}>
                                   {badge.text}
                                 </Badge>
                               ))}
+                              {/* Issue #373: the sealed taxonomy slug, shown
+                              as-is (an identifier, not prose) — null until
+                              the classifier or the backfill filled it. */}
+                              {product.category && (
+                                <Badge tone="muted" data-testid="prices-category-badge">
+                                  {product.category}
+                                </Badge>
+                              )}
                             </div>
                           )}
                         </div>
