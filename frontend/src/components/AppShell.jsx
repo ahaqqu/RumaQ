@@ -14,12 +14,13 @@ import {
   IconUserRound,
   IconSliders,
   IconSpark,
+  IconUsers,
   IconClose,
   BrandMark,
 } from './icons.jsx'
 import { useApp } from '../context/AppContext.jsx'
 import { useMe } from '../lib/queries/me.js'
-import { useSettings, useUpdateSettings } from '../lib/queries/index.js'
+import { useSettings, useUpdateSettings, useHouseholds } from '../lib/queries/index.js'
 import { cn } from '../lib/cn.js'
 import { Assistant } from './Assistant.jsx'
 import { OfflineBanner } from './OfflineBanner.jsx'
@@ -48,6 +49,13 @@ const ADMIN_NAV = [
   { id: 'scrape', key: 'nav.scrape', Icon: IconBolt, to: '/admin/scrape' },
   { id: 'aiUsage', key: 'nav.aiUsage', Icon: IconSpark, to: '/admin/ai-usage' },
 ]
+
+// Household management (issue #331): the "Household members" screen lives in
+// the HOUSEHOLD ADMIN group per the redesign. Unlike the operator surfaces in
+// ADMIN_NAV it belongs to every authenticated user — being a household member
+// (not users.is_admin) is the authorization for viewing it; owners get the
+// invite/remove affordances inside the screen itself.
+const HOUSEHOLD_NAV = [{ id: 'household', key: 'nav.household', Icon: IconUsers, to: '/household' }]
 
 // The mobile drawer is the super-app menu: primary screens first — History
 // lives here (moved out of the header) and future features slot in below.
@@ -161,6 +169,11 @@ export function AppShell({ children }) {
 
   const user = me?.user
   const householdName = settings?.active_household_name
+  // The identity card mirrors the Figma household card ("Keluarga Putri · 4
+  // people"): the count rides the households list, keyed off the active id.
+  const { data: householdsData } = useHouseholds()
+  const activeHousehold = householdsData?.households?.find((h) => h.is_active)
+  const memberCount = activeHousehold?.member_count
 
   const currentLang = i18n.language?.startsWith('id') ? 'id' : 'en'
   const changeLanguage = (lng) => {
@@ -172,8 +185,11 @@ export function AppShell({ children }) {
   const currentRouteId = matches[matches.length - 1]?.routeId || '/'
   // The scraping monitor and the manual scrape trigger are operator surfaces —
   // their nav entries only exist for admins (me.user.isAdmin from the
-  // backend, backed by the users.is_admin grant).
-  const navItems = user?.isAdmin ? [...NAV, ...ADMIN_NAV] : NAV
+  // backend, backed by the users.is_admin grant). Household members is
+  // everyone's; both share the HOUSEHOLD ADMIN group.
+  const navItems = user?.isAdmin
+    ? [...NAV, ...HOUSEHOLD_NAV, ...ADMIN_NAV]
+    : [...NAV, ...HOUSEHOLD_NAV]
   const currentNav = navItems.find((n) => n.to === currentRouteId)
   const title = currentNav ? t(currentNav.key) : t('nav.home')
   const isActive = (to) => matches.some((m) => m.routeId === to)
@@ -192,12 +208,25 @@ export function AppShell({ children }) {
   )
 
   // Shared by the desktop sidebar and the mobile drawer so both stay in sync.
-  // Logout lives in the Settings page, not here.
+  // Logout lives in the Settings page, not here. The whole card links into
+  // the Household members screen — the card is the entry point.
   const householdCard = householdName ? (
-    <div className="rounded-xl bg-surface-inset p-3" data-testid="household-card">
-      <div className="text-[13px] font-semibold leading-[145%] text-text">{householdName}</div>
-      <div className="text-[11px] leading-[145%] text-text-muted">{t('household.cardHint')}</div>
-    </div>
+    <Link
+      to="/household"
+      className="block rounded-xl bg-surface-inset p-3 hover:bg-surface-sunken transition-colors"
+      aria-label={`${householdName} — ${t('nav.household')}`}
+    >
+      <div data-testid="household-card">
+        <div className="text-[13px] font-semibold leading-[145%] text-text truncate">
+          {householdName}
+        </div>
+        <div className="text-[11px] leading-[145%] text-text-muted">
+          {typeof memberCount === 'number'
+            ? `${t('household.memberCount', { count: memberCount })} · ${t('household.cardHint')}`
+            : t('household.cardHint')}
+        </div>
+      </div>
+    </Link>
   ) : null
 
   const accountBlock = user ? (
@@ -244,16 +273,15 @@ export function AppShell({ children }) {
           {NAV.map(renderNavItem)}
         </nav>
 
-        {user?.isAdmin && (
-          <div className="flex flex-col gap-4">
-            <div className="text-[10px] font-semibold leading-3 tracking-[1px] uppercase text-text-muted">
-              {t('nav.adminGroup')}
-            </div>
-            <nav className="flex flex-col gap-1.5" aria-label={t('nav.adminGroup')}>
-              {ADMIN_NAV.map(renderNavItem)}
-            </nav>
+        <div className="flex flex-col gap-4">
+          <div className="text-[10px] font-semibold leading-3 tracking-[1px] uppercase text-text-muted">
+            {t('nav.adminGroup')}
           </div>
-        )}
+          <nav className="flex flex-col gap-1.5" aria-label={t('nav.adminGroup')}>
+            {HOUSEHOLD_NAV.map(renderNavItem)}
+            {user?.isAdmin && ADMIN_NAV.map(renderNavItem)}
+          </nav>
+        </div>
 
         <div className="mt-auto flex flex-col gap-4">
           <div className="h-px bg-border" aria-hidden="true" />
@@ -381,13 +409,23 @@ export function AppShell({ children }) {
               </NavItem>
             </nav>
 
-            {user?.isAdmin && (
-              <div className="flex flex-col gap-3">
-                <div className="text-[10px] font-semibold leading-3 tracking-[1px] uppercase text-text-muted">
-                  {t('nav.adminGroup')}
-                </div>
-                <nav className="flex flex-col gap-1" aria-label={t('nav.adminGroup')}>
-                  {ADMIN_NAV.map((item) => (
+            <div className="flex flex-col gap-3">
+              <div className="text-[10px] font-semibold leading-3 tracking-[1px] uppercase text-text-muted">
+                {t('nav.adminGroup')}
+              </div>
+              <nav className="flex flex-col gap-1" aria-label={t('nav.adminGroup')}>
+                {HOUSEHOLD_NAV.map((item) => (
+                  <NavItem
+                    key={item.id}
+                    to={item.to}
+                    active={isActive(item.to)}
+                    onClick={() => setDrawerOpen(false)}
+                  >
+                    <item.Icon size={21} className="shrink-0" /> {t(item.key)}
+                  </NavItem>
+                ))}
+                {user?.isAdmin &&
+                  ADMIN_NAV.map((item) => (
                     <NavItem
                       key={item.id}
                       to={item.to}
@@ -397,9 +435,8 @@ export function AppShell({ children }) {
                       <item.Icon size={21} className="shrink-0" /> {t(item.key)}
                     </NavItem>
                   ))}
-                </nav>
-              </div>
-            )}
+              </nav>
+            </div>
 
             <div className="mt-auto flex flex-col gap-4">
               <div className="h-px bg-border" aria-hidden="true" />

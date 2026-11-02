@@ -38,6 +38,7 @@ import {
   LogOut as _IconLogout,
   SlidersHorizontal as _IconSliders,
   Sprout as _IconSprout,
+  Copy as _IconCopy,
 } from 'lucide-react'
 
 function light(Icon) {
@@ -83,6 +84,7 @@ export const IconUserRound = light(_IconUserRound)
 export const IconLogout = light(_IconLogout)
 export const IconSliders = light(_IconSliders)
 export const IconSprout = light(_IconSprout)
+export const IconCopy = light(_IconCopy)
 
 export function BrandMark({ size = 32 }) {
   return (

@@ -395,3 +395,64 @@ export async function fetchReviewExport(): Promise<Blob> {
   }
   return res.blob()
 }
+
+// ---------------------------------------------------------------------------
+// Households (issue #331) — member management, invites, active-household
+// switching. Shapes mirror the backend's households app; member profile
+// fields (display_name, birth_date) are additive-nullish per the contract.
+// ---------------------------------------------------------------------------
+
+export function getHouseholds(signal?: AbortSignal): Promise<unknown> {
+  return unwrap(client.GET('/api/households', { signal }))
+}
+
+export function createHousehold(name: string): Promise<unknown> {
+  return unwrap(client.POST('/api/households', { body: { name } }))
+}
+
+export function renameHousehold(id: string, name: string): Promise<unknown> {
+  return unwrap(client.PATCH('/api/households/{id}', { params: { path: { id } }, body: { name } }))
+}
+
+export function activateHousehold(id: string): Promise<unknown> {
+  return unwrap(client.POST('/api/households/{id}/activate', { params: { path: { id } } }))
+}
+
+export function getHouseholdMembers(id: string, signal?: AbortSignal): Promise<unknown> {
+  return unwrap(client.GET('/api/households/{id}/members', { params: { path: { id } }, signal }))
+}
+
+export function updateHouseholdMember(
+  id: string,
+  userId: string,
+  payload: { display_name?: string | null; birth_date?: string | null }
+): Promise<unknown> {
+  return unwrap(
+    client.PATCH('/api/households/{id}/members/{userId}', {
+      params: { path: { id, userId } },
+      body: payload,
+    })
+  )
+}
+
+export function removeHouseholdMember(id: string, userId: string): Promise<unknown> {
+  return unwrap(
+    client.DELETE('/api/households/{id}/members/{userId}', { params: { path: { id, userId } } })
+  )
+}
+
+export function leaveHousehold(id: string): Promise<unknown> {
+  return unwrap(client.POST('/api/households/{id}/leave', { params: { path: { id } } }))
+}
+
+export function getHouseholdInvite(id: string, signal?: AbortSignal): Promise<unknown> {
+  return unwrap(client.GET('/api/households/{id}/invite', { params: { path: { id } }, signal }))
+}
+
+export function createHouseholdInvite(id: string): Promise<unknown> {
+  return unwrap(client.POST('/api/households/{id}/invite', { params: { path: { id } } }))
+}
+
+export function joinHousehold(code: string): Promise<unknown> {
+  return unwrap(client.POST('/api/households/join', { body: { code } }))
+}
