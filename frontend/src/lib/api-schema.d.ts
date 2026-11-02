@@ -1736,7 +1736,15 @@ export interface operations {
     requestBody: {
       content: {
         'application/json': {
-          stores: ('superindo' | 'lotte-mart' | 'astro' | 'hypermart' | 'indomaret' | 'alfamart')[]
+          stores: (
+            | 'superindo'
+            | 'lotte-mart'
+            | 'astro'
+            | 'hypermart'
+            | 'indomaret'
+            | 'alfamart'
+            | 'tip-top'
+          )[]
         }
       }
     }
