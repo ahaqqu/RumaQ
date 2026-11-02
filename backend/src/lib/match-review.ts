@@ -189,8 +189,10 @@ type EntryEvidence = {
  * One chunked lookup per ≤90 entry keys (the ingest SELECT_IN_CHUNK budget —
  * D1 caps bound parameters per query at 100). A review page is ≤200 rows, so
  * this is at most 3 queries; an empty key list skips the round trip entirely.
+ * Exported for the real-SQLite semantics test (the string-matching fake db
+ * cannot pin ordering/tie-break behavior).
  */
-async function fetchEntryEvidence(
+export async function fetchEntryEvidence(
   db: D1Database,
   keys: string[]
 ): Promise<Map<string, EntryEvidence>> {
@@ -212,7 +214,11 @@ async function fetchEntryEvidence(
              SELECT o2.id FROM price_observations o2
              JOIN price_products p2 ON p2.id = o2.product_id
              WHERE p2.product_key = p.product_key
-             ORDER BY o2.observed_date DESC, o2.scraped_at DESC
+             -- Thermos A2 (issue #380): scraped_at binds per-payload, so two
+             -- sources observing the same entry on the same date tie EXACTLY
+             -- on (observed_date, scraped_at) — the final id tie-break pins
+             -- which one's evidence wins, deterministically on any engine.
+             ORDER BY o2.observed_date DESC, o2.scraped_at DESC, o2.id DESC
              LIMIT 1
            )`
       )
@@ -229,7 +235,21 @@ async function fetchEntryEvidence(
   return evidence
 }
 
-function enrichEntryEvidence(items: ReviewItem[], evidence: Map<string, EntryEvidence>): void {
+// Thermos B1 (issue #380): any row shape carrying the four evidence fields —
+// ReviewItem and ReviewExportRow both qualify structurally, so ONE loop serves
+// the queue list, the decide/undo responses, and the export pages alike; the
+// export rows cannot silently diverge from the card's evidence shape.
+type EvidenceCarrier = {
+  entryProductKey: string
+  entryBrochureUrl: string | null
+  entrySourceUrl: string | null
+  entryObservedAt: string | null
+}
+
+function enrichEntryEvidence<T extends EvidenceCarrier>(
+  items: T[],
+  evidence: Map<string, EntryEvidence>
+): void {
   for (const item of items) {
     const found = evidence.get(item.entryProductKey)
     if (!found) continue
@@ -461,18 +481,16 @@ async function listDecidedPage(db: D1Database, after: { decidedAt: string; id: s
     if (parsed) page.rows.push({ id: row.id, row: parsed })
   }
   // Issue #380: export rows carry the entry-side evidence too — per keyset
-  // page, so the stream's memory stays flat.
+  // page, so the stream's memory stays flat. Same enrichment helper as the
+  // queue rows (thermos B1).
   const evidence = await fetchEntryEvidence(
     db,
     page.rows.map(({ row }) => row.entryProductKey)
   )
-  for (const { row } of page.rows) {
-    const found = evidence.get(row.entryProductKey)
-    if (!found) continue
-    row.entryBrochureUrl = found.entryBrochureUrl
-    row.entrySourceUrl = found.entrySourceUrl
-    row.entryObservedAt = found.entryObservedAt
-  }
+  enrichEntryEvidence(
+    page.rows.map(({ row }) => row),
+    evidence
+  )
   const last = raw[raw.length - 1]
   if (last) page.cursor = { decidedAt: last.decided_at, id: last.id }
   return page

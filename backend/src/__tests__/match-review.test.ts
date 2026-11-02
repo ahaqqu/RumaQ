@@ -7,7 +7,50 @@ import {
   decideReviewItem,
   undoReviewDecision,
   exportReviewDecisions,
+  fetchEntryEvidence,
 } from '../lib/match-review.js'
+// The backend tsconfig pins `types` to @cloudflare/workers-types, so Node
+// builtin imports carry no declarations — same contained suppressions as
+// migrations.test.ts: the enrichment semantics below run on real SQLite
+// (node:sqlite — D1 is SQLite), which the string-matching fake db cannot pin.
+// @ts-expect-error — no node types in this tsconfig
+import { DatabaseSync } from 'node:sqlite'
+// @ts-expect-error — no node types in this tsconfig
+import { readFileSync, readdirSync } from 'node:fs'
+// @ts-expect-error — no node types in this tsconfig
+import { join, dirname } from 'node:path'
+// @ts-expect-error — no node types in this tsconfig
+import { fileURLToPath } from 'node:url'
+
+type SqliteDb = {
+  exec(sql: string): void
+  prepare(sql: string): {
+    run(...params: unknown[]): unknown
+    all(...params: unknown[]): Array<Record<string, unknown>>
+  }
+}
+
+const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../migrations')
+
+function applyRealMigrations(db: SqliteDb): void {
+  for (const file of readdirSync(MIGRATIONS_DIR)
+    .filter((name: string) => name.endsWith('.sql'))
+    .sort()) {
+    db.exec(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'))
+  }
+}
+
+// Minimal D1-shaped adapter over node:sqlite — only the surface
+// fetchEntryEvidence uses (prepare → bind → all).
+function sqliteD1(db: SqliteDb): D1Database {
+  return {
+    prepare: (sql: string) => ({
+      bind: (...params: unknown[]) => ({
+        all: async () => ({ results: db.prepare(sql).all(...params) }),
+      }),
+    }),
+  } as unknown as D1Database
+}
 
 // The run report ride-along lands pairs in D1 (issue #294). The fake DB
 // follows the price-runs.test.ts pattern; the export test drives keyset
@@ -640,5 +683,78 @@ describe('runs ingest ride-along', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { ok: boolean }
     expect(body.ok).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Real-SQLite enrichment semantics (issue #380, thermos A2): the fake db
+// above matches SQL strings, so it cannot pin ORDER BY / tie-break behavior.
+// These run fetchEntryEvidence's REAL SQL through a minimal D1-shaped adapter
+// on node:sqlite, on the real migration chain.
+describe('fetchEntryEvidence — real-SQLite semantics (thermos A2)', () => {
+  it('picks the latest observation across sources and breaks an exact tie deterministically', async () => {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyRealMigrations(sqlite)
+
+    sqlite
+      .prepare(
+        `INSERT INTO price_products (id, product_key, name)
+         VALUES ('prod-1', 'beras--ramos--5-kg', 'Beras Ramos')`
+      )
+      .run()
+    const insertSource = sqlite.prepare(
+      `INSERT INTO price_sources (id, slug, name) VALUES (?, ?, ?)`
+    )
+    insertSource.run('src-superindo', 'superindo', 'Superindo')
+    insertSource.run('src-lotte-mart', 'lotte-mart', 'Lotte Mart')
+
+    const insertObs = sqlite.prepare(
+      `INSERT INTO price_observations
+         (id, product_id, source_id, observed_date, price, match_confidence,
+          brochure_url, source_url, scraped_at)
+       VALUES (?, 'prod-1', ?, ?, 27000, 1.0, ?, ?, ?)`
+    )
+    // An older sighting first — it must lose to the 10-28 pair below.
+    insertObs.run(
+      'obs-old',
+      'src-superindo',
+      '2026-10-20',
+      '/api/brochures/superindo/20261020/old.jpg',
+      'https://old.example/',
+      '2026-10-20T23:00:05Z'
+    )
+    // An EXACT tie: same observed_date, same scraped_at (scraped_at binds
+    // per-payload — ingest.ts) from two different sources. The id tie-break
+    // pins the lexicographically-greatest id's evidence on any engine.
+    insertObs.run(
+      'obs-a',
+      'src-superindo',
+      '2026-10-28',
+      '/api/brochures/superindo/20261028/a.jpg',
+      'https://a.example/',
+      '2026-10-28T23:00:05Z'
+    )
+    insertObs.run(
+      'obs-b',
+      'src-lotte-mart',
+      '2026-10-28',
+      '/api/brochures/lotte-mart/20261028/b.jpg',
+      'https://b.example/',
+      '2026-10-28T23:00:05Z'
+    )
+
+    const evidence = await fetchEntryEvidence(sqliteD1(sqlite), ['beras--ramos--5-kg'])
+    expect(evidence.get('beras--ramos--5-kg')).toEqual({
+      entryBrochureUrl: '/api/brochures/lotte-mart/20261028/b.jpg',
+      entrySourceUrl: 'https://b.example/',
+      entryObservedAt: '2026-10-28',
+    })
+  })
+
+  it('returns nothing for an entry without observations', async () => {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyRealMigrations(sqlite)
+    const evidence = await fetchEntryEvidence(sqliteD1(sqlite), ['never-seen--null--1-kg'])
+    expect(evidence.size).toBe(0)
   })
 })
