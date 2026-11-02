@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vite-plus/test'
+import { describe, it, expect, vi } from 'vite-plus/test'
 import { apiApp } from '../apps/api.js'
 import {
   resolvePlan,
@@ -162,13 +162,25 @@ describe('resolvePlan', () => {
     expect(await resolvePlan(bindingsEnv(db), 'u3')).toBe('premium')
   })
 
-  it('never throws when the read fails (free on error)', async () => {
-    const throwing = {
-      prepare: () => {
-        throw new Error('D1 unavailable')
-      },
-    } as unknown as D1Database
-    expect(await resolvePlan(bindingsEnv(throwing), 'u1')).toBe('free')
+  it('never throws when the read fails (free on error) — and logs the swallow', async () => {
+    // Fail-open is the documented contract, but the swallowed error must stay
+    // visible: once 'free' stops carrying every entitlement, a silent D1
+    // outage would hold the fail-open door open with no signal (thermos A1).
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const throwing = {
+        prepare: () => {
+          throw new Error('D1 unavailable')
+        },
+      } as unknown as D1Database
+      expect(await resolvePlan(bindingsEnv(throwing), 'u1')).toBe('free')
+      expect(warn).toHaveBeenCalledWith(
+        '[entitlements] user_plans lookup failed; resolving free:',
+        expect.any(Error)
+      )
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
 

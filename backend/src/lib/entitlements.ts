@@ -23,16 +23,19 @@ export const PLAN_ENTITLEMENTS: Record<Plan, ReadonlySet<Entitlement>> = {
 
 /** Reads the user's plan from user_plans. A missing row, an absent table
  *  (pre-migration deploy), an unknown plan value, or any read failure
- *  resolves to 'free' — never throws. Fail-open is safe while 'free' carries
- *  every entitlement, and a transient D1 hiccup cannot lock a paying user
- *  out. */
+ *  resolves to 'free' — never throws. Fail-open is intentional: safe while
+ *  'free' carries every entitlement, and a transient D1 hiccup cannot lock
+ *  a paying user out — but every swallowed read failure is logged, so a
+ *  persistent D1 outage (or a skipped migration) stays visible in the
+ *  Worker tail once 'free' stops carrying every entitlement. */
 export async function resolvePlan(env: Env['Bindings'], userId: string): Promise<Plan> {
   try {
     const row = await env.DB.prepare('SELECT plan FROM user_plans WHERE user_id = ?')
       .bind(userId)
       .first<{ plan: string }>()
     return row?.plan === 'premium' ? 'premium' : 'free'
-  } catch {
+  } catch (error) {
+    console.warn('[entitlements] user_plans lookup failed; resolving free:', error)
     return 'free'
   }
 }
