@@ -19,9 +19,10 @@ VALUES (
   'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 );
 
--- Household membership
-INSERT INTO household_members (household_id, user_id, role)
+-- Household membership (surrogate id required since migration 0021)
+INSERT INTO household_members (id, household_id, user_id, role)
 VALUES (
+  'mmmmmmmm-0000-0000-0000-000000000001',
   '11111111-2222-3333-4444-555555555555',
   'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
   'owner'
@@ -56,7 +57,8 @@ INSERT INTO households (id, name, created_by) VALUES (
   'bbbbbbbb-cccc-dddd-eeee-ffffffffffff'
 );
 
-INSERT INTO household_members (household_id, user_id, role) VALUES (
+INSERT INTO household_members (id, household_id, user_id, role) VALUES (
+  'mmmmmmmm-0000-0000-0000-000000000002',
   '22222222-3333-4444-5555-666666666666',
   'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
   'owner'

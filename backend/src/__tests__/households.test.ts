@@ -467,6 +467,9 @@ describe('households routes', () => {
     setup([[/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP]])
     for (const body of [
       { display_name: '' },
+      // Whitespace-only must fail the POST bounds (trim runs before
+      // minLength), not land as an unnamed roster row.
+      { display_name: '   ' },
       { display_name: 'x'.repeat(81) },
       { display_name: 'Adik', birth_date: '03/02/2025' },
       {},

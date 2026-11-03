@@ -34,7 +34,10 @@
 -- implies its WHERE clause, and `household_id = ?` does not imply
 -- `user_id IS NOT NULL` — so a plain household index keeps those seeks.
 CREATE TABLE household_members_two_mode (
-  id TEXT PRIMARY KEY,
+  -- NOT NULL is explicit on purpose: on rowid tables a TEXT PRIMARY KEY does
+  -- NOT imply NOT NULL (SQLite quirk), and an accidentally NULL id would
+  -- silently become unaddressable. Enforced in DDL while the rebuild is free.
+  id TEXT PRIMARY KEY NOT NULL,
   household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
   user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
   role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'member')),
@@ -44,6 +47,10 @@ CREATE TABLE household_members_two_mode (
 );
 
 -- Backfill the surrogate id for every existing (linked) member row.
+-- Two id formats coexist by design in this column: the backfill writes compact
+-- 32-char hex, while all runtime inserts (lib/households.ts, auth.ts) write
+-- dashed crypto.randomUUID() — both are opaque TEXT handles, nothing parses
+-- them, so no normalization is needed.
 INSERT INTO household_members_two_mode
   (id, household_id, user_id, role, joined_at, display_name, birth_date)
 SELECT lower(hex(randomblob(16))),

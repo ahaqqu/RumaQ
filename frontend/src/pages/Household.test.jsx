@@ -190,6 +190,21 @@ describe('Household', () => {
     )
   })
 
+  it('keeps the Add-profile draft separate from the member edit form', () => {
+    const { container } = renderHousehold()
+    // Type into the self-row edit form, then close it.
+    fireEvent.click(findButton(container, 'household.editProfile'))
+    const editInput = container.querySelector('input[maxlength="80"]')
+    fireEvent.change(editInput, { target: { value: 'Mama' } })
+    fireEvent.click(findButton(container, 'household.cancel'))
+    // The Add-profile form starts empty — a closed edit must never prefill
+    // another member's identity into Add (one click = duplicate person).
+    fireEvent.click(findChip(container, 'household.modeProfile'))
+    const addInput = container.querySelector('input[maxlength="80"]')
+    expect(addInput.value).toBe('')
+    expect(addInput).not.toBe(editInput)
+  })
+
   it('renders profile-only members with the no-account chip and no email line', () => {
     vi.mocked(useHouseholdMembers).mockReturnValue({
       data: {

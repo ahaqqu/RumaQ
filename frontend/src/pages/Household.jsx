@@ -186,13 +186,16 @@ export function Household() {
   const [copied, setCopied] = useState(false)
 
   // Add person (#388): two modes — invite an existing user (the share-code
-  // flow) or add a profile-only member with no account (a toddler).
+  // flow) or add a profile-only member with no account (a toddler). The Add
+  // form keeps its OWN draft: sharing it with the per-member edit form would
+  // prefill Add with another member's identity after an edit is closed.
   const [addMode, setAddMode] = useState('invite')
-  const [profileDraft, setProfileDraft] = useState({ display_name: '', birth_date: '' })
+  const [addProfileDraft, setAddProfileDraft] = useState({ display_name: '', birth_date: '' })
 
   // Member-addressed edits key on the surrogate member id — profile-only
   // members have no user_id.
   const [editingMemberId, setEditingMemberId] = useState(null)
+  const [editDraft, setEditDraft] = useState({ display_name: '', birth_date: '' })
   // Rename is an inline field in the identity card (review B4) — no
   // window.prompt; the remove/leave confirms stay as noted debt.
   const [renaming, setRenaming] = useState(false)
@@ -210,7 +213,7 @@ export function Household() {
 
   const openEdit = (member) => {
     setEditingMemberId(member.id)
-    setProfileDraft({
+    setEditDraft({
       display_name: member.display_name ?? '',
       birth_date: member.birth_date ?? '',
     })
@@ -218,7 +221,7 @@ export function Household() {
 
   const saveProfile = () => {
     updateMember.mutate(
-      { memberId: editingMemberId, payload: profileDraft },
+      { memberId: editingMemberId, payload: editDraft },
       {
         onSuccess: () => {
           setEditingMemberId(null)
@@ -230,13 +233,13 @@ export function Household() {
   }
 
   const addProfile = () => {
-    const displayName = profileDraft.display_name.trim()
+    const displayName = addProfileDraft.display_name.trim()
     if (!displayName) return
     createMember.mutate(
-      { display_name: displayName, birth_date: profileDraft.birth_date || null },
+      { display_name: displayName, birth_date: addProfileDraft.birth_date || null },
       {
         onSuccess: (data) => {
-          setProfileDraft({ display_name: '', birth_date: '' })
+          setAddProfileDraft({ display_name: '', birth_date: '' })
           setFeedback(
             t('household.profileAdded', { name: data?.member?.display_name ?? displayName })
           )
@@ -447,7 +450,7 @@ export function Household() {
           <div>
             {members.map((member) => (
               <MemberRow
-                key={member.id ?? member.user_id}
+                key={member.id}
                 member={member}
                 isSelf={member.user_id !== null && member.user_id === userId}
                 canRemove={isOwner}
@@ -460,22 +463,22 @@ export function Household() {
               >
                 <InlineField
                   label={t('household.displayName')}
-                  value={profileDraft.display_name}
+                  value={editDraft.display_name}
                   maxLength={80}
                   placeholder={t('household.displayNamePlaceholder')}
-                  onChange={(e) => setProfileDraft((d) => ({ ...d, display_name: e.target.value }))}
+                  onChange={(e) => setEditDraft((d) => ({ ...d, display_name: e.target.value }))}
                 />
                 <InlineField
                   label={t('household.birthDate')}
                   type="date"
-                  value={profileDraft.birth_date}
-                  onChange={(e) => setProfileDraft((d) => ({ ...d, birth_date: e.target.value }))}
+                  value={editDraft.birth_date}
+                  onChange={(e) => setEditDraft((d) => ({ ...d, birth_date: e.target.value }))}
                 />
                 <div className="flex gap-2">
                   <Button size="sm" onClick={saveProfile} disabled={updateMember.isPending}>
                     {t('household.saveProfile')}
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setEditingUserId(null)}>
+                  <Button size="sm" variant="ghost" onClick={() => setEditingMemberId(null)}>
                     {t('household.cancel')}
                   </Button>
                 </div>
@@ -492,22 +495,26 @@ export function Household() {
         <Panel>
           <PanelHead>
             <div className="font-semibold">{t('household.addPersonTitle')}</div>
-            <div className="flex items-center gap-2">
+            {/* Same toggle pattern as the review/prices filter chips: a
+                labelled group of pressed-state chips, no tab semantics. */}
+            <div
+              role="group"
+              aria-label={t('household.addPersonTitle')}
+              className="flex items-center gap-2"
+            >
               <Chip
                 variant="filter"
                 pressed={addMode === 'invite'}
+                aria-pressed={addMode === 'invite'}
                 onClick={() => setAddMode('invite')}
-                role="tab"
-                aria-selected={addMode === 'invite'}
               >
                 {t('household.modeInvite')}
               </Chip>
               <Chip
                 variant="filter"
                 pressed={addMode === 'profile'}
+                aria-pressed={addMode === 'profile'}
                 onClick={() => setAddMode('profile')}
-                role="tab"
-                aria-selected={addMode === 'profile'}
               >
                 {t('household.modeProfile')}
               </Chip>
@@ -519,21 +526,25 @@ export function Household() {
               <div className="flex flex-wrap items-end gap-3">
                 <InlineField
                   label={t('household.displayName')}
-                  value={profileDraft.display_name}
+                  value={addProfileDraft.display_name}
                   maxLength={80}
                   placeholder={t('household.displayNamePlaceholder')}
-                  onChange={(e) => setProfileDraft((d) => ({ ...d, display_name: e.target.value }))}
+                  onChange={(e) =>
+                    setAddProfileDraft((d) => ({ ...d, display_name: e.target.value }))
+                  }
                 />
                 <InlineField
                   label={t('household.birthDate')}
                   type="date"
-                  value={profileDraft.birth_date}
-                  onChange={(e) => setProfileDraft((d) => ({ ...d, birth_date: e.target.value }))}
+                  value={addProfileDraft.birth_date}
+                  onChange={(e) =>
+                    setAddProfileDraft((d) => ({ ...d, birth_date: e.target.value }))
+                  }
                 />
                 <Button
                   size="sm"
                   onClick={addProfile}
-                  disabled={createMember.isPending || !profileDraft.display_name.trim()}
+                  disabled={createMember.isPending || !addProfileDraft.display_name.trim()}
                 >
                   <IconPlus size={15} /> {t('household.profileAdd')}
                 </Button>

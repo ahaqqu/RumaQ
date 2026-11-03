@@ -13,6 +13,7 @@ import {
   literal,
   pipe,
   isoDate,
+  trim,
   minLength,
   maxLength,
 } from 'valibot'
@@ -69,10 +70,12 @@ const memberPatchSchema = strictObject({
 
 // Profile-only member creation (ahaqqu/RumaQ#388): display_name IS the
 // identity (required — no account exists to fall back on); birth_date stays
-// optional. No `role` field exists in the schema on purpose — the lib forces
-// role='member' and the contract must not even suggest otherwise.
+// optional. trim() runs BEFORE the length bounds so a whitespace-only name is
+// a 400, not an unnamed roster row. No `role` field exists in the schema on
+// purpose — the lib forces role='member' and the contract must not even
+// suggest otherwise.
 const memberCreateSchema = strictObject({
-  display_name: pipe(string(), minLength(1), maxLength(MEMBER_PROFILE_CAPS.displayName)),
+  display_name: pipe(string(), trim(), minLength(1), maxLength(MEMBER_PROFILE_CAPS.displayName)),
   birth_date: optional(union([pipe(string(), isoDate()), vnull()])),
 })
 
@@ -476,9 +479,11 @@ householdsApp.post(
   }),
   sValidator('json', memberCreateSchema),
   async (c) => {
+    // display_name arrives already trimmed by the schema (trim() runs before
+    // the bounds, and the validated value is the transformed one).
     const body = c.req.valid('json')
     const member = await createProfileMember(c.env.DB, c.req.param('id'), c.get('userId'), {
-      display_name: body.display_name.trim(),
+      display_name: body.display_name,
       birth_date: body.birth_date ?? null,
     })
     const res = c.json({ member }, 201)
