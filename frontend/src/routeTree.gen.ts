@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AddRouteImport } from './routes/add'
+import { Route as DocumentsRouteImport } from './routes/documents'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as HouseholdRouteImport } from './routes/household'
 import { Route as InventoryRouteImport } from './routes/inventory'
@@ -30,6 +31,11 @@ const IndexRoute = IndexRouteImport.update({
 const AddRoute = AddRouteImport.update({
   id: '/add',
   path: '/add',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocumentsRoute = DocumentsRouteImport.update({
+  id: '/documents',
+  path: '/documents',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HistoryRoute = HistoryRouteImport.update({
@@ -86,6 +92,7 @@ const AdminScrapeRoute = AdminScrapeRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/add': typeof AddRoute
+  '/documents': typeof DocumentsRoute
   '/history': typeof HistoryRoute
   '/household': typeof HouseholdRoute
   '/inventory': typeof InventoryRoute
@@ -100,6 +107,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/add': typeof AddRoute
+  '/documents': typeof DocumentsRoute
   '/history': typeof HistoryRoute
   '/household': typeof HouseholdRoute
   '/inventory': typeof InventoryRoute
@@ -115,6 +123,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/add': typeof AddRoute
+  '/documents': typeof DocumentsRoute
   '/history': typeof HistoryRoute
   '/household': typeof HouseholdRoute
   '/inventory': typeof InventoryRoute
@@ -131,6 +140,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/add'
+    | '/documents'
     | '/history'
     | '/household'
     | '/inventory'
@@ -145,6 +155,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/add'
+    | '/documents'
     | '/history'
     | '/household'
     | '/inventory'
@@ -159,6 +170,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/add'
+    | '/documents'
     | '/history'
     | '/household'
     | '/inventory'
@@ -174,6 +186,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AddRoute: typeof AddRoute
+  DocumentsRoute: typeof DocumentsRoute
   HistoryRoute: typeof HistoryRoute
   HouseholdRoute: typeof HouseholdRoute
   InventoryRoute: typeof InventoryRoute
@@ -200,6 +213,13 @@ declare module '@tanstack/react-router' {
       path: '/add'
       fullPath: '/add'
       preLoaderRoute: typeof AddRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/documents': {
+      id: '/documents'
+      path: '/documents'
+      fullPath: '/documents'
+      preLoaderRoute: typeof DocumentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/history': {
@@ -278,6 +298,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AddRoute: AddRoute,
+  DocumentsRoute: DocumentsRoute,
   HistoryRoute: HistoryRoute,
   HouseholdRoute: HouseholdRoute,
   InventoryRoute: InventoryRoute,

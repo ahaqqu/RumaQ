@@ -534,35 +534,78 @@ describe('migration 0022: document vault (#388)', () => {
     )
     // Linked member relation.
     insertDoc.run(
-      'doc-1', 'h1', 'm-linked', 'ktp', 'ktp.jpg', 'image/jpeg', 1234,
-      'documents/h1/doc-1', 'a'.repeat(64), 'u1'
+      'doc-1',
+      'h1',
+      'm-linked',
+      'ktp',
+      'ktp.jpg',
+      'image/jpeg',
+      1234,
+      'documents/h1/doc-1',
+      'a'.repeat(64),
+      'u1'
     )
     // Profile-only member relation — the vault's core use (akta lahir of a
     // child with no account).
     insertDoc.run(
-      'doc-2', 'h1', 'm-profile', 'akta', 'akta.pdf', 'application/pdf', 5678,
-      'documents/h1/doc-2', 'b'.repeat(64), 'u1'
+      'doc-2',
+      'h1',
+      'm-profile',
+      'akta',
+      'akta.pdf',
+      'application/pdf',
+      5678,
+      'documents/h1/doc-2',
+      'b'.repeat(64),
+      'u1'
     )
     // Household-level document: no member at all.
     insertDoc.run(
-      'doc-3', 'h1', null, 'kartu_keluarga', 'kk.jpg', 'image/jpeg', 90,
-      'documents/h1/doc-3', 'c'.repeat(64), 'u1'
+      'doc-3',
+      'h1',
+      null,
+      'kartu_keluarga',
+      'kk.jpg',
+      'image/jpeg',
+      90,
+      'documents/h1/doc-3',
+      'c'.repeat(64),
+      'u1'
     )
 
     const columns = db.prepare('PRAGMA table_info(documents)').all()
     const names = columns.map((c: Record<string, unknown>) => c.name)
     expect(names).toEqual(
       expect.arrayContaining([
-        'id', 'household_id', 'member_id', 'category', 'file_name', 'mime_type',
-        'size_bytes', 'storage_key', 'sha256', 'uploaded_by', 'created_at',
+        'id',
+        'household_id',
+        'member_id',
+        'category',
+        'file_name',
+        'mime_type',
+        'size_bytes',
+        'storage_key',
+        'sha256',
+        'uploaded_by',
+        'created_at',
       ])
     )
 
     // The category CHECK is a real constraint, not just an app-side allowlist.
-    expect(() => insertDoc.run(
-      'doc-x', 'h1', null, 'ijazah', 'x.jpg', 'image/jpeg', 1,
-      'documents/h1/doc-x', 'd'.repeat(64), 'u1'
-    )).toThrow()
+    expect(() =>
+      insertDoc.run(
+        'doc-x',
+        'h1',
+        null,
+        'ijazah',
+        'x.jpg',
+        'image/jpeg',
+        1,
+        'documents/h1/doc-x',
+        'd'.repeat(64),
+        'u1'
+      )
+    ).toThrow()
   })
 
   it('deleting a member (either mode) keeps their documents and clears the link', () => {
@@ -591,12 +634,28 @@ describe('migration 0022: document vault (#388)', () => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     insertDoc.run(
-      'doc-1', 'h1', 'm-linked', 'ktp', 'ktp.jpg', 'image/jpeg', 1,
-      'documents/h1/doc-1', 'a'.repeat(64), 'u1'
+      'doc-1',
+      'h1',
+      'm-linked',
+      'ktp',
+      'ktp.jpg',
+      'image/jpeg',
+      1,
+      'documents/h1/doc-1',
+      'a'.repeat(64),
+      'u1'
     )
     insertDoc.run(
-      'doc-2', 'h1', 'm-profile', 'akta', 'akta.pdf', 'application/pdf', 2,
-      'documents/h1/doc-2', 'b'.repeat(64), 'u1'
+      'doc-2',
+      'h1',
+      'm-profile',
+      'akta',
+      'akta.pdf',
+      'application/pdf',
+      2,
+      'documents/h1/doc-2',
+      'b'.repeat(64),
+      'u1'
     )
 
     db.prepare('DELETE FROM household_members WHERE id = ?').run('m-linked')

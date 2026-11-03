@@ -174,12 +174,12 @@ describe('magic-byte sniffer', () => {
     expect(sanitizeFileName('')).toBeNull()
     expect(sanitizeFileName('.')).toBeNull()
     expect(contentDisposition('inline', 'akta lahir.pdf')).toBe(
-      "inline; filename=\"akta lahir.pdf\"; filename*=UTF-8''akta%20lahir.pdf"
+      'inline; filename="akta lahir.pdf"; filename*=UTF-8\'\'akta%20lahir.pdf'
     )
     // The em-dash is not ASCII-representable: the quoted fallback underscores
     // it, while filename* carries the real name.
     expect(contentDisposition('attachment', 'kartu anak — bayi.pdf')).toBe(
-      "attachment; filename=\"kartu anak _ bayi.pdf\"; filename*=UTF-8''kartu%20anak%20%E2%80%94%20bayi.pdf"
+      'attachment; filename="kartu anak _ bayi.pdf"; filename*=UTF-8\'\'kartu%20anak%20%E2%80%94%20bayi.pdf'
     )
   })
 })
@@ -312,9 +312,7 @@ describe('documents routes', () => {
   })
 
   it('rejects a memberId from another household with a validation error (no probe)', async () => {
-    setup([
-      [/SELECT id FROM household_members WHERE id = \? AND household_id = \?/, () => null],
-    ])
+    setup([[/SELECT id FROM household_members WHERE id = \? AND household_id = \?/, () => null]])
     const res = await documentsApp.request(
       '/api/documents',
       postDocument(
@@ -395,22 +393,25 @@ describe('documents routes', () => {
   })
 
   it('lists documents newest first and honors memberId/category filters', async () => {
-    setup([], [
+    setup(
+      [],
       [
-        /SELECT d\.id, d\.household_id, d\.member_id, d\.category/,
-        (params) => {
-          // The scope predicate is always bound; filters append their own.
-          expect(params[0]).toBe('h1')
-          if (params.length === 3) {
-            return [DOC_ROW({ id: 'doc-filtered', member_id: params[1], category: params[2] })]
-          }
-          if (params.length === 2) {
-            return [DOC_ROW({ id: 'doc-filtered' })]
-          }
-          return [DOC_ROW({ id: 'doc-new' }), DOC_ROW({ id: 'doc-old' })]
-        },
-      ],
-    ])
+        [
+          /SELECT d\.id, d\.household_id, d\.member_id, d\.category/,
+          (params) => {
+            // The scope predicate is always bound; filters append their own.
+            expect(params[0]).toBe('h1')
+            if (params.length === 3) {
+              return [DOC_ROW({ id: 'doc-filtered', member_id: params[1], category: params[2] })]
+            }
+            if (params.length === 2) {
+              return [DOC_ROW({ id: 'doc-filtered' })]
+            }
+            return [DOC_ROW({ id: 'doc-new' }), DOC_ROW({ id: 'doc-old' })]
+          },
+        ],
+      ]
+    )
 
     const all = await documentsApp.request('/api/documents', {}, env)
     expect(all.status).toBe(200)

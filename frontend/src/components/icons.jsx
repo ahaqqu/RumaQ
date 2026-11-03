@@ -39,6 +39,8 @@ import {
   SlidersHorizontal as _IconSliders,
   Sprout as _IconSprout,
   Copy as _IconCopy,
+  FolderLock as _IconFolderLock,
+  Eye as _IconEye,
 } from 'lucide-react'
 
 function light(Icon) {
@@ -85,6 +87,8 @@ export const IconLogout = light(_IconLogout)
 export const IconSliders = light(_IconSliders)
 export const IconSprout = light(_IconSprout)
 export const IconCopy = light(_IconCopy)
+export const IconFolderLock = light(_IconFolderLock)
+export const IconEye = light(_IconEye)
 
 export function BrandMark({ size = 32 }) {
   return (

@@ -107,7 +107,9 @@ describe('documents vault semantics (real SQL)', () => {
     sqlite.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
     sqlite.prepare("INSERT INTO users (id, email) VALUES ('u2', 'b@c.com')").run()
     sqlite
-      .prepare(`INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`)
+      .prepare(
+        `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+      )
       .run()
     sqlite
       .prepare(`INSERT INTO households (id, name, created_by) VALUES ('h2', 'Rumah Lain', 'u2')`)
@@ -162,14 +164,12 @@ describe('documents vault semantics (real SQL)', () => {
     // Full listing for h1 — only its two documents. Same-second inserts share
     // created_at (D1's datetime('now') granularity), so pin distinct
     // timestamps before asserting the newest-first ordering.
-    sqlite.prepare('UPDATE documents SET created_at = ? WHERE id = ?').run(
-      '2026-11-04 10:00:00',
-      linkedDoc.id
-    )
-    sqlite.prepare('UPDATE documents SET created_at = ? WHERE id = ?').run(
-      '2026-11-04 11:00:00',
-      linkedMeta.id
-    )
+    sqlite
+      .prepare('UPDATE documents SET created_at = ? WHERE id = ?')
+      .run('2026-11-04 10:00:00', linkedDoc.id)
+    sqlite
+      .prepare('UPDATE documents SET created_at = ? WHERE id = ?')
+      .run('2026-11-04 11:00:00', linkedMeta.id)
     const all = await listDocuments(d1, 'h1')
     expect(all.map((d) => d.id)).toEqual([linkedMeta.id, linkedDoc.id])
 
@@ -201,7 +201,9 @@ describe('documents vault semantics (real SQL)', () => {
 
     sqlite.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
     sqlite
-      .prepare(`INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`)
+      .prepare(
+        `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+      )
       .run()
     sqlite
       .prepare(
@@ -264,7 +266,9 @@ describe('documents vault semantics (real SQL)', () => {
     sqlite.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
     sqlite.prepare("INSERT INTO users (id, email) VALUES ('u2', 'b@c.com')").run()
     sqlite
-      .prepare(`INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`)
+      .prepare(
+        `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+      )
       .run()
     sqlite
       .prepare(
@@ -319,7 +323,9 @@ describe('documents vault semantics (real SQL)', () => {
 
     sqlite.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
     sqlite
-      .prepare(`INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`)
+      .prepare(
+        `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+      )
       .run()
     sqlite
       .prepare(

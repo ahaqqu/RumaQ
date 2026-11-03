@@ -152,7 +152,13 @@ export function sniffDocumentMime(bytes: Uint8Array): string | null {
  */
 export function sanitizeFileName(raw: string): string | null {
   const base = raw.split(/[\\/]/).pop() ?? ''
-  const cleaned = base.replace(/[\u0000-\u001f\u007f]/g, '').trim()
+  const cleaned = [...base]
+    .filter((ch) => {
+      const code = ch.codePointAt(0) ?? 0
+      return code > 0x1f && code !== 0x7f
+    })
+    .join('')
+    .trim()
   if (!cleaned || cleaned === '.' || cleaned === '..') return null
   return cleaned.slice(0, 255)
 }
@@ -290,13 +296,7 @@ function insertAuditStatement(
       `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action)
        VALUES (?, ?, ?, ?, ?)`
     )
-    .bind(
-      crypto.randomUUID(),
-      args.documentId,
-      args.householdId,
-      args.actorUserId,
-      args.action
-    )
+    .bind(crypto.randomUUID(), args.documentId, args.householdId, args.actorUserId, args.action)
 }
 
 /**
@@ -391,10 +391,9 @@ export async function deleteDocument(
       actorUserId: args.userId,
       action: 'delete',
     }),
-    db.prepare('DELETE FROM documents WHERE id = ? AND household_id = ?').bind(
-      document.id,
-      args.householdId
-    ),
+    db
+      .prepare('DELETE FROM documents WHERE id = ? AND household_id = ?')
+      .bind(document.id, args.householdId),
   ])
 }
 
@@ -404,19 +403,18 @@ export async function deleteDocument(
  */
 export async function recordDocumentAccess(
   db: D1Database,
-  args: { documentId: string; householdId: string; actorUserId: string; action: 'view' | 'download' }
+  args: {
+    documentId: string
+    householdId: string
+    actorUserId: string
+    action: 'view' | 'download'
+  }
 ): Promise<void> {
   await db
     .prepare(
       `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action)
        VALUES (?, ?, ?, ?, ?)`
     )
-    .bind(
-      crypto.randomUUID(),
-      args.documentId,
-      args.householdId,
-      args.actorUserId,
-      args.action
-    )
+    .bind(crypto.randomUUID(), args.documentId, args.householdId, args.actorUserId, args.action)
     .run()
 }

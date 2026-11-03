@@ -18,7 +18,8 @@
     "logout": "Logout",
     "openMenu": "Open menu",
     "closeMenu": "Close menu",
-    "household": "Household members"
+    "household": "Household members",
+    "documents": "Documents"
   },
   "shell": {
     "yourHousehold": "Your household"
@@ -81,6 +82,52 @@
     "notFound": "Household not found",
     "errorGeneric": "Something went wrong. Please try again.",
     "renameSave": "Save"
+  },
+  "documents": {
+    "title": "Document vault",
+    "subtitle": "Private family documents — kartu keluarga, IDs, akta lahir — stored securely for this household.",
+    "count_one": "{{count}} document",
+    "count_other": "{{count}} documents",
+    "uploadTitle": "Upload a document",
+    "uploadHint": "JPEG, PNG, WebP, or PDF up to 10 MB. Only members of this household can ever open it.",
+    "pickFile": "Choose file",
+    "changeFile": "Change file",
+    "categoryLabel": "Category",
+    "memberLabel": "Belongs to",
+    "memberNone": "No one (household)",
+    "noAccountShort": "no account",
+    "uploadAction": "Upload",
+    "uploaded": "{{name}} added to the vault.",
+    "deleted": "{{name}} deleted.",
+    "listTitle": "Your documents",
+    "listHint": "Filter by category or family member.",
+    "filterCategory": "Filter by category",
+    "filterMember": "Filter by member",
+    "emptyTitle": "No documents yet",
+    "emptyDesc": "Upload your kartu keluarga, IDs, or your children's akta lahir to keep them safe in one place.",
+    "view": "View",
+    "download": "Download",
+    "delete": "Delete",
+    "deleteConfirm": "Delete?",
+    "deleteConfirmYes": "Yes, delete",
+    "closeViewer": "Close viewer",
+    "viewerLoading": "Loading…",
+    "viewerError": "Could not load the document.",
+    "viewerUnsupported": "This file type cannot be previewed — download it instead.",
+    "errorNoFile": "Choose a file first.",
+    "errorNoCategory": "Pick a category first.",
+    "errorTooLarge": "File too large. Maximum size is 10 MB.",
+    "errorType": "Unsupported file type. Accepted: JPEG, PNG, WebP, PDF.",
+    "errorGeneric": "Something went wrong. Please try again.",
+    "category": {
+      "kartu_keluarga": "Kartu Keluarga",
+      "ktp": "KTP",
+      "kartu_anak": "Kartu Anak",
+      "akta": "Akta Lahir",
+      "paspor": "Paspor",
+      "bpjs": "BPJS",
+      "lainnya": "Other"
+    }
   },
   "greeting": {
     "morning": "Good morning",

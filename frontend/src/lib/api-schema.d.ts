@@ -3393,7 +3393,10 @@ export interface operations {
   }
   getApiDocuments: {
     parameters: {
-      query?: never
+      query?: {
+        memberId?: string
+        category?: 'kartu_keluarga' | 'ktp' | 'kartu_anak' | 'akta' | 'paspor' | 'bpjs' | 'lainnya'
+      }
       header?: never
       path?: never
       cookie?: never

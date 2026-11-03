@@ -3342,6 +3342,26 @@
             "cookieAuth": []
           }
         ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "memberId",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Surrogate member id (both modes)"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["kartu_keluarga", "ktp", "kartu_anak", "akta", "paspor", "bpjs", "lainnya"]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK",

@@ -18,7 +18,8 @@
     "logout": "Keluar",
     "openMenu": "Buka menu",
     "closeMenu": "Tutup menu",
-    "household": "Anggota keluarga"
+    "household": "Anggota keluarga",
+    "documents": "Dokumen"
   },
   "shell": {
     "yourHousehold": "Rumah tangga kamu"
@@ -81,6 +82,52 @@
     "notFound": "Rumah tidak ditemukan",
     "errorGeneric": "Terjadi kesalahan. Silakan coba lagi.",
     "renameSave": "Simpan"
+  },
+  "documents": {
+    "title": "Lemari dokumen",
+    "subtitle": "Dokumen keluarga yang privat — kartu keluarga, KTP, akta lahir — tersimpan aman untuk keluarga ini.",
+    "count_one": "{{count}} dokumen",
+    "count_other": "{{count}} dokumen",
+    "uploadTitle": "Unggah dokumen",
+    "uploadHint": "JPEG, PNG, WebP, atau PDF hingga 10 MB. Hanya anggota keluarga ini yang bisa membukanya.",
+    "pickFile": "Pilih berkas",
+    "changeFile": "Ganti berkas",
+    "categoryLabel": "Kategori",
+    "memberLabel": "Milik",
+    "memberNone": "Tidak ada (keluarga)",
+    "noAccountShort": "tanpa akun",
+    "uploadAction": "Unggah",
+    "uploaded": "{{name}} ditambahkan ke lemari.",
+    "deleted": "{{name}} dihapus.",
+    "listTitle": "Dokumen Anda",
+    "listHint": "Saring berdasarkan kategori atau anggota keluarga.",
+    "filterCategory": "Saring berdasarkan kategori",
+    "filterMember": "Saring berdasarkan anggota",
+    "emptyTitle": "Belum ada dokumen",
+    "emptyDesc": "Unggah kartu keluarga, KTP, atau akta lahir anak Anda agar tersimpan aman di satu tempat.",
+    "view": "Lihat",
+    "download": "Unduh",
+    "delete": "Hapus",
+    "deleteConfirm": "Hapus?",
+    "deleteConfirmYes": "Ya, hapus",
+    "closeViewer": "Tutup penampil",
+    "viewerLoading": "Memuat…",
+    "viewerError": "Dokumen tidak dapat dimuat.",
+    "viewerUnsupported": "Jenis berkas ini tidak dapat dipratinjau — unduh saja.",
+    "errorNoFile": "Pilih berkas terlebih dahulu.",
+    "errorNoCategory": "Pilih kategori terlebih dahulu.",
+    "errorTooLarge": "Berkas terlalu besar. Ukuran maksimum 10 MB.",
+    "errorType": "Jenis berkas tidak didukung. Yang diterima: JPEG, PNG, WebP, PDF.",
+    "errorGeneric": "Terjadi kesalahan. Silakan coba lagi.",
+    "category": {
+      "kartu_keluarga": "Kartu Keluarga",
+      "ktp": "KTP",
+      "kartu_anak": "Kartu Anak",
+      "akta": "Akta Lahir",
+      "paspor": "Paspor",
+      "bpjs": "BPJS",
+      "lainnya": "Lainnya"
+    }
   },
   "greeting": {
     "morning": "Good morning",

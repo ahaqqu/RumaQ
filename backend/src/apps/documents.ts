@@ -8,15 +8,7 @@ import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import { describeRoute } from 'hono-openapi'
 import type { OpenAPIV3_1 } from 'openapi-types'
-import {
-  object,
-  picklist,
-  string,
-  optional,
-  pipe,
-  maxLength,
-  safeParse,
-} from 'valibot'
+import { object, picklist, string, optional, pipe, maxLength, safeParse } from 'valibot'
 
 import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
@@ -129,6 +121,20 @@ documentsApp.get(
     description:
       'Lists the active household’s documents, newest first. Optional filters: memberId (both member modes — linked accounts and profile-only members), category.',
     security: [{ cookieAuth: [] }],
+    parameters: [
+      {
+        in: 'query',
+        name: 'memberId',
+        required: false,
+        schema: { type: 'string', description: 'Surrogate member id (both modes)' },
+      },
+      {
+        in: 'query',
+        name: 'category',
+        required: false,
+        schema: { type: 'string', enum: [...DOCUMENT_CATEGORIES] },
+      },
+    ],
     responses: {
       200: {
         description: 'OK',
@@ -329,11 +335,7 @@ documentsApp.get(
     },
   }),
   async (c) => {
-    const document = await getDocumentRow(
-      c.env.DB,
-      c.get('householdId'),
-      c.req.param('id')
-    )
+    const document = await getDocumentRow(c.env.DB, c.get('householdId'), c.req.param('id'))
     if (!document) {
       throw new DocumentNotFoundError()
     }
@@ -384,11 +386,7 @@ documentsApp.get(
 
     // The scoped lookup answers 404 for a foreign household's id BEFORE any
     // other decision (no existence leak).
-    const document = await getDocumentRow(
-      c.env.DB,
-      c.get('householdId'),
-      c.req.param('id')
-    )
+    const document = await getDocumentRow(c.env.DB, c.get('householdId'), c.req.param('id'))
     if (!document) {
       throw new DocumentNotFoundError()
     }
@@ -411,7 +409,7 @@ documentsApp.get(
       headers: {
         'Content-Type': document.mime_type,
         'Content-Disposition': contentDisposition(disposition, document.file_name),
-        'Cache-Control': 'private, no-store',
+        ...NO_STORE,
       },
     })
   }
@@ -431,11 +429,7 @@ documentsApp.delete(
     },
   }),
   async (c) => {
-    const document = await getDocumentRow(
-      c.env.DB,
-      c.get('householdId'),
-      c.req.param('id')
-    )
+    const document = await getDocumentRow(c.env.DB, c.get('householdId'), c.req.param('id'))
     if (!document) {
       throw new DocumentNotFoundError()
     }
