@@ -139,6 +139,9 @@ After the results comment lands, the manager triages each finding:
 - **Needs product decision** → pending owner, noted on the ticket.
 - **Infra/env gap** → owner action item (e.g. missing test account, missing
   edge-side rate limiting).
+  Owner action items are written to `docs/MANUAL_ACTIONS.md` (numbered ID,
+  step-by-step, location-labeled) and referenced by ID from the triage
+  comment; the manager updates the file as the owner reports progress.
 - **No action** → note the disposition on the ticket (e.g. by-design).
 
 ### Merge authority

@@ -25,3 +25,4 @@
 - Follow `docs/FRONTEND_CONVENTIONS.md` for frontend coding conventions.
 - Follow `docs/BACKEND_CONVENTIONS.md` for backend coding conventions.
 - When running a live QA pass, follow `docs/QA.md` — one tracking ticket per run, QA posts results there, findings are triaged by the manager; and when the QA run's workflow-docs PR (`docs/QA.md` or AGENTS.md process lines) is ready, report it to the owner — workflow PRs are always merged by the owner, never by agents.
+- When work requires an owner manual action (env edit, secret, manual command, decision), record it in `docs/MANUAL_ACTIONS.md` with a numbered ID (A, B, … with A1/A2 steps, location-labeled LAPTOP/VPS) and link the ID in the relevant ticket; update the file as the owner reports progress — done items are removed.
