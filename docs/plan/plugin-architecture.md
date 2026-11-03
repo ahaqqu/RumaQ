@@ -1,13 +1,13 @@
 # Plugin architecture — core + adapters for optional features (document vault = first plugin)
 
 > Status: **DRAFT for owner review** (ahaqqu/RumaQ#400) — design only, no implementation in
-> this ticket. Written 2026-11-04. The owner directive this document answers: *"the goal of
+> this ticket. Written 2026-11-04. The owner directive this document answers: _"the goal of
 > rumaq is super app for managing home/house. not all customer want to use all of these
 > features. so i think we should has concept plugin. for example storing document is a
 > plugin. customer can choose not to use this feature. in future if i want to change this
 > document plugin to something else (e.g. google drive) this should be easy and not breaking
 > the core function. so we should has concept core and adapters. where plugin talks to
-> adapters rather than code."*
+> adapters rather than code."_
 >
 > Two persona sections below are the deliverable: **§3 Perspective: Product Manager** and
 > **§4 Perspective: Product Architect**. They are written to be readable independently —
@@ -34,7 +34,7 @@
   - a **domain app**: `backend/src/apps/documents.ts` dispatched by prefix in `gateway.ts`,
     with the `documents`/`document_audit` tables from migration `0022`.
 
-The question #400 asks: make *feature* and *implementation* both swappable — features
+The question #400 asks: make _feature_ and _implementation_ both swappable — features
 enable/disable per customer without breaking core, and implementations (R2 → DokumenQ →
 "Google Drive") swap behind typed ports without breaking features.
 
@@ -43,15 +43,15 @@ enable/disable per customer without breaking core, and implementations (R2 → D
 Seven established plugin systems, surveyed for the four axes that matter here: boundary
 style, enablement granularity, lifecycle, and permission model.
 
-| System | Boundary | Enablement granularity | Lifecycle | Permissions / trust |
-|---|---|---|---|---|
-| **Home Assistant** | In-process integrations; entities | Per **config entry** (≈ per instance of an integration, per home) | `setup → setup_entry → unload_entry → remove`; reload/disable **without restart** | No sandbox — integrations are trusted core code, gated by review |
-| **Obsidian** | In-process, full API access | Per **vault** (per workspace of files) | Install → enable/disable per vault; "Restricted mode" kills all | Manifest declares nothing enforceable; **no permission system** — enabled = full access |
-| **VS Code** | In-process extension host | Global default + **per workspace** override | Manifest + `contributes` (declared UI) + activation events (lazy load); disable = never activates | Declarative capability contributions; marketplace trust, no runtime ACL |
-| **WordPress** | In-process hooks (actions/filters) | Per site install (enable/disable) | Activate/deactivate; uninstall may orphan data | **None effective** — plugins are the majority of WP vulnerabilities; hooks can reach everything |
-| **Backstage** | Frontend: build-time composed packages; backend: separate deployables | Per **app build** (install = compose) + per-user feature flags on top | Install at build time; feature flags toggle visibility at runtime | npm/dependency trust; no per-plugin capability grants |
-| **Strapi** | In-process npm packages | Per deployment via `config/plugins.js` (`enabled: false`) | Install (npm) → enable/disable in config; data often survives uninstall unmanaged | Config-file trust; no user-facing permission model |
-| **Grafana** | Frontend + backend plugin processes | Per instance config (`plugins.<id>.disable`), per-dashboard exposure | `plugin.json` manifest scanned at startup; signing gate; provisioning | **Signature verification** (trust gate before load); RBAC on top |
+| System             | Boundary                                                              | Enablement granularity                                                | Lifecycle                                                                                         | Permissions / trust                                                                             |
+| ------------------ | --------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Home Assistant** | In-process integrations; entities                                     | Per **config entry** (≈ per instance of an integration, per home)     | `setup → setup_entry → unload_entry → remove`; reload/disable **without restart**                 | No sandbox — integrations are trusted core code, gated by review                                |
+| **Obsidian**       | In-process, full API access                                           | Per **vault** (per workspace of files)                                | Install → enable/disable per vault; "Restricted mode" kills all                                   | Manifest declares nothing enforceable; **no permission system** — enabled = full access         |
+| **VS Code**        | In-process extension host                                             | Global default + **per workspace** override                           | Manifest + `contributes` (declared UI) + activation events (lazy load); disable = never activates | Declarative capability contributions; marketplace trust, no runtime ACL                         |
+| **WordPress**      | In-process hooks (actions/filters)                                    | Per site install (enable/disable)                                     | Activate/deactivate; uninstall may orphan data                                                    | **None effective** — plugins are the majority of WP vulnerabilities; hooks can reach everything |
+| **Backstage**      | Frontend: build-time composed packages; backend: separate deployables | Per **app build** (install = compose) + per-user feature flags on top | Install at build time; feature flags toggle visibility at runtime                                 | npm/dependency trust; no per-plugin capability grants                                           |
+| **Strapi**         | In-process npm packages                                               | Per deployment via `config/plugins.js` (`enabled: false`)             | Install (npm) → enable/disable in config; data often survives uninstall unmanaged                 | Config-file trust; no user-facing permission model                                              |
+| **Grafana**        | Frontend + backend plugin processes                                   | Per instance config (`plugins.<id>.disable`), per-dashboard exposure  | `plugin.json` manifest scanned at startup; signing gate; provisioning                             | **Signature verification** (trust gate before load); RBAC on top                                |
 
 Sources: [HA config entries](https://contributors.home-assistant.io/core/integrations/config-entries),
 [HA config-entry unloading quality scale](https://contributors.home-assistant.io/core/quality-scale/config-entry-unloading),
@@ -73,7 +73,7 @@ Sources: [HA config entries](https://contributors.home-assistant.io/core/integra
 **Adopt:**
 
 1. **Build-time composition, runtime enablement** (Backstage, Strapi, Grafana): plugin code
-   ships in the monorepo bundle; *enablement is data, not code loading*. This is also the
+   ships in the monorepo bundle; _enablement is data, not code loading_. This is also the
    only option on Cloudflare Workers — the runtime forbids `eval()`/`new Function()` and
    requires all code uploaded at deploy time ([Cloudflare Workers restrictions](https://blog.cloudflare.com/workers-vitest-integration/)).
 2. **Config-entry-style per-tenant lifecycle** (Home Assistant): enablement is a **row with
@@ -81,7 +81,7 @@ Sources: [HA config entries](https://contributors.home-assistant.io/core/integra
    and an explicit data-removal step separate from disable. HA's config entry is the
    closest prior art to what a RumaQ household needs.
 3. **Declared UI contributions** (VS Code `contributes`, Grafana `plugin.json`): a plugin
-   *declares* its nav entries, routes, and settings panels; core renders them only when
+   _declares_ its nav entries, routes, and settings panels; core renders them only when
    enabled. Nothing reaches into `AppShell.jsx` imperatively.
 4. **Startup manifest validation** (Grafana): manifests are validated by a test/CI step, so
    a malformed plugin fails the build, never the runtime.
@@ -93,7 +93,7 @@ Sources: [HA config entries](https://contributors.home-assistant.io/core/integra
 1. **WordPress's hooks-and-filters bus.** Unbounded reach into core and sibling plugins is
    exactly why WP plugins dominate its vulnerability reports and why WP upgrades are
    feared ([Wordfence](https://www.wordfence.com/blog/2024/07/wordpress-security-research-series-wordpress-request-architecture-and-hooks/)).
-   RumaQ wants *swappable seams* with a single consumer each, not an interception mesh.
+   RumaQ wants _swappable seams_ with a single consumer each, not an interception mesh.
 2. **Obsidian's "no permission model" shortcut.** Enabled = full access is survivable for
    a local text editor; for a multi-tenant server holding family identity documents it is
    not. Capabilities stay declared in the manifest and checked.
@@ -130,7 +130,7 @@ consequence.
 ```
 
 - **Core** — everything a household cannot opt out of: auth, households/members, the
-  plugin registry, contract codegen, deploy plumbing. Core knows *which plugins exist*
+  plugin registry, contract codegen, deploy plumbing. Core knows _which plugins exist_
   (it must, to dispatch) but has **zero feature logic** for any of them.
 - **Plugin** — an optional feature: routes, tables, i18n keys, nav entries, settings.
   Talks **only to ports and its own code**. Never imports another plugin, never touches
@@ -141,10 +141,10 @@ consequence.
   Google-Drive-style service changes **one adapter file**, not the plugin, not core —
   the owner's requirement verbatim.
 
-The critical separation the owner asked for: *"customer can choose not to use this
-feature"* is the **plugin** axis (enablement); *"change this document plugin to something
-else (e.g. google drive)"* is the **adapter** axis (implementation swap). They are
-orthogonal. A Google Drive adapter would swap what *stores the bytes*; it does not disable
+The critical separation the owner asked for: _"customer can choose not to use this
+feature"_ is the **plugin** axis (enablement); _"change this document plugin to something
+else (e.g. google drive)"_ is the **adapter** axis (implementation swap). They are
+orthogonal. A Google Drive adapter would swap what _stores the bytes_; it does not disable
 the vault feature.
 
 ## 3. Perspective: Product Manager
@@ -155,8 +155,8 @@ the vault feature.
   document vault is intimate. Making it a plugin means a household that never asked for
   private-document storage never sees it, never wonders what it does with KTP scans, and
   never carries the cognitive load of an unused surface in nav or settings.
-- **Trust as a feature.** "Disable" is a visible, reversible commitment that *your
-  household's data is not being kept*. For Indonesian family documents (identity papers),
+- **Trust as a feature.** "Disable" is a visible, reversible commitment that _your
+  household's data is not being kept_. For Indonesian family documents (identity papers),
   the ability to turn the vault off — and to export-then-purge — is a differentiator, not
   a concession.
 - **Owner velocity.** The same structure lets the owner replace implementations (self-host
@@ -167,14 +167,14 @@ the vault feature.
 
 For a household with the documents plugin **disabled**, every one of these is true:
 
-| Surface | Disabled experience |
-|---|---|
-| Nav | No Documents entry in the household group (`AppShell.jsx` filters by the enabled set) |
-| Direct URL (`/documents`) | A calm empty state: "This feature is off for your household" + an enable affordance (owners) or nothing (members). Not a 404, not an error |
-| API | Plugin routes answer `404` with the standard error envelope (fail closed, no existence leak — same posture as foreign-household ids today) |
-| Settings | A "Plugins" catalog screen listing available features with state and a one-tap enable/disable (owner-only) |
-| Data | Nothing new is ever written: no rows, no bytes, no cron work, no AI spend |
-| Ops cost | **Zero** marginal cost: no objects stored (R2 bills per stored object), no scheduled work, no model calls. The code rides the same deployed bundle — on Workers, deployed-but-inactive code costs nothing at runtime; bundle growth is a code-hygiene concern, not a customer cost |
+| Surface                   | Disabled experience                                                                                                                                                                                                                                                                |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Nav                       | No Documents entry in the household group (`AppShell.jsx` filters by the enabled set)                                                                                                                                                                                              |
+| Direct URL (`/documents`) | A calm empty state: "This feature is off for your household" + an enable affordance (owners) or nothing (members). Not a 404, not an error                                                                                                                                         |
+| API                       | Plugin routes answer `404` with the standard error envelope (fail closed, no existence leak — same posture as foreign-household ids today)                                                                                                                                         |
+| Settings                  | A "Plugins" catalog screen listing available features with state and a one-tap enable/disable (owner-only)                                                                                                                                                                         |
+| Data                      | Nothing new is ever written: no rows, no bytes, no cron work, no AI spend                                                                                                                                                                                                          |
+| Ops cost                  | **Zero** marginal cost: no objects stored (R2 bills per stored object), no scheduled work, no model calls. The code rides the same deployed bundle — on Workers, deployed-but-inactive code costs nothing at runtime; bundle growth is a code-hygiene concern, not a customer cost |
 
 "Never enabled" and "disabled" are deliberately the same state — there is no install step
 for the customer. The plugin catalog in settings is the only place a household discovers
@@ -185,10 +185,10 @@ what exists.
 **Recommendation: enablement is per household, with a separate per-deployment
 availability gate for ops.** Two layers, two audiences:
 
-| Layer | Audience | Mechanism | Example |
-|---|---|---|---|
-| **Household enablement** (the customer-facing choice) | household owner | Row in a core `household_plugins` table (household_id, plugin_id, status, timestamps) | A household turns the vault off |
-| **Deployment availability** (the ops kill-switch) | owner/operator only | Config flag in `cloudflare.config.ts` wiring (env-shaped, not a customer setting) | Vault unavailability during a DokumenQ cutover incident |
+| Layer                                                 | Audience            | Mechanism                                                                             | Example                                                 |
+| ----------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| **Household enablement** (the customer-facing choice) | household owner     | Row in a core `household_plugins` table (household_id, plugin_id, status, timestamps) | A household turns the vault off                         |
+| **Deployment availability** (the ops kill-switch)     | owner/operator only | Config flag in `cloudflare.config.ts` wiring (env-shaped, not a customer setting)     | Vault unavailability during a DokumenQ cutover incident |
 
 Why per household (the owner's "customer can choose" wording points here; multi-tenant
 analysis confirms it is cheap):
@@ -217,12 +217,12 @@ analysis confirms it is cheap):
 The vault's own design already encodes the right instincts (audit rows outlive the
 documents they name; bytes are never orphaned silently). The plugin model generalizes it:
 
-| Event | Rows | Bytes | Audit |
-|---|---|---|---|
-| **Disable** | Retained untouched ("dormant") | Retained (household may re-enable) | `plugin_disabled` event recorded |
-| **Re-enable** | Everything returns exactly as left | — | `plugin_enabled` event recorded |
-| **Disable + export** | Retained; household can download an archive (per-plugin export capability) | Retained | export event recorded |
-| **Delete (purge)** | Plugin tables' household rows deleted (migration-free, app-level purge) | Purged through the port (adapter-agnostic) | Purge record retained — audit outlives data, same rule as `document_audit` |
+| Event                | Rows                                                                       | Bytes                                      | Audit                                                                      |
+| -------------------- | -------------------------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------- |
+| **Disable**          | Retained untouched ("dormant")                                             | Retained (household may re-enable)         | `plugin_disabled` event recorded                                           |
+| **Re-enable**        | Everything returns exactly as left                                         | —                                          | `plugin_enabled` event recorded                                            |
+| **Disable + export** | Retained; household can download an archive (per-plugin export capability) | Retained                                   | export event recorded                                                      |
+| **Delete (purge)**   | Plugin tables' household rows deleted (migration-free, app-level purge)    | Purged through the port (adapter-agnostic) | Purge record retained — audit outlives data, same rule as `document_audit` |
 
 Rules:
 
@@ -242,12 +242,12 @@ Rules:
 Each phase ships alone, is reversible, and is invisible or strictly additive to users.
 No phase changes any URL, table shape, or contract field already shipped by #399.
 
-| Phase | Ships | User-visible change |
-|---|---|---|
-| **A. Registry core** | Plugin manifest type + registry; `household_plugins` migration; existing households grandfathered as enabled; bootstrap payload gains an additive `enabledPlugins` field; gateway dispatches documents via the registry | None. Bit-for-bit same behavior |
-| **B. Gating** | Frontend plugin context; nav filter; route guards with the disabled empty state; owner-only enable/disable | Only if a household *chooses* to disable: nav entry disappears; everything else unchanged |
-| **C. Data lifecycle** | Plugins catalog in settings; export capability; owner-only purge flow with audit | New settings screen; no change to existing screens |
-| **D. Adapter evolution** | Ports directory formalization; DokumenQ adapter behind `StorageAdapter` (#391 M3 Mode A); optional Mode B signed-URL follow-up | None (or faster downloads, if Mode B lands) |
+| Phase                    | Ships                                                                                                                                                                                                                   | User-visible change                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| **A. Registry core**     | Plugin manifest type + registry; `household_plugins` migration; existing households grandfathered as enabled; bootstrap payload gains an additive `enabledPlugins` field; gateway dispatches documents via the registry | None. Bit-for-bit same behavior                                                           |
+| **B. Gating**            | Frontend plugin context; nav filter; route guards with the disabled empty state; owner-only enable/disable                                                                                                              | Only if a household _chooses_ to disable: nav entry disappears; everything else unchanged |
+| **C. Data lifecycle**    | Plugins catalog in settings; export capability; owner-only purge flow with audit                                                                                                                                        | New settings screen; no change to existing screens                                        |
+| **D. Adapter evolution** | Ports directory formalization; DokumenQ adapter behind `StorageAdapter` (#391 M3 Mode A); optional Mode B signed-URL follow-up                                                                                          | None (or faster downloads, if Mode B lands)                                               |
 
 Comms: Phases A–C need no announcement (they only add an off-switch). The first real
 moment is the settings catalog itself — in-app, no email campaign required. Phase D is a
@@ -276,16 +276,16 @@ non-event for users by design; it is announced in the changelog only.
 **Core guarantees to every plugin** (things plugin code may take for granted, because the
 registry installs them):
 
-| Guarantee | Already exists as | Registry's addition |
-|---|---|---|
-| Auth context | `propsAuthMiddleware` — userId + ACTIVE household per request (COALESCE recheck, `backend/src/auth.ts`) | Auto-installed on every registered plugin app; a plugin cannot register a route without it |
-| Household scoping | `household_id` predicates in SQL (the documents/households pattern) | Convention enforced in review + test: every plugin table carries `household_id NOT NULL REFERENCES households(id) ON DELETE CASCADE` |
-| Error envelope | Per-app `onError` mapping typed errors (`apps/documents.ts`) | Registry wraps each plugin app with the standard envelope; plugins only throw typed errors |
-| Rate limiting | `ipRateLimitMiddleware` + per-route limiters | Auto-installed; plugins add named per-route limits via manifest options |
-| i18n | `en.json`/`id.json` namespaces (`documents.*` exists) | Plugin-owned namespace = plugin id; CI check: en+id parity for plugin keys |
-| Scheduling | Single cron trigger (`triggers.scheduled` in `cloudflare.config.ts`) | Registry hands each plugin's declared task a wrapped slot: per-plugin try/catch, enablement check, failure audit |
-| Contract codegen | `describeRoute` → `bun run api:codegen` → `frontend/openapi.json` → `api-schema.d.ts` | Plugin routes flow through the same pipeline unchanged (documents app already does) |
-| Audit facility | `document_audit` vocabulary pattern | Core records lifecycle events (enabled/disabled/purged); in-plugin actions keep per-plugin audit tables |
+| Guarantee         | Already exists as                                                                                       | Registry's addition                                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Auth context      | `propsAuthMiddleware` — userId + ACTIVE household per request (COALESCE recheck, `backend/src/auth.ts`) | Auto-installed on every registered plugin app; a plugin cannot register a route without it                                           |
+| Household scoping | `household_id` predicates in SQL (the documents/households pattern)                                     | Convention enforced in review + test: every plugin table carries `household_id NOT NULL REFERENCES households(id) ON DELETE CASCADE` |
+| Error envelope    | Per-app `onError` mapping typed errors (`apps/documents.ts`)                                            | Registry wraps each plugin app with the standard envelope; plugins only throw typed errors                                           |
+| Rate limiting     | `ipRateLimitMiddleware` + per-route limiters                                                            | Auto-installed; plugins add named per-route limits via manifest options                                                              |
+| i18n              | `en.json`/`id.json` namespaces (`documents.*` exists)                                                   | Plugin-owned namespace = plugin id; CI check: en+id parity for plugin keys                                                           |
+| Scheduling        | Single cron trigger (`triggers.scheduled` in `cloudflare.config.ts`)                                    | Registry hands each plugin's declared task a wrapped slot: per-plugin try/catch, enablement check, failure audit                     |
+| Contract codegen  | `describeRoute` → `bun run api:codegen` → `frontend/openapi.json` → `api-schema.d.ts`                   | Plugin routes flow through the same pipeline unchanged (documents app already does)                                                  |
+| Audit facility    | `document_audit` vocabulary pattern                                                                     | Core records lifecycle events (enabled/disabled/purged); in-plugin actions keep per-plugin audit tables                              |
 
 **Forbidden to plugins** (enforced by convention + review + test-time checks, honestly not
 by a runtime database ACL — see §4.4):
@@ -301,8 +301,8 @@ by a runtime database ACL — see §4.4):
    external services go through ports (§4.2).
 5. Registering routes outside their declared prefix, or another plugin's i18n namespace.
 
-The one-sentence rule for reviewers: *a plugin may import core's published API and its
-own module, and nothing else.* A test-enforced import-boundary check (e.g. dependency
+The one-sentence rule for reviewers: _a plugin may import core's published API and its
+own module, and nothing else._ A test-enforced import-boundary check (e.g. dependency
 cruiser or a small convention test) makes this mechanical rather than tribal.
 
 ### 4.2 Port (adapter) contracts — where they live, how typed, how versioned
@@ -311,25 +311,25 @@ cruiser or a small convention test) makes this mechanical rather than tribal.
   `lib/storage.ts` unchanged in shape (the move is mechanical; import paths update in one
   file — the vault). The R2 adapter stays beside it (`ports/storage/r2.ts`), key-building
   helpers remain vault-owned (they are vault policy, not port policy — `buildDocumentKey`
-  moves *with* the plugin).
+  moves _with_ the plugin).
 - **Typing:** plain TypeScript interfaces with the existing zero-dep discipline. Ports are
   **implementation-agnostic by construction**: `StorageAdapter.put/get/delete` says nothing
   about R2, buckets, or URLs — which is precisely why the DokumenQ swap (Mode A in the
   [DokumenQ design](https://github.com/ahaqqu/DokumenQ/pull/1)) maps mechanically onto it.
 - **Versioning without breaking either side — the additive-nullish rule applied to
   interfaces:**
-  - Never change a method's signature; never remove one. New *capability* = a **new
+  - Never change a method's signature; never remove one. New _capability_ = a **new
     optional method or a new interface** (e.g. `StorageAdapterV2 extends StorageAdapter`
     with `resolveSignedUrl` — exactly DokumenQ's Mode B extension).
   - Adapters declare which port versions they implement; plugins declare which port
-    versions they *require* (in the manifest). The registry validates the pairing at
+    versions they _require_ (in the manifest). The registry validates the pairing at
     startup/test time; a mismatch fails the build, not a request.
   - Port changes ride the same PR review discipline as contract changes: additive first,
     breaking changes only when every consumer and adapter moves in the same PR.
 - **Ports are few and earn their existence.** Candidate backlog, none created speculatively:
   `StorageAdapter` (exists), a notification port (push notifications decision doc exists),
   an AI/OCR port (receipt scan's Gemini dependency), a scheduling facade. A "port" with one
-  plugin consumer *and* one implementation that will never change is a port in name only —
+  plugin consumer _and_ one implementation that will never change is a port in name only —
   keep it as a plain lib module until the second implementation is plausible.
 
 ### 4.3 Plugin manifest and lifecycle
@@ -367,7 +367,7 @@ plugin" is always a bug we shipped, never an unpredictable artifact.
 
 **Not real, and therefore enforced as build/test-time discipline instead:**
 
-- The D1 database has no per-plugin ACL: any plugin code *can* technically touch any
+- The D1 database has no per-plugin ACL: any plugin code _can_ technically touch any
   table. Mitigation: the import-boundary + table-ownership checks from §4.1 as CI tests,
   not runtime walls.
 - One shared bundle: a plugin's unhandled promise rejection can crash the isolate for
@@ -382,7 +382,7 @@ plugin" is always a bug we shipped, never an unpredictable artifact.
 **And the strongest boundary is not in the Worker at all:** the riskiest asset (document
 bytes at rest) already sits behind a port whose next implementation (#391 DokumenQ) is a
 separate process on the VPS — a real OS boundary for exactly the resource that deserves
-one. Ports give RumaQ *graded* isolation: process boundary where it matters (bytes),
+one. Ports give RumaQ _graded_ isolation: process boundary where it matters (bytes),
 isolate + convention everywhere else.
 
 ### 4.5 UI surface registration
@@ -404,11 +404,11 @@ isolate + convention everywhere else.
 
 ### 4.6 Configuration storage
 
-| Kind of config | Lives in | Never in |
-|---|---|---|
-| Household enablement + small per-household plugin settings (non-secret JSON) | `household_plugins.status` / `config_json` | Code, env vars |
-| Adapter/deployment wiring (bindings, endpoints) | `cloudflare.config.ts` bindings + Worker secrets (existing mechanics; names only, never values, in the repo) | D1, `.env`, plugin code |
-| Feature/UX copy | i18n namespaces (en + id mandatory) | Hard-coded strings |
+| Kind of config                                                               | Lives in                                                                                                     | Never in                |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------- |
+| Household enablement + small per-household plugin settings (non-secret JSON) | `household_plugins.status` / `config_json`                                                                   | Code, env vars          |
+| Adapter/deployment wiring (bindings, endpoints)                              | `cloudflare.config.ts` bindings + Worker secrets (existing mechanics; names only, never values, in the repo) | D1, `.env`, plugin code |
+| Feature/UX copy                                                              | i18n namespaces (en + id mandatory)                                                                          | Hard-coded strings      |
 
 No plugin gets its own D1 database: shared `rumaq` DB with `<plugin>_` table prefixes
 keeps migrations, backups, and cross-household admin queries in one place. Per-plugin
@@ -426,27 +426,27 @@ enabled).
 (`documents`, `document_audit`) with their current shapes, the audit vocabulary, the
 middleware stack, the `DOCUMENTS` R2 binding and private-bucket trust model (no public or
 presigned URLs — `docs/ARCHITECTURE.md` §10), and `StorageAdapter` as adapter #1. The
-`StorageAdapter` seam *is* the migration's anchor: the vault keeps compiling against it
+`StorageAdapter` seam _is_ the migration's anchor: the vault keeps compiling against it
 while everything around it re-homes. No user-visible breakage — the phases in §3.5 are
 the operational form of this plan.
 
 **Compatibility with #391 DokumenQ** rides for free: DokumenQ's Mode A
 (`DokumenQStorageAdapter` implementing `put/get/delete`; Worker still streams) is an
 adapter swap inside the documents plugin; Mode B (`resolveSignedUrl`) is the port's
-additive V2 extension, with the documented invariant change ("no *unauthenticated* byte
+additive V2 extension, with the documented invariant change ("no _unauthenticated_ byte
 path; signed URLs are the only direct path") captured in the adapter comment at that
-time. The plugin layer additionally guarantees the documents plugin is the *only* consumer
+time. The plugin layer additionally guarantees the documents plugin is the _only_ consumer
 of the storage port, so a swap review reads one directory.
 
 ## 5. Alternatives considered and rejected
 
-| Alternative | Why it was rejected |
-|---|---|
-| **1. Pure feature flags** (one boolean per feature in `user_settings`; no structural change) | Cheapest, and solves *nothing* the owner actually asked for: flags gate visibility but not lifecycle, data ownership, or implementation swap. The vault is already more than a flag (tables, bytes, audit). "Easy to change the document plugin to Google Drive" requires a seam flags cannot provide. Adopted *only* as the ops availability gate (§3.3), not as the architecture |
+| Alternative                                                                                            | Why it was rejected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. Pure feature flags** (one boolean per feature in `user_settings`; no structural change)           | Cheapest, and solves _nothing_ the owner actually asked for: flags gate visibility but not lifecycle, data ownership, or implementation swap. The vault is already more than a flag (tables, bytes, audit). "Easy to change the document plugin to Google Drive" requires a seam flags cannot provide. Adopted _only_ as the ops availability gate (§3.3), not as the architecture                                                                                                                                                                         |
 | **2. Microservice-per-plugin** (separate Worker per feature; Backstage-backend / Strapi-service style) | Breaks RumaQ's deploy discipline (`scripts/deploy.sh` is the single entrypoint — N plugins → N deploy targets, N secret surfaces, N preview branches), D1 cannot be shared across Workers cheaply (cross-plugin household queries become HTTP), latency and cost multiply. The strongest real boundary it buys (process isolation) is bought where it matters by ports instead (DokumenQ for bytes, §4.4). Revisit only if a plugin genuinely needs its own runtime (e.g. a heavy scraper) — the VPS pipeline repo already shows the pattern for that case |
-| **3. Runtime-loaded modules** (fetch plugin code from R2/KV, `import()` at runtime) | Impossible on Workers (no `eval`/`new Function`; all code uploaded at deploy time) and a security anti-pattern even where possible (untrusted-code problem, cold-path complexity). Decisively closed by the platform |
-| **4. Hooks-and-filters event bus** (WordPress-style `do_action`/`apply_filter` across core) | Maximum flexibility, minimum safety: unbounded reach into core and sibling plugins, ordering hazards, and every core change becomes a breaking-change audit across unknown interceptors. Directly contradicts "plugin talks to adapters rather than code". Ports + declared contributions give the same extension points with typed, auditable seams |
-| **5. Per-plugin D1 database / full schema isolation** (Strapi's service-per-plugin instincts) | Multiplies migrations, backups, and deploy surface; cross-household admin surfaces (the audit feed, §3.4) become cross-database queries. Namespaced tables in one DB keep every existing discipline (single `db:migrate` path, EXPLAIN-proven indexes, real-SQL tests) intact |
+| **3. Runtime-loaded modules** (fetch plugin code from R2/KV, `import()` at runtime)                    | Impossible on Workers (no `eval`/`new Function`; all code uploaded at deploy time) and a security anti-pattern even where possible (untrusted-code problem, cold-path complexity). Decisively closed by the platform                                                                                                                                                                                                                                                                                                                                       |
+| **4. Hooks-and-filters event bus** (WordPress-style `do_action`/`apply_filter` across core)            | Maximum flexibility, minimum safety: unbounded reach into core and sibling plugins, ordering hazards, and every core change becomes a breaking-change audit across unknown interceptors. Directly contradicts "plugin talks to adapters rather than code". Ports + declared contributions give the same extension points with typed, auditable seams                                                                                                                                                                                                       |
+| **5. Per-plugin D1 database / full schema isolation** (Strapi's service-per-plugin instincts)          | Multiplies migrations, backups, and deploy surface; cross-household admin surfaces (the audit feed, §3.4) become cross-database queries. Namespaced tables in one DB keep every existing discipline (single `db:migrate` path, EXPLAIN-proven indexes, real-SQL tests) intact                                                                                                                                                                                                                                                                              |
 
 ## 6. Compatibility with existing disciplines
 
