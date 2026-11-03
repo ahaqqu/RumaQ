@@ -471,3 +471,80 @@ export function createHouseholdInvite(id: string): Promise<unknown> {
 export function joinHousehold(code: string): Promise<unknown> {
   return unwrap(client.POST('/api/households/join', { body: { code } }))
 }
+
+// ---------------------------------------------------------------------------
+// Document vault (ahaqqu/RumaQ#388 MVP) — private per-household documents.
+// Metadata rides the typed client; the content endpoint bypasses it
+// (fetchReviewExport pattern): the typed client's JSON unwrap has no blob
+// path, and document bytes must stream into blob URLs — never parse as JSON.
+// No public or presigned URLs exist anywhere; every byte read is a
+// cookie-authenticated, same-origin fetch.
+// ---------------------------------------------------------------------------
+
+// Mirrors the backend's closed category set (lib/documents.ts) — one
+// definition per side; a mismatch would 400 at upload time.
+export const DOCUMENT_CATEGORIES = [
+  'kartu_keluarga',
+  'ktp',
+  'kartu_anak',
+  'akta',
+  'paspor',
+  'bpjs',
+  'lainnya',
+] as const
+
+export type DocumentCategory = (typeof DOCUMENT_CATEGORIES)[number]
+
+// Same cap as the backend (DOCUMENT_MAX_BYTES) — the client pre-check exists
+// to fail fast before a 10 MB read ever leaves the device.
+export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
+
+export function getDocuments(
+  { memberId, category }: { memberId?: string; category?: DocumentCategory } = {},
+  signal?: AbortSignal
+): Promise<unknown> {
+  return unwrap(client.GET('/api/documents', { params: { query: { memberId, category } }, signal }))
+}
+
+export function uploadDocument(
+  file: File,
+  category: DocumentCategory,
+  memberId?: string
+): Promise<unknown> {
+  const form = new FormData()
+  form.append('file', file, file.name)
+  form.append('category', category)
+  if (memberId) form.append('memberId', memberId)
+  // openapi-typescript types format:'binary' as `string`; FormData is what
+  // fetch actually sends (multipart boundary included) — one cast at the
+  // boundary, typed to the generated body shape.
+  return unwrap(
+    client.POST('/api/documents', {
+      body: form as unknown as { file: string; category: DocumentCategory; memberId?: string },
+    })
+  )
+}
+
+export function deleteDocument(id: string): Promise<unknown> {
+  return unwrap(client.DELETE('/api/documents/{id}', { params: { path: { id } } }))
+}
+
+export function getDocumentMeta(id: string, signal?: AbortSignal): Promise<unknown> {
+  return unwrap(client.GET('/api/documents/{id}', { params: { path: { id } }, signal }))
+}
+
+// The binary content endpoint — hand-written (see the section note above).
+// disposition=inline previews (audited as a view server-side),
+// disposition=attachment downloads (audited as a download).
+export async function fetchDocumentContent(
+  id: string,
+  disposition: 'inline' | 'attachment',
+  signal?: AbortSignal
+): Promise<Blob> {
+  const params = new URLSearchParams({ disposition })
+  const res = await fetch(`/api/documents/${id}/content?${params.toString()}`, { signal })
+  if (!res.ok) {
+    throw new ApiError(`Document content failed: ${res.status}`, res.status)
+  }
+  return res.blob()
+}

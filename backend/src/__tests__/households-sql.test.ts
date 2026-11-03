@@ -613,6 +613,7 @@ describe('households app over real SQL (cookie path)', () => {
       DB: d1,
       RECEIPTS: {},
       BROCHURES: {} as MockEnv['BROCHURES'],
+      DOCUMENTS: {} as MockEnv['DOCUMENTS'],
       GOOGLE_CLIENT_ID: 'test-client-id',
       GOOGLE_CLIENT_SECRET: 'test-client-secret',
       WORKER_JWT_SECRET: 'test-secret',

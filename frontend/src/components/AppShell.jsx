@@ -15,6 +15,7 @@ import {
   IconSliders,
   IconSpark,
   IconUsers,
+  IconFolderLock,
   IconClose,
   BrandMark,
 } from './icons.jsx'
@@ -55,7 +56,12 @@ const ADMIN_NAV = [
 // ADMIN_NAV it belongs to every authenticated user — being a household member
 // (not users.is_admin) is the authorization for viewing it; owners get the
 // invite/remove affordances inside the screen itself.
-const HOUSEHOLD_NAV = [{ id: 'household', key: 'nav.household', Icon: IconUsers, to: '/household' }]
+// The document vault (issue #388) rides the same group — every household
+// member keeps family documents; owners manage members inside the screens.
+const HOUSEHOLD_NAV = [
+  { id: 'household', key: 'nav.household', Icon: IconUsers, to: '/household' },
+  { id: 'documents', key: 'nav.documents', Icon: IconFolderLock, to: '/documents' },
+]
 
 // The mobile drawer is the super-app menu: primary screens first — History
 // lives here (moved out of the header) and future features slot in below.

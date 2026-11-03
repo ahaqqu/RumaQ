@@ -22,6 +22,8 @@ import {
   IconKey,
   IconTrash,
   IconRefresh,
+  IconFolderLock,
+  IconEye,
   BrandMark,
 } from './icons.jsx'
 
@@ -47,6 +49,8 @@ describe('icons', () => {
     IconKey,
     IconTrash,
     IconRefresh,
+    IconFolderLock,
+    IconEye,
   ]
 
   for (const Icon of icons) {

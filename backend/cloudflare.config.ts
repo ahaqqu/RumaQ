@@ -62,6 +62,12 @@ export default defineConfig({
     env: {
       DB: bindings.d1({ name: databaseName, id: databaseId }),
       RECEIPTS: bindings.r2({ name: bucketName }),
+      // Document vault (issue #388): the SAME private bucket as RECEIPTS under
+      // a dedicated binding — the vault's keys carry the documents/ prefix
+      // (lib/storage.ts), so no new infrastructure and no shared code path.
+      // Swapping to the #391 file service later changes only this binding and
+      // the StorageAdapter implementation.
+      DOCUMENTS: bindings.r2({ name: bucketName }),
       BROCHURES: bindings.r2({ name: brochuresBucketName }),
       ASSETS: bindings.assets(),
       EMAIL_AUTH_ENABLED: bindings.text('true'),

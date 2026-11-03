@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs'
 import { generateSpecs } from 'hono-openapi'
 import { apiApp } from '../../backend/src/apps/api.js'
 import { householdsApp } from '../../backend/src/apps/households.js'
+import { documentsApp } from '../../backend/src/apps/documents.js'
 import { authApp } from '../../backend/src/apps/auth.js'
 
 const DOCS_OPTIONS = {
@@ -130,13 +131,18 @@ Errors use \`{ "error": "..." }\`.
 }
 
 async function main() {
-  const [apiSpec, householdsSpec, authSpec] = await Promise.all([
+  const [apiSpec, householdsSpec, documentsSpec, authSpec] = await Promise.all([
     generateSpecs(apiApp, DOCS_OPTIONS),
     generateSpecs(householdsApp, DOCS_OPTIONS),
+    generateSpecs(documentsApp, DOCS_OPTIONS),
     generateSpecs(authApp, DOCS_OPTIONS),
   ])
 
-  const allPaths: Record<string, any> = { ...apiSpec.paths, ...householdsSpec.paths }
+  const allPaths: Record<string, any> = {
+    ...apiSpec.paths,
+    ...householdsSpec.paths,
+    ...documentsSpec.paths,
+  }
   for (const [authPath, methods] of Object.entries(authSpec.paths)) {
     allPaths[authPath] = methods
   }

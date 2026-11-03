@@ -796,6 +796,59 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/documents': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Lists the active household’s documents, newest first. Optional filters: memberId (both member modes — linked accounts and profile-only members), category. */
+    get: operations['getApiDocuments']
+    put?: never
+    /** @description Uploads one document (multipart/form-data: file, category, optional memberId) into the active household’s vault. Cap 10 MB enforced on Content-Length before the body is read and again on the parsed bytes; magic bytes must match the declared type (JPEG, PNG, WebP, PDF). memberId accepts both member modes (linked and profile-only). No public URLs exist — bytes are served only via the content endpoint. */
+    post: operations['postApiDocuments']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/documents/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Returns one document’s metadata. A document from another household answers the same 404 as a missing one (no existence leak). */
+    get: operations['getApiDocumentsById']
+    put?: never
+    post?: never
+    /** @description Hard-deletes a document: the stored object AND the metadata row, with the deletion audit record in the same batch. Uploader or household owner only. Audit rows outlive the document (the deletion record survives). */
+    delete: operations['deleteApiDocumentsById']
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/documents/{id}/content': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Streams the document’s bytes, authenticated and household-scoped. Content-Type is the stored mime; disposition=inline previews (audited as view), disposition=attachment downloads (audited as download). Cache-Control is private, no-store — bytes never leak through any cache, and no public or presigned URL exists. */
+    get: operations['getApiDocumentsByIdContent']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/auth/login': {
     parameters: {
       query?: never
@@ -3330,6 +3383,303 @@ export interface operations {
         content?: never
       }
       /** @description Household not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiDocuments: {
+    parameters: {
+      query?: {
+        memberId?: string
+        category?: 'kartu_keluarga' | 'ktp' | 'kartu_anak' | 'akta' | 'paspor' | 'bpjs' | 'lainnya'
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            documents: {
+              id: string
+              household_id: string
+              member_id: string | null
+              /** @enum {string} */
+              category:
+                | 'kartu_keluarga'
+                | 'ktp'
+                | 'kartu_anak'
+                | 'akta'
+                | 'paspor'
+                | 'bpjs'
+                | 'lainnya'
+              file_name: string
+              mime_type: string
+              size_bytes: number
+              sha256: string
+              uploaded_by: string
+              created_at: string
+            }[]
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  postApiDocuments: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'multipart/form-data': {
+          /** Format: binary */
+          file: string
+          /** @enum {string} */
+          category: 'kartu_keluarga' | 'ktp' | 'kartu_anak' | 'akta' | 'paspor' | 'bpjs' | 'lainnya'
+          memberId?: string
+        }
+      }
+    }
+    responses: {
+      /** @description Created */
+      201: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            document: {
+              id: string
+              household_id: string
+              member_id: string | null
+              /** @enum {string} */
+              category:
+                | 'kartu_keluarga'
+                | 'ktp'
+                | 'kartu_anak'
+                | 'akta'
+                | 'paspor'
+                | 'bpjs'
+                | 'lainnya'
+              file_name: string
+              mime_type: string
+              size_bytes: number
+              sha256: string
+              uploaded_by: string
+              created_at: string
+            }
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Document not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description File exceeds the 10 MB cap */
+      413: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unsupported or mismatched file type */
+      415: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Too many uploads */
+      429: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiDocumentsById: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            document: {
+              id: string
+              household_id: string
+              member_id: string | null
+              /** @enum {string} */
+              category:
+                | 'kartu_keluarga'
+                | 'ktp'
+                | 'kartu_anak'
+                | 'akta'
+                | 'paspor'
+                | 'bpjs'
+                | 'lainnya'
+              file_name: string
+              mime_type: string
+              size_bytes: number
+              sha256: string
+              uploaded_by: string
+              created_at: string
+            }
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Document not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  deleteApiDocumentsById: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Deleted */
+      204: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only the uploader or a household owner can do that */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Document not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiDocumentsByIdContent: {
+    parameters: {
+      query?: {
+        disposition?: 'inline' | 'attachment'
+      }
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Byte stream */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/pdf': string
+          'image/jpeg': string
+          'image/png': string
+          'image/webp': string
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Document not found */
       404: {
         headers: {
           [name: string]: unknown
