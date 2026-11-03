@@ -1,6 +1,6 @@
 # D1 Backup / Export Strategy (ahaqqu/RumaQ#342 — Phase 11 residual)
 
-**Status:** Design + partial implementation (restore tooling tested, backup workflow armed)
+**Status:** Design + implementation — restore tooling tested against the real migration chain (`backend/src/__tests__/d1-restore.test.ts`), backup workflow armed (first scheduled run is the proof)
 **Entry phase:** Design — backup strategy is architectural (export target, schedule, restore path).
 **Hard acceptance:** a restore path must exist and be **tested**, not just an export.
 **Residual not in scope here:** query-performance monitoring — see §12.
