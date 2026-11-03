@@ -940,7 +940,7 @@ describe('households routes', () => {
   })
 
   it('gives unknown, revoked, expired, and malformed codes the same answer', async () => {
-    setup([[ /SELECT id, household_id, target_member_id FROM household_invites/, () => null]])
+    setup([[/SELECT id, household_id, target_member_id FROM household_invites/, () => null]])
     for (const code of ['ZZZ9999999', 'short']) {
       const res = await householdsApp.request(
         '/api/households/join',
@@ -1073,12 +1073,12 @@ describe('households routes', () => {
           /SELECT id, household_id, target_member_id FROM household_invites/,
           () => ({ id: 'inv1', household_id: 'h2', target_member_id: 'm-tgt' }),
         ],
-        [/SELECT id, name FROM households WHERE id = \?/, () => ({ id: 'h2', name: 'Rumah Bunda' })],
-        // Pre-check: the redeemer has no row in the household yet.
         [
-          /SELECT id FROM household_members WHERE household_id = \? AND user_id = \?/,
-          () => null,
+          /SELECT id, name FROM households WHERE id = \?/,
+          () => ({ id: 'h2', name: 'Rumah Bunda' }),
         ],
+        // Pre-check: the redeemer has no row in the household yet.
+        [/SELECT id FROM household_members WHERE household_id = \? AND user_id = \?/, () => null],
       ],
       [],
       // The attach UPDATE runs (default run returns undefined = inserted).
@@ -1131,9 +1131,7 @@ describe('households routes', () => {
     expect(body.already_member).toBe(true)
     // The idempotent answer never reaches the partial unique index — no
     // attach UPDATE and no INSERT ran at all.
-    expect(db.log.some((e) => e.sql.startsWith('UPDATE household_members SET user_id'))).toBe(
-      false
-    )
+    expect(db.log.some((e) => e.sql.startsWith('UPDATE household_members SET user_id'))).toBe(false)
     expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_members'))).toBe(false)
   })
 
@@ -1144,7 +1142,10 @@ describe('households routes', () => {
           /SELECT id, household_id, target_member_id FROM household_invites/,
           () => ({ id: 'inv1', household_id: 'h2', target_member_id: 'm-tgt' }),
         ],
-        [/SELECT id, name FROM households WHERE id = \?/, () => ({ id: 'h2', name: 'Rumah Bunda' })],
+        [
+          /SELECT id, name FROM households WHERE id = \?/,
+          () => ({ id: 'h2', name: 'Rumah Bunda' }),
+        ],
         [/SELECT id FROM household_members WHERE household_id = \? AND user_id = \?/, () => null],
         // The re-read after changes === 0: the target now belongs to someone
         // else — the typed conflict, never a 500 from the partial index.
@@ -1179,7 +1180,10 @@ describe('households routes', () => {
           /SELECT id, household_id, target_member_id FROM household_invites/,
           () => ({ id: 'inv1', household_id: 'h2', target_member_id: 'm-tgt' }),
         ],
-        [/SELECT id, name FROM households WHERE id = \?/, () => ({ id: 'h2', name: 'Rumah Bunda' })],
+        [
+          /SELECT id, name FROM households WHERE id = \?/,
+          () => ({ id: 'h2', name: 'Rumah Bunda' }),
+        ],
         // The pre-check missed (concurrent double-submit), but the re-read
         // shows the target was linked to the REDEEMER — idempotent success.
         [/SELECT id FROM household_members WHERE household_id = \? AND user_id = \?/, () => null],

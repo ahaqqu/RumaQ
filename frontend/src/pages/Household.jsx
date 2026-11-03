@@ -613,8 +613,7 @@ export function Household() {
                     <Chip variant="accent">
                       {t('household.inviteFor', {
                         name:
-                          members.find((m) => m.id === invite.target_member_id)?.display_name ??
-                          '',
+                          members.find((m) => m.id === invite.target_member_id)?.display_name ?? '',
                       })}
                     </Chip>
                   )}
