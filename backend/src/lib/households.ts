@@ -54,6 +54,26 @@ export class InvalidInviteError extends Error {
   }
 }
 
+export class InvalidInviteTargetError extends Error {
+  // The owner marked an invite for something that cannot be attached later:
+  // an unknown id, a member of ANOTHER household, or an already-LINKED member.
+  // One message — the roster is owner-visible, so there is nothing to leak.
+  constructor(message = 'Invite target must be a member without an account in this household') {
+    super(message)
+    this.name = 'InvalidInviteTargetError'
+  }
+}
+
+export class InviteTargetConflictError extends Error {
+  // Two redeemers raced for one profile-only target: the attach UPDATE
+  // matched no row because someone else linked it first. A typed 4xx — never
+  // the partial unique index surfacing as a 500.
+  constructor(message = 'This invite was already used to link a member') {
+    super(message)
+    this.name = 'InviteTargetConflictError'
+  }
+}
+
 export type HouseholdRole = 'owner' | 'member'
 
 export type HouseholdSummary = {
@@ -544,6 +564,12 @@ export type ActiveInvite = {
   code: string
   created_at: string
   expires_at: string
+  // Additive-nullish (#397): the profile-only member this invite is marked
+  // for; null = plain invite (today's flow). has_target is the computed
+  // discriminator so the two shapes never drift (the roster's has_account
+  // pattern).
+  target_member_id: string | null
+  has_target: boolean
 }
 
 // The current live invite for the invite screen. If none is active (never
@@ -559,14 +585,20 @@ export async function getActiveInvite(
 ): Promise<ActiveInvite | null> {
   const row = await db
     .prepare(
-      `SELECT id, code_encrypted, created_at, expires_at
+      `SELECT id, code_encrypted, created_at, expires_at, target_member_id
          FROM household_invites
         WHERE household_id = ? AND revoked_at IS NULL AND expires_at > datetime('now')
         ORDER BY created_at DESC, id DESC
         LIMIT 1`
     )
     .bind(householdId)
-    .first<{ id: string; code_encrypted: string; created_at: string; expires_at: string }>()
+    .first<{
+      id: string
+      code_encrypted: string
+      created_at: string
+      expires_at: string
+      target_member_id: string | null
+    }>()
   if (!row) {
     return null
   }
@@ -575,6 +607,8 @@ export async function getActiveInvite(
     code: await decryptAiKey(row.code_encrypted, encryptionKey),
     created_at: row.created_at,
     expires_at: row.expires_at,
+    target_member_id: row.target_member_id,
+    has_target: row.target_member_id !== null,
   }
 }
 
@@ -585,12 +619,30 @@ export async function getActiveInvite(
 // validity checks — no JS/SQLite timestamp format drift. At rest the code
 // exists only as a SHA-256 hash (the join lookup handle) plus its AES-GCM
 // ciphertext under WORKER_ENCRYPTION_KEY (A8).
+//
+// Link-later (#397): an optional targetMemberId marks the invite for one
+// PROFILE-ONLY member of the SAME household — redeeming it attaches the
+// redeemer's account to that row instead of creating a new member. The target
+// is validated BEFORE any write: the rotation batch revokes the household's
+// live codes, so a bad target must never reach it. An unknown id and another
+// household's member are the same refusal (getTargetMember is household-
+// scoped); a linked member cannot be attached later (they have an account).
 export async function createInvite(
   db: D1Database,
   householdId: string,
   userId: string,
-  encryptionKey: string
+  encryptionKey: string,
+  targetMemberId?: string | null
 ): Promise<ActiveInvite> {
+  let targetMember: string | null = null
+  if (targetMemberId) {
+    const member = await getTargetMember(db, householdId, targetMemberId)
+    if (!member || member.user_id !== null) {
+      throw new InvalidInviteTargetError()
+    }
+    targetMember = member.id
+  }
+
   const code = generateInviteCode()
   const codeHash = await sha256Hex(normalizeInviteCode(code))
   const codeEncrypted = await encryptAiKey(code, encryptionKey)
@@ -602,9 +654,9 @@ export async function createInvite(
       .bind(householdId),
     db
       .prepare(
-        "INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at) VALUES (?, ?, ?, ?, ?, datetime('now', '+7 days'))"
+        "INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at, target_member_id) VALUES (?, ?, ?, ?, ?, datetime('now', '+7 days'), ?)"
       )
-      .bind(crypto.randomUUID(), householdId, codeHash, codeEncrypted, userId),
+      .bind(crypto.randomUUID(), householdId, codeHash, codeEncrypted, userId, targetMember),
   ])
   const invite = await getActiveInvite(db, householdId, encryptionKey)
   if (!invite) {
@@ -624,6 +676,12 @@ export type JoinResult = {
 // insert is ON CONFLICT DO NOTHING, so a concurrent double-submit that races
 // past any check still lands as one row and reports already_member instead of
 // surfacing the PK violation as a 500.
+//
+// Link-later (#397): a TARGETED invite (target_member_id set, 0023) attaches
+// the redeemer to the existing profile-only row instead of inserting — the
+// row keeps its surrogate id and profile fields, so vault documents keyed by
+// that id (0022) stay attached through the link. A PLAIN invite takes
+// today's insert path, unchanged.
 export async function joinByCode(
   db: D1Database,
   userId: string,
@@ -637,11 +695,11 @@ export async function joinByCode(
   const codeHash = await sha256Hex(code)
   const invite = await db
     .prepare(
-      `SELECT id, household_id FROM household_invites
+      `SELECT id, household_id, target_member_id FROM household_invites
         WHERE code_hash = ? AND revoked_at IS NULL AND expires_at > datetime('now')`
     )
     .bind(codeHash)
-    .first<{ id: string; household_id: string }>()
+    .first<{ id: string; household_id: string; target_member_id: string | null }>()
   if (!invite) {
     throw new InvalidInviteError()
   }
@@ -652,6 +710,10 @@ export async function joinByCode(
     .first<{ id: string; name: string }>()
   if (!household) {
     throw new InvalidInviteError()
+  }
+
+  if (invite.target_member_id !== null) {
+    return attachRedeemer(db, household, userId, invite.target_member_id)
   }
 
   const result = await db
@@ -669,4 +731,61 @@ export async function joinByCode(
   const alreadyMember = (result as { meta?: { changes?: number } } | undefined)?.meta?.changes === 0
 
   return { household, already_member: alreadyMember }
+}
+
+// The targeted-invite attach (#397): `UPDATE ... SET user_id = ? WHERE id = ?
+// AND user_id IS NULL` preserves the row's id, display_name, and birth_date —
+// that identity preservation is what the surrogate id (0021) bought. One
+// statement, like the plain join path's single insert. The guards make every
+// race a typed answer instead of a partial-index 500:
+//   - pre-check first: a redeemer ALREADY linked in this household (any row
+//     with their user_id) gets the plain flow's already_member answer — the
+//     idempotent double-redeem, and the only thing standing between a
+//     second attach and the partial unique index;
+//   - the UPDATE additionally carries NOT EXISTS so a redeemer linked between
+//     the pre-check and here matches no row rather than violating the index;
+//   - changes === 0 then means someone else claimed the target (or linked the
+//     redeemer elsewhere) — a re-read distinguishes the redeemer's OWN claim
+//     (idempotent already_member, same-user concurrent double-submit) from
+//     the typed conflict.
+async function attachRedeemer(
+  db: D1Database,
+  household: { id: string; name: string },
+  userId: string,
+  targetMemberId: string
+): Promise<JoinResult> {
+  const existing = await db
+    .prepare('SELECT id FROM household_members WHERE household_id = ? AND user_id = ?')
+    .bind(household.id, userId)
+    .first<{ id: string }>()
+  if (existing) {
+    return { household, already_member: true }
+  }
+
+  const result = await db
+    .prepare(
+      `UPDATE household_members SET user_id = ?
+        WHERE id = ? AND user_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM household_members hm
+             WHERE hm.household_id = ? AND hm.user_id = ?
+          )`
+    )
+    .bind(userId, targetMemberId, household.id, userId)
+    .run()
+  // meta.changes === 0 means no row matched (the target was claimed meanwhile);
+  // undefined (mocked D1 in unit tests) counts as attached.
+  const attached = (result as { meta?: { changes?: number } } | undefined)?.meta?.changes !== 0
+  if (attached) {
+    return { household, already_member: false }
+  }
+
+  const target = await db
+    .prepare('SELECT user_id FROM household_members WHERE id = ? AND household_id = ?')
+    .bind(targetMemberId, household.id)
+    .first<{ user_id: string | null }>()
+  if (target && target.user_id === userId) {
+    return { household, already_member: true }
+  }
+  throw new InviteTargetConflictError()
 }

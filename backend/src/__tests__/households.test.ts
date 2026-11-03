@@ -810,12 +810,13 @@ describe('households routes', () => {
     setup([
       [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
       [
-        /SELECT id, code_encrypted, created_at, expires_at FROM household_invites/,
+        /SELECT id, code_encrypted, created_at, expires_at, target_member_id FROM household_invites/,
         () => ({
           id: 'inv1',
           code_encrypted: codeEncrypted,
           created_at: '2026-11-01 00:00:00',
           expires_at: '2026-11-08 00:00:00',
+          target_member_id: null,
         }),
       ],
     ])
@@ -832,7 +833,10 @@ describe('households routes', () => {
   it('returns invite:null when no live code exists', async () => {
     setup([
       [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
-      [/SELECT id, code_encrypted, created_at, expires_at FROM household_invites/, () => null],
+      [
+        /SELECT id, code_encrypted, created_at, expires_at, target_member_id FROM household_invites/,
+        () => null,
+      ],
     ])
     const res = await householdsApp.request('/api/households/h1/invite', {}, env)
     expect(res.status).toBe(200)
@@ -845,12 +849,13 @@ describe('households routes', () => {
     setup([
       [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
       [
-        /SELECT id, code_encrypted, created_at, expires_at FROM household_invites/,
+        /SELECT id, code_encrypted, created_at, expires_at, target_member_id FROM household_invites/,
         () => ({
           id: 'inv2',
           code_encrypted: codeEncrypted,
           created_at: '2026-11-03 00:00:00',
           expires_at: '2026-11-10 00:00:00',
+          target_member_id: null,
         }),
       ],
     ])
@@ -862,7 +867,10 @@ describe('households routes', () => {
     expect(revoke?.params[0]).toBe('h1')
     // At rest: the plaintext code is never written — hash + ciphertext only.
     const insert = db.log.find((e) => e.sql.startsWith('INSERT INTO household_invites'))
-    expect(insert?.params).toHaveLength(5)
+    // The 6th bind is target_member_id — null for a bodyless POST (plain
+    // invite, #397), so the storage shape is unchanged for old clients.
+    expect(insert?.params).toHaveLength(6)
+    expect(insert?.params[5]).toBeNull()
     expect(String(insert?.params[2])).toMatch(/^[0-9a-f]{64}$/)
     expect(insert?.sql).toContain('code_hash, code_encrypted')
     // Expiry arithmetic stays in SQL so the stored format matches the
@@ -873,8 +881,8 @@ describe('households routes', () => {
   it('joins by code as a member, normalizing presentation', async () => {
     setup([
       [
-        /SELECT id, household_id FROM household_invites/,
-        () => ({ id: 'inv1', household_id: 'h2' }),
+        /SELECT id, household_id, target_member_id FROM household_invites/,
+        () => ({ id: 'inv1', household_id: 'h2', target_member_id: null }),
       ],
       [/SELECT id, name FROM households WHERE id = \?/, () => ({ id: 'h2', name: 'Rumah Bunda' })],
     ])
@@ -904,8 +912,8 @@ describe('households routes', () => {
     setup(
       [
         [
-          /SELECT id, household_id FROM household_invites/,
-          () => ({ id: 'inv1', household_id: 'h2' }),
+          /SELECT id, household_id, target_member_id FROM household_invites/,
+          () => ({ id: 'inv1', household_id: 'h2', target_member_id: null }),
         ],
         [
           /SELECT id, name FROM households WHERE id = \?/,
@@ -932,7 +940,7 @@ describe('households routes', () => {
   })
 
   it('gives unknown, revoked, expired, and malformed codes the same answer', async () => {
-    setup([[/SELECT id, household_id FROM household_invites/, () => null]])
+    setup([[ /SELECT id, household_id, target_member_id FROM household_invites/, () => null]])
     for (const code of ['ZZZ9999999', 'short']) {
       const res = await householdsApp.request(
         '/api/households/join',
@@ -950,7 +958,7 @@ describe('households routes', () => {
 
   it('rate-limits code guessing per user', async () => {
     resetRateLimit()
-    setup([[/SELECT id, household_id FROM household_invites/, () => null]])
+    setup([[/SELECT id, household_id, target_member_id FROM household_invites/, () => null]])
     let limitedRes: Response | null = null
     for (let i = 0; i < 11; i++) {
       const res = await householdsApp.request(
@@ -967,6 +975,234 @@ describe('households routes', () => {
     }
     expect(limitedRes).not.toBeNull()
     expect(limitedRes?.headers.get('Retry-After')).toBeTruthy()
+  })
+
+  // Link-later (ahaqqu/RumaQ#397): owner-marked invites. The POST body's
+  // target_member_id must name a profile-only member of the household; the
+  // join branches to an attach instead of an insert.
+  it('creates a targeted invite and reveals the mark', async () => {
+    const codeEncrypted = await encryptAiKey('GHI2345678', 'test-enc-key')
+    setup([
+      [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
+      [
+        /SELECT id, user_id, role FROM household_members/,
+        () => ({ id: 'm-tgt', user_id: null, role: 'member' }),
+      ],
+      [
+        /SELECT id, code_encrypted, created_at, expires_at, target_member_id FROM household_invites/,
+        () => ({
+          id: 'inv3',
+          code_encrypted: codeEncrypted,
+          created_at: '2026-11-03 00:00:00',
+          expires_at: '2026-11-10 00:00:00',
+          target_member_id: 'm-tgt',
+        }),
+      ],
+    ])
+    const res = await householdsApp.request(
+      '/api/households/h1/invite',
+      {
+        method: 'POST',
+        body: JSON.stringify({ target_member_id: 'm-tgt' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { invite: Record<string, unknown> }
+    expect(body.invite).toMatchObject({ target_member_id: 'm-tgt', has_target: true })
+    // The mark rides the INSERT's 6th bind.
+    const insert = db.log.find((e) => e.sql.startsWith('INSERT INTO household_invites'))
+    expect(insert?.params[5]).toBe('m-tgt')
+  })
+
+  it('400s a linked member as target without touching the live codes', async () => {
+    setup([
+      [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
+      // The target has an account already — there is nothing to attach later.
+      [
+        /SELECT id, user_id, role FROM household_members/,
+        () => ({ id: 'm1', user_id: 'u2', role: 'member' }),
+      ],
+    ])
+    const res = await householdsApp.request(
+      '/api/households/h1/invite',
+      {
+        method: 'POST',
+        body: JSON.stringify({ target_member_id: 'm1' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(400)
+    await expect(res.json()).resolves.toEqual({
+      error: 'Invite target must be a member without an account in this household',
+    })
+    // The validation runs BEFORE the rotation batch — a bad target must not
+    // revoke the household's live codes as a side effect.
+    expect(db.log.some((e) => e.sql.startsWith('UPDATE household_invites SET revoked_at'))).toBe(
+      false
+    )
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_invites'))).toBe(false)
+  })
+
+  it('400s an unknown or other-household target the same way', async () => {
+    setup([
+      [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
+      // getTargetMember is household-scoped: null covers both an unknown id
+      // and another household's member, and both refuse identically.
+      [/SELECT id, user_id, role FROM household_members/, () => null],
+    ])
+    const res = await householdsApp.request(
+      '/api/households/h1/invite',
+      {
+        method: 'POST',
+        body: JSON.stringify({ target_member_id: 'm-other' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(400)
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_invites'))).toBe(false)
+  })
+
+  it('attaches the redeemer to the targeted member on join', async () => {
+    setup(
+      [
+        [
+          /SELECT id, household_id, target_member_id FROM household_invites/,
+          () => ({ id: 'inv1', household_id: 'h2', target_member_id: 'm-tgt' }),
+        ],
+        [/SELECT id, name FROM households WHERE id = \?/, () => ({ id: 'h2', name: 'Rumah Bunda' })],
+        // Pre-check: the redeemer has no row in the household yet.
+        [
+          /SELECT id FROM household_members WHERE household_id = \? AND user_id = \?/,
+          () => null,
+        ],
+      ],
+      [],
+      // The attach UPDATE runs (default run returns undefined = inserted).
+      [[/UPDATE household_members SET user_id = \?/, () => ({ meta: { changes: 1 } })]]
+    )
+    const res = await householdsApp.request(
+      '/api/households/join',
+      {
+        method: 'POST',
+        body: JSON.stringify({ code: 'ABC2345678' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { already_member: boolean }
+    expect(body.already_member).toBe(false)
+    // No INSERT may run on the attach branch — the row already exists.
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_members'))).toBe(false)
+    const update = db.log.find((e) => e.sql.startsWith('UPDATE household_members SET user_id'))
+    expect(update?.params).toEqual(['u1', 'm-tgt', 'h2', 'u1'])
+    expect(update?.sql).toContain('user_id IS NULL')
+    expect(update?.sql).toContain('NOT EXISTS')
+  })
+
+  it('answers already_member when the redeemer is already linked in the targeted household', async () => {
+    setup([
+      [
+        /SELECT id, household_id, target_member_id FROM household_invites/,
+        () => ({ id: 'inv1', household_id: 'h2', target_member_id: 'm-tgt' }),
+      ],
+      [/SELECT id, name FROM households WHERE id = \?/, () => ({ id: 'h2', name: 'Rumah Bunda' })],
+      // Pre-check hits: the redeemer already has a row in this household.
+      [
+        /SELECT id FROM household_members WHERE household_id = \? AND user_id = \?/,
+        () => ({ id: 'm-self' }),
+      ],
+    ])
+    const res = await householdsApp.request(
+      '/api/households/join',
+      {
+        method: 'POST',
+        body: JSON.stringify({ code: 'ABC2345678' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { already_member: boolean }
+    expect(body.already_member).toBe(true)
+    // The idempotent answer never reaches the partial unique index — no
+    // attach UPDATE and no INSERT ran at all.
+    expect(db.log.some((e) => e.sql.startsWith('UPDATE household_members SET user_id'))).toBe(
+      false
+    )
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_members'))).toBe(false)
+  })
+
+  it('409s when another user claimed the targeted member meanwhile', async () => {
+    setup(
+      [
+        [
+          /SELECT id, household_id, target_member_id FROM household_invites/,
+          () => ({ id: 'inv1', household_id: 'h2', target_member_id: 'm-tgt' }),
+        ],
+        [/SELECT id, name FROM households WHERE id = \?/, () => ({ id: 'h2', name: 'Rumah Bunda' })],
+        [/SELECT id FROM household_members WHERE household_id = \? AND user_id = \?/, () => null],
+        // The re-read after changes === 0: the target now belongs to someone
+        // else — the typed conflict, never a 500 from the partial index.
+        [
+          /SELECT user_id FROM household_members WHERE id = \? AND household_id = \?/,
+          () => ({ user_id: 'someone-else' }),
+        ],
+      ],
+      [],
+      // changes === 0: the attach UPDATE matched no row.
+      [[/UPDATE household_members SET user_id = \?/, () => ({ meta: { changes: 0 } })]]
+    )
+    const res = await householdsApp.request(
+      '/api/households/join',
+      {
+        method: 'POST',
+        body: JSON.stringify({ code: 'ABC2345678' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(409)
+    await expect(res.json()).resolves.toEqual({
+      error: 'This invite was already used to link a member',
+    })
+  })
+
+  it('answers already_member when a same-user race attached the redeemer', async () => {
+    setup(
+      [
+        [
+          /SELECT id, household_id, target_member_id FROM household_invites/,
+          () => ({ id: 'inv1', household_id: 'h2', target_member_id: 'm-tgt' }),
+        ],
+        [/SELECT id, name FROM households WHERE id = \?/, () => ({ id: 'h2', name: 'Rumah Bunda' })],
+        // The pre-check missed (concurrent double-submit), but the re-read
+        // shows the target was linked to the REDEEMER — idempotent success.
+        [/SELECT id FROM household_members WHERE household_id = \? AND user_id = \?/, () => null],
+        [
+          /SELECT user_id FROM household_members WHERE id = \? AND household_id = \?/,
+          () => ({ user_id: 'u1' }),
+        ],
+      ],
+      [],
+      [[/UPDATE household_members SET user_id = \?/, () => ({ meta: { changes: 0 } })]]
+    )
+    const res = await householdsApp.request(
+      '/api/households/join',
+      {
+        method: 'POST',
+        body: JSON.stringify({ code: 'ABC2345678' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { already_member: boolean }
+    expect(body.already_member).toBe(true)
   })
 })
 

@@ -40,6 +40,8 @@ import {
   HouseholdForbiddenError,
   LastOwnerError,
   InvalidInviteError,
+  InvalidInviteTargetError,
+  InviteTargetConflictError,
 } from '../lib/households.js'
 import { householdsApp } from '../apps/households.js'
 import { resetRateLimit } from '../lib/rate-limit.js'
@@ -589,6 +591,180 @@ describe('invite round trip over real SQL (#331, review A7/A8)', () => {
       .run()
 
     await expect(joinByCode(d1, 'owner', 'ABC2345678')).rejects.toBeInstanceOf(InvalidInviteError)
+  })
+})
+
+// Link-later (ahaqqu/RumaQ#397) over real SQL: the targeted-invite attach.
+// The whole point of the feature is what survives the redeem — the row's
+// surrogate id and profile fields — plus the races the partial unique index
+// would otherwise surface as 500s.
+describe('targeted invite attach over real SQL (#397)', () => {
+  let sqlite: Db
+  let d1: D1Database
+
+  beforeEach(() => {
+    ;({ sqlite, d1 } = createDb())
+    createUser(sqlite, 'owner', 'owner@b.com')
+    createUser(sqlite, 'joiner', 'joiner@b.com')
+    createUser(sqlite, 'other', 'other@b.com')
+    createHouseholdRow(sqlite, 'h1', 'Keluarga Putri', 'owner')
+    addMember(sqlite, 'h1', 'owner', 'owner', '2026-01-01 00:00:00')
+  })
+
+  it('attaches the redeemer to the profile-only row, preserving id and profile', async () => {
+    const memberId = addProfileMember(sqlite, 'h1', 'Adik', '2025-03-02', '2026-11-01 00:00:00')
+    // A vault document keyed by the member id (0022) — the thing the attach
+    // must not detach.
+    sqlite
+      .prepare(
+        `INSERT INTO documents
+           (id, household_id, member_id, category, file_name, mime_type, size_bytes, storage_key, sha256, uploaded_by)
+         VALUES ('doc-1', 'h1', ?, 'akta', 'akta.pdf', 'application/pdf', 1, 'documents/h1/doc-1', '${'a'.repeat(64)}', 'owner')`
+      )
+      .run(memberId)
+
+    const invite = await createInvite(d1, 'h1', 'owner', 'test-enc-key', memberId)
+    expect(invite).toMatchObject({ target_member_id: memberId, has_target: true })
+
+    const result = await joinByCode(d1, 'joiner', invite.code)
+    expect(result).toMatchObject({ already_member: false, household: { id: 'h1' } })
+
+    // The SAME row: same surrogate id, profile fields intact, now linked.
+    // No second member row was inserted.
+    const rows = sqlite
+      .prepare('SELECT * FROM household_members WHERE household_id = ?')
+      .all('h1') as Array<Record<string, unknown>>
+    expect(rows).toHaveLength(2)
+    const attached = rows.find((r) => r['id'] === memberId)
+    expect(attached).toMatchObject({
+      user_id: 'joiner',
+      role: 'member',
+      display_name: 'Adik',
+      birth_date: '2025-03-02',
+    })
+    // The roster's discriminator flips on the same row (no duplication).
+    const roster = await listMembers(d1, 'h1')
+    const rosterRow = roster.find((m) => m.id === memberId)
+    expect(rosterRow).toMatchObject({ has_account: true, display_name: 'Adik' })
+
+    // The vault document is still attached to the member the account took
+    // over — the identity preservation the surrogate id bought.
+    const doc = sqlite.prepare('SELECT member_id FROM documents WHERE id = ?').get('doc-1') as {
+      member_id: string
+    }
+    expect(doc.member_id).toBe(memberId)
+  })
+
+  it('is idempotent for the same-user double redeem (already_member, not an error)', async () => {
+    const memberId = addProfileMember(sqlite, 'h1', 'Adik', null, '2026-11-01 00:00:00')
+    const invite = await createInvite(d1, 'h1', 'owner', 'test-enc-key', memberId)
+    await joinByCode(d1, 'joiner', invite.code)
+
+    // The second redeem passes no pre-check in a concurrent race — but the
+    // answer is still already_member, never the partial unique index as a 500.
+    const second = await joinByCode(d1, 'joiner', invite.code)
+    expect(second.already_member).toBe(true)
+    const rows = sqlite
+      .prepare('SELECT COUNT(*) AS cnt FROM household_members WHERE household_id = ?')
+      .get('h1') as { cnt: number }
+    expect(rows.cnt).toBe(2)
+  })
+
+  it('409-conflicts a different user redeeming an already-claimed target', async () => {
+    const memberId = addProfileMember(sqlite, 'h1', 'Adik', null, '2026-11-01 00:00:00')
+    const invite = await createInvite(d1, 'h1', 'owner', 'test-enc-key', memberId)
+    await joinByCode(d1, 'joiner', invite.code)
+
+    // A different redeemer reaches the guarded UPDATE (their pre-check finds
+    // no row of their own) and matches none: typed conflict, storage untouched.
+    await expect(joinByCode(d1, 'other', invite.code)).rejects.toBeInstanceOf(
+      InviteTargetConflictError
+    )
+    const attached = sqlite
+      .prepare('SELECT user_id FROM household_members WHERE id = ?')
+      .get(memberId) as { user_id: string }
+    expect(attached.user_id).toBe('joiner')
+    const rows = sqlite
+      .prepare('SELECT COUNT(*) AS cnt FROM household_members WHERE household_id = ?')
+      .get('h1') as { cnt: number }
+    expect(rows.cnt).toBe(2)
+  })
+
+  it('answers already_member when the redeemer is linked in the household via another row', async () => {
+    const memberId = addProfileMember(sqlite, 'h1', 'Adik', null, '2026-11-01 00:00:00')
+    // The joiner is ALREADY a member (any row with their user_id) — the
+    // pre-check must answer before the attach can touch the index.
+    addMember(sqlite, 'h1', 'joiner', 'member', '2026-02-01 00:00:00')
+    const invite = await createInvite(d1, 'h1', 'owner', 'test-enc-key', memberId)
+
+    const result = await joinByCode(d1, 'joiner', invite.code)
+    expect(result.already_member).toBe(true)
+    // The target row is untouched — the pre-check short-circuits.
+    const target = sqlite
+      .prepare('SELECT user_id FROM household_members WHERE id = ?')
+      .get(memberId) as { user_id: string | null }
+    expect(target.user_id).toBeNull()
+  })
+
+  it('cascades the invite away when its target member is deleted', async () => {
+    const memberId = addProfileMember(sqlite, 'h1', 'Adik', null, '2026-11-01 00:00:00')
+    const invite = await createInvite(d1, 'h1', 'owner', 'test-enc-key', memberId)
+
+    // The owner removes the profile-only member: the pending invite is
+    // transient data and dies with the target (0023 CASCADE) — no ghost
+    // invite survives to attach someone to a deleted row.
+    sqlite.prepare('DELETE FROM household_members WHERE id = ?').run(memberId)
+    const invites = sqlite.prepare('SELECT COUNT(*) AS cnt FROM household_invites').get() as {
+      cnt: number
+    }
+    expect(invites.cnt).toBe(0)
+
+    // Joining by that code is now the normal unknown-code answer.
+    await expect(joinByCode(d1, 'joiner', invite.code)).rejects.toBeInstanceOf(InvalidInviteError)
+  })
+
+  it('refuses targets that are unknown, foreign, or already linked — before rotating codes', async () => {
+    addProfileMember(sqlite, 'h1', 'Adik', null, '2026-11-01 00:00:00')
+
+    // A linked member of the same household cannot be "attached later" —
+    // the owner's own row is the linked target.
+    const linkedId = memberIdOf(sqlite, 'h1', 'owner')
+    await expect(createInvite(d1, 'h1', 'owner', 'test-enc-key', linkedId)).rejects.toBeInstanceOf(
+      InvalidInviteTargetError
+    )
+    // An unknown id — and, household-scoped lookup, another household's
+    // member — refuse identically.
+    await expect(
+      createInvite(d1, 'h1', 'owner', 'test-enc-key', 'no-such-member')
+    ).rejects.toBeInstanceOf(InvalidInviteTargetError)
+    createHouseholdRow(sqlite, 'h2', 'Rumah Kedua', 'owner')
+    const foreignId = addProfileMember(sqlite, 'h2', 'Sepupu', null, '2026-11-01 00:00:00')
+    await expect(createInvite(d1, 'h1', 'owner', 'test-enc-key', foreignId)).rejects.toBeInstanceOf(
+      InvalidInviteTargetError
+    )
+
+    // The refusals ran before the rotation batch: the household still has its
+    // one plain invite, and no new code row exists.
+    const invites = sqlite
+      .prepare('SELECT COUNT(*) AS cnt FROM household_invites WHERE household_id = ?')
+      .get('h1') as { cnt: number }
+    expect(invites.cnt).toBe(0)
+  })
+
+  it('keeps plain invites bit-identical: NULL target, insert path, reveal shape', async () => {
+    const invite = await createInvite(d1, 'h1', 'owner', 'test-enc-key')
+    const row = sqlite
+      .prepare('SELECT target_member_id FROM household_invites WHERE id = ?')
+      .get(invite.id) as { target_member_id: string | null }
+    expect(row.target_member_id).toBeNull()
+    expect(invite).toMatchObject({ target_member_id: null, has_target: false })
+
+    const result = await joinByCode(d1, 'joiner', invite.code)
+    expect(result).toMatchObject({ already_member: false, household: { id: 'h1' } })
+    const memberships = sqlite
+      .prepare('SELECT COUNT(*) AS cnt FROM household_members WHERE user_id = ?')
+      .get('joiner') as { cnt: number }
+    expect(memberships.cnt).toBe(1)
   })
 })
 
