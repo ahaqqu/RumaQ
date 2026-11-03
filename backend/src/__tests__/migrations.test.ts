@@ -503,3 +503,206 @@ describe('migration 0021: two-mode household members (#388)', () => {
     expect(rosterDetail).not.toMatch(/SCAN|TEMP B-TREE/i)
   })
 })
+
+// Document vault (ahaqqu/RumaQ#388 MVP): documents + document_audit. The
+// interesting questions are the FK semantics — which row removals cascade,
+// which keep the document — and the audit trail's deliberate FK-less design.
+describe('migration 0022: document vault (#388)', () => {
+  it('creates documents with the closed category set and both-mode member FK', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role)
+       VALUES ('m-linked', 'h1', 'u1', 'owner')`
+    ).run()
+    // Mode B: a profile-only member (toddler, no account).
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role)
+       VALUES ('m-profile', 'h1', NULL, 'member')`
+    ).run()
+
+    const insertDoc = db.prepare(
+      `INSERT INTO documents
+         (id, household_id, member_id, category, file_name, mime_type, size_bytes,
+          storage_key, sha256, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    // Linked member relation.
+    insertDoc.run(
+      'doc-1', 'h1', 'm-linked', 'ktp', 'ktp.jpg', 'image/jpeg', 1234,
+      'documents/h1/doc-1', 'a'.repeat(64), 'u1'
+    )
+    // Profile-only member relation — the vault's core use (akta lahir of a
+    // child with no account).
+    insertDoc.run(
+      'doc-2', 'h1', 'm-profile', 'akta', 'akta.pdf', 'application/pdf', 5678,
+      'documents/h1/doc-2', 'b'.repeat(64), 'u1'
+    )
+    // Household-level document: no member at all.
+    insertDoc.run(
+      'doc-3', 'h1', null, 'kartu_keluarga', 'kk.jpg', 'image/jpeg', 90,
+      'documents/h1/doc-3', 'c'.repeat(64), 'u1'
+    )
+
+    const columns = db.prepare('PRAGMA table_info(documents)').all()
+    const names = columns.map((c: Record<string, unknown>) => c.name)
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'id', 'household_id', 'member_id', 'category', 'file_name', 'mime_type',
+        'size_bytes', 'storage_key', 'sha256', 'uploaded_by', 'created_at',
+      ])
+    )
+
+    // The category CHECK is a real constraint, not just an app-side allowlist.
+    expect(() => insertDoc.run(
+      'doc-x', 'h1', null, 'ijazah', 'x.jpg', 'image/jpeg', 1,
+      'documents/h1/doc-x', 'd'.repeat(64), 'u1'
+    )).toThrow()
+  })
+
+  it('deleting a member (either mode) keeps their documents and clears the link', () => {
+    // ON DELETE SET NULL, never CASCADE: a D1 cascade cannot reach the R2
+    // object, so member removal must not orphan the bytes — the household
+    // still owns the document, only the person link is cleared.
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role)
+       VALUES ('m-linked', 'h1', 'u1', 'owner')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role)
+       VALUES ('m-profile', 'h1', NULL, 'member')`
+    ).run()
+    const insertDoc = db.prepare(
+      `INSERT INTO documents
+         (id, household_id, member_id, category, file_name, mime_type, size_bytes,
+          storage_key, sha256, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    insertDoc.run(
+      'doc-1', 'h1', 'm-linked', 'ktp', 'ktp.jpg', 'image/jpeg', 1,
+      'documents/h1/doc-1', 'a'.repeat(64), 'u1'
+    )
+    insertDoc.run(
+      'doc-2', 'h1', 'm-profile', 'akta', 'akta.pdf', 'application/pdf', 2,
+      'documents/h1/doc-2', 'b'.repeat(64), 'u1'
+    )
+
+    db.prepare('DELETE FROM household_members WHERE id = ?').run('m-linked')
+    db.prepare('DELETE FROM household_members WHERE id = ?').run('m-profile')
+
+    expect(db.prepare('SELECT member_id FROM documents WHERE id = ?').get('doc-1')).toMatchObject({
+      member_id: null,
+    })
+    expect(db.prepare('SELECT member_id FROM documents WHERE id = ?').get('doc-2')).toMatchObject({
+      member_id: null,
+    })
+  })
+
+  it('deleting the household cascades documents; audit rows keep their document reference', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role)
+       VALUES ('m1', 'h1', 'u1', 'owner')`
+    ).run()
+    db.prepare(
+      `INSERT INTO documents
+         (id, household_id, member_id, category, file_name, mime_type, size_bytes,
+          storage_key, sha256, uploaded_by)
+       VALUES ('doc-1', 'h1', NULL, 'akta', 'akta.pdf', 'application/pdf', 1,
+               'documents/h1/doc-1', '${'a'.repeat(64)}', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action)
+       VALUES ('aud-1', 'doc-1', 'h1', 'u1', 'upload')`
+    ).run()
+
+    // Household deletion cascades both tables (household_id FKs).
+    db.prepare('DELETE FROM households WHERE id = ?').run('h1')
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM documents').all()).toEqual([{ cnt: 0 }])
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM document_audit').all()).toEqual([{ cnt: 0 }])
+  })
+
+  it('audit rows survive the document deletion they record (no FK on document_id)', () => {
+    // The delete route writes the 'delete' audit record in the same batch as
+    // the DELETE — an FK + cascade on document_id would erase exactly that
+    // record. The trail must outlive the row it names.
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO documents
+         (id, household_id, member_id, category, file_name, mime_type, size_bytes,
+          storage_key, sha256, uploaded_by)
+       VALUES ('doc-1', 'h1', NULL, 'paspor', 'p.pdf', 'application/pdf', 1,
+               'documents/h1/doc-1', '${'a'.repeat(64)}', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action)
+       VALUES ('aud-view', 'doc-1', 'h1', 'u1', 'view')`
+    ).run()
+
+    db.prepare('DELETE FROM documents WHERE id = ?').run('doc-1')
+
+    const audit = db
+      .prepare('SELECT document_id, action FROM document_audit WHERE id = ?')
+      .get('aud-view')
+    expect(audit).toEqual({ document_id: 'doc-1', action: 'view' })
+
+    // The action CHECK is real.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action)
+           VALUES ('aud-bad', 'doc-1', 'h1', 'u1', 'share')`
+        )
+        .run()
+    ).toThrow()
+  })
+
+  it('indexes the household listing and audit lookups for seeks (no scan, no temp B-tree)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const listingPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT id FROM documents WHERE household_id = ?
+          ORDER BY created_at DESC, id DESC`
+      )
+      .all('h1')
+    const listing = listingPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(listing).toContain('idx_documents_household')
+    expect(listing).not.toMatch(/SCAN|TEMP B-TREE/i)
+
+    const auditPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT action FROM document_audit WHERE document_id = ?
+          ORDER BY created_at`
+      )
+      .all('doc-1')
+    const audit = auditPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(audit).toContain('idx_document_audit_document')
+    expect(audit).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+})

@@ -26,6 +26,16 @@ export async function sha256Hex(value: string): Promise<string> {
     .join('')
 }
 
+// The same fingerprint over raw bytes — the document vault (#388) hashes the
+// uploaded file bytes (integrity column on documents.sha256).
+export async function sha256HexBytes(value: Uint8Array | ArrayBuffer): Promise<string> {
+  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value)
+  const digest = await crypto.subtle.digest('SHA-256', bytes.slice().buffer as ArrayBuffer)
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
 export function base64UrlEncode(buffer: ArrayBuffer | Uint8Array): string {
   const bytes = new Uint8Array(buffer)
   let binary = ''

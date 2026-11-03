@@ -86,13 +86,18 @@ export function createBrochuresStub() {
 
 export type MockBrochures = ReturnType<typeof createBrochuresStub>
 
+// The document vault's in-memory R2 (issue #388) — the same Map-backed stub
+// shape as the brochures one; tests assert on the recorded puts/deletes.
+export const createDocumentsStub = createBrochuresStub
+
 export type MockEnv = Omit<
   Env['Bindings'],
-  'DB' | 'RECEIPTS' | 'BROCHURES' | 'ASSETS' | 'props'
+  'DB' | 'RECEIPTS' | 'BROCHURES' | 'DOCUMENTS' | 'ASSETS' | 'props'
 > & {
   DB: MockD1
   RECEIPTS: Record<string, never>
   BROCHURES: MockBrochures
+  DOCUMENTS: MockBrochures
   ASSETS: Fetcher
   props?: AuthProps
 }
@@ -108,6 +113,7 @@ export function createMockEnv(overrides: Partial<MockEnv> = {}): MockEnv {
     },
     RECEIPTS: {},
     BROCHURES: createBrochuresStub(),
+    DOCUMENTS: createDocumentsStub(),
     GOOGLE_CLIENT_ID: 'test-client-id',
     GOOGLE_CLIENT_SECRET: 'test-client-secret',
     WORKER_JWT_SECRET: 'test-secret',

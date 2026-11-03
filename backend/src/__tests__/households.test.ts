@@ -74,6 +74,7 @@ function createEnv(db: FakeDb, overrides: Partial<MockEnv> = {}): MockEnv {
     DB: db as unknown as MockEnv['DB'],
     RECEIPTS: {},
     BROCHURES: {} as MockEnv['BROCHURES'],
+    DOCUMENTS: {} as MockEnv['DOCUMENTS'],
     GOOGLE_CLIENT_ID: 'test-client-id',
     GOOGLE_CLIENT_SECRET: 'test-client-secret',
     WORKER_JWT_SECRET: 'test-secret',

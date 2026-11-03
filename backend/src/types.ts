@@ -14,6 +14,15 @@ export type Env = {
     RECEIPTS: R2Bucket
     /** Brochure images (issue #293) — private, served only via the Worker proxy. */
     BROCHURES: R2Bucket
+    /**
+     * Document vault bytes (issue #388) — the same PRIVATE bucket as
+     * RECEIPTS, bound under its own name so the vault's StorageAdapter wiring
+     * never touches the receipts code path (and vice versa). Objects live
+     * under the documents/<household_id>/<document_id> key prefix
+     * (lib/storage.ts); swapping to the #391 file service later is a
+     * config + adapter change, no route edits.
+     */
+    DOCUMENTS: R2Bucket
     GOOGLE_CLIENT_ID: string
     GOOGLE_CLIENT_SECRET: string
     WORKER_JWT_SECRET: string

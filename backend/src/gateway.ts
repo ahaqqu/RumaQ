@@ -2,6 +2,7 @@ import type { Env } from './types.js'
 import { authApp } from './apps/auth.js'
 import { apiApp } from './apps/api.js'
 import { householdsApp } from './apps/households.js'
+import { documentsApp } from './apps/documents.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
 
 const AUTH_ROUTES = new Set([
@@ -63,6 +64,11 @@ export const gateway = {
       // general apiApp fallthrough.
       if (path === '/api/households' || path.startsWith('/api/households/')) {
         return householdsApp.fetch(request, env, ctx)
+      }
+
+      // Document vault (ahaqqu/RumaQ#388 MVP) — same domain-app pattern.
+      if (path === '/api/documents' || path.startsWith('/api/documents/')) {
+        return documentsApp.fetch(request, env, ctx)
       }
 
       try {
