@@ -9,14 +9,17 @@ type MockD1 = {
   batch: Mock
 }
 
-// Minimal in-memory R2 stub for the BROCHURES bucket (issue #293):
-// get/put/delete/list over a Map — enough surface for the upload/proxy
-// routes and the retention sweep's paginated list. Real Miniflare R2 in the
-// automation harness covers the actual semantics.
+// Minimal in-memory R2 stub for the BROCHURES bucket (issue #293) and the
+// DOCUMENTS vault bucket (issue #388): get/put/delete/list over a Map —
+// enough surface for the upload/proxy routes and the retention sweep's
+// paginated list. Real Miniflare R2 in the automation harness covers the
+// actual semantics.
 export type StubR2Object = {
   key: string
   httpMetadata?: { contentType?: string }
   customMetadata?: Record<string, string>
+  size: number
+  body: ReadableStream<Uint8Array>
   blob: () => Promise<Blob>
   arrayBuffer: () => Promise<ArrayBuffer>
 }
@@ -30,8 +33,12 @@ export function createBrochuresStub() {
       customMetadata?: Record<string, string>
     }
   >()
+  // Every delete is recorded — the vault tests assert "no orphan object"
+  // against this log, not a mock call count.
+  const deleted: string[] = []
   return {
     objects,
+    deleted,
     async put(
       key: string,
       value: Uint8Array,
@@ -54,11 +61,21 @@ export function createBrochuresStub() {
         key,
         httpMetadata: obj.httpMetadata,
         customMetadata: obj.customMetadata,
+        size: obj.bytes.byteLength,
+        // One-shot body stream, like R2ObjectBody — the vault's StorageAdapter
+        // streams this straight into the Response.
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(obj.bytes.slice())
+            controller.close()
+          },
+        }),
         blob: () => Promise.resolve(new Blob([obj.bytes as BlobPart])),
         arrayBuffer: () => Promise.resolve(obj.bytes.slice().buffer as ArrayBuffer),
       }
     },
     async delete(key: string) {
+      deleted.push(key)
       objects.delete(key)
     },
     async list(options: { prefix?: string; cursor?: string; limit?: number } = {}) {
