@@ -3169,7 +3169,12 @@ export interface operations {
         }
         content: {
           'application/json': {
-            invite: Record<string, never> | null
+            invite: {
+              id: string
+              code: string
+              created_at: string
+              expires_at: string
+            } | null
           }
         }
       }

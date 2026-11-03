@@ -3100,7 +3100,7 @@
                   "required": ["invite"],
                   "properties": {
                     "invite": {
-                      "type": [
+                      "anyOf": [
                         {
                           "type": "object",
                           "required": ["id", "code", "created_at", "expires_at"],
@@ -3119,7 +3119,9 @@
                             }
                           }
                         },
-                        "null"
+                        {
+                          "type": "null"
+                        }
                       ]
                     }
                   }
