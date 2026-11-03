@@ -105,6 +105,54 @@ function DocumentViewer({ document: doc, onClose }) {
   const { t } = useTranslation()
   const [objectUrl, setObjectUrl] = useState(null)
   const [error, setError] = useState(false)
+  const dialogRef = useRef(null)
+  // The close callback is read from a ref so the focus contract below mounts
+  // exactly once (the parent passes an inline handler that changes identity
+  // on every render).
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  // Modal-dialog focus contract (the AppShell drawer pattern): focus enters
+  // the panel when it opens, Tab stays inside it while the overlay occludes
+  // the page, Escape closes, and unmounting hands focus back to whatever
+  // opened it.
+  useEffect(() => {
+    const panel = dialogRef.current
+    const previouslyFocused = document.activeElement
+    panel?.focus()
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        onCloseRef.current()
+        return
+      }
+      if (e.key !== 'Tab' || !panel) return
+      const focusables = panel.querySelectorAll(
+        'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusables.length === 0) return
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement
+      const inside = active !== panel && panel.contains(active)
+      if (!inside) {
+        e.preventDefault()
+        ;(e.shiftKey ? last : first).focus()
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      if (previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body) {
+        previouslyFocused.focus()
+      }
+    }
+  }, [])
 
   useEffect(() => {
     let url = null
@@ -128,7 +176,9 @@ function DocumentViewer({ document: doc, onClose }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-black/70 p-4"
+      ref={dialogRef}
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex flex-col bg-black/70 p-4 outline-none"
       role="dialog"
       aria-modal="true"
       aria-label={doc.file_name}
@@ -327,7 +377,11 @@ export function Documents() {
       anchor.href = url
       anchor.download = doc.file_name
       anchor.click()
-      URL.revokeObjectURL(url)
+      // Defer revocation (review B3): revoking synchronously after click()
+      // can pull the blob out from under a download that has not taken its
+      // reference yet. A generous timer costs nothing — the blob is only the
+      // in-memory copy the browser is already writing out.
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
     } catch (err) {
       setActionError(t(documentErrorKey(err)))
     }

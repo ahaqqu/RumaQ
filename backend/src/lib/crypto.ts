@@ -27,10 +27,15 @@ export async function sha256Hex(value: string): Promise<string> {
 }
 
 // The same fingerprint over raw bytes — the document vault (#388) hashes the
-// uploaded file bytes (integrity column on documents.sha256).
-export async function sha256HexBytes(value: Uint8Array | ArrayBuffer): Promise<string> {
+// uploaded file bytes (integrity column on documents.sha256). The view goes
+// to the digest directly (BufferSource) — no copy of a 10 MB payload. The
+// narrow ArrayBuffer-backed generic is what BufferSource demands; callers
+// hold exactly that (file.data, literal-backed test bytes).
+export async function sha256HexBytes(
+  value: Uint8Array<ArrayBuffer> | ArrayBuffer
+): Promise<string> {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value)
-  const digest = await crypto.subtle.digest('SHA-256', bytes.slice().buffer as ArrayBuffer)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('')

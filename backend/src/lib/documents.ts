@@ -10,7 +10,7 @@
 // the households-app pattern). Delete is owner-or-uploader.
 
 import { sha256HexBytes } from './crypto.js'
-import { buildDocumentKey, type StorageAdapter } from './storage.js'
+import { buildDocumentKey, isDocumentKey, type StorageAdapter } from './storage.js'
 import { getMembership } from './households.js'
 
 export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
@@ -30,6 +30,21 @@ export type DocumentCategory = (typeof DOCUMENT_CATEGORIES)[number]
 
 /** Content types the vault accepts, and the bytes that must back them. */
 export const DOCUMENT_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+
+/**
+ * Vault-key guard (review B1): `storage_key` comes from a D1 row, and the
+ * bucket is SHARED with the receipts namespace. A corrupted, hand-edited, or
+ * badly-migrated row must never turn the vault's get/delete into reads or
+ * deletes of a sibling namespace's objects — so every storage touch by key
+ * goes through this check first. Keys are written exclusively by
+ * buildDocumentKey (documents/<household>/<id>), so the only way past this
+ * guard is a bug elsewhere — exactly the case it exists for.
+ */
+export function ensureVaultKey(storageKey: string): void {
+  if (!isDocumentKey(storageKey)) {
+    throw new DocumentNotFoundError()
+  }
+}
 
 export type DocumentAction = 'upload' | 'view' | 'download' | 'delete'
 
@@ -314,7 +329,7 @@ export async function createDocument(
     memberId: string | null
     category: DocumentCategory
     fileName: string
-    bytes: Uint8Array
+    bytes: Uint8Array<ArrayBuffer>
     mime: string
     uploadedBy: string
   }
@@ -381,6 +396,11 @@ export async function deleteDocument(
   if (!isUploader && !isOwner) {
     throw new DocumentForbiddenError()
   }
+
+  // Vault-key guard (review B1): a row whose key escaped the documents/
+  // namespace never touches storage — deleting it could take out a sibling
+  // namespace's object (e.g. a receipt).
+  ensureVaultKey(document.storage_key)
 
   await storage.delete(document.storage_key)
 

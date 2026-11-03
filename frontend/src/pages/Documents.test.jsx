@@ -234,7 +234,8 @@ describe('Documents', () => {
 
   it('previews in-app through an authed inline fetch and revokes the object URL on close', async () => {
     const { container } = renderDocuments()
-    fireEvent.click(findByAriaLabel(container, 'documents.view'))
+    const viewButton = findByAriaLabel(container, 'documents.view')
+    fireEvent.click(viewButton)
     await waitFor(() => expect(fetchDocumentContent).toHaveBeenCalledWith('doc-1', 'inline'))
     await waitFor(() => expect(createObjectURL).toHaveBeenCalled())
     // The dialog is up with the viewer busy/loaded state.
@@ -243,6 +244,26 @@ describe('Documents', () => {
     fireEvent.click(findByAriaLabel(container, 'documents.closeViewer'))
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-url')
     expect(container.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('manages the viewer dialog focus: enters on open, closes on Escape, restores on close (review B2)', async () => {
+    const { container } = renderDocuments()
+    const viewButton = findByAriaLabel(container, 'documents.view')
+    // jsdom does not move focus on click; a real browser has the button
+    // focused when the dialog opens.
+    viewButton.focus()
+    fireEvent.click(viewButton)
+    const dialog = await waitFor(() => {
+      const el = container.querySelector('[role="dialog"]')
+      expect(el).toBeTruthy()
+      return el
+    })
+    // Focus entered the panel when it opened (AppShell drawer contract).
+    expect(dialog.contains(document.activeElement)).toBe(true)
+    // Escape closes it; focus hands back to the button that opened it.
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(viewButton)
   })
 
   it('downloads with the attachment disposition (audited as a download server-side)', async () => {

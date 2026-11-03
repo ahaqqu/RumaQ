@@ -25,6 +25,7 @@ import {
   DocumentValidationError,
   contentDisposition,
   createDocument,
+  ensureVaultKey,
   deleteDocument,
   getDocumentRow,
   isHouseholdMember,
@@ -54,6 +55,12 @@ const dispositionQuerySchema = object({
 // make uploads the endpoint abuse would ride.
 const UPLOAD_RATE_WINDOW_MS = 60_000
 const UPLOAD_RATE_MAX = 20
+
+// Transport slack for the pre-parse cap (review A1): multipart framing adds
+// boundary + field headers on top of the file bytes (~hundreds of bytes at
+// this scale). The pre-check measures the whole body, so a legitimate
+// exactly-10 MB file needs this headroom to reach the exact post-parse cap.
+export const UPLOAD_TRANSPORT_SLACK = 64 * 1024
 
 // The OpenAPI shape for one document — metadata only (storage_key is an
 // internal R2 handle the client must not learn).
@@ -228,10 +235,18 @@ documentsApp.post(
       throw new DocumentValidationError('Expected multipart/form-data')
     }
 
-    // Pre-parse cap: reject on the declared Content-Length before the body is
-    // read (the platform allows this — the header arrives with the request).
-    const contentLength = Number(c.req.header('Content-Length') ?? '0')
-    if (Number.isFinite(contentLength) && contentLength > DOCUMENT_MAX_BYTES) {
+    // Pre-parse cap (A1): the Content-Length covers the WHOLE multipart body —
+    // boundary + field headers ride on top of the file bytes — so the declared
+    // size gets a fixed transport slack. The EXACT cap fires on the parsed
+    // file bytes below; this line only rejects obviously-oversized bodies
+    // before the first byte is read.
+    const contentLengthHeader = c.req.header('Content-Length')
+    const contentLength = Number(contentLengthHeader ?? '')
+    if (
+      contentLengthHeader !== undefined &&
+      Number.isFinite(contentLength) &&
+      contentLength > DOCUMENT_MAX_BYTES + UPLOAD_TRANSPORT_SLACK
+    ) {
       throw new DocumentTooLargeError()
     }
 
@@ -239,7 +254,44 @@ documentsApp.post(
     let category: string | undefined
     let memberId: string | undefined
     try {
-      const formData = await c.req.parseBody()
+      let formData: Record<string, FormDataEntryValue | File>
+      if (contentLengthHeader === undefined && c.req.raw.body) {
+        // Chunked upload (A2): no Content-Length means parseBody() would
+        // buffer the entire body before the post-parse cap could fire. Read
+        // the stream here instead and ABORT the moment the buffered bytes
+        // pass the cap — the transient buffer is bounded by
+        // DOCUMENT_MAX_BYTES + UPLOAD_TRANSPORT_SLACK, not by the platform's
+        // request limit. The multipart headers carry over when the capped
+        // bytes are re-wrapped into a Request for parsing.
+        const reader = c.req.raw.body.getReader()
+        const chunks: Uint8Array[] = []
+        let total = 0
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          total += value.byteLength
+          if (total > DOCUMENT_MAX_BYTES + UPLOAD_TRANSPORT_SLACK) {
+            await reader.cancel()
+            throw new DocumentTooLargeError()
+          }
+          chunks.push(value)
+        }
+        const cappedRequest = new Request(c.req.raw.url, {
+          method: 'POST',
+          headers: c.req.raw.headers,
+          // The stream hands back ArrayBufferLike-backed views; BlobPart only
+          // admits ArrayBuffer-backed ones — a type-level assertion, no copy.
+          body: new Blob(chunks as unknown as BlobPart[]),
+        })
+        // Request.formData() yields a FormData instance; the branch below
+        // reads entries by key, so flatten it into the same plain shape
+        // Hono's parseBody() produces.
+        formData = Object.fromEntries(await cappedRequest.formData())
+      } else {
+        // Framed upload: HTTP/1.1 Content-Length IS the transport bound, so
+        // the parse buffer is already capped by the pre-check above.
+        formData = await c.req.parseBody()
+      }
       const uploaded = formData['file']
       if (uploaded && typeof uploaded !== 'string' && 'arrayBuffer' in uploaded) {
         file = {
@@ -250,7 +302,10 @@ documentsApp.post(
       }
       if (typeof formData['category'] === 'string') category = formData['category']
       if (typeof formData['memberId'] === 'string') memberId = formData['memberId']
-    } catch {
+    } catch (err) {
+      if (err instanceof DocumentTooLargeError) {
+        throw err
+      }
       throw new DocumentValidationError('Failed to parse upload')
     }
 
@@ -258,8 +313,8 @@ documentsApp.post(
       throw new DocumentValidationError('No file provided. Use field name "file".')
     }
 
-    // Post-parse cap: chunked uploads can omit Content-Length, so the real
-    // byte count is checked too.
+    // The EXACT cap fires here, on the parsed file bytes — the authoritative
+    // check every transport (framed, chunked, lying headers) funnels into.
     const bytes = new Uint8Array(file.data)
     if (bytes.byteLength > DOCUMENT_MAX_BYTES) {
       throw new DocumentTooLargeError()
@@ -391,6 +446,10 @@ documentsApp.get(
       throw new DocumentNotFoundError()
     }
 
+    // Vault-key guard (review B1): a corrupted storage_key must never be fed
+    // to the adapter — reading it could serve a sibling namespace's object.
+    ensureVaultKey(document.storage_key)
+
     const stored = await createR2StorageAdapter(c.env.DOCUMENTS).get(document.storage_key)
     if (!stored) {
       // Row without bytes (a failed delete batch mid-crash, say) is a dead
@@ -410,6 +469,9 @@ documentsApp.get(
         'Content-Type': document.mime_type,
         'Content-Disposition': contentDisposition(disposition, document.file_name),
         ...NO_STORE,
+        // Defense-in-depth (review A3): the stored mime is sniff-pinned at
+        // upload; this header stops the browser from second-guessing it.
+        'X-Content-Type-Options': 'nosniff',
       },
     })
   }

@@ -346,6 +346,141 @@ describe('documents routes', () => {
     expect(db.log).toHaveLength(0)
   })
 
+  it('accepts an exactly-10 MB file — the pre-check slack absorbs multipart overhead, the exact cap governs the bytes (review A1)', async () => {
+    setup([
+      [/SELECT id FROM household_members WHERE id = \? AND household_id = \?/, () => ({ id: 'm' })],
+      [SCOPED_DOC_ROUTE, readBackFromLog],
+    ])
+    const exact = new Uint8Array(10 * 1024 * 1024)
+    exact[0] = 0xff
+    exact[1] = 0xd8
+    exact[2] = 0xff
+    const res = await documentsApp.request(
+      '/api/documents',
+      postDocument(
+        uploadForm({ bytes: exact, name: 'scan-big.jpg', type: 'image/jpeg' }, { category: 'ktp' })
+      ),
+      env
+    )
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { document: Row }
+    expect(body.document.size_bytes).toBe(10 * 1024 * 1024)
+    expect(bucket.objects.size).toBe(1)
+  })
+
+  // A chunked (Content-Length-less) multipart body, streamed in pieces — the
+  // transport a proxy or fetch streaming upload produces.
+  function chunkedUpload(fileBytes: Uint8Array, fileName: string): RequestInit {
+    const boundary = '----rumaq-chunked'
+    const encoder = new TextEncoder()
+    const head = encoder.encode(
+      `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file"; filename="${fileName}"\r\n` +
+        `Content-Type: image/jpeg\r\n\r\n`
+    )
+    const categoryPart = encoder.encode(
+      `--${boundary}\r\n` + `Content-Disposition: form-data; name="category"\r\n\r\n` + `ktp\r\n`
+    )
+    const tail = encoder.encode(`--${boundary}--\r\n`)
+    const full = new Uint8Array(
+      head.byteLength +
+        fileBytes.byteLength +
+        2 + // the file part's terminating CRLF
+        categoryPart.byteLength +
+        tail.byteLength
+    )
+    let cursor = 0
+    full.set(head, cursor)
+    cursor += head.byteLength
+    full.set(fileBytes, cursor)
+    cursor += fileBytes.byteLength
+    // The file part's terminating CRLF rides in front of the category part's
+    // opening boundary.
+    full.set(encoder.encode('\r\n'), cursor)
+    cursor += 2
+    full.set(categoryPart, cursor)
+    cursor += categoryPart.byteLength
+    full.set(tail, cursor)
+    let offset = 0
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset >= full.byteLength) {
+          controller.close()
+          return
+        }
+        const chunk = full.slice(offset, offset + 64 * 1024)
+        offset += chunk.byteLength
+        controller.enqueue(chunk)
+      },
+    })
+    return {
+      method: 'POST',
+      body: stream,
+      // Required for stream bodies; keeps undici from framing with
+      // Content-Length — exactly the chunked shape the route must bound.
+      duplex: 'half',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    } as RequestInit
+  }
+
+  it('parses a chunked (no Content-Length) exactly-10 MB upload through the bounded path (review A2)', async () => {
+    setup([
+      [/SELECT id FROM household_members WHERE id = \? AND household_id = \?/, () => ({ id: 'm' })],
+      [SCOPED_DOC_ROUTE, readBackFromLog],
+    ])
+    const exact = new Uint8Array(10 * 1024 * 1024)
+    exact[0] = 0xff
+    exact[1] = 0xd8
+    exact[2] = 0xff
+    const res = await documentsApp.request(
+      '/api/documents',
+      chunkedUpload(exact, 'scan-chunked.jpg'),
+      env
+    )
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { document: Row }
+    expect(body.document.size_bytes).toBe(10 * 1024 * 1024)
+    expect(bucket.objects.size).toBe(1)
+  })
+
+  it('aborts a chunked upload past the cap during the stream read, before any parse or store (review A2)', async () => {
+    setup()
+    // 10 MB + 65 KB of payload: over the pre-parse bound (cap + slack) no
+    // matter how the multipart overhead lands — the stream read must stop
+    // early instead of buffering the whole body.
+    const over = new Uint8Array(10 * 1024 * 1024 + 65 * 1024)
+    over[0] = 0xff
+    over[1] = 0xd8
+    over[2] = 0xff
+    const res = await documentsApp.request(
+      '/api/documents',
+      chunkedUpload(over, 'huge-chunked.jpg'),
+      env
+    )
+    expect(res.status).toBe(413)
+    expect(bucket.objects.size).toBe(0)
+    expect(db.log).toHaveLength(0)
+  })
+
+  it('refuses to touch storage when a row carries a key outside the vault namespace (review B1)', async () => {
+    setup([
+      [/SELECT h.id, h.name, m.role/, () => ({ id: 'h1', name: 'R', role: 'owner' })],
+      [SCOPED_DOC_ROUTE, () => DOC_ROW({ storage_key: 'receipts/h1/escaped.jpg' })],
+    ])
+
+    // Content: the escaped key must never reach the adapter (it could serve a
+    // sibling namespace's object) — the row is a dead document.
+    const content = await documentsApp.request('/api/documents/doc-1/content', {}, env)
+    expect(content.status).toBe(404)
+
+    // Delete: refusing protects the sibling namespace even though the row
+    // technically matches the scope.
+    const del = await documentsApp.request('/api/documents/doc-1', { method: 'DELETE' }, env)
+    expect(del.status).toBe(404)
+    expect(bucket.deleted).toHaveLength(0)
+    expect(bucket.objects.size).toBe(0)
+  })
+
   it('rejects magic bytes that do not match the declared type (415) — sniff policy is reject, never override', async () => {
     setup()
     // Declared JPEG, actually text.
