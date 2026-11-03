@@ -24,3 +24,4 @@
 - When asked to update this file, use format: "When <condition>, <action>", keep it concise and clear.
 - Follow `docs/FRONTEND_CONVENTIONS.md` for frontend coding conventions.
 - Follow `docs/BACKEND_CONVENTIONS.md` for backend coding conventions.
+- When running a live QA pass, follow `docs/QA.md` — one tracking ticket per run, QA posts results there, findings are triaged by the manager; and when the QA run's workflow-docs PR (`docs/QA.md` or AGENTS.md process lines) is ready, report it to the owner — workflow PRs are always merged by the owner, never by agents.
