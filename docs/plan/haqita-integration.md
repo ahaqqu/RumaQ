@@ -1,6 +1,6 @@
 # Haqita → RumaQ Integration — Architecture & Implementation Plan
 
-> Status: **PR1–PR4 merged; go-live complete** — the nightly timer is enabled and active, the live env carries `RUMAQ_PUBLISH=true`, and production holds live price observations (the 6-hourly freshness check is armed and green). Written 2026-10-24, updated 2026-10-31.
+> Status: **PR1–PR4 merged; go-live complete** — the nightly timer is enabled and active, the live env carries `RUMAQ_PUBLISH=true`, and production holds live price observations (the 6-hourly freshness check is armed and green). Written 2026-10-24, updated 2026-10-31. **2026-11-03: the scraper tree moved to the private [RumaQ-pipeline](https://github.com/ahaqqu/RumaQ-pipeline) repo (ahaqqu/RumaQ#376)** — §2, §6 and §7's deploy bullets below are pointers now; the backend ingest sections (§5) remain accurate.
 > PR1 (contract & backend) merged as #252, PR2 (scraper scaffold + Superindo + Gemini OCR +
 > dry-run publish) merged as #255, PR3 (Lotte Tier-2 + matcher + commit-based VPS deploy,
 > VPS scope folded from milestone 4) merged as #262, PR4 (go-live gate: freshness status
@@ -55,23 +55,9 @@
 
 ## 2. Where the scraper runs (anti-scraping answer)
 
-**On the VPS**, as a systemd timer service with **no inbound ports**, using a
-**per-store fetch-strategy ladder**:
+**Split (2026-11-03)**: the scraper moved to the private [RumaQ-pipeline](https://github.com/ahaqqu/RumaQ-pipeline) repo (ahaqqu/RumaQ#376). The anti-scraping posture — the per-store fetch-strategy ladder (plain fetch → headless Chromium → per-store proxy), proxy/egress setup, per-store source techniques — is documented there now.
 
-1. **Tier 1 — plain fetch**: realistic Chrome headers/cookies (Superindo works today;
-   JSON/API sources like Astro / Alfamart-Indomaret catalogs will use this).
-2. **Tier 2 — headless Chromium (Playwright)**: for JS-challenged sites (Lotte is behind
-   Imperva Incapsula). A real browser executing the challenge usually passes regardless
-   of datacenter IP — main mitigation for the EU Netcup egress IP.
-3. **Tier 3 — per-store proxy**: store-scoped `HTTP_PROXY` (cheap residential proxy or
-   ID egress) if a specific store still blocks the VPS IP.
-
-Rejected alternatives: GitHub Actions (shared US datacenter IPs — worst Incapsula
-profile, cron drift); home machine (best IP, no reliable scheduler); Cloudflare cron
-(datacenter-flagged IPs, forces everything onto CF).
-
-**Fail-fast gate: validate Lotte reachability from the VPS in Milestone 2, before
-porting the matcher.**
+The run-location decisions are unchanged and recorded in that repo: the scraper runs **on the VPS** as a systemd timer service with **no inbound ports**. RumaQ is the publish backend only: the authenticated `/api/internal/*` ingest surface plus the `@rumaq/contract` schemas (§5).
 
 ## 3. Whole-system architecture
 
@@ -242,142 +228,21 @@ brochure URL (`brochure_url`). Keeps the scraper credential-free.
 - Plans GET joins the observation so the frontend can show a badge:
   "estimasi dari brosur Lotte Mart, valid s/d 28 Okt".
 
-## 6. Scraper package (`scraper/`, new Bun workspace member)
+## 6. Scraper package (moved to RumaQ-pipeline)
 
-```
-scraper/
-  package.json            deps: cheerio, playwright-core (+bundled chromium), @google/genai,
-                          valibot, (dev) vitest — NO torch/sklearn/numpy
-  src/main.ts             pipeline scrape→ocr→match→publish; stage-status JSON files (resume);
-                          exit codes; structured logs
-  src/config.ts           port of haqita config.yaml thresholds + per-store strategy table
-  src/stores/types.ts     StorePlugin interface — two capabilities:
-                          brochure: listBrochureIssues() → page image URLs
-                          catalog:  listItems() → structured items directly (Astro, Alfamart/Indomaret)
-  src/stores/superindo.ts port of scripts/scrapers/superindo.py (cheerio; jabodetabek filter) — plain fetch
-  src/stores/lotte.ts     port of scripts/scrapers/lotte.py — browser tier (Incapsula)
-  src/stores/index.ts     registry
-  src/fetch/strategy.ts   ladder: plain(headers+cookie jar) → playwright headless
-                          (realistic UA/viewport, waits) → store-scoped proxy via env
-  src/fetch/state.ts      novelty detection: URL+MD5 state.json; min 50KB / 300px filters
-  src/ocr/gemini.ts       @google/genai; port prompt from haqita scripts/ocr/prompts/gemini.py;
-                          JSON items {name, brand, unit, price, promo[], period}; quota-aware retry
-  src/ocr/verify.ts       port AI_PROMPT_TEMPLATE from matcher.py (YES/NO pair verifier)
-  src/match/normalize.ts  port normalizer.py (canonical_tokens, normalize_brand, token_overlap,
-                          units_type/value_compatible)
-  src/match/promo.ts      port matching/promo_parser.py (~584 lines)
-  src/match/gates.ts      gates 0–5 as pure functions (unit_type, brand, token_jaccard [0.30],
-                          exact, embedding [auto ≥0.85 / low <0.55], price plausibility [3.0×])
-  src/match/embedding.ts  Gemini embedding API (replaces paraphrase-multilingual-MiniLM-L12-v2)
-                          + on-disk embedding cache in state dir
-  src/match/matcher.ts    ★ KEY CHANGE: match each store's items against the growing CANONICAL
-                          CATALOG (scales to N stores; old code was lotte×superindo pairwise).
-                          Unmatched confident items found the catalog.
-  src/publish/payload.ts  THE shared Valibot IngestPayload schema (imported by backend)
-  src/publish/client.ts   POST to RUMAQ_INGEST_URL with bearer RUMAQ_INGEST_SECRET;
-                          retry/backoff; --dry-run mode (write payload to state dir)
-  src/util/               log, retry, image helpers
-  scripts/run.sh          single-shot pipeline (systemd timer + manual use)
-  provision/vps/          retired; host units, timer and deploy contract now live
-                          in ahaqqu/vps rumaq/ (installed by its root applier)
-  test/                   port relevant pytest suites (scrapers/matching/ocr/payload/publish);
-                          copy HTML/image fixtures from haqita data/test/
-```
+The `scraper/` workspace moved verbatim to the private [RumaQ-pipeline](https://github.com/ahaqqu/RumaQ-pipeline) repo on 2026-11-03 (ahaqqu/RumaQ#376; provenance commit `34884be`, moved from `ahaqqu/RumaQ@eefe3f4a`) — it lives at `groceries/scraper/` there, including §6.1's Astro catalog store and the matcher/normalizer/promo-parser ports. The full original §6 package layout and Astro findings are preserved in that repo's copy of this plan.
 
-Ported thresholds (from haqita `config.yaml`): `token_jaccard_min: 0.30`,
-`embedding_auto_match: 0.85`, `embedding_ambiguous_low: 0.55`,
-`unit_tolerance_pct: 15`, `price_ratio_max: 3.0`; OCR model `gemini-3.5-flash`
-(+ verifier `gemini-2.5-flash`), or whatever the current models are at implementation
-time.
+What stayed in RumaQ is the backend ingest contract: `contract/src/index.ts` (`@rumaq/contract`, shared Valibot schemas, additive-only). The pipeline vendors a pinned copy and syncs it with `./scripts/sync-contract.sh <sha>` after a RumaQ contract PR merges.
 
-**Deleted from haqita** (do not port): web UI + Pages Functions API, deploy.py,
-sync_cloudflare.py, seed_d1.py, haqita.sh, git-database auto-commit, agentic
-harness, review queue/admin UI (replaced by `rejected-items.log` in the VPS state
-dir). Images pruned 7 days after successful publish (disk-scarce box).
-
-### 6.1 Astro catalog store (implemented 2026-10-28)
-
-Astro is the first `catalog`-kind store (§6's "structured items directly"
-capability — no brochure images, no Gemini OCR). Investigation findings, all
-probed live on 2026-10-28:
-
-- **Source**: category pages on `www.astronauts.id` server-render page 0 of
-  the listing (30 items) with the full inventory API response embedded as raw
-  JSON inside the Next.js flight stream (`self.__next_f.push([1,"…"])`).
-- **Why not the API**: every direct call to `api.astronauts.id` is gated by an
-  app-version check (`error_code EC1001`, "Aplikasi kamu perlu di-update
-  dulu") plus an `X-DEVICE-ID` device fingerprint header. The web bundle
-  hardcodes the version headers (`X-API-VERSION: 1.9.11`,
-  `X-APP-VERSION: android-2.17.1`, `X-DEVICE: web-customer`,
-  `X-DEVICE-VERSION: 3.4.10`), but replaying them still trips the gate — so
-  the plugin scrapes the SSR route instead, which needs no headers beyond the
-  Tier-1 defaults. `?page=1` is ignored server-side; 30 items per category is
-  the v1 coverage.
-- **Extraction**: product objects are located _structurally_ — the API's key
-  order varies between responses (one fetch orders `variantRelativeProductIds`
-  first, the next puts it mid-object), so a first-key anchor silently returns
-  0 items. The parser does one string-aware brace scan and resolves each
-  `variantRelativeProductIds` occurrence to its innermost enclosing object.
-- **Category pages** (the three RumaQ v1 staples): beras
-  (`kebutuhan-pokok-2721/beras-lokal-5858` + `beras-import-5859`), minyak
-  goreng (`kebutuhan-pokok-2721/minyak-goreng-25060`), daging ayam
-  (`ayam-unggas-7179/ayam-parting-7181` + `ayam-utuh-7182`).
-- **Category override**: `ASTRO_CATEGORY_PAGES` (comma-separated full URLs,
-  same shape as Lotte's `LOTTE_URL`) swaps the page list without a redeploy —
-  full URLs because the parent category segment is required (`/c/beras-lokal-5858`
-  404s). Only `astronauts.id` hosts are accepted and an override with no valid
-  entries falls back to the defaults; `maxPages` still caps the count. Note
-  Astro has no leaflet-style image brochure — promos are per-product in the
-  inventory JSON (captured above) or client-rendered campaign pages
-  (`/promo/…`) without the embedded JSON, so the catalog parser cannot read
-  them.
-- **Promo mechanics per product**, mapped to the ingest contract:
-  - _inventory discount_: `product_discount_price` (post-discount, becomes
-    the item's `price`) + `product_discount_percentage` → promo label
-    "Diskon 8%" → `parsePromo` → `discount_pct`, effective unit price = the
-    discounted price. Quota-limited (`product_discount_stock`,
-    `product_discount_daily_quota`) — not surfaced; the observed price is
-    what the customer pays.
-  - _tier discount_: `inventory_discount_tier_label` ("Beli 2 Disc.4%" with
-    the per-unit `final_price` at that qty) → kept as promo label text only.
-    It is conditional on buying N units; the observed "Disc.%" phrasing
-    matches no `parsePromo` pattern, so it stays `single` (no effective unit
-    price). A tier label phrased like a standard promo ("Beli 2 Gratis 1")
-    would claim its math — the same treatment OCR'd conditional brochure
-    promos get, not a special guarantee.
-  - _vouchers_: `voucher_labels` exist but are empty on category listings in
-    practice — not mapped.
-  - `product_grammation_label` ("5kg", "450-550gram") becomes `unit`; the
-    listing carries only a numeric `brandId`, so `brand` is null.
-
-## 7. VPS operations (host config now lives in `ahaqqu/vps`)
+## 7. VPS operations (host config in `ahaqqu/vps`; deploys from RumaQ-pipeline)
 
 > The authoritative units, timer, deploy contract, deploy identity's grant and
 > env templates live in `ahaqqu/vps` `rumaq/` (`docs/DEPLOY.md`,
-> `docs/ACCESS.md`). The bullets below record the original in-repo bootstrap;
-> its scripts (`scraper/provision/vps/`, `scripts/provision-vps.sh`) were
-> retired when the scraper deploy switched to `vps-deploy rumaq`.
-
-- System user `rumaq-scraper`; code rsynced to `/srv/rumaq-scraper`;
-  state in `/var/lib/rumaq-scraper`; secrets root-only in `/etc/rumaq/scraper.env`
-  (owned by `ahaqqu/vps` `rumaq/`; KajianQ pattern: `GEMINI_API_KEY`,
-  `RUMAQ_INGEST_URL`, `RUMAQ_INGEST_SECRET`, optional per-store proxy vars).
-- `rumaq-scraper.timer` at 23:00 UTC (= 06:00 WIB). No nginx, no cert, no listener.
-  The unit pins the zone in `OnCalendar=*-*-* 23:00:00 UTC` — without the suffix
-  systemd reads the time in the box's local zone (Europe/Berlin).
-- CI deployed as the shared `kajianq-deploy` with a scoped sudoers rule for
-  `systemctl restart rumaq-scraper`; it now deploys as `rumaq-deploy` through
-  `sudo -n /usr/local/sbin/vps-deploy rumaq`.
-- RumaQ `scripts/deploy.sh` gains a `vps` mode (build + upload + `vps-deploy`). **Add every new
-  shell script to `.gitattributes` with `mode=755`** (CI requirement).
-- `scripts/test.sh unit scraper` → new vitest project in root `vite.config.ts`.
-- `ahaqqu/vps` PR: `docs/RESOURCES.md` app-table row + inventory card; doctor.sh awareness (timer unit).
-- **Operator bootstrap**: retired — `scraper/provision/vps/` and
-  `scripts/provision-vps.sh` are gone. Install the host configuration with the
-  `ahaqqu/vps` applier (`runbook/BOOTSTRAP.md` § 6), then append this
-  repository's key to the `rumaq-deploy` identity (§ 9 Switch one project to
-  its deploy identity). The nightly timer and `RUMAQ_PUBLISH=true` are already
-  live and are never reset by a deploy.
+> `docs/ACCESS.md`). Since 2026-11-03 the box artifact is built and shipped by
+> the pipeline repo (`./scripts/deploy.sh groceries vps` there); this repo's
+> `deploy.sh vps` mode, `scripts/deploy/vps.sh` and the deploy-vps CI job were
+> removed (ahaqqu/RumaQ#376). The original in-repo bootstrap bullets were
+> retired earlier and are kept in the pipeline repo's copy of this plan.
 
 ### 7.1 Monitoring (owner decision 2026-10-26: admin screen wanted)
 

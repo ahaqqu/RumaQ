@@ -16,8 +16,6 @@ export default defineConfig({
     semi: false,
     singleQuote: true,
     trailingComma: 'es5',
-    // Verbatim scraped-site fixtures are test data, not source to format.
-    ignorePatterns: ['scraper/test/fixtures/**'],
     overrides: [
       {
         files: ['**/*.sh'],
@@ -92,7 +90,7 @@ export default defineConfig({
           // between files. Verified leak-free for this suite (green under
           // --sequence.shuffle.filesOnly), but new tests must not rely on
           // fresh per-file global/module state. Scoped to this project only;
-          // backend/scraper are node envs and gain nothing.
+          // the backend is a node env and gains nothing.
           // Exception: under vmThreads the jsdom window IS the VM global, so
           // its unforgeable `window.location` cannot be redefined — api.test.js
           // stubs it and therefore runs in the `frontend-dom` project below
@@ -123,16 +121,6 @@ export default defineConfig({
           root: 'backend',
           environment: 'node',
           include: ['src/**/*.test.ts'],
-          testTimeout: 15000,
-        },
-      },
-      {
-        extends: true,
-        test: {
-          name: 'scraper',
-          root: 'scraper',
-          environment: 'node',
-          include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
           testTimeout: 15000,
         },
       },

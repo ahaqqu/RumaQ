@@ -6,13 +6,9 @@ name: Deploy production
 # on the commit. Pull requests never run this workflow — they use ci.yml —
 # so no deploy check appears there at all.
 #
-# Two targets, each with its own path filter (needs-deploy.sh):
-#   deploy      — the Cloudflare Worker (everything except docs/workflows)
-#   deploy-vps  — the scraper box through the shared vps-deploy contract in
-#                 ahaqqu/vps (rumaq/): build the artifact, upload it as
-#                 rumaq-deploy, run `vps-deploy rumaq`. Gated on vars.VPS_HOST;
-#                 until the owner appends this repo's key to the rumaq-deploy
-#                 identity the job fails closed at the helper, by design.
+# Single target with its own path filter (needs-deploy.sh):
+#   deploy — the Cloudflare Worker (everything except docs/workflows).
+# The scraper box is deployed by the private RumaQ-pipeline repo.
 on:
   push:
     branches: [main]
@@ -98,78 +94,3 @@ jobs:
           WORKER_JWT_SECRET: ${{ secrets.WORKER_JWT_SECRET }}
           WORKER_ENCRYPTION_KEY: ${{ secrets.WORKER_ENCRYPTION_KEY }}
           HAQITA_INGEST_SECRET: ${{ secrets.HAQITA_INGEST_SECRET }}
-
-  deploy-vps:
-    needs: ci
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-    # An unset VPS_HOST skips this job (visible as a skip on the commit),
-    # exactly like ci.sh skips Worker validation without CLOUDFLARE_API_TOKEN.
-    # A set host with anything else missing fails by name in the Require step
-    # below — never a silent default destination. VPS_USER defaults to
-    # rumaq-deploy, the only identity the contract grants `vps-deploy rumaq`.
-    if: vars.VPS_HOST != ''
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Require the deploy access
-        run: |
-          test -n "$VPS_HOST" || { echo "::error::vars.VPS_HOST is unset"; exit 1; }
-          [ "$VPS_USER" = rumaq-deploy ] ||
-            { echo "::error::vars.VPS_USER is '$VPS_USER' — the contract grants only rumaq-deploy"; exit 1; }
-          test -n "$SSH_KEY" || { echo "::error::secrets.VPS_DEPLOY_SSH_KEY is unset — the runner has no key to reach the box"; exit 1; }
-        env:
-          VPS_HOST: ${{ vars.VPS_HOST }}
-          VPS_USER: ${{ vars.VPS_USER || 'rumaq-deploy' }}
-          SSH_KEY: ${{ secrets.VPS_DEPLOY_SSH_KEY }}
-
-      - name: Write the SSH key
-        run: |
-          install -d -m 0700 ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
-          chmod 0600 ~/.ssh/id_deploy
-          {
-            echo "Host $VPS_HOST"
-            echo "  IdentityFile ~/.ssh/id_deploy"
-            echo "  IdentitiesOnly yes"
-          } >> ~/.ssh/config
-        env:
-          SSH_KEY: ${{ secrets.VPS_DEPLOY_SSH_KEY }}
-          VPS_HOST: ${{ vars.VPS_HOST }}
-
-      - id: vps-changes
-        name: Check if the VPS deploy is needed
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [[ $GITHUB_EVENT_NAME == workflow_dispatch ]]; then
-            base=""
-          else
-            base=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy.yml/runs?status=success&branch=main&per_page=1" \
-              --jq '.workflow_runs[0].head_sha // ""')
-          fi
-          needs=$(bash ./scripts/github/needs-deploy.sh \
-            "${base:-0000000000000000000000000000000000000000}" \
-            "$(git rev-parse HEAD)" vps)
-          echo "needs=$needs" >> "$GITHUB_OUTPUT"
-          echo "VPS deploy needed: $needs"
-
-      - uses: oven-sh/setup-bun@v2
-        if: steps.vps-changes.outputs.needs == 'true'
-        with:
-          bun-version: 1.4.0
-
-      - run: bun install --frozen-lockfile
-        if: steps.vps-changes.outputs.needs == 'true'
-
-      - name: Deploy the scraper to the VPS
-        if: steps.vps-changes.outputs.needs == 'true'
-        run: bash ./scripts/deploy.sh vps
-        env:
-          RUMAQ_VPS_HOST: ${{ vars.VPS_HOST }}
-          RUMAQ_VPS_USER: ${{ vars.VPS_USER || 'rumaq-deploy' }}

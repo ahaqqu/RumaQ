@@ -31,12 +31,12 @@ Before the first run, copy `backend/.dev.vars.example` to `backend/.dev.vars` an
 
 Single entrypoint: `./scripts/test.sh` — see [`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md).
 
-| Suite              | Command                                                   |
-| ------------------ | --------------------------------------------------------- |
-| Unit (all)         | `./scripts/test.sh unit`                                  |
-| Unit (one project) | `./scripts/test.sh unit frontend` / `backend` / `scraper` |
-| Local integration  | `./scripts/test.sh automation-local`                      |
-| Production smoke   | `./scripts/test.sh automation-live`                       |
+| Suite              | Command                                       |
+| ------------------ | --------------------------------------------- |
+| Unit (all)         | `./scripts/test.sh unit`                      |
+| Unit (one project) | `./scripts/test.sh unit frontend` / `backend` |
+| Local integration  | `./scripts/test.sh automation-local`          |
+| Production smoke   | `./scripts/test.sh automation-live`           |
 
 Coverage thresholds are 50/50/50/50 for frontend and backend. New API endpoints need an automation scenario in `automation/tests/local/api/`; new UI flows need one in `automation/tests/local/e2e/`.
 

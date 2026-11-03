@@ -13,8 +13,6 @@ set -euo pipefail
 #   ./scripts/deploy.sh cloudflare --dry-run  # validate without deploying
 #   ./scripts/deploy.sh --dry-run             # alias for dry-run validation
 #   ./scripts/deploy.sh frontend              # deploy only the frontend
-#   ./scripts/deploy.sh vps                   # deploy the scraper to the VPS
-#   ./scripts/deploy.sh vps --dry-run         # build+plan the VPS ship only
 # ============================================================
 
 DRY_RUN=false
@@ -24,12 +22,12 @@ for arg in "$@"; do
     --dry-run)
       DRY_RUN=true
       ;;
-    local | cloudflare | frontend | dry-run | vps)
+    local | cloudflare | frontend | dry-run)
       MODE="$arg"
       ;;
     *)
       echo "Unknown argument: $arg"
-      echo "Usage: $0 [local|cloudflare|frontend|dry-run|vps] [--dry-run]"
+      echo "Usage: $0 [local|cloudflare|frontend|dry-run] [--dry-run]"
       exit 1
       ;;
   esac
@@ -486,20 +484,9 @@ case "$MODE" in
       deploy_worker
     fi
     ;;
-  vps)
-    # Ship the scraper artifact to the box (build -> verify -> upload ->
-    # vps-deploy rumaq). Host configuration lives in ahaqqu/vps rumaq/.
-    # Configuration via RUMAQ_VPS_* environment variables; see
-    # scripts/deploy/vps.sh.
-    if $DRY_RUN; then
-      bash "$ROOT_DIR/scripts/deploy/vps.sh" --dry-run
-    else
-      bash "$ROOT_DIR/scripts/deploy/vps.sh"
-    fi
-    ;;
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: $0 [local|cloudflare|dry-run|frontend|vps] [--dry-run]"
+    echo "Usage: $0 [local|cloudflare|dry-run|frontend] [--dry-run]"
     exit 1
     ;;
 esac
