@@ -59,6 +59,11 @@
     "inviteCopied": "Tersalin!",
     "inviteExpires": "Kedaluwarsa {{date}}",
     "inviteNone": "Belum ada kode undangan aktif. Buat satu untuk mengundang seseorang.",
+    "inviteTargetLabel": "Untuk anggota (opsional)",
+    "inviteTargetNone": "Siapa pun dengan kode",
+    "inviteTargetHint": "Orang pertama yang menukar kode ini bergabung sebagai anggota ini — akunnya ditautkan ke profil ini, dengan nama, tanggal lahir, dan dokumennya tetap utuh.",
+    "inviteFor": "Untuk: {{name}}",
+    "inviteInvalidTarget": "Target undangan harus anggota tanpa akun di rumah ini.",
     "joinTitle": "Gabung ke rumah",
     "joinHint": "Punya kode dari rumah Anda? Masukkan di sini.",
     "joinPlaceholder": "Kode undangan",
@@ -81,7 +86,8 @@
     "onlyOwners": "Hanya pemilik rumah yang bisa melakukan itu",
     "notFound": "Rumah tidak ditemukan",
     "errorGeneric": "Terjadi kesalahan. Silakan coba lagi.",
-    "renameSave": "Simpan"
+    "renameSave": "Simpan",
+    "joinConflict": "Profil undangan ini sudah tertaut ke akun lain."
   },
   "documents": {
     "title": "Lemari dokumen",

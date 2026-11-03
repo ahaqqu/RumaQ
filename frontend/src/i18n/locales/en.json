@@ -59,6 +59,11 @@
     "inviteCopied": "Copied!",
     "inviteExpires": "Expires {{date}}",
     "inviteNone": "No active invite code. Generate one to invite someone.",
+    "inviteTargetLabel": "For member (optional)",
+    "inviteTargetNone": "Anyone with the code",
+    "inviteTargetHint": "The first person to redeem this code joins as this member — their account is linked to this profile, keeping its name, birth date, and documents.",
+    "inviteFor": "For: {{name}}",
+    "inviteInvalidTarget": "Invite target must be a member without an account in this household.",
     "joinTitle": "Join a household",
     "joinHint": "Got a code from your household? Enter it here.",
     "joinPlaceholder": "Invite code",
@@ -81,7 +86,8 @@
     "onlyOwners": "Only household owners can do that",
     "notFound": "Household not found",
     "errorGeneric": "Something went wrong. Please try again.",
-    "renameSave": "Save"
+    "renameSave": "Save",
+    "joinConflict": "This invite's profile has already been linked to another account."
   },
   "documents": {
     "title": "Document vault",

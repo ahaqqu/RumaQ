@@ -464,8 +464,18 @@ export function getHouseholdInvite(id: string, signal?: AbortSignal): Promise<un
   return unwrap(client.GET('/api/households/{id}/invite', { params: { path: { id } }, signal }))
 }
 
-export function createHouseholdInvite(id: string): Promise<unknown> {
-  return unwrap(client.POST('/api/households/{id}/invite', { params: { path: { id } } }))
+// The optional payload marks the invite for one profile-only member
+// (ahaqqu/RumaQ#397); undefined = plain invite (today's bodyless POST).
+export function createHouseholdInvite(
+  id: string,
+  payload?: { target_member_id?: string | null }
+): Promise<unknown> {
+  return unwrap(
+    client.POST('/api/households/{id}/invite', {
+      params: { path: { id } },
+      ...(payload ? { body: payload } : {}),
+    })
+  )
 }
 
 export function joinHousehold(code: string): Promise<unknown> {

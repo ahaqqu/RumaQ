@@ -250,6 +250,164 @@ describe('Household', () => {
     expect(container.textContent).toContain('household.inviteRegenerate')
   })
 
+  // Link-later (#397): the owner can mark the invite for one profile-only
+  // member; the selector lists ONLY has_account=false roster rows.
+  it('hides the invite target selector when every member has an account', () => {
+    const { container } = renderHousehold()
+    expect(container.querySelector('[data-testid="invite-target-select"]')).toBeNull()
+  })
+
+  it('lists only profile-only members in the invite target selector', () => {
+    vi.mocked(useHouseholdMembers).mockReturnValue({
+      data: {
+        members: [
+          ...MEMBERS.members,
+          {
+            id: 'm9',
+            user_id: null,
+            has_account: false,
+            role: 'member',
+            display_name: 'Adik',
+            birth_date: '2025-03-02',
+            joined_at: '2026-11-03 00:00:00',
+            name: null,
+            email: null,
+            picture: null,
+          },
+        ],
+      },
+      isLoading: false,
+    })
+    const { container } = renderHousehold()
+    const select = container.querySelector('[data-testid="invite-target-select"]')
+    expect(select).toBeTruthy()
+    const options = [...select.querySelectorAll('option')]
+    // The no-target option plus exactly the profile-only rows.
+    expect(options).toHaveLength(2)
+    expect(options[0].value).toBe('')
+    expect(options[0].textContent).toContain('household.inviteTargetNone')
+    expect(options[1].value).toBe('m9')
+    expect(options[1].textContent).toBe('Adik')
+  })
+
+  it('generates a marked invite when a member is selected and a plain one otherwise', () => {
+    vi.mocked(useHouseholdMembers).mockReturnValue({
+      data: {
+        members: [
+          ...MEMBERS.members,
+          {
+            id: 'm9',
+            user_id: null,
+            has_account: false,
+            role: 'member',
+            display_name: 'Adik',
+            birth_date: null,
+            joined_at: '2026-11-03 00:00:00',
+            name: null,
+            email: null,
+            picture: null,
+          },
+        ],
+      },
+      isLoading: false,
+    })
+    const inviteMutation = mutation()
+    vi.mocked(useCreateHouseholdInvite).mockReturnValue(inviteMutation)
+    const { container } = renderHousehold()
+
+    // No selection: the POST stays bodyless — today's plain invite.
+    fireEvent.click(findButton(container, 'household.inviteGenerate'))
+    expect(inviteMutation.mutate).toHaveBeenLastCalledWith(undefined, expect.anything())
+
+    // Picking Adik marks the invite for her member id.
+    const select = container.querySelector('[data-testid="invite-target-select"]')
+    fireEvent.change(select, { target: { value: 'm9' } })
+    fireEvent.click(findButton(container, 'household.inviteGenerate'))
+    expect(inviteMutation.mutate).toHaveBeenLastCalledWith(
+      { target_member_id: 'm9' },
+      expect.anything()
+    )
+  })
+
+  it('marks a targeted invite with For: <display_name> in the owner display', () => {
+    vi.mocked(useHouseholdMembers).mockReturnValue({
+      data: {
+        members: [
+          ...MEMBERS.members,
+          {
+            id: 'm9',
+            user_id: null,
+            has_account: false,
+            role: 'member',
+            display_name: 'Adik',
+            birth_date: null,
+            joined_at: '2026-11-03 00:00:00',
+            name: null,
+            email: null,
+            picture: null,
+          },
+        ],
+      },
+      isLoading: false,
+    })
+    vi.mocked(useHouseholdInvite).mockReturnValue({
+      data: {
+        invite: {
+          id: 'inv1',
+          code: 'ABC2345678',
+          expires_at: '2026-11-10 00:00:00',
+          target_member_id: 'm9',
+          has_target: true,
+        },
+      },
+      isLoading: false,
+    })
+    const { container } = renderHousehold()
+    expect(container.textContent).toContain('household.inviteFor')
+    expect(container.textContent).toContain('Adik')
+  })
+
+  it('shows no For mark for a plain invite', () => {
+    vi.mocked(useHouseholdInvite).mockReturnValue({
+      data: {
+        invite: {
+          id: 'inv1',
+          code: 'ABC2345678',
+          expires_at: '2026-11-10 00:00:00',
+          target_member_id: null,
+          has_target: false,
+        },
+      },
+      isLoading: false,
+    })
+    const { container } = renderHousehold()
+    expect(container.textContent).not.toContain('household.inviteFor')
+  })
+
+  it('maps a 400 on the invite endpoint to the invalid-target copy', () => {
+    vi.mocked(useCreateHouseholdInvite).mockReturnValue({
+      mutate: vi.fn((_payload, opts) => opts?.onError?.(new ApiError('fail', 400))),
+      isPending: false,
+    })
+    const { container } = renderHousehold()
+    fireEvent.click(findButton(container, 'household.inviteGenerate'))
+    expect(container.textContent).toContain('household.inviteInvalidTarget')
+  })
+
+  it('maps a 409 on join to the target-conflict copy, not the last-owner rule', () => {
+    const joinMutation = {
+      mutate: vi.fn((_code, opts) => opts?.onError?.(new ApiError('fail', 409))),
+      isPending: false,
+    }
+    vi.mocked(useJoinHousehold).mockReturnValue(joinMutation)
+    const { container } = renderHousehold()
+    const input = container.querySelector('input[aria-label="household.joinPlaceholder"]')
+    fireEvent.change(input, { target: { value: 'ABC2345678' } })
+    fireEvent.click(findButton(container, 'household.joinAction'))
+    expect(container.textContent).toContain('household.joinConflict')
+    expect(container.textContent).not.toContain('household.lastOwnerRemoveBlocked')
+  })
+
   it('copies the wrapped invite link', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })

@@ -33,14 +33,20 @@ import { cn } from '../lib/cn.js'
 
 // Error vocabulary mirrors the backend's households app: the (endpoint,
 // status) pair picks the copy, never the raw server string. A 400 only means
-// "invalid invite code" on the join endpoint — other mutations get the
-// generic message instead of an invite-specific claim (review A10).
+// "invalid invite code" on the join endpoint and "invalid target" on the
+// invite endpoint — other mutations get the generic message instead of an
+// invite-specific claim (review A10). The join endpoint's 409 is the
+// link-later target conflict (#397), not the last-owner rule.
 function householdErrorKey(error, endpoint) {
   const status = error instanceof ApiError ? error.status : undefined
-  if (status === 400)
-    return endpoint === 'join' ? 'household.joinInvalid' : 'household.errorGeneric'
+  if (status === 400) {
+    if (endpoint === 'join') return 'household.joinInvalid'
+    if (endpoint === 'invite') return 'household.inviteInvalidTarget'
+    return 'household.errorGeneric'
+  }
   if (status === 403) return 'household.onlyOwners'
-  if (status === 409) return 'household.lastOwnerRemoveBlocked'
+  if (status === 409)
+    return endpoint === 'join' ? 'household.joinConflict' : 'household.lastOwnerRemoveBlocked'
   return 'household.errorGeneric'
 }
 
@@ -191,6 +197,11 @@ export function Household() {
   // prefill Add with another member's identity after an edit is closed.
   const [addMode, setAddMode] = useState('invite')
   const [addProfileDraft, setAddProfileDraft] = useState({ display_name: '', birth_date: '' })
+  // Link-later (#397): an owner can mark the invite for one profile-only
+  // member — redeeming it attaches the redeemer's account to that row instead
+  // of creating a new member. Empty selection = today's plain invite.
+  const [inviteTargetId, setInviteTargetId] = useState('')
+  const profileOnlyMembers = members.filter((m) => m.has_account === false)
 
   // Member-addressed edits key on the surrogate member id — profile-only
   // members have no user_id.
@@ -331,6 +342,17 @@ export function Household() {
     () => (invite ? `${window.location.origin}/household?code=${invite.code}` : null),
     [invite]
   )
+
+  // Generates (or rotates) the code. With a member picked in the selector the
+  // invite is marked for them ({ target_member_id }); without one the payload
+  // is undefined and the POST stays bodyless (the plain invite, #397). A 400
+  // here is the invalid-target refusal, not the generic copy.
+  const generateInvite = () => {
+    createInvite.mutate(inviteTargetId ? { target_member_id: inviteTargetId } : undefined, {
+      onSuccess: () => setActionError(null),
+      onError: (err) => setActionError(t(householdErrorKey(err, 'invite'))),
+    })
+  }
 
   const copyInvite = async () => {
     if (!inviteLink) return
@@ -553,6 +575,32 @@ export function Household() {
           ) : (
             <PanelBody className="flex flex-col gap-3">
               <p className="text-sm text-text-muted">{t('household.inviteHint')}</p>
+              {/* Link-later (#397): mark the invite for one profile-only
+                  member. The selector lists ONLY has_account=false roster
+                  rows — linked members have nothing to attach. */}
+              {profileOnlyMembers.length > 0 && (
+                <>
+                  <label className="flex flex-col gap-1 text-sm max-w-[360px]">
+                    <span className="text-text-muted">{t('household.inviteTargetLabel')}</span>
+                    <select
+                      className="w-full"
+                      data-testid="invite-target-select"
+                      value={inviteTargetId}
+                      onChange={(e) => setInviteTargetId(e.target.value)}
+                    >
+                      <option value="">{t('household.inviteTargetNone')}</option>
+                      {profileOnlyMembers.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.display_name || m.name || m.email || '?'}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {inviteTargetId && (
+                    <p className="text-sm text-text-muted">{t('household.inviteTargetHint')}</p>
+                  )}
+                </>
+              )}
               {invite ? (
                 <div className="flex flex-wrap items-center gap-3">
                   <code
@@ -561,6 +609,15 @@ export function Household() {
                   >
                     {invite.code}
                   </code>
+                  {invite.has_target && (
+                    <Chip variant="accent">
+                      {t('household.inviteFor', {
+                        name:
+                          members.find((m) => m.id === invite.target_member_id)?.display_name ??
+                          '',
+                      })}
+                    </Chip>
+                  )}
                   <Button size="sm" variant="secondary" onClick={copyInvite}>
                     {copied ? <IconCheck size={15} /> : <IconCopy size={15} />}
                     {copied ? t('household.inviteCopied') : t('household.inviteCopy')}
@@ -573,7 +630,7 @@ export function Household() {
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => createInvite.mutate()}
+                    onClick={generateInvite}
                     disabled={createInvite.isPending}
                   >
                     <IconRefresh size={15} /> {t('household.inviteRegenerate')}
@@ -582,11 +639,7 @@ export function Household() {
               ) : (
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="text-sm text-text-muted">{t('household.inviteNone')}</span>
-                  <Button
-                    size="sm"
-                    onClick={() => createInvite.mutate()}
-                    disabled={createInvite.isPending}
-                  >
+                  <Button size="sm" onClick={generateInvite} disabled={createInvite.isPending}>
                     <IconPlus size={15} /> {t('household.inviteGenerate')}
                   </Button>
                 </div>
