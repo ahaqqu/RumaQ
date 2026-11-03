@@ -25,7 +25,7 @@
   artifacts a family has (KTP, kartu keluarga, akta), and some customers will rationally
   not want that data stored at all.
 - Today, "optional" is expressed only in the frontend nav (`frontend/src/components/
-  AppShell.jsx` hard-codes `NAV` / `HOUSEHOLD_ADMIN` groups) and in the gateway's
+  AppShell.jsx` hard-codes `NAV` / `HOUSEHOLD_NAV` groups) and in the gateway's
   hand-wired dispatch (`backend/src/gateway.ts` adds one `if` per domain app). Feature
   presence is a **code layout fact**, not a **product fact** a household controls.
 - The vault MVP already contains the two structural pieces this design generalizes:
