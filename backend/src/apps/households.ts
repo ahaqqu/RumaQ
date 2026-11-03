@@ -32,6 +32,7 @@ import {
   createHousehold,
   renameHousehold,
   listMembers,
+  createProfileMember,
   updateMemberProfile,
   removeMember,
   leaveHousehold,
@@ -66,6 +67,15 @@ const memberPatchSchema = strictObject({
   birth_date: optional(union([pipe(string(), isoDate()), literal(''), vnull()])),
 })
 
+// Profile-only member creation (ahaqqu/RumaQ#388): display_name IS the
+// identity (required — no account exists to fall back on); birth_date stays
+// optional. No `role` field exists in the schema on purpose — the lib forces
+// role='member' and the contract must not even suggest otherwise.
+const memberCreateSchema = strictObject({
+  display_name: pipe(string(), minLength(1), maxLength(MEMBER_PROFILE_CAPS.displayName)),
+  birth_date: optional(union([pipe(string(), isoDate()), vnull()])),
+})
+
 const joinSchema = object({
   code: pipe(string(), minLength(1), maxLength(60)),
 })
@@ -88,9 +98,13 @@ const householdSummarySchema: OpenAPIV3_1.SchemaObject = {
 
 const householdMemberSchema: OpenAPIV3_1.SchemaObject = {
   type: 'object',
-  required: ['user_id', 'role', 'joined_at'],
+  required: ['id', 'user_id', 'role', 'joined_at', 'has_account'],
   properties: {
-    user_id: { type: 'string' },
+    // Surrogate member id (0021) — the addressable handle for both modes.
+    id: { type: 'string' },
+    // Additive-nullish for Mode B (#388): NULL = profile-only member with no
+    // user account (never authenticates, owner-managed).
+    user_id: { type: ['string', 'null'] },
     role: { type: 'string', enum: ['owner', 'member'] },
     // Additive-nullish profile fields (BayiQ-ready; see 0020 migration).
     display_name: { type: ['string', 'null'] },
@@ -99,6 +113,9 @@ const householdMemberSchema: OpenAPIV3_1.SchemaObject = {
     name: { type: ['string', 'null'] },
     email: { type: ['string', 'null'] },
     picture: { type: ['string', 'null'] },
+    // The two-mode discriminator: true when the member is linked to a user
+    // account, false for profile-only members.
+    has_account: { type: 'boolean' },
   },
 }
 
@@ -144,7 +161,7 @@ householdsApp.use('/api/households/:id/activate', propsAuthMiddleware)
 householdsApp.use('/api/households/:id/leave', propsAuthMiddleware)
 householdsApp.use('/api/households/:id/invite', propsAuthMiddleware)
 householdsApp.use('/api/households/:id/members', propsAuthMiddleware)
-householdsApp.use('/api/households/:id/members/:userId', propsAuthMiddleware)
+householdsApp.use('/api/households/:id/members/:memberId', propsAuthMiddleware)
 
 householdsApp.get(
   '/api/households',
@@ -380,7 +397,8 @@ householdsApp.post(
 householdsApp.get(
   '/api/households/:id/members',
   describeRoute({
-    description: 'Lists the members of a household. Members and owners of that household only.',
+    description:
+      'Lists the members of a household — both linked accounts (has_account=true) and profile-only members without an account (has_account=false, ahaqqu/RumaQ#388). Members and owners of that household only.',
     security: [{ cookieAuth: [] }],
     responses: {
       200: {
@@ -412,11 +430,65 @@ householdsApp.get(
   }
 )
 
-householdsApp.patch(
-  '/api/households/:id/members/:userId',
+householdsApp.post(
+  '/api/households/:id/members',
   describeRoute({
     description:
-      'Updates a member’s profile fields (display_name, birth_date). Owners may edit anyone; members may edit themselves. Roles are not writable.',
+      'Creates a profile-only member — a person with no user account (e.g. a toddler), identified by display_name plus an optional birth_date. Owner-only; the role is always member and such members never authenticate. They count toward member_count.',
+    security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['display_name'],
+            additionalProperties: false,
+            properties: {
+              display_name: { type: 'string', minLength: 1, maxLength: 80 },
+              birth_date: { type: 'string', description: 'YYYY-MM-DD' },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      201: {
+        description: 'Created',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['member'],
+              properties: { member: householdMemberSchema },
+            },
+          },
+        },
+      },
+      400: { description: 'Validation error' },
+      401: { description: 'Unauthorized' },
+      404: { description: 'Household not found' },
+      403: { description: 'Only household owners can do that' },
+    },
+  }),
+  sValidator('json', memberCreateSchema),
+  async (c) => {
+    const body = c.req.valid('json')
+    const member = await createProfileMember(c.env.DB, c.req.param('id'), c.get('userId'), {
+      display_name: body.display_name.trim(),
+      birth_date: body.birth_date ?? null,
+    })
+    const res = c.json({ member }, 201)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+householdsApp.patch(
+  '/api/households/:id/members/:memberId',
+  describeRoute({
+    description:
+      'Updates a member’s profile fields (display_name, birth_date), addressed by member id. Owners may edit anyone; a linked member may edit themselves. Profile-only members (has_account=false) are owner-only. Roles are not writable.',
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: false,
@@ -458,7 +530,7 @@ householdsApp.patch(
   sValidator('json', memberPatchSchema),
   async (c) => {
     const householdId = c.req.param('id')
-    const targetUserId = c.req.param('userId')
+    const memberId = c.req.param('memberId')
     const body = c.req.valid('json')
 
     const patch: { display_name?: string | null; birth_date?: string | null } = {}
@@ -476,7 +548,7 @@ householdsApp.patch(
       c.env.DB,
       householdId,
       c.get('userId'),
-      targetUserId,
+      memberId,
       patch
     )
     if (!member) {
@@ -489,10 +561,10 @@ householdsApp.patch(
 )
 
 householdsApp.delete(
-  '/api/households/:id/members/:userId',
+  '/api/households/:id/members/:memberId',
   describeRoute({
     description:
-      'Removes a member from a household. Owner-only; the household must keep at least one owner (409 otherwise).',
+      'Removes a member from a household, addressed by member id. Owner-only; the household must keep at least one owner (409 otherwise). Profile-only members are a simple delete; removing a linked member also repoints (or respawns) their session.',
     security: [{ cookieAuth: [] }],
     responses: {
       204: { description: 'Removed' },
@@ -503,7 +575,7 @@ householdsApp.delete(
     },
   }),
   async (c) => {
-    await removeMember(c.env.DB, c.req.param('id'), c.get('userId'), c.req.param('userId'))
+    await removeMember(c.env.DB, c.req.param('id'), c.get('userId'), c.req.param('memberId'))
     return c.newResponse(null, 204)
   }
 )

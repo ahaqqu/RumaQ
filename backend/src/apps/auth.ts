@@ -183,8 +183,8 @@ authApp.get(
           actualUserId
         ),
         c.env.DB.prepare(
-          'INSERT INTO household_members (household_id, user_id, role) VALUES (?, ?, ?)'
-        ).bind(householdId, actualUserId, 'owner'),
+          'INSERT INTO household_members (id, household_id, user_id, role) VALUES (?, ?, ?, ?)'
+        ).bind(crypto.randomUUID(), householdId, actualUserId, 'owner'),
         c.env.DB.prepare(
           'INSERT INTO user_settings (id, user_id, active_household_id) VALUES (?, ?, ?)'
         ).bind(settingsId, actualUserId, householdId),
@@ -357,8 +357,8 @@ authApp.post(
           user.id
         ),
         c.env.DB.prepare(
-          'INSERT INTO household_members (household_id, user_id, role) VALUES (?, ?, ?)'
-        ).bind(householdId, user.id, 'owner'),
+          'INSERT INTO household_members (id, household_id, user_id, role) VALUES (?, ?, ?, ?)'
+        ).bind(crypto.randomUUID(), householdId, user.id, 'owner'),
         c.env.DB.prepare(
           'INSERT INTO user_settings (id, user_id, active_household_id) VALUES (?, ?, ?)'
         ).bind(settingsId, user.id, householdId),

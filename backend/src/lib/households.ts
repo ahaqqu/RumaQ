@@ -7,6 +7,14 @@
 // must retain >= 1 owner. Household existence is never leaked: a caller that
 // is not a member gets the same 404 as a household that does not exist.
 //
+// Member modes (ahaqqu/RumaQ#388): a member row is either LINKED to a user
+// account (user_id NOT NULL — today's model, the only mode that can
+// authenticate) or PROFILE-ONLY (user_id NULL — e.g. a toddler; forced
+// role='member', owner-managed, never counted among owners). Both modes share
+// the surrogate `id` (0021): every member-addressed surface goes through it,
+// so a profile-only member can be attached to an account later without the
+// row (and its future vault documents) losing its identity.
+//
 // Session continuity (review A2/A4): a user who loses a membership — by leave
 // or by removal — is repointed at their next remaining household, or given a
 // respawned baseline one when none remains, in the SAME atomic batch as the
@@ -58,7 +66,12 @@ export type HouseholdSummary = {
 }
 
 export type HouseholdMemberRow = {
-  user_id: string
+  // Surrogate member id (0021) — the stable addressable handle for both
+  // modes; profile-only members have no user_id to key on.
+  id: string
+  // NULL = profile-only member (Mode B, ahaqqu/RumaQ#388): no account, never
+  // authenticates, owner-managed.
+  user_id: string | null
   role: HouseholdRole
   display_name: string | null
   birth_date: string | null
@@ -66,6 +79,9 @@ export type HouseholdMemberRow = {
   name: string | null
   email: string | null
   picture: string | null
+  // The listing discriminator for the two modes — true when the row is
+  // linked to a user account.
+  has_account: boolean
 }
 
 // The membership lookup every household route starts from: the household row
@@ -168,8 +184,10 @@ export async function createHousehold(
       .prepare('INSERT INTO households (id, name, created_by) VALUES (?, ?, ?)')
       .bind(householdId, name, userId),
     db
-      .prepare('INSERT INTO household_members (household_id, user_id, role) VALUES (?, ?, ?)')
-      .bind(householdId, userId, 'owner'),
+      .prepare(
+        'INSERT INTO household_members (id, household_id, user_id, role) VALUES (?, ?, ?, ?)'
+      )
+      .bind(crypto.randomUUID(), householdId, userId, 'owner'),
     ...LOCATION_SEEDS.map((loc) =>
       db
         .prepare('INSERT INTO locations (id, household_id, label, sort_order) VALUES (?, ?, ?, ?)')
@@ -197,67 +215,127 @@ export async function renameHousehold(
     .run()
 }
 
+// The roster: both member modes (ahaqqu/RumaQ#388). LEFT JOIN — a profile-only
+// member has no users row, and an inner join would silently hide them. The
+// mode discriminator is computed from user_id so the two shapes never drift.
+const MEMBER_SELECT = `SELECT m.id, m.user_id, m.role, m.display_name, m.birth_date, m.joined_at,
+              u.name, u.email, u.picture
+         FROM household_members m
+         LEFT JOIN users u ON u.id = m.user_id`
+
+function toMemberRow(row: Omit<HouseholdMemberRow, 'has_account'>): HouseholdMemberRow {
+  return { ...row, has_account: row.user_id !== null }
+}
+
 export async function listMembers(
   db: D1Database,
   householdId: string
 ): Promise<HouseholdMemberRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT m.user_id, m.role, m.display_name, m.birth_date, m.joined_at,
-              u.name, u.email, u.picture
-         FROM household_members m
-         JOIN users u ON u.id = m.user_id
+      `${MEMBER_SELECT}
         WHERE m.household_id = ?
         -- Owners head the list (the invite/remove affordances hang off that
-        -- role); ties break deterministically on join time then id.
-        ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END, m.joined_at, m.user_id`
+        -- role); ties break deterministically on join time then member id —
+        -- user_id is nullable now, so it cannot be the tie-break.
+        ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END, m.joined_at, m.id`
     )
     .bind(householdId)
-    .all<HouseholdMemberRow>()
-  return results
+    .all<Omit<HouseholdMemberRow, 'has_account'>>()
+  return results.map(toMemberRow)
 }
 
 function readMemberRow(
   db: D1Database,
   householdId: string,
-  targetUserId: string
+  memberId: string
 ): Promise<HouseholdMemberRow | null> {
   return db
-    .prepare(
-      `SELECT m.user_id, m.role, m.display_name, m.birth_date, m.joined_at,
-              u.name, u.email, u.picture
-         FROM household_members m
-         JOIN users u ON u.id = m.user_id
-        WHERE m.user_id = ? AND m.household_id = ?`
-    )
-    .bind(targetUserId, householdId)
-    .first<HouseholdMemberRow>()
+    .prepare(`${MEMBER_SELECT} WHERE m.id = ? AND m.household_id = ?`)
+    .bind(memberId, householdId)
+    .first<Omit<HouseholdMemberRow, 'has_account'>>()
+    .then((row) => (row ? toMemberRow(row) : null))
 }
 
-// Owners edit any member's profile; a member edits their own. Role is never
-// writable here (v1 keeps owner/member fixed at join; a future promotion flow
-// owns the >= 1 owner invariant). An empty patch is a no-op read — the current
-// row comes back, not the 404 that means "does not exist" (review A5).
+// The target row a member-addressed operation acts on, fetched by the
+// surrogate id — checked before any write so an unknown member id is a clean
+// 404, not a no-op. Scoped to the household so a valid id from ANOTHER
+// household cannot be addressed through this one.
+async function getTargetMember(
+  db: D1Database,
+  householdId: string,
+  memberId: string
+): Promise<{ id: string; user_id: string | null; role: HouseholdRole } | null> {
+  return db
+    .prepare('SELECT id, user_id, role FROM household_members WHERE id = ? AND household_id = ?')
+    .bind(memberId, householdId)
+    .first<{ id: string; user_id: string | null; role: HouseholdRole }>()
+}
+
+// Creates a PROFILE-ONLY member (Mode B, ahaqqu/RumaQ#388) — a person with no
+// account (a toddler), identified by display_name (+ optional birth_date).
+// Owner-only; the role is FORCED to 'member' in the INSERT itself: a
+// profile-only member can never own, never invite, and is never counted among
+// owners (member_count still includes them — it is a plain COUNT(*)).
+
+export type ProfileMemberInput = {
+  display_name: string
+  birth_date: string | null
+}
+
+export async function createProfileMember(
+  db: D1Database,
+  householdId: string,
+  actorId: string,
+  input: ProfileMemberInput
+): Promise<HouseholdMemberRow> {
+  await requireOwner(db, householdId, actorId)
+
+  const memberId = crypto.randomUUID()
+  // user_id stays NULL — that NULL is the Mode B marker the partial unique
+  // index (0021) and the auth resolution both key on. The batch keeps the
+  // write atomic the same way every other membership write is.
+  await db.batch([
+    db
+      .prepare(
+        "INSERT INTO household_members (id, household_id, user_id, role, display_name, birth_date) VALUES (?, ?, NULL, 'member', ?, ?)"
+      )
+      .bind(memberId, householdId, input.display_name, input.birth_date),
+  ])
+
+  const row = await readMemberRow(db, householdId, memberId)
+  if (!row) {
+    throw new Error('Failed to create profile-only member')
+  }
+  return row
+}
+
+// Owners edit any member's profile; a member edits their own — but ONLY when
+// the target is linked (self = user_id match). A profile-only member has no
+// self: patches to it are owner-only. Role is never writable here (v1 keeps
+// owner/member fixed at join; a future promotion flow owns the >= 1 owner
+// invariant). An empty patch is a no-op read — the current row comes back,
+// not the 404 that means "does not exist" (review A5).
 export async function updateMemberProfile(
   db: D1Database,
   householdId: string,
   actorId: string,
-  targetUserId: string,
+  memberId: string,
   patch: { display_name?: string | null; birth_date?: string | null }
 ): Promise<HouseholdMemberRow | null> {
   const membership = await requireMembership(db, householdId, actorId)
-  if (membership.role !== 'owner' && actorId !== targetUserId) {
-    throw new HouseholdForbiddenError()
-  }
+  const isOwner = membership.role === 'owner'
 
   // The target must be a member of the same household — checked before any
-  // write so an unknown user_id is a clean 404, not a no-op UPDATE.
-  const target = await db
-    .prepare('SELECT user_id FROM household_members WHERE household_id = ? AND user_id = ?')
-    .bind(householdId, targetUserId)
-    .first<{ user_id: string }>()
+  // authorization answer so an unknown id leaks nothing and writes nothing.
+  const target = await getTargetMember(db, householdId, memberId)
   if (!target) {
     return null
+  }
+
+  const isSelf = target.user_id !== null && target.user_id === actorId
+  if (!isOwner && !isSelf) {
+    throw new HouseholdForbiddenError()
   }
 
   const updates: string[] = []
@@ -271,18 +349,16 @@ export async function updateMemberProfile(
     params.push(patch.birth_date)
   }
   if (updates.length === 0) {
-    return readMemberRow(db, householdId, targetUserId)
+    return readMemberRow(db, householdId, memberId)
   }
 
-  params.push(targetUserId, householdId)
+  params.push(memberId, householdId)
   await db
-    .prepare(
-      `UPDATE household_members SET ${updates.join(', ')} WHERE user_id = ? AND household_id = ?`
-    )
+    .prepare(`UPDATE household_members SET ${updates.join(', ')} WHERE id = ? AND household_id = ?`)
     .bind(...params)
     .run()
 
-  return readMemberRow(db, householdId, targetUserId)
+  return readMemberRow(db, householdId, memberId)
 }
 
 // Everything that must happen when `userId` loses membership in `householdId`
@@ -333,8 +409,10 @@ async function buildDepartureBatch(
       .prepare('INSERT INTO households (id, name, created_by) VALUES (?, ?, ?)')
       .bind(newId, BASELINE_HOUSEHOLD_NAME, userId),
     db
-      .prepare('INSERT INTO household_members (household_id, user_id, role) VALUES (?, ?, ?)')
-      .bind(newId, userId, 'owner'),
+      .prepare(
+        'INSERT INTO household_members (id, household_id, user_id, role) VALUES (?, ?, ?, ?)'
+      )
+      .bind(crypto.randomUUID(), newId, userId, 'owner'),
     ...LOCATION_SEEDS.map((loc) =>
       db
         .prepare('INSERT INTO locations (id, household_id, label, sort_order) VALUES (?, ?, ?, ?)')
@@ -365,23 +443,23 @@ async function countOwners(db: D1Database, householdId: string): Promise<number>
   return row?.cnt ?? 0
 }
 
-// Removes a member (owner action). The >= 1 owner invariant is checked against
-// the current row set, not the caller's claim, so removing the last owner 409s
-// even if the data drifted. The removal and the removed member's session
-// continuity commit in one atomic batch — symmetry with leaveHousehold, so an
-// evicted member (like a leaver) is never locked out of join/create (A2/A4).
+// Removes a member (owner action) — both modes. The >= 1 owner invariant is
+// checked against the current row set, not the caller's claim, so removing
+// the last owner 409s even if the data drifted. For a LINKED member the
+// removal and their session continuity commit in one atomic batch (symmetry
+// with leaveHousehold — an evicted member is never locked out of
+// join/create, A2/A4). A PROFILE-ONLY member has no account: no
+// user_settings pointer exists, no departure-repoint semantics apply — the
+// batch is the single atomic DELETE, and nothing respawns.
 export async function removeMember(
   db: D1Database,
   householdId: string,
   actorId: string,
-  targetUserId: string
+  memberId: string
 ): Promise<void> {
   await requireOwner(db, householdId, actorId)
 
-  const target = await db
-    .prepare('SELECT role FROM household_members WHERE household_id = ? AND user_id = ?')
-    .bind(householdId, targetUserId)
-    .first<{ role: HouseholdRole }>()
+  const target = await getTargetMember(db, householdId, memberId)
   if (!target) {
     throw new HouseholdNotFoundError()
   }
@@ -389,7 +467,18 @@ export async function removeMember(
     throw new LastOwnerError()
   }
 
-  await db.batch(await buildDepartureBatch(db, householdId, targetUserId))
+  if (target.user_id === null) {
+    // Profile-only (Mode B): the delete IS the whole operation. Still a batch
+    // so the write path stays uniformly atomic.
+    await db.batch([
+      db
+        .prepare('DELETE FROM household_members WHERE id = ? AND household_id = ?')
+        .bind(memberId, householdId),
+    ])
+    return
+  }
+
+  await db.batch(await buildDepartureBatch(db, householdId, target.user_id))
 }
 
 // Self-service exit. Same last-owner rule: transfer ownership is a future
@@ -567,10 +656,13 @@ export async function joinByCode(
 
   const result = await db
     .prepare(
-      `INSERT INTO household_members (household_id, user_id, role) VALUES (?, ?, ?)
-       ON CONFLICT (household_id, user_id) DO NOTHING`
+      `INSERT INTO household_members (id, household_id, user_id, role) VALUES (?, ?, ?, ?)
+       -- The conflict target is 0021's partial unique index: joined members
+       -- always have a user_id, so the WHERE clause is satisfied and the old
+       -- PK-pair uniqueness arbitrates the race (review A7).
+       ON CONFLICT (household_id, user_id) WHERE user_id IS NOT NULL DO NOTHING`
     )
-    .bind(invite.household_id, userId, 'member')
+    .bind(crypto.randomUUID(), invite.household_id, userId, 'member')
     .run()
   // meta.changes === 0 means the conflict path fired (already a member);
   // undefined (mocked D1 in unit tests) counts as inserted.
