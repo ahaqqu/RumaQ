@@ -6,6 +6,7 @@ import {
   useCreateHousehold,
   useRenameHousehold,
   useActivateHousehold,
+  useCreateHouseholdMember,
   useUpdateHouseholdMember,
   useRemoveHouseholdMember,
   useCreateHouseholdInvite,
@@ -16,6 +17,7 @@ import {
   createHousehold,
   renameHousehold,
   activateHousehold,
+  createHouseholdMember,
   updateHouseholdMember,
   removeHouseholdMember,
   createHouseholdInvite,
@@ -28,6 +30,7 @@ vi.mock('../api', () => ({
   renameHousehold: vi.fn(),
   activateHousehold: vi.fn(),
   getHouseholdMembers: vi.fn(),
+  createHouseholdMember: vi.fn(),
   updateHouseholdMember: vi.fn(),
   removeHouseholdMember: vi.fn(),
   leaveHousehold: vi.fn(),
@@ -150,7 +153,7 @@ describe('useUpdateHouseholdMember', () => {
   beforeEach(() => {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     queryClient.setQueryData(MEMBERS_KEY, {
-      members: [{ user_id: 'u2', display_name: null, birth_date: null }],
+      members: [{ id: 'm2', user_id: 'u2', display_name: null, birth_date: null }],
     })
     vi.clearAllMocks()
   })
@@ -161,7 +164,7 @@ describe('useUpdateHouseholdMember', () => {
       wrapper: createWrapper(queryClient),
     })
     await act(async () =>
-      result.current.mutate({ userId: 'u2', payload: { display_name: 'Putri' } })
+      result.current.mutate({ memberId: 'm2', payload: { display_name: 'Putri' } })
     )
     await waitFor(() => expect(result.current.isError).toBe(true))
     expect(queryClient.getQueryData(MEMBERS_KEY).members[0].display_name).toBeNull()
@@ -174,11 +177,35 @@ describe('useUpdateHouseholdMember', () => {
       wrapper: createWrapper(queryClient),
     })
     await act(async () =>
-      result.current.mutate({ userId: 'u2', payload: { display_name: 'Putri' } })
+      result.current.mutate({ memberId: 'm2', payload: { display_name: 'Putri' } })
     )
     expect(queryClient.getQueryData(MEMBERS_KEY).members[0].display_name).toBe('Putri')
-    await act(async () => resolveUpdate({ member: { user_id: 'u2', display_name: 'Putri' } }))
+    await act(async () => resolveUpdate({ member: { id: 'm2', display_name: 'Putri' } }))
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
+  })
+})
+
+describe('useCreateHouseholdMember', () => {
+  it('invalidates the roster and the households list (member_count) on settle', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(MEMBERS_KEY, { members: [{ id: 'm1', user_id: 'u1' }] })
+    queryClient.setQueryData(HOUSEHOLDS_KEY, HOUSEHOLDS)
+    createHouseholdMember.mockResolvedValue({
+      member: { id: 'm9', user_id: null, has_account: false, display_name: 'Adik' },
+    })
+
+    const { result } = renderHook(() => useCreateHouseholdMember('h1'), {
+      wrapper: createWrapper(queryClient),
+    })
+    await act(async () => result.current.mutate({ display_name: 'Adik', birth_date: '2025-03-02' }))
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(createHouseholdMember).toHaveBeenCalledWith('h1', {
+      display_name: 'Adik',
+      birth_date: '2025-03-02',
+    })
+    // Mode B grows the household size — both keys go stale.
+    expect(queryClient.getQueryState(HOUSEHOLDS_KEY).isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(MEMBERS_KEY).isInvalidated).toBe(true)
   })
 })
 
@@ -187,8 +214,8 @@ describe('useRemoveHouseholdMember', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     queryClient.setQueryData(MEMBERS_KEY, {
       members: [
-        { user_id: 'u1', display_name: null },
-        { user_id: 'u2', display_name: 'Putri' },
+        { id: 'm1', user_id: 'u1', display_name: null },
+        { id: 'm2', user_id: 'u2', display_name: 'Putri' },
       ],
     })
     queryClient.setQueryData(HOUSEHOLDS_KEY, HOUSEHOLDS)
@@ -198,15 +225,17 @@ describe('useRemoveHouseholdMember', () => {
     const { result } = renderHook(() => useRemoveHouseholdMember(), {
       wrapper: createWrapper(queryClient),
     })
-    await act(async () => result.current.mutate({ id: 'h1', userId: 'u2' }))
+    await act(async () => result.current.mutate({ id: 'h1', memberId: 'm2', selfUserId: 'u2' }))
     expect(queryClient.getQueryData(MEMBERS_KEY).members).toHaveLength(1)
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(queryClient.getQueryState(HOUSEHOLDS_KEY).isInvalidated).toBe(true)
   })
 
-  it('sweeps the whole cache only when the caller removed themselves', async () => {
+  it('sweeps the whole cache only when the caller removed a member linked to themselves', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    queryClient.setQueryData(MEMBERS_KEY, { members: [{ user_id: 'u2', display_name: 'P' }] })
+    queryClient.setQueryData(MEMBERS_KEY, {
+      members: [{ id: 'm2', user_id: 'u2', display_name: 'P' }],
+    })
     queryClient.setQueryData(HOUSEHOLDS_KEY, HOUSEHOLDS)
     queryClient.setQueryData(['stock'], { stock: [] })
     removeHouseholdMember.mockResolvedValue({ ok: true })
@@ -216,29 +245,32 @@ describe('useRemoveHouseholdMember', () => {
       wrapper: createWrapper(queryClient),
     })
     // Removing someone else: scoped keys only, other views untouched.
-    await act(async () => result.current.mutate({ id: 'h1', userId: 'u2' }))
+    await act(async () => result.current.mutate({ id: 'h1', memberId: 'm2', selfUserId: 'u2' }))
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(queryClient.getQueryState(HOUSEHOLDS_KEY).isInvalidated).toBe(true)
     expect(queryClient.getQueryState(MEMBERS_KEY).isInvalidated).toBe(true)
     expect(queryClient.getQueryState(['stock']).isInvalidated).toBe(false)
 
     // Self-removal (owner removed via API): every household-scoped view
-    // changed for them — the full sweep is justified.
-    await act(async () => result.current.mutate({ id: 'h1', userId: 'u1' }))
+    // changed for them — the full sweep is justified. A profile-only member
+    // (selfUserId: null) can never match, so it never sweeps.
+    await act(async () => result.current.mutate({ id: 'h1', memberId: 'm1', selfUserId: 'u1' }))
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(queryClient.getQueryState(['stock']).isInvalidated).toBe(true)
   })
 
   it('rolls back the removal on failure', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    queryClient.setQueryData(MEMBERS_KEY, { members: [{ user_id: 'u2', display_name: 'Putri' }] })
+    queryClient.setQueryData(MEMBERS_KEY, {
+      members: [{ id: 'm2', user_id: 'u2', display_name: 'Putri' }],
+    })
     removeHouseholdMember.mockRejectedValue(new Error('fail'))
     useMe.mockReturnValue({ data: { user: { id: 'u1' } } })
 
     const { result } = renderHook(() => useRemoveHouseholdMember(), {
       wrapper: createWrapper(queryClient),
     })
-    await act(async () => result.current.mutate({ id: 'h1', userId: 'u2' }))
+    await act(async () => result.current.mutate({ id: 'h1', memberId: 'm2', selfUserId: 'u2' }))
     await waitFor(() => expect(result.current.isError).toBe(true))
     expect(queryClient.getQueryData(MEMBERS_KEY).members).toHaveLength(1)
   })

@@ -210,12 +210,7 @@ describe('households routes', () => {
     // The creator's membership lands in the same batch, as 'owner' (with its
     // own surrogate member id — 0021).
     const membershipInsert = db.log.find((e) => e.sql.startsWith('INSERT INTO household_members'))
-    expect(membershipInsert?.params).toEqual([
-      expect.any(String),
-      body.household.id,
-      'u1',
-      'owner',
-    ])
+    expect(membershipInsert?.params).toEqual([expect.any(String), body.household.id, 'u1', 'owner'])
     // No user_settings write: creating never silently switches households.
     expect(inserted.some((sql) => sql.startsWith('UPDATE user_settings'))).toBe(false)
     // Seeds (locations + stores) ride the same batch as the login flow's.
@@ -410,25 +405,23 @@ describe('households routes', () => {
   })
 
   it('creates a profile-only member as owner with the role forced to member', async () => {
-    setup(
+    setup([
+      [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
       [
-        [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
-        [
-          /SELECT m\.id, m\.user_id[\s\S]*WHERE m\.id = \? AND m\.household_id = \?/,
-          () => ({
-            id: 'm-new',
-            user_id: null,
-            role: 'member',
-            display_name: 'Adik',
-            birth_date: '2025-03-02',
-            joined_at: '2026-11-04 00:00:00',
-            name: null,
-            email: null,
-            picture: null,
-          }),
-        ],
-      ]
-    )
+        /SELECT m\.id, m\.user_id[\s\S]*WHERE m\.id = \? AND m\.household_id = \?/,
+        () => ({
+          id: 'm-new',
+          user_id: null,
+          role: 'member',
+          display_name: 'Adik',
+          birth_date: '2025-03-02',
+          joined_at: '2026-11-04 00:00:00',
+          name: null,
+          email: null,
+          picture: null,
+        }),
+      ],
+    ])
     const res = await householdsApp.request(
       '/api/households/h1/members',
       {
@@ -505,7 +498,10 @@ describe('households routes', () => {
   it('lets a member edit their own profile and normalizes clears to NULL', async () => {
     setup([
       [/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP],
-      [/SELECT id, user_id, role FROM household_members/, () => ({ id: 'm1', user_id: 'u1', role: 'member' })],
+      [
+        /SELECT id, user_id, role FROM household_members/,
+        () => ({ id: 'm1', user_id: 'u1', role: 'member' }),
+      ],
       [
         /SELECT m\.id, m\.user_id[\s\S]*WHERE m\.id = \? AND m\.household_id = \?/,
         () => ({
@@ -740,9 +736,9 @@ describe('households routes', () => {
     )
     expect(res.status).toBe(204)
     const statements = db.log.map((e) => e.sql)
-    expect(statements.filter((sql) => sql.startsWith('DELETE FROM household_members'))).toHaveLength(
-      1
-    )
+    expect(
+      statements.filter((sql) => sql.startsWith('DELETE FROM household_members'))
+    ).toHaveLength(1)
     expect(statements.some((sql) => sql.startsWith('UPDATE user_settings'))).toBe(false)
     expect(statements.some((sql) => sql.startsWith('INSERT INTO households'))).toBe(false)
     expect(statements.some((sql) => sql.startsWith('INSERT INTO household_members'))).toBe(false)
@@ -790,12 +786,7 @@ describe('households routes', () => {
     // No household left -> fresh baseline household, owner membership, seeds.
     expect(db.log.some((e) => e.sql.startsWith('INSERT INTO households'))).toBe(true)
     const membership = db.log.find((e) => e.sql.startsWith('INSERT INTO household_members'))
-    expect(membership?.params).toEqual([
-      expect.any(String),
-      expect.any(String),
-      'u1',
-      'owner',
-    ])
+    expect(membership?.params).toEqual([expect.any(String), expect.any(String), 'u1', 'owner'])
     const settings = db.log.filter((e) =>
       e.sql.startsWith('UPDATE user_settings SET active_household_id = ?')
     )
@@ -900,7 +891,9 @@ describe('households routes', () => {
     // can race. The joined member gets a surrogate id and role member.
     const insert = db.log.find((e) => e.sql.startsWith('INSERT INTO household_members'))
     expect(insert?.params).toEqual([expect.any(String), 'h2', 'u1', 'member'])
-    expect(insert?.sql).toContain('ON CONFLICT (household_id, user_id) WHERE user_id IS NOT NULL DO NOTHING')
+    expect(insert?.sql).toContain(
+      'ON CONFLICT (household_id, user_id) WHERE user_id IS NOT NULL DO NOTHING'
+    )
   })
 
   it('is idempotent for an existing member and answers already_member', async () => {

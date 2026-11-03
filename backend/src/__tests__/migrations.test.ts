@@ -437,7 +437,9 @@ describe('migration 0021: two-mode household members (#388)', () => {
 
     // The rebuild left no scaffold table behind.
     const tables = db
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'household_members%'")
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'household_members%'"
+      )
       .all()
     expect(tables.map((r: Record<string, unknown>) => r.name)).toEqual(['household_members'])
   })
@@ -494,7 +496,9 @@ describe('migration 0021: two-mode household members (#388)', () => {
     const rosterPlan = db
       .prepare('EXPLAIN QUERY PLAN SELECT id FROM household_members WHERE household_id = ?')
       .all('h1')
-    const rosterDetail = rosterPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    const rosterDetail = rosterPlan
+      .map((r: Record<string, unknown>) => String(r.detail))
+      .join(' | ')
     expect(rosterDetail).toContain('idx_household_members_household')
     expect(rosterDetail).not.toMatch(/SCAN|TEMP B-TREE/i)
   })

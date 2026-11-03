@@ -446,7 +446,10 @@ householdsApp.post(
             additionalProperties: false,
             properties: {
               display_name: { type: 'string', minLength: 1, maxLength: 80 },
-              birth_date: { type: 'string', description: 'YYYY-MM-DD' },
+              birth_date: {
+                type: ['string', 'null'],
+                description: 'YYYY-MM-DD, or null when unknown',
+              },
             },
           },
         },

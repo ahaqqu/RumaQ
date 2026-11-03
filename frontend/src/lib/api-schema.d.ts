@@ -732,17 +732,18 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description Lists the members of a household. Members and owners of that household only. */
+    /** @description Lists the members of a household — both linked accounts (has_account=true) and profile-only members without an account (has_account=false, ahaqqu/RumaQ#388). Members and owners of that household only. */
     get: operations['getApiHouseholdsByIdMembers']
     put?: never
-    post?: never
+    /** @description Creates a profile-only member — a person with no user account (e.g. a toddler), identified by display_name plus an optional birth_date. Owner-only; the role is always member and such members never authenticate. They count toward member_count. */
+    post: operations['postApiHouseholdsByIdMembers']
     delete?: never
     options?: never
     head?: never
     patch?: never
     trace?: never
   }
-  '/api/households/{id}/members/{userId}': {
+  '/api/households/{id}/members/{memberId}': {
     parameters: {
       query?: never
       header?: never
@@ -752,12 +753,12 @@ export interface paths {
     get?: never
     put?: never
     post?: never
-    /** @description Removes a member from a household. Owner-only; the household must keep at least one owner (409 otherwise). */
-    delete: operations['deleteApiHouseholdsByIdMembersByUserId']
+    /** @description Removes a member from a household, addressed by member id. Owner-only; the household must keep at least one owner (409 otherwise). Profile-only members are a simple delete; removing a linked member also repoints (or respawns) their session. */
+    delete: operations['deleteApiHouseholdsByIdMembersByMemberId']
     options?: never
     head?: never
-    /** @description Updates a member’s profile fields (display_name, birth_date). Owners may edit anyone; members may edit themselves. Roles are not writable. */
-    patch: operations['patchApiHouseholdsByIdMembersByUserId']
+    /** @description Updates a member’s profile fields (display_name, birth_date), addressed by member id. Owners may edit anyone; a linked member may edit themselves. Profile-only members (has_account=false) are owner-only. Roles are not writable. */
+    patch: operations['patchApiHouseholdsByIdMembersByMemberId']
     trace?: never
   }
   '/api/households/{id}/leave': {
@@ -2967,7 +2968,8 @@ export interface operations {
         content: {
           'application/json': {
             members: {
-              user_id: string
+              id: string
+              user_id: string | null
               /** @enum {string} */
               role: 'owner' | 'member'
               display_name?: string | null
@@ -2976,6 +2978,7 @@ export interface operations {
               name?: string | null
               email?: string | null
               picture?: string | null
+              has_account: boolean
             }[]
           }
         }
@@ -2996,13 +2999,85 @@ export interface operations {
       }
     }
   }
-  deleteApiHouseholdsByIdMembersByUserId: {
+  postApiHouseholdsByIdMembers: {
     parameters: {
       query?: never
       header?: never
       path: {
         id: string
-        userId: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          display_name: string
+          /** @description YYYY-MM-DD, or null when unknown */
+          birth_date?: string | null
+        }
+      }
+    }
+    responses: {
+      /** @description Created */
+      201: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            member: {
+              id: string
+              user_id: string | null
+              /** @enum {string} */
+              role: 'owner' | 'member'
+              display_name?: string | null
+              birth_date?: string | null
+              joined_at: string
+              name?: string | null
+              email?: string | null
+              picture?: string | null
+              has_account: boolean
+            }
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only household owners can do that */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Household not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  deleteApiHouseholdsByIdMembersByMemberId: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+        memberId: string
       }
       cookie?: never
     }
@@ -3045,13 +3120,13 @@ export interface operations {
       }
     }
   }
-  patchApiHouseholdsByIdMembersByUserId: {
+  patchApiHouseholdsByIdMembersByMemberId: {
     parameters: {
       query?: never
       header?: never
       path: {
         id: string
-        userId: string
+        memberId: string
       }
       cookie?: never
     }
@@ -3073,7 +3148,8 @@ export interface operations {
         content: {
           'application/json': {
             member: {
-              user_id: string
+              id: string
+              user_id: string | null
               /** @enum {string} */
               role: 'owner' | 'member'
               display_name?: string | null
@@ -3082,6 +3158,7 @@ export interface operations {
               name?: string | null
               email?: string | null
               picture?: string | null
+              has_account: boolean
             }
           }
         }

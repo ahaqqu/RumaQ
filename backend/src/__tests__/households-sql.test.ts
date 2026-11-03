@@ -245,20 +245,21 @@ describe('two-mode member schema over real SQL (#388)', () => {
     // Several account-less people in one household: fine — NULLs are the
     // whole point of the partial index.
     const profileRows = sqlite
-      .prepare('SELECT COUNT(*) AS cnt FROM household_members WHERE household_id = ? AND user_id IS NULL')
+      .prepare(
+        'SELECT COUNT(*) AS cnt FROM household_members WHERE household_id = ? AND user_id IS NULL'
+      )
       .get('h1') as { cnt: number }
     expect(profileRows.cnt).toBe(2)
 
     // The old PK pair's guarantee survives for LINKED members: a second row
     // for the same (household, user) must be refused by the partial unique
     // index, not by application discipline.
-    expect(
-      () =>
-        sqlite
-          .prepare(
-            'INSERT INTO household_members (id, household_id, user_id, role) VALUES (?, ?, ?, ?)'
-          )
-          .run(crypto.randomUUID(), 'h1', 'u1', 'member')
+    expect(() =>
+      sqlite
+        .prepare(
+          'INSERT INTO household_members (id, household_id, user_id, role) VALUES (?, ?, ?, ?)'
+        )
+        .run(crypto.randomUUID(), 'h1', 'u1', 'member')
     ).toThrow()
 
     // A different household may still hold the same user.
@@ -363,8 +364,7 @@ describe('profile-only member lifecycle over real SQL (#388)', () => {
       createProfileMember(d1, 'h1', 'member', { display_name: 'Adik', birth_date: null })
     ).rejects.toBeInstanceOf(HouseholdForbiddenError)
     expect(
-      (sqlite.prepare('SELECT COUNT(*) AS cnt FROM household_members').get() as { cnt: number })
-        .cnt
+      (sqlite.prepare('SELECT COUNT(*) AS cnt FROM household_members').get() as { cnt: number }).cnt
     ).toBe(2)
 
     const row = await createProfileMember(d1, 'h1', 'owner', {
@@ -410,9 +410,9 @@ describe('profile-only member lifecycle over real SQL (#388)', () => {
       .prepare('SELECT active_household_id FROM user_settings WHERE user_id = ?')
       .get('owner') as { active_household_id: string }
     expect(settings.active_household_id).toBe('h1')
-    const householdCount = sqlite
-      .prepare('SELECT COUNT(*) AS cnt FROM households')
-      .get() as { cnt: number }
+    const householdCount = sqlite.prepare('SELECT COUNT(*) AS cnt FROM households').get() as {
+      cnt: number
+    }
     expect(householdCount.cnt).toBe(1)
   })
 
@@ -433,8 +433,7 @@ describe('profile-only member lifecycle over real SQL (#388)', () => {
     ).rejects.toBeInstanceOf(LastOwnerError)
     // The 409 fired before any write: both members still present.
     expect(
-      (sqlite.prepare('SELECT COUNT(*) AS cnt FROM household_members').get() as { cnt: number })
-        .cnt
+      (sqlite.prepare('SELECT COUNT(*) AS cnt FROM household_members').get() as { cnt: number }).cnt
     ).toBe(2)
 
     await expect(removeMember(d1, 'h1', 'owner', 'no-such-member')).rejects.toBeInstanceOf(

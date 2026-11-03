@@ -422,22 +422,37 @@ export function getHouseholdMembers(id: string, signal?: AbortSignal): Promise<u
   return unwrap(client.GET('/api/households/{id}/members', { params: { path: { id } }, signal }))
 }
 
+// Profile-only member creation (ahaqqu/RumaQ#388): a person with no account —
+// display_name is the identity, birth_date optional. Owner-only server-side.
+export function createHouseholdMember(
+  id: string,
+  payload: { display_name: string; birth_date?: string | null }
+): Promise<unknown> {
+  return unwrap(
+    client.POST('/api/households/{id}/members', { params: { path: { id } }, body: payload })
+  )
+}
+
+// Member-addressed surfaces take the surrogate member id (0021) — profile-only
+// members have no user_id to key on.
 export function updateHouseholdMember(
   id: string,
-  userId: string,
+  memberId: string,
   payload: { display_name?: string | null; birth_date?: string | null }
 ): Promise<unknown> {
   return unwrap(
-    client.PATCH('/api/households/{id}/members/{userId}', {
-      params: { path: { id, userId } },
+    client.PATCH('/api/households/{id}/members/{memberId}', {
+      params: { path: { id, memberId } },
       body: payload,
     })
   )
 }
 
-export function removeHouseholdMember(id: string, userId: string): Promise<unknown> {
+export function removeHouseholdMember(id: string, memberId: string): Promise<unknown> {
   return unwrap(
-    client.DELETE('/api/households/{id}/members/{userId}', { params: { path: { id, userId } } })
+    client.DELETE('/api/households/{id}/members/{memberId}', {
+      params: { path: { id, memberId } },
+    })
   )
 }
 

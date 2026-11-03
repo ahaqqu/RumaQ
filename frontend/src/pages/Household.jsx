@@ -8,6 +8,7 @@ import {
   useRenameHousehold,
   useActivateHousehold,
   useHouseholdMembers,
+  useCreateHouseholdMember,
   useUpdateHouseholdMember,
   useRemoveHouseholdMember,
   useLeaveHousehold,
@@ -92,6 +93,8 @@ function InlineField({ label, ...props }) {
 
 // One member row: identity, role chip, joined date, and the profile/remove
 // affordances (profile: self always, owners for anyone; remove: owners only).
+// Profile-only members (#388, has_account=false) carry a "no account" chip —
+// they have no email/picture, display_name is their identity.
 function MemberRow({ member, isSelf, canRemove, onEdit, onRemove, editOpen, children, language }) {
   const { t, i18n } = useTranslation()
   const name = member.display_name || member.name || member.email || member.user_id
@@ -106,19 +109,17 @@ function MemberRow({ member, isSelf, canRemove, onEdit, onRemove, editOpen, chil
           </div>
           <div className="text-sm text-text-muted truncate">
             {member.email}
-            {member.joined_at && (
-              <>
-                {' · '}
-                {t('household.joined', {
-                  date: formatDate(member.joined_at, i18n.language) ?? member.joined_at,
-                })}
-              </>
-            )}
+            {member.email && member.joined_at && ' · '}
+            {member.joined_at &&
+              t('household.joined', {
+                date: formatDate(member.joined_at, i18n.language) ?? member.joined_at,
+              })}
           </div>
         </div>
         <Chip variant={member.role === 'owner' ? 'accent' : 'default'}>
           {member.role === 'owner' ? t('household.roleOwner') : t('household.roleMember')}
         </Chip>
+        {member.has_account === false && <Chip>{t('household.noAccount')}</Chip>}
         <div className="flex items-center gap-1.5 shrink-0">
           {(isSelf || canRemove) && (
             <Button size="sm" variant="ghost" onClick={onEdit} aria-expanded={editOpen}>
@@ -175,6 +176,7 @@ export function Household() {
 
   const { data: membersData, isLoading: membersLoading } = useHouseholdMembers(activeId)
   const members = membersData?.members ?? []
+  const createMember = useCreateHouseholdMember(activeId)
   const updateMember = useUpdateHouseholdMember(activeId)
   const removeMember = useRemoveHouseholdMember()
 
@@ -183,8 +185,14 @@ export function Household() {
   const invite = inviteData?.invite ?? null
   const [copied, setCopied] = useState(false)
 
-  const [editingUserId, setEditingUserId] = useState(null)
+  // Add person (#388): two modes — invite an existing user (the share-code
+  // flow) or add a profile-only member with no account (a toddler).
+  const [addMode, setAddMode] = useState('invite')
   const [profileDraft, setProfileDraft] = useState({ display_name: '', birth_date: '' })
+
+  // Member-addressed edits key on the surrogate member id — profile-only
+  // members have no user_id.
+  const [editingMemberId, setEditingMemberId] = useState(null)
   // Rename is an inline field in the identity card (review B4) — no
   // window.prompt; the remove/leave confirms stay as noted debt.
   const [renaming, setRenaming] = useState(false)
@@ -201,7 +209,7 @@ export function Household() {
   const ownerCount = members.filter((m) => m.role === 'owner').length
 
   const openEdit = (member) => {
-    setEditingUserId(member.user_id)
+    setEditingMemberId(member.id)
     setProfileDraft({
       display_name: member.display_name ?? '',
       birth_date: member.birth_date ?? '',
@@ -210,10 +218,28 @@ export function Household() {
 
   const saveProfile = () => {
     updateMember.mutate(
-      { userId: editingUserId, payload: profileDraft },
+      { memberId: editingMemberId, payload: profileDraft },
       {
         onSuccess: () => {
-          setEditingUserId(null)
+          setEditingMemberId(null)
+          setActionError(null)
+        },
+        onError: (err) => setActionError(t(householdErrorKey(err))),
+      }
+    )
+  }
+
+  const addProfile = () => {
+    const displayName = profileDraft.display_name.trim()
+    if (!displayName) return
+    createMember.mutate(
+      { display_name: displayName, birth_date: profileDraft.birth_date || null },
+      {
+        onSuccess: (data) => {
+          setProfileDraft({ display_name: '', birth_date: '' })
+          setFeedback(
+            t('household.profileAdded', { name: data?.member?.display_name ?? displayName })
+          )
           setActionError(null)
         },
         onError: (err) => setActionError(t(householdErrorKey(err))),
@@ -225,7 +251,9 @@ export function Household() {
     const name = member.display_name || member.name || member.email
     if (!window.confirm(t('household.removeConfirm', { name }))) return
     removeMember.mutate(
-      { id: activeId, userId: member.user_id },
+      // selfUserId rides along so the hook can sweep the whole cache when a
+      // member linked to the caller is removed (profile-only rows never are).
+      { id: activeId, memberId: member.id, selfUserId: member.user_id },
       { onError: (err) => setActionError(t(householdErrorKey(err))) }
     )
   }
@@ -419,14 +447,14 @@ export function Household() {
           <div>
             {members.map((member) => (
               <MemberRow
-                key={member.user_id}
+                key={member.id ?? member.user_id}
                 member={member}
-                isSelf={member.user_id === userId}
+                isSelf={member.user_id !== null && member.user_id === userId}
                 canRemove={isOwner}
-                editOpen={editingUserId === member.user_id}
+                editOpen={editingMemberId === member.id}
                 language={i18n.language}
                 onEdit={() =>
-                  editingUserId === member.user_id ? setEditingUserId(null) : openEdit(member)
+                  editingMemberId === member.id ? setEditingMemberId(null) : openEdit(member)
                 }
                 onRemove={() => confirmRemove(member)}
               >
@@ -457,55 +485,103 @@ export function Household() {
         )}
       </Panel>
 
-      {/* Invite (owners) — v1 share-code invite: code + wrapped link, no email. */}
+      {/* Add person (owners) — two modes (#388): invite an existing user
+          (the current share-code flow) or add a profile-only member with no
+          account. Mode chips act as the segmented control. */}
       {isOwner && (
         <Panel>
           <PanelHead>
-            <div className="font-semibold">{t('household.inviteTitle')}</div>
-            {invite && (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => createInvite.mutate()}
-                disabled={createInvite.isPending}
+            <div className="font-semibold">{t('household.addPersonTitle')}</div>
+            <div className="flex items-center gap-2">
+              <Chip
+                variant="filter"
+                pressed={addMode === 'invite'}
+                onClick={() => setAddMode('invite')}
+                role="tab"
+                aria-selected={addMode === 'invite'}
               >
-                <IconRefresh size={15} /> {t('household.inviteRegenerate')}
-              </Button>
-            )}
+                {t('household.modeInvite')}
+              </Chip>
+              <Chip
+                variant="filter"
+                pressed={addMode === 'profile'}
+                onClick={() => setAddMode('profile')}
+                role="tab"
+                aria-selected={addMode === 'profile'}
+              >
+                {t('household.modeProfile')}
+              </Chip>
+            </div>
           </PanelHead>
-          <PanelBody className="flex flex-col gap-3">
-            <p className="text-sm text-text-muted">{t('household.inviteHint')}</p>
-            {invite ? (
-              <div className="flex flex-wrap items-center gap-3">
-                <code
-                  className="px-4 py-2.5 rounded-lg bg-surface-inset text-lg font-bold tracking-[0.2em] select-all"
-                  data-testid="invite-code"
-                >
-                  {invite.code}
-                </code>
-                <Button size="sm" variant="secondary" onClick={copyInvite}>
-                  {copied ? <IconCheck size={15} /> : <IconCopy size={15} />}
-                  {copied ? t('household.inviteCopied') : t('household.inviteCopy')}
-                </Button>
-                <span className="text-xs text-text-muted">
-                  {t('household.inviteExpires', {
-                    date: formatDate(invite.expires_at, i18n.language) ?? invite.expires_at,
-                  })}
-                </span>
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-sm text-text-muted">{t('household.inviteNone')}</span>
+          {addMode === 'profile' ? (
+            <PanelBody className="flex flex-col gap-3">
+              <p className="text-sm text-text-muted">{t('household.profileHint')}</p>
+              <div className="flex flex-wrap items-end gap-3">
+                <InlineField
+                  label={t('household.displayName')}
+                  value={profileDraft.display_name}
+                  maxLength={80}
+                  placeholder={t('household.displayNamePlaceholder')}
+                  onChange={(e) => setProfileDraft((d) => ({ ...d, display_name: e.target.value }))}
+                />
+                <InlineField
+                  label={t('household.birthDate')}
+                  type="date"
+                  value={profileDraft.birth_date}
+                  onChange={(e) => setProfileDraft((d) => ({ ...d, birth_date: e.target.value }))}
+                />
                 <Button
                   size="sm"
-                  onClick={() => createInvite.mutate()}
-                  disabled={createInvite.isPending}
+                  onClick={addProfile}
+                  disabled={createMember.isPending || !profileDraft.display_name.trim()}
                 >
-                  <IconPlus size={15} /> {t('household.inviteGenerate')}
+                  <IconPlus size={15} /> {t('household.profileAdd')}
                 </Button>
               </div>
-            )}
-          </PanelBody>
+            </PanelBody>
+          ) : (
+            <PanelBody className="flex flex-col gap-3">
+              <p className="text-sm text-text-muted">{t('household.inviteHint')}</p>
+              {invite ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <code
+                    className="px-4 py-2.5 rounded-lg bg-surface-inset text-lg font-bold tracking-[0.2em] select-all"
+                    data-testid="invite-code"
+                  >
+                    {invite.code}
+                  </code>
+                  <Button size="sm" variant="secondary" onClick={copyInvite}>
+                    {copied ? <IconCheck size={15} /> : <IconCopy size={15} />}
+                    {copied ? t('household.inviteCopied') : t('household.inviteCopy')}
+                  </Button>
+                  <span className="text-xs text-text-muted">
+                    {t('household.inviteExpires', {
+                      date: formatDate(invite.expires_at, i18n.language) ?? invite.expires_at,
+                    })}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => createInvite.mutate()}
+                    disabled={createInvite.isPending}
+                  >
+                    <IconRefresh size={15} /> {t('household.inviteRegenerate')}
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-sm text-text-muted">{t('household.inviteNone')}</span>
+                  <Button
+                    size="sm"
+                    onClick={() => createInvite.mutate()}
+                    disabled={createInvite.isPending}
+                  >
+                    <IconPlus size={15} /> {t('household.inviteGenerate')}
+                  </Button>
+                </div>
+              )}
+            </PanelBody>
+          )}
         </Panel>
       )}
 

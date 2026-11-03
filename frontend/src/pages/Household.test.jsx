@@ -30,6 +30,7 @@ vi.mock('../lib/queries/index.js', () => ({
   useRenameHousehold: vi.fn(),
   useActivateHousehold: vi.fn(),
   useHouseholdMembers: vi.fn(),
+  useCreateHouseholdMember: vi.fn(),
   useUpdateHouseholdMember: vi.fn(),
   useRemoveHouseholdMember: vi.fn(),
   useLeaveHousehold: vi.fn(),
@@ -46,6 +47,7 @@ import {
   useRenameHousehold,
   useActivateHousehold,
   useHouseholdMembers,
+  useCreateHouseholdMember,
   useUpdateHouseholdMember,
   useRemoveHouseholdMember,
   useLeaveHousehold,
@@ -68,7 +70,9 @@ const OWNER_HOUSEHOLDS = {
 const MEMBERS = {
   members: [
     {
+      id: 'm1',
       user_id: 'u1',
+      has_account: true,
       role: 'owner',
       display_name: null,
       birth_date: null,
@@ -78,7 +82,9 @@ const MEMBERS = {
       picture: null,
     },
     {
+      id: 'm2',
       user_id: 'u2',
+      has_account: true,
       role: 'member',
       display_name: 'Putri',
       birth_date: '2024-05-01',
@@ -110,6 +116,11 @@ function findButton(container, label) {
   )
 }
 
+// The Add person mode toggle renders as Chips (spans), not buttons.
+function findChip(container, label) {
+  return [...container.querySelectorAll('span')].find((chip) => chip.textContent.includes(label))
+}
+
 describe('Household', () => {
   beforeEach(() => {
     mockSearch = {}
@@ -120,6 +131,7 @@ describe('Household', () => {
     vi.mocked(useCreateHousehold).mockReturnValue(mutation())
     vi.mocked(useRenameHousehold).mockReturnValue(mutation())
     vi.mocked(useActivateHousehold).mockReturnValue(mutation())
+    vi.mocked(useCreateHouseholdMember).mockReturnValue(mutation())
     vi.mocked(useUpdateHouseholdMember).mockReturnValue(mutation())
     vi.mocked(useRemoveHouseholdMember).mockReturnValue(mutation())
     vi.mocked(useLeaveHousehold).mockReturnValue(mutation())
@@ -138,9 +150,9 @@ describe('Household', () => {
     expect(container.textContent).toContain('household.roleMember')
   })
 
-  it('shows the invite panel only to owners', () => {
+  it('shows the Add person panel only to owners', () => {
     const { container } = renderHousehold()
-    expect(container.textContent).toContain('household.inviteTitle')
+    expect(container.textContent).toContain('household.addPersonTitle')
 
     vi.mocked(useHouseholds).mockReturnValue({
       data: {
@@ -151,7 +163,57 @@ describe('Household', () => {
       isLoading: false,
     })
     const memberView = renderHousehold()
-    expect(memberView.container.textContent).not.toContain('household.inviteTitle')
+    expect(memberView.container.textContent).not.toContain('household.addPersonTitle')
+  })
+
+  it('defaults the Add person flow to the invite mode (the current flow)', () => {
+    const { container } = renderHousehold()
+    expect(container.textContent).toContain('household.inviteHint')
+    expect(findButton(container, 'household.inviteGenerate')).toBeTruthy()
+    // The profile form is not open in the invite mode.
+    expect(container.textContent).not.toContain('household.profileHint')
+  })
+
+  it('adds a profile-only member through the Add person profile mode', () => {
+    const createMemberMutation = mutation()
+    vi.mocked(useCreateHouseholdMember).mockReturnValue(createMemberMutation)
+    const { container } = renderHousehold()
+    fireEvent.click(findChip(container, 'household.modeProfile'))
+    const nameInput = container.querySelector('input[maxlength="80"]')
+    fireEvent.change(nameInput, { target: { value: '  Adik  ' } })
+    const dateInput = container.querySelector('input[type="date"]')
+    fireEvent.change(dateInput, { target: { value: '2025-03-02' } })
+    fireEvent.click(findButton(container, 'household.profileAdd'))
+    expect(createMemberMutation.mutate).toHaveBeenCalledWith(
+      { display_name: 'Adik', birth_date: '2025-03-02' },
+      expect.anything()
+    )
+  })
+
+  it('renders profile-only members with the no-account chip and no email line', () => {
+    vi.mocked(useHouseholdMembers).mockReturnValue({
+      data: {
+        members: [
+          ...MEMBERS.members,
+          {
+            id: 'm9',
+            user_id: null,
+            has_account: false,
+            role: 'member',
+            display_name: 'Adik',
+            birth_date: '2025-03-02',
+            joined_at: '2026-11-03 00:00:00',
+            name: null,
+            email: null,
+            picture: null,
+          },
+        ],
+      },
+      isLoading: false,
+    })
+    const { container } = renderHousehold()
+    expect(container.textContent).toContain('Adik')
+    expect(container.textContent).toContain('household.noAccount')
   })
 
   it('generates an invite code when the owner asks for one', () => {
@@ -213,8 +275,9 @@ describe('Household', () => {
     const nameInput = container.querySelector('input[maxlength="80"]')
     fireEvent.change(nameInput, { target: { value: 'Mama' } })
     fireEvent.click(findButton(container, 'household.saveProfile'))
+    // Member-addressed edits key on the surrogate member id (#388).
     expect(updateMutation.mutate).toHaveBeenCalledWith(
-      { userId: 'u1', payload: { display_name: 'Mama', birth_date: '' } },
+      { memberId: 'm1', payload: { display_name: 'Mama', birth_date: '' } },
       expect.anything()
     )
   })
@@ -231,7 +294,7 @@ describe('Household', () => {
     fireEvent.click(removeButton)
     expect(window.confirm).toHaveBeenCalled()
     expect(removeMutation.mutate).toHaveBeenCalledWith(
-      { id: 'h1', userId: 'u2' },
+      { id: 'h1', memberId: 'm2', selfUserId: 'u2' },
       expect.anything()
     )
   })
