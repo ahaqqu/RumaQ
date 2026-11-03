@@ -1,0 +1,153 @@
+name: D1 backup
+
+# Scheduled D1 -> R2 backup (ahaqqu/RumaQ#342, docs/plan/d1-backup.md):
+# export via the D1 REST API, upload into the private rumaq-receipts bucket
+# under backups/<db>/<WIB-date>/dump.sql, prune retention (14 daily + 4
+# weekly), and raise/close a `backup-failure` issue like smoke.yml does.
+#
+# Cron is 20:07 UTC = 03:07 WIB: off-peak, captures the previous WIB day's
+# writes, and avoids smoke.yml (tops of 00/06/12/18 UTC), the Worker's
+# 03:17 UTC retention cron and audit.yml (07:00 UTC). workflow_dispatch
+# allows manual runs/drills. Failures are fail-loud: they open a
+# `backup-failure` issue naming the likely cause instead of skipping.
+#
+# The three CLOUDFLARE_* secrets already ship for deploy.yml; if the token's
+# grant set turns out to be incomplete (D1 Edit / R2 Storage Edit), the first
+# failed run opens a ticket and docs/plan/d1-backup.md §9 lists the owner
+# fix (rotate grants, or set BACKUP_CLOUDFLARE_API_TOKEN — preferred by this
+# workflow when present).
+
+on:
+  schedule:
+    - cron: '7 20 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fail loud on missing credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BACKUP_CLOUDFLARE_API_TOKEN: ${{ secrets.BACKUP_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
+        run: |
+          missing=0
+          for v in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_DATABASE_ID; do
+            if [[ -z "${!v:-}" ]]; then
+              echo "::error title=Missing secret::$v is not set — the backup cannot run"
+              missing=1
+            fi
+          done
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" && -z "${BACKUP_CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "::error title=Missing secret::CLOUDFLARE_API_TOKEN (or BACKUP_CLOUDFLARE_API_TOKEN) is not set — the backup cannot run"
+            missing=1
+          fi
+          if [[ $missing -ne 0 ]]; then
+            echo "The fix is documented in docs/plan/d1-backup.md §9 (Option A: rotate the deploy token's grants; Option B: gh secret set BACKUP_CLOUDFLARE_API_TOKEN)."
+            exit 1
+          fi
+
+      - name: Export D1 to R2 and prune retention
+        # export-d1.sh verifies the downloaded dump with the restore-drill
+        # canaries BEFORE uploading: a broken export fails this run (→ the
+        # backup-failure ticket below) instead of replacing a good backup
+        # with a green-but-unrestorable dump that would sit unnoticed until
+        # the monthly drill. Retention pruning runs only on the success path.
+        run: ./scripts/backup/export-d1.sh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BACKUP_CLOUDFLARE_API_TOKEN: ${{ secrets.BACKUP_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
+          # Empty (unset) vars fall back to the script defaults (rumaq /
+          # rumaq-receipts); set them as Actions variables to override.
+          D1_DATABASE_NAME: ${{ vars.D1_DATABASE_NAME }}
+          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+
+      - name: Close resolved issues
+        # The open/close-issue steps mirror smoke.yml verbatim (smoke-failure
+        # ↔ backup-failure). When a third workflow needs this pattern,
+        # extract a composite action instead of a fourth copy (review B2).
+        if: success()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const api = { headers: { 'X-GitHub-Api-Version': '2022-11-28' } }
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'backup-failure',
+              per_page: 100,
+              ...api,
+            })
+
+            const stale = issues.filter(i => i.title.startsWith('D1 backup failure'))
+            for (const issue of stale) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'completed',
+                ...api,
+              })
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: 'D1 backup succeeded (export + R2 upload + retention prune) — resolved. Closing.',
+                ...api,
+              })
+            }
+            console.log(`Closed ${stale.length} resolved issue(s)`)
+
+      - name: Create issue on failure
+        if: failure()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const api = { headers: { 'X-GitHub-Api-Version': '2022-11-28' } }
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'backup-failure',
+              state: 'open',
+              ...api,
+            })
+
+            const now = new Date().toISOString().slice(0, 10)
+            const title = `D1 backup failure — ${now}`
+            const existing = issues.find(i => i.title === title)
+
+            if (existing) {
+              console.log(`Issue #${existing.number} already exists`)
+              return
+            }
+
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: `D1 backup failed (export, R2 upload, or retention prune).\n\n[View failed run](${runUrl})\n\n**Likely causes:**\n` +
+                `- Missing or incomplete API-token grants — the token needs D1 Edit + Workers R2 Storage Edit (check the failed step's error)\n` +
+                `- Export did not complete within the bounded poll window (10 min)\n` +
+                `- R2 upload rejected\n\n` +
+                `**Fix:** docs/plan/d1-backup.md §7 (runbook) and §9 (owner actions).\n\n` +
+                `**Data-safety note:** a failed run never deletes previous dumps — retention pruning runs only on the success path.`,
+              labels: ['backup-failure'],
+              ...api,
+            })
