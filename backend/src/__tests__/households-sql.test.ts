@@ -26,6 +26,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { ACTIVE_HOUSEHOLD_SQL, signJwt } from '../auth.js'
+import { sha256Hex } from '../lib/crypto.js'
 import {
   leaveHousehold,
   removeMember,
@@ -726,6 +727,11 @@ describe('targeted invite attach over real SQL (#397)', () => {
   it('refuses targets that are unknown, foreign, or already linked — before rotating codes', async () => {
     addProfileMember(sqlite, 'h1', 'Adik', null, '2026-11-01 00:00:00')
 
+    // A pre-existing live invite the refusals must NOT disturb (review B3):
+    // validation runs before the rotation batch, so the household's current
+    // code survives every refusal untouched.
+    const live = await createInvite(d1, 'h1', 'owner', 'test-enc-key')
+
     // A linked member of the same household cannot be "attached later" —
     // the owner's own row is the linked target.
     const linkedId = memberIdOf(sqlite, 'h1', 'owner')
@@ -743,12 +749,51 @@ describe('targeted invite attach over real SQL (#397)', () => {
       InvalidInviteTargetError
     )
 
-    // The refusals ran before the rotation batch: the household still has its
-    // one plain invite, and no new code row exists.
+    // No new code row exists, and the pre-existing one is still live —
+    // un-revoked, still the active invite, still redeemable.
     const invites = sqlite
       .prepare('SELECT COUNT(*) AS cnt FROM household_invites WHERE household_id = ?')
       .get('h1') as { cnt: number }
-    expect(invites.cnt).toBe(0)
+    expect(invites.cnt).toBe(1)
+    const stored = sqlite
+      .prepare('SELECT revoked_at FROM household_invites WHERE id = ?')
+      .get(live.id) as { revoked_at: string | null }
+    expect(stored.revoked_at).toBeNull()
+    await expect(getActiveInvite(d1, 'h1', 'test-enc-key')).resolves.toMatchObject({
+      id: live.id,
+    })
+  })
+
+  // The attach UPDATE is self-contained (review A1): household_id is bound
+  // alongside id. 0023's FK checks only that the target member EXISTS, not
+  // that it belongs to the invite's household — so drifted data (planted here
+  // with a direct SQL insert) must fail closed: the guarded UPDATE matches no
+  // row and the redeem is a typed conflict, never a cross-household attach.
+  it('cannot attach a member of another household even when invite data drifts', async () => {
+    createHouseholdRow(sqlite, 'h2', 'Rumah Kedua', 'owner')
+    const foreignId = addProfileMember(sqlite, 'h2', 'Sepupu', null, '2026-11-01 00:00:00')
+    // The drift: an invite in h1 whose mark names an h2 member. The FK alone
+    // would allow it — exactly the hole the household_id guard closes.
+    sqlite
+      .prepare(
+        `INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at, target_member_id)
+         VALUES ('inv-drift', 'h1', ?, 'enc', 'owner', datetime('now', '+7 days'), ?)`
+      )
+      .run(await sha256Hex('ABC2345678'), foreignId)
+
+    await expect(joinByCode(d1, 'joiner', 'ABC2345678')).rejects.toBeInstanceOf(
+      InviteTargetConflictError
+    )
+    // The foreign row is untouched, and no membership exists anywhere for
+    // the redeemer — the attach never crossed households.
+    const foreign = sqlite
+      .prepare('SELECT user_id, household_id FROM household_members WHERE id = ?')
+      .get(foreignId) as { user_id: string | null; household_id: string }
+    expect(foreign).toMatchObject({ user_id: null, household_id: 'h2' })
+    const memberships = sqlite
+      .prepare('SELECT COUNT(*) AS cnt FROM household_members WHERE user_id = ?')
+      .get('joiner') as { cnt: number }
+    expect(memberships.cnt).toBe(0)
   })
 
   it('keeps plain invites bit-identical: NULL target, insert path, reveal shape', async () => {

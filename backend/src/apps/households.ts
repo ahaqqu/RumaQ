@@ -89,9 +89,11 @@ const joinSchema = object({
 // one profile-only member; no field (or explicit null) = today's plain
 // invite. strictObject like the member schemas; every field optional so a
 // bodyless POST (today's clients, no Content-Type) still validates — Hono
-// skips JSON parsing without a JSON Content-Type and validates {}.
+// skips JSON parsing without a JSON Content-Type and validates {}. The id cap
+// (64) matches documents.ts's memberId bound — it covers both id formats the
+// member table stores (dashed UUID, 0021's 32-hex backfill).
 const inviteCreateSchema = strictObject({
-  target_member_id: optional(union([pipe(string(), minLength(1)), vnull()])),
+  target_member_id: optional(union([pipe(string(), minLength(1), maxLength(64)), vnull()])),
 })
 
 // Household summaries ride the shared member/Household shape; nullable fields
@@ -700,6 +702,7 @@ householdsApp.post(
             properties: {
               target_member_id: {
                 type: ['string', 'null'],
+                maxLength: 64,
                 description:
                   'A profile-only member (has_account=false) of this household to mark the invite for; omit or null for a plain invite',
               },

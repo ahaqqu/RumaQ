@@ -3305,6 +3305,7 @@
                 "properties": {
                   "target_member_id": {
                     "type": ["string", "null"],
+                    "maxLength": 64,
                     "description": "A profile-only member (has_account=false) of this household to mark the invite for; omit or null for a plain invite"
                   }
                 }

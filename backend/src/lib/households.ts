@@ -734,10 +734,14 @@ export async function joinByCode(
 }
 
 // The targeted-invite attach (#397): `UPDATE ... SET user_id = ? WHERE id = ?
-// AND user_id IS NULL` preserves the row's id, display_name, and birth_date —
-// that identity preservation is what the surrogate id (0021) bought. One
-// statement, like the plain join path's single insert. The guards make every
-// race a typed answer instead of a partial-index 500:
+// AND household_id = ? AND user_id IS NULL` preserves the row's id,
+// display_name, and birth_date — that identity preservation is what the
+// surrogate id (0021) bought. The UPDATE is SELF-CONTAINED: household_id is
+// bound alongside id, so a drifted invite (0023's FK checks only that the
+// target member exists, not that it belongs to the invite's household) can
+// never attach a member of a DIFFERENT household. One statement, like the
+// plain join path's single insert. The guards make every race a typed answer
+// instead of a partial-index 500:
 //   - pre-check first: a redeemer ALREADY linked in this household (any row
 //     with their user_id) gets the plain flow's already_member answer — the
 //     idempotent double-redeem, and the only thing standing between a
@@ -765,13 +769,13 @@ async function attachRedeemer(
   const result = await db
     .prepare(
       `UPDATE household_members SET user_id = ?
-        WHERE id = ? AND user_id IS NULL
+        WHERE id = ? AND household_id = ? AND user_id IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM household_members hm
              WHERE hm.household_id = ? AND hm.user_id = ?
           )`
     )
-    .bind(userId, targetMemberId, household.id, userId)
+    .bind(userId, targetMemberId, household.id, household.id, userId)
     .run()
   // meta.changes === 0 means no row matched (the target was claimed meanwhile);
   // undefined (mocked D1 in unit tests) counts as attached.

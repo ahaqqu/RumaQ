@@ -1099,8 +1099,10 @@ describe('households routes', () => {
     // No INSERT may run on the attach branch — the row already exists.
     expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_members'))).toBe(false)
     const update = db.log.find((e) => e.sql.startsWith('UPDATE household_members SET user_id'))
-    expect(update?.params).toEqual(['u1', 'm-tgt', 'h2', 'u1'])
-    expect(update?.sql).toContain('user_id IS NULL')
+    // Self-contained guard (review A1): household_id is bound alongside id,
+    // so the attach can never reach outside the invite's household.
+    expect(update?.params).toEqual(['u1', 'm-tgt', 'h2', 'h2', 'u1'])
+    expect(update?.sql).toContain('household_id = ? AND user_id IS NULL')
     expect(update?.sql).toContain('NOT EXISTS')
   })
 
