@@ -116,9 +116,12 @@ function findButton(container, label) {
   )
 }
 
-// The Add person mode toggle renders as Chips (spans), not buttons.
+// The Add person mode chips are real toggle buttons (#404): aria-pressed
+// carries the selected state.
 function findChip(container, label) {
-  return [...container.querySelectorAll('span')].find((chip) => chip.textContent.includes(label))
+  return [...container.querySelectorAll('button[aria-pressed]')].find((chip) =>
+    chip.textContent.includes(label)
+  )
 }
 
 describe('Household', () => {
@@ -178,7 +181,12 @@ describe('Household', () => {
     const createMemberMutation = mutation()
     vi.mocked(useCreateHouseholdMember).mockReturnValue(createMemberMutation)
     const { container } = renderHousehold()
+    // Mode chips are toggle buttons: invite starts pressed, profile flips it.
+    expect(findChip(container, 'household.modeInvite').getAttribute('aria-pressed')).toBe('true')
+    expect(findChip(container, 'household.modeProfile').getAttribute('aria-pressed')).toBe('false')
     fireEvent.click(findChip(container, 'household.modeProfile'))
+    expect(findChip(container, 'household.modeInvite').getAttribute('aria-pressed')).toBe('false')
+    expect(findChip(container, 'household.modeProfile').getAttribute('aria-pressed')).toBe('true')
     const nameInput = container.querySelector('input[maxlength="80"]')
     fireEvent.change(nameInput, { target: { value: '  Adik  ' } })
     const dateInput = container.querySelector('input[type="date"]')

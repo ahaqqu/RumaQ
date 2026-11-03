@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
-import { render } from '@testing-library/react'
+import { render, fireEvent } from '@testing-library/react'
 import React from 'react'
 import {
   LocChip,
@@ -10,6 +10,7 @@ import {
   MetaItem,
   IconPin,
 } from './ui.jsx'
+import { Chip } from './Chip.jsx'
 
 // The global test-setup t() mock returns raw keys; these tests assert the
 // rendered token counts, so resolve en.json and interpolate like i18next.
@@ -38,6 +39,44 @@ describe('LocChip', () => {
   it('renders location name', () => {
     const { container } = render(React.createElement(LocChip, { loc: 'Kulkas' }))
     expect(container.textContent).toContain('Kulkas')
+  })
+})
+
+describe('Chip', () => {
+  it('renders an interactive chip as a toggle button with aria-pressed (#404)', () => {
+    const onClick = vi.fn()
+    const { container, rerender } = render(
+      React.createElement(
+        Chip,
+        { variant: 'filter', pressed: false, onClick },
+        'documents.category.ktp'
+      )
+    )
+    const button = container.querySelector('button')
+    expect(button).toBeTruthy()
+    expect(button.tagName).toBe('BUTTON')
+    expect(button.getAttribute('type')).toBe('button')
+    expect(button.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(button)
+    expect(onClick).toHaveBeenCalledTimes(1)
+
+    rerender(
+      React.createElement(
+        Chip,
+        { variant: 'filter', pressed: true, onClick },
+        'documents.category.ktp'
+      )
+    )
+    expect(container.querySelector('button').getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('keeps static chips (no onClick) as non-focusable span badges', () => {
+    const { container } = render(React.createElement(Chip, { variant: 'loc' }, 'Kulkas'))
+    expect(container.querySelector('span')).toBeTruthy()
+    expect(container.querySelector('button')).toBeNull()
+    // The span variant must never carry toggle state — it is not a control.
+    expect(container.querySelector('[aria-pressed]')).toBeNull()
   })
 })
 
