@@ -25,7 +25,7 @@
 - Cross-bucket / second-region copies of R2 objects (receipts & document bytes
   stay on R2's built-in durability; noted as future work in §10).
 - Continuous replication, read replicas, sharding.
-- Automated restore *into production* — that stays a human-run runbook (§7).
+- Automated restore _into production_ — that stays a human-run runbook (§7).
 - R2 lifecycle-rule backstop — the export script prunes; a `backups/`-prefix
   lifecycle rule is listed as an optional owner hardening step (§9).
 
@@ -33,16 +33,16 @@
 
 ## 2. What already exists (evidence base)
 
-| Fact | Evidence |
-| --- | --- |
-| D1 has built-in PITR ("Time Travel"): restore to any minute within the last **30 days** (Workers Paid) / **7 days** (Workers Free); restore is **in-place and destructive**, Wrangler CLI only; docs explicitly say "to keep states longer than 30 days, export to R2 via REST API" | Cloudflare D1 docs — Time Travel and backups (`developers.cloudflare.com/d1/reference/time-travel`) |
-| D1 export REST API: `POST /accounts/{account_id}/d1/database/{database_id}/export` with `output_format: "polling"`; poll until `status: "complete"`; returns `signed_url` "available for one hour"; caveat: an in-progress export "may take some time for larger DBs, during which your D1 will be unavailable to serve queries", and an un-polled export auto-cancels | Cloudflare API reference — D1 database export |
-| R2 objects are writable through the Cloudflare REST API with an API token: `PUT /accounts/{account_id}/r2/buckets/{bucket}/objects/{key}` (returns `etag`, `size`, `version`); list and delete equivalents exist | Cloudflare API reference — R2 bucket objects |
-| The production Worker already runs a scheduled cron (`17 3 * * *` — AI-usage retention sweep, #353) | `backend/cloudflare.config.ts` `triggers.scheduled` |
-| GitHub scheduled workflows already run in this repo: `smoke.yml` (every 6h, auto-opens/closes `smoke-failure` issues) and `audit.yml` (daily 07:00 UTC, same ticket pattern) | `.github/workflows/smoke.yml`, `.github/workflows/audit.yml` |
-| Production R2 access exists: private bucket `rumaq-receipts` with `RECEIPTS`/`DOCUMENTS` bindings sharing the bucket under dedicated key prefixes ("no new infrastructure" precedent), plus a separate `rumaq-brochures` bucket for a different retention law | `backend/cloudflare.config.ts` (#388 vault, #293 brochures) |
-| Deploys run `cf d1 list / d1 create / d1 migrations apply` (D1 Edit) and `cf r2 buckets list / create` (R2 Edit) with `CLOUDFLARE_API_TOKEN` — in GitHub Actions *and* locally | `scripts/deploy.sh` (`setup_database_remote`, `ensure_r2_bucket`), `.github/workflows/deploy.yml` |
-| Local restore-drill engine precedent: the migration chain is exercised against real SQLite (`node:sqlite`) because "D1 is SQLite" | `backend/src/__tests__/migrations.test.ts` |
+| Fact                                                                                                                                                                                                                                                                                                                                                                   | Evidence                                                                                            |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| D1 has built-in PITR ("Time Travel"): restore to any minute within the last **30 days** (Workers Paid) / **7 days** (Workers Free); restore is **in-place and destructive**, Wrangler CLI only; docs explicitly say "to keep states longer than 30 days, export to R2 via REST API"                                                                                    | Cloudflare D1 docs — Time Travel and backups (`developers.cloudflare.com/d1/reference/time-travel`) |
+| D1 export REST API: `POST /accounts/{account_id}/d1/database/{database_id}/export` with `output_format: "polling"`; poll until `status: "complete"`; returns `signed_url` "available for one hour"; caveat: an in-progress export "may take some time for larger DBs, during which your D1 will be unavailable to serve queries", and an un-polled export auto-cancels | Cloudflare API reference — D1 database export                                                       |
+| R2 objects are writable through the Cloudflare REST API with an API token: `PUT /accounts/{account_id}/r2/buckets/{bucket}/objects/{key}` (returns `etag`, `size`, `version`); list and delete equivalents exist                                                                                                                                                       | Cloudflare API reference — R2 bucket objects                                                        |
+| The production Worker already runs a scheduled cron (`17 3 * * *` — AI-usage retention sweep, #353)                                                                                                                                                                                                                                                                    | `backend/cloudflare.config.ts` `triggers.scheduled`                                                 |
+| GitHub scheduled workflows already run in this repo: `smoke.yml` (every 6h, auto-opens/closes `smoke-failure` issues) and `audit.yml` (daily 07:00 UTC, same ticket pattern)                                                                                                                                                                                           | `.github/workflows/smoke.yml`, `.github/workflows/audit.yml`                                        |
+| Production R2 access exists: private bucket `rumaq-receipts` with `RECEIPTS`/`DOCUMENTS` bindings sharing the bucket under dedicated key prefixes ("no new infrastructure" precedent), plus a separate `rumaq-brochures` bucket for a different retention law                                                                                                          | `backend/cloudflare.config.ts` (#388 vault, #293 brochures)                                         |
+| Deploys run `cf d1 list / d1 create / d1 migrations apply` (D1 Edit) and `cf r2 buckets list / create` (R2 Edit) with `CLOUDFLARE_API_TOKEN` — in GitHub Actions _and_ locally                                                                                                                                                                                         | `scripts/deploy.sh` (`setup_database_remote`, `ensure_r2_bucket`), `.github/workflows/deploy.yml`   |
+| Local restore-drill engine precedent: the migration chain is exercised against real SQLite (`node:sqlite`) because "D1 is SQLite"                                                                                                                                                                                                                                      | `backend/src/__tests__/migrations.test.ts`                                                          |
 
 ---
 
@@ -53,11 +53,11 @@ no `/etc/rumaq/scraper.env`).
 
 **Already stored, usable today:**
 
-| Credential | Where | Proven permissions | Backup-relevant? |
-| --- | --- | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | GitHub secret, ahaqqu/RumaQ (`deploy.yml` ci + deploy jobs) | D1 Edit (`d1 list/create/migrations apply`), R2 Edit (`r2 buckets list/create`), Workers Edit + Secrets Edit (`cf deploy`, `workers secrets update`) | **Yes — export needs D1 Edit; upload needs R2 Edit. Expected sufficient as-is.** |
-| `CLOUDFLARE_ACCOUNT_ID` | GitHub secret, ahaqqu/RumaQ | — | Yes (API path prefix) |
-| `CLOUDFLARE_DATABASE_ID` | GitHub secret, ahaqqu/RumaQ | — | Yes (export target UUID) |
+| Credential               | Where                                                       | Proven permissions                                                                                                                                   | Backup-relevant?                                                                 |
+| ------------------------ | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`   | GitHub secret, ahaqqu/RumaQ (`deploy.yml` ci + deploy jobs) | D1 Edit (`d1 list/create/migrations apply`), R2 Edit (`r2 buckets list/create`), Workers Edit + Secrets Edit (`cf deploy`, `workers secrets update`) | **Yes — export needs D1 Edit; upload needs R2 Edit. Expected sufficient as-is.** |
+| `CLOUDFLARE_ACCOUNT_ID`  | GitHub secret, ahaqqu/RumaQ                                 | —                                                                                                                                                    | Yes (API path prefix)                                                            |
+| `CLOUDFLARE_DATABASE_ID` | GitHub secret, ahaqqu/RumaQ                                 | —                                                                                                                                                    | Yes (export target UUID)                                                         |
 
 **Other credentials checked and NOT backup-relevant / not present:**
 
@@ -109,12 +109,12 @@ into the existing private bucket under a dedicated `backups/` prefix.**
    to scraper deploys. Adding a token there means widening a reviewed host
    contract; rejected.
 3. **Rely on Time Travel alone.** It is real (30-day window on Paid / 7-day on
-   Free) and is the *first* restore lever for recent accidents (§7, Scenario
+   Free) and is the _first_ restore lever for recent accidents (§7, Scenario
    A), but: the window rolls forward silently — a corruption noticed on day 31
    is unrecoverable; restore is in-place/destructive via Wrangler only (no
    file to verify); and Cloudflare's own docs direct long-term retention to
    exports. So: dumps are **not redundant**, they are the >window layer and
-   the only dump that can be *tested* end-to-end.
+   the only dump that can be _tested_ end-to-end.
 4. **Separate `rumaq-backups` bucket.** Cleaner blast radius, but it is new
    infra the deploy path must create/manage. The vault already established the
    shared-bucket-dedicated-prefix precedent (`DOCUMENTS` on the receipts
@@ -128,11 +128,11 @@ into the existing private bucket under a dedicated `backups/` prefix.**
 
 - **Endpoint:** `POST /accounts/{account_id}/d1/database/{database_id}/export`
   with `output_format: "polling"`, `dump_options.compatibility: "d1"` (default:
-  importable back into D1 — *not* `sqlite3_cli_only`, which cannot be
+  importable back into D1 — _not_ `sqlite3_cli_only`, which cannot be
   re-imported).
 - **Poll loop:** repeat the POST with `current_bookmark` until
   `result.status == "complete"` (bounded: 60 attempts × 10 s). An un-polled
-  export auto-cancels by design, so the bounded poll *is* the cancel safety.
+  export auto-cancels by design, so the bounded poll _is_ the cancel safety.
 - **Availability caveat:** export can block queries on the DB while running.
   For this DB (personal-scale) it is seconds; the workflow logs
   `GET /accounts/{account_id}/d1/database/{database_id}` size each run so
@@ -158,7 +158,7 @@ into the existing private bucket under a dedicated `backups/` prefix.**
 **Schedule: daily `7 20 * * *` UTC = 03:07 WIB.** Rationale:
 
 - WIB-morning alignment: captures the full previous day of writes (Indonesian
-  evening usage peak) *before* the next usage day starts — RPO ≤ 24 h, layered
+  evening usage peak) _before_ the next usage day starts — RPO ≤ 24 h, layered
   on top of Time Travel's minute-level PITR for anything recent.
 - Off-peak WIB night; avoids collision with `smoke.yml` (tops of 00/06/12/18
   UTC), the Worker cron (03:17 UTC), and `audit.yml` (07:00 UTC).
@@ -176,7 +176,7 @@ after each successful upload:**
   by a few objects and self-corrects on the next green run.
 - At steady state: 18 objects ≈ 18 days of history (a corruption discovered
   on day 19+ is beyond both PITR and dumps — accepted; weekly-cadence
-  restore *drills*, not longer retention, are the guard against silent
+  restore _drills_, not longer retention, are the guard against silent
   restore-rot, §8).
 
 ---
@@ -323,7 +323,7 @@ cadence is the human backstop.
    The workflow gates on the trio being present (fail-loud `::error`,
    mirroring the RumaQ-pipeline `deploy-vps.yml` vars-gating precedent) —
    with the secrets already in place it runs from the first merge; if the
-   token grant is incomplete, it fails *into a ticket* instead of silently
+   token grant is incomplete, it fails _into a ticket_ instead of silently
    skipping.
 
 ---
@@ -341,13 +341,13 @@ CPU, no VPS, no new bucket.
 
 ## 11. What activates now vs after owner actions
 
-| Piece | State at merge |
-| --- | --- |
-| Restore drill (`verify-dump.mjs`, `restore-drill.sh`) + tests | **Live** — runs today on any dump file, zero secrets |
-| `backup.yml` schedule, export/prune/alerting scripts | **Live** — the trio (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_DATABASE_ID`) already exists as repo secrets; first scheduled run is the proof |
-| If the stored token's grants are incomplete | First run fails → `backup-failure` issue → owner applies Option A or B from §9 → next run goes green (workflow already prefers `BACKUP_CLOUDFLARE_API_TOKEN` if Option B is chosen) |
-| Monthly drill cadence | Owner checklist (§8) — documented, not automatable without a live restore target |
-| Optional R2 lifecycle backstop on `backups/` (30-day expire) | Owner one-liner in the dashboard; script pruning already enforces the policy |
+| Piece                                                         | State at merge                                                                                                                                                                      |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Restore drill (`verify-dump.mjs`, `restore-drill.sh`) + tests | **Live** — runs today on any dump file, zero secrets                                                                                                                                |
+| `backup.yml` schedule, export/prune/alerting scripts          | **Live** — the trio (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_DATABASE_ID`) already exists as repo secrets; first scheduled run is the proof                    |
+| If the stored token's grants are incomplete                   | First run fails → `backup-failure` issue → owner applies Option A or B from §9 → next run goes green (workflow already prefers `BACKUP_CLOUDFLARE_API_TOKEN` if Option B is chosen) |
+| Monthly drill cadence                                         | Owner checklist (§8) — documented, not automatable without a live restore target                                                                                                    |
+| Optional R2 lifecycle backstop on `backups/` (30-day expire)  | Owner one-liner in the dashboard; script pruning already enforces the policy                                                                                                        |
 
 ---
 
