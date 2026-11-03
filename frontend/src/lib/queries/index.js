@@ -13,6 +13,7 @@ export {
   useRenameHousehold,
   useActivateHousehold,
   useHouseholdMembers,
+  useCreateHouseholdMember,
   useUpdateHouseholdMember,
   useRemoveHouseholdMember,
   useLeaveHousehold,

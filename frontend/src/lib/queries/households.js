@@ -5,6 +5,7 @@ import {
   renameHousehold,
   activateHousehold,
   getHouseholdMembers,
+  createHouseholdMember,
   updateHouseholdMember,
   removeHouseholdMember,
   leaveHousehold,
@@ -105,11 +106,14 @@ export function useHouseholdMembers(id) {
   })
 }
 
+// Member-addressed mutations key on the surrogate member id (#388) —
+// profile-only members have no user_id, and the row keeps its identity when
+// an account is attached later.
 export function useUpdateHouseholdMember(id) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ userId, payload }) => updateHouseholdMember(id, userId, payload),
-    onMutate: async ({ userId, payload }) => {
+    mutationFn: ({ memberId, payload }) => updateHouseholdMember(id, memberId, payload),
+    onMutate: async ({ memberId, payload }) => {
       const key = ['household-members', id]
       await queryClient.cancelQueries({ queryKey: key })
       const previous = queryClient.getQueryData(key)
@@ -117,7 +121,7 @@ export function useUpdateHouseholdMember(id) {
         old
           ? {
               ...old,
-              members: old.members.map((m) => (m.user_id === userId ? { ...m, ...payload } : m)),
+              members: old.members.map((m) => (m.id === memberId ? { ...m, ...payload } : m)),
             }
           : old
       )
@@ -134,18 +138,31 @@ export function useUpdateHouseholdMember(id) {
   })
 }
 
+// Creates a profile-only member (Mode B, #388) — a person with no account.
+export function useCreateHouseholdMember(id) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload) => createHouseholdMember(id, payload),
+    onSettled: () => {
+      // The roster gains a row and the household's member_count grows.
+      queryClient.invalidateQueries({ queryKey: HOUSEHOLDS_KEY })
+      queryClient.invalidateQueries({ queryKey: ['household-members', id] })
+    },
+  })
+}
+
 export function useRemoveHouseholdMember() {
   const queryClient = useQueryClient()
   const revalidateEverything = useRevalidateEverything()
   const { data: me } = useMe()
   return useMutation({
-    mutationFn: ({ id, userId }) => removeHouseholdMember(id, userId),
-    onMutate: async ({ id, userId }) => {
+    mutationFn: ({ id, memberId }) => removeHouseholdMember(id, memberId),
+    onMutate: async ({ id, memberId }) => {
       const key = ['household-members', id]
       await queryClient.cancelQueries({ queryKey: key })
       const previous = queryClient.getQueryData(key)
       queryClient.setQueryData(key, (old) =>
-        old ? { ...old, members: old.members.filter((m) => m.user_id !== userId) } : old
+        old ? { ...old, members: old.members.filter((m) => m.id !== memberId) } : old
       )
       return { previous }
     },
@@ -159,9 +176,10 @@ export function useRemoveHouseholdMember() {
       // counts — the caller's other cached data is untouched (review B6).
       queryClient.invalidateQueries({ queryKey: HOUSEHOLDS_KEY })
       queryClient.invalidateQueries({ queryKey: ['household-members', vars.id] })
-      // The full sweep is for the rare case the caller removed THEMSELVES
-      // (every household-scoped view just changed for them).
-      if (me?.user?.id === vars.userId) {
+      // The full sweep is for the rare case the caller removed a member
+      // LINKED TO THEMSELVES (every household-scoped view just changed for
+      // them). Profile-only members have no session to strand.
+      if (me?.user?.id && vars.selfUserId === me.user.id) {
         revalidateEverything()
       }
     },

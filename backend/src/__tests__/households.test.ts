@@ -207,9 +207,10 @@ describe('households routes', () => {
 
     const inserted = db.log.map((e) => e.sql)
     expect(inserted.some((sql) => sql.startsWith('INSERT INTO households'))).toBe(true)
-    // The creator's membership lands in the same batch, as 'owner'.
+    // The creator's membership lands in the same batch, as 'owner' (with its
+    // own surrogate member id — 0021).
     const membershipInsert = db.log.find((e) => e.sql.startsWith('INSERT INTO household_members'))
-    expect(membershipInsert?.params).toEqual([body.household.id, 'u1', 'owner'])
+    expect(membershipInsert?.params).toEqual([expect.any(String), body.household.id, 'u1', 'owner'])
     // No user_settings write: creating never silently switches households.
     expect(inserted.some((sql) => sql.startsWith('UPDATE user_settings'))).toBe(false)
     // Seeds (locations + stores) ride the same batch as the login flow's.
@@ -315,9 +316,10 @@ describe('households routes', () => {
       [[/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP]],
       [
         [
-          /JOIN users u ON u\.id = m\.user_id\s+WHERE m\.household_id = \?\s+-- Owners/,
+          /LEFT JOIN users u ON u\.id = m\.user_id\s+WHERE m\.household_id = \?\s+-- Owners/,
           () => [
             {
+              id: 'm1',
               user_id: 'u1',
               role: 'owner',
               display_name: null,
@@ -328,6 +330,7 @@ describe('households routes', () => {
               picture: null,
             },
             {
+              id: 'm2',
               user_id: 'u2',
               role: 'member',
               display_name: 'Putri',
@@ -347,10 +350,142 @@ describe('households routes', () => {
     expect(body.members).toHaveLength(2)
     // Additive-nullish profile fields ride the member shape (BayiQ-ready).
     expect(body.members[1]).toMatchObject({
+      id: 'm2',
       user_id: 'u2',
       display_name: 'Putri',
       birth_date: '2024-05-01',
+      has_account: true,
     })
+  })
+
+  it('lists profile-only members alongside linked ones with the mode discriminator', async () => {
+    setup(
+      [[/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP]],
+      [
+        [
+          /LEFT JOIN users u ON u\.id = m\.user_id\s+WHERE m\.household_id = \?\s+-- Owners/,
+          () => [
+            {
+              id: 'm1',
+              user_id: 'u1',
+              role: 'owner',
+              display_name: null,
+              birth_date: null,
+              joined_at: '2026-11-01 00:00:00',
+              name: 'Alice',
+              email: 'a@b.com',
+              picture: null,
+            },
+            {
+              // Profile-only (Mode B, #388): no user row joins on.
+              id: 'm9',
+              user_id: null,
+              role: 'member',
+              display_name: 'Adik',
+              birth_date: '2025-03-02',
+              joined_at: '2026-11-03 00:00:00',
+              name: null,
+              email: null,
+              picture: null,
+            },
+          ],
+        ],
+      ]
+    )
+    const res = await householdsApp.request('/api/households/h1/members', {}, env)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { members: Array<Record<string, unknown>> }
+    expect(body.members[1]).toMatchObject({
+      id: 'm9',
+      user_id: null,
+      has_account: false,
+      display_name: 'Adik',
+      email: null,
+    })
+  })
+
+  it('creates a profile-only member as owner with the role forced to member', async () => {
+    setup([
+      [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
+      [
+        /SELECT m\.id, m\.user_id[\s\S]*WHERE m\.id = \? AND m\.household_id = \?/,
+        () => ({
+          id: 'm-new',
+          user_id: null,
+          role: 'member',
+          display_name: 'Adik',
+          birth_date: '2025-03-02',
+          joined_at: '2026-11-04 00:00:00',
+          name: null,
+          email: null,
+          picture: null,
+        }),
+      ],
+    ])
+    const res = await householdsApp.request(
+      '/api/households/h1/members',
+      {
+        method: 'POST',
+        body: JSON.stringify({ display_name: '  Adik  ', birth_date: '2025-03-02' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { member: Record<string, unknown> }
+    expect(body.member).toMatchObject({
+      id: 'm-new',
+      user_id: null,
+      role: 'member',
+      has_account: false,
+      display_name: 'Adik',
+      birth_date: '2025-03-02',
+    })
+    // The write itself encodes Mode B: user_id NULL and role 'member' are
+    // SQL literals in the INSERT — a profile-only member can never own,
+    // whatever the client sends.
+    const insert = db.log.find((e) => e.sql.startsWith('INSERT INTO household_members'))
+    expect(insert?.params).toEqual([expect.any(String), 'h1', 'Adik', '2025-03-02'])
+    expect(insert?.sql).toContain("VALUES (?, ?, NULL, 'member', ?, ?)")
+    expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
+  })
+
+  it('403s a non-owner creating a profile-only member and 400s invalid input', async () => {
+    setup([[/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP]])
+    const forbidden = await householdsApp.request(
+      '/api/households/h1/members',
+      {
+        method: 'POST',
+        body: JSON.stringify({ display_name: 'Adik' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(forbidden.status).toBe(403)
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_members'))).toBe(false)
+
+    setup([[/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP]])
+    for (const body of [
+      { display_name: '' },
+      // Whitespace-only must fail the POST bounds (trim runs before
+      // minLength), not land as an unnamed roster row.
+      { display_name: '   ' },
+      { display_name: 'x'.repeat(81) },
+      { display_name: 'Adik', birth_date: '03/02/2025' },
+      {},
+    ]) {
+      const bad = await householdsApp.request(
+        '/api/households/h1/members',
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+          headers: { 'Content-Type': 'application/json' },
+        },
+        env
+      )
+      expect(bad.status).toBe(400)
+    }
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_members'))).toBe(false)
   })
 
   it('404s the member list for a non-member without leaking the household', async () => {
@@ -366,10 +501,14 @@ describe('households routes', () => {
   it('lets a member edit their own profile and normalizes clears to NULL', async () => {
     setup([
       [/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP],
-      [/SELECT user_id FROM household_members/, () => ({ user_id: 'u1' })],
       [
-        /SELECT m\.user_id, m\.role, m\.display_name[\s\S]*WHERE m\.user_id = \? AND m\.household_id = \?/,
+        /SELECT id, user_id, role FROM household_members/,
+        () => ({ id: 'm1', user_id: 'u1', role: 'member' }),
+      ],
+      [
+        /SELECT m\.id, m\.user_id[\s\S]*WHERE m\.id = \? AND m\.household_id = \?/,
         () => ({
+          id: 'm1',
           user_id: 'u1',
           role: 'member',
           display_name: 'Mama',
@@ -382,7 +521,7 @@ describe('households routes', () => {
       ],
     ])
     const res = await householdsApp.request(
-      '/api/households/h1/members/u1',
+      '/api/households/h1/members/m1',
       {
         method: 'PATCH',
         body: JSON.stringify({ display_name: '  Mama  ', birth_date: '1995-01-01' }),
@@ -395,7 +534,7 @@ describe('households routes', () => {
     expect(update?.params.slice(0, 2)).toEqual(['Mama', '1995-01-01'])
 
     const clear = await householdsApp.request(
-      '/api/households/h1/members/u1',
+      '/api/households/h1/members/m1',
       {
         method: 'PATCH',
         body: JSON.stringify({ display_name: '', birth_date: '' }),
@@ -409,9 +548,17 @@ describe('households routes', () => {
   })
 
   it('blocks a member editing someone else but allows an owner', async () => {
-    setup([[/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP]])
+    setup([
+      [/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP],
+      // The target lookup runs before the authorization answer (no leak, no
+      // write) — the route then 403s the non-owner.
+      [
+        /SELECT id, user_id, role FROM household_members/,
+        () => ({ id: 'm2', user_id: 'u2', role: 'member' }),
+      ],
+    ])
     const res = await householdsApp.request(
-      '/api/households/h1/members/u2',
+      '/api/households/h1/members/m2',
       {
         method: 'PATCH',
         body: JSON.stringify({ display_name: 'Nope' }),
@@ -420,13 +567,18 @@ describe('households routes', () => {
       env
     )
     expect(res.status).toBe(403)
+    expect(db.log.some((e) => e.sql.startsWith('UPDATE household_members SET'))).toBe(false)
 
     setup([
       [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
-      [/SELECT user_id FROM household_members/, () => ({ user_id: 'u2' })],
       [
-        /SELECT m\.user_id, m\.role, m\.display_name[\s\S]*WHERE m\.user_id = \? AND m\.household_id = \?/,
+        /SELECT id, user_id, role FROM household_members/,
+        () => ({ id: 'm2', user_id: 'u2', role: 'member' }),
+      ],
+      [
+        /SELECT m\.id, m\.user_id[\s\S]*WHERE m\.id = \? AND m\.household_id = \?/,
         () => ({
+          id: 'm2',
           user_id: 'u2',
           role: 'member',
           display_name: 'X',
@@ -439,7 +591,7 @@ describe('households routes', () => {
       ],
     ])
     const ok = await householdsApp.request(
-      '/api/households/h1/members/u2',
+      '/api/households/h1/members/m2',
       {
         method: 'PATCH',
         body: JSON.stringify({ display_name: 'Putri' }),
@@ -450,10 +602,65 @@ describe('households routes', () => {
     expect(ok.status).toBe(200)
   })
 
+  it('makes a profile-only member owner-only to patch, even for plain members', async () => {
+    // A profile-only member has no "self" — a plain member gets the same 403
+    // an owner-row edit would give (ahaqqu/RumaQ#388).
+    setup([
+      [/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP],
+      [
+        /SELECT id, user_id, role FROM household_members/,
+        () => ({ id: 'm9', user_id: null, role: 'member' }),
+      ],
+    ])
+    const res = await householdsApp.request(
+      '/api/households/h1/members/m9',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ display_name: 'Nope' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(res.status).toBe(403)
+    expect(db.log.some((e) => e.sql.startsWith('UPDATE household_members SET'))).toBe(false)
+
+    setup([
+      [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
+      [
+        /SELECT id, user_id, role FROM household_members/,
+        () => ({ id: 'm9', user_id: null, role: 'member' }),
+      ],
+      [
+        /SELECT m\.id, m\.user_id[\s\S]*WHERE m\.id = \? AND m\.household_id = \?/,
+        () => ({
+          id: 'm9',
+          user_id: null,
+          role: 'member',
+          display_name: 'Adik',
+          birth_date: null,
+          joined_at: '',
+          name: null,
+          email: null,
+          picture: null,
+        }),
+      ],
+    ])
+    const ok = await householdsApp.request(
+      '/api/households/h1/members/m9',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ display_name: 'Adik Kecil' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(ok.status).toBe(200)
+  })
+
   it('400s a malformed birth_date and 404s an unknown target member', async () => {
     setup([[/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP]])
     const badDate = await householdsApp.request(
-      '/api/households/h1/members/u1',
+      '/api/households/h1/members/m1',
       {
         method: 'PATCH',
         body: JSON.stringify({ birth_date: '01/02/1995' }),
@@ -465,12 +672,12 @@ describe('households routes', () => {
 
     setup([
       [/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP],
-      // The target lookup misses: the target user is not a member of this
+      // The target lookup misses: the target member is not part of this
       // household, so the lib must refuse before any write.
-      [/SELECT user_id FROM household_members/, () => null],
+      [/SELECT id, user_id, role FROM household_members/, () => null],
     ])
     const res = await householdsApp.request(
-      '/api/households/h1/members/u1',
+      '/api/households/h1/members/m1',
       {
         method: 'PATCH',
         body: JSON.stringify({ display_name: 'Mama' }),
@@ -486,7 +693,10 @@ describe('households routes', () => {
   it('removes a member when owner and repoints their settings', async () => {
     setup([
       [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
-      [/SELECT role FROM household_members/, () => ({ role: 'member' })],
+      [
+        /SELECT id, user_id, role FROM household_members/,
+        () => ({ id: 'm2', user_id: 'u2', role: 'member' }),
+      ],
       OWNER_COUNT_ONE,
       // The removed member still belongs to h2 — the repoint targets it.
       [
@@ -495,7 +705,7 @@ describe('households routes', () => {
       ],
     ])
     const res = await householdsApp.request(
-      '/api/households/h1/members/u2',
+      '/api/households/h1/members/m2',
       { method: 'DELETE' },
       env
     )
@@ -512,14 +722,42 @@ describe('households routes', () => {
     expect(repoint?.params).toEqual(['h2', 'u2', 'h1'])
   })
 
+  it('removes a profile-only member with a bare delete and no session work', async () => {
+    // Mode B removal (#388): no user account, so no user_settings pointer and
+    // no departure-repoint/respawn semantics — one atomic DELETE, nothing else.
+    setup([
+      [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
+      [
+        /SELECT id, user_id, role FROM household_members/,
+        () => ({ id: 'm9', user_id: null, role: 'member' }),
+      ],
+    ])
+    const res = await householdsApp.request(
+      '/api/households/h1/members/m9',
+      { method: 'DELETE' },
+      env
+    )
+    expect(res.status).toBe(204)
+    const statements = db.log.map((e) => e.sql)
+    expect(
+      statements.filter((sql) => sql.startsWith('DELETE FROM household_members'))
+    ).toHaveLength(1)
+    expect(statements.some((sql) => sql.startsWith('UPDATE user_settings'))).toBe(false)
+    expect(statements.some((sql) => sql.startsWith('INSERT INTO households'))).toBe(false)
+    expect(statements.some((sql) => sql.startsWith('INSERT INTO household_members'))).toBe(false)
+  })
+
   it('409s removing the last owner and 403s a member removing anyone', async () => {
     setup([
       [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
-      [/SELECT role FROM household_members/, () => ({ role: 'owner' })],
+      [
+        /SELECT id, user_id, role FROM household_members/,
+        () => ({ id: 'm1', user_id: 'u1', role: 'owner' }),
+      ],
       OWNER_COUNT_ONE,
     ])
     const res = await householdsApp.request(
-      '/api/households/h1/members/u1',
+      '/api/households/h1/members/m1',
       { method: 'DELETE' },
       env
     )
@@ -528,7 +766,7 @@ describe('households routes', () => {
 
     setup([[/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP]])
     const forbidden = await householdsApp.request(
-      '/api/households/h1/members/u3',
+      '/api/households/h1/members/m3',
       { method: 'DELETE' },
       env
     )
@@ -551,7 +789,7 @@ describe('households routes', () => {
     // No household left -> fresh baseline household, owner membership, seeds.
     expect(db.log.some((e) => e.sql.startsWith('INSERT INTO households'))).toBe(true)
     const membership = db.log.find((e) => e.sql.startsWith('INSERT INTO household_members'))
-    expect(membership?.params).toEqual([expect.any(String), 'u1', 'owner'])
+    expect(membership?.params).toEqual([expect.any(String), expect.any(String), 'u1', 'owner'])
     const settings = db.log.filter((e) =>
       e.sql.startsWith('UPDATE user_settings SET active_household_id = ?')
     )
@@ -652,10 +890,13 @@ describe('households routes', () => {
     const body = (await res.json()) as { household: { id: string }; already_member: boolean }
     expect(body).toEqual({ household: { id: 'h2', name: 'Rumah Bunda' }, already_member: false })
     // Idempotency is storage-level (review A7): the insert always runs; the
-    // UNIQUE PK conflict decides membership, not a pre-check that can race.
+    // partial unique index (0021) decides membership, not a pre-check that
+    // can race. The joined member gets a surrogate id and role member.
     const insert = db.log.find((e) => e.sql.startsWith('INSERT INTO household_members'))
-    expect(insert?.params).toEqual(['h2', 'u1', 'member'])
-    expect(insert?.sql).toContain('ON CONFLICT (household_id, user_id) DO NOTHING')
+    expect(insert?.params).toEqual([expect.any(String), 'h2', 'u1', 'member'])
+    expect(insert?.sql).toContain(
+      'ON CONFLICT (household_id, user_id) WHERE user_id IS NOT NULL DO NOTHING'
+    )
   })
 
   it('is idempotent for an existing member and answers already_member', async () => {

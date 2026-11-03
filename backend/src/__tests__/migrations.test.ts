@@ -385,3 +385,121 @@ describe('migration 0020: household member profiles + invites (#331)', () => {
     expect(tables.map((r: Record<string, unknown>) => r.name)).toEqual(['household_invites'])
   })
 })
+
+// Two-mode members (ahaqqu/RumaQ#388): the household_members rebuild —
+// surrogate PK, nullable user_id (NULL = profile-only member), and the old
+// PK-pair uniqueness re-established as a partial unique index. The rebuild is
+// a create-new/copy/rename, so the interesting question is what SURVIVES it.
+describe('migration 0021: two-mode household members (#388)', () => {
+  it('rebuilds the table: old rows keep their data and gain a surrogate id', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0021')
+    )
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare("INSERT INTO users (id, email) VALUES ('u2', 'c@d.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (household_id, user_id, role, joined_at, display_name, birth_date)
+       VALUES ('h1', 'u1', 'owner', '2026-01-01 00:00:00', 'Mama', '1995-01-01')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0021_two_mode_household_members.sql'), 'utf8'))
+
+    // The pre-0021 membership survives with every column intact and a
+    // backfilled surrogate id (the vault's future attach handle).
+    const row = db
+      .prepare('SELECT * FROM household_members WHERE household_id = ? AND user_id = ?')
+      .get('h1', 'u1') as Record<string, unknown>
+    expect(row).toMatchObject({
+      household_id: 'h1',
+      user_id: 'u1',
+      role: 'owner',
+      joined_at: '2026-01-01 00:00:00',
+      display_name: 'Mama',
+      birth_date: '1995-01-01',
+    })
+    expect(typeof row['id']).toBe('string')
+    expect(String(row['id'])).toMatch(/^[0-9a-f]{32}$/)
+
+    // Mode B is representable now: user_id is nullable, so a profile-only
+    // member (no account) is a plain row.
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role, display_name, birth_date)
+       VALUES ('m-profile', 'h1', NULL, 'member', 'Adik', '2025-03-02')`
+    ).run()
+    const profile = db.prepare('SELECT * FROM household_members WHERE id = ?').get('m-profile')
+    expect(profile).toMatchObject({ user_id: null, role: 'member' })
+
+    // The rebuild left no scaffold table behind.
+    const tables = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'household_members%'"
+      )
+      .all()
+    expect(tables.map((r: Record<string, unknown>) => r.name)).toEqual(['household_members'])
+  })
+
+  it('enforces the old PK-pair uniqueness for linked members only (partial index)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+
+    const linked = db.prepare(
+      'INSERT INTO household_members (id, household_id, user_id, role) VALUES (?, ?, ?, ?)'
+    )
+    linked.run('m1', 'h1', 'u1', 'owner')
+    // The partial unique index carries the old PK guarantee: one row per
+    // account per household.
+    expect(() => linked.run('m2', 'h1', 'u1', 'member')).toThrow()
+    // Profile-only rows (NULL user_id) are exempt — several account-less
+    // people may share a household.
+    linked.run('m3', 'h1', null, 'member')
+    linked.run('m4', 'h1', null, 'member')
+
+    // The partial index is really partial: it fires for user_id IS NOT NULL.
+    const index = db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_household_members_household_user'"
+      )
+      .get() as { sql: string | null }
+    expect(index.sql).toContain('WHERE user_id IS NOT NULL')
+  })
+
+  it('keeps the 0020 auth-fallback index plan fast across the rebuild', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    // Same EXPLAIN contract as the 0020 test — the rebuild recreates the
+    // index, and the per-request fast path must not silently regress to a
+    // scan or a temp B-tree sort.
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT household_id FROM household_members
+          WHERE user_id = ? ORDER BY joined_at, household_id LIMIT 1`
+      )
+      .all('u1')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(detail).toContain('idx_household_members_user')
+    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
+
+    // The per-household scans the old PK prefix used to serve (roster,
+    // owner counts, member_count) seek through the new household index.
+    const rosterPlan = db
+      .prepare('EXPLAIN QUERY PLAN SELECT id FROM household_members WHERE household_id = ?')
+      .all('h1')
+    const rosterDetail = rosterPlan
+      .map((r: Record<string, unknown>) => String(r.detail))
+      .join(' | ')
+    expect(rosterDetail).toContain('idx_household_members_household')
+    expect(rosterDetail).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+})

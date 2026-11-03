@@ -33,6 +33,11 @@ import {
   joinByCode,
   getMembership,
   getActiveInvite,
+  createProfileMember,
+  updateMemberProfile,
+  listMembers,
+  HouseholdNotFoundError,
+  HouseholdForbiddenError,
   LastOwnerError,
   InvalidInviteError,
 } from '../lib/households.js'
@@ -116,12 +121,34 @@ function addMember(
   userId: string,
   role: 'owner' | 'member',
   joinedAt: string
-): void {
+): string {
+  // The surrogate id (0021) is generated here so every existing test body
+  // stays unchanged; new two-mode tests read the return value to address
+  // member rows.
+  const id = crypto.randomUUID()
   sqlite
     .prepare(
-      'INSERT INTO household_members (household_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)'
+      'INSERT INTO household_members (id, household_id, user_id, role, joined_at) VALUES (?, ?, ?, ?, ?)'
     )
-    .run(householdId, userId, role, joinedAt)
+    .run(id, householdId, userId, role, joinedAt)
+  return id
+}
+
+// Plants a profile-only member (Mode B, #388): user_id NULL, role member.
+function addProfileMember(
+  sqlite: Db,
+  householdId: string,
+  displayName: string,
+  birthDate: string | null,
+  joinedAt: string
+): string {
+  const id = crypto.randomUUID()
+  sqlite
+    .prepare(
+      "INSERT INTO household_members (id, household_id, user_id, role, display_name, birth_date, joined_at) VALUES (?, ?, NULL, 'member', ?, ?, ?)"
+    )
+    .run(id, householdId, displayName, birthDate, joinedAt)
+  return id
 }
 
 function setActivePointer(sqlite: Db, userId: string, householdId: string | null): void {
@@ -135,6 +162,16 @@ function resolveActiveHousehold(sqlite: Db, userId: string): string | null {
     household_id: string | null
   } | null
   return row?.household_id ?? null
+}
+
+// Member-addressed operations (patch/remove) key on the surrogate id (0021);
+// the seeded rows here get their ids through the table, not the helper.
+function memberIdOf(sqlite: Db, householdId: string, userId: string): string {
+  const row = sqlite
+    .prepare('SELECT id FROM household_members WHERE household_id = ? AND user_id = ?')
+    .get(householdId, userId) as { id: string } | undefined
+  if (!row) throw new Error(`no member row for ${userId} in ${householdId}`)
+  return row.id
 }
 
 // The middleware SQL is the app's single scoping authority — every household
@@ -192,6 +229,219 @@ describe('active-household resolution (COALESCE) over real SQL (#331, review C1)
   })
 })
 
+// Two-mode members (ahaqqu/RumaQ#388): the 0021 rebuild gives every member a
+// surrogate id, makes user_id nullable (NULL = profile-only, no account) and
+// re-establishes the old PK-pair uniqueness as a PARTIAL unique index. These
+// tests pin the storage contract the auth path and the member surfaces lean on.
+describe('two-mode member schema over real SQL (#388)', () => {
+  it('keeps one row per linked account per household but allows many profile-only members', () => {
+    const { sqlite } = createDb()
+    createUser(sqlite, 'u1', 'a@b.com')
+    createHouseholdRow(sqlite, 'h1', 'Keluarga Putri', 'u1')
+    addMember(sqlite, 'h1', 'u1', 'owner', '2026-01-01 00:00:00')
+    addProfileMember(sqlite, 'h1', 'Adik', '2025-03-02', '2026-11-01 00:00:00')
+    addProfileMember(sqlite, 'h1', 'Nenek', null, '2026-11-01 00:00:00')
+
+    // Several account-less people in one household: fine — NULLs are the
+    // whole point of the partial index.
+    const profileRows = sqlite
+      .prepare(
+        'SELECT COUNT(*) AS cnt FROM household_members WHERE household_id = ? AND user_id IS NULL'
+      )
+      .get('h1') as { cnt: number }
+    expect(profileRows.cnt).toBe(2)
+
+    // The old PK pair's guarantee survives for LINKED members: a second row
+    // for the same (household, user) must be refused by the partial unique
+    // index, not by application discipline.
+    expect(() =>
+      sqlite
+        .prepare(
+          'INSERT INTO household_members (id, household_id, user_id, role) VALUES (?, ?, ?, ?)'
+        )
+        .run(crypto.randomUUID(), 'h1', 'u1', 'member')
+    ).toThrow()
+
+    // A different household may still hold the same user.
+    createHouseholdRow(sqlite, 'h2', 'Rumah Kedua', 'u1')
+    addMember(sqlite, 'h2', 'u1', 'owner', '2026-02-01 00:00:00')
+  })
+
+  it('keeps the 0020 auth index intact and the surrogate PK after the rebuild', () => {
+    const { sqlite } = createDb()
+    // The rebuilt table: id is the PK, user_id is nullable.
+    const columns = sqlite.prepare('PRAGMA table_info(household_members)').all() as Array<
+      Record<string, unknown>
+    >
+    const byName = Object.fromEntries(columns.map((c) => [c.name, c]))
+    expect(byName['id']).toMatchObject({ pk: 1 })
+    expect(byName['user_id']).toMatchObject({ notnull: 0 })
+    expect(byName['display_name']).toMatchObject({ notnull: 0 })
+    expect(byName['birth_date']).toMatchObject({ notnull: 0 })
+
+    // 0020's index is recreated column-for-column — the auth fallback's plan
+    // rides it (see the EXPLAIN check in migrations.test.ts).
+    const indexes = sqlite
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'household_members' ORDER BY name"
+      )
+      .all() as Array<{ name: string }>
+    expect(indexes.map((i) => i.name)).toEqual(
+      expect.arrayContaining([
+        'idx_household_members_user',
+        'idx_household_members_household_user',
+        'idx_household_members_household',
+      ])
+    )
+  })
+
+  it('never resolves a profile-only member (or a NULL row) through the auth COALESCE', () => {
+    const { sqlite } = createDb()
+    createUser(sqlite, 'u1', 'a@b.com')
+    createUser(sqlite, 'u2', 'c@d.com')
+    createHouseholdRow(sqlite, 'h1', 'Keluarga Putri', 'u1')
+    createHouseholdRow(sqlite, 'h2', 'Rumah Kedua', 'u2')
+    addMember(sqlite, 'h1', 'u1', 'owner', '2026-01-01 00:00:00')
+    addMember(sqlite, 'h2', 'u2', 'owner', '2026-01-01 00:00:00')
+    addProfileMember(sqlite, 'h1', 'Adik', null, '2026-11-01 00:00:00')
+
+    // The linked members resolve exactly as before — NULL-user rows cannot
+    // match `user_id = ?`, so they are invisible to the middleware.
+    expect(resolveActiveHousehold(sqlite, 'u1')).toBe('h1')
+    expect(resolveActiveHousehold(sqlite, 'u2')).toBe('h2')
+
+    // A user_id that only exists as a profile-only "identity" (display_name)
+    // has no membership rows at all: the middleware 401s it. There is no
+    // credential to mint for Mode B — that is the point of the mode.
+    expect(resolveActiveHousehold(sqlite, 'nobody')).toBeNull()
+  })
+})
+
+// The profile-only lifecycle through the lib, over real SQL: forced role,
+// roster discriminator, owner-only patching, and the bare-delete removal.
+describe('profile-only member lifecycle over real SQL (#388)', () => {
+  let sqlite: Db
+  let d1: D1Database
+
+  beforeEach(() => {
+    ;({ sqlite, d1 } = createDb())
+    createUser(sqlite, 'owner', 'owner@b.com')
+    createUser(sqlite, 'member', 'member@b.com')
+    createHouseholdRow(sqlite, 'h1', 'Keluarga Putri', 'owner')
+    addMember(sqlite, 'h1', 'owner', 'owner', '2026-01-01 00:00:00')
+    addMember(sqlite, 'h1', 'member', 'member', '2026-02-01 00:00:00')
+  })
+
+  it('creates a forced-member profile row that the roster marks has_account:false', async () => {
+    const row = await createProfileMember(d1, 'h1', 'owner', {
+      display_name: 'Adik',
+      birth_date: '2025-03-02',
+    })
+    expect(row).toMatchObject({
+      role: 'member',
+      user_id: null,
+      has_account: false,
+      display_name: 'Adik',
+      birth_date: '2025-03-02',
+    })
+
+    const roster = await listMembers(d1, 'h1')
+    expect(roster).toHaveLength(3)
+    const profile = roster.find((m) => m.id === row.id)
+    expect(profile).toMatchObject({ has_account: false, name: null, email: null })
+    expect(roster.find((m) => m.user_id === 'owner')).toMatchObject({ has_account: true })
+
+    // member_count (listHouseholds' subquery) is a plain COUNT(*) — Mode B
+    // members count toward the household size.
+    const count = sqlite
+      .prepare('SELECT COUNT(*) AS cnt FROM household_members WHERE household_id = ?')
+      .get('h1') as { cnt: number }
+    expect(count.cnt).toBe(3)
+  })
+
+  it('is owner-only to create and patch, and patching cannot mint an owner', async () => {
+    await expect(
+      createProfileMember(d1, 'h1', 'member', { display_name: 'Adik', birth_date: null })
+    ).rejects.toBeInstanceOf(HouseholdForbiddenError)
+    expect(
+      (sqlite.prepare('SELECT COUNT(*) AS cnt FROM household_members').get() as { cnt: number }).cnt
+    ).toBe(2)
+
+    const row = await createProfileMember(d1, 'h1', 'owner', {
+      display_name: 'Adik',
+      birth_date: null,
+    })
+
+    // A plain member gets the 403 on a profile-only row — there is no "self".
+    await expect(
+      updateMemberProfile(d1, 'h1', 'member', row.id, { display_name: 'Nope' })
+    ).rejects.toBeInstanceOf(HouseholdForbiddenError)
+
+    // The owner patches it, and the role stays 'member' — the UPDATE only
+    // touches profile fields, so no patch shape can mint an owner.
+    const patched = await updateMemberProfile(d1, 'h1', 'owner', row.id, {
+      display_name: 'Adik Kecil',
+      birth_date: '2025-03-02',
+    })
+    expect(patched).toMatchObject({ display_name: 'Adik Kecil', role: 'member' })
+    const stored = sqlite
+      .prepare('SELECT role FROM household_members WHERE id = ?')
+      .get(row.id) as { role: string }
+    expect(stored.role).toBe('member')
+  })
+
+  it('removes a profile-only member as one bare delete — no settings work, no respawn', async () => {
+    setActivePointer(sqlite, 'owner', 'h1')
+    const row = await createProfileMember(d1, 'h1', 'owner', {
+      display_name: 'Adik',
+      birth_date: null,
+    })
+
+    await removeMember(d1, 'h1', 'owner', row.id)
+
+    const remaining = sqlite
+      .prepare('SELECT COUNT(*) AS cnt FROM household_members WHERE id = ?')
+      .get(row.id) as { cnt: number }
+    expect(remaining.cnt).toBe(0)
+    // The owner's session is untouched — no user_settings write ever ran
+    // (Mode B has no pointer to repoint) and no baseline household was
+    // respawned (nobody lost their last membership).
+    const settings = sqlite
+      .prepare('SELECT active_household_id FROM user_settings WHERE user_id = ?')
+      .get('owner') as { active_household_id: string }
+    expect(settings.active_household_id).toBe('h1')
+    const householdCount = sqlite.prepare('SELECT COUNT(*) AS cnt FROM households').get() as {
+      cnt: number
+    }
+    expect(householdCount.cnt).toBe(1)
+  })
+
+  it('removes a linked member with the full departure semantics, addressed by member id', async () => {
+    // Same surface, Mode A branch: the member-id address still repoints the
+    // removed user's stale pointer (the A2 guarantee, now id-addressed).
+    setActivePointer(sqlite, 'member', 'h1')
+    createHouseholdRow(sqlite, 'h2', 'Rumah Kedua', 'member')
+    addMember(sqlite, 'h2', 'member', 'owner', '2026-03-01 00:00:00')
+
+    await removeMember(d1, 'h1', 'owner', memberIdOf(sqlite, 'h1', 'member'))
+    expect(resolveActiveHousehold(sqlite, 'member')).toBe('h2')
+  })
+
+  it('409s removing the last owner via the member-id surface and 404s unknown ids', async () => {
+    await expect(
+      removeMember(d1, 'h1', 'owner', memberIdOf(sqlite, 'h1', 'owner'))
+    ).rejects.toBeInstanceOf(LastOwnerError)
+    // The 409 fired before any write: both members still present.
+    expect(
+      (sqlite.prepare('SELECT COUNT(*) AS cnt FROM household_members').get() as { cnt: number }).cnt
+    ).toBe(2)
+
+    await expect(removeMember(d1, 'h1', 'owner', 'no-such-member')).rejects.toBeInstanceOf(
+      HouseholdNotFoundError
+    )
+  })
+})
+
 // The departure batch (review A2/A4): remove and leave commit the DELETE and
 // the session-continuity work in ONE transaction — and a user left with no
 // household gets the same baseline respawn the leave path always had.
@@ -213,7 +463,7 @@ describe('departure batch over real SQL (#331, review A2/A4)', () => {
     addMember(sqlite, 'h2', 'member', 'owner', '2026-03-01 00:00:00')
     setActivePointer(sqlite, 'member', 'h1')
 
-    await removeMember(d1, 'h1', 'owner', 'member')
+    await removeMember(d1, 'h1', 'owner', memberIdOf(sqlite, 'h1', 'member'))
 
     const remaining = sqlite
       .prepare('SELECT COUNT(*) AS cnt FROM household_members WHERE user_id = ?')
@@ -232,7 +482,7 @@ describe('departure batch over real SQL (#331, review A2/A4)', () => {
     setActivePointer(sqlite, 'member', 'h1')
     addMember(sqlite, 'h1', 'member', 'member', '2026-02-01 00:00:00')
 
-    await removeMember(d1, 'h1', 'owner', 'member')
+    await removeMember(d1, 'h1', 'owner', memberIdOf(sqlite, 'h1', 'member'))
 
     // Symmetry with leave (review A2): the evicted member is not 401-locked
     // out — the auth resolution immediately serves the respawned household.
@@ -444,5 +694,38 @@ describe('households app over real SQL (cookie path)', () => {
       members: Array<Record<string, unknown>>
     }
     expect(after).toHaveLength(2)
+  })
+
+  it('creates a profile-only member over the app stack and lists both modes', async () => {
+    seed()
+    const cookie = { headers: { Cookie: `rumaq_session=${await jwt('u1')}` } }
+    const create = await householdsApp.request(
+      '/api/households/h1/members',
+      {
+        method: 'POST',
+        body: JSON.stringify({ display_name: 'Adik', birth_date: '2025-03-02' }),
+        headers: { 'Content-Type': 'application/json', Cookie: cookie.headers.Cookie },
+      },
+      env
+    )
+    expect(create.status).toBe(201)
+    const { member } = (await create.json()) as { member: Record<string, unknown> }
+    expect(member).toMatchObject({
+      user_id: null,
+      has_account: false,
+      role: 'member',
+      display_name: 'Adik',
+      birth_date: '2025-03-02',
+    })
+
+    // The roster serves both modes through the same endpoint; the Mode B row
+    // carries no account fields.
+    const roster = await householdsApp.request('/api/households/h1/members', cookie, env)
+    const { members } = (await roster.json()) as { members: Array<Record<string, unknown>> }
+    expect(members.find((m) => m.id === member.id)).toMatchObject({
+      has_account: false,
+      email: null,
+    })
+    expect(members.find((m) => m.user_id === 'u1')).toMatchObject({ has_account: true })
   })
 })
