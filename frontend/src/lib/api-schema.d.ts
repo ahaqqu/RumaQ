@@ -683,7 +683,7 @@ export interface paths {
     }
     get?: never
     put?: never
-    /** @description Joins a household by invite code. Unknown, revoked, and expired codes return the same error (no existence leak); joining a household you already belong to is idempotent. */
+    /** @description Joins a household by invite code. Unknown, revoked, and expired codes return the same error (no existence leak); joining a household you already belong to is idempotent. An invite marked for a profile-only member (target_member_id, ahaqqu/RumaQ#397) attaches the redeemer’s account to that existing member row — id, display name, birth date, and documents stay attached — instead of creating a new member. */
     post: operations['postApiHouseholdsJoin']
     delete?: never
     options?: never
@@ -788,7 +788,7 @@ export interface paths {
     /** @description Returns the household’s current live invite code, or null when none is active. Owner-only. */
     get: operations['getApiHouseholdsByIdInvite']
     put?: never
-    /** @description Generates a fresh invite code for the household, revoking any previous live code. Owner-only. Codes expire after 7 days. */
+    /** @description Generates a fresh invite code for the household, revoking any previous live code. Owner-only. Codes expire after 7 days. An optional target_member_id marks the invite for one profile-only member of the household (ahaqqu/RumaQ#397): redeeming it attaches the redeemer’s account to that member row instead of creating a new member. */
     post: operations['postApiHouseholdsByIdInvite']
     delete?: never
     options?: never
@@ -2889,6 +2889,13 @@ export interface operations {
         }
         content?: never
       }
+      /** @description The invite’s targeted member was already linked to another account */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
       /** @description Too many join attempts */
       429: {
         headers: {
@@ -3314,6 +3321,8 @@ export interface operations {
               code: string
               created_at: string
               expires_at: string
+              target_member_id: string | null
+              has_target: boolean
             } | null
           }
         }
@@ -3350,7 +3359,14 @@ export interface operations {
       }
       cookie?: never
     }
-    requestBody?: never
+    requestBody?: {
+      content: {
+        'application/json': {
+          /** @description A profile-only member (has_account=false) of this household to mark the invite for; omit or null for a plain invite */
+          target_member_id?: string | null
+        }
+      }
+    }
     responses: {
       /** @description Created */
       201: {
@@ -3364,9 +3380,18 @@ export interface operations {
               code: string
               created_at: string
               expires_at: string
+              target_member_id: string | null
+              has_target: boolean
             }
           }
         }
+      }
+      /** @description Invalid invite target */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
       }
       /** @description Unauthorized */
       401: {

@@ -208,7 +208,9 @@ export function useHouseholdInvite(id) {
 export function useCreateHouseholdInvite(id) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => createHouseholdInvite(id),
+    // payload is undefined for a plain invite (#397) — the old no-arg call
+    // keeps working; a { target_member_id } payload marks the invite.
+    mutationFn: (payload) => createHouseholdInvite(id, payload),
     onSuccess: (data) => {
       queryClient.setQueryData(['household-invite', id], data)
     },

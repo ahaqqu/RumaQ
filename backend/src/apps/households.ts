@@ -27,6 +27,8 @@ import {
   HouseholdForbiddenError,
   LastOwnerError,
   InvalidInviteError,
+  InvalidInviteTargetError,
+  InviteTargetConflictError,
   requireMembership,
   requireOwner,
   listHouseholds,
@@ -83,6 +85,17 @@ const joinSchema = object({
   code: pipe(string(), minLength(1), maxLength(60)),
 })
 
+// Invite targeting (ahaqqu/RumaQ#397): the optional body marks the invite for
+// one profile-only member; no field (or explicit null) = today's plain
+// invite. strictObject like the member schemas; every field optional so a
+// bodyless POST (today's clients, no Content-Type) still validates — Hono
+// skips JSON parsing without a JSON Content-Type and validates {}. The id cap
+// (64) matches documents.ts's memberId bound — it covers both id formats the
+// member table stores (dashed UUID, 0021's 32-hex backfill).
+const inviteCreateSchema = strictObject({
+  target_member_id: optional(union([pipe(string(), minLength(1), maxLength(64)), vnull()])),
+})
+
 // Household summaries ride the shared member/Household shape; nullable fields
 // use the additive-nullish pattern (`type: ['string','null']`) so older clients
 // tolerate the fields and newer ones read them.
@@ -124,12 +137,18 @@ const householdMemberSchema: OpenAPIV3_1.SchemaObject = {
 
 const inviteSchema: OpenAPIV3_1.SchemaObject = {
   type: 'object',
-  required: ['id', 'code', 'created_at', 'expires_at'],
+  required: ['id', 'code', 'created_at', 'expires_at', 'target_member_id', 'has_target'],
   properties: {
     id: { type: 'string' },
     code: { type: 'string' },
     created_at: { type: 'string' },
     expires_at: { type: 'string' },
+    // Additive-nullish (ahaqqu/RumaQ#397): the profile-only member this
+    // invite is marked for; null = plain invite (today's flow).
+    target_member_id: { type: ['string', 'null'] },
+    // The discriminator, computed from target_member_id so the two shapes
+    // never drift (the roster's has_account pattern).
+    has_target: { type: 'boolean' },
   },
 }
 
@@ -151,6 +170,10 @@ householdsApp.onError((err, c) => {
   if (err instanceof HouseholdForbiddenError) return c.json({ error: err.message }, 403)
   if (err instanceof LastOwnerError) return c.json({ error: err.message }, 409)
   if (err instanceof InvalidInviteError) return c.json({ error: err.message }, 400)
+  // Link-later (#397): the owner marked an invite for something that cannot
+  // be attached later (400), or two redeemers raced for one target (409).
+  if (err instanceof InvalidInviteTargetError) return c.json({ error: err.message }, 400)
+  if (err instanceof InviteTargetConflictError) return c.json({ error: err.message }, 409)
   console.error(err)
   return c.json({ error: 'Internal server error' }, 500, NO_CACHE)
 })
@@ -250,7 +273,7 @@ householdsApp.post(
   '/api/households/join',
   describeRoute({
     description:
-      'Joins a household by invite code. Unknown, revoked, and expired codes return the same error (no existence leak); joining a household you already belong to is idempotent.',
+      'Joins a household by invite code. Unknown, revoked, and expired codes return the same error (no existence leak); joining a household you already belong to is idempotent. An invite marked for a profile-only member (target_member_id, ahaqqu/RumaQ#397) attaches the redeemer’s account to that existing member row — id, display name, birth date, and documents stay attached — instead of creating a new member.',
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -286,6 +309,9 @@ householdsApp.post(
       },
       400: { description: 'Invalid or expired invite code' },
       401: { description: 'Unauthorized' },
+      // A targeted invite whose member was linked by someone else meanwhile
+      // (#397): a typed conflict, never the partial unique index as a 500.
+      409: { description: 'The invite’s targeted member was already linked to another account' },
       429: { description: 'Too many join attempts' },
     },
   }),
@@ -664,8 +690,27 @@ householdsApp.post(
   '/api/households/:id/invite',
   describeRoute({
     description:
-      'Generates a fresh invite code for the household, revoking any previous live code. Owner-only. Codes expire after 7 days.',
+      'Generates a fresh invite code for the household, revoking any previous live code. Owner-only. Codes expire after 7 days. An optional target_member_id marks the invite for one profile-only member of the household (ahaqqu/RumaQ#397): redeeming it attaches the redeemer’s account to that member row instead of creating a new member.',
     security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: false,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              target_member_id: {
+                type: ['string', 'null'],
+                maxLength: 64,
+                description:
+                  'A profile-only member (has_account=false) of this household to mark the invite for; omit or null for a plain invite',
+              },
+            },
+          },
+        },
+      },
+    },
     responses: {
       201: {
         description: 'Created',
@@ -679,11 +724,13 @@ householdsApp.post(
           },
         },
       },
+      400: { description: 'Invalid invite target' },
       401: { description: 'Unauthorized' },
       404: { description: 'Household not found' },
       403: { description: 'Only household owners can do that' },
     },
   }),
+  sValidator('json', inviteCreateSchema),
   async (c) => {
     const householdId = c.req.param('id')
     await requireOwner(c.env.DB, householdId, c.get('userId'))
@@ -691,7 +738,8 @@ householdsApp.post(
       c.env.DB,
       householdId,
       c.get('userId'),
-      c.env.WORKER_ENCRYPTION_KEY
+      c.env.WORKER_ENCRYPTION_KEY,
+      c.req.valid('json').target_member_id ?? null
     )
     const res = c.json({ invite }, 201)
     res.headers.set('Cache-Control', 'private, no-cache')

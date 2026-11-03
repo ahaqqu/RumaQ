@@ -765,3 +765,98 @@ describe('migration 0022: document vault (#388)', () => {
     expect(audit).not.toMatch(/SCAN|TEMP B-TREE/i)
   })
 })
+
+// Link-later (ahaqqu/RumaQ#397): household_invites.target_member_id — the
+// additive column that marks an invite for one profile-only member. The
+// interesting questions are the FK semantics: CASCADE (unlike 0022's
+// documents SET NULL) because a pending invite is transient data, plus the
+// referential integrity of the mark itself.
+describe('migration 0023: invite target member (#397)', () => {
+  it('adds the nullable target column on top of the pre-0023 schema; old invites stay null', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0023')
+    )
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at)
+       VALUES ('inv-1', 'h1', '${'a'.repeat(64)}', 'enc', 'u1', '2026-11-10 00:00:00')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0023_invite_target_member.sql'), 'utf8'))
+
+    // The pre-existing invite survives with target_member_id NULL — no
+    // backfill; NULL IS the plain-invite marker the join path branches on.
+    const old = db.prepare('SELECT * FROM household_invites WHERE id = ?').get('inv-1')
+    expect(old).toMatchObject({ id: 'inv-1', target_member_id: null })
+
+    // New invites may carry the mark.
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role)
+       VALUES ('m-profile', 'h1', NULL, 'member')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at, target_member_id)
+       VALUES ('inv-2', 'h1', '${'b'.repeat(64)}', 'enc', 'u1', '2026-11-10 00:00:00', 'm-profile')`
+    ).run()
+    const fresh = db.prepare('SELECT * FROM household_invites WHERE id = ?').get('inv-2')
+    expect(fresh).toMatchObject({ target_member_id: 'm-profile' })
+  })
+
+  it('cascades the invite away when its target member is deleted (transient data)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role)
+       VALUES ('m-profile', 'h1', NULL, 'member')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at, target_member_id)
+       VALUES ('inv-1', 'h1', '${'a'.repeat(64)}', 'enc', 'u1', '2026-11-10 00:00:00', 'm-profile')`
+    ).run()
+
+    // The pending invite is dead weight once the member it names is gone —
+    // the 0023 comment's rationale (opposite of documents' SET NULL: a
+    // document outlives the member, an unredeemed invite must not survive to
+    // attach a redeemer to a ghost row).
+    db.prepare('DELETE FROM household_members WHERE id = ?').run('m-profile')
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM household_invites').all()).toEqual([{ cnt: 0 }])
+  })
+
+  it('enforces the FK: the target must be a real member row', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at, target_member_id)
+           VALUES ('inv-x', 'h1', '${'a'.repeat(64)}', 'enc', 'u1', '2026-11-10 00:00:00', 'no-such-member')`
+        )
+        .run()
+    ).toThrow()
+  })
+
+  it('keeps the full chain green on a fresh database', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(household_invites)').all()
+    const names = columns.map((c: Record<string, unknown>) => c.name)
+    expect(names).toContain('target_member_id')
+  })
+})

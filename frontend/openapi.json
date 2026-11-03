@@ -2608,7 +2608,7 @@
     "/api/households/join": {
       "post": {
         "operationId": "postApiHouseholdsJoin",
-        "description": "Joins a household by invite code. Unknown, revoked, and expired codes return the same error (no existence leak); joining a household you already belong to is idempotent.",
+        "description": "Joins a household by invite code. Unknown, revoked, and expired codes return the same error (no existence leak); joining a household you already belong to is idempotent. An invite marked for a profile-only member (target_member_id, ahaqqu/RumaQ#397) attaches the redeemer’s account to that existing member row — id, display name, birth date, and documents stay attached — instead of creating a new member.",
         "security": [
           {
             "cookieAuth": []
@@ -2666,6 +2666,9 @@
           },
           "401": {
             "description": "Unauthorized"
+          },
+          "409": {
+            "description": "The invite’s targeted member was already linked to another account"
           },
           "429": {
             "description": "Too many join attempts"
@@ -3224,7 +3227,14 @@
                       "anyOf": [
                         {
                           "type": "object",
-                          "required": ["id", "code", "created_at", "expires_at"],
+                          "required": [
+                            "id",
+                            "code",
+                            "created_at",
+                            "expires_at",
+                            "target_member_id",
+                            "has_target"
+                          ],
                           "properties": {
                             "id": {
                               "type": "string"
@@ -3237,6 +3247,12 @@
                             },
                             "expires_at": {
                               "type": "string"
+                            },
+                            "target_member_id": {
+                              "type": ["string", "null"]
+                            },
+                            "has_target": {
+                              "type": "boolean"
                             }
                           }
                         },
@@ -3273,12 +3289,30 @@
       },
       "post": {
         "operationId": "postApiHouseholdsByIdInvite",
-        "description": "Generates a fresh invite code for the household, revoking any previous live code. Owner-only. Codes expire after 7 days.",
+        "description": "Generates a fresh invite code for the household, revoking any previous live code. Owner-only. Codes expire after 7 days. An optional target_member_id marks the invite for one profile-only member of the household (ahaqqu/RumaQ#397): redeeming it attaches the redeemer’s account to that member row instead of creating a new member.",
         "security": [
           {
             "cookieAuth": []
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "target_member_id": {
+                    "type": ["string", "null"],
+                    "maxLength": 64,
+                    "description": "A profile-only member (has_account=false) of this household to mark the invite for; omit or null for a plain invite"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": "Created",
@@ -3290,7 +3324,14 @@
                   "properties": {
                     "invite": {
                       "type": "object",
-                      "required": ["id", "code", "created_at", "expires_at"],
+                      "required": [
+                        "id",
+                        "code",
+                        "created_at",
+                        "expires_at",
+                        "target_member_id",
+                        "has_target"
+                      ],
                       "properties": {
                         "id": {
                           "type": "string"
@@ -3303,6 +3344,12 @@
                         },
                         "expires_at": {
                           "type": "string"
+                        },
+                        "target_member_id": {
+                          "type": ["string", "null"]
+                        },
+                        "has_target": {
+                          "type": "boolean"
                         }
                       }
                     }
@@ -3310,6 +3357,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid invite target"
           },
           "401": {
             "description": "Unauthorized"
