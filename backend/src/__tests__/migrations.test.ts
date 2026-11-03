@@ -254,3 +254,134 @@ describe('migration 0019: price_observations.taxo_version (#373)', () => {
     expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('taxo_version')
   })
 })
+
+// Household member management (ahaqqu/RumaQ#331): additive profile fields on
+// household_members (display_name, birth_date — stable addressable member
+// entities so per-member features like a BayiQ immunization chart can attach
+// later without schema surgery) plus the owner-issued invite-code table.
+describe('migration 0020: household member profiles + invites (#331)', () => {
+  it('adds nullable member profile columns on top of the pre-0020 schema; old rows stay null', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0020')
+    )
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (household_id, user_id, role) VALUES ('h1', 'u1', 'owner')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0020_household_member_profiles.sql'), 'utf8'))
+
+    // The pre-existing membership survives with both profile fields NULL —
+    // no backfill; the household screen owns collecting them.
+    const old = db
+      .prepare('SELECT * FROM household_members WHERE household_id = ? AND user_id = ?')
+      .get('h1', 'u1')
+    expect(old).toMatchObject({
+      household_id: 'h1',
+      user_id: 'u1',
+      role: 'owner',
+      display_name: null,
+      birth_date: null,
+    })
+
+    // New rows carry the per-member profile (dates as TEXT 'YYYY-MM-DD').
+    db.prepare("INSERT INTO users (id, email) VALUES ('u2', 'b@c.com')").run()
+    db.prepare(
+      `INSERT INTO household_members (household_id, user_id, role, display_name, birth_date)
+       VALUES ('h1', 'u2', 'member', 'Putri', '2024-05-01')`
+    ).run()
+    const fresh = db
+      .prepare('SELECT * FROM household_members WHERE household_id = ? AND user_id = ?')
+      .get('h1', 'u2')
+    expect(fresh).toMatchObject({ display_name: 'Putri', birth_date: '2024-05-01' })
+  })
+
+  it('creates the household_invites table with a unique code_hash and cascading delete', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at)
+       VALUES ('inv-1', 'h1', '${'a'.repeat(64)}', 'enc-payload', 'u1', '2026-11-10 00:00:00')`
+    ).run()
+    const invite = db.prepare('SELECT * FROM household_invites WHERE id = ?').get('inv-1')
+    expect(invite).toMatchObject({
+      id: 'inv-1',
+      household_id: 'h1',
+      revoked_at: null,
+    })
+
+    // code_hash is the join lookup handle — it must be unique. No plaintext
+    // `code` column exists at all (review A8): a DB leak yields neither codes
+    // nor a hash preimage to search.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at)
+           VALUES ('inv-2', 'h1', '${'a'.repeat(64)}', 'enc-payload-2', 'u1', '2026-11-10 00:00:00')`
+        )
+        .run()
+    ).toThrow()
+    const columns = db.prepare('PRAGMA table_info(household_invites)').all()
+    const names = columns.map((c: Record<string, unknown>) => c.name)
+    expect(names).toContain('code_hash')
+    expect(names).toContain('code_encrypted')
+    expect(names).not.toContain('code')
+
+    // Deleting the household cascades to its invites (no orphan codes).
+    db.prepare('DELETE FROM households WHERE id = ?').run('h1')
+    const remaining = db.prepare('SELECT COUNT(*) AS cnt FROM household_invites').all()
+    expect(remaining).toEqual([{ cnt: 0 }])
+  })
+
+  it('indexes household_members(user_id) so per-request membership lookups seek', () => {
+    // Review A1: the auth middleware's COALESCE fallback, listHouseholds, and
+    // the departure remaining-check all filter by user_id alone — without the
+    // index each ran a full scan + temp B-tree sort per request.
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const index = db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_household_members_user'"
+      )
+      .get()
+    expect(index).toMatchObject({
+      sql: expect.stringContaining('idx_household_members_user'),
+    })
+
+    // The fallback half of the auth resolution must be a SEARCH on that index
+    // with no TABLE SCAN and no temp-B-tree sort — the per-request budget.
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT household_id FROM household_members
+          WHERE user_id = ? ORDER BY joined_at, household_id LIMIT 1`
+      )
+      .all('u1')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(detail).toContain('idx_household_members_user')
+    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+
+  it('keeps the full chain green on a fresh database', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const memberColumns = db.prepare('PRAGMA table_info(household_members)').all()
+    const names = memberColumns.map((c: Record<string, unknown>) => c.name)
+    expect(names).toEqual(expect.arrayContaining(['display_name', 'birth_date']))
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'household_invites'")
+      .all()
+    expect(tables.map((r: Record<string, unknown>) => r.name)).toEqual(['household_invites'])
+  })
+})

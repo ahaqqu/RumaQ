@@ -1,3 +1,6 @@
+import { createMiddleware } from 'hono/factory'
+import type { Env } from '../types.js'
+
 type WindowEntry = {
   count: number
   resetAt: number
@@ -49,3 +52,29 @@ export function resetRateLimit(key?: string): void {
     windows.clear()
   }
 }
+
+// General per-user/per-IP API rate limiting, shared by every public domain
+// app (api.ts and households.ts run the same stack). Applied after CORS but
+// before auth so that unauthenticated bursts are also throttled. Keys are
+// in-memory only; move to KV for multi-instance deployments. A domain app can
+// layer a stricter, keyed limiter on top (e.g. invite-code redemption) using
+// isRateLimited directly.
+export const ipRateLimitMiddleware = createMiddleware<Env>(async (c, next) => {
+  // Rate-limit by client IP. In production, Cloudflare sets CF-Connecting-IP,
+  // which is authoritative. The X-Forwarded-For fallback is only for the
+  // local Docker test stack, where the reverse proxy supplies a synthetic IP
+  // per test scenario. A browser client cannot spoof CF-Connecting-IP.
+  const clientIp =
+    c.req.header('CF-Connecting-IP') ||
+    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+    'unknown'
+  const key = `api:${clientIp}`
+  const { windowMs, maxRequests } = getRateLimitConfig(c.env)
+  const { limited, retryAfter } = isRateLimited(key, windowMs, maxRequests)
+  if (limited) {
+    return c.json({ error: 'Too many requests. Please slow down.' }, 429, {
+      'Retry-After': String(retryAfter),
+    })
+  }
+  await next()
+})

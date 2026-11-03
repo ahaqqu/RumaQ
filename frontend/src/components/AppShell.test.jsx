@@ -9,6 +9,7 @@ import {
   useUpdateSettings,
   useUsage,
   useSendChatMessage,
+  useHouseholds,
 } from '../lib/queries/index.js'
 import { useMe, useLogout } from '../lib/queries/me.js'
 
@@ -50,6 +51,7 @@ vi.mock('../lib/queries/index.js', () => ({
   useUpdateSettings: vi.fn(),
   useUsage: vi.fn(),
   useSendChatMessage: vi.fn(),
+  useHouseholds: vi.fn(),
 }))
 
 function renderWithProviders(ui) {
@@ -75,6 +77,19 @@ describe('AppShell', () => {
     vi.mocked(useSettings).mockReturnValue({
       data: { has_ai_key: false, active_household_name: 'Keluarga Putri' },
     })
+    vi.mocked(useHouseholds).mockReturnValue({
+      data: {
+        households: [
+          {
+            id: 'h1',
+            name: 'Keluarga Putri',
+            role: 'owner',
+            member_count: 4,
+            is_active: true,
+          },
+        ],
+      },
+    })
     vi.mocked(useUpdateSettings).mockReturnValue({ mutate: vi.fn() })
     // Assistant is mounted by the shell; it consumes usage + chat hooks.
     vi.mocked(useUsage).mockReturnValue({
@@ -98,12 +113,19 @@ describe('AppShell', () => {
     expect(container.querySelector('#test-child')).toBeTruthy()
   })
 
-  it('renders the household card from settings', () => {
-    const { getByTestId, getByText } = renderWithProviders(
-      React.createElement(AppShell, null, null)
-    )
-    expect(getByTestId('household-card').textContent).toContain('Keluarga Putri')
-    expect(getByText('Your shared kitchen')).toBeTruthy()
+  it('renders the household card from settings with the member count', () => {
+    const { getByTestId } = renderWithProviders(React.createElement(AppShell, null, null))
+    const card = getByTestId('household-card')
+    expect(card.textContent).toContain('Keluarga Putri')
+    // "4 people · Your shared kitchen" — the Figma household-card identity.
+    expect(card.textContent).toContain('4 people')
+    expect(card.textContent).toContain('Your shared kitchen')
+  })
+
+  it('links the household card into the Household members screen', () => {
+    const { getByTestId } = renderWithProviders(React.createElement(AppShell, null, null))
+    const card = getByTestId('household-card')
+    expect(card.closest('a')?.getAttribute('href')).toBe('/household')
   })
 
   it('omits the household card when the household name is unknown', () => {
@@ -171,9 +193,13 @@ describe('AppShell', () => {
     expect(container.querySelector('aside[role="dialog"]')).toBeNull()
   })
 
-  it('hides admin nav for regular users and shows it for admins', () => {
+  it('shows Household members to everyone but operator surfaces only to admins', () => {
     const { container } = renderWithProviders(React.createElement(AppShell, null, null))
-    expect(container.textContent).not.toContain('Household admin')
+    // The HOUSEHOLD ADMIN group heading and the Household members entry exist
+    // for every user; operator items do not.
+    expect(container.textContent).toContain('Household admin')
+    expect(container.textContent).toContain('Household members')
+    expect(container.textContent).not.toContain('Scraper Monitor')
 
     vi.mocked(useMe).mockReturnValue({
       data: { user: { id: 'u1', email: 'a@b.com', name: 'Alice', isAdmin: true } },

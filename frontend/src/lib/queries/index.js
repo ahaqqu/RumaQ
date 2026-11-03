@@ -7,6 +7,19 @@ export { useUsage, useAdminAiUsage } from './usage.js'
 export { useLocations, useCreateLocation, useDeleteLocation } from './locations.js'
 export { useStores, useCreateStore, useDeleteStore } from './stores.js'
 export { usePlans, useGeneratePlan, useSavePlan, useUpdatePlanItem } from './plans.js'
+export {
+  useHouseholds,
+  useCreateHousehold,
+  useRenameHousehold,
+  useActivateHousehold,
+  useHouseholdMembers,
+  useUpdateHouseholdMember,
+  useRemoveHouseholdMember,
+  useLeaveHousehold,
+  useHouseholdInvite,
+  useCreateHouseholdInvite,
+  useJoinHousehold,
+} from './households.js'
 export { useHistory, usePurchasePatterns, useSendChatMessage } from './history.js'
 export {
   usePrices,

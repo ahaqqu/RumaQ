@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AddRouteImport } from './routes/add'
 import { Route as HistoryRouteImport } from './routes/history'
+import { Route as HouseholdRouteImport } from './routes/household'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as PlanRouteImport } from './routes/plan'
 import { Route as PricesRouteImport } from './routes/prices'
@@ -34,6 +35,11 @@ const AddRoute = AddRouteImport.update({
 const HistoryRoute = HistoryRouteImport.update({
   id: '/history',
   path: '/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HouseholdRoute = HouseholdRouteImport.update({
+  id: '/household',
+  path: '/household',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InventoryRoute = InventoryRouteImport.update({
@@ -81,6 +87,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/add': typeof AddRoute
   '/history': typeof HistoryRoute
+  '/household': typeof HouseholdRoute
   '/inventory': typeof InventoryRoute
   '/plan': typeof PlanRoute
   '/prices': typeof PricesRoute
@@ -94,6 +101,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/add': typeof AddRoute
   '/history': typeof HistoryRoute
+  '/household': typeof HouseholdRoute
   '/inventory': typeof InventoryRoute
   '/plan': typeof PlanRoute
   '/prices': typeof PricesRoute
@@ -108,6 +116,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/add': typeof AddRoute
   '/history': typeof HistoryRoute
+  '/household': typeof HouseholdRoute
   '/inventory': typeof InventoryRoute
   '/plan': typeof PlanRoute
   '/prices': typeof PricesRoute
@@ -123,6 +132,7 @@ export interface FileRouteTypes {
     | '/'
     | '/add'
     | '/history'
+    | '/household'
     | '/inventory'
     | '/plan'
     | '/prices'
@@ -136,6 +146,7 @@ export interface FileRouteTypes {
     | '/'
     | '/add'
     | '/history'
+    | '/household'
     | '/inventory'
     | '/plan'
     | '/prices'
@@ -149,6 +160,7 @@ export interface FileRouteTypes {
     | '/'
     | '/add'
     | '/history'
+    | '/household'
     | '/inventory'
     | '/plan'
     | '/prices'
@@ -163,6 +175,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AddRoute: typeof AddRoute
   HistoryRoute: typeof HistoryRoute
+  HouseholdRoute: typeof HouseholdRoute
   InventoryRoute: typeof InventoryRoute
   PlanRoute: typeof PlanRoute
   PricesRoute: typeof PricesRoute
@@ -194,6 +207,13 @@ declare module '@tanstack/react-router' {
       path: '/history'
       fullPath: '/history'
       preLoaderRoute: typeof HistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/household': {
+      id: '/household'
+      path: '/household'
+      fullPath: '/household'
+      preLoaderRoute: typeof HouseholdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/inventory': {
@@ -259,6 +279,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AddRoute: AddRoute,
   HistoryRoute: HistoryRoute,
+  HouseholdRoute: HouseholdRoute,
   InventoryRoute: InventoryRoute,
   PlanRoute: PlanRoute,
   PricesRoute: PricesRoute,
