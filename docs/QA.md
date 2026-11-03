@@ -107,7 +107,7 @@ mode:
   by a QA run.
 - Reference evidence by absolute path in the results comment.
 - No secrets, tokens, cookie values, or `.env` contents in evidence or
-  comments (cookie *metadata* such as length/expiry is fine).
+  comments (cookie _metadata_ such as length/expiry is fine).
 - End-of-run hygiene: log the smoke account out; if a session token remains
   server-valid (see QA-F2 on ticket #402), disclose it in the cleanup
   statement.
