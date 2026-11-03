@@ -20,7 +20,7 @@ This document describes the production architecture for RumaQ on Cloudflare's fr
 | Frontend       | Cloudflare Worker (static assets)      | Hosts the React + Vite SPA on the Worker origin | Bundled with the Worker deploy      |
 | API            | Cloudflare Workers                     | Hono HTTP API, auth, AI proxy                   | 100,000 requests/day                |
 | Database       | Cloudflare D1                          | Relational SQLite database                      | 500 MB storage, 100,000 queries/day |
-| Files          | Cloudflare R2                          | Receipt image storage                           | 10 GB storage, 10 M reads/mo        |
+| Files          | Cloudflare R2                          | Receipt image + document vault storage          | 10 GB storage, 10 M reads/mo        |
 | Cache/metadata | Cloudflare KV (optional)               | Rate-limit counters, AI usage windows           | 1 GB, 100,000 reads/day             |
 | Auth           | Google OAuth 2.0                       | SSO login, managed inside the Worker            | Free                                |
 | AI             | OpenAI / Gemini / Anthropic / OpenCode | External LLM calls proxied through the Worker   | User's own billing                  |
@@ -244,6 +244,7 @@ Core entities:
 - `purchases` + `purchase_items` — receipt history; the substrate for all estimates.
 - `plans` + `plan_items` — AI-generated shopping trips.
 - `user_settings` — AI provider/key, motion preference, currency, and persona roles.
+- `documents` + `document_audit` — the household document vault (ahaqqu/RumaQ#388, migration 0022): per-household files optionally attached to a member (both modes — linked accounts and profile-only members from 0021), closed category set, sha256 + storage metadata, and a per-action audit trail that outlives the document it records.
 - `ai_usage_events` — one row per completed AI call (provider, model, input/output/cached tokens, key source); auto-deleted after one year by the daily retention cron.
 
 ## 7. AI integration
@@ -354,22 +355,23 @@ The legacy Pages project was deleted after the cutover; `rumaq.pages.dev` no lon
 
 ### Environment variables
 
-| Variable                   | Where         | Purpose                                                                                                                                                                             |
-| -------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GOOGLE_CLIENT_ID`         | Worker secret | Google OAuth client ID                                                                                                                                                              |
-| `GOOGLE_CLIENT_SECRET`     | Worker secret | Google OAuth client secret                                                                                                                                                          |
-| `WORKER_JWT_SECRET`        | Worker secret | HMAC key for session JWT                                                                                                                                                            |
-| `WORKER_ENCRYPTION_KEY`    | Worker secret | AES-GCM key for AI keys                                                                                                                                                             |
-| `HAQITA_INGEST_SECRET`     | Worker secret | Bearer secret for the internal price ingest endpoint (`POST /api/internal/ingest/prices`, pushed daily by the rumaq-scraper VPS job). Optional: when unset the endpoint returns 503 |
-| `CLOUDFLARE_ACCOUNT_ID`    | Build/deploy  | Cloudflare account ID; used by Wrangler and the deploy script                                                                                                                       |
-| `CLOUDFLARE_DATABASE_ID`   | Build/deploy  | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed                                                                                          |
-| `CLOUDFLARE_API_TOKEN`     | Build/deploy  | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                                                                                            |
-| `EMAIL_AUTH_ENABLED`       | Worker var    | Set to `"true"` or `"false"` to enable or disable email/password testing auth                                                                                                       |
-| `RUN_SECRETS_CHECK`        | Worker var    | Set to `"true"` to enable missing-secrets check on startup (recommended for production); off by default                                                                             |
-| `WORKER_URL`               | Build env     | URL of the deployed Worker (e.g. `https://rumaq.ahaqqu.com`); used at build time as `VITE_API_BASE`                                                                                 |
-| `D1_DATABASE_NAME`         | Deploy        | D1 database name (default: `rumaq`)                                                                                                                                                 |
-| `R2_BUCKET_NAME`           | Deploy        | R2 bucket name for receipt images (default: `rumaq-receipts`)                                                                                                                       |
-| `R2_BROCHURES_BUCKET_NAME` | Deploy        | R2 bucket name for brochure images (default: `rumaq-brochures`)                                                                                                                     |
+| Variable                   | Where         | Purpose                                                                                                                                                                                                 |
+| -------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_CLIENT_ID`         | Worker secret | Google OAuth client ID                                                                                                                                                                                  |
+| `GOOGLE_CLIENT_SECRET`     | Worker secret | Google OAuth client secret                                                                                                                                                                              |
+| `WORKER_JWT_SECRET`        | Worker secret | HMAC key for session JWT                                                                                                                                                                                |
+| `WORKER_ENCRYPTION_KEY`    | Worker secret | AES-GCM key for AI keys                                                                                                                                                                                 |
+| `HAQITA_INGEST_SECRET`     | Worker secret | Bearer secret for the internal price ingest endpoint (`POST /api/internal/ingest/prices`, pushed daily by the rumaq-scraper VPS job). Optional: when unset the endpoint returns 503                     |
+| `CLOUDFLARE_ACCOUNT_ID`    | Build/deploy  | Cloudflare account ID; used by Wrangler and the deploy script                                                                                                                                           |
+| `CLOUDFLARE_DATABASE_ID`   | Build/deploy  | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed                                                                                                              |
+| `CLOUDFLARE_API_TOKEN`     | Build/deploy  | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                                                                                                                |
+| `EMAIL_AUTH_ENABLED`       | Worker var    | Set to `"true"` or `"false"` to enable or disable email/password testing auth                                                                                                                           |
+| `RUN_SECRETS_CHECK`        | Worker var    | Set to `"true"` to enable missing-secrets check on startup (recommended for production); off by default                                                                                                 |
+| `WORKER_URL`               | Build env     | URL of the deployed Worker (e.g. `https://rumaq.ahaqqu.com`); used at build time as `VITE_API_BASE`                                                                                                     |
+| `D1_DATABASE_NAME`         | Deploy        | D1 database name (default: `rumaq`)                                                                                                                                                                     |
+| `R2_BUCKET_NAME`           | Deploy        | R2 bucket name for receipt images (default: `rumaq-receipts`)                                                                                                                                           |
+| `R2_BROCHURES_BUCKET_NAME` | Deploy        | R2 bucket name for brochure images (default: `rumaq-brochures`)                                                                                                                                         |
+| — (no new var)             | —             | The document vault (ahaqqu/RumaQ#388) binds `DOCUMENTS` to the SAME private bucket as `RECEIPTS` under a dedicated name; its keys carry the `documents/` prefix, so no new bucket or variable is needed |
 
 ### Secrets management
 
@@ -422,6 +424,7 @@ If usage grows, the first upgrade is Workers Paid ($5/mo) for higher request and
 - [x] AI API keys are encrypted at rest (AES-GCM) and only decrypted in the Worker.
 - [x] Google OAuth `state` and PKCE verifier prevent CSRF/replay.
 - [x] R2 objects are private; frontend receives receipt images through `GET /api/purchases/:id/receipt` (proxy stream). R2 signed URLs are out of current scope (open security item).
+- [x] Document vault bytes stream only through the household-scoped `GET /api/documents/{id}/content` (auth + `household_id` in the SQL predicate; foreign ids answer 404 with no existence leak). Uploads are capped at 10 MB (Content-Length pre-check + post-parse), magic-byte sniffed (declared-vs-actual mismatch = 415), and audited; no public or presigned URLs exist for documents.
 - [x] D1 queries are parameterized; no string concatenation.
 - [x] Every D1 query that reads or writes household-scoped data filters by `household_id` or `user_id`.
 - [x] Same-origin app + API: no cross-origin API calls in production. CORS keeps localhost dev origins allowed and defaults to the canonical `rumaq.ahaqqu.com` origin (`PAGES_ORIGIN` overrides it); unknown origins are rejected.
