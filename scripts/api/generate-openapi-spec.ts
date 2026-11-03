@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs'
 import { generateSpecs } from 'hono-openapi'
 import { apiApp } from '../../backend/src/apps/api.js'
 import { householdsApp } from '../../backend/src/apps/households.js'
+import { documentsApp } from '../../backend/src/apps/documents.js'
 import { authApp } from '../../backend/src/apps/auth.js'
 
 // Generates the OpenAPI contract consumed by the typed API client
@@ -14,9 +15,10 @@ const DOCS_OPTIONS = {
   },
 }
 
-const [apiSpec, householdsSpec, authSpec] = await Promise.all([
+const [apiSpec, householdsSpec, documentsSpec, authSpec] = await Promise.all([
   generateSpecs(apiApp, DOCS_OPTIONS),
   generateSpecs(householdsApp, DOCS_OPTIONS),
+  generateSpecs(documentsApp, DOCS_OPTIONS),
   generateSpecs(authApp, DOCS_OPTIONS),
 ])
 
@@ -42,9 +44,12 @@ const spec = {
   // Internal service routes (bearer-secret ingest) are not part of the
   // browser client contract.
   paths: Object.fromEntries(
-    Object.entries({ ...apiSpec.paths, ...householdsSpec.paths, ...authPaths }).filter(
-      ([path]) => !path.startsWith('/api/internal/')
-    )
+    Object.entries({
+      ...apiSpec.paths,
+      ...householdsSpec.paths,
+      ...documentsSpec.paths,
+      ...authPaths,
+    }).filter(([path]) => !path.startsWith('/api/internal/'))
   ),
   components: { ...apiSpec.components, ...authSpec.components },
 }
