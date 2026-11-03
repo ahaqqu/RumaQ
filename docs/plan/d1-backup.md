@@ -140,7 +140,16 @@ into the existing private bucket under a dedicated `backups/` prefix.**
   can drop to weekly).
 - **Download:** fetch `signed_url` (valid one hour) — immediately, inside the
   same run. The dump is **never** uploaded as a GitHub Actions artifact and
-  never printed (§9 invariants).
+  never printed (§9 invariants). Neither the API token nor the signed URL
+  (a bearer capability) transit curl argv — both are passed via `-K -` stdin
+  config files, so they never appear in the world-readable process command
+  line.
+- **Pre-upload verification:** the export script runs the restore-drill
+  canaries (`scripts/backup/restore-drill.sh` → `verify-dump.mjs`) against
+  the downloaded dump BEFORE the R2 upload — a broken export fails the run
+  into a `backup-failure` ticket instead of replacing a good backup with a
+  green-but-unrestorable dump that would otherwise sit unnoticed until the
+  monthly drill.
 - **Upload:** `PUT /accounts/{account_id}/r2/buckets/{bucket}/objects/{key}`
   into the private bucket `rumaq-receipts` (`R2_BUCKET_NAME`, default) —
   **not** the brochures bucket.
@@ -160,6 +169,10 @@ into the existing private bucket under a dedicated `backups/` prefix.**
 - WIB-morning alignment: captures the full previous day of writes (Indonesian
   evening usage peak) _before_ the next usage day starts — RPO ≤ 24 h, layered
   on top of Time Travel's minute-level PITR for anything recent.
+- Publish ordering: the price pipeline publishes at 23:00 UTC (06:00 WIB),
+  ~21 h before the next 03:07 WIB export — every nightly dump already
+  contains the previous day's publish, so RPO ≤ 24 h holds by that ordering
+  alone.
 - Off-peak WIB night; avoids collision with `smoke.yml` (tops of 00/06/12/18
   UTC), the Worker cron (03:17 UTC), and `audit.yml` (07:00 UTC).
 - Seven-minute past the hour dodges top-of-hour runner congestion.

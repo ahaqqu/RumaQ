@@ -60,6 +60,11 @@ jobs:
           fi
 
       - name: Export D1 to R2 and prune retention
+        # export-d1.sh verifies the downloaded dump with the restore-drill
+        # canaries BEFORE uploading: a broken export fails this run (→ the
+        # backup-failure ticket below) instead of replacing a good backup
+        # with a green-but-unrestorable dump that would sit unnoticed until
+        # the monthly drill. Retention pruning runs only on the success path.
         run: ./scripts/backup/export-d1.sh
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -72,6 +77,9 @@ jobs:
           R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
 
       - name: Close resolved issues
+        # The open/close-issue steps mirror smoke.yml verbatim (smoke-failure
+        # ↔ backup-failure). When a third workflow needs this pattern,
+        # extract a composite action instead of a fourth copy (review B2).
         if: success()
         uses: actions/github-script@v9
         with:
