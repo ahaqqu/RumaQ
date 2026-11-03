@@ -454,7 +454,8 @@ Two automated mechanisms keep dependencies secure:
 
 - Production dependencies (`bun audit --omit=dev`) are checked separately and treated as urgent.
 - Vulnerabilities that require breaking changes create a GitHub issue (labelled `security`) instead of an auto-PR; the issue is auto-closed once a later audit run passes.
-- Transitive packages pinned to vulnerable exact versions by upstreams (`sharp`, `undici`, `zod` under miniflare / `@cloudflare/config`) are held at fixed versions via `overrides` in the root `package.json`.
+- Transitive packages pinned to vulnerable exact versions by upstreams (`sharp`, `undici`, `uuid`, `zod` under miniflare / `@cloudflare/config`) are held at fixed versions via `overrides` in the root `package.json`.
+- Dev-tooling advisories without an in-range upstream fix are held there too: `deepmerge` 4.1.2 is a deliberate downgrade (no patched release exists for GHSA-gcqx-w48m-w2h4, so 4.1.2 is the highest release outside the vulnerable range; its sole consumer, `@rollup/plugin-node-resolve`, only performs a plain two-object merge), while `glob` 14.0.3 and `minimatch` 11.0.4 force the upstream fix releases across the majors consumers declare (GHSA-3g3m-2fjr-6pw4, GHSA-g3hv-75wg-m249).
 - Test tooling (`@cucumber/*`, `jest-cucumber`) is kept in `devDependencies` so transitive vulns in those packages never affect production audits.
 
 ## 13. Tech debt & deferred scope
