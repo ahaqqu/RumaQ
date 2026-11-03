@@ -33,8 +33,6 @@
     "roleMember": "Member",
     "joined": "Joined {{date}}",
     "you": "You",
-    "profileTitle": "Member profiles",
-    "profileHint": "Display name and birth date stay inside this household — per-member features (like an age-based chart) build on them later.",
     "editProfile": "Edit profile",
     "saveProfile": "Save",
     "cancel": "Cancel",
@@ -74,7 +72,8 @@
     "lastOwnerRemoveBlocked": "A household must keep at least one owner.",
     "onlyOwners": "Only household owners can do that",
     "notFound": "Household not found",
-    "errorGeneric": "Something went wrong. Please try again."
+    "errorGeneric": "Something went wrong. Please try again.",
+    "renameSave": "Save"
   },
   "greeting": {
     "morning": "Good morning",

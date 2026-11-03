@@ -12,6 +12,7 @@ import {
   createHouseholdInvite,
   joinHousehold,
 } from '../api'
+import { useMe } from './me.js'
 
 const HOUSEHOLDS_KEY = ['households']
 
@@ -136,6 +137,7 @@ export function useUpdateHouseholdMember(id) {
 export function useRemoveHouseholdMember() {
   const queryClient = useQueryClient()
   const revalidateEverything = useRevalidateEverything()
+  const { data: me } = useMe()
   return useMutation({
     mutationFn: ({ id, userId }) => removeHouseholdMember(id, userId),
     onMutate: async ({ id, userId }) => {
@@ -152,11 +154,16 @@ export function useRemoveHouseholdMember() {
         queryClient.setQueryData(['household-members', vars.id], context.previous)
       }
     },
-    onSettled: () => {
-      // Member counts on the households list change; a removed member's own
-      // session falls back to another household.
+    onSettled: (_data, _err, vars) => {
+      // Removing someone else changes only the roster and the list's member
+      // counts — the caller's other cached data is untouched (review B6).
       queryClient.invalidateQueries({ queryKey: HOUSEHOLDS_KEY })
-      revalidateEverything()
+      queryClient.invalidateQueries({ queryKey: ['household-members', vars.id] })
+      // The full sweep is for the rare case the caller removed THEMSELVES
+      // (every household-scoped view just changed for them).
+      if (me?.user?.id === vars.userId) {
+        revalidateEverything()
+      }
     },
   })
 }
@@ -191,11 +198,13 @@ export function useCreateHouseholdInvite(id) {
 }
 
 export function useJoinHousehold() {
-  const revalidateEverything = useRevalidateEverything()
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (code) => joinHousehold(code),
     onSettled: () => {
-      revalidateEverything()
+      // Joining adds a membership and nothing else: the active household is
+      // switched explicitly afterwards, so only the list is stale (review B6).
+      queryClient.invalidateQueries({ queryKey: HOUSEHOLDS_KEY })
     },
   })
 }

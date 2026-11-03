@@ -30,11 +30,14 @@ import {
 } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
 
-// Error vocabulary mirrors the backend's households app: the status picks the
-// copy, never the raw server string.
-function householdErrorKey(error) {
+// Error vocabulary mirrors the backend's households app: the (endpoint,
+// status) pair picks the copy, never the raw server string. A 400 only means
+// "invalid invite code" on the join endpoint — other mutations get the
+// generic message instead of an invite-specific claim (review A10).
+function householdErrorKey(error, endpoint) {
   const status = error instanceof ApiError ? error.status : undefined
-  if (status === 400) return 'household.joinInvalid'
+  if (status === 400)
+    return endpoint === 'join' ? 'household.joinInvalid' : 'household.errorGeneric'
   if (status === 403) return 'household.onlyOwners'
   if (status === 409) return 'household.lastOwnerRemoveBlocked'
   return 'household.errorGeneric'
@@ -182,12 +185,20 @@ export function Household() {
 
   const [editingUserId, setEditingUserId] = useState(null)
   const [profileDraft, setProfileDraft] = useState({ display_name: '', birth_date: '' })
+  // Rename is an inline field in the identity card (review B4) — no
+  // window.prompt; the remove/leave confirms stay as noted debt.
+  const [renaming, setRenaming] = useState(false)
+  const [renameDraft, setRenameDraft] = useState('')
   const [joinCode, setJoinCode] = useState(typeof joinCodeParam === 'string' ? joinCodeParam : '')
   const [newHouseholdName, setNewHouseholdName] = useState('')
   const [feedback, setFeedback] = useState(null)
   const [actionError, setActionError] = useState(null)
 
   const memberCount = active?.member_count ?? members.length
+  // The backend 409s on OWNER count, not member count — the warning and the
+  // rule must key on the same number (review A9): the sole owner of a
+  // 4-person household is blocked from leaving just as much as a solo one.
+  const ownerCount = members.filter((m) => m.role === 'owner').length
 
   const openEdit = (member) => {
     setEditingUserId(member.user_id)
@@ -241,7 +252,7 @@ export function Household() {
       },
       onError: (err) => {
         setFeedback(null)
-        setActionError(t(householdErrorKey(err)))
+        setActionError(t(householdErrorKey(err, 'join')))
       },
     })
   }
@@ -260,11 +271,17 @@ export function Household() {
 
   const rename = () => {
     if (!active) return
-    const name = window.prompt(t('household.renamePrompt'), active.name)?.trim()
+    const name = renameDraft.trim()
     if (!name || name === active.name) return
     renameHousehold.mutate(
       { id: activeId, name },
-      { onError: (err) => setActionError(t(householdErrorKey(err))) }
+      {
+        onSuccess: () => {
+          setRenaming(false)
+          setActionError(null)
+        },
+        onError: (err) => setActionError(t(householdErrorKey(err))),
+      }
     )
   }
 
@@ -339,11 +356,41 @@ export function Household() {
               )}
             </div>
           </div>
-          {isOwner && (
-            <Button size="sm" variant="secondary" onClick={rename}>
-              {t('household.rename')}
-            </Button>
-          )}
+          {isOwner &&
+            (renaming ? (
+              <div className="flex flex-wrap items-end gap-2">
+                <InlineField
+                  label={t('household.renamePrompt')}
+                  value={renameDraft}
+                  maxLength={80}
+                  autoFocus
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={rename}
+                    disabled={renameHousehold.isPending || !renameDraft.trim()}
+                  >
+                    {t('household.renameSave')}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setRenaming(false)}>
+                    {t('household.cancel')}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setRenameDraft(active?.name ?? '')
+                  setRenaming(true)
+                }}
+              >
+                {t('household.rename')}
+              </Button>
+            ))}
         </div>
       </Panel>
 
@@ -559,7 +606,7 @@ export function Household() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="font-medium text-danger">{t('household.leave')}</div>
-              {isOwner && memberCount <= 1 && (
+              {isOwner && ownerCount <= 1 && (
                 <div className="text-sm text-text-muted mt-0.5">
                   {t('household.lastOwnerWarning')}
                 </div>

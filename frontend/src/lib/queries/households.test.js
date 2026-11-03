@@ -11,6 +11,7 @@ import {
   useCreateHouseholdInvite,
   useJoinHousehold,
 } from './households.js'
+import { useMe } from './me.js'
 import {
   createHousehold,
   renameHousehold,
@@ -34,6 +35,10 @@ vi.mock('../api', () => ({
   createHouseholdInvite: vi.fn(),
   joinHousehold: vi.fn(),
 }))
+
+// The remove hook reads the session (useMe) to detect a self-removal — the
+// one case that must sweep the whole cache (review B6).
+vi.mock('./me.js', () => ({ useMe: vi.fn() }))
 
 const HOUSEHOLDS_KEY = ['households']
 const MEMBERS_KEY = ['household-members', 'h1']
@@ -188,6 +193,7 @@ describe('useRemoveHouseholdMember', () => {
     })
     queryClient.setQueryData(HOUSEHOLDS_KEY, HOUSEHOLDS)
     removeHouseholdMember.mockResolvedValue({ ok: true })
+    useMe.mockReturnValue({ data: { user: { id: 'u1' } } })
 
     const { result } = renderHook(() => useRemoveHouseholdMember(), {
       wrapper: createWrapper(queryClient),
@@ -198,10 +204,36 @@ describe('useRemoveHouseholdMember', () => {
     expect(queryClient.getQueryState(HOUSEHOLDS_KEY).isInvalidated).toBe(true)
   })
 
+  it('sweeps the whole cache only when the caller removed themselves', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(MEMBERS_KEY, { members: [{ user_id: 'u2', display_name: 'P' }] })
+    queryClient.setQueryData(HOUSEHOLDS_KEY, HOUSEHOLDS)
+    queryClient.setQueryData(['stock'], { stock: [] })
+    removeHouseholdMember.mockResolvedValue({ ok: true })
+    useMe.mockReturnValue({ data: { user: { id: 'u1' } } })
+
+    const { result } = renderHook(() => useRemoveHouseholdMember(), {
+      wrapper: createWrapper(queryClient),
+    })
+    // Removing someone else: scoped keys only, other views untouched.
+    await act(async () => result.current.mutate({ id: 'h1', userId: 'u2' }))
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(queryClient.getQueryState(HOUSEHOLDS_KEY).isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(MEMBERS_KEY).isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(['stock']).isInvalidated).toBe(false)
+
+    // Self-removal (owner removed via API): every household-scoped view
+    // changed for them — the full sweep is justified.
+    await act(async () => result.current.mutate({ id: 'h1', userId: 'u1' }))
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(queryClient.getQueryState(['stock']).isInvalidated).toBe(true)
+  })
+
   it('rolls back the removal on failure', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     queryClient.setQueryData(MEMBERS_KEY, { members: [{ user_id: 'u2', display_name: 'Putri' }] })
     removeHouseholdMember.mockRejectedValue(new Error('fail'))
+    useMe.mockReturnValue({ data: { user: { id: 'u1' } } })
 
     const { result } = renderHook(() => useRemoveHouseholdMember(), {
       wrapper: createWrapper(queryClient),
@@ -230,7 +262,7 @@ describe('useCreateHouseholdInvite', () => {
 })
 
 describe('useJoinHousehold', () => {
-  it('invalidates everything on settle (all views re-scope to the joined household)', async () => {
+  it('invalidates the households list only (join never switches the active household)', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     queryClient.setQueryData(HOUSEHOLDS_KEY, HOUSEHOLDS)
     queryClient.setQueryData(['stock'], { stock: [] })
@@ -245,6 +277,8 @@ describe('useJoinHousehold', () => {
     await act(async () => result.current.mutate('ABC2345678'))
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(queryClient.getQueryState(HOUSEHOLDS_KEY).isInvalidated).toBe(true)
-    expect(queryClient.getQueryState(['stock']).isInvalidated).toBe(true)
+    // The active household is unchanged by a join — scoped views stay valid
+    // until the user explicitly switches (review B6).
+    expect(queryClient.getQueryState(['stock']).isInvalidated).toBe(false)
   })
 })

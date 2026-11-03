@@ -33,8 +33,6 @@
     "roleMember": "Anggota",
     "joined": "Bergabung {{date}}",
     "you": "Anda",
-    "profileTitle": "Profil anggota",
-    "profileHint": "Nama panggilan dan tanggal lahir tetap di dalam rumah ini — fitur per-anggota (seperti grafik berbasis usia) akan memakainya nanti.",
     "editProfile": "Ubah profil",
     "saveProfile": "Simpan",
     "cancel": "Batal",
@@ -74,7 +72,8 @@
     "lastOwnerRemoveBlocked": "Rumah harus punya minimal satu pemilik.",
     "onlyOwners": "Hanya pemilik rumah yang bisa melakukan itu",
     "notFound": "Rumah tidak ditemukan",
-    "errorGeneric": "Terjadi kesalahan. Silakan coba lagi."
+    "errorGeneric": "Terjadi kesalahan. Silakan coba lagi.",
+    "renameSave": "Simpan"
   },
   "greeting": {
     "morning": "Good morning",
