@@ -1,4 +1,5 @@
--- Household member management (ahaqqu/RumaQ#331): two additive steps.
+-- Household member management (ahaqqu/RumaQ#331, thermos review pass): three
+-- additive steps.
 --
 -- 1) Per-member profile fields on household_members. Members must become
 --    stable, addressable entities so per-member product surfaces can attach
@@ -13,19 +14,32 @@
 ALTER TABLE household_members ADD COLUMN display_name TEXT;
 ALTER TABLE household_members ADD COLUMN birth_date TEXT;
 
--- 2) Owner-issued invite codes. One row per generated code; joining inserts a
---    household_members row and (for v1) the code itself is stored — codes are
---    10 chars of ~50 bits entropy from an unambiguous alphabet, expire after
---    7 days, and redemption is rate-limited, so the window a leaked code is
---    live is bounded. A code is revealed to its owner repeatedly (GET
---    /households/:id/invite), which a hash-only store cannot serve; rotating
---    revokes the previous rows via revoked_at, so old links die on rotate.
---    Lookup rides the UNIQUE code index; expires_at/revoked_at are checked in
---    the join query, never trusted client-side.
+-- 2) user_id index on the membership table (review A1). The PK is
+--    (household_id, user_id), so user_id-only lookups — the auth middleware's
+--    fallback resolution (every request of a user whose active pointer is
+--    NULL/stale), listHouseholds, and the leave/remove remaining-check — were
+--    full scans with a temp B-tree sort. This index turns all three into
+--    seeks and kills the sort (its column order matches the fallback's
+--    ORDER BY joined_at, household_id). Verified against EXPLAIN QUERY PLAN
+--    in migrations.test.ts so the fast path cannot silently regress.
+CREATE INDEX IF NOT EXISTS idx_household_members_user
+  ON household_members(user_id, joined_at, household_id);
+
+-- 3) Owner-issued invite codes. One row per generated code; joining inserts a
+--    household_members row and the lookup rides the code_hash index.
+--    At-rest hardening (review A8): the code itself is NEVER stored — the row
+--    keeps a deterministic SHA-256 hash for the join lookup (normalized code,
+--    so case/spacing presentation never breaks the match) plus the AES-GCM
+--    ciphertext (WORKER_ENCRYPTION_KEY, encryptAiKey precedent) so the owner
+--    screen can still reveal the current code. A DB/backup leak now yields
+--    neither usable codes nor their hashes' preimages. expires_at and
+--    revoked_at are checked in the join query, never trusted client-side;
+--    rotation revokes previous rows.
 CREATE TABLE IF NOT EXISTS household_invites (
   id TEXT PRIMARY KEY,
   household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
-  code TEXT NOT NULL UNIQUE,
+  code_hash TEXT NOT NULL UNIQUE,
+  code_encrypted TEXT NOT NULL,
   created_by TEXT NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   expires_at TEXT NOT NULL,

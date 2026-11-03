@@ -3,6 +3,7 @@ import { householdsApp } from '../apps/households.js'
 import { gateway } from '../gateway.js'
 import { signJwt } from '../auth.js'
 import { resetRateLimit } from '../lib/rate-limit.js'
+import { encryptAiKey } from '../lib/crypto.js'
 import type { MockEnv } from './support/env.js'
 
 // The household endpoints run 2-5 queries per request (membership gate, rule
@@ -18,7 +19,7 @@ type FakeDb = {
     bind: (...params: unknown[]) => {
       first: <T>() => Promise<T | null>
       all: <T>() => Promise<{ results: T[] }>
-      run: () => Promise<void>
+      run: () => Promise<Record<string, unknown> | undefined>
     }
   }
   batch: (stmts: unknown[]) => Promise<unknown[]>
@@ -27,7 +28,8 @@ type FakeDb = {
 
 function createFakeDb(
   firstRoutes: [RegExp, (params: unknown[]) => Row | null][],
-  allRoutes: [RegExp, (params: unknown[]) => Row[]][] = []
+  allRoutes: [RegExp, (params: unknown[]) => Row[]][] = [],
+  runRoutes: [RegExp, (params: unknown[]) => Record<string, unknown> | undefined][] = []
 ): FakeDb {
   const log: Array<{ sql: string; params: unknown[] }> = []
   return {
@@ -48,9 +50,12 @@ function createFakeDb(
             if (!hit) throw new Error(`fake DB: no all() route for: ${sql}`)
             return { results: (await hit[1](params)) as T[] }
           },
-          run: () => {
+          run: async () => {
             log.push({ sql: flat, params })
-            return Promise.resolve()
+            // Real D1 reports meta.changes; the join path reads it to
+            // distinguish the ON CONFLICT DO NOTHING path (0) from an insert.
+            const hit = runRoutes.find(([re]) => re.test(flat))
+            return hit ? await hit[1](params) : undefined
           },
         }),
       }
@@ -101,9 +106,10 @@ describe('households routes', () => {
 
   const setup = (
     firstRoutes: [RegExp, (params: unknown[]) => Row | null][],
-    allRoutes?: [RegExp, (params: unknown[]) => Row[]][]
+    allRoutes?: [RegExp, (params: unknown[]) => Row[]][],
+    runRoutes?: [RegExp, (params: unknown[]) => Record<string, unknown> | undefined][]
   ) => {
-    db = createFakeDb(firstRoutes, allRoutes)
+    db = createFakeDb(firstRoutes, allRoutes, runRoutes)
     env = createEnv(db)
     return env
   }
@@ -305,7 +311,8 @@ describe('households routes', () => {
 
   it('lists members with profile fields for a member of the household', async () => {
     setup(
-      [],
+      // The membership gate runs BEFORE the roster is fetched (review B2).
+      [[/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP]],
       [
         [
           /JOIN users u ON u\.id = m\.user_id\s+WHERE m\.household_id = \?\s+-- Owners/,
@@ -348,24 +355,8 @@ describe('households routes', () => {
 
   it('404s the member list for a non-member without leaking the household', async () => {
     setup(
-      [],
-      [
-        [
-          /JOIN users u ON u\.id = m\.user_id\s+WHERE m\.household_id = \?\s+-- Owners/,
-          () => [
-            {
-              user_id: 'someone-else',
-              role: 'owner',
-              display_name: null,
-              birth_date: null,
-              joined_at: '',
-              name: 'X',
-              email: 'x@b.com',
-              picture: null,
-            },
-          ],
-        ],
-      ]
+      // The membership gate rejects before the roster query ever runs.
+      [[/FROM households h\s+JOIN household_members/, () => null]]
     )
     const res = await householdsApp.request('/api/households/h1/members', {}, env)
     expect(res.status).toBe(404)
@@ -497,6 +488,11 @@ describe('households routes', () => {
       [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
       [/SELECT role FROM household_members/, () => ({ role: 'member' })],
       OWNER_COUNT_ONE,
+      // The removed member still belongs to h2 — the repoint targets it.
+      [
+        /SELECT household_id FROM household_members\s+WHERE user_id = \? AND household_id != \?/,
+        () => ({ household_id: 'h2' }),
+      ],
     ])
     const res = await householdsApp.request(
       '/api/households/h1/members/u2',
@@ -505,7 +501,15 @@ describe('households routes', () => {
     )
     expect(res.status).toBe(204)
     expect(db.log.some((e) => e.sql.startsWith('DELETE FROM household_members'))).toBe(true)
-    expect(db.log.some((e) => e.sql.includes('active_household_id = ('))).toBe(true)
+    // Repoint: bound params, not a subquery — the remaining household was
+    // resolved before the batch so the whole departure commits atomically.
+    const repoint = db.log.find(
+      (e) =>
+        e.sql.startsWith('UPDATE user_settings SET active_household_id = ?') &&
+        e.sql.includes('active_household_id = ?') &&
+        e.params.length === 3
+    )
+    expect(repoint?.params).toEqual(['h2', 'u2', 'h1'])
   })
 
   it('409s removing the last owner and 403s a member removing anyone', async () => {
@@ -535,7 +539,11 @@ describe('households routes', () => {
     setup([
       [/FROM households h\s+JOIN household_members/, () => MEMBER_MEMBERSHIP],
       OWNER_COUNT_TWO,
-      [/SELECT household_id FROM household_members WHERE user_id = \? ORDER BY/, () => null],
+      // No membership outside h1 -> the respawn branch of the departure batch.
+      [
+        /SELECT household_id FROM household_members\s+WHERE user_id = \? AND household_id != \?/,
+        () => null,
+      ],
     ])
     const res = await householdsApp.request('/api/households/h1/leave', { method: 'POST' }, env)
     expect(res.status).toBe(200)
@@ -556,13 +564,17 @@ describe('households routes', () => {
   })
 
   it('returns the live invite to owners and 403s members', async () => {
+    // The code is stored encrypted at rest (review A8); the owner GET
+    // decrypts with WORKER_ENCRYPTION_KEY. The fake row carries a real
+    // ciphertext so the round trip is exercised, not assumed.
+    const codeEncrypted = await encryptAiKey('ABC2345678', 'test-enc-key')
     setup([
       [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
       [
-        /SELECT id, code, created_at, expires_at FROM household_invites/,
+        /SELECT id, code_encrypted, created_at, expires_at FROM household_invites/,
         () => ({
           id: 'inv1',
-          code: 'ABC2345678',
+          code_encrypted: codeEncrypted,
           created_at: '2026-11-01 00:00:00',
           expires_at: '2026-11-08 00:00:00',
         }),
@@ -581,7 +593,7 @@ describe('households routes', () => {
   it('returns invite:null when no live code exists', async () => {
     setup([
       [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
-      [/SELECT id, code, created_at, expires_at FROM household_invites/, () => null],
+      [/SELECT id, code_encrypted, created_at, expires_at FROM household_invites/, () => null],
     ])
     const res = await householdsApp.request('/api/households/h1/invite', {}, env)
     expect(res.status).toBe(200)
@@ -590,13 +602,14 @@ describe('households routes', () => {
   })
 
   it('rotates the invite code, revoking the previous one in the same batch', async () => {
+    const codeEncrypted = await encryptAiKey('DEF2345678', 'test-enc-key')
     setup([
       [/FROM households h\s+JOIN household_members/, () => OWNER_MEMBERSHIP],
       [
-        /SELECT id, code, created_at, expires_at FROM household_invites/,
+        /SELECT id, code_encrypted, created_at, expires_at FROM household_invites/,
         () => ({
           id: 'inv2',
-          code: 'DEF2345678',
+          code_encrypted: codeEncrypted,
           created_at: '2026-11-03 00:00:00',
           expires_at: '2026-11-10 00:00:00',
         }),
@@ -608,8 +621,11 @@ describe('households routes', () => {
     expect(body.invite.code).toMatch(/^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{10}$/)
     const revoke = db.log.find((e) => e.sql.startsWith('UPDATE household_invites SET revoked_at'))
     expect(revoke?.params[0]).toBe('h1')
+    // At rest: the plaintext code is never written — hash + ciphertext only.
     const insert = db.log.find((e) => e.sql.startsWith('INSERT INTO household_invites'))
-    expect(insert?.params).toHaveLength(4)
+    expect(insert?.params).toHaveLength(5)
+    expect(String(insert?.params[2])).toMatch(/^[0-9a-f]{64}$/)
+    expect(insert?.sql).toContain('code_hash, code_encrypted')
     // Expiry arithmetic stays in SQL so the stored format matches the
     // datetime('now') comparison in the validity checks.
     expect(insert?.sql).toContain('+7 days')
@@ -622,7 +638,6 @@ describe('households routes', () => {
         () => ({ id: 'inv1', household_id: 'h2' }),
       ],
       [/SELECT id, name FROM households WHERE id = \?/, () => ({ id: 'h2', name: 'Rumah Bunda' })],
-      [/SELECT 1 AS one FROM household_members/, () => null],
     ])
     const res = await householdsApp.request(
       '/api/households/join',
@@ -636,19 +651,29 @@ describe('households routes', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { household: { id: string }; already_member: boolean }
     expect(body).toEqual({ household: { id: 'h2', name: 'Rumah Bunda' }, already_member: false })
+    // Idempotency is storage-level (review A7): the insert always runs; the
+    // UNIQUE PK conflict decides membership, not a pre-check that can race.
     const insert = db.log.find((e) => e.sql.startsWith('INSERT INTO household_members'))
     expect(insert?.params).toEqual(['h2', 'u1', 'member'])
+    expect(insert?.sql).toContain('ON CONFLICT (household_id, user_id) DO NOTHING')
   })
 
   it('is idempotent for an existing member and answers already_member', async () => {
-    setup([
+    setup(
       [
-        /SELECT id, household_id FROM household_invites/,
-        () => ({ id: 'inv1', household_id: 'h2' }),
+        [
+          /SELECT id, household_id FROM household_invites/,
+          () => ({ id: 'inv1', household_id: 'h2' }),
+        ],
+        [
+          /SELECT id, name FROM households WHERE id = \?/,
+          () => ({ id: 'h2', name: 'Rumah Bunda' }),
+        ],
       ],
-      [/SELECT id, name FROM households WHERE id = \?/, () => ({ id: 'h2', name: 'Rumah Bunda' })],
-      [/SELECT 1 AS one FROM household_members/, () => ({ one: 1 })],
-    ])
+      [],
+      // meta.changes === 0 = the conflict path fired (already a member).
+      [[/INSERT INTO household_members/, () => ({ meta: { changes: 0 } })]]
+    )
     const res = await householdsApp.request(
       '/api/households/join',
       {
@@ -661,7 +686,7 @@ describe('households routes', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { already_member: boolean }
     expect(body.already_member).toBe(true)
-    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_members'))).toBe(false)
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_members'))).toBe(true)
   })
 
   it('gives unknown, revoked, expired, and malformed codes the same answer', async () => {

@@ -6,6 +6,15 @@
 // 0001). Only owners invite and remove; members can leave; every household
 // must retain >= 1 owner. Household existence is never leaked: a caller that
 // is not a member gets the same 404 as a household that does not exist.
+//
+// Session continuity (review A2/A4): a user who loses a membership — by leave
+// or by removal — is repointed at their next remaining household, or given a
+// respawned baseline one when none remains, in the SAME atomic batch as the
+// delete. Neither the departing user's session nor a crash mid-operation may
+// ever strand a stale active pointer (the state the auth middleware's
+// per-request re-check exists to contain).
+
+import { encryptAiKey, decryptAiKey, sha256Hex } from './crypto.js'
 
 export class HouseholdNotFoundError extends Error {
   constructor(message = 'Household not found') {
@@ -78,7 +87,7 @@ export async function getMembership(
     .first<{ id: string; name: string; role: HouseholdRole }>()
 }
 
-async function requireMembership(db: D1Database, householdId: string, userId: string) {
+export async function requireMembership(db: D1Database, householdId: string, userId: string) {
   const membership = await getMembership(db, householdId, userId)
   if (!membership) {
     throw new HouseholdNotFoundError()
@@ -86,7 +95,9 @@ async function requireMembership(db: D1Database, householdId: string, userId: st
   return membership
 }
 
-async function requireOwner(db: D1Database, householdId: string, userId: string) {
+// The owner gate for the invite/remove/rename surfaces. Throws the typed
+// errors the app-level onError maps (403), so routes never re-derive roles.
+export async function requireOwner(db: D1Database, householdId: string, userId: string) {
   const membership = await requireMembership(db, householdId, userId)
   if (membership.role !== 'owner') {
     throw new HouseholdForbiddenError()
@@ -131,7 +142,7 @@ export async function listHouseholds(db: D1Database, userId: string): Promise<Ho
 
 // Default storage locations / stores seeded for a brand-new household — the
 // same lists the login flows plant, extracted here so "create household" and
-// "left my last household" respawn the exact same baseline.
+// the leave/remove baseline respawn plant the exact same baseline.
 const LOCATION_SEEDS = [
   { label: 'Kulkas', sort_order: 1 },
   { label: 'Freezer', sort_order: 2 },
@@ -140,6 +151,8 @@ const LOCATION_SEEDS = [
 ]
 
 const STORE_SEEDS = [{ label: 'Indomaret' }, { label: 'Alfamart' }, { label: 'Pasar' }]
+
+const BASELINE_HOUSEHOLD_NAME = 'Rumahku'
 
 // One batch: household row, owner membership, the seeds. The creator always
 // lands as 'owner'; user_settings is NOT touched here — creating a household
@@ -204,9 +217,27 @@ export async function listMembers(
   return results
 }
 
+function readMemberRow(
+  db: D1Database,
+  householdId: string,
+  targetUserId: string
+): Promise<HouseholdMemberRow | null> {
+  return db
+    .prepare(
+      `SELECT m.user_id, m.role, m.display_name, m.birth_date, m.joined_at,
+              u.name, u.email, u.picture
+         FROM household_members m
+         JOIN users u ON u.id = m.user_id
+        WHERE m.user_id = ? AND m.household_id = ?`
+    )
+    .bind(targetUserId, householdId)
+    .first<HouseholdMemberRow>()
+}
+
 // Owners edit any member's profile; a member edits their own. Role is never
 // writable here (v1 keeps owner/member fixed at join; a future promotion flow
-// owns the >= 1 owner invariant).
+// owns the >= 1 owner invariant). An empty patch is a no-op read — the current
+// row comes back, not the 404 that means "does not exist" (review A5).
 export async function updateMemberProfile(
   db: D1Database,
   householdId: string,
@@ -240,7 +271,7 @@ export async function updateMemberProfile(
     params.push(patch.birth_date)
   }
   if (updates.length === 0) {
-    return null
+    return readMemberRow(db, householdId, targetUserId)
   }
 
   params.push(targetUserId, householdId)
@@ -251,36 +282,76 @@ export async function updateMemberProfile(
     .bind(...params)
     .run()
 
-  return db
-    .prepare(
-      `SELECT m.user_id, m.role, m.display_name, m.birth_date, m.joined_at,
-              u.name, u.email, u.picture
-         FROM household_members m
-         JOIN users u ON u.id = m.user_id
-        WHERE m.user_id = ? AND m.household_id = ?`
-    )
-    .bind(targetUserId, householdId)
-    .first<HouseholdMemberRow>()
+  return readMemberRow(db, householdId, targetUserId)
 }
 
-// A user leaving or being removed must not strand their session on a household
-// they no longer belong to: repoint user_settings at their next membership
-// (oldest first), or NULL it — the auth middleware then resolves their new
-// baseline, and the login flow rebuilds a household if they have none left.
-async function repointActiveHousehold(db: D1Database, userId: string, leftHouseholdId: string) {
-  await db
+// Everything that must happen when `userId` loses membership in `householdId`
+// (they were removed, or they left): the DELETE, the settings repoint to the
+// oldest remaining membership — guarded so an already-switched pointer is
+// never clobbered — and, when nothing remains, the baseline respawn. The
+// caller commits the whole list in ONE db.batch, so the exact
+// "membership gone but pointer stale" state a crash could otherwise produce
+// is unrepresentable, and a membership-less session 401s nowhere (both login
+// flows would also rebuild a baseline on the next sign-in; this makes the
+// wait unnecessary — review A2/A4).
+async function buildDepartureBatch(
+  db: D1Database,
+  householdId: string,
+  userId: string
+): Promise<D1PreparedStatement[]> {
+  // Computed BEFORE the delete that rides the same batch — with the target
+  // known, the repoint is a plain bound UPDATE instead of a subquery.
+  const remaining = await db
     .prepare(
-      `UPDATE user_settings
-          SET active_household_id = (
-                SELECT household_id FROM household_members
-                 WHERE user_id = ? AND household_id != ?
-                 ORDER BY joined_at, household_id LIMIT 1
-              ),
-              updated_at = datetime('now')
-        WHERE user_id = ? AND active_household_id = ?`
+      `SELECT household_id FROM household_members
+        WHERE user_id = ? AND household_id != ?
+        ORDER BY joined_at, household_id LIMIT 1`
     )
-    .bind(userId, leftHouseholdId, userId, leftHouseholdId)
-    .run()
+    .bind(userId, householdId)
+    .first<{ household_id: string }>()
+
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare('DELETE FROM household_members WHERE household_id = ? AND user_id = ?')
+      .bind(householdId, userId),
+  ]
+
+  if (remaining) {
+    statements.push(
+      db
+        .prepare(
+          "UPDATE user_settings SET active_household_id = ?, updated_at = datetime('now') WHERE user_id = ? AND active_household_id = ?"
+        )
+        .bind(remaining.household_id, userId, householdId)
+    )
+    return statements
+  }
+
+  const newId = crypto.randomUUID()
+  statements.push(
+    db
+      .prepare('INSERT INTO households (id, name, created_by) VALUES (?, ?, ?)')
+      .bind(newId, BASELINE_HOUSEHOLD_NAME, userId),
+    db
+      .prepare('INSERT INTO household_members (household_id, user_id, role) VALUES (?, ?, ?)')
+      .bind(newId, userId, 'owner'),
+    ...LOCATION_SEEDS.map((loc) =>
+      db
+        .prepare('INSERT INTO locations (id, household_id, label, sort_order) VALUES (?, ?, ?, ?)')
+        .bind(crypto.randomUUID(), newId, loc.label, loc.sort_order)
+    ),
+    ...STORE_SEEDS.map((store) =>
+      db
+        .prepare('INSERT INTO stores (id, household_id, label) VALUES (?, ?, ?)')
+        .bind(crypto.randomUUID(), newId, store.label)
+    ),
+    db
+      .prepare(
+        "UPDATE user_settings SET active_household_id = ?, updated_at = datetime('now') WHERE user_id = ?"
+      )
+      .bind(newId, userId)
+  )
+  return statements
 }
 
 async function countOwners(db: D1Database, householdId: string): Promise<number> {
@@ -296,7 +367,9 @@ async function countOwners(db: D1Database, householdId: string): Promise<number>
 
 // Removes a member (owner action). The >= 1 owner invariant is checked against
 // the current row set, not the caller's claim, so removing the last owner 409s
-// even if the data drifted.
+// even if the data drifted. The removal and the removed member's session
+// continuity commit in one atomic batch — symmetry with leaveHousehold, so an
+// evicted member (like a leaver) is never locked out of join/create (A2/A4).
 export async function removeMember(
   db: D1Database,
   householdId: string,
@@ -316,11 +389,7 @@ export async function removeMember(
     throw new LastOwnerError()
   }
 
-  await db
-    .prepare('DELETE FROM household_members WHERE household_id = ? AND user_id = ?')
-    .bind(householdId, targetUserId)
-    .run()
-  await repointActiveHousehold(db, targetUserId, householdId)
+  await db.batch(await buildDepartureBatch(db, householdId, targetUserId))
 }
 
 // Self-service exit. Same last-owner rule: transfer ownership is a future
@@ -335,30 +404,7 @@ export async function leaveHousehold(
     throw new LastOwnerError()
   }
 
-  await db
-    .prepare('DELETE FROM household_members WHERE household_id = ? AND user_id = ?')
-    .bind(householdId, userId)
-    .run()
-  await repointActiveHousehold(db, userId, householdId)
-
-  // Leaving the last household must not brick the session: the login flow
-  // would rebuild one on the next sign-in, but every household-scoped route
-  // 401s until then. Respawn the baseline household immediately.
-  const remaining = await db
-    .prepare(
-      'SELECT household_id FROM household_members WHERE user_id = ? ORDER BY joined_at, household_id LIMIT 1'
-    )
-    .bind(userId)
-    .first<{ household_id: string }>()
-  if (!remaining) {
-    const newId = await createHousehold(db, userId, 'Rumahku')
-    await db
-      .prepare(
-        "UPDATE user_settings SET active_household_id = ?, updated_at = datetime('now') WHERE user_id = ?"
-      )
-      .bind(newId, userId)
-      .run()
-  }
+  await db.batch(await buildDepartureBatch(db, householdId, userId))
 }
 
 // Activation is membership-checked (switch only among your own households) —
@@ -398,7 +444,8 @@ export function generateInviteCode(): string {
 }
 
 // Users paste codes with stray spacing, lowercase, or copied from a link —
-// normalize before lookup so a valid code never fails on presentation.
+// normalize before hashing/lookup so a valid code never fails on presentation.
+// This exact normalization is what the stored code_hash was computed over.
 export function normalizeInviteCode(raw: string): string {
   return raw.trim().toUpperCase().replace(/[\s-]/g, '')
 }
@@ -413,33 +460,51 @@ export type ActiveInvite = {
 // The current live invite for the invite screen. If none is active (never
 // generated, rotated away, or expired) the owner generates one — GET never
 // auto-creates so a read-only render cannot rotate codes as a side effect.
+// The code is stored encrypted at rest (A8): only this owner-facing reveal
+// decrypts; the join path matches on the deterministic hash instead, so a DB
+// or backup leak yields neither usable codes nor lookup handles.
 export async function getActiveInvite(
   db: D1Database,
-  householdId: string
+  householdId: string,
+  encryptionKey: string
 ): Promise<ActiveInvite | null> {
-  return db
+  const row = await db
     .prepare(
-      `SELECT id, code, created_at, expires_at
+      `SELECT id, code_encrypted, created_at, expires_at
          FROM household_invites
         WHERE household_id = ? AND revoked_at IS NULL AND expires_at > datetime('now')
         ORDER BY created_at DESC, id DESC
         LIMIT 1`
     )
     .bind(householdId)
-    .first<ActiveInvite>()
+    .first<{ id: string; code_encrypted: string; created_at: string; expires_at: string }>()
+  if (!row) {
+    return null
+  }
+  return {
+    id: row.id,
+    code: await decryptAiKey(row.code_encrypted, encryptionKey),
+    created_at: row.created_at,
+    expires_at: row.expires_at,
+  }
 }
 
 // (Re)issues the household's invite code. Rotating revokes every prior live
 // code for the household in the same batch, so old links die the moment a new
 // code exists. Expiry arithmetic stays in SQL (datetime('now', '+7 days')) so
 // the stored format always matches the datetime('now') comparison in the
-// validity checks — no JS/SQLite timestamp format drift.
+// validity checks — no JS/SQLite timestamp format drift. At rest the code
+// exists only as a SHA-256 hash (the join lookup handle) plus its AES-GCM
+// ciphertext under WORKER_ENCRYPTION_KEY (A8).
 export async function createInvite(
   db: D1Database,
   householdId: string,
-  userId: string
+  userId: string,
+  encryptionKey: string
 ): Promise<ActiveInvite> {
   const code = generateInviteCode()
+  const codeHash = await sha256Hex(normalizeInviteCode(code))
+  const codeEncrypted = await encryptAiKey(code, encryptionKey)
   await db.batch([
     db
       .prepare(
@@ -448,11 +513,11 @@ export async function createInvite(
       .bind(householdId),
     db
       .prepare(
-        "INSERT INTO household_invites (id, household_id, code, created_by, expires_at) VALUES (?, ?, ?, ?, datetime('now', '+7 days'))"
+        "INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at) VALUES (?, ?, ?, ?, ?, datetime('now', '+7 days'))"
       )
-      .bind(crypto.randomUUID(), householdId, code, userId),
+      .bind(crypto.randomUUID(), householdId, codeHash, codeEncrypted, userId),
   ])
-  const invite = await getActiveInvite(db, householdId)
+  const invite = await getActiveInvite(db, householdId, encryptionKey)
   if (!invite) {
     throw new Error('Failed to create invite code')
   }
@@ -466,8 +531,10 @@ export type JoinResult = {
 
 // Redeems a code. Every failure mode (unknown, revoked, expired) throws the
 // same InvalidInviteError so the answer never leaks whether a code exists;
-// success is idempotent — an existing member rejoining gets their household
-// back with already_member=true (and no duplicate membership row).
+// success is idempotent AT THE STORAGE LAYER (review A7): the membership
+// insert is ON CONFLICT DO NOTHING, so a concurrent double-submit that races
+// past any check still lands as one row and reports already_member instead of
+// surfacing the PK violation as a 500.
 export async function joinByCode(
   db: D1Database,
   userId: string,
@@ -478,12 +545,13 @@ export async function joinByCode(
     throw new InvalidInviteError()
   }
 
+  const codeHash = await sha256Hex(code)
   const invite = await db
     .prepare(
       `SELECT id, household_id FROM household_invites
-        WHERE code = ? AND revoked_at IS NULL AND expires_at > datetime('now')`
+        WHERE code_hash = ? AND revoked_at IS NULL AND expires_at > datetime('now')`
     )
-    .bind(code)
+    .bind(codeHash)
     .first<{ id: string; household_id: string }>()
   if (!invite) {
     throw new InvalidInviteError()
@@ -497,18 +565,16 @@ export async function joinByCode(
     throw new InvalidInviteError()
   }
 
-  const existing = await db
-    .prepare('SELECT 1 AS one FROM household_members WHERE household_id = ? AND user_id = ?')
-    .bind(invite.household_id, userId)
-    .first<{ one: number }>()
-  if (existing) {
-    return { household, already_member: true }
-  }
-
-  await db
-    .prepare('INSERT INTO household_members (household_id, user_id, role) VALUES (?, ?, ?)')
+  const result = await db
+    .prepare(
+      `INSERT INTO household_members (household_id, user_id, role) VALUES (?, ?, ?)
+       ON CONFLICT (household_id, user_id) DO NOTHING`
+    )
     .bind(invite.household_id, userId, 'member')
     .run()
+  // meta.changes === 0 means the conflict path fired (already a member);
+  // undefined (mocked D1 in unit tests) counts as inserted.
+  const alreadyMember = (result as { meta?: { changes?: number } } | undefined)?.meta?.changes === 0
 
-  return { household, already_member: false }
+  return { household, already_member: alreadyMember }
 }

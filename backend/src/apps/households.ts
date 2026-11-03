@@ -12,9 +12,9 @@ import {
   null as vnull,
   literal,
   pipe,
+  isoDate,
   minLength,
   maxLength,
-  regex,
 } from 'valibot'
 
 import type { Env } from '../types.js'
@@ -26,7 +26,8 @@ import {
   HouseholdForbiddenError,
   LastOwnerError,
   InvalidInviteError,
-  getMembership,
+  requireMembership,
+  requireOwner,
   listHouseholds,
   createHousehold,
   renameHousehold,
@@ -52,6 +53,8 @@ const householdNameSchema = object({
 // age-based chart in ahaqqu/BayiQ, a SEPARATE repo — never integrated here)
 // can attach later without schema surgery. Empty string means "clear" (the
 // client sends '' when the user empties the field) and is normalized to NULL.
+// birth_date uses valibot's isoDate (review A6): a real calendar date, not
+// just the YYYY-MM-DD shape — "2024-13-45" must not reach the column.
 const MEMBER_PROFILE_CAPS = {
   displayName: 80,
 } as const
@@ -60,7 +63,7 @@ const memberPatchSchema = strictObject({
   display_name: optional(
     union([pipe(string(), maxLength(MEMBER_PROFILE_CAPS.displayName)), vnull()])
   ),
-  birth_date: optional(union([pipe(string(), regex(/^\d{4}-\d{2}-\d{2}$/)), literal(''), vnull()])),
+  birth_date: optional(union([pipe(string(), isoDate()), literal(''), vnull()])),
 })
 
 const joinSchema = object({
@@ -398,12 +401,11 @@ householdsApp.get(
   }),
   async (c) => {
     const householdId = c.req.param('id')
-    // Membership gate before any data leaves the household.
+    // Membership gate FIRST (review B2): every household route authorizes
+    // before touching target data — the roster (names, emails, pictures) is
+    // fetched only for members of the household.
+    await requireMembership(c.env.DB, householdId, c.get('userId'))
     const members = await listMembers(c.env.DB, householdId)
-    const callerIsMember = members.some((m) => m.user_id === c.get('userId'))
-    if (!callerIsMember) {
-      return c.json({ error: 'Household not found' }, 404)
-    }
     const res = c.json({ members: members satisfies HouseholdMemberRow[] })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
@@ -551,7 +553,13 @@ householdsApp.get(
             schema: {
               type: 'object',
               required: ['invite'],
-              properties: { invite: { type: [inviteSchema, 'null'] } as any },
+              properties: {
+                // Additive-nullish via anyOf (review B3): the object schema or
+                // null, typed without casts.
+                invite: {
+                  anyOf: [inviteSchema, { type: 'null' }],
+                } as OpenAPIV3_1.SchemaObject,
+              },
             },
           },
         },
@@ -563,11 +571,9 @@ householdsApp.get(
   }),
   async (c) => {
     const householdId = c.req.param('id')
-    const membership = await requireOwnerMembership(c.env.DB, householdId, c.get('userId'))
-    if (membership.role !== 'owner') {
-      return c.json({ error: 'Only household owners can do that' }, 403)
-    }
-    const invite = await getActiveInvite(c.env.DB, householdId)
+    // Owner gate lives in the lib (review B1) — the typed 403 maps in onError.
+    await requireOwner(c.env.DB, householdId, c.get('userId'))
+    const invite = await getActiveInvite(c.env.DB, householdId, c.env.WORKER_ENCRYPTION_KEY)
     const res = c.json({ invite: (invite ?? null) satisfies ActiveInvite | null })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
@@ -600,28 +606,15 @@ householdsApp.post(
   }),
   async (c) => {
     const householdId = c.req.param('id')
-    const membership = await requireOwnerMembership(c.env.DB, householdId, c.get('userId'))
-    if (membership.role !== 'owner') {
-      return c.json({ error: 'Only household owners can do that' }, 403)
-    }
-    const invite = await createInvite(c.env.DB, householdId, c.get('userId'))
+    await requireOwner(c.env.DB, householdId, c.get('userId'))
+    const invite = await createInvite(
+      c.env.DB,
+      householdId,
+      c.get('userId'),
+      c.env.WORKER_ENCRYPTION_KEY
+    )
     const res = c.json({ invite }, 201)
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }
 )
-
-// Membership gate for the owner-only invite pair. The lib's own requireOwner
-// is intentionally private; here the 403 is a route-level return (not an
-// exception) so the owner-check reads next to the OpenAPI annotations.
-async function requireOwnerMembership(
-  db: Parameters<typeof getMembership>[0],
-  householdId: string,
-  userId: string
-) {
-  const membership = await getMembership(db, householdId, userId)
-  if (!membership) {
-    throw new HouseholdNotFoundError()
-  }
-  return membership
-}

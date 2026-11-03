@@ -917,11 +917,14 @@ apiApp.get(
         encrypted_ai_key: string | null
       }>()
 
-    const household = settings?.active_household_id
-      ? await c.env.DB.prepare('SELECT name FROM households WHERE id = ?')
-          .bind(settings.active_household_id)
-          .first<{ name: string }>()
-      : null
+    // The household identity echoes the middleware's RESOLVED household
+    // (review A3) — the one value every other route scopes by — not the raw
+    // user_settings.active_household_id, which can be stale (a removed
+    // member's pointer) and would diverge from the second resolver here.
+    const resolvedHouseholdId = c.get('householdId')
+    const household = await c.env.DB.prepare('SELECT name FROM households WHERE id = ?')
+      .bind(resolvedHouseholdId)
+      .first<{ name: string }>()
 
     const res = c.json({
       motion_preference: settings?.motion_preference ?? 'standard',
@@ -934,7 +937,7 @@ apiApp.get(
       persona_ai_role: settings?.persona_ai_role ?? null,
       persona_enabled: settings?.persona_enabled === 1,
       theme_hue: settings?.theme_hue ?? null,
-      active_household_id: settings?.active_household_id ?? null,
+      active_household_id: resolvedHouseholdId,
       active_household_name: household?.name ?? null,
       has_ai_key: settings?.encrypted_ai_key != null && settings.encrypted_ai_key !== '',
       server_ai_available: Boolean(c.env.RUMAQ_SERVER_AI_PROVIDER && c.env.RUMAQ_SERVER_AI_KEY),

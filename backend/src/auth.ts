@@ -111,6 +111,35 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return hashB64 === expectedHash
 }
 
+// Active-household resolution (ahaqqu/RumaQ#331), extracted as a constant so
+// the real-SQL tests (migrations.test.ts pattern) run the EXACT statement the
+// middleware runs against real SQLite — semantics and the index plan are
+// regression-guarded there (review C1).
+// Subquery 1: user_settings.active_household_id wins ONLY while the user is
+// still a member of that household — a stale pointer (the member was removed)
+// must not keep granting access. Subquery 2: otherwise the oldest membership
+// is the baseline, deterministic (joined_at then id) where the old LIMIT 1
+// picked an arbitrary row. Both are index seeks via
+// idx_household_members_user (0020) — see the migration for the EXPLAIN proof.
+// A NULL answer means the session is unauthorized; in practice every
+// membership-less user is re-baselined atomically by leaveHousehold /
+// removeMember (lib/households.ts) and by the login flows, so the 401 below
+// is unreachable for sessions this app issued after those guarantees (review
+// A2 keeps join/create behind the same resolution — the respawn makes that
+// safe, rather than exempting the routes from it).
+export const ACTIVE_HOUSEHOLD_SQL = `SELECT COALESCE(
+     (SELECT m.household_id
+        FROM household_members m
+        JOIN user_settings s ON s.user_id = m.user_id AND s.active_household_id = m.household_id
+       WHERE m.user_id = ?
+       LIMIT 1),
+     (SELECT household_id
+        FROM household_members
+       WHERE user_id = ?
+       ORDER BY joined_at, household_id
+       LIMIT 1)
+   ) AS household_id`
+
 export const propsAuthMiddleware = createMiddleware<Env>(async (c, next) => {
   const props = c.env.props
   if (props?.userId && props?.householdId) {
@@ -134,28 +163,7 @@ export const propsAuthMiddleware = createMiddleware<Env>(async (c, next) => {
     return c.json({ error: 'Unauthorized' }, 401)
   }
 
-  // Active-household resolution (ahaqqu/RumaQ#331): user_settings
-  // .active_household_id wins ONLY while the user is still a member of that
-  // household — a stale pointer (the member was removed) must not keep
-  // granting access. Otherwise the oldest membership is the baseline. One
-  // COALESCE round trip; the fallback is deterministic (joined_at then id)
-  // where the old LIMIT 1 picked an arbitrary row. If neither yields a
-  // household the session is unauthorized — the login flows (re)create a
-  // baseline household for membership-less users.
-  const row = await c.env.DB.prepare(
-    `SELECT COALESCE(
-       (SELECT m.household_id
-          FROM household_members m
-          JOIN user_settings s ON s.user_id = m.user_id AND s.active_household_id = m.household_id
-         WHERE m.user_id = ?
-         LIMIT 1),
-       (SELECT household_id
-          FROM household_members
-         WHERE user_id = ?
-         ORDER BY joined_at, household_id
-         LIMIT 1)
-     ) AS household_id`
-  )
+  const row = await c.env.DB.prepare(ACTIVE_HOUSEHOLD_SQL)
     .bind(payload.sub, payload.sub)
     .first<{ household_id: string | null }>()
 

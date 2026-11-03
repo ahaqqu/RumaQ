@@ -302,7 +302,7 @@ describe('migration 0020: household member profiles + invites (#331)', () => {
     expect(fresh).toMatchObject({ display_name: 'Putri', birth_date: '2024-05-01' })
   })
 
-  it('creates the household_invites table with a unique code and cascading delete', () => {
+  it('creates the household_invites table with a unique code_hash and cascading delete', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
     applyMigrations(db, migrationFiles())
 
@@ -311,31 +311,66 @@ describe('migration 0020: household member profiles + invites (#331)', () => {
       `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
     ).run()
     db.prepare(
-      `INSERT INTO household_invites (id, household_id, code, created_by, expires_at)
-       VALUES ('inv-1', 'h1', 'ABC2345678', 'u1', '2026-11-10 00:00:00')`
+      `INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at)
+       VALUES ('inv-1', 'h1', '${'a'.repeat(64)}', 'enc-payload', 'u1', '2026-11-10 00:00:00')`
     ).run()
     const invite = db.prepare('SELECT * FROM household_invites WHERE id = ?').get('inv-1')
     expect(invite).toMatchObject({
       id: 'inv-1',
       household_id: 'h1',
-      code: 'ABC2345678',
       revoked_at: null,
     })
 
-    // Codes are the join handle — they must be unique.
+    // code_hash is the join lookup handle — it must be unique. No plaintext
+    // `code` column exists at all (review A8): a DB leak yields neither codes
+    // nor a hash preimage to search.
     expect(() =>
       db
         .prepare(
-          `INSERT INTO household_invites (id, household_id, code, created_by, expires_at)
-           VALUES ('inv-2', 'h1', 'ABC2345678', 'u1', '2026-11-10 00:00:00')`
+          `INSERT INTO household_invites (id, household_id, code_hash, code_encrypted, created_by, expires_at)
+           VALUES ('inv-2', 'h1', '${'a'.repeat(64)}', 'enc-payload-2', 'u1', '2026-11-10 00:00:00')`
         )
         .run()
     ).toThrow()
+    const columns = db.prepare('PRAGMA table_info(household_invites)').all()
+    const names = columns.map((c: Record<string, unknown>) => c.name)
+    expect(names).toContain('code_hash')
+    expect(names).toContain('code_encrypted')
+    expect(names).not.toContain('code')
 
     // Deleting the household cascades to its invites (no orphan codes).
     db.prepare('DELETE FROM households WHERE id = ?').run('h1')
     const remaining = db.prepare('SELECT COUNT(*) AS cnt FROM household_invites').all()
     expect(remaining).toEqual([{ cnt: 0 }])
+  })
+
+  it('indexes household_members(user_id) so per-request membership lookups seek', () => {
+    // Review A1: the auth middleware's COALESCE fallback, listHouseholds, and
+    // the departure remaining-check all filter by user_id alone — without the
+    // index each ran a full scan + temp B-tree sort per request.
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const index = db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_household_members_user'"
+      )
+      .get()
+    expect(index).toMatchObject({
+      sql: expect.stringContaining('idx_household_members_user'),
+    })
+
+    // The fallback half of the auth resolution must be a SEARCH on that index
+    // with no TABLE SCAN and no temp-B-tree sort — the per-request budget.
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT household_id FROM household_members
+          WHERE user_id = ? ORDER BY joined_at, household_id LIMIT 1`
+      )
+      .all('u1')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(detail).toContain('idx_household_members_user')
+    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
   })
 
   it('keeps the full chain green on a fresh database', () => {
