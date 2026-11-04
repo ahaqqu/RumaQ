@@ -407,6 +407,30 @@ export const runReportSchema = strictObject({
       reviewItemPairs: nullish(pipe(array(reviewItemPairSchema), maxLength(200))),
       reviewItemsTotal: nullish(pipe(number(), integer(), minValue(0))),
       reviewItemsTruncated: nullish(boolean()),
+      // Issue #418: AI-verifier resilience telemetry — the monitor sees a
+      // degraded verifier (quota / budget / circuit breaker) instead of
+      // inferring it from a flagged-pairs spike. All additive-nullish
+      // (#294 pattern): old scrapers' reports still validate; a NEW
+      // scraper's report on an OLD Worker fails loudly (Worker-first
+      // deploy order). Pairs/calls/errors are counts over the verifier
+      // stage of one run; the three booleans are the degradation state.
+      // - verifierPairs: borderline pairs the verifier was asked about.
+      // - verifierCalls: generateContent calls actually made (retries
+      //   included) — the quota spend, and the evidence a call budget
+      //   bound the stage.
+      // - verifierSaturationErrors: 503 UNAVAILABLE responses seen across
+      //   all attempts — the storm metric from the 2026-11-04 incident.
+      // - verifierQuotaExhausted: the whole model chain hit daily quota.
+      // - verifierBreakerTripped: N consecutive failed pairs skipped the
+      //   remaining sweep (degraded to flagged-for-review, never guessed).
+      // - verifierBudgetExhausted: the per-run call or wall-clock budget
+      //   stopped the sweep early (same degrade path).
+      verifierPairs: nullish(pipe(number(), integer(), minValue(0))),
+      verifierCalls: nullish(pipe(number(), integer(), minValue(0))),
+      verifierSaturationErrors: nullish(pipe(number(), integer(), minValue(0))),
+      verifierQuotaExhausted: nullish(boolean()),
+      verifierBreakerTripped: nullish(boolean()),
+      verifierBudgetExhausted: nullish(boolean()),
     })
   ),
   publish: nullish(
