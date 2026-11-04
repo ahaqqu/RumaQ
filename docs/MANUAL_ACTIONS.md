@@ -5,6 +5,7 @@ Maintained by the manager. **To report status, just reply in chat**, e.g.
 removed, failed steps stay with the error noted). Empty file = inbox zero.
 
 Conventions:
+
 - Every step is absolute (explicit `cd` or absolute path) and labeled
   **[LAPTOP]** (this machine) or **[VPS]** (the box `62.83.35.220`, ssh alias
   `rumaq-vps`).
@@ -69,9 +70,9 @@ the manager, even when you're AFK.
 
 ---
 
-*Last updated 2026-11-04 ~07:45 WIB by the manager. Completed this window
+_Last updated 2026-11-04 ~07:45 WIB by the manager. Completed this window
 (no longer listed): D1–D5 decisions recorded on tickets ✓ (session epoch /
 guest approved / persona parked / Apify GO / lotte per-store proxy), A secret
 cleanup ✓, F 20:00 WIB schedule verified ✓, OCR audit env ✓,
 HARIHARI_PROXY_URL ✓, ingest rotation ✓, pipeline CI secrets ✓, production
-deploy of the vault ✓ (CI auto-deploy).*
+deploy of the vault ✓ (CI auto-deploy)._
