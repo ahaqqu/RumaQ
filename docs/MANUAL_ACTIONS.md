@@ -65,9 +65,6 @@ the manager, even when you're AFK.
 - **E2** https://github.com/ahaqqu/RumaQ/pull/401 — plugin architecture
   design (north star — execution is standalone-first per owner decision
   2026-11-04). CI green.
-- **E3** https://github.com/ahaqqu/DokumenQ/pull/2 — DokumenQ AGENTS.md
-  charter (§9 Q8 decision: secrets-discipline rules before any code PR).
-  (Design PR DokumenQ#1 was MERGED 2026-11-04 with owner approval.)
 - **E4** https://github.com/ahaqqu/AutQ/pull/9 — AutQ enterprise architecture
   (senior-architect design: Rust IdP on the VPS, SSO via redirects,
   client_credentials m2m, per-app "later + prepare" seams, go/no-go criteria;
@@ -80,14 +77,12 @@ the manager, even when you're AFK.
 Worker now accepts old + new (`_NEXT` = new value), and the box sends the new
 value. Remaining:
 
-- **H5 [OWNER — one click, or just wait]** Verify the new secret publishes.
-  EITHER open https://rumaq.ahaqqu.com → Admin → Scrape → **Scrape Now**
-  (all stores; the publish result lands ~90 min later), OR do nothing —
-  tomorrow's 20:00 WIB nightly verifies automatically (the outbox replays
-  first). Expect `[publish] Accepted …` in `journalctl -u rumaq-scraper`.
-  (Manager note: the Scrape-Now surface is admin-gated beyond the QA test
-  account — manager cannot trigger it; that's why this is your click.)
-- **H6 [LAPTOP]** Only AFTER a publish is verified accepted — promote:
+- **H5 DONE** (owner clicked Scrape-Now 2026-11-04 ~23:26 WIB; all 9 stores
+  spawning). Manager verifies `[publish] Accepted …` when the run completes
+  (~00:56 WIB) — result posted in chat. Future Scrape-Now triggers are now
+  self-serve for the manager via the admin test account (`test@rumaq.dev`,
+  repo-convention password — never written to any file).
+- **H6 [LAPTOP]** Only AFTER the publish is verified accepted — promote:
   `cd ~/Projects/RumaQ` (repo ROOT) →
   `node node_modules/cf/bin/cf workers secrets update HAQITA_INGEST_SECRET --worker api --type secret_text --text '<NEW VALUE>'`
 - **H7 [LAPTOP]** Then remove the redundant one:
