@@ -96,6 +96,39 @@ dual-accept window (Worker accepts primary + `_NEXT`, #376):
 - **H7 [LAPTOP]** Then remove the redundant one:
   `node node_modules/cf/bin/cf workers secrets delete HAQITA_INGEST_SECRET_NEXT --worker api`
 
+## I. Review the AI prompts (owner review — pipeline repo)
+
+All AI prompts live in **ahaqqu/RumaQ-pipeline** (the scraper moved there in
+RumaQ #387). There are exactly **two** prompts; nothing else calls an LLM —
+astro/alfamart/tip-top parse structured HTML (no OCR), and categorize is a
+rules + name-hash-cache classifier (no prompt text).
+
+- **I1 — OCR extraction prompt** (Gemini vision). Shared body + a per-store
+  first line for the 6 brochure stores (superindo, lotte-mart, hypermart,
+  indomaret, hari-hari, yogya):
+  https://github.com/ahaqqu/RumaQ-pipeline/blob/main/groceries/scraper/src/ocr/gemini.ts#L20-L55
+  - Output shape demanded: ONLY a JSON array — `name`, `brand`, `unit`,
+    `price` (integer IDR, "Rp 8.500" → 8500, never per-unit), `promo` texts,
+    `period`, plus `originalPrice` (rule added in #367).
+  - Price-semantics rules: discounted vs original (red-font heuristic,
+    "not always"), both prices never in `promo`.
+  - Accuracy AFTER the model: strict JSON parse + price validation —
+    `price_missing` vs `price_invalid` (raw price embedded in the reason; e.g.
+    2026-11-03's `INDOMIE Mi Goreng — price_invalid: 0`):
+    https://github.com/ahaqqu/RumaQ-pipeline/blob/main/groceries/scraper/src/ocr/parse.ts#L129-L145
+    Rejections are logged with reasons in status.json + the run report.
+  - Shadow OCR audit (#367) replays pages through a mirrored prompt and diffs
+    the two: https://github.com/ahaqqu/RumaQ-pipeline/blob/main/groceries/scraper/src/ocr/audit.ts
+- **I2 — match verifier prompt** (Gemini, ONE binary call per borderline
+  pair): same brand + variant + size → YES; different brand/variant/pack size
+  → NO; OCR typos do not differentiate; unparseable/failed → null → the pair
+  is flagged for review, never silently guessed:
+  https://github.com/ahaqqu/RumaQ-pipeline/blob/main/groceries/scraper/src/ocr/verify.ts#L18-L30
+- Both prompts carry in-code **"load-bearing — change deliberately, not
+  casually"** warnings (ported verbatim from haqita). If you want wording
+  changes, mark the line and I'll run it through the store fixtures + shadow
+  audit before merging.
+
 ---
 
 *Last updated 2026-11-04 ~23:15 WIB by the manager. Corrections: the old
