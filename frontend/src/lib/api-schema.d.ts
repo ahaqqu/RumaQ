@@ -3804,6 +3804,18 @@ export interface operations {
         }
         content?: never
       }
+      /** @description Too many attempts from this address; retry_after carries the seconds left */
+      429: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            error: string
+            retry_after: number
+          }
+        }
+      }
     }
   }
 }
