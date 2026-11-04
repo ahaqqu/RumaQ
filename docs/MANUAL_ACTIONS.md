@@ -40,20 +40,20 @@ only on your explicit go. Replay-backfill also needs your explicit go.
 - **C3 [VPS]** `sudo systemctl restart rumaq-scraper-agent`
 - **C4 [VPS]** `systemctl status rumaq-scraper-agent --no-pager | head -5` → active
 
-## G. Set `LOTTEMART_PROXY_URL` on the box (#412 — per-store proxy for Lotte)
+## G. Set the EXISTING `LOTTE_PROXY_URL` on the box (lotte-mart Tier-3 proxy)
 
-**WAIT for my go in chat first** (the pipeline PR must land; until then the
-env is simply unused). Reuses the `HARIHARI_PROXY_URL` mechanism — same
-residential-proxy provider; take a dedicated endpoint if you want per-store
-isolation.
+**PARKED while lotte's site is down** (owner, 2026-11-04). Correction: **no
+pipeline PR needed** — the store already declares `proxyEnv: 'LOTTE_PROXY_URL'`
+(pipeline `config.ts:144`); the env was simply never set. Empty/absent = the
+current by-design skip. Use the same residential-proxy provider as
+`HARIHARI_PROXY_URL`; a dedicated endpoint if you want per-store isolation.
 
 - **G1 [VPS]** `ssh rumaq-vps`
 - **G2 [VPS]** `sudo -e /etc/rumaq/scraper.env` → add
-  `LOTTEMART_PROXY_URL=<proxy endpoint>` (exact var name confirmed when the
-  pipeline PR lands)
+  `LOTTE_PROXY_URL=<proxy endpoint>`
 - **G3 [VPS]** `sudo systemctl restart rumaq-scraper-agent`
-- **G4** On the next nightly (or a Scrape-Now): lotte outbox clears — no more
-  `BrowserTierRequired … Tier 3` for lotte in `journalctl -u rumaq-scraper`
+- **G4** Next run: no more `BrowserTierRequired … Tier 3` for lotte in
+  `journalctl -u rumaq-scraper`; outbox clears.
 
 ## E. Review + merge owner-gate PRs [LAPTOP]
 
@@ -68,30 +68,27 @@ the manager, even when you're AFK.
 - **E3** https://github.com/ahaqqu/DokumenQ/pull/2 — DokumenQ AGENTS.md
   charter (§9 Q8 decision: secrets-discipline rules before any code PR).
   (Design PR DokumenQ#1 was MERGED 2026-11-04 with owner approval.)
+- **E4** https://github.com/ahaqqu/AutQ/pull/9 — AutQ enterprise architecture
+  (senior-architect design: Rust IdP on the VPS, SSO via redirects,
+  client_credentials m2m, per-app "later + prepare" seams, go/no-go criteria;
+  supersedes the obsolete T1–T7 stack). 3 open questions inside — the manager
+  will ask them via harness.
 
 ## H. Rotate the ingest secret — publish 401 since 2026-11-04 20:00 WIB
 
-Tonight's nightly (first on the 20:00 schedule) died at the LAST step:
-`PublishRejected: Ingest endpoint rejected credentials (HTTP 401)` — the
-Worker-side ingest secret no longer matches the box's `RUMAQ_INGEST_SECRET`
-(auth code unchanged, no deploys in between; likely fallout of the unfinished
-old action A — `_NEXT` still exists server-side, so "empty text = unset" was
-wrong). **~89 min of scraping (incl. alfamart 1034 items) is safe in the
-outbox and replays automatically once this is fixed.** Zero-downtime via the
-dual-accept window (Worker accepts primary + `_NEXT`, #376):
+**H1–H4 DONE (owner, 2026-11-04 ~23:15 WIB).** Rotation is half-landed: the
+Worker now accepts old + new (`_NEXT` = new value), and the box sends the new
+value. Remaining:
 
-- **H1 [LAPTOP]** Generate a fresh secret (e.g. `openssl rand -base64 32`).
-  Never paste it into chat or any file the manager reads.
-- **H2 [LAPTOP]** `cd ~/Projects/RumaQ` (repo ROOT — `cf` lives at
-  `node_modules/cf/bin/cf` there, **not** `backend/`) →
-  `node node_modules/cf/bin/cf workers secrets update HAQITA_INGEST_SECRET_NEXT --worker api --type secret_text --text '<NEW VALUE>'`
-  (Worker now accepts old + new).
-- **H3 [VPS]** `ssh rumaq-vps` → `sudo -e /etc/rumaq/scraper.env` → set
-  `RUMAQ_INGEST_SECRET=<NEW VALUE>`
-- **H4 [VPS]** `sudo systemctl restart rumaq-scraper-agent`
-- **H5** Tell me when done — I verify with ONE Scrape-Now and expect
-  `[publish] Accepted …` in the journal.
-- **H6 [LAPTOP]** Only after H5 verifies: promote —
+- **H5 [OWNER — one click, or just wait]** Verify the new secret publishes.
+  EITHER open https://rumaq.ahaqqu.com → Admin → Scrape → **Scrape Now**
+  (all stores; the publish result lands ~90 min later), OR do nothing —
+  tomorrow's 20:00 WIB nightly verifies automatically (the outbox replays
+  first). Expect `[publish] Accepted …` in `journalctl -u rumaq-scraper`.
+  (Manager note: the Scrape-Now surface is admin-gated beyond the QA test
+  account — manager cannot trigger it; that's why this is your click.)
+- **H6 [LAPTOP]** Only AFTER a publish is verified accepted — promote:
+  `cd ~/Projects/RumaQ` (repo ROOT) →
   `node node_modules/cf/bin/cf workers secrets update HAQITA_INGEST_SECRET --worker api --type secret_text --text '<NEW VALUE>'`
 - **H7 [LAPTOP]** Then remove the redundant one:
   `node node_modules/cf/bin/cf workers secrets delete HAQITA_INGEST_SECRET_NEXT --worker api`
@@ -131,11 +128,12 @@ rules + name-hash-cache classifier (no prompt text).
 
 ---
 
-*Last updated 2026-11-04 ~23:15 WIB by the manager. Corrections: the old
+*Last updated 2026-11-04 ~23:35 WIB by the manager. Corrections: the old
 action A never completed (wrong `cf` path — the CLI lives at repo root, and
-`HAQITA_INGEST_SECRET_NEXT` still exists server-side) — superseded by **H**.
-E3 replaced: DokumenQ design PR #1 MERGED (owner-approved, §9 resolved 8/8);
-E3 is now the AGENTS.md charter PR. Completed this window: D1–D5 decisions ✓
-(epoch / guest approved / persona parked / Apify GO / lotte per-store proxy),
-F 20:00 WIB schedule verified ✓, OCR audit env ✓, HARIHARI_PROXY_URL ✓,
-ingest rotation ✓, pipeline CI secrets ✓.*
+`HAQITA_INGEST_SECRET_NEXT` still exists server-side) — superseded by **H**
+(H1–H4 done, H5 verification pending). **G** corrected to the existing
+`LOTTE_PROXY_URL` var — no pipeline PR needed; parked while lotte is down.
+E3 = DokumenQ AGENTS charter PR (design PR #1 MERGED); **E4** = AutQ
+enterprise architecture PR. Completed this window: D1–D5 decisions ✓, F
+20:00 WIB schedule verified ✓, DokumenQ §9 8/8 ✓, OCR audit env ✓,
+HARIHARI_PROXY_URL ✓, ingest rotation ✓, pipeline CI secrets ✓.*
