@@ -3,7 +3,8 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import { openAPIRouteHandler, describeRoute } from 'hono-openapi'
 import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
-import { signJwt, verifyPassword, base64UrlEncode, randomState } from '../auth.js'
+import { signJwt, verifyJwt, verifyPassword, base64UrlEncode, randomState } from '../auth.js'
+import { isRateLimited, getClientIp } from '../lib/rate-limit.js'
 import { getRequestOrigin } from '../lib/request.js'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
@@ -12,6 +13,16 @@ const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
 const COOKIE_NAME = 'rumaq_session'
 const OAUTH_STATE_COOKIE = 'rumaq_oauth_state'
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000
+
+// QA-F4 (ahaqqu/RumaQ#402): /email-login gets its own, much tighter limiter
+// than the general per-IP window (which the auth app does not run at all —
+// only api/households/documents do). Credential probing is the cheapest
+// attack there is; the window is small so a lockout never outlives a typo
+// spree, and the 429 is EXPLICIT — Retry-After header plus retry_after
+// seconds in the body — so a client at human pace gets a visible, actionable
+// signal instead of an identical 401 on every attempt.
+const LOGIN_RATE_WINDOW_MS = 60_000
+const LOGIN_RATE_MAX = 10
 
 // The authorize-time and token-exchange redirect_uri must match exactly — Google
 // rejects the exchange otherwise — so both routes build it here, derived from the
@@ -149,12 +160,17 @@ authApp.get(
       googleUser.sub
     )
 
-    const lookupStmt = c.env.DB.prepare('SELECT id FROM users WHERE google_id = ?').bind(
-      googleUser.sub
-    )
+    // session_epoch rides along in the same lookup — the token must carry the
+    // CURRENT epoch (ahaqqu/RumaQ#405), not a default, or a post-logout
+    // re-login would mint a token the middleware rejects.
+    const lookupStmt = c.env.DB.prepare(
+      'SELECT id, session_epoch FROM users WHERE google_id = ?'
+    ).bind(googleUser.sub)
 
     const batchResults = await c.env.DB.batch([userStmt, lookupStmt])
-    const rows = batchResults[1]?.results as { id?: string }[] | undefined
+    const rows = batchResults[1]?.results as
+      | { id?: string; session_epoch?: number | null }[]
+      | undefined
     const actualUserId = rows?.[0]?.id || finalUserId
 
     const existingMember = await c.env.DB.prepare(
@@ -210,6 +226,7 @@ authApp.get(
         email: googleUser.email,
         iat,
         exp: iat + SESSION_DURATION_MS,
+        epoch: rows?.[0]?.session_epoch ?? 0,
       },
       c.env.WORKER_JWT_SECRET
     )
@@ -230,7 +247,8 @@ authApp.get(
 authApp.all(
   '/logout',
   describeRoute({
-    description: 'Clears the session cookie. POST returns { ok: true }; GET redirects to /.',
+    description:
+      'Revokes the session server-side by bumping the user’s session epoch (ahaqqu/RumaQ#405) — every token issued before the bump stops working, on all devices — then clears the cookie. POST returns { ok: true }; GET redirects to /. Without a valid session cookie it is a no-op that only clears the cookie.',
     responses: {
       200: {
         description: 'OK',
@@ -243,7 +261,34 @@ authApp.all(
       302: { description: 'Redirect to origin (GET)' },
     },
   }),
-  (c) => {
+  async (c) => {
+    // The epoch bump needs the user id, which only a VALID token may supply —
+    // the sub of an unverified token would let anyone revoke a victim's
+    // sessions by crafting a cookie. No/expired/forged cookie: clear the
+    // cookie and move on (logout stays idempotent and leak-free).
+    let token: string | undefined
+    try {
+      token = getCookie(c, COOKIE_NAME)
+    } catch {
+      // c.req.raw not available (test mock)
+    }
+    if (token) {
+      const payload = await verifyJwt(token, c.env.WORKER_JWT_SECRET)
+      if (payload && typeof payload.sub === 'string') {
+        // Monotonic bump, never a reset: setting the epoch back to 0 would
+        // resurrect every pre-feature token (no claim = 0). One UPDATE by
+        // primary key.
+        await c.env.DB.prepare(
+          `UPDATE users
+              SET session_epoch = session_epoch + 1,
+                  updated_at = datetime('now')
+            WHERE id = ?`
+        )
+          .bind(payload.sub)
+          .run()
+      }
+    }
+
     const isHttps = new URL(c.req.url).protocol === 'https:'
     setCookie(c, COOKIE_NAME, '', {
       path: '/',
@@ -290,9 +335,36 @@ authApp.post(
       400: { description: 'Missing email or password' },
       401: { description: 'Invalid email or password' },
       403: { description: 'Email auth is disabled' },
+      429: {
+        description: 'Too many attempts from this address; retry_after carries the seconds left',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['error', 'retry_after'],
+              properties: { error: { type: 'string' }, retry_after: { type: 'integer' } },
+            },
+          },
+        },
+      },
     },
   }),
   async (c) => {
+    // QA-F4 limiter (see LOGIN_RATE_* above) — counts every attempt, keyed by
+    // the same client-IP derivation the shared middleware uses.
+    const { limited, retryAfter } = isRateLimited(
+      `email-login:${getClientIp(c)}`,
+      LOGIN_RATE_WINDOW_MS,
+      LOGIN_RATE_MAX
+    )
+    if (limited) {
+      return c.json(
+        { error: 'Too many login attempts. Please slow down.', retry_after: retryAfter },
+        429,
+        { 'Retry-After': String(retryAfter) }
+      )
+    }
+
     if (c.env.EMAIL_AUTH_ENABLED !== 'true') {
       return c.json({ error: 'Email auth is disabled' }, 403)
     }
@@ -310,7 +382,7 @@ authApp.post(
     }
 
     const user = await c.env.DB.prepare(
-      'SELECT id, email, name, password_hash FROM users WHERE email = ?'
+      'SELECT id, email, name, password_hash, session_epoch FROM users WHERE email = ?'
     )
       .bind(email)
       .first<{
@@ -318,6 +390,7 @@ authApp.post(
         email: string
         name: string
         password_hash: string
+        session_epoch: number | null
       }>()
 
     if (!user || !user.password_hash) {
@@ -379,7 +452,13 @@ authApp.post(
 
     const iat = Date.now()
     const jwt = await signJwt(
-      { sub: user.id, email: user.email, iat, exp: iat + SESSION_DURATION_MS },
+      {
+        sub: user.id,
+        email: user.email,
+        iat,
+        exp: iat + SESSION_DURATION_MS,
+        epoch: user.session_epoch ?? 0,
+      },
       c.env.WORKER_JWT_SECRET
     )
 
