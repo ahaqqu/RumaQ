@@ -123,12 +123,14 @@ function findByAriaLabel(container, label) {
   return container.querySelector(`[aria-label="${label}"]`)
 }
 
-// Chips are spans (Household.jsx pattern) — scoped to their labelled group so
-// the upload section and the filter section never blur together.
+// Filter chips are real toggle buttons (aria-pressed, #404) — scoped to their
+// labelled group so the upload section and the filter section never blur.
 function findChipInGroup(container, groupLabel, chipLabel) {
   const group = container.querySelector(`[role="group"][aria-label="${groupLabel}"]`)
   if (!group) return null
-  return [...group.querySelectorAll('span')].find((chip) => chip.textContent.includes(chipLabel))
+  return [...group.querySelectorAll('button[aria-pressed]')].find((chip) =>
+    chip.textContent.includes(chipLabel)
+  )
 }
 
 describe('Documents', () => {

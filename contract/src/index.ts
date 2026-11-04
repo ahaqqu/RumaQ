@@ -223,6 +223,58 @@ export const backfillCategoriesPayloadSchema = strictObject({
 
 export type BackfillCategoriesPayload = InferOutput<typeof backfillCategoriesPayloadSchema>
 
+// Issue #409: per-stage/per-store timing, so the monitor answers "which
+// process took long" (a nightly can run ~70 minutes) without journal
+// spelunking. Durations are wall-clock milliseconds, rounded integers.
+//
+// Per-store mapping (recorded where the pipeline structures the work):
+//   - fetchMs: source-page discovery (plugin listing incl. browser-rendered
+//     fetches) plus novelty classification with its image downloads.
+//   - ocrMs: primary OCR model calls plus shadow-audit samples.
+//   - uploadMs: R2 brochure page-image PUTs (structurally per-store work in
+//     the scrape loop — distinct from the run-level ingest publish below).
+//   - sleepMs: rate-limit/retry backoffs and browser-challenge polls waited
+//     inside this store's scope — the hidden cost, separated from work time
+//     (the sum of the journal's "Sleeping Nms" lines for the store).
+//   - totalMs: wall clock around the store's whole run (failure included).
+// Match and publish are single global sweeps over all stores' items (one
+// matcher pass, one ingest POST), so the per-store entry carries none of
+// them — their time lives on the run-level schema below.
+//
+// Additive: old scrapers' reports (no field) still validate; a new scraper's
+// report on an OLD Worker fails loudly (Worker deploys first). Persisted
+// today via the per_store JSON blob (price-runs.ts); a dedicated column is
+// the future AdminScrape display ticket's concern.
+export const runStoreTimingSchema = strictObject({
+  fetchMs: pipe(number(), integer(), minValue(0)),
+  ocrMs: pipe(number(), integer(), minValue(0)),
+  uploadMs: pipe(number(), integer(), minValue(0)),
+  sleepMs: pipe(number(), integer(), minValue(0)),
+  totalMs: pipe(number(), integer(), minValue(0)),
+})
+
+export type RunStoreTiming = InferOutput<typeof runStoreTimingSchema>
+
+// Issue #409: run-level timing. fetchMs/ocrMs/uploadMs are the sums of the
+// per-store values (stores run sequentially); matchMs/taxonomyMs/publishMs
+// time the global stages the per-store entries cannot carry (the match
+// sweep, the taxonomy classification gate, the payload build + ingest POST);
+// sleepMs accumulates every wait across all scopes (stores + match +
+// taxonomy + publish); totalMs is finishedAt − runStartedAt. Additive like
+// the per-store block above.
+export const runTimingSchema = strictObject({
+  fetchMs: pipe(number(), integer(), minValue(0)),
+  ocrMs: pipe(number(), integer(), minValue(0)),
+  uploadMs: pipe(number(), integer(), minValue(0)),
+  matchMs: pipe(number(), integer(), minValue(0)),
+  taxonomyMs: pipe(number(), integer(), minValue(0)),
+  publishMs: pipe(number(), integer(), minValue(0)),
+  sleepMs: pipe(number(), integer(), minValue(0)),
+  totalMs: pipe(number(), integer(), minValue(0)),
+})
+
+export type RunTiming = InferOutput<typeof runTimingSchema>
+
 // Run report (haqita-integration.md §7.1): the scraper reports each live run
 // to the backend so the admin scraping monitor can show run history without
 // reading journald. One POST per finished run — including failed runs, which
@@ -266,6 +318,12 @@ export const runReportStoreSchema = strictObject({
   // the RUMAQ_CATEGORY shadow-mode audit surface. Absent when the gate is
   // off or the store had no items. Same additive contract as audit above.
   taxonomy: nullish(runTaxonomySchema),
+  // Issue #409: per-stage timing for this store (fetchMs / ocrMs / uploadMs
+  // / sleepMs / totalMs — the mapping comment on runStoreTimingSchema).
+  // Absent from reports produced before the field existed. Additive: old
+  // scrapers' reports (no field) still validate; a new scraper's report on
+  // an OLD Worker fails loudly (Worker deploys first).
+  timing: nullish(runStoreTimingSchema),
 })
 
 // One flagged candidate pair the matcher reports for the admin review queue
@@ -359,6 +417,13 @@ export const runReportSchema = strictObject({
       error: nullish(string()),
     })
   ),
+  // Issue #409: run-level timing (runTimingSchema) — the global match/
+  // taxonomy/publish stage times plus the per-stage totals the monitor
+  // sorts by to answer "which process took long". Absent from reports
+  // produced before the field existed. Additive like perStore timing above;
+  // persistence beyond the validated payload is the AdminScrape display
+  // ticket's concern.
+  timing: nullish(runTimingSchema),
   error: nullish(pipe(string(), maxLength(2000))),
 })
 

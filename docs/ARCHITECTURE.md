@@ -186,7 +186,7 @@ Google OAuth 2.0 is implemented inside the Worker using the [Authorization Code 
 4. Protected-route middleware
    - The **gateway** (`backend/src/gateway.ts`) routes `/api/*` non-auth requests to the `CachedApi` entrypoint (which wraps `apiApp`).
    - Inside `apiApp` (`backend/src/apps/api.ts`), the `propsAuthMiddleware` first checks `c.env.props` (fast path when props are provided), then falls back to reading the `rumaq_session` cookie, verifying the JWT, and resolving the active household: `user_settings.active_household_id` wins only while the user is still a member of that household (a stale pointer after a removal must not grant access), otherwise the oldest `household_members` row. It sets Hono `Variables` (`userId`, `householdId`) for downstream route handlers. Routes that require authentication register this middleware; public routes skip it entirely.
-   - Household member management (issue #331) is a separate domain app (`backend/src/apps/households.ts` + `backend/src/lib/households.ts`) the gateway dispatches for `/api/households*` before the `apiApp` fallthrough — same CORS/per-IP rate-limit/auth stack, plus owner/last-owner rules and expiring invite codes in `household_invites` (migration 0020). Members come in two modes (issue #388, migration 0021): linked to a user account, or profile-only (`user_id` NULL — no account, forced role `member`, owner-managed, never authenticates); every member row carries a surrogate `id` that member-addressed endpoints (`PATCH`/`DELETE .../members/{memberId}`, profile-only creation via `POST .../members`) and the future document vault key on.
+   - Household member management (issue #331) is a separate domain app (`backend/src/apps/households.ts` + `backend/src/lib/households.ts`) the gateway dispatches for `/api/households*` before the `apiApp` fallthrough — same CORS/per-IP rate-limit/auth stack, plus owner/last-owner rules and expiring invite codes in `household_invites` (migration 0020). Members come in two modes (issue #388, migration 0021): linked to a user account, or profile-only (`user_id` NULL — no account, forced role `member`, owner-managed, never authenticates); every member row carries a surrogate `id` that member-addressed endpoints (`PATCH`/`DELETE .../members/{memberId}`, profile-only creation via `POST .../members`) and the future document vault key on. Link-later (issue #397, migration 0023): an invite can carry `target_member_id` marking one profile-only member; redeeming it attaches the redeemer's `user_id` to that row (`UPDATE ... WHERE user_id IS NULL` + pre-check/guard so races report typed 4xx, never a partial-unique-index 500) instead of inserting a new member — the row's id and profile fields survive, so vault documents stay attached. The invite CASCADE-deletes with its target member (transient data).
 
 **Why not Cloudflare Access?** Access is simpler, but in-app OAuth keeps the API self-contained, lets us store the user record in D1 for personalization, and makes local development straightforward with the Cloudflare Vite plugin.
 
@@ -246,6 +246,14 @@ Core entities:
 - `user_settings` — AI provider/key, motion preference, currency, and persona roles.
 - `documents` + `document_audit` — the household document vault (ahaqqu/RumaQ#388, migration 0022): per-household files optionally attached to a member (both modes — linked accounts and profile-only members from 0021), closed category set, sha256 + storage metadata, and a per-action audit trail that outlives the document it records.
 - `ai_usage_events` — one row per completed AI call (provider, model, input/output/cached tokens, key source); auto-deleted after one year by the daily retention cron.
+
+### Migrations
+
+Schema lives in numbered SQL files under [`backend/migrations/`](../backend/migrations/) — `NNNN_description.sql`, applied in filename order. D1 tracks which files it has already applied (its `d1_migrations` table), so deploys only run the new files.
+
+- **When they run:** automatically on every deploy — `scripts/deploy.sh` runs `cf d1 migrations apply` against the local dev D1 (`--local --persist-to backend/.cloudflare/state`), the production database, and the shared `rumaq-preview` database for branch previews.
+- **Writing one:** take the next free number and never edit an applied migration (the recipe is in [`docs/BACKEND_CONVENTIONS.md`](BACKEND_CONVENTIONS.md)). Prefer additive changes (new table/column/index); there are no down migrations — a bad migration is reverted by a forward fix.
+- **Testing:** `backend/src/__tests__/migrations.test.ts` applies the full chain to a real SQLite engine (`node:sqlite` — D1 is SQLite); rebuild-style migrations (0021) carry before/after assertions there, and the restore drill (below) round-trips the whole chain through a dump.
 
 ## 7. AI integration
 
@@ -355,23 +363,24 @@ The legacy Pages project was deleted after the cutover; `rumaq.pages.dev` no lon
 
 ### Environment variables
 
-| Variable                   | Where         | Purpose                                                                                                                                                                                                 |
-| -------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GOOGLE_CLIENT_ID`         | Worker secret | Google OAuth client ID                                                                                                                                                                                  |
-| `GOOGLE_CLIENT_SECRET`     | Worker secret | Google OAuth client secret                                                                                                                                                                              |
-| `WORKER_JWT_SECRET`        | Worker secret | HMAC key for session JWT                                                                                                                                                                                |
-| `WORKER_ENCRYPTION_KEY`    | Worker secret | AES-GCM key for AI keys                                                                                                                                                                                 |
-| `HAQITA_INGEST_SECRET`     | Worker secret | Bearer secret for the internal price ingest endpoint (`POST /api/internal/ingest/prices`, pushed daily by the rumaq-scraper VPS job). Optional: when unset the endpoint returns 503                     |
-| `CLOUDFLARE_ACCOUNT_ID`    | Build/deploy  | Cloudflare account ID; used by Wrangler and the deploy script                                                                                                                                           |
-| `CLOUDFLARE_DATABASE_ID`   | Build/deploy  | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed                                                                                                              |
-| `CLOUDFLARE_API_TOKEN`     | Build/deploy  | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                                                                                                                |
-| `EMAIL_AUTH_ENABLED`       | Worker var    | Set to `"true"` or `"false"` to enable or disable email/password testing auth                                                                                                                           |
-| `RUN_SECRETS_CHECK`        | Worker var    | Set to `"true"` to enable missing-secrets check on startup (recommended for production); off by default                                                                                                 |
-| `WORKER_URL`               | Build env     | URL of the deployed Worker (e.g. `https://rumaq.ahaqqu.com`); used at build time as `VITE_API_BASE`                                                                                                     |
-| `D1_DATABASE_NAME`         | Deploy        | D1 database name (default: `rumaq`)                                                                                                                                                                     |
-| `R2_BUCKET_NAME`           | Deploy        | R2 bucket name for receipt images (default: `rumaq-receipts`)                                                                                                                                           |
-| `R2_BROCHURES_BUCKET_NAME` | Deploy        | R2 bucket name for brochure images (default: `rumaq-brochures`)                                                                                                                                         |
-| — (no new var)             | —             | The document vault (ahaqqu/RumaQ#388) binds `DOCUMENTS` to the SAME private bucket as `RECEIPTS` under a dedicated name; its keys carry the `documents/` prefix, so no new bucket or variable is needed |
+| Variable                      | Where          | Purpose                                                                                                                                                                                                 |
+| ----------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_CLIENT_ID`            | Worker secret  | Google OAuth client ID                                                                                                                                                                                  |
+| `GOOGLE_CLIENT_SECRET`        | Worker secret  | Google OAuth client secret                                                                                                                                                                              |
+| `WORKER_JWT_SECRET`           | Worker secret  | HMAC key for session JWT                                                                                                                                                                                |
+| `WORKER_ENCRYPTION_KEY`       | Worker secret  | AES-GCM key for AI keys                                                                                                                                                                                 |
+| `HAQITA_INGEST_SECRET`        | Worker secret  | Bearer secret for the internal price ingest endpoint (`POST /api/internal/ingest/prices`, pushed daily by the rumaq-scraper VPS job). Optional: when unset the endpoint returns 503                     |
+| `CLOUDFLARE_ACCOUNT_ID`       | Build/deploy   | Cloudflare account ID; used by Wrangler and the deploy script                                                                                                                                           |
+| `CLOUDFLARE_DATABASE_ID`      | Build/deploy   | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed                                                                                                              |
+| `CLOUDFLARE_API_TOKEN`        | Build/deploy   | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                                                                                                                |
+| `BACKUP_CLOUDFLARE_API_TOKEN` | Actions secret | Optional scoped token the D1 backup workflow prefers over `CLOUDFLARE_API_TOKEN` (docs/plan/d1-backup.md §9)                                                                                            |
+| `EMAIL_AUTH_ENABLED`          | Worker var     | Set to `"true"` or `"false"` to enable or disable email/password testing auth                                                                                                                           |
+| `RUN_SECRETS_CHECK`           | Worker var     | Set to `"true"` to enable missing-secrets check on startup (recommended for production); off by default                                                                                                 |
+| `WORKER_URL`                  | Build env      | URL of the deployed Worker (e.g. `https://rumaq.ahaqqu.com`); used at build time as `VITE_API_BASE`                                                                                                     |
+| `D1_DATABASE_NAME`            | Deploy         | D1 database name (default: `rumaq`)                                                                                                                                                                     |
+| `R2_BUCKET_NAME`              | Deploy         | R2 bucket name for receipt images (default: `rumaq-receipts`)                                                                                                                                           |
+| `R2_BROCHURES_BUCKET_NAME`    | Deploy         | R2 bucket name for brochure images (default: `rumaq-brochures`)                                                                                                                                         |
+| — (no new var)                | —              | The document vault (ahaqqu/RumaQ#388) binds `DOCUMENTS` to the SAME private bucket as `RECEIPTS` under a dedicated name; its keys carry the `documents/` prefix, so no new bucket or variable is needed |
 
 ### Secrets management
 
@@ -406,6 +415,14 @@ export WORKER_ENCRYPTION_KEY=...
 | `WORKER_JWT_SECRET`     | yes   | yes  | yes        | Active sessions invalidated                      |
 | `WORKER_ENCRYPTION_KEY` | yes   | yes  | yes        | Stored AI keys must be re-entered                |
 | `HAQITA_INGEST_SECRET`  | yes   | yes  | yes        | Scraper pushes rejected until its env is rotated |
+
+### Database backups & restore
+
+Nightly automated backup (ahaqqu/RumaQ#342): the scheduled **D1 backup** workflow (`.github/workflows/backup.yml`, 20:07 UTC = 03:07 WIB, plus manual dispatch) exports the production D1 database via the REST API and uploads the dump into the private `rumaq-receipts` bucket under `backups/<db>/<WIB-date>/dump.sql` — a keyspace no Worker binding can read. Retention keeps the newest 14 daily and 4 weekly (Sunday) dumps, pruned by `scripts/backup/export-d1.sh` on the success path only — a failed backup never deletes the previous ones. A failed run opens a `backup-failure` issue; the next green run closes it (the smoke-test pattern).
+
+Before any dump may be imported back into production it must pass the **restore drill**: `./scripts/backup/restore-drill.sh <dump.sql>` rebuilds the file in scratch SQLite and asserts `integrity_check`, `foreign_key_check`, and the canary tables (users, households, household_members, stock, purchases, documents). The drill engine is tested against the real migration chain in `backend/src/__tests__/d1-restore.test.ts`; run the drill monthly against the newest R2 dump so restore-rot is caught while the backup is still in its Time Travel window.
+
+The full runbook — Time Travel for recent accidents (Scenario A), dump → drill → fresh DB → cutover for older disasters (Scenario B) — plus the owner actions if the API token's grants turn out to be incomplete, live in [`docs/plan/d1-backup.md`](plan/d1-backup.md). The workflow reuses the deploy credential trio (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_DATABASE_ID`); a scoped `BACKUP_CLOUDFLARE_API_TOKEN` is preferred when present.
 
 ## 9. Free-tier headroom
 
@@ -454,7 +471,8 @@ Two automated mechanisms keep dependencies secure:
 
 - Production dependencies (`bun audit --omit=dev`) are checked separately and treated as urgent.
 - Vulnerabilities that require breaking changes create a GitHub issue (labelled `security`) instead of an auto-PR; the issue is auto-closed once a later audit run passes.
-- Transitive packages pinned to vulnerable exact versions by upstreams (`sharp`, `undici`, `zod` under miniflare / `@cloudflare/config`) are held at fixed versions via `overrides` in the root `package.json`.
+- Transitive packages pinned to vulnerable exact versions by upstreams (`sharp`, `undici`, `uuid`, `zod` under miniflare / `@cloudflare/config`) are held at fixed versions via `overrides` in the root `package.json`.
+- Dev-tooling advisories without an in-range upstream fix are held there too: `deepmerge` 4.1.2 is a deliberate downgrade (no patched release exists for GHSA-gcqx-w48m-w2h4, so 4.1.2 is the highest release outside the vulnerable range; its sole consumer, `@rollup/plugin-node-resolve`, only performs a plain two-object merge), while `glob` 14.0.3 and `minimatch` 11.0.4 force the upstream fix releases across the majors consumers declare (GHSA-3g3m-2fjr-6pw4, GHSA-g3hv-75wg-m249).
 - Test tooling (`@cucumber/*`, `jest-cucumber`) is kept in `devDependencies` so transitive vulns in those packages never affect production audits.
 
 ## 13. Tech debt & deferred scope

@@ -291,6 +291,24 @@ describe('useCreateHouseholdInvite', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(queryClient.getQueryData(INVITE_KEY).invite.code).toBe('ABC2345678')
   })
+
+  it('sends no body for the plain call and the target payload for a marked one (#397)', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    createHouseholdInvite.mockResolvedValue({ invite: { id: 'inv1', code: 'ABC2345678' } })
+
+    const { result } = renderHook(() => useCreateHouseholdInvite('h1'), {
+      wrapper: createWrapper(queryClient),
+    })
+    // The old no-arg call: bodyless POST (plain invite).
+    await act(async () => result.current.mutate())
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(createHouseholdInvite).toHaveBeenLastCalledWith('h1', undefined)
+
+    // A marked invite rides { target_member_id } through to the API.
+    await act(async () => result.current.mutate({ target_member_id: 'm9' }))
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(createHouseholdInvite).toHaveBeenLastCalledWith('h1', { target_member_id: 'm9' })
+  })
 })
 
 describe('useJoinHousehold', () => {
