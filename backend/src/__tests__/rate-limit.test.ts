@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vite-plus/test'
-import { isRateLimited, getRateLimitConfig, resetRateLimit } from '../lib/rate-limit.js'
+import { Hono } from 'hono'
+import {
+  isRateLimited,
+  getRateLimitConfig,
+  resetRateLimit,
+  ipRateLimitMiddleware,
+} from '../lib/rate-limit.js'
+import { createMockEnv, type MockEnv } from './support/env.js'
 
 beforeEach(() => {
   resetRateLimit()
@@ -52,5 +59,27 @@ describe('isRateLimited', () => {
     const { limited: bLimited } = isRateLimited('ipB', 60_000, 1)
     expect(aLimited).toBe(true)
     expect(bLimited).toBe(false)
+  })
+})
+
+// QA-F4 (ahaqqu/RumaQ#402): the 429 must be an explicit, client-visible
+// signal — body carries error + retry_after seconds, header echoes it.
+describe('ipRateLimitMiddleware', () => {
+  it('returns an explicit 429 body (error + retry_after) with a Retry-After header', async () => {
+    const app = new Hono<{ Bindings: MockEnv }>()
+    app.use('*', ipRateLimitMiddleware)
+    app.get('/', (c) => c.json({ ok: true }))
+    const env = createMockEnv({ RATE_LIMIT_WINDOW_MS: '60000', RATE_LIMIT_MAX_REQUESTS: '2' })
+    const headers = { 'CF-Connecting-IP': '203.0.113.9' }
+
+    expect((await app.request('/', { headers }, env)).status).toBe(200)
+    expect((await app.request('/', { headers }, env)).status).toBe(200)
+    const limited = await app.request('/', { headers }, env)
+    expect(limited.status).toBe(429)
+    const body = (await limited.json()) as { error: string; retry_after: number }
+    expect(body.error).toContain('Too many requests')
+    expect(Number.isInteger(body.retry_after)).toBe(true)
+    expect(body.retry_after).toBeGreaterThan(0)
+    expect(limited.headers.get('Retry-After')).toBe(String(body.retry_after))
   })
 })
