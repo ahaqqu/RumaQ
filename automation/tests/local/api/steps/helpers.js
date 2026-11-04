@@ -58,7 +58,10 @@ export class ApiContext {
   async authenticateViaEmail(email, password) {
     this.response = await fetch(`${BASE_URL}/api/auth/email-login`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      // Forward the scenario's synthetic IP: /email-login runs its own
+      // per-IP limiter (QA-F4), so without these headers every login would
+      // share one 'unknown' bucket and flake past the budget.
+      headers: { 'content-type': 'application/json', ...this.headers },
       body: JSON.stringify({ email, password }),
     })
     try {
