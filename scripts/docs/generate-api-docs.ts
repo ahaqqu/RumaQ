@@ -152,7 +152,7 @@ async function main() {
     get: {
       operationId: 'getLogout',
       description:
-        'Clears the session cookie. POST returns { ok: true }; GET redirects to {origin}.',
+        'Revokes the session server-side (bumps the user’s session epoch, ahaqqu/RumaQ#405) and clears the cookie. POST returns { ok: true }; GET redirects to {origin}.',
       responses: {
         '200': { description: 'OK' },
         '302': { description: 'Redirect (GET)' },

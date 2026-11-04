@@ -860,3 +860,72 @@ describe('migration 0023: invite target member (#397)', () => {
     expect(names).toContain('target_member_id')
   })
 })
+
+// Session-epoch logout revocation (ahaqqu/RumaQ#405, owner decision: option 2).
+// users.session_epoch is the server-side counter logout bumps; the auth
+// middleware compares the epoch signed into the JWT against it. The
+// interesting properties: the additive default (no backfill — every existing
+// user and every invite-created account sits at 0, which is what pre-feature
+// tokens without the claim normalize to), and the per-request lookup cost
+// (the middleware's subquery must seek the users primary key, not scan).
+describe('migration 0024: users.session_epoch (#405)', () => {
+  it('adds the counter column on top of the pre-0024 schema; old rows default to 0', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0024')
+    )
+
+    // Rows that predate the feature: email-auth users, Google users, and the
+    // profile-only members' would-be accounts all start at epoch 0.
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO users (id, email, name, picture, google_id)
+       VALUES ('u2', 'c@d.com', 'Google User', NULL, 'g-1')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0024_session_epoch.sql'), 'utf8'))
+
+    const old = db.prepare('SELECT * FROM users WHERE id = ?').get('u1')
+    expect(old).toMatchObject({ id: 'u1', session_epoch: 0 })
+    expect(db.prepare('SELECT * FROM users WHERE id = ?').get('u2')).toMatchObject({
+      session_epoch: 0,
+    })
+
+    // New rows default too — a fresh login flow inserts without naming the
+    // column and must land at the compatible epoch.
+    db.prepare("INSERT INTO users (id, email) VALUES ('u3', 'e@f.com')").run()
+    expect(db.prepare('SELECT * FROM users WHERE id = ?').get('u3')).toMatchObject({
+      session_epoch: 0,
+    })
+
+    // The logout bump is a monotonic += 1 — representable and persistent.
+    db.prepare('UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?').run('u1')
+    expect(db.prepare('SELECT session_epoch FROM users WHERE id = ?').get('u1')).toMatchObject({
+      session_epoch: 1,
+    })
+  })
+
+  it('keeps the middleware epoch subquery on an indexed seek (no scan, no temp B-tree)', () => {
+    // The epoch comparison rides in the SAME statement as the active-household
+    // resolution (backend/src/auth.ts) — the per-request budget stays at one
+    // indexed lookup. The users half must seek the primary key.
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+
+    const plan = db
+      .prepare('EXPLAIN QUERY PLAN SELECT session_epoch FROM users WHERE id = ?')
+      .all('u1')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+
+  it('keeps the full chain green on a fresh database (additive, nothing dropped)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(users)').all()
+    const names = columns.map((c: Record<string, unknown>) => c.name)
+    expect(names).toContain('session_epoch')
+  })
+})

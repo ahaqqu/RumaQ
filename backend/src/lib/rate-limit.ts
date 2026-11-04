@@ -53,6 +53,20 @@ export function resetRateLimit(key?: string): void {
   }
 }
 
+// Rate-limit by client IP. In production, Cloudflare sets CF-Connecting-IP,
+// which is authoritative. The X-Forwarded-For fallback is only for the local
+// Docker test stack, where the reverse proxy supplies a synthetic IP per test
+// scenario. A browser client cannot spoof CF-Connecting-IP. Shared so the
+// stricter per-endpoint limiters (e.g. /email-login, QA-F4) key identically
+// to the general middleware.
+export function getClientIp(c: { req: { header(name: string): string | undefined } }): string {
+  return (
+    c.req.header('CF-Connecting-IP') ||
+    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+    'unknown'
+  )
+}
+
 // General per-user/per-IP API rate limiting, shared by every public domain
 // app (api.ts and households.ts run the same stack). Applied after CORS but
 // before auth so that unauthenticated bursts are also throttled. Keys are
@@ -60,19 +74,13 @@ export function resetRateLimit(key?: string): void {
 // layer a stricter, keyed limiter on top (e.g. invite-code redemption) using
 // isRateLimited directly.
 export const ipRateLimitMiddleware = createMiddleware<Env>(async (c, next) => {
-  // Rate-limit by client IP. In production, Cloudflare sets CF-Connecting-IP,
-  // which is authoritative. The X-Forwarded-For fallback is only for the
-  // local Docker test stack, where the reverse proxy supplies a synthetic IP
-  // per test scenario. A browser client cannot spoof CF-Connecting-IP.
-  const clientIp =
-    c.req.header('CF-Connecting-IP') ||
-    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
-    'unknown'
-  const key = `api:${clientIp}`
+  const key = `api:${getClientIp(c)}`
   const { windowMs, maxRequests } = getRateLimitConfig(c.env)
   const { limited, retryAfter } = isRateLimited(key, windowMs, maxRequests)
   if (limited) {
-    return c.json({ error: 'Too many requests. Please slow down.' }, 429, {
+    // Explicit client-visible signal (QA-F4): the body carries retry_after so
+    // clients that never read the Retry-After header still get the number.
+    return c.json({ error: 'Too many requests. Please slow down.', retry_after: retryAfter }, 429, {
       'Retry-After': String(retryAfter),
     })
   }
