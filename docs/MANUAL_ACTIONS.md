@@ -5,7 +5,6 @@ Maintained by the manager. **To report status, just reply in chat**, e.g.
 removed, failed steps stay with the error noted). Empty file = inbox zero.
 
 Conventions:
-
 - Every step is absolute (explicit `cd` or absolute path) and labeled
   **[LAPTOP]** (this machine) or **[VPS]** (the box `62.83.35.220`, ssh alias
   `rumaq-vps`).
@@ -62,17 +61,48 @@ Workflow rule: these are workflow/design PRs — always merged by you, never by
 the manager, even when you're AFK.
 
 - **E1** https://github.com/ahaqqu/RumaQ/pull/403 — QA workflow docs
-  (docs/QA.md + AGENTS.md line). CI green.
+  (docs/QA.md + AGENTS.md line + docs/MANUAL_ACTIONS.md). CI green.
 - **E2** https://github.com/ahaqqu/RumaQ/pull/401 — plugin architecture
-  design (per-household recommendation, 8 proposed follow-up tickets). CI green.
-- **E3** https://github.com/ahaqqu/DokumenQ/pull/1 — DokumenQ design doc
-  (signed-URL flow, migration runbook, 8 open questions to answer).
+  design (north star — execution is standalone-first per owner decision
+  2026-11-04). CI green.
+- **E3** https://github.com/ahaqqu/DokumenQ/pull/2 — DokumenQ AGENTS.md
+  charter (§9 Q8 decision: secrets-discipline rules before any code PR).
+  (Design PR DokumenQ#1 was MERGED 2026-11-04 with owner approval.)
+
+## H. Rotate the ingest secret — publish 401 since 2026-11-04 20:00 WIB
+
+Tonight's nightly (first on the 20:00 schedule) died at the LAST step:
+`PublishRejected: Ingest endpoint rejected credentials (HTTP 401)` — the
+Worker-side ingest secret no longer matches the box's `RUMAQ_INGEST_SECRET`
+(auth code unchanged, no deploys in between; likely fallout of the unfinished
+old action A — `_NEXT` still exists server-side, so "empty text = unset" was
+wrong). **~89 min of scraping (incl. alfamart 1034 items) is safe in the
+outbox and replays automatically once this is fixed.** Zero-downtime via the
+dual-accept window (Worker accepts primary + `_NEXT`, #376):
+
+- **H1 [LAPTOP]** Generate a fresh secret (e.g. `openssl rand -base64 32`).
+  Never paste it into chat or any file the manager reads.
+- **H2 [LAPTOP]** `cd ~/Projects/RumaQ` (repo ROOT — `cf` lives at
+  `node_modules/cf/bin/cf` there, **not** `backend/`) →
+  `node node_modules/cf/bin/cf workers secrets update HAQITA_INGEST_SECRET_NEXT --worker api --type secret_text --text '<NEW VALUE>'`
+  (Worker now accepts old + new).
+- **H3 [VPS]** `ssh rumaq-vps` → `sudo -e /etc/rumaq/scraper.env` → set
+  `RUMAQ_INGEST_SECRET=<NEW VALUE>`
+- **H4 [VPS]** `sudo systemctl restart rumaq-scraper-agent`
+- **H5** Tell me when done — I verify with ONE Scrape-Now and expect
+  `[publish] Accepted …` in the journal.
+- **H6 [LAPTOP]** Only after H5 verifies: promote —
+  `node node_modules/cf/bin/cf workers secrets update HAQITA_INGEST_SECRET --worker api --type secret_text --text '<NEW VALUE>'`
+- **H7 [LAPTOP]** Then remove the redundant one:
+  `node node_modules/cf/bin/cf workers secrets delete HAQITA_INGEST_SECRET_NEXT --worker api`
 
 ---
 
-_Last updated 2026-11-04 ~07:45 WIB by the manager. Completed this window
-(no longer listed): D1–D5 decisions recorded on tickets ✓ (session epoch /
-guest approved / persona parked / Apify GO / lotte per-store proxy), A secret
-cleanup ✓, F 20:00 WIB schedule verified ✓, OCR audit env ✓,
-HARIHARI_PROXY_URL ✓, ingest rotation ✓, pipeline CI secrets ✓, production
-deploy of the vault ✓ (CI auto-deploy)._
+*Last updated 2026-11-04 ~23:15 WIB by the manager. Corrections: the old
+action A never completed (wrong `cf` path — the CLI lives at repo root, and
+`HAQITA_INGEST_SECRET_NEXT` still exists server-side) — superseded by **H**.
+E3 replaced: DokumenQ design PR #1 MERGED (owner-approved, §9 resolved 8/8);
+E3 is now the AGENTS.md charter PR. Completed this window: D1–D5 decisions ✓
+(epoch / guest approved / persona parked / Apify GO / lotte per-store proxy),
+F 20:00 WIB schedule verified ✓, OCR audit env ✓, HARIHARI_PROXY_URL ✓,
+ingest rotation ✓, pipeline CI secrets ✓.*
