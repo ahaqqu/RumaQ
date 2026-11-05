@@ -891,7 +891,7 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description Lists the active household’s tasks — the shared board (open + done). Filters compose: assignee=me (the caller’s member row), assignee=all (or absent — everyone), or a surrogate member id (both modes; an unknown id filters to an empty list, it is a read filter not a probe); status=open|done|all (default all); mine=1 is the "My tasks" sugar for assignee=me and wins over assignee. No per-member read hiding: every household member sees the board (#429 design note). */
+    /** @description Lists the active household’s tasks — the shared board (open + done). Filters compose: assignee=me (the caller’s member row), assignee=all (or absent — everyone), or a surrogate member id (both modes; an unknown id filters to an empty list, it is a read filter not a probe); status is open, done, or all (default all); mine=1 is the "My tasks" sugar for assignee=me and wins over assignee. No per-member read hiding: every household member sees the board (#429 design note). */
     get: operations['getApiTasks']
     put?: never
     /** @description Creates a task: free-text title (trimmed, 1-120 chars — no preset categories, the #422 philosophy), optional assignee (ANY household member — linked or profile-only, 0021), optional due date and recurrence. Any linked member can create; profile-only members never act (no account, 0021). needs_approval derives server-side: true when the assignee is a profile-only member. The create audit record commits in the same batch. */

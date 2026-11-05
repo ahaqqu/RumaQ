@@ -4304,7 +4304,7 @@
     "/api/tasks": {
       "get": {
         "operationId": "getApiTasks",
-        "description": "Lists the active household’s tasks — the shared board (open + done). Filters compose: assignee=me (the caller’s member row), assignee=all (or absent — everyone), or a surrogate member id (both modes; an unknown id filters to an empty list, it is a read filter not a probe); status=open|done|all (default all); mine=1 is the \"My tasks\" sugar for assignee=me and wins over assignee. No per-member read hiding: every household member sees the board (#429 design note).",
+        "description": "Lists the active household’s tasks — the shared board (open + done). Filters compose: assignee=me (the caller’s member row), assignee=all (or absent — everyone), or a surrogate member id (both modes; an unknown id filters to an empty list, it is a read filter not a probe); status is open, done, or all (default all); mine=1 is the \"My tasks\" sugar for assignee=me and wins over assignee. No per-member read hiding: every household member sees the board (#429 design note).",
         "security": [
           {
             "cookieAuth": []
@@ -4327,7 +4327,8 @@
             "schema": {
               "type": "string",
               "enum": ["open", "done", "all"],
-              "default": "all"
+              "default": "all",
+              "description": "'open', 'done', or 'all' (default all)"
             }
           },
           {
