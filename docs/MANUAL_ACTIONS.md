@@ -5,6 +5,7 @@ Maintained by the manager. **To report status, just reply in chat**, e.g.
 removed, failed steps stay with the error noted). Empty file = inbox zero.
 
 Conventions:
+
 - Every step is absolute (explicit `cd` or absolute path) and labeled
   **[LAPTOP]** (this machine) or **[VPS]** (the box `62.83.35.220`, ssh alias
   `rumaq-vps`).
@@ -123,7 +124,7 @@ rules + name-hash-cache classifier (no prompt text).
 
 ---
 
-*Last updated 2026-11-04 ~23:35 WIB by the manager. Corrections: the old
+_Last updated 2026-11-04 ~23:35 WIB by the manager. Corrections: the old
 action A never completed (wrong `cf` path — the CLI lives at repo root, and
 `HAQITA_INGEST_SECRET_NEXT` still exists server-side) — superseded by **H**
 (H1–H4 done, H5 verification pending). **G** corrected to the existing
@@ -131,4 +132,4 @@ action A never completed (wrong `cf` path — the CLI lives at repo root, and
 E3 = DokumenQ AGENTS charter PR (design PR #1 MERGED); **E4** = AutQ
 enterprise architecture PR. Completed this window: D1–D5 decisions ✓, F
 20:00 WIB schedule verified ✓, DokumenQ §9 8/8 ✓, OCR audit env ✓,
-HARIHARI_PROXY_URL ✓, ingest rotation ✓, pipeline CI secrets ✓.*
+HARIHARI_PROXY_URL ✓, ingest rotation ✓, pipeline CI secrets ✓._
