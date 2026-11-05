@@ -47,10 +47,10 @@ the manager, even when you're AFK.
 - **E2** https://github.com/ahaqqu/RumaQ/pull/401 — plugin architecture
   design (north star — execution is standalone-first per owner decision
   2026-11-04). CI green.
-_(E4 AutQ enterprise architecture — merged by the owner 2026-11-05. H —
-ingest secret rotation — DONE: owner promoted the primary + deleted `_NEXT`
-2026-11-05; verified green by the manager's publish checks. J —
-YOGYA_PROXY_URL — DONE 2026-11-05.)_
+  _(E4 AutQ enterprise architecture — merged by the owner 2026-11-05. H —
+  ingest secret rotation — DONE: owner promoted the primary + deleted `_NEXT`
+  2026-11-05; verified green by the manager's publish checks. J —
+  YOGYA_PROXY_URL — DONE 2026-11-05.)_
 
 ## I. Review the AI prompts (owner review — pipeline repo)
 
