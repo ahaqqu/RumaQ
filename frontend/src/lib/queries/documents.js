@@ -46,14 +46,13 @@ export function useCreateDocument() {
 
 // Add a file to an existing document. The create-then-N-adds loop in the page
 // awaits each mutation so upload order stays deterministic; the returned
-// document payload (all files) is what the endpoint answers with.
+// document payload (all files) is what the endpoint answers with. NO per-settle
+// invalidation here (review B3 #422): each settle fired a whole-cache
+// invalidate, so an N-file upload refetched the list ~N times — the page's
+// upload runner invalidates ONCE after the loop finishes instead.
 export function useAddDocumentFile() {
-  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ documentId, file, label }) => addDocumentFile(documentId, file, label),
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: DOCUMENTS_KEY })
-    },
   })
 }
 

@@ -143,7 +143,10 @@ describe('useAddDocumentFile', () => {
     vi.clearAllMocks()
   })
 
-  it('adds a file to the document and invalidates the vault cache', async () => {
+  // Review B3 #422: the hook does NOT invalidate per settle — an N-file
+  // upload would refetch the whole list N times. The page's upload runner
+  // invalidates ONCE after the loop; this pins the hook's no-invalidate side.
+  it('adds a file and leaves cache invalidation to the caller (no per-settle refetch)', async () => {
     addDocumentFile.mockResolvedValue({ document: DOC })
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
     const file = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], 'belakang.jpg', {
@@ -156,11 +159,8 @@ describe('useAddDocumentFile', () => {
     await act(async () => result.current.mutate({ documentId: 'doc-1', file, label: 'Belakang' }))
 
     expect(addDocumentFile).toHaveBeenCalledWith('doc-1', file, 'Belakang')
-    await waitFor(() =>
-      expect(invalidateSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ queryKey: ['documents'] })
-      )
-    )
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(invalidateSpy).not.toHaveBeenCalled()
   })
 })
 

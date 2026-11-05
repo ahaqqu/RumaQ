@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useQueryClient } from '@tanstack/react-query'
 import {
+  documentsQueryKey,
   useHouseholds,
   useHouseholdMembers,
   useDocuments,
@@ -15,7 +17,9 @@ import {
   DOCUMENT_MAX_FILES,
   DOCUMENT_NAME_MAX,
   fetchDocumentContent,
+  sniffDocumentMime,
 } from '../lib/api'
+import { DocumentViewer } from './DocumentViewer.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
 import { Button } from '../components/Button.jsx'
@@ -120,122 +124,6 @@ function PickedFiles({ picked, onLabel, onRemove, language }) {
         </li>
       ))}
     </ul>
-  )
-}
-
-// In-app viewer: the blob URL is fetched with the session cookie (inline
-// disposition — audited as a view server-side), previewed in-app, and always
-// revoked on close/unmount. Images render inline; PDF via the object embed.
-// Per file since #422 — the content endpoint is /documents/:id/files/:fileId.
-function DocumentViewer({ documentId, file, onClose }) {
-  const { t } = useTranslation()
-  const [objectUrl, setObjectUrl] = useState(null)
-  const [error, setError] = useState(false)
-  const dialogRef = useRef(null)
-  // The close callback is read from a ref so the focus contract below mounts
-  // exactly once (the parent passes an inline handler that changes identity
-  // on every render).
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
-
-  // Modal-dialog focus contract (the AppShell drawer pattern): focus enters
-  // the panel when it opens, Tab stays inside it while the overlay occludes
-  // the page, Escape closes, and unmounting hands focus back to whatever
-  // opened it.
-  useEffect(() => {
-    const panel = dialogRef.current
-    const previouslyFocused = document.activeElement
-    panel?.focus()
-    const onKey = (e) => {
-      if (e.key === 'Escape') {
-        onCloseRef.current()
-        return
-      }
-      if (e.key !== 'Tab' || !panel) return
-      const focusables = panel.querySelectorAll(
-        'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      )
-      if (focusables.length === 0) return
-      const first = focusables[0]
-      const last = focusables[focusables.length - 1]
-      const active = document.activeElement
-      const inside = active !== panel && panel.contains(active)
-      if (!inside) {
-        e.preventDefault()
-        ;(e.shiftKey ? last : first).focus()
-      } else if (e.shiftKey && active === first) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault()
-        first.focus()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      if (previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body) {
-        previouslyFocused.focus()
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    let url = null
-    let cancelled = false
-    fetchDocumentContent(documentId, file.id, 'inline')
-      .then((blob) => {
-        if (cancelled) return
-        url = URL.createObjectURL(blob)
-        setObjectUrl(url)
-      })
-      .catch(() => {
-        if (!cancelled) setError(true)
-      })
-    return () => {
-      cancelled = true
-      if (url) URL.revokeObjectURL(url)
-    }
-  }, [documentId, file.id])
-
-  const isImage = file.content_type.startsWith('image/')
-
-  return (
-    <div
-      ref={dialogRef}
-      tabIndex={-1}
-      className="fixed inset-0 z-50 flex flex-col bg-black/70 p-4 outline-none"
-      role="dialog"
-      aria-modal="true"
-      aria-label={file.file_name}
-    >
-      <div className="flex items-center justify-between gap-3 pb-3 text-white">
-        <div className="min-w-0 truncate text-sm font-medium">
-          {file.label ? `${file.label} · ` : ''}
-          {file.file_name}
-        </div>
-        <Button size="sm" variant="ghost" onClick={onClose} aria-label={t('documents.closeViewer')}>
-          <IconClose size={16} />
-        </Button>
-      </div>
-      <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl bg-surface p-2">
-        {error ? (
-          <p className="text-sm text-danger">{t('documents.viewerError')}</p>
-        ) : !objectUrl ? (
-          <p className="text-sm text-text-muted">{t('documents.viewerLoading')}</p>
-        ) : isImage ? (
-          <img
-            src={objectUrl}
-            alt={file.label || file.file_name}
-            className="max-h-full max-w-full rounded-lg object-contain"
-          />
-        ) : file.content_type === 'application/pdf' ? (
-          <embed src={objectUrl} type="application/pdf" className="h-full w-full rounded-lg" />
-        ) : (
-          <p className="text-sm text-text-muted">{t('documents.viewerUnsupported')}</p>
-        )}
-      </div>
-    </div>
   )
 }
 
@@ -413,6 +301,7 @@ function DocumentRow({
 export function Documents() {
   const { t, i18n } = useTranslation()
   const language = i18n.language
+  const queryClient = useQueryClient()
   const createInputRef = useRef(null)
   const addInputRef = useRef(null)
 
@@ -488,12 +377,59 @@ export function Documents() {
     setter((prev) => prev.filter((_, i) => i !== index))
   }
 
-  const oversizePicked = (list) => list.find((entry) => entry.file.size > DOCUMENT_MAX_BYTES)
+  // Shared picked-batch validation (review B2 #422): empty, the per-document
+  // cap (capOffset = files the document already holds), the size cap, and —
+  // review A4 #422 — a magic-byte sniff of every picked file. The sniff reads
+  // the first 12 bytes up front so a renamed .txt fails BEFORE the create,
+  // not mid-loop with a partial document stranded; the server re-sniffs.
+  const validatePicked = async (entries, capOffset = 0) => {
+    if (entries.length === 0) return t('documents.errorNoFile')
+    if (entries.length + capOffset > DOCUMENT_MAX_FILES) {
+      return t('documents.errorTooManyFiles')
+    }
+    if (entries.some((entry) => entry.file.size > DOCUMENT_MAX_BYTES)) {
+      return t('documents.errorTooLarge')
+    }
+    for (const entry of entries) {
+      const head = new Uint8Array(await entry.file.slice(0, 12).arrayBuffer())
+      if (!sniffDocumentMime(head)) return t('documents.errorType')
+    }
+    return null
+  }
 
-  // Create → then the remaining files ride add-file one by one. Sequential,
-  // not parallel: the backend orders by max(sort_order) + 1, so parallel
-  // calls could race the order; awaiting each keeps pick order = upload
-  // order, and the progress line reflects exactly where a failure stopped.
+  // The shared sequential upload runner (review B2 #422): picked entries ride
+  // add-file one by one. Sequential, not parallel: the backend orders by max
+  // (sort_order) + 1, so parallel calls could race the order; awaiting each
+  // keeps pick order = upload order, and the progress line reflects exactly
+  // where a failure stopped. Owns the busy/progress bookkeeping and the error
+  // mapping both flows shared, and refreshes the vault cache ONCE per run
+  // (review B3 #422 — per-settle invalidation meant ~N list refetches for one
+  // multi-file upload).
+  const runSequentialUploads = async ({ documentId, entries, startIndex = 0, onDone }) => {
+    setBusy(true)
+    try {
+      const total = entries.length
+      for (let i = startIndex; i < total; i++) {
+        setProgress({ current: i + 1, total })
+        const entry = entries[i]
+        await addFile.mutateAsync({
+          documentId,
+          file: entry.file,
+          label: entry.label || undefined,
+        })
+      }
+      setActionError(null)
+      onDone()
+    } catch (err) {
+      setActionError(t(documentErrorKey(err)))
+    } finally {
+      setProgress(null)
+      setBusy(false)
+      queryClient.invalidateQueries({ queryKey: documentsQueryKey() })
+    }
+  }
+
+  // Create → then the remaining files ride the shared runner.
   const startUpload = async () => {
     setFeedback(null)
     setActionError(null)
@@ -502,17 +438,9 @@ export function Documents() {
       setActionError(t('documents.errorNoName'))
       return
     }
-    if (pickedFiles.length === 0) {
-      setActionError(t('documents.errorNoFile'))
-      return
-    }
-    if (pickedFiles.length > DOCUMENT_MAX_FILES) {
-      setActionError(t('documents.errorTooManyFiles'))
-      return
-    }
-    const oversize = oversizePicked(pickedFiles)
-    if (oversize) {
-      setActionError(t('documents.errorTooLarge'))
+    const invalid = await validatePicked(pickedFiles)
+    if (invalid) {
+      setActionError(invalid)
       return
     }
     setBusy(true)
@@ -524,25 +452,19 @@ export function Documents() {
         label: first.label || undefined,
         memberId: uploadMemberId || undefined,
       })
-      const documentId = created?.document?.id
-      const total = pickedFiles.length
-      for (let i = 1; i < total; i++) {
-        setProgress({ current: i + 1, total })
-        const entry = pickedFiles[i]
-        await addFile.mutateAsync({
-          documentId,
-          file: entry.file,
-          label: entry.label || undefined,
-        })
-      }
-      setPickedFiles([])
-      setUploadName('')
-      setActionError(null)
-      setFeedback(t('documents.uploaded', { name }))
+      await runSequentialUploads({
+        documentId: created?.document?.id,
+        entries: pickedFiles,
+        startIndex: 1,
+        onDone: () => {
+          setPickedFiles([])
+          setUploadName('')
+          setFeedback(t('documents.uploaded', { name }))
+        },
+      })
     } catch (err) {
       setActionError(t(documentErrorKey(err)))
     } finally {
-      setProgress(null)
       setBusy(false)
     }
   }
@@ -550,41 +472,21 @@ export function Documents() {
   const startAddFiles = async (doc) => {
     setFeedback(null)
     setActionError(null)
-    if (addPicked.length === 0) {
-      setActionError(t('documents.errorNoFile'))
+    const invalid = await validatePicked(addPicked, doc.files.length)
+    if (invalid) {
+      setActionError(invalid)
       return
     }
-    if (doc.files.length + addPicked.length > DOCUMENT_MAX_FILES) {
-      setActionError(t('documents.errorTooManyFiles'))
-      return
-    }
-    const oversize = oversizePicked(addPicked)
-    if (oversize) {
-      setActionError(t('documents.errorTooLarge'))
-      return
-    }
-    setBusy(true)
-    try {
-      const total = addPicked.length
-      for (let i = 0; i < total; i++) {
-        setProgress({ current: i + 1, total })
-        const entry = addPicked[i]
-        await addFile.mutateAsync({
-          documentId: doc.id,
-          file: entry.file,
-          label: entry.label || undefined,
-        })
-      }
-      setAddPicked([])
-      setAddingFor(null)
-      setActionError(null)
-      setFeedback(t('documents.filesAdded', { name: doc.name, count: total }))
-    } catch (err) {
-      setActionError(t(documentErrorKey(err)))
-    } finally {
-      setProgress(null)
-      setBusy(false)
-    }
+    await runSequentialUploads({
+      documentId: doc.id,
+      entries: addPicked,
+      startIndex: 0,
+      onDone: () => {
+        setAddPicked([])
+        setAddingFor(null)
+        setFeedback(t('documents.filesAdded', { name: doc.name, count: addPicked.length }))
+      },
+    })
   }
 
   const download = async (doc, file) => {

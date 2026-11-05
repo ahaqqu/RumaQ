@@ -16,6 +16,10 @@ vi.mock('../lib/queries/me.js', () => ({
 }))
 
 vi.mock('../lib/queries/index.js', () => ({
+  documentsQueryKey: (filters = {}) => [
+    'documents',
+    { q: filters.q ?? null, memberId: filters.memberId ?? null },
+  ],
   useHouseholds: vi.fn(),
   useHouseholdMembers: vi.fn(),
   useDocuments: vi.fn(),
@@ -36,6 +40,23 @@ vi.mock('../lib/api', () => ({
   DOCUMENT_MAX_FILES: 20,
   DOCUMENT_NAME_MAX: 120,
   fetchDocumentContent: vi.fn(),
+  // The same signature table as the real lib/api sniff (review A4 #422): the
+  // page pre-sniffs picked files so a renamed .txt cannot 415 mid-loop.
+  sniffDocumentMime: vi.fn((bytes) => {
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+      return 'image/jpeg'
+    }
+    if (
+      bytes.length >= 4 &&
+      bytes[0] === 0x25 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x44 &&
+      bytes[3] === 0x46
+    ) {
+      return 'application/pdf'
+    }
+    return null
+  }),
 }))
 
 import { useMe } from '../lib/queries/me.js'
@@ -118,14 +139,11 @@ function createQueryClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
 }
 
-function renderDocuments() {
-  return render(
-    React.createElement(
-      QueryClientProvider,
-      { client: createQueryClient() },
-      React.createElement(Documents, null)
-    )
+function renderDocuments(client = createQueryClient()) {
+  const rendered = render(
+    React.createElement(QueryClientProvider, { client }, React.createElement(Documents, null))
   )
+  return { ...rendered, client }
 }
 
 function findButton(container, label) {
@@ -149,7 +167,13 @@ function pickFiles(container, input, files) {
 }
 
 function jpegFile(name, size = 10) {
-  return new File([new Uint8Array(size).fill(0x00)], name, { type: 'image/jpeg' })
+  // Real JPEG magic bytes — the page pre-sniffs picked files (review A4
+  // #422), so fixtures must carry signatures the sniff recognizes.
+  const bytes = new Uint8Array(size)
+  bytes[0] = 0xff
+  bytes[1] = 0xd8
+  bytes[2] = 0xff
+  return new File([bytes], name, { type: 'image/jpeg' })
 }
 
 describe('Documents', () => {
@@ -220,14 +244,37 @@ describe('Documents', () => {
     })
     pickFiles(container, container.querySelector('input[type="file"]'), [big])
     fireEvent.click(findButton(container, 'documents.uploadAction'))
-    expect(container.textContent).toContain('documents.errorTooLarge')
+    // The picked-batch validation is async (the sniff reads file bytes), so
+    // the banner lands a tick after the click.
+    await waitFor(() => expect(container.textContent).toContain('documents.errorTooLarge'))
     expect(createMutation.mutateAsync).not.toHaveBeenCalled()
+  })
+
+  it('rejects a picked batch whose bytes do not sniff as an allowed type, before any request (review A4 #422)', async () => {
+    const { container } = renderDocuments()
+    const nameInput = container.querySelector('[data-testid="document-name"]')
+    fireEvent.change(nameInput, { target: { value: 'Scan falso' } })
+    // A renamed .txt rides the OS picker past accept= — the sniff must stop
+    // the WHOLE batch up front, not mid-loop with a partial document stranded.
+    const fake = new File([new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f])], 'fake.jpg', {
+      type: 'image/jpeg',
+    })
+    pickFiles(container, container.querySelector('input[type="file"]'), [
+      jpegFile('depan.jpg'),
+      fake,
+    ])
+    fireEvent.click(findButton(container, 'documents.uploadAction'))
+    await waitFor(() => expect(container.textContent).toContain('documents.errorType'))
+    expect(createMutation.mutateAsync).not.toHaveBeenCalled()
+    expect(addFileMutation.mutateAsync).not.toHaveBeenCalled()
   })
 
   it('creates with the first file, then rides the rest through add-file in pick order (labels included)', async () => {
     createMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-new' } })
     addFileMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-new' } })
-    const { container } = renderDocuments()
+    const client = createQueryClient()
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries')
+    const { container } = renderDocuments(client)
 
     const nameInput = container.querySelector('[data-testid="document-name"]')
     fireEvent.change(nameInput, { target: { value: '  Buku Nika  ' } })
@@ -272,6 +319,14 @@ describe('Documents', () => {
     await waitFor(() => expect(container.textContent).toContain('documents.uploaded'))
     // The picked list clears.
     expect(pickedFileNames(container)).toEqual([])
+
+    // ONE cache refresh per run (review B3 #422): the two settled add-file
+    // calls each carry the updated document, so the runner invalidates once
+    // after the loop instead of per settle (~N refetches for one upload).
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1))
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ['documents', { q: null, memberId: null }] })
+    )
   })
 
   it('attaches a document to a member via the upload select (memberId rides the create payload)', async () => {
