@@ -47,14 +47,6 @@ the manager, even when you're AFK.
 - **E2** https://github.com/ahaqqu/RumaQ/pull/401 — plugin architecture
   design (north star — execution is standalone-first per owner decision
   2026-11-04). CI green.
-- **E5** https://github.com/ahaqqu/RumaQ/pull/432 — pre-commit automation
-  (owner directive): husky@9.1.7 devDep + `.husky/pre-commit` running
-  `vp check --fix` + re-stage, so formatting/HTML misses never reach CI.
-  Both demo cases proven (auto-fix proceeds, unfixable error blocks). All
-  gates + GitHub CI green. **Owner-gate: new dependency — review the
-  `bun.lock` diff before merging.** After merge, one `bun install` per clone
-  activates it (already run on the manager's main checkout).
-
 _(E4 AutQ enterprise architecture — merged by the owner 2026-11-05. H —
 ingest secret rotation — DONE: owner promoted the primary + deleted `_NEXT`
 2026-11-05; verified green by the manager's publish checks. J —
@@ -101,6 +93,6 @@ report merged by owner — lives at `docs/reports/competitor-analysis-2026-11.ht
 Nov 5), **G** (LOTTE_PROXY_URL set Nov 6 — site still down; temporary source
 swap tracked in ahaqqu/RumaQ-pipeline#25), **K** (nightly 401 incident —
 verified green; #425 closed), **B** (declined by owner — Apify research #411
-is the replacement path). Remaining: **E1** (#403 — manager fixing CI, merge
-authorized), **E2** (#401 — manager merging per owner authorization), **E5**
-(#432 hooks), **C** (~Nov 15), **I** (prompt review)._
+is the replacement path). Remaining: **C**
+(~Nov 15), **I** (prompt review). E5 (#432 hooks) merged by owner 2026-11-06 —
+pre-commit `vp check --fix` is live on every clone after `bun install`._
