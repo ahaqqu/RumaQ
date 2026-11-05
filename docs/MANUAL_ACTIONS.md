@@ -18,18 +18,14 @@ Conventions:
 
 ---
 
-## B. Hari-Hari PAS cold-start backfill (one-time, #396 §2)
+## B. Hari-Hari PAS cold-start backfill — **DECLINED by owner 2026-11-06**
 
-History deeper than the 5-tweet guest window is never auto-fetched — the
-current PAS period's catalog pages must be provided manually once.
-
-- **B1 [LAPTOP]** Open the store's own Instagram/Facebook/X and locate the
-  current PAS-period catalog posts/pages.
-- **B2 [LAPTOP]** Save those catalog pages (images/PDFs) locally.
-- **B3 [LAPTOP]** Follow the backfill ingestion per ahaqqu/RumaQ#396 §2 (the
-  ticket documents the scope: current period only). If the exact ingestion
-  command isn't documented to your liking, say so and the manager will write
-  B3 out concretely against the pipeline's admin tooling.
+Owner: "i don't want to do B." The manual backfill is off the table. The
+replacement path is the Apify research (ahaqgu/RumaQ#411): if free-tier Apify
+is adopted for Hari-Hari (X), the current PAS period's history becomes a
+one-time automated deep fetch instead of a manual save-and-ingest — and B
+retires. Until that decision, hari-hari stays thin (guest-window only,
+green-skip semantics).
 
 ## C. Categorize activation `RUMAQ_CATEGORY` shadow → on (time-gated ~2026-11-15, #396 §5)
 
@@ -41,21 +37,6 @@ only on your explicit go. Replay-backfill also needs your explicit go.
 - **C3 [VPS]** `sudo systemctl restart rumaq-scraper-agent`
 - **C4 [VPS]** `systemctl status rumaq-scraper-agent --no-pager | head -5` → active
 
-## G. Set the EXISTING `LOTTE_PROXY_URL` on the box (lotte-mart Tier-3 proxy)
-
-**PARKED while lotte's site is down** (owner, 2026-11-04). Correction: **no
-pipeline PR needed** — the store already declares `proxyEnv: 'LOTTE_PROXY_URL'`
-(pipeline `config.ts:144`); the env was simply never set. Empty/absent = the
-current by-design skip. Use the same residential-proxy provider as
-`HARIHARI_PROXY_URL`; a dedicated endpoint if you want per-store isolation.
-
-- **G1 [VPS]** `ssh rumaq-vps`
-- **G2 [VPS]** `sudo -e /etc/rumaq/scraper.env` → add
-  `LOTTE_PROXY_URL=<proxy endpoint>`
-- **G3 [VPS]** `sudo systemctl restart rumaq-scraper-agent`
-- **G4** Next run: no more `BrowserTierRequired … Tier 3` for lotte in
-  `journalctl -u rumaq-scraper`; outbox clears.
-
 ## E. Review + merge owner-gate PRs [LAPTOP]
 
 Workflow rule: these are workflow/design PRs — always merged by you, never by
@@ -66,28 +47,18 @@ the manager, even when you're AFK.
 - **E2** https://github.com/ahaqqu/RumaQ/pull/401 — plugin architecture
   design (north star — execution is standalone-first per owner decision
   2026-11-04). CI green.
-- **E4** https://github.com/ahaqqu/AutQ/pull/9 — AutQ enterprise architecture
-  (senior-architect design: Rust IdP on the VPS, SSO via redirects,
-  client_credentials m2m, per-app "later + prepare" seams, go/no-go criteria;
-  supersedes the obsolete T1–T7 stack). 3 open questions inside — the manager
-  will ask them via harness.
+- **E5** https://github.com/ahaqqu/RumaQ/pull/432 — pre-commit automation
+  (owner directive): husky@9.1.7 devDep + `.husky/pre-commit` running
+  `vp check --fix` + re-stage, so formatting/HTML misses never reach CI.
+  Both demo cases proven (auto-fix proceeds, unfixable error blocks). All
+  gates + GitHub CI green. **Owner-gate: new dependency — review the
+  `bun.lock` diff before merging.** After merge, one `bun install` per clone
+  activates it (already run on the manager's main checkout).
 
-## H. Rotate the ingest secret — publish 401 since 2026-11-04 20:00 WIB
-
-**H1–H4 DONE (owner, 2026-11-04 ~23:15 WIB).** Rotation is half-landed: the
-Worker now accepts old + new (`_NEXT` = new value), and the box sends the new
-value. Remaining:
-
-- **H5 DONE** (owner clicked Scrape-Now 2026-11-04 ~23:26 WIB; all 9 stores
-  spawning). Manager verifies `[publish] Accepted …` when the run completes
-  (~00:56 WIB) — result posted in chat. Future Scrape-Now triggers are now
-  self-serve for the manager via the admin test account (`test@rumaq.dev`,
-  repo-convention password — never written to any file).
-- **H6 [LAPTOP]** Only AFTER the publish is verified accepted — promote:
-  `cd ~/Projects/RumaQ` (repo ROOT) →
-  `node node_modules/cf/bin/cf workers secrets update HAQITA_INGEST_SECRET --worker api --type secret_text --text '<NEW VALUE>'`
-- **H7 [LAPTOP]** Then remove the redundant one:
-  `node node_modules/cf/bin/cf workers secrets delete HAQITA_INGEST_SECRET_NEXT --worker api`
+_(E4 AutQ enterprise architecture — merged by the owner 2026-11-05. H —
+ingest secret rotation — DONE: owner promoted the primary + deleted `_NEXT`
+2026-11-05; verified green by the manager's publish checks. J —
+YOGYA_PROXY_URL — DONE 2026-11-05.)_
 
 ## I. Review the AI prompts (owner review — pipeline repo)
 
@@ -124,12 +95,12 @@ rules + name-hash-cache classifier (no prompt text).
 
 ---
 
-_Last updated 2026-11-04 ~23:35 WIB by the manager. Corrections: the old
-action A never completed (wrong `cf` path — the CLI lives at repo root, and
-`HAQITA_INGEST_SECRET_NEXT` still exists server-side) — superseded by **H**
-(H1–H4 done, H5 verification pending). **G** corrected to the existing
-`LOTTE_PROXY_URL` var — no pipeline PR needed; parked while lotte is down.
-E3 = DokumenQ AGENTS charter PR (design PR #1 MERGED); **E4** = AutQ
-enterprise architecture PR. Completed this window: D1–D5 decisions ✓, F
-20:00 WIB schedule verified ✓, DokumenQ §9 8/8 ✓, OCR audit env ✓,
-HARIHARI_PROXY_URL ✓, ingest rotation ✓, pipeline CI secrets ✓._
+_Last updated 2026-11-06 ~09:4x WIB by the manager. Completed: **E3** (strategy
+report merged by owner — lives at `docs/reports/competitor-analysis-2026-11.html`),
+**E4** (Nov 5), **H6/H7** (rotation finalized Nov 5), **J** (YOGYA_PROXY_URL
+Nov 5), **G** (LOTTE_PROXY_URL set Nov 6 — site still down; temporary source
+swap tracked in ahaqqu/RumaQ-pipeline#25), **K** (nightly 401 incident —
+verified green; #425 closed), **B** (declined by owner — Apify research #411
+is the replacement path). Remaining: **E1** (#403 — manager fixing CI, merge
+authorized), **E2** (#401 — manager merging per owner authorization), **E5**
+(#432 hooks), **C** (~Nov 15), **I** (prompt review)._
