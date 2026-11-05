@@ -158,7 +158,7 @@ tasksApp.get(
   '/api/tasks',
   describeRoute({
     description:
-      'Lists the active household’s tasks — the shared board (open + done). Filters compose: assignee=me (the caller’s member row), assignee=all (or absent — everyone), or a surrogate member id (both modes; an unknown id filters to an empty list, it is a read filter not a probe); status=open|done|all (default all); mine=1 is the "My tasks" sugar for assignee=me and wins over assignee. No per-member read hiding: every household member sees the board (#429 design note).',
+      'Lists the active household’s tasks — the shared board (open + done). Filters compose: assignee=me (the caller’s member row), assignee=all (or absent — everyone), or a surrogate member id (both modes; an unknown id filters to an empty list, it is a read filter not a probe); status is open, done, or all (default all); mine=1 is the "My tasks" sugar for assignee=me and wins over assignee. No per-member read hiding: every household member sees the board (#429 design note).',
     security: [{ cookieAuth: [] }],
     parameters: [
       {
@@ -174,7 +174,15 @@ tasksApp.get(
         in: 'query',
         name: 'status',
         required: false,
-        schema: { type: 'string', enum: ['open', 'done', 'all'], default: 'all' },
+        // An explicit description WITHOUT pipe characters — hono-openapi
+        // renders the bare enum into the docs table as `status=open|done|all`,
+        // which splits the markdown cell (docs/API.md is generated).
+        schema: {
+          type: 'string',
+          enum: ['open', 'done', 'all'],
+          default: 'all',
+          description: "'open', 'done', or 'all' (default all)",
+        },
       },
       {
         in: 'query',
