@@ -29,6 +29,7 @@ export {
   useAddDocumentFile,
   useDeleteDocument,
   useDeleteDocumentFile,
+  useUpdateDocumentExpiry,
 } from './documents.js'
 export { useHistory, usePurchasePatterns, useSendChatMessage } from './history.js'
 export {

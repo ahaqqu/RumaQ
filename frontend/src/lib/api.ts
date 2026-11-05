@@ -497,6 +497,12 @@ export function joinHousehold(code: string): Promise<unknown> {
 export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
 export const DOCUMENT_MAX_FILES = 20
 export const DOCUMENT_NAME_MAX = 120
+// The #426 remind-window default + bounds (lib/documents.ts owns the rule;
+// the client mirrors them for its edit form pre-checks and the due-soon
+// derivation, and the server re-validates — never trust the client).
+export const DOCUMENT_DEFAULT_REMIND_DAYS = 30
+export const DOCUMENT_REMIND_DAYS_MIN = 1
+export const DOCUMENT_REMIND_DAYS_MAX = 365
 
 // Client-side magic-byte sniff over the FIRST bytes of a picked file (the
 // same signature table as the backend's sniffDocumentMime). The `accept=`
@@ -548,10 +554,15 @@ export function sniffDocumentMime(bytes: Uint8Array): string | null {
 }
 
 export function getDocuments(
-  { q, memberId }: { q?: string; memberId?: string } = {},
+  { q, memberId, expiringWithin }: { q?: string; memberId?: string; expiringWithin?: number } = {},
   signal?: AbortSignal
 ): Promise<unknown> {
-  return unwrap(client.GET('/api/documents', { params: { query: { q, memberId } }, signal }))
+  return unwrap(
+    client.GET('/api/documents', {
+      params: { query: { q, memberId, expiring_within: expiringWithin } },
+      signal,
+    })
+  )
 }
 
 // Create = the free-text name + the FIRST file (its optional label rides the
@@ -597,6 +608,17 @@ export function addDocumentFile(documentId: string, file: File, label?: string):
 
 export function deleteDocument(id: string): Promise<unknown> {
   return unwrap(client.DELETE('/api/documents/{id}', { params: { path: { id } } }))
+}
+
+// Expiry metadata update (#426): expires_on as an ISO date or null to clear
+// (clearing also clears the remind window server-side), remind_days_before
+// as a 1..365 integer. The backend owns every rule (defaults, cross-field
+// checks, the 'update' audit record); the client just sends the shape.
+export function updateDocumentExpiry(
+  id: string,
+  payload: { expires_on?: string | null; remind_days_before?: number }
+): Promise<unknown> {
+  return unwrap(client.PATCH('/api/documents/{id}', { params: { path: { id } }, body: payload }))
 }
 
 export function deleteDocumentFile(documentId: string, fileId: string): Promise<unknown> {

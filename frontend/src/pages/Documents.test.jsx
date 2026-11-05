@@ -19,7 +19,11 @@ vi.mock('../lib/queries/index.js', () => ({
   DOCUMENTS_BASE_KEY: ['documents'],
   documentsQueryKey: (filters = {}) => [
     'documents',
-    { q: filters.q ?? null, memberId: filters.memberId ?? null },
+    {
+      q: filters.q ?? null,
+      memberId: filters.memberId ?? null,
+      expiringWithin: filters.expiringWithin ?? null,
+    },
   ],
   useHouseholds: vi.fn(),
   useHouseholdMembers: vi.fn(),
@@ -28,6 +32,7 @@ vi.mock('../lib/queries/index.js', () => ({
   useAddDocumentFile: vi.fn(),
   useDeleteDocument: vi.fn(),
   useDeleteDocumentFile: vi.fn(),
+  useUpdateDocumentExpiry: vi.fn(),
 }))
 
 vi.mock('../lib/api', () => ({
@@ -40,6 +45,9 @@ vi.mock('../lib/api', () => ({
   DOCUMENT_MAX_BYTES: 10 * 1024 * 1024,
   DOCUMENT_MAX_FILES: 20,
   DOCUMENT_NAME_MAX: 120,
+  DOCUMENT_DEFAULT_REMIND_DAYS: 30,
+  DOCUMENT_REMIND_DAYS_MIN: 1,
+  DOCUMENT_REMIND_DAYS_MAX: 365,
   fetchDocumentContent: vi.fn(),
   // The same signature table as the real lib/api sniff (review A4 #422): the
   // page pre-sniffs picked files so a renamed .txt cannot 415 mid-loop.
@@ -78,6 +86,7 @@ import {
   useAddDocumentFile,
   useDeleteDocument,
   useDeleteDocumentFile,
+  useUpdateDocumentExpiry,
 } from '../lib/queries/index.js'
 import { fetchDocumentContent, DOCUMENT_MAX_FILES } from '../lib/api'
 
@@ -547,5 +556,230 @@ describe('Documents', () => {
     const { container } = renderDocuments()
     expect(container.textContent).toContain('documents.emptyTitle')
     expect(container.textContent).toContain('documents.emptyDesc')
+  })
+})
+
+// Expiry surfaces (#426): the vault chip tone thresholds, the Due soon
+// section (per-document remind window, soonest first), and the inline
+// expiry editor's payload contract. i18n runs uninitialized here, so
+// assertions read the raw keys — same idiom as the suite above.
+describe('Documents — expiry surfaces (#426)', () => {
+  let updateExpiryMutation
+
+  function docWithExpiry(overrides = {}) {
+    return { ...DOC, files: [], ...overrides }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    updateExpiryMutation = mutation()
+    vi.mocked(useMe).mockReturnValue({ data: { user: { id: 'u1' } } })
+    vi.mocked(useHouseholds).mockReturnValue({ data: HOUSEHOLDS, isLoading: false })
+    vi.mocked(useHouseholdMembers).mockReturnValue({ data: MEMBERS, isLoading: false })
+    vi.mocked(useDocuments).mockReturnValue({
+      data: { documents: [docWithExpiry()] },
+      isLoading: false,
+    })
+    vi.mocked(useCreateDocument).mockReturnValue(mutation())
+    vi.mocked(useAddDocumentFile).mockReturnValue(mutation())
+    vi.mocked(useDeleteDocument).mockReturnValue(mutation())
+    vi.mocked(useDeleteDocumentFile).mockReturnValue(mutation())
+    vi.mocked(useUpdateDocumentExpiry).mockReturnValue(updateExpiryMutation)
+  })
+
+  it('renders the expiry chip with the urgency tones: danger under 7 days (expired included), amber under 30, muted beyond', () => {
+    vi.mocked(useDocuments).mockReturnValue({
+      data: {
+        documents: [
+          docWithExpiry({ id: 'doc-expired', name: 'SIM Lama', days_until_expiry: -4 }),
+          docWithExpiry({ id: 'doc-red', name: 'SIM', days_until_expiry: 6 }),
+          docWithExpiry({ id: 'doc-amber', name: 'Paspor', days_until_expiry: 20 }),
+          docWithExpiry({ id: 'doc-muted', name: 'Ijazah', days_until_expiry: 200 }),
+        ],
+      },
+      isLoading: false,
+    })
+    const { container } = renderDocuments()
+    // Three of the four documents are also inside their default 30-day
+    // window, so the Due soon section repeats their chips — scope the tone
+    // assertions to the vault-list rows.
+    const listChips = [...container.querySelectorAll('[data-testid="expiry-chip"]')].filter(
+      (chip) => !chip.closest('[data-testid="due-soon"]')
+    )
+    expect(listChips).toHaveLength(4)
+    // Tone classes come from the shared Badge; the copy keys pick expired
+    // (negative) vs counted-down labels.
+    expect(listChips[0].className).toContain('text-danger')
+    expect(listChips[0].textContent).toContain('documents.expiredDaysAgo')
+    expect(listChips[1].className).toContain('text-danger')
+    expect(listChips[1].textContent).toContain('documents.expiresInDays')
+    expect(listChips[2].className).toContain('text-warn')
+    expect(listChips[3].className).toContain('text-text-muted')
+  })
+
+  it('shows no chip for undated documents — expiry is opt-in metadata', () => {
+    const { container } = renderDocuments()
+    expect(container.querySelectorAll('[data-testid="expiry-chip"]')).toHaveLength(0)
+    expect(container.textContent).toContain('KTP Adik')
+  })
+
+  it('shows the Due soon section for documents inside their own remind window, soonest expiry first', () => {
+    vi.mocked(useDocuments).mockReturnValue({
+      data: {
+        documents: [
+          // 25 days out with a 30-day window → due.
+          docWithExpiry({
+            id: 'doc-far',
+            name: 'Paspor',
+            days_until_expiry: 25,
+            remind_days_before: 30,
+          }),
+          // 3 days out with a 7-day window → due (and leads: soonest first).
+          docWithExpiry({
+            id: 'doc-soon',
+            name: 'SIM',
+            days_until_expiry: 3,
+            remind_days_before: 7,
+          }),
+          // 200 days out — far beyond the window → not listed.
+          docWithExpiry({
+            id: 'doc-out',
+            name: 'Ijazah',
+            days_until_expiry: 200,
+            remind_days_before: 30,
+          }),
+          // No expiry at all → not listed.
+          docWithExpiry({ id: 'doc-nodate', name: 'Kartu Keluarga', days_until_expiry: null }),
+        ],
+      },
+      isLoading: false,
+    })
+    const { container } = renderDocuments()
+    const section = container.querySelector('[data-testid="due-soon"]')
+    expect(section).not.toBeNull()
+    expect(container.textContent).toContain('documents.dueSoonTitle')
+    const rows = [...section.querySelectorAll('[data-testid="due-soon-row"]')]
+    expect(rows).toHaveLength(2)
+    expect(rows[0].textContent).toContain('SIM')
+    expect(rows[1].textContent).toContain('Paspor')
+  })
+
+  it('renders no Due soon section when nothing is inside a window', () => {
+    vi.mocked(useDocuments).mockReturnValue({
+      data: {
+        documents: [docWithExpiry({ days_until_expiry: 200, remind_days_before: 30 })],
+      },
+      isLoading: false,
+    })
+    const { container } = renderDocuments()
+    expect(container.querySelector('[data-testid="due-soon"]')).toBeNull()
+  })
+
+  it('edits expiry inline: date + window ride the PATCH payload, opening prefills the stored values', async () => {
+    updateExpiryMutation.mutateAsync.mockResolvedValue({ document: {} })
+    vi.mocked(useDocuments).mockReturnValue({
+      data: {
+        documents: [
+          docWithExpiry({
+            expires_on: '2027-01-01',
+            remind_days_before: 30,
+            days_until_expiry: 56,
+          }),
+        ],
+      },
+      isLoading: false,
+    })
+    const { container } = renderDocuments()
+    fireEvent.click(findButton(container, 'documents.editExpiry'))
+    const editor = container.querySelector('[data-testid="expiry-edit"]')
+    expect(editor).not.toBeNull()
+    const dateInput = container.querySelector('[data-testid="expiry-date"]')
+    expect(dateInput.value).toBe('2027-01-01')
+    const windowInput = container.querySelector('[data-testid="remind-days"]')
+    expect(windowInput.value).toBe('30')
+    fireEvent.change(dateInput, { target: { value: '2027-06-15' } })
+    fireEvent.change(windowInput, { target: { value: '14' } })
+    fireEvent.click(container.querySelector('[data-testid="expiry-save"]'))
+    await waitFor(() => expect(updateExpiryMutation.mutateAsync).toHaveBeenCalledTimes(1))
+    expect(updateExpiryMutation.mutateAsync).toHaveBeenCalledWith({
+      id: 'doc-1',
+      payload: { expires_on: '2027-06-15', remind_days_before: 14 },
+    })
+    await waitFor(() => expect(container.textContent).toContain('documents.expirySaved'))
+  })
+
+  it('clearing the date sends expires_on null (the server clears the window with it)', async () => {
+    updateExpiryMutation.mutateAsync.mockResolvedValue({ document: {} })
+    vi.mocked(useDocuments).mockReturnValue({
+      data: {
+        documents: [
+          docWithExpiry({
+            expires_on: '2027-01-01',
+            remind_days_before: 30,
+            days_until_expiry: 56,
+          }),
+        ],
+      },
+      isLoading: false,
+    })
+    const { container } = renderDocuments()
+    fireEvent.click(findButton(container, 'documents.editExpiry'))
+    fireEvent.change(container.querySelector('[data-testid="expiry-date"]'), {
+      target: { value: '' },
+    })
+    fireEvent.click(container.querySelector('[data-testid="expiry-save"]'))
+    await waitFor(() => expect(updateExpiryMutation.mutateAsync).toHaveBeenCalledTimes(1))
+    expect(updateExpiryMutation.mutateAsync).toHaveBeenCalledWith({
+      id: 'doc-1',
+      payload: { expires_on: null },
+    })
+  })
+
+  it('disables the reminder window until a date is set — a window without an expiry is meaningless', () => {
+    vi.mocked(useDocuments).mockReturnValue({
+      data: { documents: [docWithExpiry({ expires_on: null, remind_days_before: null })] },
+      isLoading: false,
+    })
+    const { container } = renderDocuments()
+    fireEvent.click(findButton(container, 'documents.editExpiry'))
+    // No date: the window field sits disabled (the default shows what will
+    // apply once a date is saved).
+    expect(container.querySelector('[data-testid="remind-days"]').disabled).toBe(true)
+    fireEvent.change(container.querySelector('[data-testid="expiry-date"]'), {
+      target: { value: '2027-01-01' },
+    })
+    expect(container.querySelector('[data-testid="remind-days"]').disabled).toBe(false)
+  })
+
+  it('refuses an out-of-range reminder window in copy, before any request', async () => {
+    vi.mocked(useDocuments).mockReturnValue({
+      data: {
+        documents: [
+          docWithExpiry({
+            expires_on: '2027-01-01',
+            remind_days_before: 30,
+            days_until_expiry: 56,
+          }),
+        ],
+      },
+      isLoading: false,
+    })
+    const { container } = renderDocuments()
+    fireEvent.click(findButton(container, 'documents.editExpiry'))
+    fireEvent.change(container.querySelector('[data-testid="remind-days"]'), {
+      target: { value: '400' },
+    })
+    fireEvent.click(container.querySelector('[data-testid="expiry-save"]'))
+    expect(container.textContent).toContain('documents.errorRemindRange')
+    expect(updateExpiryMutation.mutateAsync).not.toHaveBeenCalled()
+  })
+
+  it('cancelling the editor closes it without a request', async () => {
+    const { container } = renderDocuments()
+    fireEvent.click(findButton(container, 'documents.editExpiry'))
+    expect(container.querySelector('[data-testid="expiry-edit"]')).not.toBeNull()
+    fireEvent.click(findButton(container, 'documents.cancel'))
+    expect(container.querySelector('[data-testid="expiry-edit"]')).toBeNull()
+    expect(updateExpiryMutation.mutateAsync).not.toHaveBeenCalled()
   })
 })

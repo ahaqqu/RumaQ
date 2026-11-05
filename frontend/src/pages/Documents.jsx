@@ -10,18 +10,23 @@ import {
   useAddDocumentFile,
   useDeleteDocument,
   useDeleteDocumentFile,
+  useUpdateDocumentExpiry,
 } from '../lib/queries/index.js'
 import {
   ApiError,
   DOCUMENT_MAX_BYTES,
   DOCUMENT_MAX_FILES,
   DOCUMENT_NAME_MAX,
+  DOCUMENT_DEFAULT_REMIND_DAYS,
+  DOCUMENT_REMIND_DAYS_MIN,
+  DOCUMENT_REMIND_DAYS_MAX,
   fetchDocumentContent,
   sniffDocumentMime,
 } from '../lib/api'
 import { DocumentViewer } from './DocumentViewer.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
+import { Badge } from '../components/Badge.jsx'
 import { Button } from '../components/Button.jsx'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import {
@@ -32,6 +37,8 @@ import {
   IconClose,
   IconCheck,
   IconEye,
+  IconCalendarBlank,
+  IconClock,
 } from '../components/icons.jsx'
 
 // Error vocabulary mirrors the backend's documents app: the status picks the
@@ -44,6 +51,34 @@ function documentErrorKey(error) {
   if (status === 415) return 'documents.errorType'
   if (status === 409) return 'documents.errorTooManyFiles'
   return 'documents.errorGeneric'
+}
+
+// --- Expiry surfaces (#426) ------------------------------------------------
+
+// The expiry chip tone, mirroring the issue's thresholds: red under 7 days
+// (already-expired documents included — they are the most urgent), amber
+// under 30, muted beyond. null = no expiry set → no chip at all.
+function expiryTone(days) {
+  if (days === null || days === undefined) return null
+  if (days < 7) return 'danger'
+  if (days < 30) return 'warn'
+  return 'muted'
+}
+
+function ExpiryBadge({ days }) {
+  const { t } = useTranslation()
+  if (days === null || days === undefined) return null
+  const label =
+    days < 0
+      ? t('documents.expiredDaysAgo', { count: -days })
+      : days === 0
+        ? t('documents.expiresToday')
+        : t('documents.expiresInDays', { count: days })
+  return (
+    <Badge tone={expiryTone(days)} data-testid="expiry-chip">
+      {label}
+    </Badge>
+  )
 }
 
 function formatBytes(bytes, language) {
@@ -164,7 +199,7 @@ function FileRow({
             {t('documents.deleteConfirmYes')}
           </Button>
           <Button size="sm" variant="ghost" onClick={onToggleConfirm} disabled={busy}>
-            {t('common.cancel')}
+            {t('documents.cancel')}
           </Button>
         </div>
       ) : (
@@ -208,6 +243,7 @@ function DocumentRow({
   onDownloadFile,
   onDeleteFile,
   onDeleteDoc,
+  onEditExpiry,
   fileConfirmKey,
   onToggleFileConfirm,
   docConfirmOpen,
@@ -224,7 +260,12 @@ function DocumentRow({
           <IconFolderLock size={20} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="font-medium truncate">{doc.name}</div>
+          <div className="font-medium truncate flex items-center gap-2">
+            <span className="truncate">{doc.name}</span>
+            {/* Expiry chip (#426): computed days, tone by urgency. Absent for
+                undated documents — expiry stays opt-in metadata. */}
+            <ExpiryBadge days={doc.days_until_expiry} />
+          </div>
           <div className="text-sm text-text-muted truncate">
             {t('documents.filesCount', { count: doc.files.length })}
             {memberName && <> · {memberName}</>}
@@ -251,11 +292,20 @@ function DocumentRow({
               onClick={onToggleDocConfirm}
               disabled={removeDocPending}
             >
-              {t('common.cancel')}
+              {t('documents.cancel')}
             </Button>
           </div>
         ) : (
           <div className="flex items-center gap-1.5 shrink-0">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onEditExpiry}
+              aria-label={`${t('documents.editExpiry')}: ${doc.name}`}
+            >
+              <IconCalendarBlank size={15} />{' '}
+              <span className="hidden sm:inline">{t('documents.editExpiry')}</span>
+            </Button>
             <Button
               size="sm"
               variant="ghost"
@@ -298,6 +348,60 @@ function DocumentRow({
   )
 }
 
+// The inline expiry editor (#426): a date input plus the optional remind
+// window, rendered below the row it edits (the add-files form's placement).
+// Clearing the date sends expires_on: null — the server clears the window
+// with it; the window field is ignored then, and the pre-check below says so
+// in copy before anything is sent.
+function ExpiryEditForm({ doc, draft, onDraftChange, onSave, onCancel, saving }) {
+  const { t } = useTranslation()
+  return (
+    <div className="px-5 py-4 border-b border-border flex flex-col gap-3" data-testid="expiry-edit">
+      <div className="font-medium text-sm">
+        {t('documents.editExpiry')} · {doc.name}
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1 text-sm min-w-0">
+          <span className="text-text-muted">{t('documents.expiryLabel')}</span>
+          <input
+            type="date"
+            value={draft.expiresOn}
+            onChange={(e) => onDraftChange({ ...draft, expiresOn: e.target.value })}
+            aria-label={t('documents.expiryLabel')}
+            data-testid="expiry-date"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm min-w-0">
+          <span className="text-text-muted">{t('documents.remindLabel')}</span>
+          {/* A window without an expiry is meaningless — disabled until the
+              date is set; the server clears the stored window together with
+              the expiry anyway. */}
+          <input
+            type="number"
+            min={DOCUMENT_REMIND_DAYS_MIN}
+            max={DOCUMENT_REMIND_DAYS_MAX}
+            value={draft.remindDays}
+            disabled={!draft.expiresOn}
+            onChange={(e) => onDraftChange({ ...draft, remindDays: e.target.value })}
+            aria-label={t('documents.remindLabel')}
+            data-testid="remind-days"
+          />
+          <span className="text-xs text-text-muted">{t('documents.remindHint')}</span>
+        </label>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={onSave} disabled={saving} data-testid="expiry-save">
+          {t('documents.save')}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
+          {t('documents.cancel')}
+        </Button>
+      </div>
+      <div className="text-xs text-text-muted">{t('documents.expiryHint')}</div>
+    </div>
+  )
+}
+
 export function Documents() {
   const { t, i18n } = useTranslation()
   const language = i18n.language
@@ -331,10 +435,26 @@ export function Documents() {
   const { data: documentsData, isLoading: documentsLoading } = useDocuments(activeId ? filters : {})
   const documents = (documentsData?.documents ?? []).filter((d) => d.household_id === activeId)
 
+  // Due soon (#426): every document whose computed distance has entered its
+  // own reminder window (NULL window reads as the 30-day default — the same
+  // rule the nightly sweep applies). Derived from the list the page already
+  // holds: one fetch, and the section can never disagree with the vault list.
+  const dueSoon = useMemo(() => {
+    return documents
+      .filter(
+        (d) =>
+          d.days_until_expiry !== null &&
+          d.days_until_expiry !== undefined &&
+          d.days_until_expiry <= (d.remind_days_before ?? DOCUMENT_DEFAULT_REMIND_DAYS)
+      )
+      .sort((a, b) => a.days_until_expiry - b.days_until_expiry)
+  }, [documents])
+
   const create = useCreateDocument()
   const addFile = useAddDocumentFile()
   const remove = useDeleteDocument()
   const removeFile = useDeleteDocumentFile()
+  const updateExpiry = useUpdateDocumentExpiry()
 
   // Create draft state — its own form, like the Household add form. picked
   // files carry an optional per-file label; the create call takes the FIRST
@@ -351,6 +471,66 @@ export function Documents() {
   const [confirmingDocId, setConfirmingDocId] = useState(null)
   const [fileConfirmKey, setFileConfirmKey] = useState(null)
   const [viewing, setViewing] = useState(null)
+  // The #426 expiry editor: which document is being edited and its draft.
+  const [expiryEditingId, setExpiryEditingId] = useState(null)
+  const [expiryDraft, setExpiryDraft] = useState({ expiresOn: '', remindDays: '' })
+
+  const openExpiryEdit = (doc) => {
+    setFeedback(null)
+    setActionError(null)
+    setExpiryEditingId(doc.id)
+    setExpiryDraft({
+      expiresOn: doc.expires_on ?? '',
+      remindDays: doc.remind_days_before ?? DOCUMENT_DEFAULT_REMIND_DAYS,
+    })
+  }
+
+  const closeExpiryEdit = () => {
+    setExpiryEditingId(null)
+    setExpiryDraft({ expiresOn: '', remindDays: '' })
+  }
+
+  // Save the expiry draft: a cleared date ALWAYS sends expires_on: null — the
+  // server clears the window with it (the invariant), so the window field is
+  // irrelevant then (it is disabled while the date is empty). A set date
+  // sends the window when filled; an empty window lets the server keep the
+  // existing one or apply its 30-day default. The range is pre-checked here
+  // (mirroring the server's 1..365) so a bad value fails in copy instead of a
+  // generic 400.
+  const saveExpiry = async (doc) => {
+    setFeedback(null)
+    setActionError(null)
+    const dateValue = expiryDraft.expiresOn || null
+    let payload
+    if (dateValue === null) {
+      payload = { expires_on: null }
+    } else {
+      const windowValue =
+        expiryDraft.remindDays === '' || expiryDraft.remindDays === null
+          ? undefined
+          : Number(expiryDraft.remindDays)
+      if (
+        windowValue !== undefined &&
+        (!Number.isInteger(windowValue) ||
+          windowValue < DOCUMENT_REMIND_DAYS_MIN ||
+          windowValue > DOCUMENT_REMIND_DAYS_MAX)
+      ) {
+        setActionError(t('documents.errorRemindRange'))
+        return
+      }
+      payload = { expires_on: dateValue }
+      if (windowValue !== undefined) {
+        payload.remind_days_before = windowValue
+      }
+    }
+    try {
+      await updateExpiry.mutateAsync({ id: doc.id, payload })
+      closeExpiryEdit()
+      setFeedback(t('documents.expirySaved', { name: doc.name }))
+    } catch (err) {
+      setActionError(t(documentErrorKey(err)))
+    }
+  }
 
   const pickCreateFiles = (event) => {
     const files = [...(event.target.files ?? [])]
@@ -673,6 +853,42 @@ export function Documents() {
         </PanelBody>
       </Panel>
 
+      {/* Due soon (#426) — documents inside their reminder window, soonest
+          expiry first. Rendered only when non-empty: an all-clear vault has
+          nothing to say here. */}
+      {dueSoon.length > 0 && (
+        <Panel>
+          <PanelHead>
+            <div className="flex items-center gap-2">
+              <IconClock size={18} className="text-warn shrink-0" />
+              <div>
+                <div className="font-semibold">{t('documents.dueSoonTitle')}</div>
+                <div className="text-sm text-text-muted mt-0.5">{t('documents.dueSoonHint')}</div>
+              </div>
+            </div>
+          </PanelHead>
+          <div data-testid="due-soon">
+            {dueSoon.map((doc) => (
+              <div
+                key={doc.id}
+                data-testid="due-soon-row"
+                className="px-5 py-3 border-b border-border last:border-b-0 flex items-center gap-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">{doc.name}</div>
+                  <div className="text-sm text-text-muted truncate">
+                    {doc.member_id && <> {memberNameById.get(doc.member_id) ?? ''} · </>}
+                    {t('documents.remindLabel')}:{' '}
+                    {doc.remind_days_before ?? DOCUMENT_DEFAULT_REMIND_DAYS}
+                  </div>
+                </div>
+                <ExpiryBadge days={doc.days_until_expiry} />
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
       {/* List — the name search replaces the category chips (#422); member
           chips compose with it. */}
       <Panel>
@@ -770,41 +986,53 @@ export function Documents() {
                       }}
                       disabled={busy}
                     >
-                      {t('common.cancel')}
+                      {t('documents.cancel')}
                     </Button>
                   </div>
                 </div>
               ) : (
-                <DocumentRow
-                  key={doc.id}
-                  doc={doc}
-                  memberName={doc.member_id ? (memberNameById.get(doc.member_id) ?? null) : null}
-                  onAddFiles={() => {
-                    setFeedback(null)
-                    setActionError(null)
-                    setAddingFor(doc.id)
-                    setAddPicked([])
-                  }}
-                  onViewFile={(d, file) => {
-                    setFeedback(null)
-                    setActionError(null)
-                    setViewing({ doc: d, file })
-                  }}
-                  onDownloadFile={download}
-                  onDeleteFile={(d, file) => confirmDeleteFile(d, file)}
-                  onDeleteDoc={() => confirmDeleteDoc(doc)}
-                  fileConfirmKey={fileConfirmKey}
-                  onToggleFileConfirm={(key) =>
-                    setFileConfirmKey(fileConfirmKey === key ? null : key)
-                  }
-                  docConfirmOpen={confirmingDocId === doc.id}
-                  onToggleDocConfirm={() =>
-                    setConfirmingDocId(confirmingDocId === doc.id ? null : doc.id)
-                  }
-                  removeDocPending={remove.isPending}
-                  removeFilePending={removeFile.isPending}
-                  language={language}
-                />
+                <div key={doc.id}>
+                  <DocumentRow
+                    doc={doc}
+                    memberName={doc.member_id ? (memberNameById.get(doc.member_id) ?? null) : null}
+                    onAddFiles={() => {
+                      setFeedback(null)
+                      setActionError(null)
+                      setAddingFor(doc.id)
+                      setAddPicked([])
+                    }}
+                    onEditExpiry={() => openExpiryEdit(doc)}
+                    onViewFile={(d, file) => {
+                      setFeedback(null)
+                      setActionError(null)
+                      setViewing({ doc: d, file })
+                    }}
+                    onDownloadFile={download}
+                    onDeleteFile={(d, file) => confirmDeleteFile(d, file)}
+                    onDeleteDoc={() => confirmDeleteDoc(doc)}
+                    fileConfirmKey={fileConfirmKey}
+                    onToggleFileConfirm={(key) =>
+                      setFileConfirmKey(fileConfirmKey === key ? null : key)
+                    }
+                    docConfirmOpen={confirmingDocId === doc.id}
+                    onToggleDocConfirm={() =>
+                      setConfirmingDocId(confirmingDocId === doc.id ? null : doc.id)
+                    }
+                    removeDocPending={remove.isPending}
+                    removeFilePending={removeFile.isPending}
+                    language={language}
+                  />
+                  {expiryEditingId === doc.id && (
+                    <ExpiryEditForm
+                      doc={doc}
+                      draft={expiryDraft}
+                      onDraftChange={setExpiryDraft}
+                      onSave={() => saveExpiry(doc)}
+                      onCancel={closeExpiryEdit}
+                      saving={updateExpiry.isPending}
+                    />
+                  )}
+                </div>
               )
             )}
           </div>
