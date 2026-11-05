@@ -1,14 +1,17 @@
-// Document vault routes (ahaqqu/RumaQ#388 MVP). Same stack as the households
-// app: logger + CORS + per-IP limiter, propsAuthMiddleware on every path, and
-// an onError mapping the lib's typed errors. Documents scope to the caller's
-// ACTIVE household (auth middleware) — there is no household id in the URL to
-// forge, and every lookup carries the household predicate in its WHERE clause.
+// Document vault routes (ahaqqu/RumaQ#422 rework of the #388 MVP). Same stack
+// as the households app: logger + CORS + per-IP limiter, propsAuthMiddleware
+// on every path, and an onError mapping the lib's typed errors. Documents
+// scope to the caller's ACTIVE household (auth middleware) — there is no
+// household id in the URL to forge, and every lookup carries the household
+// predicate in its WHERE clause. One document holds N files (#422): create
+// takes the name + first file, later files ride POST /:id/files.
 
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import { logger } from 'hono/logger'
 import { describeRoute } from 'hono-openapi'
 import type { OpenAPIV3_1 } from 'openapi-types'
-import { object, picklist, string, optional, pipe, maxLength, safeParse } from 'valibot'
+import { object, optional, picklist, pipe, safeParse, string, maxLength } from 'valibot'
 
 import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
@@ -16,24 +19,29 @@ import { propsAuthMiddleware } from '../auth.js'
 import { ipRateLimitMiddleware, isRateLimited } from '../lib/rate-limit.js'
 import { createR2StorageAdapter } from '../lib/storage.js'
 import {
-  DOCUMENT_CATEGORIES,
   DOCUMENT_MAX_BYTES,
   DocumentForbiddenError,
   DocumentNotFoundError,
   DocumentTooLargeError,
+  DocumentTooManyFilesError,
   DocumentUnsupportedTypeError,
   DocumentValidationError,
+  addDocumentFile,
   contentDisposition,
   createDocument,
-  ensureVaultKey,
   deleteDocument,
+  deleteDocumentFile,
+  ensureVaultKey,
+  getDocumentFileRow,
   getDocumentRow,
+  getDocumentWithFiles,
   isHouseholdMember,
   listDocuments,
   recordDocumentAccess,
+  sanitizeDocumentLabel,
+  sanitizeDocumentName,
   sanitizeFileName,
   sniffDocumentMime,
-  type DocumentCategory,
   type DocumentSummary,
 } from '../lib/documents.js'
 
@@ -43,7 +51,7 @@ const NO_CACHE = { 'Cache-Control': 'private, no-cache' }
 const NO_STORE = { 'Cache-Control': 'private, no-store' }
 
 const listQuerySchema = object({
-  category: optional(picklist(DOCUMENT_CATEGORIES)),
+  q: optional(pipe(string(), maxLength(120))),
   memberId: optional(pipe(string(), maxLength(64))),
 })
 
@@ -52,9 +60,11 @@ const dispositionQuerySchema = object({
 })
 
 // Upload rate limit: tighter than the global per-IP window — 10 MB bodies
-// make uploads the endpoint abuse would ride.
+// make uploads the endpoint abuse would ride. A maxed-out document (owner
+// cap: 20 files) is 20 requests in one burst, so the window holds a full
+// document plus headroom for one more operation.
 const UPLOAD_RATE_WINDOW_MS = 60_000
-const UPLOAD_RATE_MAX = 20
+const UPLOAD_RATE_MAX = 40
 
 // Transport slack for the pre-parse cap (review A1): multipart framing adds
 // boundary + field headers on top of the file bytes (~hundreds of bytes at
@@ -62,35 +72,49 @@ const UPLOAD_RATE_MAX = 20
 // exactly-10 MB file needs this headroom to reach the exact post-parse cap.
 export const UPLOAD_TRANSPORT_SLACK = 64 * 1024
 
-// The OpenAPI shape for one document — metadata only (storage_key is an
-// internal R2 handle the client must not learn).
-const documentSummarySchema: OpenAPIV3_1.SchemaObject = {
+// The OpenAPI shape for one file — metadata only (r2_key is an internal R2
+// handle the client must not learn). label is the OPTIONAL free-text name
+// ("Front", "Page 3") — null when unnamed (owner decision #422-1).
+const documentFileSchema: OpenAPIV3_1.SchemaObject = {
   type: 'object',
   required: [
     'id',
-    'household_id',
-    'member_id',
-    'category',
     'file_name',
-    'mime_type',
+    'content_type',
     'size_bytes',
+    'sort_order',
     'sha256',
     'uploaded_by',
-    'created_at',
+    'uploaded_at',
   ],
+  properties: {
+    id: { type: 'string' },
+    file_name: { type: 'string' },
+    content_type: { type: 'string' },
+    size_bytes: { type: 'integer' },
+    label: { type: ['string', 'null'] },
+    sort_order: { type: 'integer' },
+    sha256: { type: 'string' },
+    uploaded_by: { type: 'string' },
+    uploaded_at: { type: 'string' },
+  },
+}
+
+// The OpenAPI shape for one document — metadata + its files in upload order.
+const documentSummarySchema: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  required: ['id', 'household_id', 'member_id', 'name', 'uploaded_by', 'created_at', 'files'],
   properties: {
     id: { type: 'string' },
     household_id: { type: 'string' },
     // Nullable: household-level documents (kartu keluarga) have no single
     // person; both member modes (linked / profile-only, 0021) address here.
     member_id: { type: ['string', 'null'] },
-    category: { type: 'string', enum: [...DOCUMENT_CATEGORIES] },
-    file_name: { type: 'string' },
-    mime_type: { type: 'string' },
-    size_bytes: { type: 'integer' },
-    sha256: { type: 'string' },
+    // Free text — the preset category list is gone (#422).
+    name: { type: 'string' },
     uploaded_by: { type: 'string' },
     created_at: { type: 'string' },
+    files: { type: 'array', items: documentFileSchema },
   },
 }
 
@@ -110,6 +134,9 @@ documentsApp.onError((err, c) => {
   if (err instanceof DocumentValidationError) return c.json({ error: err.message }, 400)
   if (err instanceof DocumentTooLargeError) return c.json({ error: err.message }, 413)
   if (err instanceof DocumentUnsupportedTypeError) return c.json({ error: err.message }, 415)
+  if (err instanceof DocumentTooManyFilesError) {
+    return c.json({ error: err.message }, 409, NO_CACHE)
+  }
   if (err instanceof DocumentNotFoundError) return c.json({ error: err.message }, 404, NO_CACHE)
   if (err instanceof DocumentForbiddenError) return c.json({ error: err.message }, 403, NO_CACHE)
   console.error(err)
@@ -120,26 +147,170 @@ documentsApp.onError((err, c) => {
 // its own line here too.
 documentsApp.use('/api/documents', propsAuthMiddleware)
 documentsApp.use('/api/documents/:id', propsAuthMiddleware)
-documentsApp.use('/api/documents/:id/content', propsAuthMiddleware)
+documentsApp.use('/api/documents/:id/files', propsAuthMiddleware)
+documentsApp.use('/api/documents/:id/files/:fileId', propsAuthMiddleware)
+documentsApp.use('/api/documents/:id/files/:fileId/content', propsAuthMiddleware)
+
+// One parsed upload — the file plus the string multipart fields, already
+// bounded by the pre-parse cap. Both POST routes funnel through here so the
+// cap/parse dance (A1/A2) exists exactly once.
+type ParsedUpload = {
+  file: { name: string; data: ArrayBuffer; type: string }
+  fields: Record<string, string>
+}
+
+async function parseUpload(c: Context<Env>): Promise<ParsedUpload> {
+  const contentType = c.req.header('Content-Type') || ''
+  if (!contentType.includes('multipart/form-data')) {
+    throw new DocumentValidationError('Expected multipart/form-data')
+  }
+
+  // Pre-parse cap (A1): the Content-Length covers the WHOLE multipart body —
+  // boundary + field headers ride on top of the file bytes — so the declared
+  // size gets a fixed transport slack. The EXACT cap fires on the parsed
+  // file bytes below; this line only rejects obviously-oversized bodies
+  // before the first byte is read.
+  const contentLengthHeader = c.req.header('Content-Length')
+  const contentLength = Number(contentLengthHeader ?? '')
+  if (
+    contentLengthHeader !== undefined &&
+    Number.isFinite(contentLength) &&
+    contentLength > DOCUMENT_MAX_BYTES + UPLOAD_TRANSPORT_SLACK
+  ) {
+    throw new DocumentTooLargeError()
+  }
+
+  try {
+    let formData: Record<string, FormDataEntryValue | File>
+    if (contentLengthHeader === undefined && c.req.raw.body) {
+      // Chunked upload (A2): no Content-Length means parseBody() would
+      // buffer the entire body before the post-parse cap could fire. Read
+      // the stream here instead and ABORT the moment the buffered bytes
+      // pass the cap — the transient buffer is bounded by
+      // DOCUMENT_MAX_BYTES + UPLOAD_TRANSPORT_SLACK, not by the platform's
+      // request limit. The multipart headers carry over when the capped
+      // bytes are re-wrapped into a Request for parsing.
+      const reader = c.req.raw.body.getReader()
+      const chunks: Uint8Array[] = []
+      let total = 0
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        total += value.byteLength
+        if (total > DOCUMENT_MAX_BYTES + UPLOAD_TRANSPORT_SLACK) {
+          await reader.cancel()
+          throw new DocumentTooLargeError()
+        }
+        chunks.push(value)
+      }
+      const cappedRequest = new Request(c.req.raw.url, {
+        method: 'POST',
+        headers: c.req.raw.headers,
+        // The stream hands back ArrayBufferLike-backed views; BlobPart only
+        // admits ArrayBuffer-backed ones — a type-level assertion, no copy.
+        body: new Blob(chunks as unknown as BlobPart[]),
+      })
+      // Request.formData() yields a FormData instance; the branch below
+      // reads entries by key, so flatten it into the same plain shape
+      // Hono's parseBody() produces.
+      formData = Object.fromEntries(await cappedRequest.formData())
+    } else {
+      // Framed upload: HTTP/1.1 Content-Length IS the transport bound, so
+      // the parse buffer is already capped by the pre-check above.
+      formData = await c.req.parseBody()
+    }
+    const uploaded = formData['file']
+    if (!uploaded || typeof uploaded === 'string' || !('arrayBuffer' in uploaded)) {
+      throw new DocumentValidationError('No file provided. Use field name "file".')
+    }
+    const fields: Record<string, string> = {}
+    for (const [key, value] of Object.entries(formData)) {
+      if (key !== 'file' && typeof value === 'string') fields[key] = value
+    }
+    return {
+      file: {
+        name: uploaded.name,
+        data: await uploaded.arrayBuffer(),
+        type: uploaded.type,
+      },
+      fields,
+    }
+  } catch (err) {
+    if (err instanceof DocumentTooLargeError || err instanceof DocumentValidationError) {
+      throw err
+    }
+    throw new DocumentValidationError('Failed to parse upload')
+  }
+}
+
+// The EXACT per-file checks both POST routes share: parsed cap, empty file,
+// basename sanitization, sniff-pinned bytes. Returns the validated pieces the
+// lib mutations take.
+function validateFileBytes(file: { name: string; data: ArrayBuffer; type: string }): {
+  bytes: Uint8Array<ArrayBuffer>
+  mime: string
+  fileName: string
+} {
+  const bytes = new Uint8Array(file.data)
+  if (bytes.byteLength > DOCUMENT_MAX_BYTES) {
+    throw new DocumentTooLargeError()
+  }
+  if (bytes.byteLength === 0) {
+    throw new DocumentValidationError('Empty file')
+  }
+  const fileName = sanitizeFileName(file.name)
+  if (!fileName) {
+    throw new DocumentValidationError('Invalid file name')
+  }
+  // The declared mime must be on the allowlist AND agree with the magic
+  // bytes (sniff policy: reject on mismatch — pinned in the #388 PR).
+  const sniffed = sniffDocumentMime(bytes)
+  if (!sniffed || sniffed !== file.type) {
+    throw new DocumentUnsupportedTypeError()
+  }
+  return { bytes, mime: sniffed, fileName }
+}
+
+// The member relation accepts BOTH modes (linked / profile-only, 0021) —
+// both address through the surrogate member id. An id from another household
+// is a body-validation failure, not a resource probe (400). Empty string is
+// "no member" (the household itself).
+async function resolveMemberId(
+  db: Context<Env>['env']['DB'],
+  householdId: string,
+  memberId: string | undefined
+): Promise<string | null> {
+  if (memberId === undefined || memberId === '') return null
+  const known = await isHouseholdMember(db, householdId, memberId)
+  if (!known) {
+    throw new DocumentValidationError('Member not found in this household')
+  }
+  return memberId
+}
+
+// Rate-limits both upload endpoints (they carry 10 MB bodies).
+function enforceUploadRate(userId: string): { limited: boolean; retryAfter: number } {
+  return isRateLimited(`doc-upload:${userId}`, UPLOAD_RATE_WINDOW_MS, UPLOAD_RATE_MAX)
+}
 
 documentsApp.get(
   '/api/documents',
   describeRoute({
     description:
-      'Lists the active household’s documents, newest first. Optional filters: memberId (both member modes — linked accounts and profile-only members), category.',
+      'Lists the active household’s documents, newest first, each with its files in upload order. Optional filters: q (case-insensitive contains-search on the free-text document name — the #422 replacement for the category filter), memberId (both member modes — linked accounts and profile-only members).',
     security: [{ cookieAuth: [] }],
     parameters: [
+      {
+        in: 'query',
+        name: 'q',
+        required: false,
+        schema: { type: 'string', description: 'Name search: case-insensitive substring' },
+      },
       {
         in: 'query',
         name: 'memberId',
         required: false,
         schema: { type: 'string', description: 'Surrogate member id (both modes)' },
-      },
-      {
-        in: 'query',
-        name: 'category',
-        required: false,
-        schema: { type: 'string', enum: [...DOCUMENT_CATEGORIES] },
       },
     ],
     responses: {
@@ -165,8 +336,8 @@ documentsApp.get(
       throw new DocumentValidationError('Invalid list filters')
     }
     const documents = await listDocuments(c.env.DB, c.get('householdId'), {
+      q: parsed.output.q,
       memberId: parsed.output.memberId,
-      category: parsed.output.category,
     })
     const res = c.json({ documents: documents satisfies DocumentSummary[] })
     res.headers.set('Cache-Control', 'private, no-cache')
@@ -178,7 +349,7 @@ documentsApp.post(
   '/api/documents',
   describeRoute({
     description:
-      'Uploads one document (multipart/form-data: file, category, optional memberId) into the active household’s vault. Cap 10 MB enforced on Content-Length before the body is read and again on the parsed bytes; magic bytes must match the declared type (JPEG, PNG, WebP, PDF). memberId accepts both member modes (linked and profile-only). No public URLs exist — bytes are served only via the content endpoint.',
+      'Creates a document (multipart/form-data: name, file, optional label for that file, optional memberId). The name is free text — trimmed, 1-120 chars, no preset list (#422). The file becomes attachment #1 (sort_order 1); more files ride POST /documents/{id}/files, max 20 per document. Cap 10 MB enforced on Content-Length before the body is read and again on the parsed bytes; magic bytes must match the declared type (JPEG, PNG, WebP, PDF). memberId accepts both member modes (linked and profile-only). No public URLs exist — bytes are served only via the per-file content endpoint.',
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -186,10 +357,11 @@ documentsApp.post(
         'multipart/form-data': {
           schema: {
             type: 'object',
-            required: ['file', 'category'],
+            required: ['file', 'name'],
             properties: {
+              name: { type: 'string' },
               file: { type: 'string', format: 'binary' },
-              category: { type: 'string', enum: [...DOCUMENT_CATEGORIES] },
+              label: { type: 'string' },
               memberId: { type: 'string' },
             },
           },
@@ -219,145 +391,29 @@ documentsApp.post(
     const userId = c.get('userId')
     const householdId = c.get('householdId')
 
-    const { limited, retryAfter } = isRateLimited(
-      `doc-upload:${userId}`,
-      UPLOAD_RATE_WINDOW_MS,
-      UPLOAD_RATE_MAX
-    )
+    const { limited, retryAfter } = enforceUploadRate(userId)
     if (limited) {
       return c.json({ error: 'Too many uploads. Please slow down.' }, 429, {
         'Retry-After': String(retryAfter),
       })
     }
 
-    const contentType = c.req.header('Content-Type') || ''
-    if (!contentType.includes('multipart/form-data')) {
-      throw new DocumentValidationError('Expected multipart/form-data')
-    }
+    const upload = await parseUpload(c)
 
-    // Pre-parse cap (A1): the Content-Length covers the WHOLE multipart body —
-    // boundary + field headers ride on top of the file bytes — so the declared
-    // size gets a fixed transport slack. The EXACT cap fires on the parsed
-    // file bytes below; this line only rejects obviously-oversized bodies
-    // before the first byte is read.
-    const contentLengthHeader = c.req.header('Content-Length')
-    const contentLength = Number(contentLengthHeader ?? '')
-    if (
-      contentLengthHeader !== undefined &&
-      Number.isFinite(contentLength) &&
-      contentLength > DOCUMENT_MAX_BYTES + UPLOAD_TRANSPORT_SLACK
-    ) {
-      throw new DocumentTooLargeError()
+    const name = sanitizeDocumentName(upload.fields['name'] ?? '')
+    if (!name) {
+      throw new DocumentValidationError('Give the document a name (1-120 characters).')
     }
+    const label = sanitizeDocumentLabel(upload.fields['label'])
+    const memberId = await resolveMemberId(c.env.DB, householdId, upload.fields['memberId'])
 
-    let file: { name: string; data: ArrayBuffer; type: string } | undefined
-    let category: string | undefined
-    let memberId: string | undefined
-    try {
-      let formData: Record<string, FormDataEntryValue | File>
-      if (contentLengthHeader === undefined && c.req.raw.body) {
-        // Chunked upload (A2): no Content-Length means parseBody() would
-        // buffer the entire body before the post-parse cap could fire. Read
-        // the stream here instead and ABORT the moment the buffered bytes
-        // pass the cap — the transient buffer is bounded by
-        // DOCUMENT_MAX_BYTES + UPLOAD_TRANSPORT_SLACK, not by the platform's
-        // request limit. The multipart headers carry over when the capped
-        // bytes are re-wrapped into a Request for parsing.
-        const reader = c.req.raw.body.getReader()
-        const chunks: Uint8Array[] = []
-        let total = 0
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          total += value.byteLength
-          if (total > DOCUMENT_MAX_BYTES + UPLOAD_TRANSPORT_SLACK) {
-            await reader.cancel()
-            throw new DocumentTooLargeError()
-          }
-          chunks.push(value)
-        }
-        const cappedRequest = new Request(c.req.raw.url, {
-          method: 'POST',
-          headers: c.req.raw.headers,
-          // The stream hands back ArrayBufferLike-backed views; BlobPart only
-          // admits ArrayBuffer-backed ones — a type-level assertion, no copy.
-          body: new Blob(chunks as unknown as BlobPart[]),
-        })
-        // Request.formData() yields a FormData instance; the branch below
-        // reads entries by key, so flatten it into the same plain shape
-        // Hono's parseBody() produces.
-        formData = Object.fromEntries(await cappedRequest.formData())
-      } else {
-        // Framed upload: HTTP/1.1 Content-Length IS the transport bound, so
-        // the parse buffer is already capped by the pre-check above.
-        formData = await c.req.parseBody()
-      }
-      const uploaded = formData['file']
-      if (uploaded && typeof uploaded !== 'string' && 'arrayBuffer' in uploaded) {
-        file = {
-          name: uploaded.name,
-          data: await uploaded.arrayBuffer(),
-          type: uploaded.type,
-        }
-      }
-      if (typeof formData['category'] === 'string') category = formData['category']
-      if (typeof formData['memberId'] === 'string') memberId = formData['memberId']
-    } catch (err) {
-      if (err instanceof DocumentTooLargeError) {
-        throw err
-      }
-      throw new DocumentValidationError('Failed to parse upload')
-    }
-
-    if (!file) {
-      throw new DocumentValidationError('No file provided. Use field name "file".')
-    }
-
-    // The EXACT cap fires here, on the parsed file bytes — the authoritative
-    // check every transport (framed, chunked, lying headers) funnels into.
-    const bytes = new Uint8Array(file.data)
-    if (bytes.byteLength > DOCUMENT_MAX_BYTES) {
-      throw new DocumentTooLargeError()
-    }
-    if (bytes.byteLength === 0) {
-      throw new DocumentValidationError('Empty file')
-    }
-
-    if (!(DOCUMENT_CATEGORIES as readonly string[]).includes(category ?? '')) {
-      throw new DocumentValidationError('Invalid category')
-    }
-
-    const fileName = sanitizeFileName(file.name)
-    if (!fileName) {
-      throw new DocumentValidationError('Invalid file name')
-    }
-
-    // The declared mime must be on the allowlist AND agree with the magic
-    // bytes (sniff policy: reject on mismatch — pinned in the PR).
-    const sniffed = sniffDocumentMime(bytes)
-    if (!sniffed || sniffed !== file.type) {
-      throw new DocumentUnsupportedTypeError()
-    }
-
-    // The member relation accepts BOTH modes (linked / profile-only, 0021) —
-    // both address through the surrogate member id. An id from another
-    // household is a body-validation failure, not a resource probe (400).
-    if (memberId !== undefined && memberId !== '') {
-      const known = await isHouseholdMember(c.env.DB, householdId, memberId)
-      if (!known) {
-        throw new DocumentValidationError('Member not found in this household')
-      }
-    } else {
-      memberId = undefined
-    }
+    const { bytes, mime, fileName } = validateFileBytes(upload.file)
 
     const document = await createDocument(c.env.DB, createR2StorageAdapter(c.env.DOCUMENTS), {
       householdId,
-      memberId: memberId ?? null,
-      category: (category ?? 'lainnya') as DocumentCategory,
-      fileName,
-      bytes,
-      mime: sniffed,
+      memberId,
+      name,
+      file: { fileName, bytes, mime, label },
       uploadedBy: userId,
     })
 
@@ -371,7 +427,7 @@ documentsApp.get(
   '/api/documents/:id',
   describeRoute({
     description:
-      'Returns one document’s metadata. A document from another household answers the same 404 as a missing one (no existence leak).',
+      'Returns one document’s metadata with its files in upload order. A document from another household answers the same 404 as a missing one (no existence leak).',
     security: [{ cookieAuth: [] }],
     responses: {
       200: {
@@ -390,7 +446,7 @@ documentsApp.get(
     },
   }),
   async (c) => {
-    const document = await getDocumentRow(c.env.DB, c.get('householdId'), c.req.param('id'))
+    const document = await getDocumentWithFiles(c.env.DB, c.get('householdId'), c.req.param('id'))
     if (!document) {
       throw new DocumentNotFoundError()
     }
@@ -400,15 +456,92 @@ documentsApp.get(
   }
 )
 
-// Binary content endpoint. Described here for the API docs (binary response,
-// the contract's codegen handles format:'binary' fine) — the browser client
-// calls it with a hand-written fetch because the typed client's JSON unwrap
-// has no blob path; recorded as a flagged choice in the PR.
-documentsApp.get(
-  '/api/documents/:id/content',
+documentsApp.post(
+  '/api/documents/:id/files',
   describeRoute({
     description:
-      'Streams the document’s bytes, authenticated and household-scoped. Content-Type is the stored mime; disposition=inline previews (audited as view), disposition=attachment downloads (audited as download). Cache-Control is private, no-store — bytes never leak through any cache, and no public or presigned URL exists.',
+      'Adds one file to an existing document (multipart/form-data: file, optional label). Max 20 files per document — a full document refuses another file with 409 before the body is read. Same 10 MB cap (Content-Length pre-check + parsed bytes) and magic-byte policy as create; the file lands at sort_order = max + 1 (upload order). Returns the updated document with all files. No public URLs exist — bytes are served only via the per-file content endpoint.',
+    security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'multipart/form-data': {
+          schema: {
+            type: 'object',
+            required: ['file'],
+            properties: {
+              file: { type: 'string', format: 'binary' },
+              label: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      201: {
+        description: 'File added — the updated document comes back',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['document'],
+              properties: { document: documentSummarySchema },
+            },
+          },
+        },
+      },
+      ...JSON_ERROR_RESPONSES,
+      409: { description: 'The document already holds the maximum of 20 files' },
+      413: { description: 'File exceeds the 10 MB cap' },
+      415: { description: 'Unsupported or mismatched file type' },
+      429: { description: 'Too many uploads' },
+    },
+  }),
+  async (c) => {
+    const userId = c.get('userId')
+    const householdId = c.get('householdId')
+
+    const { limited, retryAfter } = enforceUploadRate(userId)
+    if (limited) {
+      return c.json({ error: 'Too many uploads. Please slow down.' }, 429, {
+        'Retry-After': String(retryAfter),
+      })
+    }
+
+    // Scoped lookup first (no existence leak), cap check inside the lib
+    // BEFORE any byte touches storage.
+    const document = await getDocumentRow(c.env.DB, householdId, c.req.param('id'))
+    if (!document) {
+      throw new DocumentNotFoundError()
+    }
+
+    const upload = await parseUpload(c)
+    const label = sanitizeDocumentLabel(upload.fields['label'])
+    const { bytes, mime, fileName } = validateFileBytes(upload.file)
+
+    const updated = await addDocumentFile(c.env.DB, createR2StorageAdapter(c.env.DOCUMENTS), {
+      householdId,
+      documentId: document.id,
+      file: { fileName, bytes, mime, label },
+      uploadedBy: userId,
+    })
+
+    const res = c.json({ document: updated }, 201)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+// Binary content endpoint, PER FILE since #422. Described here for the API
+// docs (binary response, the contract's codegen handles format:'binary'
+// fine) — the browser client calls it with a hand-written fetch because the
+// typed client's JSON unwrap has no blob path; recorded as a flagged choice
+// in the #388 PR.
+documentsApp.get(
+  '/api/documents/:id/files/:fileId/content',
+  describeRoute({
+    description:
+      'Streams one file’s bytes, authenticated and household-scoped (the file must belong to the document, the document to the household). Content-Type is the stored mime; disposition=inline previews (audited as view), disposition=attachment downloads (audited as download). Cache-Control is private, no-store — bytes never leak through any cache, and no public or presigned URL exists.',
     security: [{ cookieAuth: [] }],
     parameters: [
       {
@@ -439,26 +572,36 @@ documentsApp.get(
     }
     const disposition = parsed.output.disposition ?? 'inline'
 
-    // The scoped lookup answers 404 for a foreign household's id BEFORE any
-    // other decision (no existence leak).
+    // The scoped lookups answer 404 for a foreign household's id BEFORE any
+    // other decision (no existence leak) — document first, then its file.
     const document = await getDocumentRow(c.env.DB, c.get('householdId'), c.req.param('id'))
     if (!document) {
       throw new DocumentNotFoundError()
     }
+    const file = await getDocumentFileRow(
+      c.env.DB,
+      c.get('householdId'),
+      document.id,
+      c.req.param('fileId')
+    )
+    if (!file) {
+      throw new DocumentNotFoundError()
+    }
 
-    // Vault-key guard (review B1): a corrupted storage_key must never be fed
-    // to the adapter — reading it could serve a sibling namespace's object.
-    ensureVaultKey(document.storage_key)
+    // Vault-key guard (review B1): a corrupted r2_key must never be fed to
+    // the adapter — reading it could serve a sibling namespace's object.
+    ensureVaultKey(file.r2_key)
 
-    const stored = await createR2StorageAdapter(c.env.DOCUMENTS).get(document.storage_key)
+    const stored = await createR2StorageAdapter(c.env.DOCUMENTS).get(file.r2_key)
     if (!stored) {
       // Row without bytes (a failed delete batch mid-crash, say) is a dead
-      // document — never a server error leak.
+      // file — never a server error leak.
       throw new DocumentNotFoundError()
     }
 
     await recordDocumentAccess(c.env.DB, {
       documentId: document.id,
+      fileId: file.id,
       householdId: document.household_id,
       actorUserId: c.get('userId'),
       action: disposition === 'attachment' ? 'download' : 'view',
@@ -466,8 +609,8 @@ documentsApp.get(
 
     return new Response(stored.stream, {
       headers: {
-        'Content-Type': document.mime_type,
-        'Content-Disposition': contentDisposition(disposition, document.file_name),
+        'Content-Type': file.content_type,
+        'Content-Disposition': contentDisposition(disposition, file.file_name),
         ...NO_STORE,
         // Defense-in-depth (review A3): the stored mime is sniff-pinned at
         // upload; this header stops the browser from second-guessing it.
@@ -478,10 +621,46 @@ documentsApp.get(
 )
 
 documentsApp.delete(
+  '/api/documents/:id/files/:fileId',
+  describeRoute({
+    description:
+      'Removes ONE file from a document: the stored object AND its row, with the file_delete audit record in the same batch. Allowed for the household owner, the document’s uploader, or the file’s uploader. The last file may be deleted — the document survives with zero files until someone deletes it. Audit rows outlive the file they name.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      204: { description: 'Deleted' },
+      401: { description: 'Unauthorized' },
+      403: {
+        description:
+          'Only the household owner, the document uploader, or the file uploader can do that',
+      },
+      404: { description: 'Document or file not found' },
+    },
+  }),
+  async (c) => {
+    const householdId = c.get('householdId')
+    const document = await getDocumentRow(c.env.DB, householdId, c.req.param('id'))
+    if (!document) {
+      throw new DocumentNotFoundError()
+    }
+    const file = await getDocumentFileRow(c.env.DB, householdId, document.id, c.req.param('fileId'))
+    if (!file) {
+      throw new DocumentNotFoundError()
+    }
+    await deleteDocumentFile(c.env.DB, createR2StorageAdapter(c.env.DOCUMENTS), {
+      householdId,
+      userId: c.get('userId'),
+      document,
+      file,
+    })
+    return c.newResponse(null, 204)
+  }
+)
+
+documentsApp.delete(
   '/api/documents/:id',
   describeRoute({
     description:
-      'Hard-deletes a document: the stored object AND the metadata row, with the deletion audit record in the same batch. Uploader or household owner only. Audit rows outlive the document (the deletion record survives).',
+      'Hard-deletes a document: every file’s stored object AND the metadata rows, with the deletion audit record in the same batch (the file rows cascade). Uploader or household owner only. Audit rows outlive the document (the deletion record survives).',
     security: [{ cookieAuth: [] }],
     responses: {
       204: { description: 'Deleted' },

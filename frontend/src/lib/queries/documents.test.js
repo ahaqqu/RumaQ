@@ -4,16 +4,26 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import {
   useDocuments,
-  useUploadDocument,
+  useCreateDocument,
+  useAddDocumentFile,
   useDeleteDocument,
+  useDeleteDocumentFile,
   documentsQueryKey,
 } from './documents.js'
-import { getDocuments, uploadDocument, deleteDocument } from '../api'
+import {
+  getDocuments,
+  createDocument,
+  addDocumentFile,
+  deleteDocument,
+  deleteDocumentFile,
+} from '../api'
 
 vi.mock('../api', () => ({
   getDocuments: vi.fn(),
-  uploadDocument: vi.fn(),
+  createDocument: vi.fn(),
+  addDocumentFile: vi.fn(),
   deleteDocument: vi.fn(),
+  deleteDocumentFile: vi.fn(),
 }))
 
 function createWrapper(queryClient) {
@@ -25,13 +35,10 @@ const DOC = {
   id: 'doc-1',
   household_id: 'h1',
   member_id: null,
-  category: 'akta',
-  file_name: 'akta-adik.pdf',
-  mime_type: 'application/pdf',
-  size_bytes: 2048,
-  sha256: 'a'.repeat(64),
+  name: 'KTP Adik',
   uploaded_by: 'u1',
   created_at: '2026-11-03 10:00:00',
+  files: [],
 }
 
 describe('useDocuments', () => {
@@ -50,57 +57,59 @@ describe('useDocuments', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(result.current.data.documents).toHaveLength(1)
     expect(getDocuments).toHaveBeenCalledWith(
-      { memberId: undefined, category: undefined },
+      { q: undefined, memberId: undefined },
       expect.anything()
     )
   })
 
-  it('keys and fetches per filter pair — member and category ride the key', async () => {
+  it('keys and fetches per filter pair — the q name search and member ride the key (#422)', async () => {
     getDocuments.mockResolvedValue({ documents: [] })
-    const { result, rerender } = renderHook(({ filters }) => useDocuments(filters), {
+    const { result } = renderHook(({ filters }) => useDocuments(filters), {
       wrapper: createWrapper(queryClient),
-      initialProps: { filters: { memberId: 'm-toddler' } },
+      initialProps: { filters: { q: 'ktp' } },
     })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(getDocuments).toHaveBeenCalledWith(
-      { memberId: 'm-toddler', category: undefined },
-      expect.anything()
-    )
-    expect(documentsQueryKey({ memberId: 'm-toddler' })).toEqual([
-      'documents',
-      { memberId: 'm-toddler', category: null },
-    ])
-    expect(documentsQueryKey({ category: 'akta' })).not.toEqual(
-      documentsQueryKey({ memberId: 'm-toddler' })
-    )
-    void rerender
+    expect(getDocuments).toHaveBeenCalledWith({ q: 'ktp', memberId: undefined }, expect.anything())
+    expect(documentsQueryKey({ q: 'ktp' })).toEqual(['documents', { q: 'ktp', memberId: null }])
+    expect(documentsQueryKey({ q: 'ktp' })).not.toEqual(documentsQueryKey({ q: 'akta' }))
+    expect(documentsQueryKey({ memberId: 'm-1' })).not.toEqual(documentsQueryKey({ q: 'ktp' }))
   })
 })
 
-describe('useUploadDocument', () => {
+describe('useCreateDocument', () => {
   let queryClient
 
   beforeEach(() => {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    queryClient.setQueryData(['documents', { memberId: null, category: null }], {
-      documents: [],
-    })
+    queryClient.setQueryData(['documents', { q: null, memberId: null }], { documents: [] })
     vi.clearAllMocks()
   })
 
-  it('uploads with the picked file/category/member and invalidates the vault cache on settle', async () => {
-    uploadDocument.mockResolvedValue({ document: DOC })
+  it('creates with name + first file (+ optional label/member) and invalidates the vault cache on settle', async () => {
+    createDocument.mockResolvedValue({ document: DOC })
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
     const file = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], 'ktp.jpg', {
       type: 'image/jpeg',
     })
 
-    const { result } = renderHook(() => useUploadDocument(), {
+    const { result } = renderHook(() => useCreateDocument(), {
       wrapper: createWrapper(queryClient),
     })
-    await act(async () => result.current.mutate({ file, category: 'ktp', memberId: 'm-toddler' }))
+    await act(async () =>
+      result.current.mutate({
+        name: 'KTP',
+        file,
+        label: 'Depan',
+        memberId: 'm-toddler',
+      })
+    )
 
-    expect(uploadDocument).toHaveBeenCalledWith(file, 'ktp', 'm-toddler')
+    expect(createDocument).toHaveBeenCalledWith({
+      name: 'KTP',
+      file,
+      label: 'Depan',
+      memberId: 'm-toddler',
+    })
     await waitFor(() =>
       expect(invalidateSpy).toHaveBeenCalledWith(
         expect.objectContaining({ queryKey: ['documents'] })
@@ -108,21 +117,50 @@ describe('useUploadDocument', () => {
     )
   })
 
-  it('invalidates even when the upload fails (415/413 surfaces via error)', async () => {
-    uploadDocument.mockRejectedValue(new Error('415'))
+  it('invalidates even when the create fails (413/415/400 surfaces via error)', async () => {
+    createDocument.mockRejectedValue(new Error('415'))
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
     const file = new File([new Uint8Array([1])], 'x.jpg', { type: 'image/jpeg' })
 
-    const { result } = renderHook(() => useUploadDocument(), {
+    const { result } = renderHook(() => useCreateDocument(), {
       wrapper: createWrapper(queryClient),
     })
-    await act(async () => result.current.mutate({ file, category: 'ktp' }))
+    await act(async () => result.current.mutate({ name: 'KTP', file }))
 
     await waitFor(() =>
       expect(invalidateSpy).toHaveBeenCalledWith(
         expect.objectContaining({ queryKey: ['documents'] })
       )
     )
+  })
+})
+
+describe('useAddDocumentFile', () => {
+  let queryClient
+
+  beforeEach(() => {
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    vi.clearAllMocks()
+  })
+
+  // Review B3 #422: the hook does NOT invalidate per settle — an N-file
+  // upload would refetch the whole list N times. The page's upload runner
+  // invalidates ONCE after the loop; this pins the hook's no-invalidate side.
+  it('adds a file and leaves cache invalidation to the caller (no per-settle refetch)', async () => {
+    addDocumentFile.mockResolvedValue({ document: DOC })
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    const file = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], 'belakang.jpg', {
+      type: 'image/jpeg',
+    })
+
+    const { result } = renderHook(() => useAddDocumentFile(), {
+      wrapper: createWrapper(queryClient),
+    })
+    await act(async () => result.current.mutate({ documentId: 'doc-1', file, label: 'Belakang' }))
+
+    expect(addDocumentFile).toHaveBeenCalledWith('doc-1', file, 'Belakang')
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(invalidateSpy).not.toHaveBeenCalled()
   })
 })
 
@@ -144,6 +182,32 @@ describe('useDeleteDocument', () => {
     await act(async () => result.current.mutate({ id: 'doc-1' }))
 
     expect(deleteDocument).toHaveBeenCalledWith('doc-1')
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ['documents'] })
+      )
+    )
+  })
+})
+
+describe('useDeleteDocumentFile', () => {
+  let queryClient
+
+  beforeEach(() => {
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    vi.clearAllMocks()
+  })
+
+  it('deletes one file off its document and invalidates the vault cache', async () => {
+    deleteDocumentFile.mockResolvedValue(null)
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+
+    const { result } = renderHook(() => useDeleteDocumentFile(), {
+      wrapper: createWrapper(queryClient),
+    })
+    await act(async () => result.current.mutate({ documentId: 'doc-1', fileId: 'file-1' }))
+
+    expect(deleteDocumentFile).toHaveBeenCalledWith('doc-1', 'file-1')
     await waitFor(() =>
       expect(invalidateSpy).toHaveBeenCalledWith(
         expect.objectContaining({ queryKey: ['documents'] })

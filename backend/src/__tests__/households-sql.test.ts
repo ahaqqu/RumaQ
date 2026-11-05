@@ -615,14 +615,20 @@ describe('targeted invite attach over real SQL (#397)', () => {
   it('attaches the redeemer to the profile-only row, preserving id and profile', async () => {
     const memberId = addProfileMember(sqlite, 'h1', 'Adik', '2025-03-02', '2026-11-01 00:00:00')
     // A vault document keyed by the member id (0022) — the thing the attach
-    // must not detach.
+    // must not detach. Free-text name + a document_files row (0025).
     sqlite
       .prepare(
-        `INSERT INTO documents
-           (id, household_id, member_id, category, file_name, mime_type, size_bytes, storage_key, sha256, uploaded_by)
-         VALUES ('doc-1', 'h1', ?, 'akta', 'akta.pdf', 'application/pdf', 1, 'documents/h1/doc-1', '${'a'.repeat(64)}', 'owner')`
+        `INSERT INTO documents (id, household_id, member_id, name, uploaded_by)
+         VALUES ('doc-1', 'h1', ?, 'Akta Lahir', 'owner')`
       )
       .run(memberId)
+    sqlite
+      .prepare(
+        `INSERT INTO document_files
+           (id, document_id, r2_key, file_name, size_bytes, content_type, label, sort_order, sha256, uploaded_by)
+         VALUES ('file-doc-1', 'doc-1', 'documents/h1/doc-1', 'akta.pdf', 1, 'application/pdf', NULL, 1, '${'a'.repeat(64)}', 'owner')`
+      )
+      .run()
 
     const invite = await createInvite(d1, 'h1', 'owner', 'test-enc-key', memberId)
     expect(invite).toMatchObject({ target_member_id: memberId, has_target: true })

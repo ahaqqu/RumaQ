@@ -244,7 +244,7 @@ Core entities:
 - `purchases` + `purchase_items` — receipt history; the substrate for all estimates.
 - `plans` + `plan_items` — AI-generated shopping trips.
 - `user_settings` — AI provider/key, motion preference, currency, and persona roles.
-- `documents` + `document_audit` — the household document vault (ahaqqu/RumaQ#388, migration 0022): per-household files optionally attached to a member (both modes — linked accounts and profile-only members from 0021), closed category set, sha256 + storage metadata, and a per-action audit trail that outlives the document it records.
+- `documents` + `document_files` + `document_audit` — the household document vault (ahaqqu/RumaQ#388, reworked by #422 / migration 0025): free-text document names, one document holding up to 20 files (each its own private R2 object with an optional label), files optionally attached to a member (both modes — linked accounts and profile-only members from 0021), and a per-action audit trail that outlives the document it records.
 - `ai_usage_events` — one row per completed AI call (provider, model, input/output/cached tokens, key source); auto-deleted after one year by the daily retention cron.
 
 ### Migrations
@@ -441,7 +441,7 @@ If usage grows, the first upgrade is Workers Paid ($5/mo) for higher request and
 - [x] AI API keys are encrypted at rest (AES-GCM) and only decrypted in the Worker.
 - [x] Google OAuth `state` and PKCE verifier prevent CSRF/replay.
 - [x] R2 objects are private; frontend receives receipt images through `GET /api/purchases/:id/receipt` (proxy stream). R2 signed URLs are out of current scope (open security item).
-- [x] Document vault bytes stream only through the household-scoped `GET /api/documents/{id}/content` (auth + `household_id` in the SQL predicate; foreign ids answer 404 with no existence leak). Uploads are capped at 10 MB (Content-Length pre-check + post-parse), magic-byte sniffed (declared-vs-actual mismatch = 415), and audited; no public or presigned URLs exist for documents.
+- [x] Document vault bytes stream only through the household-scoped, per-file `GET /api/documents/{id}/files/{fileId}/content` (#422 — a document holds up to 20 files; auth + `household_id` in the SQL predicate, and the file must belong to the named document; foreign ids answer 404 with no existence leak). Uploads are capped at 10 MB per file (Content-Length pre-check + post-parse), magic-byte sniffed (declared-vs-actual mismatch = 415), and audited; no public or presigned URLs exist for documents.
 - [x] D1 queries are parameterized; no string concatenation.
 - [x] Every D1 query that reads or writes household-scoped data filters by `household_id` or `user_id`.
 - [x] Same-origin app + API: no cross-origin API calls in production. CORS keeps localhost dev origins allowed and defaults to the canonical `rumaq.ahaqqu.com` origin (`PAGES_ORIGIN` overrides it); unknown origins are rejected.

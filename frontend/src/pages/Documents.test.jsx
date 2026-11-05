@@ -16,11 +16,18 @@ vi.mock('../lib/queries/me.js', () => ({
 }))
 
 vi.mock('../lib/queries/index.js', () => ({
+  DOCUMENTS_BASE_KEY: ['documents'],
+  documentsQueryKey: (filters = {}) => [
+    'documents',
+    { q: filters.q ?? null, memberId: filters.memberId ?? null },
+  ],
   useHouseholds: vi.fn(),
   useHouseholdMembers: vi.fn(),
   useDocuments: vi.fn(),
-  useUploadDocument: vi.fn(),
+  useCreateDocument: vi.fn(),
+  useAddDocumentFile: vi.fn(),
   useDeleteDocument: vi.fn(),
+  useDeleteDocumentFile: vi.fn(),
 }))
 
 vi.mock('../lib/api', () => ({
@@ -30,9 +37,36 @@ vi.mock('../lib/api', () => ({
       this.status = status
     }
   },
-  DOCUMENT_CATEGORIES: ['kartu_keluarga', 'ktp', 'kartu_anak', 'akta', 'paspor', 'bpjs', 'lainnya'],
   DOCUMENT_MAX_BYTES: 10 * 1024 * 1024,
+  DOCUMENT_MAX_FILES: 20,
+  DOCUMENT_NAME_MAX: 120,
   fetchDocumentContent: vi.fn(),
+  // The same signature table as the real lib/api sniff (review A4 #422): the
+  // page pre-sniffs picked files so a renamed .txt cannot 415 mid-loop.
+  sniffDocumentMime: vi.fn((bytes) => {
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+      return 'image/jpeg'
+    }
+    if (
+      bytes.length >= 8 &&
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47
+    ) {
+      return 'image/png'
+    }
+    if (
+      bytes.length >= 4 &&
+      bytes[0] === 0x25 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x44 &&
+      bytes[3] === 0x46
+    ) {
+      return 'application/pdf'
+    }
+    return null
+  }),
 }))
 
 import { useMe } from '../lib/queries/me.js'
@@ -40,10 +74,12 @@ import {
   useHouseholds,
   useHouseholdMembers,
   useDocuments,
-  useUploadDocument,
+  useCreateDocument,
+  useAddDocumentFile,
   useDeleteDocument,
+  useDeleteDocumentFile,
 } from '../lib/queries/index.js'
-import { fetchDocumentContent } from '../lib/api'
+import { fetchDocumentContent, DOCUMENT_MAX_FILES } from '../lib/api'
 
 function mutation(overrides = {}) {
   return { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, ...overrides }
@@ -86,31 +122,38 @@ const MEMBERS = {
   ],
 }
 
+const FILE = {
+  id: 'file-1',
+  document_id: 'doc-1',
+  file_name: 'depan.jpg',
+  content_type: 'image/jpeg',
+  size_bytes: 1024,
+  label: 'Depan',
+  sort_order: 1,
+  sha256: 'a'.repeat(64),
+  uploaded_by: 'u1',
+  uploaded_at: '2026-11-03 10:00:00',
+}
+
 const DOC = {
   id: 'doc-1',
   household_id: 'h1',
   member_id: 'm-toddler',
-  category: 'akta',
-  file_name: 'akta-adik.pdf',
-  mime_type: 'application/pdf',
-  size_bytes: 2048,
-  sha256: 'a'.repeat(64),
+  name: 'KTP Adik',
   uploaded_by: 'u1',
   created_at: '2026-11-03 10:00:00',
+  files: [FILE],
 }
 
 function createQueryClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
 }
 
-function renderDocuments() {
-  return render(
-    React.createElement(
-      QueryClientProvider,
-      { client: createQueryClient() },
-      React.createElement(Documents, null)
-    )
+function renderDocuments(client = createQueryClient()) {
+  const rendered = render(
+    React.createElement(QueryClientProvider, { client }, React.createElement(Documents, null))
   )
+  return { ...rendered, client }
 }
 
 function findButton(container, label) {
@@ -123,38 +166,59 @@ function findByAriaLabel(container, label) {
   return container.querySelector(`[aria-label="${label}"]`)
 }
 
-// Filter chips are real toggle buttons (aria-pressed, #404) — scoped to their
-// labelled group so the upload section and the filter section never blur.
-function findChipInGroup(container, groupLabel, chipLabel) {
-  const group = container.querySelector(`[role="group"][aria-label="${groupLabel}"]`)
-  if (!group) return null
-  return [...group.querySelectorAll('button[aria-pressed]')].find((chip) =>
-    chip.textContent.includes(chipLabel)
+function pickedFileNames(container) {
+  return [...container.querySelectorAll('[data-testid="picked-file"]')].map(
+    (el) => el.textContent.split(' · ')[0]
   )
 }
 
+function pickFiles(container, input, files) {
+  fireEvent.change(input, { target: { files } })
+}
+
+function jpegFile(name, size = 10) {
+  // Real JPEG magic bytes — the page pre-sniffs picked files (review A4
+  // #422), so fixtures must carry signatures the sniff recognizes.
+  const bytes = new Uint8Array(size)
+  bytes[0] = 0xff
+  bytes[1] = 0xd8
+  bytes[2] = 0xff
+  return new File([bytes], name, { type: 'image/jpeg' })
+}
+
 describe('Documents', () => {
-  let uploadMutation
+  let createMutation
+  let addFileMutation
   let deleteMutation
+  let deleteFileMutation
 
   beforeEach(() => {
     vi.clearAllMocks()
-    uploadMutation = mutation()
+    createMutation = mutation()
+    addFileMutation = mutation()
     deleteMutation = mutation()
+    deleteFileMutation = mutation()
     vi.mocked(useMe).mockReturnValue({ data: { user: { id: 'u1' } } })
     vi.mocked(useHouseholds).mockReturnValue({ data: HOUSEHOLDS, isLoading: false })
     vi.mocked(useHouseholdMembers).mockReturnValue({ data: MEMBERS, isLoading: false })
     vi.mocked(useDocuments).mockReturnValue({ data: { documents: [DOC] }, isLoading: false })
-    vi.mocked(useUploadDocument).mockReturnValue(uploadMutation)
+    vi.mocked(useCreateDocument).mockReturnValue(createMutation)
+    vi.mocked(useAddDocumentFile).mockReturnValue(addFileMutation)
     vi.mocked(useDeleteDocument).mockReturnValue(deleteMutation)
+    vi.mocked(useDeleteDocumentFile).mockReturnValue(deleteFileMutation)
     vi.mocked(fetchDocumentContent).mockResolvedValue(new Blob(['%PDF-1.7']))
   })
 
-  it('shows the vault identity card, the roster-backed member select (both modes), and the list', () => {
+  it('shows the vault identity card, the roster-backed member select (both modes), and the list with files + labels', () => {
     const { container } = renderDocuments()
     expect(container.textContent).toContain('documents.title')
     expect(container.textContent).toContain('documents.count')
-    expect(container.textContent).toContain('akta-adik.pdf')
+    // Free-text document name in the list; the file under it with its label.
+    expect(container.textContent).toContain('KTP Adik')
+    expect(container.textContent).toContain('depan.jpg')
+    expect(container.textContent).toContain('Depan')
+    // No preset category chips anywhere (owner directive #422).
+    expect(container.textContent).not.toContain('documents.categoryLabel')
     // The member select lists BOTH modes; the toddler is labelled no-account.
     const select = container.querySelector('select')
     const options = [...select.querySelectorAll('option')].map((o) => o.textContent)
@@ -163,86 +227,221 @@ describe('Documents', () => {
     expect(options.some((text) => text.includes('documents.noAccountShort'))).toBe(true)
   })
 
-  it('uploads through the picker + category chips, and the client-side pre-check blocks oversize files before any request', () => {
+  it('requires a name before upload — free text, no preset list (#422)', async () => {
     const { container } = renderDocuments()
     const input = container.querySelector('input[type="file"]')
+    pickFiles(container, input, [jpegFile('ktp.jpg')])
+    fireEvent.click(findButton(container, 'documents.uploadAction'))
+    expect(container.textContent).toContain('documents.errorNoName')
+    expect(createMutation.mutateAsync).not.toHaveBeenCalled()
+  })
 
-    // Oversize: 10 MB + 1 — rejected client-side, no mutate call.
+  it('keeps the upload action disabled until files are picked', async () => {
+    const { container } = renderDocuments()
+    const nameInput = container.querySelector('[data-testid="document-name"]')
+    fireEvent.change(nameInput, { target: { value: 'Kartu Keluarga' } })
+    const uploadButton = findButton(container, 'documents.uploadAction')
+    expect(uploadButton.disabled).toBe(true)
+    expect(createMutation.mutateAsync).not.toHaveBeenCalled()
+  })
+
+  it('blocks oversize files client-side before any request (10 MB cap)', async () => {
+    const { container } = renderDocuments()
+    const nameInput = container.querySelector('[data-testid="document-name"]')
+    fireEvent.change(nameInput, { target: { value: 'Scan besar' } })
     const big = new File([new Uint8Array(10 * 1024 * 1024 + 1).fill(0x00)], 'huge.jpg', {
       type: 'image/jpeg',
     })
-    fireEvent.change(input, { target: { files: [big] } })
-    expect(container.querySelector('[data-testid="picked-file"]').textContent).toContain('huge.jpg')
-    fireEvent.click(findChipInGroup(container, 'documents.categoryLabel', 'documents.category.ktp'))
+    pickFiles(container, container.querySelector('input[type="file"]'), [big])
     fireEvent.click(findButton(container, 'documents.uploadAction'))
-    expect(container.textContent).toContain('documents.errorTooLarge')
-    expect(uploadMutation.mutate).not.toHaveBeenCalled()
+    // The picked-batch validation is async (the sniff reads file bytes), so
+    // the banner lands a tick after the click.
+    await waitFor(() => expect(container.textContent).toContain('documents.errorTooLarge'))
+    expect(createMutation.mutateAsync).not.toHaveBeenCalled()
+  })
 
-    // A valid file + category reaches the mutation with the exact payload.
-    const small = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], 'ktp.jpg', {
+  it('rejects a picked batch whose bytes do not sniff as an allowed type, before any request (review A4 #422)', async () => {
+    const { container } = renderDocuments()
+    const nameInput = container.querySelector('[data-testid="document-name"]')
+    fireEvent.change(nameInput, { target: { value: 'Scan falso' } })
+    // A renamed .txt rides the OS picker past accept= — the sniff must stop
+    // the WHOLE batch up front, not mid-loop with a partial document stranded.
+    const fake = new File([new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f])], 'fake.jpg', {
       type: 'image/jpeg',
     })
-    fireEvent.change(input, { target: { files: [small] } })
+    pickFiles(container, container.querySelector('input[type="file"]'), [
+      jpegFile('depan.jpg'),
+      fake,
+    ])
     fireEvent.click(findButton(container, 'documents.uploadAction'))
-    expect(uploadMutation.mutate).toHaveBeenCalledTimes(1)
-    const [payload] = uploadMutation.mutate.mock.calls[0]
-    expect(payload.category).toBe('ktp')
-    expect(payload.file.name).toBe('ktp.jpg')
-
-    // Upload success surfaces the feedback line.
-    uploadMutation.mutate.mock.calls[0][1].onSuccess({
-      document: { file_name: 'ktp.jpg' },
-    })
-    return waitFor(() => expect(container.textContent).toContain('documents.uploaded'))
+    await waitFor(() => expect(container.textContent).toContain('documents.errorType'))
+    expect(createMutation.mutateAsync).not.toHaveBeenCalled()
+    expect(addFileMutation.mutateAsync).not.toHaveBeenCalled()
   })
 
-  it('requires a category before upload', () => {
+  it('rejects a declared-type mismatch up front too — PNG bytes named .jpg cannot 415 mid-loop (review delta D2 #422)', async () => {
     const { container } = renderDocuments()
-    const input = container.querySelector('input[type="file"]')
-    const small = new File([new Uint8Array([0xff, 0xd8])], 'ktp.jpg', { type: 'image/jpeg' })
-    fireEvent.change(input, { target: { files: [small] } })
+    const nameInput = container.querySelector('[data-testid="document-name"]')
+    fireEvent.change(nameInput, { target: { value: 'Scan salah' } })
+    // The bytes sniff fine as PNG, but the declared type says image/jpeg —
+    // exactly the mismatch the server 415s, so the pre-batch gate refuses it
+    // the same way (server stays the authority).
+    const bytes = new Uint8Array(10)
+    bytes[0] = 0x89
+    bytes[1] = 0x50
+    bytes[2] = 0x4e
+    bytes[3] = 0x47
+    bytes[4] = 0x0d
+    bytes[5] = 0x0a
+    bytes[6] = 0x1a
+    bytes[7] = 0x0a
+    pickFiles(container, container.querySelector('input[type="file"]'), [
+      new File([bytes], 'fake.jpg', { type: 'image/jpeg' }),
+    ])
     fireEvent.click(findButton(container, 'documents.uploadAction'))
-    expect(container.textContent).toContain('documents.errorNoCategory')
-    expect(uploadMutation.mutate).not.toHaveBeenCalled()
+    await waitFor(() => expect(container.textContent).toContain('documents.errorType'))
+    expect(createMutation.mutateAsync).not.toHaveBeenCalled()
+    expect(addFileMutation.mutateAsync).not.toHaveBeenCalled()
   })
 
-  it('attaches a document to a member via the upload select (memberId rides the payload)', () => {
-    const { container } = renderDocuments()
-    const input = container.querySelector('input[type="file"]')
-    const small = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'akta.pdf', {
-      type: 'application/pdf',
+  it('invalidates the bare vault base key so a FILTERED view also refreshes (review delta D1 #422)', async () => {
+    createMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-new' } })
+    addFileMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-new' } })
+    // Default gcTime: the seeded filtered entry must SURVIVE unobserved until
+    // the invalidation check (createQueryClient's gcTime: 0 would collect it
+    // before the upload even runs).
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries')
+    // The list the user is LOOKING at: a q-filtered view of the vault cache.
+    // documentsQueryKey()'s exact filter object would NOT match it (filter
+    // properties strict-equal), which is the staleness the delta called out.
+    const filteredKey = ['documents', { q: 'ktp', memberId: null }]
+    client.setQueryData(filteredKey, { documents: [DOC] })
+    const { container } = renderDocuments(client)
+
+    fireEvent.change(container.querySelector('[data-testid="document-search"]'), {
+      target: { value: 'ktp' },
     })
-    fireEvent.change(input, { target: { files: [small] } })
+    fireEvent.change(container.querySelector('[data-testid="document-name"]'), {
+      target: { value: 'KTP Bapak' },
+    })
+    pickFiles(container, container.querySelector('input[type="file"]'), [jpegFile('ktp.jpg')])
+    fireEvent.click(findButton(container, 'documents.uploadAction'))
+
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1))
+    // The single call is the bare prefix...
+    expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['documents'] }))
+    // ...and it actually REACHED the filtered view (was a no-op before the fix).
+    await waitFor(() => expect(client.getQueryState(filteredKey)?.isInvalidated).toBe(true))
+  })
+
+  it('creates with the first file, then rides the rest through add-file in pick order (labels included)', async () => {
+    createMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-new' } })
+    addFileMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-new' } })
+    const client = createQueryClient()
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries')
+    const { container } = renderDocuments(client)
+
+    const nameInput = container.querySelector('[data-testid="document-name"]')
+    fireEvent.change(nameInput, { target: { value: '  Buku Nika  ' } })
+    const input = container.querySelector('input[type="file"]')
+    pickFiles(container, input, [
+      jpegFile('page-1.jpg'),
+      jpegFile('page-2.jpg'),
+      jpegFile('page-3.jpg'),
+    ])
+
+    // Optional per-file labels ride their file (owner decision #422-1).
+    const labelInputs = [...container.querySelectorAll('[aria-label^="documents.labelAria"]')]
+    expect(labelInputs).toHaveLength(3)
+    fireEvent.change(labelInputs[0], { target: { value: 'Halaman depan' } })
+    fireEvent.change(labelInputs[2], { target: { value: 'Halaman 3' } })
+
+    fireEvent.click(findButton(container, 'documents.uploadAction'))
+
+    await waitFor(() => expect(createMutation.mutateAsync).toHaveBeenCalledTimes(1))
+    // The create takes the free-text name (trimmed) + the FIRST file.
+    expect(createMutation.mutateAsync.mock.calls[0][0]).toMatchObject({
+      name: 'Buku Nika',
+      label: 'Halaman depan',
+      memberId: undefined,
+    })
+    expect(createMutation.mutateAsync.mock.calls[0][0].file.name).toBe('page-1.jpg')
+
+    // The remaining files ride add-file sequentially, in pick order.
+    await waitFor(() => expect(addFileMutation.mutateAsync).toHaveBeenCalledTimes(2))
+    expect(addFileMutation.mutateAsync.mock.calls[0][0]).toMatchObject({
+      documentId: 'doc-new',
+      label: undefined,
+    })
+    expect(addFileMutation.mutateAsync.mock.calls[0][0].file.name).toBe('page-2.jpg')
+    expect(addFileMutation.mutateAsync.mock.calls[1][0]).toMatchObject({
+      documentId: 'doc-new',
+      label: 'Halaman 3',
+    })
+    expect(addFileMutation.mutateAsync.mock.calls[1][0].file.name).toBe('page-3.jpg')
+
+    // Success surfaces the feedback line with the document name.
+    await waitFor(() => expect(container.textContent).toContain('documents.uploaded'))
+    // The picked list clears.
+    expect(pickedFileNames(container)).toEqual([])
+
+    // ONE cache refresh per run (review B3 #422): the two settled add-file
+    // calls each carry the updated document, so the runner invalidates once
+    // after the loop instead of per settle (~N refetches for one upload).
+    // The BARE base key (review delta D1 #422) — prefix matching reaches
+    // every filtered view.
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1))
+    expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['documents'] }))
+  })
+
+  it('attaches a document to a member via the upload select (memberId rides the create payload)', async () => {
+    createMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-new' } })
+    const { container } = renderDocuments()
+    const nameInput = container.querySelector('[data-testid="document-name"]')
+    fireEvent.change(nameInput, { target: { value: 'Akta Adik' } })
+    pickFiles(container, container.querySelector('input[type="file"]'), [jpegFile('akta.jpg')])
     const select = container.querySelector('select')
     fireEvent.change(select, { target: { value: 'm-toddler' } })
-    fireEvent.click(
-      findChipInGroup(container, 'documents.categoryLabel', 'documents.category.akta')
-    )
     fireEvent.click(findButton(container, 'documents.uploadAction'))
-    expect(uploadMutation.mutate).toHaveBeenCalledWith(
-      expect.objectContaining({ category: 'akta', memberId: 'm-toddler' }),
-      expect.anything()
-    )
+    await waitFor(() => expect(createMutation.mutateAsync).toHaveBeenCalled())
+    expect(createMutation.mutateAsync.mock.calls[0][0]).toMatchObject({
+      name: 'Akta Adik',
+      memberId: 'm-toddler',
+    })
   })
 
-  it('filters the list by category chip and re-queries with the filter', () => {
+  it('searches by name: the search input rides the query key (no category filter anymore)', () => {
     const { container } = renderDocuments()
-    const chip = findChipInGroup(container, 'documents.filterCategory', 'documents.category.akta')
-    expect(chip.getAttribute('aria-pressed')).toBe('false')
+    const search = container.querySelector('[data-testid="document-search"]')
+    expect(search).toBeTruthy()
+    fireEvent.change(search, { target: { value: '  ktp  ' } })
+    const lastCall = vi.mocked(useDocuments).mock.calls.at(-1)
+    // Trimmed q + no memberId — the name search, not a category picklist.
+    expect(lastCall[0]).toMatchObject({ q: 'ktp', memberId: undefined })
+  })
+
+  it('filters the list by member chip and re-queries with the filter', () => {
+    const { container } = renderDocuments()
+    const chip = [...container.querySelectorAll('button[aria-pressed]')].find((b) =>
+      b.textContent.includes('Alice')
+    )
     fireEvent.click(chip)
     const lastCall = vi.mocked(useDocuments).mock.calls.at(-1)
-    expect(lastCall[0]).toMatchObject({ category: 'akta', memberId: undefined })
+    expect(lastCall[0]).toMatchObject({ memberId: 'm-linked', q: undefined })
   })
 
-  it('previews in-app through an authed inline fetch and revokes the object URL on close', async () => {
+  it('previews a file in-app through an authed per-file inline fetch and revokes the object URL on close', async () => {
     const { container } = renderDocuments()
-    const viewButton = findByAriaLabel(container, 'documents.view')
+    const viewButton = findByAriaLabel(container, 'documents.view: depan.jpg')
     fireEvent.click(viewButton)
-    await waitFor(() => expect(fetchDocumentContent).toHaveBeenCalledWith('doc-1', 'inline'))
+    await waitFor(() =>
+      expect(fetchDocumentContent).toHaveBeenCalledWith('doc-1', 'file-1', 'inline')
+    )
     await waitFor(() => expect(createObjectURL).toHaveBeenCalled())
-    // The dialog is up with the viewer busy/loaded state.
+    // The dialog is up with the viewer busy/loaded state, labelled by the file.
     const dialog = container.querySelector('[role="dialog"]')
-    expect(dialog).toBeTruthy()
+    expect(dialog.getAttribute('aria-label')).toBe('depan.jpg')
     fireEvent.click(findByAriaLabel(container, 'documents.closeViewer'))
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-url')
     expect(container.querySelector('[role="dialog"]')).toBeNull()
@@ -250,7 +449,7 @@ describe('Documents', () => {
 
   it('manages the viewer dialog focus: enters on open, closes on Escape, restores on close (review B2)', async () => {
     const { container } = renderDocuments()
-    const viewButton = findByAriaLabel(container, 'documents.view')
+    const viewButton = findByAriaLabel(container, 'documents.view: depan.jpg')
     // jsdom does not move focus on click; a real browser has the button
     // focused when the dialog opens.
     viewButton.focus()
@@ -268,20 +467,79 @@ describe('Documents', () => {
     expect(document.activeElement).toBe(viewButton)
   })
 
-  it('downloads with the attachment disposition (audited as a download server-side)', async () => {
+  it('downloads with the attachment disposition through the per-file endpoint (audited server-side)', async () => {
     const { container } = renderDocuments()
-    fireEvent.click(findByAriaLabel(container, 'documents.download'))
-    await waitFor(() => expect(fetchDocumentContent).toHaveBeenCalledWith('doc-1', 'attachment'))
+    fireEvent.click(findByAriaLabel(container, 'documents.download: depan.jpg'))
+    await waitFor(() =>
+      expect(fetchDocumentContent).toHaveBeenCalledWith('doc-1', 'file-1', 'attachment')
+    )
   })
 
-  it('deletes with a two-step inline confirm (no window.prompt)', () => {
+  it('deletes ONE file with a two-step inline confirm (no window.prompt)', async () => {
     const { container } = renderDocuments()
-    fireEvent.click(findByAriaLabel(container, 'documents.delete'))
+    fireEvent.click(findByAriaLabel(container, 'documents.deleteFile: depan.jpg'))
     // First click only reveals the confirm — nothing deleted yet.
-    expect(deleteMutation.mutate).not.toHaveBeenCalled()
+    expect(deleteFileMutation.mutate).not.toHaveBeenCalled()
     expect(container.textContent).toContain('documents.deleteConfirmYes')
     fireEvent.click(findButton(container, 'documents.deleteConfirmYes'))
+    expect(deleteFileMutation.mutate).toHaveBeenCalledWith(
+      { documentId: 'doc-1', fileId: 'file-1' },
+      expect.anything()
+    )
+  })
+
+  it('deletes the whole document with a two-step inline confirm', () => {
+    const { container } = renderDocuments()
+    fireEvent.click(findByAriaLabel(container, 'documents.delete: KTP Adik'))
+    expect(deleteMutation.mutate).not.toHaveBeenCalled()
+    fireEvent.click(findButton(container, 'documents.deleteConfirmYes'))
     expect(deleteMutation.mutate).toHaveBeenCalledWith({ id: 'doc-1' }, expect.anything())
+  })
+
+  it('adds files to an existing document sequentially, and refuses going past the 20-file cap client-side', async () => {
+    addFileMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-1' } })
+    const { container } = renderDocuments()
+    fireEvent.click(
+      findByAriaLabel(container, 'documents.add files') ??
+        findButton(container, 'documents.addFiles')
+    )
+
+    // The add-files form replaces the row.
+    expect(container.textContent).toContain('documents.addFilesTitle')
+    const addInput = [...container.querySelectorAll('input[type="file"]')][1]
+    pickFiles(container, addInput, [jpegFile('belakang.jpg')])
+    const labelInput = container.querySelector('[aria-label^="documents.labelAria"]')
+    fireEvent.change(labelInput, { target: { value: 'Belakang' } })
+    fireEvent.click(findButton(container, 'documents.addFilesAction'))
+
+    await waitFor(() => expect(addFileMutation.mutateAsync).toHaveBeenCalledTimes(1))
+    expect(addFileMutation.mutateAsync.mock.calls[0][0]).toMatchObject({
+      documentId: 'doc-1',
+      label: 'Belakang',
+    })
+    expect(addFileMutation.mutateAsync.mock.calls[0][0].file.name).toBe('belakang.jpg')
+    await waitFor(() => expect(container.textContent).toContain('documents.filesAdded'))
+
+    // A full document (20 files) refuses more — client pre-check, no call.
+    vi.mocked(useDocuments).mockReturnValue({
+      data: {
+        documents: [
+          {
+            ...DOC,
+            files: Array.from({ length: DOCUMENT_MAX_FILES }, (_, i) => ({
+              ...FILE,
+              id: `f-${i}`,
+            })),
+          },
+        ],
+      },
+      isLoading: false,
+    })
+    const { container: full } = renderDocuments()
+    const addButtons = [...full.querySelectorAll('button')].filter((b) =>
+      b.textContent.includes('documents.addFiles')
+    )
+    expect(addButtons[0]?.disabled).toBe(true)
   })
 
   it('shows the empty state when the vault has no documents', () => {
