@@ -1,0 +1,3 @@
+# vp check is whole-tree (not staged-only) — deliberate, matches CI exactly; commits are blocked if ANY file in the tree fails style.
+bun run style
+git add -u
