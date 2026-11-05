@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vite-plus/test'
 import { apiApp } from '../apps/api.js'
 import { gateway } from '../gateway.js'
 import { createMockEnv } from './support/env.js'
-import { utcIsoDate } from '../lib/documents.js'
+import { householdIsoDate } from '../lib/document-expiry.js'
 
 describe('apiApp (cached routes)', () => {
   it('/api/health returns ok with public cache headers', async () => {
@@ -179,7 +179,7 @@ describe('worker scheduled handler (1-year AI usage retention, #353)', () => {
           id: 'doc-1',
           household_id: 'h1',
           name: 'KTP Bapak',
-          expires_on: utcIsoDate(new Date()),
+          expires_on: householdIsoDate(new Date()),
           remind_days_before: 30,
         },
       ],

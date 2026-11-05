@@ -4,7 +4,7 @@ import { apiApp } from './apps/api.js'
 import { householdsApp } from './apps/households.js'
 import { documentsApp } from './apps/documents.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
-import { logDueDocumentReminders } from './lib/documents.js'
+import { logDueDocumentReminders } from './lib/document-expiry.js'
 
 const AUTH_ROUTES = new Set([
   '/api/auth/login',

@@ -34,9 +34,13 @@ import { propsAuthMiddleware } from '../auth.js'
 import { ipRateLimitMiddleware, isRateLimited } from '../lib/rate-limit.js'
 import { createR2StorageAdapter } from '../lib/storage.js'
 import {
-  DOCUMENT_MAX_BYTES,
   REMIND_DAYS_MAX,
   REMIND_DAYS_MIN,
+  isValidExpiryDate,
+  resolveExpiryUpdate,
+} from '../lib/document-expiry.js'
+import {
+  DOCUMENT_MAX_BYTES,
   DocumentForbiddenError,
   DocumentNotFoundError,
   DocumentTooLargeError,
@@ -53,10 +57,8 @@ import {
   getDocumentRow,
   getDocumentWithFiles,
   isHouseholdMember,
-  isValidExpiryDate,
   listDocuments,
   recordDocumentAccess,
-  resolveExpiryUpdate,
   sanitizeDocumentLabel,
   sanitizeDocumentName,
   sanitizeFileName,
@@ -358,7 +360,7 @@ documentsApp.get(
   '/api/documents',
   describeRoute({
     description:
-      'Lists the active household’s documents, newest first, each with its files in upload order. Optional filters: q (case-insensitive contains-search on the free-text document name — the #422 replacement for the category filter), memberId (both member modes — linked accounts and profile-only members), expiring_within (#426: N days, 1-365 — documents whose expiry lands within the next N days, already-expired included; orders those results soonest-expiry-first). Every item carries expires_on, remind_days_before and the COMPUTED days_until_expiry (whole days from today, UTC, negative = expired) — never stored.',
+      'Lists the active household’s documents, newest first, each with its files in upload order. Optional filters: q (case-insensitive contains-search on the free-text document name — the #422 replacement for the category filter), memberId (both member modes — linked accounts and profile-only members), expiring_within (#426: N days, 1-365 — documents whose expiry lands within the next N days, already-expired included; orders those results soonest-expiry-first). Every item carries expires_on, remind_days_before and the COMPUTED days_until_expiry (whole days from the household calendar, pinned at UTC+7/WIB — the Indonesia-first audience; negative = expired) — never stored.',
     security: [{ cookieAuth: [] }],
     parameters: [
       {

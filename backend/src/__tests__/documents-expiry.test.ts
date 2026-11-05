@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vite-plus/test'
 import { documentsApp } from '../apps/documents.js'
 import { resetRateLimit } from '../lib/rate-limit.js'
-import { daysUntil, utcIsoDate } from '../lib/documents.js'
+import { daysUntil, householdIsoDate } from '../lib/document-expiry.js'
 import {
   createDocumentsHarness,
   createEnv,
@@ -115,16 +115,22 @@ describe('documents routes — expiry metadata (#426)', () => {
     expect(typeof body.document.days_until_expiry).toBe('number')
     expect(JSON.stringify(body.document)).not.toContain('"r2_key"')
 
-    // One batch: the 'update' audit row + the UPDATE, whose WHERE carries the
-    // household predicate (same no-existence-leak shape as every statement).
+    // One batch, GUARDED (V2-A1): the UPDATE first, then the 'update' audit
+    // record riding an INSERT..SELECT gated on the row the UPDATE just
+    // touched — a concurrent delete can never leave a spurious audit record
+    // behind. Both statements carry the household predicate.
     const batched = db.log.filter(
       (e) => /INSERT INTO document_audit/.test(e.sql) || /UPDATE documents/.test(e.sql)
     )
     expect(batched).toHaveLength(2)
-    expect(batched[0]?.params[4]).toBe('update')
-    const update = batched[1]
+    const update = batched[0]
     expect(update?.sql).toContain('WHERE id = ? AND household_id = ?')
     expect(update?.params).toEqual(['2027-05-20', 90, 'doc-1', 'h1'])
+    const audit = batched[1]
+    expect(audit?.sql).toContain(
+      "SELECT ?, ?, ?, ?, 'update', NULL WHERE EXISTS (SELECT 1 FROM documents WHERE id = ? AND household_id = ?)"
+    )
+    expect(audit?.params).toEqual([expect.any(String), 'doc-1', 'h1', 'u1', 'doc-1', 'h1'])
   })
 
   it('applies the 30-day app default when an expiry is set without a window (no stored column default)', async () => {
@@ -310,7 +316,9 @@ describe('documents routes — expiry metadata (#426)', () => {
       env
     )
     const body = (await res.json()) as { document: WithFiles }
-    expect(body.document.days_until_expiry).toBe(daysUntil('2030-01-01', utcIsoDate(new Date())))
+    expect(body.document.days_until_expiry).toBe(
+      daysUntil('2030-01-01', householdIsoDate(new Date()))
+    )
     expect(body.document.days_until_expiry).toBeGreaterThan(0)
   })
 })
