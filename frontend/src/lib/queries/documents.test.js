@@ -8,6 +8,7 @@ import {
   useAddDocumentFile,
   useDeleteDocument,
   useDeleteDocumentFile,
+  useUpdateDocumentExpiry,
   documentsQueryKey,
 } from './documents.js'
 import {
@@ -16,6 +17,7 @@ import {
   addDocumentFile,
   deleteDocument,
   deleteDocumentFile,
+  updateDocumentExpiry,
 } from '../api'
 
 vi.mock('../api', () => ({
@@ -24,6 +26,7 @@ vi.mock('../api', () => ({
   addDocumentFile: vi.fn(),
   deleteDocument: vi.fn(),
   deleteDocumentFile: vi.fn(),
+  updateDocumentExpiry: vi.fn(),
 }))
 
 function createWrapper(queryClient) {
@@ -69,10 +72,38 @@ describe('useDocuments', () => {
       initialProps: { filters: { q: 'ktp' } },
     })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(getDocuments).toHaveBeenCalledWith({ q: 'ktp', memberId: undefined }, expect.anything())
-    expect(documentsQueryKey({ q: 'ktp' })).toEqual(['documents', { q: 'ktp', memberId: null }])
+    expect(getDocuments).toHaveBeenCalledWith(
+      { q: 'ktp', memberId: undefined, expiringWithin: undefined },
+      expect.anything()
+    )
+    expect(documentsQueryKey({ q: 'ktp' })).toEqual([
+      'documents',
+      { q: 'ktp', memberId: null, expiringWithin: null },
+    ])
     expect(documentsQueryKey({ q: 'ktp' })).not.toEqual(documentsQueryKey({ q: 'akta' }))
     expect(documentsQueryKey({ memberId: 'm-1' })).not.toEqual(documentsQueryKey({ q: 'ktp' }))
+  })
+
+  it('keys and fetches per expiring_within window — a distinct filter dimension (#426)', async () => {
+    getDocuments.mockResolvedValue({ documents: [] })
+    const { result } = renderHook(({ filters }) => useDocuments(filters), {
+      wrapper: createWrapper(queryClient),
+      initialProps: { filters: { expiringWithin: 30 } },
+    })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    // The window rides the query as the snake_case param the API takes.
+    expect(getDocuments).toHaveBeenCalledWith(
+      { q: undefined, memberId: undefined, expiringWithin: 30 },
+      expect.anything()
+    )
+    expect(documentsQueryKey({ expiringWithin: 30 })).toEqual([
+      'documents',
+      { q: null, memberId: null, expiringWithin: 30 },
+    ])
+    expect(documentsQueryKey({ expiringWithin: 30 })).not.toEqual(
+      documentsQueryKey({ expiringWithin: 7 })
+    )
+    expect(documentsQueryKey({ expiringWithin: 30 })).not.toEqual(documentsQueryKey({}))
   })
 })
 
@@ -208,6 +239,57 @@ describe('useDeleteDocumentFile', () => {
     await act(async () => result.current.mutate({ documentId: 'doc-1', fileId: 'file-1' }))
 
     expect(deleteDocumentFile).toHaveBeenCalledWith('doc-1', 'file-1')
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ['documents'] })
+      )
+    )
+  })
+})
+
+describe('useUpdateDocumentExpiry', () => {
+  let queryClient
+
+  beforeEach(() => {
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    vi.clearAllMocks()
+  })
+
+  it('sends the expiry payload for its document and invalidates the vault cache', async () => {
+    updateDocumentExpiry.mockResolvedValue({ document: DOC })
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+
+    const { result } = renderHook(() => useUpdateDocumentExpiry(), {
+      wrapper: createWrapper(queryClient),
+    })
+    await act(async () =>
+      result.current.mutate({
+        id: 'doc-1',
+        payload: { expires_on: '2027-01-01', remind_days_before: 14 },
+      })
+    )
+
+    expect(updateDocumentExpiry).toHaveBeenCalledWith('doc-1', {
+      expires_on: '2027-01-01',
+      remind_days_before: 14,
+    })
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ['documents'] })
+      )
+    )
+  })
+
+  it('sends the clearing payload (expires_on null) and still invalidates on settle', async () => {
+    updateDocumentExpiry.mockResolvedValue({ document: DOC })
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+
+    const { result } = renderHook(() => useUpdateDocumentExpiry(), {
+      wrapper: createWrapper(queryClient),
+    })
+    await act(async () => result.current.mutate({ id: 'doc-1', payload: { expires_on: null } }))
+
+    expect(updateDocumentExpiry).toHaveBeenCalledWith('doc-1', { expires_on: null })
     await waitFor(() =>
       expect(invalidateSpy).toHaveBeenCalledWith(
         expect.objectContaining({ queryKey: ['documents'] })

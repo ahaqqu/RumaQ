@@ -5,13 +5,14 @@ import {
   addDocumentFile,
   deleteDocument,
   deleteDocumentFile,
+  updateDocumentExpiry,
 } from '../api'
 
 // The document vault (ahaqqu/RumaQ#422 rework) — server-state for the
-// household-scoped document list. The filter pair (q = free-text name search,
-// memberId) rides in the query key, so changing either re-fetches against the
-// scoped endpoint (server-side filtering — the list stays honest for large
-// vaults).
+// household-scoped document list. The filter trio (q = free-text name search,
+// memberId, expiringWithin = the #426 expiry window) rides in the query key,
+// so changing any re-fetches against the scoped endpoint (server-side
+// filtering — the list stays honest for large vaults).
 
 const DOCUMENTS_KEY = ['documents']
 
@@ -23,15 +24,18 @@ const DOCUMENTS_KEY = ['documents']
 export const DOCUMENTS_BASE_KEY = DOCUMENTS_KEY
 
 export function documentsQueryKey(filters = {}) {
-  const { q, memberId } = filters
-  return [DOCUMENTS_KEY[0], { q: q ?? null, memberId: memberId ?? null }]
+  const { q, memberId, expiringWithin } = filters
+  return [
+    DOCUMENTS_KEY[0],
+    { q: q ?? null, memberId: memberId ?? null, expiringWithin: expiringWithin ?? null },
+  ]
 }
 
 export function useDocuments(filters = {}) {
-  const { q, memberId } = filters
+  const { q, memberId, expiringWithin } = filters
   return useQuery({
-    queryKey: documentsQueryKey({ q, memberId }),
-    queryFn: ({ signal }) => getDocuments({ q, memberId }, signal),
+    queryKey: documentsQueryKey({ q, memberId, expiringWithin }),
+    queryFn: ({ signal }) => getDocuments({ q, memberId, expiringWithin }, signal),
     staleTime: 1000 * 30,
   })
 }
@@ -80,6 +84,19 @@ export function useDeleteDocumentFile() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ documentId, fileId }) => deleteDocumentFile(documentId, fileId),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: DOCUMENTS_KEY })
+    },
+  })
+}
+
+// Expiry metadata update (#426). Same whole-cache invalidation: the edited
+// document may be visible under several filter views (and the computed
+// days_until_expiry changes for every one of them).
+export function useUpdateDocumentExpiry() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, payload }) => updateDocumentExpiry(id, payload),
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: DOCUMENTS_KEY })
     },

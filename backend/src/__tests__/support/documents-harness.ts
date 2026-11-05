@@ -162,7 +162,9 @@ export const COUNT_ROUTE = (count: number): [RegExp, (params: unknown[]) => Row 
 
 export function joinRowsFromLog(doc: Row, files: Row[]): Row[] {
   // The projection aliases d.id AS document_id — shape the fake rows the way
-  // the real SQL hands them to the lib's grouping.
+  // the real SQL hands them to the lib's grouping. expires_on/remind_days_before
+  // ride the projection since #426 (days_until_expiry is computed by the lib,
+  // never stored, so it is NOT part of the raw row shape).
   const base = {
     document_id: doc.id,
     household_id: doc.household_id,
@@ -170,6 +172,8 @@ export function joinRowsFromLog(doc: Row, files: Row[]): Row[] {
     name: doc.name,
     uploaded_by: doc.uploaded_by,
     created_at: doc.created_at,
+    expires_on: doc.expires_on ?? null,
+    remind_days_before: doc.remind_days_before ?? null,
   }
   if (files.length === 0) {
     return [{ ...base, file_id: null }]
@@ -215,6 +219,8 @@ export function DOC_ROW(overrides: Row = {}): Row {
     name: 'Akta Lahir Adik',
     uploaded_by: 'u1',
     created_at: '2026-11-04 00:00:00',
+    expires_on: null,
+    remind_days_before: null,
     ...overrides,
   }
 }

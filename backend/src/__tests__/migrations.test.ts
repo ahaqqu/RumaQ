@@ -1188,3 +1188,195 @@ describe('migration 0025: document names + multi-file (#422)', () => {
     expect(audit).not.toMatch(/SCAN|TEMP B-TREE/i)
   })
 })
+
+// Expiry & renewal reminders (ahaqqu/RumaQ#426): two nullable metadata
+// columns on documents, an expiry-listing index, and the widened audit
+// CHECK ('update'). The interesting properties: pure additivity (no
+// backfill — expiry starts empty everywhere), the app-level default choice
+// (no column DEFAULT: the default is conditional on expires_on being set),
+// and that the audit rebuild preserves every row verbatim.
+describe('migration 0026: document expiry metadata (#426)', () => {
+  it('adds the nullable columns on top of the pre-0026 schema; old rows stay null', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0026')
+    )
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    const insertDoc = db.prepare(
+      `INSERT INTO documents (id, household_id, member_id, name, uploaded_by)
+       VALUES (?, 'h1', NULL, 'KTP Bapak', 'u1')`
+    )
+    insertDoc.run('doc-1')
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0026_document_expiry_reminders.sql'), 'utf8'))
+
+    // Pre-#426 rows survive with no expiry — expiry is opt-in metadata.
+    const old = db.prepare('SELECT * FROM documents WHERE id = ?').get('doc-1')
+    expect(old).toMatchObject({ id: 'doc-1', expires_on: null, remind_days_before: null })
+
+    // New rows land at NULL too — the app (PATCH) is the only writer and
+    // owns the conditional 30-day default; the column carries no DEFAULT.
+    insertDoc.run('doc-2')
+    const fresh = db.prepare('SELECT expires_on, remind_days_before FROM documents').all()
+    expect(fresh.every((r: Record<string, unknown>) => r.expires_on === null)).toBe(true)
+    expect(fresh.every((r: Record<string, unknown>) => r.remind_days_before === null)).toBe(true)
+  })
+
+  it('carries the expiry metadata values and the audit vocabulary forward (rebuild copies rows verbatim)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0026')
+    )
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO documents (id, household_id, member_id, name, uploaded_by)
+       VALUES ('doc-1', 'h1', NULL, 'Paspor', 'u1')`
+    ).run()
+    const insertAuditSql = `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action, document_file_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    db.prepare(insertAuditSql).run(
+      'aud-1',
+      'doc-1',
+      'h1',
+      'u1',
+      'upload',
+      null,
+      '2026-11-01 00:00:00'
+    )
+    db.prepare(insertAuditSql).run(
+      'aud-2',
+      'doc-1',
+      'h1',
+      'u1',
+      'file_add',
+      'f-1',
+      '2026-11-02 00:00:00'
+    )
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0026_document_expiry_reminders.sql'), 'utf8'))
+
+    // The expiry values are representable — ISO date text + integer window.
+    db.prepare(`UPDATE documents SET expires_on = ?, remind_days_before = ? WHERE id = ?`).run(
+      '2027-05-20',
+      60,
+      'doc-1'
+    )
+    expect(
+      db.prepare('SELECT expires_on, remind_days_before FROM documents WHERE id = ?').get('doc-1')
+    ).toMatchObject({
+      expires_on: '2027-05-20',
+      remind_days_before: 60,
+    })
+
+    // Every pre-0026 audit row survived the rebuild with its exact shape.
+    const audit = db.prepare('SELECT * FROM document_audit ORDER BY id').all()
+    expect(audit).toHaveLength(2)
+    expect(audit[0]).toMatchObject({
+      id: 'aud-1',
+      action: 'upload',
+      document_file_id: null,
+      created_at: '2026-11-01 00:00:00',
+    })
+    expect(audit[1]).toMatchObject({ id: 'aud-2', action: 'file_add', document_file_id: 'f-1' })
+
+    // The widened CHECK accepts 'update' and still rejects unknown actions.
+    // Fresh statements: the rebuild dropped and recreated the table.
+    expect(() =>
+      db
+        .prepare(insertAuditSql)
+        .run('aud-3', 'doc-1', 'h1', 'u1', 'update', null, '2026-11-03 00:00:00')
+    ).not.toThrow()
+    expect(() =>
+      db
+        .prepare(insertAuditSql)
+        .run('aud-bad', 'doc-1', 'h1', 'u1', 'share', null, '2026-11-04 00:00:00')
+    ).toThrow()
+  })
+
+  it('keeps the expiring_within filter on an indexed seek (no scan), with and without the files join', () => {
+    // The claim is deliberately scoped to what the plan proves (V2-B4): the
+    // household scope + expiry window bound is index-SERVED by
+    // (household_id, expires_on) and never degrades to a table SCAN. The
+    // shipped statement adds the document_files LEFT JOIN and the
+    // created_at/id/sort_order tiebreaker terms, whose sort takes a bounded
+    // per-household TEMP B-TREE — unavoidable once the join rides along (the
+    // same simplification the 0022/0025 listing proofs make), so no
+    // "no TEMP B-TREE" claim is made here. The second plan asserts the seek
+    // survives the real join shape.
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const filterPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT id FROM documents
+          WHERE household_id = ? AND expires_on IS NOT NULL AND expires_on <= ?
+          ORDER BY expires_on ASC`
+      )
+      .all('h1', '2026-12-31')
+    const filterDetail = filterPlan
+      .map((r: Record<string, unknown>) => String(r.detail))
+      .join(' | ')
+    expect(filterDetail).toContain('idx_documents_household_expiry')
+    expect(filterDetail).not.toMatch(/SCAN/i)
+
+    const joinPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT d.id AS document_id, d.household_id, d.member_id,
+           d.name, d.uploaded_by, d.created_at, d.expires_on, d.remind_days_before,
+           f.id AS file_id, f.file_name, f.size_bytes, f.content_type,
+           f.label, f.sort_order, f.sha256 AS file_sha256,
+           f.uploaded_by AS file_uploaded_by, f.uploaded_at
+         FROM documents d
+         LEFT JOIN document_files f ON f.document_id = d.id
+         WHERE d.household_id = ? AND d.expires_on IS NOT NULL AND d.expires_on <= ?
+         ORDER BY d.expires_on ASC, d.created_at DESC, d.id DESC, f.sort_order ASC, f.id ASC`
+      )
+      .all('h1', '2026-12-31')
+    const joinDetail = joinPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(joinDetail).toContain('idx_documents_household_expiry')
+    expect(joinDetail).not.toMatch(/SCAN documents/i)
+    // Pinned, not hidden: the shipped plan takes the bounded tiebreaker sort —
+    // the assertion says so explicitly so a future "silent" change to the
+    // sort shape cannot go unnoticed in either direction.
+    expect(joinDetail).toContain('USE TEMP B-TREE FOR LAST 4 TERMS OF ORDER BY')
+    expect(joinDetail).toContain('SEARCH f USING INDEX idx_document_files_document')
+  })
+
+  it('keeps the full chain green on a fresh database (additive; default listing untouched)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(documents)').all()
+    const names = columns.map((c: Record<string, unknown>) => c.name)
+    expect(names).toEqual([
+      'id',
+      'household_id',
+      'member_id',
+      'name',
+      'uploaded_by',
+      'created_at',
+      'expires_on',
+      'remind_days_before',
+    ])
+
+    // The old listing index still exists for the newest-first default order.
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT id FROM documents
+          WHERE household_id = ? ORDER BY created_at DESC, id DESC`
+      )
+      .all('h1')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(detail).toContain('idx_documents_household')
+    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+})

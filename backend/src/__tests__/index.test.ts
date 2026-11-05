@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vite-plus/test'
 import { apiApp } from '../apps/api.js'
 import { gateway } from '../gateway.js'
 import { createMockEnv } from './support/env.js'
+import { householdIsoDate } from '../lib/document-expiry.js'
 
 describe('apiApp (cached routes)', () => {
   it('/api/health returns ok with public cache headers', async () => {
@@ -147,6 +148,7 @@ describe('worker scheduled handler (1-year AI usage retention, #353)', () => {
     env.DB.prepare = vi.fn().mockReturnThis()
     env.DB.bind = vi.fn().mockReturnThis()
     ;(env.DB as unknown as { run: unknown }).run = vi.fn().mockResolvedValue(undefined)
+    ;(env.DB as unknown as { all: unknown }).all = vi.fn().mockResolvedValue({ results: [] })
     const waitUntil = vi.fn()
     const ctx = { waitUntil } as unknown as ExecutionContext
 
@@ -156,8 +158,53 @@ describe('worker scheduled handler (1-year AI usage retention, #353)', () => {
       ctx
     )
 
-    expect(waitUntil).toHaveBeenCalledOnce()
+    expect(waitUntil).toHaveBeenCalledTimes(2)
     expect(env.DB.prepare).toHaveBeenCalledWith('DELETE FROM ai_usage_events WHERE ts < ?')
     expect(env.DB.bind).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/))
+  })
+
+  it('piggybacks the document expiry reminder sweep on the same tick (#426)', async () => {
+    const env = createMockEnv()
+    env.DB.prepare = vi.fn().mockReturnThis()
+    env.DB.bind = vi.fn().mockReturnThis()
+    ;(env.DB as unknown as { run: unknown }).run = vi.fn().mockResolvedValue(undefined)
+    // The due-set pass reads the expiry-bearing rows (SELECT ... WHERE
+    // expires_on IS NOT NULL) and logs a summary only when the set is
+    // non-empty — v1 renders in-app, so the sweep's artifact is the log line.
+    // The fixture expiry is TODAY (distance 0, inside any window), so the
+    // due-ness holds against the real clock whatever day it runs.
+    const allSpy = vi.fn().mockResolvedValue({
+      results: [
+        {
+          id: 'doc-1',
+          household_id: 'h1',
+          name: 'KTP Bapak',
+          expires_on: householdIsoDate(new Date()),
+          remind_days_before: 30,
+        },
+      ],
+    })
+    ;(env.DB as unknown as { all: unknown }).all = allSpy
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const waitUntil = vi.fn()
+    const ctx = { waitUntil } as unknown as ExecutionContext
+
+    await gateway.scheduled(
+      {} as ScheduledController,
+      env as unknown as Parameters<typeof gateway.scheduled>[1],
+      ctx
+    )
+
+    expect(waitUntil).toHaveBeenCalledTimes(2)
+    expect(env.DB.prepare).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE expires_on IS NOT NULL')
+    )
+    // Let the waitUntil promises settle, then assert the due-set report ran.
+    const tasks = waitUntil.mock.calls.map((call) => call[0]) as Promise<unknown>[]
+    await Promise.all(tasks)
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('renewal reminders: 1 document(s) due across 1 household(s)')
+    )
+    logSpy.mockRestore()
   })
 })

@@ -4,6 +4,7 @@ import { apiApp } from './apps/api.js'
 import { householdsApp } from './apps/households.js'
 import { documentsApp } from './apps/documents.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
+import { logDueDocumentReminders } from './lib/document-expiry.js'
 
 const AUTH_ROUTES = new Set([
   '/api/auth/login',
@@ -93,12 +94,15 @@ export const gateway = {
   },
 
   // Daily cron (triggers.scheduled in cloudflare.config.ts): usage records
-  // are deleted after one year (issue #353).
+  // are deleted after one year (issue #353), and the document expiry sweep
+  // (#426) computes + logs the per-household due set — v1 renders in-app only
+  // (no new notification channel); v2 dispatch rides this same sweep.
   async scheduled(
     _controller: ScheduledController,
     env: Env['Bindings'],
     ctx: ExecutionContext
   ): Promise<void> {
     ctx.waitUntil(deleteExpiredAiUsageEvents(env))
+    ctx.waitUntil(logDueDocumentReminders(env.DB))
   },
 }

@@ -13,6 +13,7 @@
 import { sha256HexBytes } from './crypto.js'
 import { buildDocumentFileKey, isDocumentKey, type StorageAdapter } from './storage.js'
 import { getMembership } from './households.js'
+import { daysUntil, householdIsoDate } from './document-expiry.js'
 
 export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
 
@@ -46,7 +47,7 @@ export function ensureVaultKey(storageKey: string): void {
   }
 }
 
-/** Audit actions (#422 vocabulary): document-level + file-scoped records. */
+/** Audit actions (#422 vocabulary, widened by #426): document-level + file-scoped records. */
 export type DocumentAction =
   | 'upload' // document create (first file rides in the same batch)
   | 'view' // inline byte stream, per file
@@ -54,6 +55,7 @@ export type DocumentAction =
   | 'delete' // document delete (all files cascade)
   | 'file_add' // file added to an existing document
   | 'file_delete' // single file removed
+  | 'update' // metadata edit (the #426 expiry PATCH)
 
 export type DocumentRow = {
   id: string
@@ -62,6 +64,12 @@ export type DocumentRow = {
   name: string
   uploaded_by: string
   created_at: string
+  // Expiry metadata (#426): ISO YYYY-MM-DD text (0026 — SQLite has no native
+  // DATE), null until someone sets it. remind_days_before is non-null
+  // whenever expires_on is (app-maintained invariant); NULL is read as the
+  // 30-day default.
+  expires_on: string | null
+  remind_days_before: number | null
 }
 
 export type DocumentFileRow = {
@@ -100,6 +108,12 @@ export type DocumentSummary = {
   name: string
   uploaded_by: string
   created_at: string
+  // Expiry metadata (#426): stored columns + the COMPUTED days_until_expiry
+  // (whole days from today, UTC; negative = already expired). Never stored —
+  // a stored copy would rot the moment the calendar moved.
+  expires_on: string | null
+  remind_days_before: number | null
+  days_until_expiry: number | null
   files: DocumentFileSummary[]
 }
 
@@ -271,6 +285,8 @@ type DocumentJoinRow = {
   name: string
   uploaded_by: string
   created_at: string
+  expires_on: string | null
+  remind_days_before: number | null
   file_id: string | null
   file_name: string | null
   size_bytes: number | null
@@ -284,13 +300,14 @@ type DocumentJoinRow = {
 
 const DOCUMENT_JOIN_PROJECTION = `SELECT d.id AS document_id, d.household_id, d.member_id,
        d.name, d.uploaded_by, d.created_at,
+       d.expires_on, d.remind_days_before,
        f.id AS file_id, f.file_name, f.size_bytes, f.content_type,
        f.label, f.sort_order, f.sha256 AS file_sha256,
        f.uploaded_by AS file_uploaded_by, f.uploaded_at
   FROM documents d
   LEFT JOIN document_files f ON f.document_id = d.id`
 
-function groupJoinRows(rows: DocumentJoinRow[]): DocumentSummary[] {
+function groupJoinRows(rows: DocumentJoinRow[], today: string): DocumentSummary[] {
   const byId = new Map<string, DocumentSummary>()
   for (const row of rows) {
     let doc = byId.get(row.document_id)
@@ -302,6 +319,9 @@ function groupJoinRows(rows: DocumentJoinRow[]): DocumentSummary[] {
         name: row.name,
         uploaded_by: row.uploaded_by,
         created_at: row.created_at,
+        expires_on: row.expires_on,
+        remind_days_before: row.remind_days_before,
+        days_until_expiry: daysUntil(row.expires_on, today),
         files: [],
       }
       byId.set(row.document_id, doc)
@@ -325,17 +345,30 @@ function groupJoinRows(rows: DocumentJoinRow[]): DocumentSummary[] {
 
 const DOCUMENTS_ORDER = `ORDER BY d.created_at DESC, d.id DESC, f.sort_order ASC, f.id ASC`
 
+// The expiry view orders by the date that matters (#426): soonest expiry
+// first — the due-soon reading order — with the created_at/id tiebreakers
+// keeping same-expiry rows stable exactly like the default listing.
+const EXPIRY_ORDER = `ORDER BY d.expires_on ASC, d.created_at DESC, d.id DESC, f.sort_order ASC, f.id ASC`
+
 /**
  * List the active household's documents, newest first, each with its files in
  * upload order. Filters compose into the WHERE clause with bound parameters
  * only — no string interpolation of values. `q` is the #422 NAME SEARCH
  * (owner decision 2): a case-insensitive contains-match on the document
  * name; LIKE metacharacters are escaped so the needle is literal.
+ *
+ * `expiringWithin` (#426): N days, 1..365 (validated by the route). Selects
+ * documents whose expiry lands within the next N days — already-expired
+ * documents stay INCLUDED (they are the most due), so the predicate is a
+ * single `expires_on <= horizon` bound and switches the ordering to
+ * soonest-expiry-first (EXPIRY_ORDER). days_until_expiry on the returned
+ * summaries is computed against the same `now` clock.
  */
 export async function listDocuments(
   db: D1Database,
   householdId: string,
-  filters: { q?: string; memberId?: string } = {}
+  filters: { q?: string; memberId?: string; expiringWithin?: number } = {},
+  now: Date = new Date()
 ): Promise<DocumentSummary[]> {
   const conditions = ['d.household_id = ?']
   const params: string[] = [householdId]
@@ -351,15 +384,23 @@ export async function listDocuments(
     conditions.push(`lower(d.name) LIKE ? ESCAPE '\\'`)
     params.push(`%${needle}%`)
   }
+  let order = DOCUMENTS_ORDER
+  if (filters.expiringWithin !== undefined) {
+    const horizon = householdIsoDate(new Date(now.getTime() + filters.expiringWithin * 86_400_000))
+    conditions.push('d.expires_on IS NOT NULL')
+    conditions.push('d.expires_on <= ?')
+    params.push(horizon)
+    order = EXPIRY_ORDER
+  }
   const { results } = await db
     .prepare(
       `${DOCUMENT_JOIN_PROJECTION}
         WHERE ${conditions.join(' AND ')}
-        ${DOCUMENTS_ORDER}`
+        ${order}`
     )
     .bind(...params)
     .all<DocumentJoinRow>()
-  return groupJoinRows(results)
+  return groupJoinRows(results, householdIsoDate(now))
 }
 
 /**
@@ -371,17 +412,18 @@ export async function listDocuments(
 export async function getDocumentWithFiles(
   db: D1Database,
   householdId: string,
-  documentId: string
+  documentId: string,
+  now: Date = new Date()
 ): Promise<DocumentSummary | null> {
   const { results } = await db
     .prepare(`${DOCUMENT_JOIN_PROJECTION} WHERE d.id = ? AND d.household_id = ? ${DOCUMENTS_ORDER}`)
     .bind(documentId, householdId)
     .all<DocumentJoinRow>()
-  const summaries = groupJoinRows(results)
+  const summaries = groupJoinRows(results, householdIsoDate(now))
   return summaries[0] ?? null
 }
 
-/** The documents-only row for authz flows (no join needed to delete). */
+/** The documents-only row for authz/metadata flows (no join needed). */
 export async function getDocumentRow(
   db: D1Database,
   householdId: string,
@@ -390,6 +432,7 @@ export async function getDocumentRow(
   return db
     .prepare(
       `SELECT d.id, d.household_id, d.member_id, d.name,
+              d.expires_on, d.remind_days_before,
               d.uploaded_by, d.created_at
          FROM documents d
         WHERE d.id = ? AND d.household_id = ?`
@@ -458,7 +501,13 @@ export async function isHouseholdMember(
   return row !== null
 }
 
-function insertDocumentStatement(db: D1Database, row: DocumentRow): D1PreparedStatement {
+// Create names the five base columns only — expiry metadata (#426) is not a
+// create-time field: it arrives via PATCH after the document exists, so the
+// new columns stay NULL exactly like every pre-#426 row.
+function insertDocumentStatement(
+  db: D1Database,
+  row: Omit<DocumentRow, 'expires_on' | 'remind_days_before'>
+): D1PreparedStatement {
   return db
     .prepare(
       `INSERT INTO documents (id, household_id, member_id, name, uploaded_by)
@@ -592,13 +641,14 @@ function insertFileAddAuditStatement(
 async function readBackSummary(
   db: D1Database,
   householdId: string,
-  documentId: string
+  documentId: string,
+  now: Date = new Date()
 ): Promise<DocumentSummary> {
-  const stored = await getDocumentWithFiles(db, householdId, documentId)
+  const stored = await getDocumentWithFiles(db, householdId, documentId, now)
   if (!stored) {
     // The batch committed but the read-back found nothing — a database that
     // broken fails every later request too; surface it as a 500.
-    throw new Error('document insert did not persist')
+    throw new Error('document mutation did not persist')
   }
   return stored
 }
@@ -726,6 +776,63 @@ export async function addDocumentFile(
   }
 
   return readBackSummary(db, args.householdId, args.documentId)
+}
+
+/**
+ * Update the expiry metadata (#426). Authorization lives at the route (the
+ * add-file model: any household member — expiry is household-level
+ * information, and the auth middleware already pinned the caller to their
+ * active household). The batch is GUARDED (the #422 A2 precedent): the
+ * UPDATE carries the household predicate in its WHERE, and the 'update'
+ * audit record rides an INSERT..SELECT gated on the row the UPDATE just
+ * touched — so a concurrent delete winning the race between the route's
+ * pre-check and this batch commits NEITHER a phantom update NOR a spurious
+ * audit record, and the caller reads meta.changes off the UPDATE to answer
+ * 404 instead of failing the read-back with a 500. Read-back returns the
+ * full summary so the route answers with what actually persisted; `now`
+ * feeds its days_until_expiry clock (injectable for tests).
+ */
+export async function updateDocumentExpiry(
+  db: D1Database,
+  args: {
+    householdId: string
+    documentId: string
+    actorUserId: string
+    expiresOn: string | null
+    remindDaysBefore: number | null
+    now?: Date
+  }
+): Promise<DocumentSummary> {
+  const results = await db.batch([
+    db
+      .prepare(
+        `UPDATE documents
+            SET expires_on = ?, remind_days_before = ?
+          WHERE id = ? AND household_id = ?`
+      )
+      .bind(args.expiresOn, args.remindDaysBefore, args.documentId, args.householdId),
+    db
+      .prepare(
+        `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action, document_file_id)
+         SELECT ?, ?, ?, ?, 'update', NULL
+         WHERE EXISTS (SELECT 1 FROM documents WHERE id = ? AND household_id = ?)`
+      )
+      .bind(
+        crypto.randomUUID(),
+        args.documentId,
+        args.householdId,
+        args.actorUserId,
+        args.documentId,
+        args.householdId
+      ),
+  ])
+  const changes = (results[0] as { meta?: { changes?: number } } | undefined)?.meta?.changes
+  if ((changes ?? 0) === 0) {
+    // The guarded UPDATE matched zero rows — a concurrent delete took the
+    // document between the route's pre-check and this batch: 404.
+    throw new DocumentNotFoundError()
+  }
+  return readBackSummary(db, args.householdId, args.documentId, args.now)
 }
 
 /**

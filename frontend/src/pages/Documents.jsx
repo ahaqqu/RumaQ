@@ -10,16 +10,21 @@ import {
   useAddDocumentFile,
   useDeleteDocument,
   useDeleteDocumentFile,
+  useUpdateDocumentExpiry,
 } from '../lib/queries/index.js'
 import {
   ApiError,
   DOCUMENT_MAX_BYTES,
   DOCUMENT_MAX_FILES,
   DOCUMENT_NAME_MAX,
+  DOCUMENT_DEFAULT_REMIND_DAYS,
+  DOCUMENT_REMIND_DAYS_MIN,
+  DOCUMENT_REMIND_DAYS_MAX,
   fetchDocumentContent,
   sniffDocumentMime,
 } from '../lib/api'
 import { DocumentViewer } from './DocumentViewer.jsx'
+import { DueSoonSection, ExpiryBadge, ExpiryEditForm, selectDueSoon } from './DocumentExpiry.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
 import { Button } from '../components/Button.jsx'
@@ -32,6 +37,7 @@ import {
   IconClose,
   IconCheck,
   IconEye,
+  IconCalendarBlank,
 } from '../components/icons.jsx'
 
 // Error vocabulary mirrors the backend's documents app: the status picks the
@@ -164,7 +170,7 @@ function FileRow({
             {t('documents.deleteConfirmYes')}
           </Button>
           <Button size="sm" variant="ghost" onClick={onToggleConfirm} disabled={busy}>
-            {t('common.cancel')}
+            {t('documents.cancel')}
           </Button>
         </div>
       ) : (
@@ -208,6 +214,7 @@ function DocumentRow({
   onDownloadFile,
   onDeleteFile,
   onDeleteDoc,
+  onEditExpiry,
   fileConfirmKey,
   onToggleFileConfirm,
   docConfirmOpen,
@@ -224,7 +231,12 @@ function DocumentRow({
           <IconFolderLock size={20} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="font-medium truncate">{doc.name}</div>
+          <div className="font-medium truncate flex items-center gap-2">
+            <span className="truncate">{doc.name}</span>
+            {/* Expiry chip (#426): computed days, tone by urgency. Absent for
+                undated documents — expiry stays opt-in metadata. */}
+            <ExpiryBadge days={doc.days_until_expiry} />
+          </div>
           <div className="text-sm text-text-muted truncate">
             {t('documents.filesCount', { count: doc.files.length })}
             {memberName && <> · {memberName}</>}
@@ -251,11 +263,20 @@ function DocumentRow({
               onClick={onToggleDocConfirm}
               disabled={removeDocPending}
             >
-              {t('common.cancel')}
+              {t('documents.cancel')}
             </Button>
           </div>
         ) : (
           <div className="flex items-center gap-1.5 shrink-0">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onEditExpiry}
+              aria-label={`${t('documents.editExpiry')}: ${doc.name}`}
+            >
+              <IconCalendarBlank size={15} />{' '}
+              <span className="hidden sm:inline">{t('documents.editExpiry')}</span>
+            </Button>
             <Button
               size="sm"
               variant="ghost"
@@ -331,10 +352,16 @@ export function Documents() {
   const { data: documentsData, isLoading: documentsLoading } = useDocuments(activeId ? filters : {})
   const documents = (documentsData?.documents ?? []).filter((d) => d.household_id === activeId)
 
+  // Due soon (#426) — derivation lives in DocumentExpiry.jsx (V2-B2); fed
+  // the list the page already holds: one fetch, and the section can never
+  // disagree with the vault list.
+  const dueSoon = useMemo(() => selectDueSoon(documents), [documents])
+
   const create = useCreateDocument()
   const addFile = useAddDocumentFile()
   const remove = useDeleteDocument()
   const removeFile = useDeleteDocumentFile()
+  const updateExpiry = useUpdateDocumentExpiry()
 
   // Create draft state — its own form, like the Household add form. picked
   // files carry an optional per-file label; the create call takes the FIRST
@@ -351,6 +378,66 @@ export function Documents() {
   const [confirmingDocId, setConfirmingDocId] = useState(null)
   const [fileConfirmKey, setFileConfirmKey] = useState(null)
   const [viewing, setViewing] = useState(null)
+  // The #426 expiry editor: which document is being edited and its draft.
+  const [expiryEditingId, setExpiryEditingId] = useState(null)
+  const [expiryDraft, setExpiryDraft] = useState({ expiresOn: '', remindDays: '' })
+
+  const openExpiryEdit = (doc) => {
+    setFeedback(null)
+    setActionError(null)
+    setExpiryEditingId(doc.id)
+    setExpiryDraft({
+      expiresOn: doc.expires_on ?? '',
+      remindDays: doc.remind_days_before ?? DOCUMENT_DEFAULT_REMIND_DAYS,
+    })
+  }
+
+  const closeExpiryEdit = () => {
+    setExpiryEditingId(null)
+    setExpiryDraft({ expiresOn: '', remindDays: '' })
+  }
+
+  // Save the expiry draft: a cleared date ALWAYS sends expires_on: null — the
+  // server clears the window with it (the invariant), so the window field is
+  // irrelevant then (it is disabled while the date is empty). A set date
+  // sends the window when filled; an empty window lets the server keep the
+  // existing one or apply its 30-day default. The range is pre-checked here
+  // (mirroring the server's 1..365) so a bad value fails in copy instead of a
+  // generic 400.
+  const saveExpiry = async (doc) => {
+    setFeedback(null)
+    setActionError(null)
+    const dateValue = expiryDraft.expiresOn || null
+    let payload
+    if (dateValue === null) {
+      payload = { expires_on: null }
+    } else {
+      const windowValue =
+        expiryDraft.remindDays === '' || expiryDraft.remindDays === null
+          ? undefined
+          : Number(expiryDraft.remindDays)
+      if (
+        windowValue !== undefined &&
+        (!Number.isInteger(windowValue) ||
+          windowValue < DOCUMENT_REMIND_DAYS_MIN ||
+          windowValue > DOCUMENT_REMIND_DAYS_MAX)
+      ) {
+        setActionError(t('documents.errorRemindRange'))
+        return
+      }
+      payload = { expires_on: dateValue }
+      if (windowValue !== undefined) {
+        payload.remind_days_before = windowValue
+      }
+    }
+    try {
+      await updateExpiry.mutateAsync({ id: doc.id, payload })
+      closeExpiryEdit()
+      setFeedback(t('documents.expirySaved', { name: doc.name }))
+    } catch (err) {
+      setActionError(t(documentErrorKey(err)))
+    }
+  }
 
   const pickCreateFiles = (event) => {
     const files = [...(event.target.files ?? [])]
@@ -673,6 +760,11 @@ export function Documents() {
         </PanelBody>
       </Panel>
 
+      {/* Due soon (#426) — documents inside their reminder window, soonest
+          expiry first. Rendered only when non-empty: an all-clear vault has
+          nothing to say here. Presentation lives in DocumentExpiry.jsx. */}
+      {dueSoon.length > 0 && <DueSoonSection docs={dueSoon} memberNameById={memberNameById} />}
+
       {/* List — the name search replaces the category chips (#422); member
           chips compose with it. */}
       <Panel>
@@ -770,41 +862,53 @@ export function Documents() {
                       }}
                       disabled={busy}
                     >
-                      {t('common.cancel')}
+                      {t('documents.cancel')}
                     </Button>
                   </div>
                 </div>
               ) : (
-                <DocumentRow
-                  key={doc.id}
-                  doc={doc}
-                  memberName={doc.member_id ? (memberNameById.get(doc.member_id) ?? null) : null}
-                  onAddFiles={() => {
-                    setFeedback(null)
-                    setActionError(null)
-                    setAddingFor(doc.id)
-                    setAddPicked([])
-                  }}
-                  onViewFile={(d, file) => {
-                    setFeedback(null)
-                    setActionError(null)
-                    setViewing({ doc: d, file })
-                  }}
-                  onDownloadFile={download}
-                  onDeleteFile={(d, file) => confirmDeleteFile(d, file)}
-                  onDeleteDoc={() => confirmDeleteDoc(doc)}
-                  fileConfirmKey={fileConfirmKey}
-                  onToggleFileConfirm={(key) =>
-                    setFileConfirmKey(fileConfirmKey === key ? null : key)
-                  }
-                  docConfirmOpen={confirmingDocId === doc.id}
-                  onToggleDocConfirm={() =>
-                    setConfirmingDocId(confirmingDocId === doc.id ? null : doc.id)
-                  }
-                  removeDocPending={remove.isPending}
-                  removeFilePending={removeFile.isPending}
-                  language={language}
-                />
+                <div key={doc.id}>
+                  <DocumentRow
+                    doc={doc}
+                    memberName={doc.member_id ? (memberNameById.get(doc.member_id) ?? null) : null}
+                    onAddFiles={() => {
+                      setFeedback(null)
+                      setActionError(null)
+                      setAddingFor(doc.id)
+                      setAddPicked([])
+                    }}
+                    onEditExpiry={() => openExpiryEdit(doc)}
+                    onViewFile={(d, file) => {
+                      setFeedback(null)
+                      setActionError(null)
+                      setViewing({ doc: d, file })
+                    }}
+                    onDownloadFile={download}
+                    onDeleteFile={(d, file) => confirmDeleteFile(d, file)}
+                    onDeleteDoc={() => confirmDeleteDoc(doc)}
+                    fileConfirmKey={fileConfirmKey}
+                    onToggleFileConfirm={(key) =>
+                      setFileConfirmKey(fileConfirmKey === key ? null : key)
+                    }
+                    docConfirmOpen={confirmingDocId === doc.id}
+                    onToggleDocConfirm={() =>
+                      setConfirmingDocId(confirmingDocId === doc.id ? null : doc.id)
+                    }
+                    removeDocPending={remove.isPending}
+                    removeFilePending={removeFile.isPending}
+                    language={language}
+                  />
+                  {expiryEditingId === doc.id && (
+                    <ExpiryEditForm
+                      doc={doc}
+                      draft={expiryDraft}
+                      onDraftChange={setExpiryDraft}
+                      onSave={() => saveExpiry(doc)}
+                      onCancel={closeExpiryEdit}
+                      saving={updateExpiry.isPending}
+                    />
+                  )}
+                </div>
               )
             )}
           </div>
