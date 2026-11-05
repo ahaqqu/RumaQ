@@ -23,6 +23,7 @@ import {
   picklist,
   pipe,
   isoDate,
+  check,
   trim,
   minLength,
   maxLength,
@@ -33,6 +34,7 @@ import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { ipRateLimitMiddleware } from '../lib/rate-limit.js'
+import { householdIsoDate, isValidExpiryDate } from '../lib/document-expiry.js'
 import {
   TaskConflictError,
   TaskForbiddenError,
@@ -58,11 +60,17 @@ const TASK_TITLE_MAX = 120
 
 // Valibot trims BEFORE the length bounds and the validated value IS the
 // transformed one, so a whitespace-only title is a 400, not a blank row (the
-// households memberCreateSchema discipline).
+// households memberCreateSchema discipline). due_date goes beyond isoDate's
+// shape check with the documents domain's real-calendar validator (thermos
+// A5): isoDate alone accepts 2026-02-31, which the roll-forward would then
+// silently normalize (Date.UTC → Mar 3), shifting the schedule — an
+// impossible date is a 400 before any write, exactly like expires_on (#426).
+const taskDueDate = pipe(string(), isoDate(), check(isValidExpiryDate))
+
 const taskCreateSchema = strictObject({
   title: pipe(string(), trim(), minLength(1), maxLength(TASK_TITLE_MAX)),
   assignee_member_id: optional(union([pipe(string(), minLength(1), maxLength(64)), vnull()])),
-  due_date: optional(union([pipe(string(), isoDate()), vnull()])),
+  due_date: optional(union([taskDueDate, vnull()])),
   recurrence: optional(union([picklist(['daily', 'weekly', 'monthly']), vnull()])),
 })
 
@@ -72,7 +80,7 @@ const taskCreateSchema = strictObject({
 // in one call would make the completion's permission matrix ambiguous.
 const taskPatchSchema = strictObject({
   title: optional(pipe(string(), trim(), minLength(1), maxLength(TASK_TITLE_MAX))),
-  due_date: optional(union([pipe(string(), isoDate()), vnull()])),
+  due_date: optional(union([taskDueDate, vnull()])),
   recurrence: optional(union([picklist(['daily', 'weekly', 'monthly']), vnull()])),
   assignee_member_id: optional(union([pipe(string(), minLength(1), maxLength(64)), vnull()])),
   status: optional(picklist(['done'])),
@@ -405,9 +413,13 @@ tasksApp.patch(
       ) {
         throw new TaskValidationError('Completion is a standalone action')
       }
-      // Server-authoritative completion day (UTC, the /api/home precedent) —
-      // the recurrence roll-forward anchors on it.
-      const completedOn = new Date().toISOString().slice(0, 10)
+      // Server-authoritative completion day on the HOUSEHOLD CALENDAR —
+      // householdIsoDate pins UTC+7 (WIB), the #426 discipline for
+      // household-facing dates (thermos A3). Plain UTC anchored the
+      // roll-forward a day behind every morning between 00:00 and 07:00 WIB:
+      // a daily chore completed at 06:30 stayed due "today" and re-prompted
+      // after having been done.
+      const completedOn = householdIsoDate(new Date())
       const updated = await completeTask(c.env.DB, {
         householdId,
         userId,

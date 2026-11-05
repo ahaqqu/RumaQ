@@ -1477,29 +1477,52 @@ describe('migration 0027: household tasks (#429)', () => {
     expect(audit.map((r: Record<string, unknown>) => r.action)).toEqual(['create'])
   })
 
-  it('keeps the board listing on an indexed seek for the status-filtered, due-date-ordered query', () => {
+  it('keeps the board listing on the shipped SQL: index seek, no scan, sort as an explicit temp B-tree', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
     applyMigrations(db, migrationFiles())
 
-    // The open column's query: WHERE household_id = ? AND status = 'open'
-    // ORDER BY due_date — the 0027 index columns match exactly.
+    // The EXACT shipped statement (lib/tasks.ts listTasks, status-filtered
+    // variant): household+status filter with the (due_date IS NULL)
+    // undated-last ordering and the created_at/id tiebreakers. Pinned
+    // verbatim — the earlier pin tested an ORDER BY the lib never runs
+    // (ahaqqu/RumaQ#445 thermos B1, the #434-B4 precedent).
+    //
+    // What is true and load-bearing: the 0027 index serves the FILTER (no
+    // table SCAN). The expression term in ORDER BY defeats index-order
+    // satisfaction, so the sort is a TEMP B-TREE — asserted EXPLICITLY
+    // rather than denied: at household scale (tens to low hundreds of rows)
+    // the sort is harmless, and an honest pin makes any future plan change
+    // (e.g. restructuring undated tasks out) a conscious diff.
+    const BOARD_PROJECTION = `SELECT t.id, t.household_id, t.title, t.assignee_member_id,
+            am.user_id AS assignee_user_id, t.created_by_member_id, t.due_date,
+            t.recurrence, t.status, t.needs_approval, t.approved_by_member_id,
+            t.created_at, t.updated_at
+       FROM household_tasks t
+       LEFT JOIN household_members am ON am.id = t.assignee_member_id`
     const boardPlan = db
       .prepare(
-        `EXPLAIN QUERY PLAN SELECT id FROM household_tasks
-          WHERE household_id = ? AND status = 'open' ORDER BY due_date`
+        `EXPLAIN QUERY PLAN ${BOARD_PROJECTION}
+       WHERE t.household_id = ? AND t.status = 'open'
+       ORDER BY (t.due_date IS NULL), t.due_date, t.created_at, t.id`
       )
       .all('h1')
     const board = boardPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
     expect(board).toContain('idx_household_tasks_household')
-    expect(board).not.toMatch(/SCAN|TEMP B-TREE/i)
+    expect(board).not.toMatch(/\bSCAN\b/)
+    expect(board).toContain('TEMP B-TREE FOR ORDER BY')
 
-    // The household-prefix seek (status=all board) uses the same index.
+    // The household-prefix variant (status=all) — same seek, same honest sort.
     const allPlan = db
-      .prepare('EXPLAIN QUERY PLAN SELECT id FROM household_tasks WHERE household_id = ?')
+      .prepare(
+        `EXPLAIN QUERY PLAN ${BOARD_PROJECTION}
+       WHERE t.household_id = ?
+       ORDER BY (t.due_date IS NULL), t.due_date, t.created_at, t.id`
+      )
       .all('h1')
     const all = allPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
     expect(all).toContain('idx_household_tasks_household')
-    expect(all).not.toMatch(/TEMP B-TREE/i)
+    expect(all).not.toMatch(/\bSCAN\b/)
+    expect(all).toContain('TEMP B-TREE FOR ORDER BY')
 
     // The audit lookups (per task, per household) seek too — the 0022 pair.
     const auditPlan = db
@@ -1510,6 +1533,6 @@ describe('migration 0027: household tasks (#429)', () => {
       .all('t1')
     const audit = auditPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
     expect(audit).toContain('idx_household_task_audit_task')
-    expect(audit).not.toMatch(/SCAN|TEMP B-TREE/i)
+    expect(audit).not.toMatch(/\bSCAN\b|TEMP B-TREE/i)
   })
 })

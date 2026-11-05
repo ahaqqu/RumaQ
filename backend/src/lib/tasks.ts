@@ -363,12 +363,65 @@ function insertAuditStatement(
     .bind(crypto.randomUUID(), args.taskId, args.householdId, args.actorUserId, args.action)
 }
 
+/**
+ * The audit row for a GUARDED mutation (ahaqqu/RumaQ#445 thermos A1 — the
+ * updateDocumentExpiry pattern from #434): an INSERT..SELECT gated on the row
+ * the mutation just touched, mirroring the UPDATE's state preconditions, so a
+ * race between the caller's pre-check and this batch commits NEITHER the
+ * write NOR a spurious audit record. `guardSql`/`guardParams` carry the extra
+ * WHERE terms (verbatim from the UPDATE's WHERE).
+ */
+function guardedAuditStatement(
+  db: D1Database,
+  args: {
+    taskId: string
+    householdId: string
+    actorUserId: string
+    action: TaskAction
+    guardSql?: string
+    guardParams?: unknown[]
+  }
+): D1PreparedStatement {
+  const guard = args.guardSql ? ` AND ${args.guardSql}` : ''
+  return db
+    .prepare(
+      `INSERT INTO household_task_audit (id, task_id, household_id, actor_user_id, action)
+       SELECT ?, ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM household_tasks WHERE id = ? AND household_id = ?${guard}
+       )`
+    )
+    .bind(
+      crypto.randomUUID(),
+      args.taskId,
+      args.householdId,
+      args.actorUserId,
+      args.action,
+      args.taskId,
+      args.householdId,
+      ...(args.guardParams ?? [])
+    )
+}
+
+// Reads meta.changes off a batch result. Undefined (the mocked D1 in the
+// route tests) counts as success — the real meta.changes behavior is pinned
+// in tasks-sql.test.ts (the joinByCode convention in lib/households.ts).
+function readChanges(result: unknown): number {
+  const changes = (result as { meta?: { changes?: number } } | undefined)?.meta?.changes
+  return changes === undefined ? 1 : changes
+}
+
 // ---------------------------------------------------------------------------
-// Mutations — every write carries its audit row in the SAME batch (the vault's
-// in-transaction rule: an audit row that can be skipped by a crash is a rumor).
-// Authorization re-derives the caller's member row INSIDE the lib from
-// (householdId, userId) — the vault's discipline — so a route can never hand
-// a caller row from one household to another household's task.
+// Mutations — every write is GUARDED (ahaqqu/RumaQ#445 thermos A1): the
+// UPDATE/DELETE carries its state preconditions in the WHERE, the audit row
+// rides the gated INSERT..SELECT, and the caller reads meta.changes to answer
+// the typed 404 (raced delete) / 409 (raced second action) instead of failing
+// a read-back with a 500 or leaving a phantom audit row. Every write carries
+// its audit row in the SAME batch (the vault's in-transaction rule: an audit
+// row that can be skipped by a crash is a rumor). Authorization re-derives
+// the caller's member row INSIDE the lib from (householdId, userId) — the
+// vault's discipline — so a route can never hand a caller row from one
+// household to another household's task.
 // ---------------------------------------------------------------------------
 
 /**
@@ -418,7 +471,9 @@ export async function createTask(
   ])
   const stored = await getTaskRow(db, args.householdId, taskId)
   if (!stored) {
-    throw new Error('task insert did not persist')
+    // Unreachable in practice (a fresh UUID in the same household); the typed
+    // 404 is the honest answer if a concurrent delete somehow won anyway.
+    throw new TaskNotFoundError()
   }
   return toSummary(stored)
 }
@@ -440,6 +495,13 @@ export type TaskEditPatch = {
  * Edit fields (title/due date/recurrence) and assign/reassign. Creator or
  * owner only — a member manages the tasks they created; owners manage the
  * household's.
+ *
+ * A DONE one-shot task cannot be reassigned (ahaqqu/RumaQ#445 thermos A4):
+ * the assignee change re-derives needs_approval from the new assignee's
+ * mode, which would make a task the new kid never did immediately
+ * approvable — the approval record (and the future allowance credit) would
+ * attach to a non-event. Refuse with a typed 400; assign a fresh task
+ * instead. Recurring tasks never rest in done, so they are unaffected.
  */
 export async function updateTask(
   db: D1Database,
@@ -454,6 +516,9 @@ export async function updateTask(
   const caller = await requireCallerMember(db, args.householdId, args.userId)
   if (!isCreator(task, caller) && !isOwner(caller)) {
     throw new TaskForbiddenError()
+  }
+  if (args.patch.assignee !== undefined && task.status === 'done' && task.recurrence === null) {
+    throw new TaskValidationError('A done task cannot be reassigned — assign a fresh task instead')
   }
 
   const updates: string[] = []
@@ -485,32 +550,52 @@ export async function updateTask(
 
   updates.push("updated_at = datetime('now')")
   params.push(task.id, args.householdId)
-  await db.batch([
+  // GUARDED (thermos A1): the UPDATE carries the existence precondition, and
+  // the 'update' audit row rides the gated INSERT..SELECT — a concurrent
+  // delete winning the race between the pre-check and this batch commits
+  // neither a phantom update nor a spurious audit record; changes === 0
+  // answers 404, never a 500 read-back.
+  const results = await db.batch([
     db
       .prepare(`UPDATE household_tasks SET ${updates.join(', ')} WHERE id = ? AND household_id = ?`)
       .bind(...params),
-    insertAuditStatement(db, {
+    guardedAuditStatement(db, {
       taskId: task.id,
       householdId: args.householdId,
       actorUserId: args.userId,
       action: 'update',
     }),
   ])
+  if (readChanges(results[0]) === 0) {
+    throw new TaskNotFoundError()
+  }
 
   const stored = await getTaskRow(db, args.householdId, task.id)
   if (!stored) {
-    throw new Error('task update did not persist')
+    // The write committed, but a concurrent delete landed between the batch
+    // and this read-back — 404 is the honest answer about the row's fate.
+    throw new TaskNotFoundError()
   }
   return toSummary(stored)
 }
 
 /**
- * Complete (ahaqqu/RumaQ#429): assignee-self, creator, or owner. Requires an
- * open task (409 otherwise — a double complete would double-roll a recurring
- * schedule). A ONE-SHOT task flips to 'done'; a RECURRING task rolls its due
- * date to the next occurrence (anchored on the current due date, advanced
- * past the completion day), re-opens, and clears any approval — the completed
- * instance lives on as the 'complete' audit row.
+ * Complete (ahaqqu/RumaQ#429): assignee-self, creator, or owner. A ONE-SHOT
+ * task flips to 'done'; a RECURRING task rolls its due date to the next
+ * occurrence (anchored on the current due date, advanced past the completion
+ * day), re-opens, and clears any approval — the completed instance lives on
+ * as the 'complete' audit row.
+ *
+ * The UPDATE is GUARDED with an OPTIMISTIC ANCHOR (ahaqqu/RumaQ#445 thermos
+ * A1 + A2): `status = 'open' AND due_date IS ?` binds the due date captured
+ * at the read, so the SECOND complete of the same instance — a sequential
+ * double-tap or two family members racing, each reading the same anchor —
+ * matches zero rows and answers 409, for recurring tasks too (they never
+ * rest in `done`, so a status-only guard can never refuse them). Completing
+ * the NEXT rolled occurrence works normally: its anchor is the new due date.
+ * The 'complete' audit row rides the same guarded INSERT..SELECT, so a
+ * refused write never leaves an audit row (no double allowance credit), and
+ * a raced delete answers 404.
  */
 export async function completeTask(
   db: D1Database,
@@ -530,6 +615,7 @@ export async function completeTask(
     )
   }
   if (task.status !== 'open') {
+    // Fast path (the in-statement guard below is the racing arbiter).
     throw new TaskConflictError('Task is already done')
   }
 
@@ -544,23 +630,49 @@ export async function completeTask(
     updates.push("status = 'done'")
   }
   updates.push("updated_at = datetime('now')")
-  params.push(task.id, args.householdId)
+  // The optimistic anchor: the pre-read state the completion is based on.
+  // `IS ?` is SQLite's null-safe equality — an undated task anchors on NULL.
+  const stateGuard = "status = 'open' AND due_date IS ?"
+  const stateParams = [task.due_date]
+  params.push(task.id, args.householdId, ...stateParams)
 
-  await db.batch([
-    db
-      .prepare(`UPDATE household_tasks SET ${updates.join(', ')} WHERE id = ? AND household_id = ?`)
-      .bind(...params),
-    insertAuditStatement(db, {
+  // The audit statement runs FIRST, before the roll-forward mutates the very
+  // columns its EXISTS checks: within the batch's transaction both statements
+  // evaluate the same pre-state, so the audit fires exactly when the UPDATE
+  // matches (a refused second complete leaves no audit row; a raced delete
+  // leaves neither). The same [audit, write] order deleteTask uses.
+  const results = await db.batch([
+    guardedAuditStatement(db, {
       taskId: task.id,
       householdId: args.householdId,
       actorUserId: args.userId,
       action: 'complete',
+      guardSql: stateGuard,
+      guardParams: stateParams,
     }),
+    db
+      .prepare(
+        `UPDATE household_tasks SET ${updates.join(', ')}
+          WHERE id = ? AND household_id = ? AND ${stateGuard}`
+      )
+      .bind(...params),
   ])
+  if (readChanges(results[1]) === 0) {
+    // The anchor went stale between the read and this write: a concurrent
+    // delete took the row (404), or a second complete of the same instance
+    // won the race (409) — the re-read tells them apart.
+    const reread = await getTaskRow(db, args.householdId, task.id)
+    if (!reread) {
+      throw new TaskNotFoundError()
+    }
+    throw new TaskConflictError('Task is already done')
+  }
 
   const stored = await getTaskRow(db, args.householdId, task.id)
   if (!stored) {
-    throw new Error('task completion did not persist')
+    // The write committed, but a concurrent delete landed between the batch
+    // and this read-back — 404 is the honest answer about the row's fate.
+    throw new TaskNotFoundError()
   }
   return toSummary(stored)
 }
@@ -608,31 +720,47 @@ export async function approveTask(
             )`
       )
       .bind(caller.memberId, task.id, args.householdId),
-    insertAuditStatement(db, {
+    // The 'approve' audit mirrors the UPDATE's full guard (thermos A1): a
+    // refused guard must never leave an approval record for a non-event.
+    guardedAuditStatement(db, {
       taskId: task.id,
       householdId: args.householdId,
       actorUserId: args.userId,
       action: 'approve',
+      guardSql:
+        "status = 'done' AND needs_approval = 1 AND EXISTS (" +
+        'SELECT 1 FROM household_members am' +
+        ' WHERE am.id = household_tasks.assignee_member_id AND am.user_id IS NULL)',
     }),
   ])
-  // The guard refused: the flag went stale between the read and this write.
-  const changes = (results[0] as { meta?: { changes?: number } } | undefined)?.meta?.changes
-  if ((changes ?? 1) === 0) {
+  // The guard refused: the flag went stale between the read and this write
+  // (the kid got linked — #397, or the member row was removed), or a
+  // concurrent delete took the row — the re-read tells them apart.
+  if (readChanges(results[0]) === 0) {
+    const reread = await getTaskRow(db, args.householdId, task.id)
+    if (!reread) {
+      throw new TaskNotFoundError()
+    }
     throw new TaskConflictError('Task is not awaiting approval')
   }
 
   const stored = await getTaskRow(db, args.householdId, task.id)
   if (!stored) {
-    throw new Error('task approval did not persist')
+    // The write committed, but a concurrent delete landed between the batch
+    // and this read-back — 404 is the honest answer about the row's fate.
+    throw new TaskNotFoundError()
   }
   return toSummary(stored)
 }
 
 /**
- * Delete: creator or owner. The 'delete' audit row is written BEFORE the
- * delete INSIDE the same batch and survives it (no FK on
- * household_task_audit.task_id — the deletion record must outlive the row it
- * names, the 0022 discipline).
+ * Delete: creator or owner. The 'delete' audit row is gated on the row still
+ * existing (thermos A1) and written BEFORE the delete INSIDE the same batch,
+ * surviving it (no FK on household_task_audit.task_id — the deletion record
+ * must outlive the row it names, the 0022 discipline). A raced delete —
+ * another device deleted between the pre-check and this batch — commits
+ * neither a phantom audit record nor a no-op delete: changes === 0 answers
+ * 404.
  */
 export async function deleteTask(
   db: D1Database,
@@ -648,8 +776,8 @@ export async function deleteTask(
     throw new TaskForbiddenError()
   }
 
-  await db.batch([
-    insertAuditStatement(db, {
+  const results = await db.batch([
+    guardedAuditStatement(db, {
       taskId: task.id,
       householdId: args.householdId,
       actorUserId: args.userId,
@@ -659,4 +787,7 @@ export async function deleteTask(
       .prepare('DELETE FROM household_tasks WHERE id = ? AND household_id = ?')
       .bind(task.id, args.householdId),
   ])
+  if (readChanges(results[1]) === 0) {
+    throw new TaskNotFoundError()
+  }
 }

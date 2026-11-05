@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vite-plus/test'
+import { describe, it, expect, beforeEach, vi } from 'vite-plus/test'
 import { tasksApp } from '../apps/tasks.js'
 import { resetRateLimit } from '../lib/rate-limit.js'
 import type { MockEnv } from './support/env.js'
@@ -389,6 +389,10 @@ describe('tasks routes', () => {
       { title: 'a'.repeat(121) },
       { title: 'Ok', recurrence: 'yearly' },
       { title: 'Ok', due_date: '2024-13-45' },
+      // A real-calendar check rides isoDate (thermos A5): format-valid but
+      // impossible dates must 400 before any write — the roll-forward would
+      // otherwise silently normalize Feb 31 to Mar 3.
+      { title: 'Ok', due_date: '2026-02-31' },
       { nope: true },
     ]
     for (const body of cases) {
@@ -411,7 +415,9 @@ describe('tasks routes', () => {
 
     const update = db.log.find((e) => e.sql.startsWith('UPDATE household_tasks'))
     expect(update?.sql).toContain("status = 'done'")
-    expect(update?.params).toEqual(['t2', 'h1']) // household predicate on the write
+    // Bind order: the setter params, then id + household predicate, then the
+    // optimistic anchor (the task's pre-read due date).
+    expect(update?.params).toEqual(['t2', 'h1', '2026-11-10'])
     const audit = db.log.find((e) => e.sql.startsWith('INSERT INTO household_task_audit'))
     expect(audit?.params[4]).toBe('complete')
   })
@@ -472,6 +478,47 @@ describe('tasks routes', () => {
     )
     expect(res.status).toBe(409)
     expect(db.log.some((e) => e.sql.startsWith('UPDATE household_tasks'))).toBe(false)
+  })
+
+  it('anchors the completion day on the household calendar (UTC+7): a chore completed at 00:30 WIB rolls to the correct next day', async () => {
+    // 2026-11-07T17:30:00Z is 2026-11-08 00:30 WIB — plain UTC would anchor
+    // completedOn on Nov 7 and the daily chore due Nov 7 would come back
+    // "due today" after having been done (thermos A3).
+    vi.useFakeTimers({ now: new Date('2026-11-07T17:30:00Z') })
+    try {
+      const dueTodayDaily = {
+        ...OPEN_TASK_KID,
+        id: 't5',
+        due_date: '2026-11-07',
+        recurrence: 'daily',
+      }
+      const env = setup(dueTodayDaily)
+      const res = await tasksApp.request(
+        '/api/tasks/t5',
+        jsonRequest('PATCH', { status: 'done' }),
+        env
+      )
+      expect(res.status).toBe(200)
+      const update = db.log.find((e) => e.sql.startsWith('UPDATE household_tasks'))
+      // completedOn = 2026-11-08 (WIB) → next due 2026-11-09. The UTC bug
+      // would have answered 2026-11-08 — due again the same morning.
+      expect(update?.params[0]).toBe('2026-11-09')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refuses reassigning a done one-shot task with a typed 400 (thermos A4)', async () => {
+    const env = setup(DONE_KID_TASK)
+    const res = await tasksApp.request(
+      '/api/tasks/t3',
+      jsonRequest('PATCH', { assignee_member_id: 'm-ayah' }),
+      env
+    )
+    expect(res.status).toBe(400)
+    // Nothing moved: no write, no audit row.
+    expect(db.log.some((e) => e.sql.startsWith('UPDATE household_tasks'))).toBe(false)
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_task_audit'))).toBe(false)
   })
 
   it('approves a done, approval-needing task by the creator and by an owner; both audit rows land', async () => {

@@ -40,6 +40,8 @@ import {
   updateTask,
   TaskConflictError,
   TaskForbiddenError,
+  TaskNotFoundError,
+  TaskValidationError,
 } from '../lib/tasks.js'
 
 type Db = {
@@ -377,20 +379,35 @@ describe('household tasks semantics (real SQL)', () => {
     })
     expect(approved.approved_by_member_id).toBe('m-ibu')
 
-    // Reassign the DONE task to the linked member: needs_approval flips false
-    // and the stale approval clears.
-    const reassigned = await updateTask(d1, {
+    // Reassigning the DONE one-shot to a new assignee is REFUSED (thermos
+    // A4): the reassignment would re-derive needs_approval for a kid who
+    // never did the task and make it immediately approvable — the approval
+    // record (and the future allowance credit) would attach to a non-event.
+    // Assign a fresh task instead.
+    await expect(
+      updateTask(d1, {
+        householdId: 'h1',
+        userId: 'u1',
+        task: await freshRow(d1, done.id),
+        patch: { title: 'Sapu teras', assignee: (await getHouseholdMember(d1, 'h1', 'm-ayah'))! },
+      })
+    ).rejects.toBeInstanceOf(TaskValidationError)
+    // Nothing moved: the done task keeps its assignee and its approval.
+    const untouched = await freshRow(d1, done.id)
+    expect(untouched).toMatchObject({
+      status: 'done',
+      assignee_member_id: 'm-anak',
+      approved_by_member_id: 'm-ibu',
+    })
+
+    // Edits still work on the done task (the refusal is reassignment only).
+    const renamed = await updateTask(d1, {
       householdId: 'h1',
       userId: 'u1',
-      task: await freshRow(d1, done.id),
-      patch: { title: 'Sapu teras', assignee: (await getHouseholdMember(d1, 'h1', 'm-ayah'))! },
+      task: untouched,
+      patch: { title: 'Sapu teras' },
     })
-    expect(reassigned).toMatchObject({
-      title: 'Sapu teras',
-      assignee_member_id: 'm-ayah',
-      needs_approval: false,
-      approved_by_member_id: null,
-    })
+    expect(renamed.title).toBe('Sapu teras')
 
     // The creator can edit; an unrelated member cannot.
     await expect(
@@ -402,6 +419,28 @@ describe('household tasks semantics (real SQL)', () => {
       })
     ).rejects.toBeInstanceOf(TaskForbiddenError)
 
+    // Reassignment works on an OPEN task: needs_approval re-derives and the
+    // prior approval (if any) clears.
+    const openTask = await createTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      title: 'Sapu teras',
+      assignee: (await getHouseholdMember(d1, 'h1', 'm-anak'))!,
+      dueDate: null,
+      recurrence: null,
+    })
+    const reassigned = await updateTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      task: await freshRow(d1, openTask.id),
+      patch: { assignee: (await getHouseholdMember(d1, 'h1', 'm-ayah'))! },
+    })
+    expect(reassigned).toMatchObject({
+      assignee_member_id: 'm-ayah',
+      needs_approval: false,
+      approved_by_member_id: null,
+    })
+
     // An empty patch is a no-op read at the lib level — no write, no audit
     // row. (A re-submitted IDENTICAL assignee is the ROUTE's no-op — the
     // route owns change detection, pinned in tasks.test.ts. The lib's null
@@ -411,7 +450,7 @@ describe('household tasks semantics (real SQL)', () => {
     const noop = await updateTask(d1, {
       householdId: 'h1',
       userId: 'u1',
-      task: await freshRow(d1, done.id),
+      task: await freshRow(d1, openTask.id),
       patch: {},
     })
     expect(noop.title).toBe('Sapu teras')
@@ -420,7 +459,7 @@ describe('household tasks semantics (real SQL)', () => {
     const unassigned = await updateTask(d1, {
       householdId: 'h1',
       userId: 'u1',
-      task: await freshRow(d1, done.id),
+      task: await freshRow(d1, openTask.id),
       patch: { assignee: null },
     })
     expect(unassigned).toMatchObject({ assignee_member_id: null, needs_approval: false })
@@ -616,6 +655,147 @@ describe('household tasks semantics (real SQL)', () => {
       completedOn: '2026-11-06',
     })
     expect(done.status).toBe('done')
+  })
+
+  it('refuses a second complete of the same recurring instance (optimistic due-date anchor) while the next occurrence completes normally', async () => {
+    const { sqlite, d1 } = createDb()
+    seed(sqlite)
+
+    const daily = await createTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      title: 'Kasih makan kucing',
+      assignee: (await getHouseholdMember(d1, 'h1', 'm-anak'))!,
+      dueDate: '2026-11-02',
+      recurrence: 'daily',
+    })
+    // The pre-read row both taps capture — the second tap is the same
+    // request replayed with the same anchor (sequential double-tap; two
+    // family members racing read the identical state).
+    const capturedRow = await freshRow(d1, daily.id)
+    const first = await completeTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      task: capturedRow,
+      completedOn: '2026-11-06',
+    })
+    expect(first).toMatchObject({ status: 'open', due_date: '2026-11-07' })
+
+    // The double-tap completes with the SAME captured anchor: the guarded
+    // UPDATE's `due_date IS ?` matches zero rows — the schedule must not
+    // roll twice, and no second audit row may land (double credit in the
+    // future allowance ledger).
+    await expect(
+      completeTask(d1, {
+        householdId: 'h1',
+        userId: 'u1',
+        task: capturedRow,
+        completedOn: '2026-11-06',
+      })
+    ).rejects.toBeInstanceOf(TaskConflictError)
+    expect(auditActions(sqlite, daily.id).map((r) => r.action)).toEqual(['create', 'complete'])
+    const row = await freshRow(d1, daily.id)
+    expect(row.due_date).toBe('2026-11-07')
+
+    // Completing the NEXT rolled occurrence works normally (its anchor is
+    // the new due date) — the refusal is per-instance, not per-task.
+    const second = await completeTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      task: row,
+      completedOn: '2026-11-07',
+    })
+    expect(second.due_date).toBe('2026-11-08')
+    expect(auditActions(sqlite, daily.id).map((r) => r.action)).toEqual([
+      'create',
+      'complete',
+      'complete',
+    ])
+  })
+
+  it('answers 404 without a phantom audit row when a delete races update/complete/delete (thermos A1)', async () => {
+    const { sqlite, d1 } = createDb()
+    seed(sqlite)
+
+    const task = await createTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      title: 'Sapu halaman',
+      assignee: (await getHouseholdMember(d1, 'h1', 'm-anak'))!,
+      dueDate: null,
+      recurrence: null,
+    })
+    // The row another device deletes between the caller's pre-check and the
+    // caller's batch — every mutation re-fetched this stale row.
+    const stale = await freshRow(d1, task.id)
+    sqlite.prepare('DELETE FROM household_tasks WHERE id = ?').run(task.id)
+    const auditsBefore = auditCount(sqlite)
+
+    for (const mutation of [
+      () =>
+        updateTask(d1, {
+          householdId: 'h1',
+          userId: 'u1',
+          task: stale,
+          patch: { title: 'Hantu' },
+        }),
+      () =>
+        completeTask(d1, {
+          householdId: 'h1',
+          userId: 'u1',
+          task: stale,
+          completedOn: '2026-11-06',
+        }),
+      () => deleteTask(d1, { householdId: 'h1', userId: 'u1', task: stale }),
+    ]) {
+      await expect(mutation()).rejects.toBeInstanceOf(TaskNotFoundError)
+    }
+    // Neither a phantom write NOR a spurious audit record. The trail is only
+    // the 'create': the row was deleted by the RACE (raw SQL, no lib call),
+    // and every stale-row mutation's gated audit saw no row to attach to.
+    expect(auditCount(sqlite)).toBe(auditsBefore)
+    expect(auditActions(sqlite, task.id).map((r) => r.action)).toEqual(['create'])
+  })
+
+  it('refuses approval when the kid got linked between the read and the write (guarded-approve race, thermos B2)', async () => {
+    const { sqlite, d1 } = createDb()
+    seed(sqlite)
+
+    const kidTask = await createTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      title: 'Rapikan tempat tidur',
+      assignee: (await getHouseholdMember(d1, 'h1', 'm-anak'))!,
+      dueDate: null,
+      recurrence: null,
+    })
+    const done = await completeTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      task: await freshRow(d1, kidTask.id),
+      completedOn: '2026-11-06',
+    })
+    // The row the approver reads — derived needs_approval still true (the
+    // link has not happened yet).
+    const stale = await freshRow(d1, done.id)
+    expect(stale.needs_approval).toBe(true)
+
+    // Link-later (ahaqqu/RumaQ#397) attaches an account to the kid's member
+    // row BETWEEN the read and the approve batch — u5 is a fresh account, so
+    // the partial unique index is not in the way.
+    sqlite.prepare("INSERT INTO users (id, email) VALUES ('u5', 'kid@b.com')").run()
+    sqlite.prepare("UPDATE household_members SET user_id = 'u5' WHERE id = 'm-anak'").run()
+
+    // The guarded UPDATE's EXISTS re-checks the LIVE assignee mode inside the
+    // batch: the kid is linked now, so nothing is awaiting approval — zero
+    // rows, typed 409, and NO phantom 'approve' audit row.
+    await expect(
+      approveTask(d1, { householdId: 'h1', userId: 'u1', task: stale })
+    ).rejects.toBeInstanceOf(TaskConflictError)
+    expect(auditActions(sqlite, kidTask.id).map((r) => r.action)).toEqual(['create', 'complete'])
+    const row = await freshRow(d1, kidTask.id)
+    expect(row.approved_by_member_id).toBeNull()
+    expect(row.needs_approval).toBe(false) // derived from the live join
   })
 
   it('enforces the schema CHECKs and defaults (0027 backstops)', async () => {
