@@ -16,6 +16,7 @@ import {
   IconSpark,
   IconUsers,
   IconFolderLock,
+  IconTask,
   IconClose,
   BrandMark,
 } from './icons.jsx'
@@ -60,6 +61,7 @@ const ADMIN_NAV = [
 // member keeps family documents; owners manage members inside the screens.
 const HOUSEHOLD_NAV = [
   { id: 'household', key: 'nav.household', Icon: IconUsers, to: '/household' },
+  { id: 'tasks', key: 'nav.tasks', Icon: IconTask, to: '/tasks' },
   { id: 'documents', key: 'nav.documents', Icon: IconFolderLock, to: '/documents' },
 ]
 

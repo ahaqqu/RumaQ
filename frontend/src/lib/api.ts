@@ -652,3 +652,59 @@ export async function fetchDocumentContent(
   }
   return res.blob()
 }
+
+// ---------------------------------------------------------------------------
+// Household tasks (ahaqqu/RumaQ#429) — per-member family task assignments.
+// Tasks scope to the active household; assignee ids are the surrogate member
+// ids (both modes — linked accounts and profile-only members, 0021).
+// ---------------------------------------------------------------------------
+
+export type TaskRecurrence = 'daily' | 'weekly' | 'monthly'
+
+export type TaskListFilters = {
+  // 'me' resolves to the caller's member row server-side; any member id
+  // filters the board to that person; 'all' (or absent) is the whole board.
+  assignee?: string
+  status?: 'open' | 'done' | 'all'
+  // The "My tasks" sugar — wins over assignee on the backend.
+  mine?: '1'
+}
+
+export function getTasks(filters: TaskListFilters = {}, signal?: AbortSignal): Promise<unknown> {
+  return unwrap(
+    client.GET('/api/tasks', {
+      params: { query: { assignee: filters.assignee, status: filters.status, mine: filters.mine } },
+      signal,
+    })
+  )
+}
+
+export function createTask(payload: {
+  title: string
+  assignee_member_id?: string | null
+  due_date?: string | null
+  recurrence?: TaskRecurrence | null
+}): Promise<unknown> {
+  return unwrap(client.POST('/api/tasks', { body: payload }))
+}
+
+// One PATCH endpoint, three actions (the backend contract): edit fields;
+// complete with { status: 'done' } alone; approve with { approve: true }
+// alone. Mixing actions in one call is a 400 — the page keeps them separate.
+export function patchTask(
+  id: string,
+  payload: {
+    title?: string
+    due_date?: string | null
+    recurrence?: TaskRecurrence | null
+    assignee_member_id?: string | null
+    status?: 'done'
+    approve?: true
+  }
+): Promise<unknown> {
+  return unwrap(client.PATCH('/api/tasks/{id}', { params: { path: { id } }, body: payload }))
+}
+
+export function deleteTask(id: string): Promise<unknown> {
+  return unwrap(client.DELETE('/api/tasks/{id}', { params: { path: { id } } }))
+}

@@ -125,7 +125,10 @@ function seed(sqlite: Db): void {
   member.run('m-om-h2', 'h2', 'u3', 'owner', 'Om')
 }
 
-function auditActions(sqlite: Db, taskId: string): Array<{ action: string; actor_user_id: string }> {
+function auditActions(
+  sqlite: Db,
+  taskId: string
+): Array<{ action: string; actor_user_id: string }> {
   // Insert order (rowid) — created_at shares datetime('now')'s second
   // granularity, so ordering on it + a random UUID id would be nondeterministic.
   return sqlite
@@ -137,8 +140,9 @@ function auditActions(sqlite: Db, taskId: string): Array<{ action: string; actor
 }
 
 function auditCount(sqlite: Db): number {
-  return (sqlite.prepare('SELECT COUNT(*) AS cnt FROM household_task_audit').get() as { cnt: number })
-    .cnt
+  return (
+    sqlite.prepare('SELECT COUNT(*) AS cnt FROM household_task_audit').get() as { cnt: number }
+  ).cnt
 }
 
 // The lib mutations take the full TaskRow (with the internal join column) —
@@ -200,13 +204,11 @@ describe('household tasks semantics (real SQL)', () => {
     // The board: h1 sees exactly its three tasks; h2 sees none. The DEFAULT
     // timestamps are REAL — datetime('now') fills them, a bound '' would not.
     const board = await listTasks(d1, 'h1')
-    expect(board.map((t) => t.id).sort()).toEqual(
-      [kidTask.id, ayahTask.id, unassigned.id].sort()
-    )
+    expect(board.map((t) => t.id).sort()).toEqual([kidTask.id, ayahTask.id, unassigned.id].sort())
     expect(await listTasks(d1, 'h2')).toEqual([])
-    const stored = sqlite.prepare('SELECT created_at FROM household_tasks WHERE id = ?').get(
-      kidTask.id
-    ) as { created_at: string }
+    const stored = sqlite
+      .prepare('SELECT created_at FROM household_tasks WHERE id = ?')
+      .get(kidTask.id) as { created_at: string }
     expect(stored.created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
 
     // Unknown task id and a member id from ANOTHER household: the same
@@ -222,9 +224,6 @@ describe('household tasks semantics (real SQL)', () => {
   it('completes: assignee-self for linked members, on-behalf by creator/owner for the kid; unrelated members refused', async () => {
     const { sqlite, d1 } = createDb()
     seed(sqlite)
-    const ayah = (await getCallerMember(d1, 'h1', 'u2'))!
-    const om = (await getCallerMember(d1, 'h1', 'u3'))!
-
     const ayahTask = await createTask(d1, {
       householdId: 'h1',
       userId: 'u1',
@@ -273,10 +272,7 @@ describe('household tasks semantics (real SQL)', () => {
     }
     // Two creates + two completes — the refused call wrote nothing.
     expect(auditCount(sqlite)).toBe(4)
-    expect(auditActions(sqlite, ayahTask.id).map((r) => r.action)).toEqual([
-      'create',
-      'complete',
-    ])
+    expect(auditActions(sqlite, ayahTask.id).map((r) => r.action)).toEqual(['create', 'complete'])
   })
 
   it('rolls recurring tasks forward on completion and keeps them open', async () => {
@@ -521,9 +517,13 @@ describe('household tasks semantics (real SQL)', () => {
       })
     ).rejects.toBeInstanceOf(TaskForbiddenError)
     expect(await getTaskRow(d1, 'h2', task.id)).toBeNull()
-    expect((sqlite.prepare('SELECT status FROM household_tasks WHERE id = ?').get(task.id) as { status: string }).status).toBe(
-      'open'
-    )
+    expect(
+      (
+        sqlite.prepare('SELECT status FROM household_tasks WHERE id = ?').get(task.id) as {
+          status: string
+        }
+      ).status
+    ).toBe('open')
   })
 
   it('fails closed for a caller with no member row (no write, no actor)', async () => {
@@ -639,9 +639,7 @@ describe('household tasks semantics (real SQL)', () => {
     // The closed sets refuse anything else — the app never writes these, the
     // schema is the backstop (the 0001 role CHECK discipline).
     expect(() =>
-      sqlite
-        .prepare("UPDATE household_tasks SET recurrence = 'yearly' WHERE id = ?")
-        .run(task.id)
+      sqlite.prepare("UPDATE household_tasks SET recurrence = 'yearly' WHERE id = ?").run(task.id)
     ).toThrow()
     expect(() =>
       sqlite.prepare("UPDATE household_tasks SET status = 'archived' WHERE id = ?").run(task.id)

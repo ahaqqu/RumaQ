@@ -1473,9 +1473,7 @@ describe('migration 0027: household tasks (#429)', () => {
     // TEXT handle — the deletion record (and every completion history) must
     // outlive the row it names.
     db.prepare('DELETE FROM household_tasks WHERE id = ?').run('t1')
-    const audit = db
-      .prepare('SELECT action FROM household_task_audit WHERE task_id = ?')
-      .all('t1')
+    const audit = db.prepare('SELECT action FROM household_task_audit WHERE task_id = ?').all('t1')
     expect(audit.map((r: Record<string, unknown>) => r.action)).toEqual(['create'])
   })
 

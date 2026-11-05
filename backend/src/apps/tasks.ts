@@ -273,7 +273,6 @@ tasksApp.post(
   sValidator('json', taskCreateSchema),
   async (c) => {
     const householdId = c.get('householdId')
-    const caller = await requireCallerMember(c.env.DB, householdId, c.get('userId'))
     const body = c.req.valid('json')
 
     // The assignee reference is validated BEFORE any write (the documents
@@ -289,8 +288,7 @@ tasksApp.post(
 
     const task = await createTask(c.env.DB, {
       householdId,
-      caller,
-      actorUserId: c.get('userId'),
+      userId: c.get('userId'),
       title: body.title,
       assignee,
       dueDate: body.due_date ?? null,
@@ -358,13 +356,13 @@ tasksApp.patch(
     const householdId = c.get('householdId')
     const userId = c.get('userId')
 
-    // Scoped lookup first (no existence leak), membership + permissions in
-    // the lib afterwards.
+    // Scoped lookup first (no existence leak); membership + permissions
+    // re-derive INSIDE the lib from (householdId, userId) — the vault's
+    // discipline, so no caller row can cross households.
     const task = await getTaskRow(c.env.DB, householdId, c.req.param('id'))
     if (!task) {
       throw new TaskNotFoundError()
     }
-    const caller = await requireCallerMember(c.env.DB, householdId, userId)
     const body = c.req.valid('json')
 
     // Approve is standalone (ahaqqu/RumaQ#429): mixing it with edits would
@@ -381,8 +379,7 @@ tasksApp.patch(
       }
       const updated = await approveTask(c.env.DB, {
         householdId,
-        caller,
-        actorUserId: userId,
+        userId,
         task,
       })
       const res = c.json({ task: updated })
@@ -405,8 +402,7 @@ tasksApp.patch(
       const completedOn = new Date().toISOString().slice(0, 10)
       const updated = await completeTask(c.env.DB, {
         householdId,
-        caller,
-        actorUserId: userId,
+        userId,
         task,
         completedOn,
       })
@@ -446,8 +442,7 @@ tasksApp.patch(
 
     const updated = await updateTask(c.env.DB, {
       householdId,
-      caller,
-      actorUserId: userId,
+      userId,
       task,
       patch,
     })
@@ -476,11 +471,9 @@ tasksApp.delete(
     if (!task) {
       throw new TaskNotFoundError()
     }
-    const caller = await requireCallerMember(c.env.DB, householdId, c.get('userId'))
     await deleteTask(c.env.DB, {
       householdId,
-      caller,
-      actorUserId: c.get('userId'),
+      userId: c.get('userId'),
       task,
     })
     return c.newResponse(null, 204)

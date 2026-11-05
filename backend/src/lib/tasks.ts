@@ -523,8 +523,7 @@ export async function completeTask(
 ): Promise<TaskSummary> {
   const { task } = args
   const caller = await requireCallerMember(db, args.householdId, args.userId)
-  const allowed =
-    isAssigneeSelf(task, caller) || isCreator(task, caller) || isOwner(caller)
+  const allowed = isAssigneeSelf(task, caller) || isCreator(task, caller) || isOwner(caller)
   if (!allowed) {
     throw new TaskForbiddenError(
       'Only the assignee, the creator, or a household owner can complete a task'

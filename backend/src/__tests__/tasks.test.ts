@@ -243,9 +243,13 @@ describe('tasks routes', () => {
   })
 
   it('401s without a session on every method', async () => {
-    const env = createEnv(createFakeDb([CALLER_ROUTE, MEMBER_ROUTE, taskRoute(OPEN_TASK_KID)]), 'u1', {
-      props: undefined,
-    })
+    const env = createEnv(
+      createFakeDb([CALLER_ROUTE, MEMBER_ROUTE, taskRoute(OPEN_TASK_KID)]),
+      'u1',
+      {
+        props: undefined,
+      }
+    )
     for (const [method, path] of [
       ['GET', '/api/tasks'],
       ['POST', '/api/tasks'],
@@ -258,9 +262,10 @@ describe('tasks routes', () => {
   })
 
   it('lists the household board (no per-member read hiding) with cache headers', async () => {
-    db = createFakeDb([CALLER_ROUTE, taskRoute(null)], [
-      BOARD_ROUTE([OPEN_TASK_KID, OPEN_TASK_AYAH, DONE_KID_TASK]),
-    ])
+    db = createFakeDb(
+      [CALLER_ROUTE, taskRoute(null)],
+      [BOARD_ROUTE([OPEN_TASK_KID, OPEN_TASK_AYAH, DONE_KID_TASK])]
+    )
     // A plain member-role account sees the WHOLE household board — the #429
     // read-scope decision (kids' visibility rides the shared family device).
     const res = await tasksApp.request('/api/tasks', {}, createEnv(db, 'u2'))
@@ -342,13 +347,7 @@ describe('tasks routes', () => {
     ])
     // The audit row rides the SAME batch — the vault's in-transaction rule.
     const audit = db.log.find((e) => e.sql.startsWith('INSERT INTO household_task_audit'))
-    expect(audit?.params).toEqual([
-      expect.any(String),
-      insert?.params[0],
-      'h1',
-      'u1',
-      'create',
-    ])
+    expect(audit?.params).toEqual([expect.any(String), insert?.params[0], 'h1', 'u1', 'create'])
   })
 
   it('creates an unassigned task without the approval flag, by a plain linked member', async () => {
@@ -400,7 +399,7 @@ describe('tasks routes', () => {
   })
 
   it('completes a one-shot task by the linked assignee themselves', async () => {
-    const env = setup(OPEN_TASK_AYAH)
+    setup(OPEN_TASK_AYAH)
     const res = await tasksApp.request(
       '/api/tasks/t2',
       jsonRequest('PATCH', { status: 'done' }),
@@ -440,9 +439,7 @@ describe('tasks routes', () => {
     )
     expect(otherRes.status).toBe(403)
     expect(db.log.some((e) => e.sql.startsWith('UPDATE household_tasks'))).toBe(false)
-    expect(
-      db.log.some((e) => e.sql.startsWith('INSERT INTO household_task_audit'))
-    ).toBe(false)
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_task_audit'))).toBe(false)
   })
 
   it('rolls a recurring task to its next due date instead of flipping status', async () => {
@@ -482,7 +479,7 @@ describe('tasks routes', () => {
       // u2 is ayah — give him creator provenance so the creator path is the
       // one under test for him (the issue's "assigner approves").
       const task = { ...DONE_KID_TASK, created_by_member_id: userId === 'u2' ? 'm-ayah' : 'm-ibu' }
-      const env = setup(task)
+      setup(task)
       const res = await tasksApp.request(
         '/api/tasks/t3',
         jsonRequest('PATCH', { approve: true }),
@@ -526,7 +523,7 @@ describe('tasks routes', () => {
   })
 
   it('403s approval by a member with no relation to the task', async () => {
-    const env = setup(DONE_KID_TASK)
+    setup(DONE_KID_TASK)
     const res = await tasksApp.request(
       '/api/tasks/t3',
       jsonRequest('PATCH', { approve: true }),
@@ -638,17 +635,11 @@ describe('tasks routes', () => {
     const body = (await noopRes.json()) as { task: Record<string, unknown> }
     expect(body.task.id).toBe('t1')
     expect(db.log.some((e) => e.sql.startsWith('UPDATE household_tasks'))).toBe(false)
-    expect(
-      db.log.some((e) => e.sql.startsWith('INSERT INTO household_task_audit'))
-    ).toBe(false)
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_task_audit'))).toBe(false)
 
     // Fully empty patch — the households no-op-read precedent.
     const emptyEnv = setup(OPEN_TASK_KID)
-    const emptyRes = await tasksApp.request(
-      '/api/tasks/t1',
-      jsonRequest('PATCH', {}),
-      emptyEnv
-    )
+    const emptyRes = await tasksApp.request('/api/tasks/t1', jsonRequest('PATCH', {}), emptyEnv)
     expect(emptyRes.status).toBe(200)
     expect(db.log.some((e) => e.sql.startsWith('UPDATE household_tasks'))).toBe(false)
   })
@@ -683,16 +674,14 @@ describe('tasks routes', () => {
   it('deletes by creator or owner, with the delete audit row written before the delete in the same batch', async () => {
     for (const userId of ['u1', 'u2']) {
       const task = { ...OPEN_TASK_AYAH, created_by_member_id: userId === 'u2' ? 'm-ayah' : 'm-ibu' }
-      const env = setup(task)
+      setup(task)
       const res = await tasksApp.request(
         '/api/tasks/t2',
         { method: 'DELETE' },
         createEnv(db, userId)
       )
       expect(res.status).toBe(204)
-      const auditIdx = db.log.findIndex((e) =>
-        e.sql.startsWith('INSERT INTO household_task_audit')
-      )
+      const auditIdx = db.log.findIndex((e) => e.sql.startsWith('INSERT INTO household_task_audit'))
       const deleteIdx = db.log.findIndex((e) => e.sql.startsWith('DELETE FROM household_tasks'))
       expect(auditIdx).toBeGreaterThanOrEqual(0)
       expect(deleteIdx).toBeGreaterThan(auditIdx)
@@ -703,16 +692,10 @@ describe('tasks routes', () => {
   })
 
   it('refuses a delete by a member with no relation to the task', async () => {
-    const env = setup(OPEN_TASK_KID)
-    const res = await tasksApp.request(
-      '/api/tasks/t1',
-      { method: 'DELETE' },
-      createEnv(db, 'u3')
-    )
+    setup(OPEN_TASK_KID)
+    const res = await tasksApp.request('/api/tasks/t1', { method: 'DELETE' }, createEnv(db, 'u3'))
     expect(res.status).toBe(403)
     expect(db.log.some((e) => e.sql.startsWith('DELETE FROM household_tasks'))).toBe(false)
-    expect(
-      db.log.some((e) => e.sql.startsWith('INSERT INTO household_task_audit'))
-    ).toBe(false)
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_task_audit'))).toBe(false)
   })
 })

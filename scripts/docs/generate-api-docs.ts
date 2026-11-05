@@ -3,6 +3,7 @@ import { generateSpecs } from 'hono-openapi'
 import { apiApp } from '../../backend/src/apps/api.js'
 import { householdsApp } from '../../backend/src/apps/households.js'
 import { documentsApp } from '../../backend/src/apps/documents.js'
+import { tasksApp } from '../../backend/src/apps/tasks.js'
 import { authApp } from '../../backend/src/apps/auth.js'
 
 const DOCS_OPTIONS = {
@@ -131,10 +132,11 @@ Errors use \`{ "error": "..." }\`.
 }
 
 async function main() {
-  const [apiSpec, householdsSpec, documentsSpec, authSpec] = await Promise.all([
+  const [apiSpec, householdsSpec, documentsSpec, tasksSpec, authSpec] = await Promise.all([
     generateSpecs(apiApp, DOCS_OPTIONS),
     generateSpecs(householdsApp, DOCS_OPTIONS),
     generateSpecs(documentsApp, DOCS_OPTIONS),
+    generateSpecs(tasksApp, DOCS_OPTIONS),
     generateSpecs(authApp, DOCS_OPTIONS),
   ])
 
@@ -142,6 +144,7 @@ async function main() {
     ...apiSpec.paths,
     ...householdsSpec.paths,
     ...documentsSpec.paths,
+    ...tasksSpec.paths,
   }
   for (const [authPath, methods] of Object.entries(authSpec.paths)) {
     allPaths[authPath] = methods

@@ -18,6 +18,7 @@ import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as PlanRouteImport } from './routes/plan'
 import { Route as PricesRouteImport } from './routes/prices'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as AdminAiUsageRouteImport } from './routes/admin.ai-usage'
 import { Route as AdminPricesRouteImport } from './routes/admin.prices'
 import { Route as AdminReviewRouteImport } from './routes/admin.review'
@@ -68,6 +69,11 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TasksRoute = TasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminAiUsageRoute = AdminAiUsageRouteImport.update({
   id: '/admin/ai-usage',
   path: '/admin/ai-usage',
@@ -99,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/plan': typeof PlanRoute
   '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
+  '/tasks': typeof TasksRoute
   '/admin/ai-usage': typeof AdminAiUsageRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/review': typeof AdminReviewRoute
@@ -114,6 +121,7 @@ export interface FileRoutesByTo {
   '/plan': typeof PlanRoute
   '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
+  '/tasks': typeof TasksRoute
   '/admin/ai-usage': typeof AdminAiUsageRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/review': typeof AdminReviewRoute
@@ -130,6 +138,7 @@ export interface FileRoutesById {
   '/plan': typeof PlanRoute
   '/prices': typeof PricesRoute
   '/settings': typeof SettingsRoute
+  '/tasks': typeof TasksRoute
   '/admin/ai-usage': typeof AdminAiUsageRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/review': typeof AdminReviewRoute
@@ -147,6 +156,7 @@ export interface FileRouteTypes {
     | '/plan'
     | '/prices'
     | '/settings'
+    | '/tasks'
     | '/admin/ai-usage'
     | '/admin/prices'
     | '/admin/review'
@@ -162,6 +172,7 @@ export interface FileRouteTypes {
     | '/plan'
     | '/prices'
     | '/settings'
+    | '/tasks'
     | '/admin/ai-usage'
     | '/admin/prices'
     | '/admin/review'
@@ -177,6 +188,7 @@ export interface FileRouteTypes {
     | '/plan'
     | '/prices'
     | '/settings'
+    | '/tasks'
     | '/admin/ai-usage'
     | '/admin/prices'
     | '/admin/review'
@@ -193,6 +205,7 @@ export interface RootRouteChildren {
   PlanRoute: typeof PlanRoute
   PricesRoute: typeof PricesRoute
   SettingsRoute: typeof SettingsRoute
+  TasksRoute: typeof TasksRoute
   AdminAiUsageRoute: typeof AdminAiUsageRoute
   AdminPricesRoute: typeof AdminPricesRoute
   AdminReviewRoute: typeof AdminReviewRoute
@@ -264,6 +277,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/tasks': {
+      id: '/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof TasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/ai-usage': {
       id: '/admin/ai-usage'
       path: '/admin/ai-usage'
@@ -305,6 +325,7 @@ const rootRouteChildren: RootRouteChildren = {
   PlanRoute: PlanRoute,
   PricesRoute: PricesRoute,
   SettingsRoute: SettingsRoute,
+  TasksRoute: TasksRoute,
   AdminAiUsageRoute: AdminAiUsageRoute,
   AdminPricesRoute: AdminPricesRoute,
   AdminReviewRoute: AdminReviewRoute,

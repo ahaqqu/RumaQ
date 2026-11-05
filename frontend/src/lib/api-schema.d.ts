@@ -884,6 +884,42 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/tasks': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Lists the active household’s tasks — the shared board (open + done). Filters compose: assignee=me (the caller’s member row), assignee=all (or absent — everyone), or a surrogate member id (both modes; an unknown id filters to an empty list, it is a read filter not a probe); status=open|done|all (default all); mine=1 is the "My tasks" sugar for assignee=me and wins over assignee. No per-member read hiding: every household member sees the board (#429 design note). */
+    get: operations['getApiTasks']
+    put?: never
+    /** @description Creates a task: free-text title (trimmed, 1-120 chars — no preset categories, the #422 philosophy), optional assignee (ANY household member — linked or profile-only, 0021), optional due date and recurrence. Any linked member can create; profile-only members never act (no account, 0021). needs_approval derives server-side: true when the assignee is a profile-only member. The create audit record commits in the same batch. */
+    post: operations['postApiTasks']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/tasks/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post?: never
+    /** @description Hard-deletes a task: creator or household owner. The deletion audit record commits in the SAME batch as the delete and survives it (household_task_audit.task_id is a plain TEXT handle — no FK), so the household’s completion history outlives the row. */
+    delete: operations['deleteApiTasksById']
+    options?: never
+    head?: never
+    /** @description One endpoint, three actions. (1) Edit fields — title, due_date, recurrence, assignee_member_id (assign/reassign, null unassigns): creator or household owner; reassignment re-derives needs_approval from the new assignee’s mode and clears any prior approval; an empty patch is a no-op read. (2) Complete — status:"done" alone: the assignee (when linked), the creator, or an owner; profile-only assignees are completed on their behalf; a one-shot task flips to done, a RECURRING task rolls its due date to the next occurrence and stays open. (3) Approve — approve:true alone: creator or owner, only while needs_approval and the task is done; sets approved_by_member_id. Every action writes its audit row in the same batch. */
+    patch: operations['patchApiTasksById']
+    trace?: never
+  }
   '/api/auth/login': {
     parameters: {
       query?: never
@@ -3968,6 +4004,261 @@ export interface operations {
       }
       /** @description Document or file not found */
       404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiTasks: {
+    parameters: {
+      query?: {
+        assignee?: string
+        status?: 'open' | 'done' | 'all'
+        mine?: '1'
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            tasks: {
+              id: string
+              household_id: string
+              title: string
+              assignee_member_id: string | null
+              created_by_member_id: string | null
+              /** @description YYYY-MM-DD, or null */
+              due_date: string | null
+              /** @enum {string|null} */
+              recurrence: 'daily' | 'weekly' | 'monthly' | null
+              /** @enum {string} */
+              status: 'open' | 'done'
+              needs_approval: boolean
+              approved_by_member_id: string | null
+              created_at: string
+              updated_at: string
+            }[]
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  postApiTasks: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          title: string
+          /** @description A member of this household (both modes); omit or null for unassigned */
+          assignee_member_id?: string | null
+          /** @description YYYY-MM-DD */
+          due_date?: string | null
+          /** @enum {string|null} */
+          recurrence?: 'daily' | 'weekly' | 'monthly' | null
+        }
+      }
+    }
+    responses: {
+      /** @description Created */
+      201: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            task: {
+              id: string
+              household_id: string
+              title: string
+              assignee_member_id: string | null
+              created_by_member_id: string | null
+              /** @description YYYY-MM-DD, or null */
+              due_date: string | null
+              /** @enum {string|null} */
+              recurrence: 'daily' | 'weekly' | 'monthly' | null
+              /** @enum {string} */
+              status: 'open' | 'done'
+              needs_approval: boolean
+              approved_by_member_id: string | null
+              created_at: string
+              updated_at: string
+            }
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Task not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  deleteApiTasksById: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Deleted */
+      204: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only the creator or a household owner can do that */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Task not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  patchApiTasksById: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody?: {
+      content: {
+        'application/json': {
+          title?: string
+          /** @description YYYY-MM-DD, or null to clear */
+          due_date?: string | null
+          /** @enum {string|null} */
+          recurrence?: 'daily' | 'weekly' | 'monthly' | null
+          /** @description A member of this household (both modes); null unassigns */
+          assignee_member_id?: string | null
+          /**
+           * @description Complete — standalone
+           * @enum {string}
+           */
+          status?: 'done'
+          /** @description Approve — standalone, must be true */
+          approve?: boolean
+        }
+      }
+    }
+    responses: {
+      /** @description OK — the updated task comes back */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            task: {
+              id: string
+              household_id: string
+              title: string
+              assignee_member_id: string | null
+              created_by_member_id: string | null
+              /** @description YYYY-MM-DD, or null */
+              due_date: string | null
+              /** @enum {string|null} */
+              recurrence: 'daily' | 'weekly' | 'monthly' | null
+              /** @enum {string} */
+              status: 'open' | 'done'
+              needs_approval: boolean
+              approved_by_member_id: string | null
+              created_at: string
+              updated_at: string
+            }
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only the creator/assignee/owner relationship allows that */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Task not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description The task’s state refuses the action (already done, not awaiting approval) */
+      409: {
         headers: {
           [name: string]: unknown
         }
