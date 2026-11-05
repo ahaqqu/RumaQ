@@ -371,6 +371,34 @@ describe('Tasks page', () => {
     expect(remove.mutate).toHaveBeenCalledWith({ id: 't1' }, expect.any(Object))
   })
 
+  it('marks overdue against the household calendar (UTC+7 WIB mirror), not UTC', () => {
+    // 2026-11-07T17:30:00Z is 2026-11-08 00:30 WIB. A chore due Nov 7 is
+    // overdue on the household calendar — but plain-UTC "today" (Nov 7)
+    // would keep the highlight off until 07:00 WIB (thermos A3).
+    vi.useFakeTimers({ now: new Date('2026-11-07T17:30:00Z') })
+    try {
+      const overdueChore = { ...KID_CHORE, due_date: '2026-11-07' }
+      const futureChore = { ...AYAH_ERRAND, due_date: '2026-11-20' }
+      vi.mocked(useMe).mockReturnValue({ data: { user: { id: 'u1' } } })
+      vi.mocked(useHouseholds).mockReturnValue({ data: HOUSEHOLDS_OWNER, isLoading: false })
+      vi.mocked(useHouseholdMembers).mockReturnValue({ data: MEMBERS, isLoading: false })
+      vi.mocked(useTasks).mockReturnValue({
+        data: { tasks: [overdueChore, futureChore] },
+        isLoading: false,
+      })
+      vi.mocked(useCreateTask).mockReturnValue(mutation())
+      vi.mocked(useUpdateTask).mockReturnValue(mutation())
+      vi.mocked(useDeleteTask).mockReturnValue(mutation())
+
+      const { container } = renderTasks()
+      // Scope to spans: the icon-only delete buttons also carry text-danger.
+      const dangerSpans = [...container.querySelectorAll('span.text-danger')]
+      expect(dangerSpans).toHaveLength(1) // only the overdue chore's due chip
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('shows the empty state when the household has no tasks', () => {
     vi.mocked(useMe).mockReturnValue({ data: { user: { id: 'u1' } } })
     vi.mocked(useHouseholds).mockReturnValue({ data: HOUSEHOLDS_OWNER, isLoading: false })

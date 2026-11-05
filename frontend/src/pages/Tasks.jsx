@@ -56,8 +56,14 @@ function formatDate(value, language) {
   }).format(date)
 }
 
+// The household calendar day as ISO YYYY-MM-DD, pinned at UTC+7 (WIB) — the
+// frontend MIRROR of the backend's householdIsoDate (lib/document-expiry.ts,
+// #426; the frontend cannot import backend lib code, so the constant offset
+// is duplicated with this comment tying the two together — thermos A3
+// decision). A plain-UTC "today" left the overdue highlight ~7 hours late
+// every WIB night: a chore due yesterday kept its highlight until 07:00.
 function todayISO() {
-  return new Date().toISOString().slice(0, 10)
+  return new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)
 }
 
 // The assignee chip — the member-chip component the vault and the roster use:
@@ -394,8 +400,6 @@ export function Tasks() {
     deleteTask.mutate({ id: task.id }, { onError: (err) => setActionError(t(taskErrorKey(err))) })
   }
 
-  const editDraftWithMembers = editDraft
-
   if (isLoading) {
     return (
       <div className="flex flex-col gap-6" aria-busy="true">
@@ -428,7 +432,7 @@ export function Tasks() {
             onApprove={approve}
             onDelete={remove}
             onSaveEdit={saveEdit}
-            editDraft={editDraftWithMembers}
+            editDraft={editDraft}
             setEditDraft={setEditDraft}
             editPending={updateTask.isPending}
             language={i18n.language}
