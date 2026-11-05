@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vite-plus/test'
+import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test'
 import {
   verifyJwt,
   signJwt,
@@ -9,8 +9,15 @@ import {
   verifyPassword,
 } from '../auth.js'
 import { authApp } from '../apps/auth.js'
+import { resetRateLimit } from '../lib/rate-limit.js'
 
 const SECRET = 'test-secret-12345'
+
+// The /email-login limiter (QA-F4) keys the module-global window — tests must
+// start from an empty one, or counts leak across cases.
+beforeEach(() => {
+  resetRateLimit()
+})
 
 describe('base64UrlEncode / base64UrlDecode', () => {
   it('round-trips a buffer', () => {
@@ -555,5 +562,257 @@ describe('authApp Hono routes', () => {
     expect(body).toEqual({ ok: true })
     const setCookie = res.headers.get('set-cookie') || ''
     expect(setCookie).toContain('rumaq_session=')
+  })
+
+  // Session epoch (ahaqqu/RumaQ#405): the token must carry the user's CURRENT
+  // epoch — a re-login after a logout bump would otherwise mint a token the
+  // middleware rejects.
+  it('/email-login signs the user’s current session_epoch into the token', async () => {
+    const mockDb = {
+      prepare: () => mockDb,
+      bind: () => mockDb,
+      first: async () => ({
+        id: 'u-epoch3',
+        email: 'test@rumaq.dev',
+        name: 'Test User One',
+        password_hash:
+          'pbkdf2_sha256$100000$pGW_FQUWkZ4LWR5SAXwDbg$eavlQExxmqixP0sIhu9HM8OIZqaxNm5ngKDMQd7Ge3s',
+        session_epoch: 3,
+      }),
+      all: async () => ({ results: [] }),
+      batch: async () => [],
+    }
+    const env = {
+      GOOGLE_CLIENT_ID: 'test-client-id',
+      GOOGLE_CLIENT_SECRET: 'test-secret',
+      WORKER_JWT_SECRET: SECRET,
+      WORKER_ENCRYPTION_KEY: 'test-enc-key',
+      DB: mockDb,
+      PAGES_ORIGIN: 'http://localhost:5173',
+      EMAIL_AUTH_ENABLED: 'true',
+    }
+    const res = await authApp.request(
+      '/email-login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: 'test@rumaq.dev',
+          password: 'password123',
+        }),
+      },
+      env as any
+    )
+    expect(res.status).toBe(200)
+    const cookie = (res.headers.get('set-cookie') || '').match(/rumaq_session=([^;]+)/)?.[1] || ''
+    const payload = await verifyJwt(cookie, SECRET)
+    expect(payload).toMatchObject({ sub: 'u-epoch3', epoch: 3 })
+  })
+
+  it('/email-login mints epoch 0 for a user whose stored epoch is unset', async () => {
+    const mockDb = {
+      prepare: () => mockDb,
+      bind: () => mockDb,
+      first: async () => ({
+        id: 'u-legacy',
+        email: 'test@rumaq.dev',
+        name: 'Test User One',
+        password_hash:
+          'pbkdf2_sha256$100000$pGW_FQUWkZ4LWR5SAXwDbg$eavlQExxmqixP0sIhu9HM8OIZqaxNm5ngKDMQd7Ge3s',
+        session_epoch: null,
+      }),
+      all: async () => ({ results: [] }),
+      batch: async () => [],
+    }
+    const env = {
+      GOOGLE_CLIENT_ID: 'test-client-id',
+      GOOGLE_CLIENT_SECRET: 'test-secret',
+      WORKER_JWT_SECRET: SECRET,
+      WORKER_ENCRYPTION_KEY: 'test-enc-key',
+      DB: mockDb,
+      PAGES_ORIGIN: 'http://localhost:5173',
+      EMAIL_AUTH_ENABLED: 'true',
+    }
+    const res = await authApp.request(
+      '/email-login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: 'test@rumaq.dev',
+          password: 'password123',
+        }),
+      },
+      env as any
+    )
+    expect(res.status).toBe(200)
+    const cookie = (res.headers.get('set-cookie') || '').match(/rumaq_session=([^;]+)/)?.[1] || ''
+    const payload = await verifyJwt(cookie, SECRET)
+    expect(payload).toMatchObject({ sub: 'u-legacy', epoch: 0 })
+  })
+
+  // Session epoch (ahaqqu/RumaQ#405): logout revokes server-side. The bump
+  // needs a VERIFIED sub — an unverified token's sub would let anyone revoke
+  // a victim's sessions.
+  it('/logout bumps the session epoch for the verified session user', async () => {
+    const bound: unknown[][] = []
+    const sqls: string[] = []
+    const mockDb = {
+      prepare: (sql: string) => {
+        sqls.push(sql)
+        return {
+          bind: (...params: unknown[]) => {
+            bound.push(params)
+            return { run: async () => ({ meta: { changes: 1 } }) }
+          },
+        }
+      },
+    }
+    const env = {
+      WORKER_JWT_SECRET: SECRET,
+      DB: mockDb,
+      PAGES_ORIGIN: 'http://localhost:5173',
+    }
+    const token = await signJwt({ sub: 'u1', exp: Date.now() + 60_000, epoch: 2 }, SECRET)
+    const res = await authApp.request(
+      '/logout',
+      { method: 'POST', headers: { Cookie: `rumaq_session=${token}` } },
+      env as any
+    )
+    expect(res.status).toBe(200)
+    const updates = sqls.filter((s) => s.includes('session_epoch'))
+    expect(updates).toHaveLength(1)
+    expect(bound[0]).toEqual(['u1'])
+    const setCookie = res.headers.get('set-cookie') || ''
+    expect(setCookie).toContain('rumaq_session=;')
+  })
+
+  it('/logout without a valid session cookie never touches the DB', async () => {
+    let prepareCalls = 0
+    const mockDb = {
+      prepare: () => {
+        prepareCalls++
+        return { bind: () => ({ run: async () => ({}) }) }
+      },
+    }
+    const env = {
+      WORKER_JWT_SECRET: SECRET,
+      DB: mockDb,
+      PAGES_ORIGIN: 'http://localhost:5173',
+    }
+    const forged = await signJwt({ sub: 'victim', exp: Date.now() + 60_000 }, 'wrong-secret')
+    const noCookie = await authApp.request('/logout', { method: 'POST' }, env as any)
+    expect(noCookie.status).toBe(200)
+    const forgedCookie = await authApp.request(
+      '/logout',
+      { method: 'POST', headers: { Cookie: `rumaq_session=${forged}` } },
+      env as any
+    )
+    expect(forgedCookie.status).toBe(200)
+    expect(prepareCalls).toBe(0)
+  })
+
+  // QA-F4 (ahaqqu/RumaQ#402): the limiter's signal must be explicit — 429
+  // with a clear body (error + retry_after seconds) and a Retry-After header,
+  // not an identical 401 on every attempt.
+  it('/email-login returns an explicit 429 after the per-IP budget is exhausted', async () => {
+    const mockDb = {
+      prepare: () => mockDb,
+      bind: () => mockDb,
+      first: async () => null,
+      all: async () => ({ results: [] }),
+      batch: async () => [],
+    }
+    const env = {
+      GOOGLE_CLIENT_ID: 'test-client-id',
+      GOOGLE_CLIENT_SECRET: 'test-secret',
+      WORKER_JWT_SECRET: SECRET,
+      WORKER_ENCRYPTION_KEY: 'test-enc-key',
+      DB: mockDb,
+      PAGES_ORIGIN: 'http://localhost:5173',
+      EMAIL_AUTH_ENABLED: 'true',
+    }
+    const attempt = () =>
+      authApp.request(
+        '/email-login',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'CF-Connecting-IP': '203.0.113.7',
+          },
+          body: JSON.stringify({ email: 'nobody@rumaq.dev', password: 'password123' }),
+        },
+        env as any
+      )
+
+    // 10 attempts inside the window go through (401 — unknown user), then the
+    // 11th hits the explicit 429.
+    for (let i = 0; i < 10; i++) {
+      expect((await attempt()).status).toBe(401)
+    }
+    const limited = await attempt()
+    expect(limited.status).toBe(429)
+    const body = (await limited.json()) as { error: string; retry_after: number }
+    expect(body.error).toContain('Too many login attempts')
+    expect(Number.isInteger(body.retry_after)).toBe(true)
+    expect(body.retry_after).toBeGreaterThan(0)
+    expect(body.retry_after).toBeLessThanOrEqual(60)
+    expect(limited.headers.get('Retry-After')).toBe(String(body.retry_after))
+
+    // A different address still gets through — the window is per-IP.
+    const otherIp = await authApp.request(
+      '/email-login',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'CF-Connecting-IP': '203.0.113.8',
+        },
+        body: JSON.stringify({ email: 'nobody@rumaq.dev', password: 'password123' }),
+      },
+      env as any
+    )
+    expect(otherIp.status).toBe(401)
+  })
+
+  // Session epoch (ahaqqu/RumaQ#405): the Google path signs the CURRENT epoch
+  // from the same lookup that resolves the id.
+  it('/callback signs the looked-up session_epoch into the token', async () => {
+    let callCount = 0
+    globalThis.fetch = async () => {
+      callCount++
+      if (callCount === 1)
+        return new Response(JSON.stringify({ access_token: 'tok' }), { status: 200 }) as any
+      return new Response(JSON.stringify({ sub: 'g-epoch', email: 'e@b.com' }), {
+        status: 200,
+      }) as any
+    }
+    const mockDb = {
+      prepare: () => mockDb,
+      bind: () => mockDb,
+      first: async () => null,
+      all: async () => ({ results: [] }),
+      batch: async () => [{}, { results: [{ id: 'u-epoch7', session_epoch: 7 }] }],
+    }
+    const env = {
+      GOOGLE_CLIENT_ID: 'test-client-id',
+      GOOGLE_CLIENT_SECRET: 'test-secret',
+      WORKER_JWT_SECRET: SECRET,
+      WORKER_ENCRYPTION_KEY: 'test-enc-key',
+      DB: mockDb,
+      PAGES_ORIGIN: 'http://localhost:5173',
+    }
+    const res = await authApp.request(
+      '/callback?code=abc&state=test-state',
+      {
+        headers: { Cookie: 'rumaq_oauth_state=test-state:verifier' },
+      },
+      env as any
+    )
+    expect(res.status).toBe(302)
+    const cookie = (res.headers.get('set-cookie') || '').match(/rumaq_session=([^;]+)/)?.[1] || ''
+    const payload = await verifyJwt(cookie, SECRET)
+    expect(payload).toMatchObject({ sub: 'u-epoch7', epoch: 7 })
   })
 })

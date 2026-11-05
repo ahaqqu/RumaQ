@@ -36,15 +36,25 @@ export interface StorageAdapter {
 // new infrastructure, no shared code path.
 export const DOCUMENTS_KEY_PREFIX = 'documents'
 
-/** The only key shape the vault writes or reads — no traversal, no escapes. */
-export function buildDocumentKey(householdId: string, documentId: string): string {
-  return `${DOCUMENTS_KEY_PREFIX}/${householdId}/${documentId}`
+/**
+ * The only key shape the vault writes or reads — no traversal, no escapes.
+ * Since #422 a document groups N files and every file is its own object:
+ * documents/<household>/<document>/<file>. The pre-#422 shape
+ * documents/<household>/<document> lives on as the migrated first file of
+ * every existing document (0025 reuses the key — no byte movement).
+ */
+export function buildDocumentFileKey(
+  householdId: string,
+  documentId: string,
+  fileId: string
+): string {
+  return `${DOCUMENTS_KEY_PREFIX}/${householdId}/${documentId}/${fileId}`
 }
 
-/** Is this key one of ours? (The receipts namespace is never touched here.) */
+/** Is this key one of ours, legacy or current? (Receipts are never touched.) */
 export function isDocumentKey(key: string): boolean {
   const parts = key.split('/')
-  return parts.length === 3 && parts[0] === DOCUMENTS_KEY_PREFIX
+  return (parts.length === 3 || parts.length === 4) && parts[0] === DOCUMENTS_KEY_PREFIX
 }
 
 /** The R2 implementation of StorageAdapter. */

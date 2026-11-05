@@ -507,10 +507,15 @@ describe('migration 0021: two-mode household members (#388)', () => {
 // Document vault (ahaqqu/RumaQ#388 MVP): documents + document_audit. The
 // interesting questions are the FK semantics — which row removals cascade,
 // which keep the document — and the audit trail's deliberate FK-less design.
+// These tests pin the 0022-era shape, so the chain stops at 0024: #422's 0025
+// rebuilds documents around the free-text name and moves the file columns
+// into document_files (see the 0025 describe below).
 describe('migration 0022: document vault (#388)', () => {
+  const filesBelow0025 = () => migrationFiles().filter((file: string) => file < '0025')
+
   it('creates documents with the closed category set and both-mode member FK', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
-    applyMigrations(db, migrationFiles())
+    applyMigrations(db, filesBelow0025())
 
     db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
     db.prepare(
@@ -613,7 +618,7 @@ describe('migration 0022: document vault (#388)', () => {
     // object, so member removal must not orphan the bytes — the household
     // still owns the document, only the person link is cleared.
     const db = new DatabaseSync(':memory:') as unknown as Db
-    applyMigrations(db, migrationFiles())
+    applyMigrations(db, filesBelow0025())
 
     db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
     db.prepare(
@@ -671,7 +676,7 @@ describe('migration 0022: document vault (#388)', () => {
 
   it('deleting the household cascades documents; audit rows keep their document reference', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
-    applyMigrations(db, migrationFiles())
+    applyMigrations(db, filesBelow0025())
 
     db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
     db.prepare(
@@ -704,7 +709,7 @@ describe('migration 0022: document vault (#388)', () => {
     // the DELETE — an FK + cascade on document_id would erase exactly that
     // record. The trail must outlive the row it names.
     const db = new DatabaseSync(':memory:') as unknown as Db
-    applyMigrations(db, migrationFiles())
+    applyMigrations(db, filesBelow0025())
 
     db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
     db.prepare(
@@ -742,7 +747,7 @@ describe('migration 0022: document vault (#388)', () => {
 
   it('indexes the household listing and audit lookups for seeks (no scan, no temp B-tree)', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
-    applyMigrations(db, migrationFiles())
+    applyMigrations(db, filesBelow0025())
 
     const listingPlan = db
       .prepare(
@@ -858,5 +863,328 @@ describe('migration 0023: invite target member (#397)', () => {
     const columns = db.prepare('PRAGMA table_info(household_invites)').all()
     const names = columns.map((c: Record<string, unknown>) => c.name)
     expect(names).toContain('target_member_id')
+  })
+})
+
+// Session-epoch logout revocation (ahaqqu/RumaQ#405, owner decision: option 2).
+// users.session_epoch is the server-side counter logout bumps; the auth
+// middleware compares the epoch signed into the JWT against it. The
+// interesting properties: the additive default (no backfill — every existing
+// user and every invite-created account sits at 0, which is what pre-feature
+// tokens without the claim normalize to), and the per-request lookup cost
+// (the middleware's subquery must seek the users primary key, not scan).
+describe('migration 0024: users.session_epoch (#405)', () => {
+  it('adds the counter column on top of the pre-0024 schema; old rows default to 0', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0024')
+    )
+
+    // Rows that predate the feature: email-auth users, Google users, and the
+    // profile-only members' would-be accounts all start at epoch 0.
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO users (id, email, name, picture, google_id)
+       VALUES ('u2', 'c@d.com', 'Google User', NULL, 'g-1')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0024_session_epoch.sql'), 'utf8'))
+
+    const old = db.prepare('SELECT * FROM users WHERE id = ?').get('u1')
+    expect(old).toMatchObject({ id: 'u1', session_epoch: 0 })
+    expect(db.prepare('SELECT * FROM users WHERE id = ?').get('u2')).toMatchObject({
+      session_epoch: 0,
+    })
+
+    // New rows default too — a fresh login flow inserts without naming the
+    // column and must land at the compatible epoch.
+    db.prepare("INSERT INTO users (id, email) VALUES ('u3', 'e@f.com')").run()
+    expect(db.prepare('SELECT * FROM users WHERE id = ?').get('u3')).toMatchObject({
+      session_epoch: 0,
+    })
+
+    // The logout bump is a monotonic += 1 — representable and persistent.
+    db.prepare('UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?').run('u1')
+    expect(db.prepare('SELECT session_epoch FROM users WHERE id = ?').get('u1')).toMatchObject({
+      session_epoch: 1,
+    })
+  })
+
+  it('keeps the middleware epoch subquery on an indexed seek (no scan, no temp B-tree)', () => {
+    // The epoch comparison rides in the SAME statement as the active-household
+    // resolution (backend/src/auth.ts) — the per-request budget stays at one
+    // indexed lookup. The users half must seek the primary key.
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+
+    const plan = db
+      .prepare('EXPLAIN QUERY PLAN SELECT session_epoch FROM users WHERE id = ?')
+      .all('u1')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+
+  it('keeps the full chain green on a fresh database (additive, nothing dropped)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(users)').all()
+    const names = columns.map((c: Record<string, unknown>) => c.name)
+    expect(names).toContain('session_epoch')
+  })
+})
+
+// Free-text names + multi-file documents (ahaqqu/RumaQ#422): documents
+// rebuilds around `name` (the preset category CHECK and its per-document file
+// columns go — the latter move into document_files), document_files carries
+// one row per file, and document_audit rebuilds around the widened action
+// CHECK + the nullable document_file_id. The migration is real SQL against a
+// real SQLite engine: seeded pre-0025 rows ride the actual INSERT..SELECT
+// backfills, nothing mocked.
+describe('migration 0025: document names + multi-file (#422)', () => {
+  it('backfills names from the old categories and mints attachment #1 per legacy document (up from 0024)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0025')
+    )
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role)
+       VALUES ('m-linked', 'h1', 'u1', 'owner')`
+    ).run()
+
+    // One legacy document per category — every label branch of the backfill.
+    const categories = [
+      ['doc-kk', 'kartu_keluarga'],
+      ['doc-ktp', 'ktp'],
+      ['doc-anak', 'kartu_anak'],
+      ['doc-akta', 'akta'],
+      ['doc-paspor', 'paspor'],
+      ['doc-bpjs', 'bpjs'],
+      ['doc-lain', 'lainnya'],
+    ] as const
+    const insertDoc = db.prepare(
+      `INSERT INTO documents
+         (id, household_id, member_id, category, file_name, mime_type, size_bytes,
+          storage_key, sha256, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    for (const [id, category] of categories) {
+      insertDoc.run(
+        id,
+        'h1',
+        'm-linked',
+        category,
+        `${id}.jpg`,
+        'image/jpeg',
+        1234,
+        `documents/h1/${id}`,
+        ('a' + id).slice(0, 4).padEnd(64, 'b'),
+        'u1'
+      )
+    }
+    db.prepare(
+      `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action)
+       VALUES ('aud-1', 'doc-ktp', 'h1', 'u1', 'upload')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0025_document_names_multifile.sql'), 'utf8'))
+
+    // The category list is GONE from the schema — no remnant anywhere.
+    const columns = db.prepare('PRAGMA table_info(documents)').all()
+    const names = columns.map((c: Record<string, unknown>) => String(c.name))
+    expect(names).toEqual(['id', 'household_id', 'member_id', 'name', 'uploaded_by', 'created_at'])
+
+    // Names backfilled from the old category's human (EN locale) label —
+    // readable starting points the owner can rename freely.
+    const nameById = Object.fromEntries(
+      db
+        .prepare('SELECT id, name FROM documents')
+        .all()
+        .map((r: Record<string, unknown>) => [String(r.id), String(r.name)])
+    )
+    expect(nameById).toEqual({
+      'doc-kk': 'Kartu Keluarga',
+      'doc-ktp': 'KTP',
+      'doc-anak': 'Kartu Anak',
+      'doc-akta': 'Akta Lahir',
+      'doc-paspor': 'Paspor',
+      'doc-bpjs': 'BPJS',
+      'doc-lain': 'Other',
+    })
+    // Member relation and audit survive the rebuild untouched.
+    const ktp = db.prepare('SELECT * FROM documents WHERE id = ?').get('doc-ktp') as Record<
+      string,
+      unknown
+    >
+    expect(ktp).toMatchObject({ member_id: 'm-linked', uploaded_by: 'u1' })
+    expect(
+      db.prepare('SELECT action, document_file_id FROM document_audit WHERE id = ?').get('aud-1')
+    ).toEqual({ action: 'upload', document_file_id: null })
+
+    // Attachment #1 per legacy document: the old per-document file metadata,
+    // reusing the existing R2 key (no byte movement), sort_order 1, label
+    // NULL (optional per the owner decision), upload time = the document's
+    // own created_at — that IS when those bytes were uploaded.
+    const createdAtById = Object.fromEntries(
+      db
+        .prepare('SELECT id, created_at FROM documents')
+        .all()
+        .map((r: Record<string, unknown>) => [String(r.id), String(r.created_at)])
+    )
+    const files = db.prepare('SELECT * FROM document_files ORDER BY document_id').all() as Array<
+      Record<string, unknown>
+    >
+    expect(files).toHaveLength(categories.length)
+    for (const [id] of categories) {
+      const file = files.find((f) => f.document_id === id)
+      expect(file).toMatchObject({
+        id: `file-${id}`,
+        r2_key: `documents/h1/${id}`,
+        file_name: `${id}.jpg`,
+        content_type: 'image/jpeg',
+        size_bytes: 1234,
+        label: null,
+        sort_order: 1,
+        uploaded_by: 'u1',
+        uploaded_at: createdAtById[id],
+      })
+    }
+  })
+
+  it('enforces the new bounds and the FK semantics on the rebuilt schema', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+
+    // name is NOT NULL and bounded — the CHECK is a real constraint, not just
+    // an app-side rule.
+    const insertDoc = db.prepare(
+      `INSERT INTO documents (id, household_id, member_id, name, uploaded_by)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    expect(() => insertDoc.run('doc-1', 'h1', null, null, 'u1')).toThrow()
+    expect(() => insertDoc.run('doc-1', 'h1', null, 'x'.repeat(121), 'u1')).toThrow()
+    insertDoc.run('doc-1', 'h1', null, 'x'.repeat(120), 'u1')
+
+    const insertFile = db.prepare(
+      `INSERT INTO document_files
+         (id, document_id, r2_key, file_name, size_bytes, content_type, label,
+          sort_order, sha256, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    // The file FK points at a real document; the label bound is the same 120.
+    expect(() =>
+      insertFile.run(
+        'f-ghost',
+        'doc-none',
+        'documents/h1/x',
+        'a.jpg',
+        1,
+        'image/jpeg',
+        null,
+        1,
+        'a'.repeat(64),
+        'u1'
+      )
+    ).toThrow()
+    expect(() =>
+      insertFile.run(
+        'f-1',
+        'doc-1',
+        'documents/h1/doc-1/f-1',
+        'a.jpg',
+        1,
+        'image/jpeg',
+        'y'.repeat(121),
+        1,
+        'a'.repeat(64),
+        'u1'
+      )
+    ).toThrow()
+    insertFile.run(
+      'f-1',
+      'doc-1',
+      'documents/h1/doc-1/f-1',
+      'a.jpg',
+      1,
+      'image/jpeg',
+      null,
+      1,
+      'a'.repeat(64),
+      'u1'
+    )
+    insertFile.run(
+      'f-2',
+      'doc-1',
+      'documents/h1/doc-1/f-2',
+      'b.pdf',
+      2,
+      'application/pdf',
+      'z'.repeat(120),
+      2,
+      'b'.repeat(64),
+      'u1'
+    )
+
+    // The widened audit vocabulary accepts the file-scoped actions and still
+    // rejects unknown ones; document_file_id is nullable for document-level
+    // rows and carries the file id for file-scoped ones.
+    const insertAudit = db.prepare(
+      `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action, document_file_id)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    for (const [id, action, fileId] of [
+      ['aud-add', 'file_add', 'f-1'],
+      ['aud-del', 'file_delete', 'f-2'],
+      ['aud-view', 'view', 'f-1'],
+    ] as const) {
+      insertAudit.run(id, 'doc-1', 'h1', 'u1', action, fileId)
+    }
+    expect(() => insertAudit.run('aud-bad', 'doc-1', 'h1', 'u1', 'share', null)).toThrow()
+
+    // Document deletion cascades the file rows; the audit trail (FK-less)
+    // survives both the document and the files it names.
+    db.prepare('DELETE FROM documents WHERE id = ?').run('doc-1')
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM document_files').all()).toEqual([{ cnt: 0 }])
+    expect(
+      (db.prepare('SELECT COUNT(*) AS cnt FROM document_audit').all() as Array<{ cnt: number }>)[0]
+        ?.cnt
+    ).toBe(3)
+  })
+
+  it('keeps the document-files listing and the audit lookups on indexed seeks (no scan, no temp B-tree)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const filesPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT id FROM document_files WHERE document_id = ?
+          ORDER BY sort_order`
+      )
+      .all('doc-1')
+    const files = filesPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(files).toContain('idx_document_files_document')
+    expect(files).not.toMatch(/SCAN|TEMP B-TREE/i)
+
+    const auditPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT action FROM document_audit WHERE document_id = ?
+          ORDER BY created_at`
+      )
+      .all('doc-1')
+    const audit = auditPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(audit).toContain('idx_document_audit_document')
+    expect(audit).not.toMatch(/SCAN|TEMP B-TREE/i)
   })
 })

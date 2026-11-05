@@ -483,54 +483,114 @@ export function joinHousehold(code: string): Promise<unknown> {
 }
 
 // ---------------------------------------------------------------------------
-// Document vault (ahaqqu/RumaQ#388 MVP) — private per-household documents.
-// Metadata rides the typed client; the content endpoint bypasses it
+// Document vault (ahaqqu/RumaQ#422 rework of the #388 MVP) — private
+// per-household documents with free-text names and N files each. Metadata
+// rides the typed client; the per-file content endpoint bypasses it
 // (fetchReviewExport pattern): the typed client's JSON unwrap has no blob
 // path, and document bytes must stream into blob URLs — never parse as JSON.
 // No public or presigned URLs exist anywhere; every byte read is a
 // cookie-authenticated, same-origin fetch.
 // ---------------------------------------------------------------------------
 
-// Mirrors the backend's closed category set (lib/documents.ts) — one
-// definition per side; a mismatch would 400 at upload time.
-export const DOCUMENT_CATEGORIES = [
-  'kartu_keluarga',
-  'ktp',
-  'kartu_anak',
-  'akta',
-  'paspor',
-  'bpjs',
-  'lainnya',
-] as const
-
-export type DocumentCategory = (typeof DOCUMENT_CATEGORIES)[number]
-
-// Same cap as the backend (DOCUMENT_MAX_BYTES) — the client pre-check exists
-// to fail fast before a 10 MB read ever leaves the device.
+// Same caps as the backend (lib/documents.ts) — the client pre-checks exist
+// to fail fast before bytes ever leave the device.
 export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
+export const DOCUMENT_MAX_FILES = 20
+export const DOCUMENT_NAME_MAX = 120
 
-export function getDocuments(
-  { memberId, category }: { memberId?: string; category?: DocumentCategory } = {},
-  signal?: AbortSignal
-): Promise<unknown> {
-  return unwrap(client.GET('/api/documents', { params: { query: { memberId, category } }, signal }))
+// Client-side magic-byte sniff over the FIRST bytes of a picked file (the
+// same signature table as the backend's sniffDocumentMime). The `accept=`
+// attribute only filters the OS picker — a renamed .txt still reaches the
+// upload loop and would 415 MID-SEQUENCE, stranding a partially-uploaded
+// document. Sniffing the picked batch up front rejects it before anything is
+// created; the server re-sniffs (never trust the client). Returns the mime
+// the bytes claim, or null when the head matches nothing allowed.
+export function sniffDocumentMime(bytes: Uint8Array): string | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg'
+  }
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return 'image/png'
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return 'image/webp'
+  }
+  if (
+    bytes.length >= 4 &&
+    bytes[0] === 0x25 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x44 &&
+    bytes[3] === 0x46
+  ) {
+    return 'application/pdf'
+  }
+  return null
 }
 
-export function uploadDocument(
-  file: File,
-  category: DocumentCategory,
-  memberId?: string
+export function getDocuments(
+  { q, memberId }: { q?: string; memberId?: string } = {},
+  signal?: AbortSignal
 ): Promise<unknown> {
+  return unwrap(client.GET('/api/documents', { params: { query: { q, memberId } }, signal }))
+}
+
+// Create = the free-text name + the FIRST file (its optional label rides the
+// same multipart). Later files go through addDocumentFile so upload order is
+// deterministic.
+export function createDocument({
+  name,
+  file,
+  label,
+  memberId,
+}: {
+  name: string
+  file: File
+  label?: string
+  memberId?: string
+}): Promise<unknown> {
   const form = new FormData()
+  form.append('name', name)
   form.append('file', file, file.name)
-  form.append('category', category)
+  if (label) form.append('label', label)
   if (memberId) form.append('memberId', memberId)
   // openapi-typescript types format:'binary' as `string`; FormData is what
   // fetch actually sends (multipart boundary included) — one cast at the
   // boundary, typed to the generated body shape.
   return unwrap(
     client.POST('/api/documents', {
-      body: form as unknown as { file: string; category: DocumentCategory; memberId?: string },
+      body: form as unknown as { name: string; file: string; label?: string; memberId?: string },
+    })
+  )
+}
+
+export function addDocumentFile(documentId: string, file: File, label?: string): Promise<unknown> {
+  const form = new FormData()
+  form.append('file', file, file.name)
+  if (label) form.append('label', label)
+  return unwrap(
+    client.POST('/api/documents/{id}/files', {
+      params: { path: { id: documentId } },
+      body: form as unknown as { file: string; label?: string },
     })
   )
 }
@@ -539,20 +599,32 @@ export function deleteDocument(id: string): Promise<unknown> {
   return unwrap(client.DELETE('/api/documents/{id}', { params: { path: { id } } }))
 }
 
+export function deleteDocumentFile(documentId: string, fileId: string): Promise<unknown> {
+  return unwrap(
+    client.DELETE('/api/documents/{id}/files/{fileId}', {
+      params: { path: { id: documentId, fileId } },
+    })
+  )
+}
+
 export function getDocumentMeta(id: string, signal?: AbortSignal): Promise<unknown> {
   return unwrap(client.GET('/api/documents/{id}', { params: { path: { id } }, signal }))
 }
 
-// The binary content endpoint — hand-written (see the section note above).
-// disposition=inline previews (audited as a view server-side),
+// The binary content endpoint, PER FILE — hand-written (see the section note
+// above). disposition=inline previews (audited as a view server-side),
 // disposition=attachment downloads (audited as a download).
 export async function fetchDocumentContent(
-  id: string,
+  documentId: string,
+  fileId: string,
   disposition: 'inline' | 'attachment',
   signal?: AbortSignal
 ): Promise<Blob> {
   const params = new URLSearchParams({ disposition })
-  const res = await fetch(`/api/documents/${id}/content?${params.toString()}`, { signal })
+  const res = await fetch(
+    `/api/documents/${documentId}/files/${fileId}/content?${params.toString()}`,
+    { signal }
+  )
   if (!res.ok) {
     throw new ApiError(`Document content failed: ${res.status}`, res.status)
   }

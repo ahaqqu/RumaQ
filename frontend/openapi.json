@@ -3386,7 +3386,7 @@
     "/api/documents": {
       "get": {
         "operationId": "getApiDocuments",
-        "description": "Lists the active household’s documents, newest first. Optional filters: memberId (both member modes — linked accounts and profile-only members), category.",
+        "description": "Lists the active household’s documents, newest first, each with its files in upload order. Optional filters: q (case-insensitive contains-search on the free-text document name — the #422 replacement for the category filter), memberId (both member modes — linked accounts and profile-only members).",
         "security": [
           {
             "cookieAuth": []
@@ -3395,20 +3395,20 @@
         "parameters": [
           {
             "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Name search: case-insensitive substring"
+            }
+          },
+          {
+            "in": "query",
             "name": "memberId",
             "required": false,
             "schema": {
               "type": "string",
               "description": "Surrogate member id (both modes)"
-            }
-          },
-          {
-            "in": "query",
-            "name": "category",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": ["kartu_keluarga", "ktp", "kartu_anak", "akta", "paspor", "bpjs", "lainnya"]
             }
           }
         ],
@@ -3429,13 +3429,10 @@
                           "id",
                           "household_id",
                           "member_id",
-                          "category",
-                          "file_name",
-                          "mime_type",
-                          "size_bytes",
-                          "sha256",
+                          "name",
                           "uploaded_by",
-                          "created_at"
+                          "created_at",
+                          "files"
                         ],
                         "properties": {
                           "id": {
@@ -3447,28 +3444,7 @@
                           "member_id": {
                             "type": ["string", "null"]
                           },
-                          "category": {
-                            "type": "string",
-                            "enum": [
-                              "kartu_keluarga",
-                              "ktp",
-                              "kartu_anak",
-                              "akta",
-                              "paspor",
-                              "bpjs",
-                              "lainnya"
-                            ]
-                          },
-                          "file_name": {
-                            "type": "string"
-                          },
-                          "mime_type": {
-                            "type": "string"
-                          },
-                          "size_bytes": {
-                            "type": "integer"
-                          },
-                          "sha256": {
+                          "name": {
                             "type": "string"
                           },
                           "uploaded_by": {
@@ -3476,6 +3452,51 @@
                           },
                           "created_at": {
                             "type": "string"
+                          },
+                          "files": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": [
+                                "id",
+                                "file_name",
+                                "content_type",
+                                "size_bytes",
+                                "sort_order",
+                                "sha256",
+                                "uploaded_by",
+                                "uploaded_at"
+                              ],
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "file_name": {
+                                  "type": "string"
+                                },
+                                "content_type": {
+                                  "type": "string"
+                                },
+                                "size_bytes": {
+                                  "type": "integer"
+                                },
+                                "label": {
+                                  "type": ["string", "null"]
+                                },
+                                "sort_order": {
+                                  "type": "integer"
+                                },
+                                "sha256": {
+                                  "type": "string"
+                                },
+                                "uploaded_by": {
+                                  "type": "string"
+                                },
+                                "uploaded_at": {
+                                  "type": "string"
+                                }
+                              }
+                            }
                           }
                         }
                       }
@@ -3492,7 +3513,7 @@
       },
       "post": {
         "operationId": "postApiDocuments",
-        "description": "Uploads one document (multipart/form-data: file, category, optional memberId) into the active household’s vault. Cap 10 MB enforced on Content-Length before the body is read and again on the parsed bytes; magic bytes must match the declared type (JPEG, PNG, WebP, PDF). memberId accepts both member modes (linked and profile-only). No public URLs exist — bytes are served only via the content endpoint.",
+        "description": "Creates a document (multipart/form-data: name, file, optional label for that file, optional memberId). The name is free text — trimmed, 1-120 chars, no preset list (#422). The file becomes attachment #1 (sort_order 1); more files ride POST /documents/{id}/files, max 20 per document. Cap 10 MB enforced on Content-Length before the body is read and again on the parsed bytes; magic bytes must match the declared type (JPEG, PNG, WebP, PDF). memberId accepts both member modes (linked and profile-only). No public URLs exist — bytes are served only via the per-file content endpoint.",
         "security": [
           {
             "cookieAuth": []
@@ -3504,23 +3525,17 @@
             "multipart/form-data": {
               "schema": {
                 "type": "object",
-                "required": ["file", "category"],
+                "required": ["file", "name"],
                 "properties": {
+                  "name": {
+                    "type": "string"
+                  },
                   "file": {
                     "type": "string",
                     "format": "binary"
                   },
-                  "category": {
-                    "type": "string",
-                    "enum": [
-                      "kartu_keluarga",
-                      "ktp",
-                      "kartu_anak",
-                      "akta",
-                      "paspor",
-                      "bpjs",
-                      "lainnya"
-                    ]
+                  "label": {
+                    "type": "string"
                   },
                   "memberId": {
                     "type": "string"
@@ -3545,13 +3560,10 @@
                         "id",
                         "household_id",
                         "member_id",
-                        "category",
-                        "file_name",
-                        "mime_type",
-                        "size_bytes",
-                        "sha256",
+                        "name",
                         "uploaded_by",
-                        "created_at"
+                        "created_at",
+                        "files"
                       ],
                       "properties": {
                         "id": {
@@ -3563,28 +3575,7 @@
                         "member_id": {
                           "type": ["string", "null"]
                         },
-                        "category": {
-                          "type": "string",
-                          "enum": [
-                            "kartu_keluarga",
-                            "ktp",
-                            "kartu_anak",
-                            "akta",
-                            "paspor",
-                            "bpjs",
-                            "lainnya"
-                          ]
-                        },
-                        "file_name": {
-                          "type": "string"
-                        },
-                        "mime_type": {
-                          "type": "string"
-                        },
-                        "size_bytes": {
-                          "type": "integer"
-                        },
-                        "sha256": {
+                        "name": {
                           "type": "string"
                         },
                         "uploaded_by": {
@@ -3592,6 +3583,51 @@
                         },
                         "created_at": {
                           "type": "string"
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "file_name",
+                              "content_type",
+                              "size_bytes",
+                              "sort_order",
+                              "sha256",
+                              "uploaded_by",
+                              "uploaded_at"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "file_name": {
+                                "type": "string"
+                              },
+                              "content_type": {
+                                "type": "string"
+                              },
+                              "size_bytes": {
+                                "type": "integer"
+                              },
+                              "label": {
+                                "type": ["string", "null"]
+                              },
+                              "sort_order": {
+                                "type": "integer"
+                              },
+                              "sha256": {
+                                "type": "string"
+                              },
+                              "uploaded_by": {
+                                "type": "string"
+                              },
+                              "uploaded_at": {
+                                "type": "string"
+                              }
+                            }
+                          }
                         }
                       }
                     }
@@ -3624,7 +3660,7 @@
     "/api/documents/{id}": {
       "get": {
         "operationId": "getApiDocumentsById",
-        "description": "Returns one document’s metadata. A document from another household answers the same 404 as a missing one (no existence leak).",
+        "description": "Returns one document’s metadata with its files in upload order. A document from another household answers the same 404 as a missing one (no existence leak).",
         "security": [
           {
             "cookieAuth": []
@@ -3645,13 +3681,10 @@
                         "id",
                         "household_id",
                         "member_id",
-                        "category",
-                        "file_name",
-                        "mime_type",
-                        "size_bytes",
-                        "sha256",
+                        "name",
                         "uploaded_by",
-                        "created_at"
+                        "created_at",
+                        "files"
                       ],
                       "properties": {
                         "id": {
@@ -3663,28 +3696,7 @@
                         "member_id": {
                           "type": ["string", "null"]
                         },
-                        "category": {
-                          "type": "string",
-                          "enum": [
-                            "kartu_keluarga",
-                            "ktp",
-                            "kartu_anak",
-                            "akta",
-                            "paspor",
-                            "bpjs",
-                            "lainnya"
-                          ]
-                        },
-                        "file_name": {
-                          "type": "string"
-                        },
-                        "mime_type": {
-                          "type": "string"
-                        },
-                        "size_bytes": {
-                          "type": "integer"
-                        },
-                        "sha256": {
+                        "name": {
                           "type": "string"
                         },
                         "uploaded_by": {
@@ -3692,6 +3704,51 @@
                         },
                         "created_at": {
                           "type": "string"
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "file_name",
+                              "content_type",
+                              "size_bytes",
+                              "sort_order",
+                              "sha256",
+                              "uploaded_by",
+                              "uploaded_at"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "file_name": {
+                                "type": "string"
+                              },
+                              "content_type": {
+                                "type": "string"
+                              },
+                              "size_bytes": {
+                                "type": "integer"
+                              },
+                              "label": {
+                                "type": ["string", "null"]
+                              },
+                              "sort_order": {
+                                "type": "integer"
+                              },
+                              "sha256": {
+                                "type": "string"
+                              },
+                              "uploaded_by": {
+                                "type": "string"
+                              },
+                              "uploaded_at": {
+                                "type": "string"
+                              }
+                            }
+                          }
                         }
                       }
                     }
@@ -3723,7 +3780,7 @@
       },
       "delete": {
         "operationId": "deleteApiDocumentsById",
-        "description": "Hard-deletes a document: the stored object AND the metadata row, with the deletion audit record in the same batch. Uploader or household owner only. Audit rows outlive the document (the deletion record survives).",
+        "description": "Hard-deletes a document: every file’s stored object AND the metadata rows, with the deletion audit record in the same batch (the file rows cascade). Uploader or household owner only. Audit rows outlive the document (the deletion record survives).",
         "security": [
           {
             "cookieAuth": []
@@ -3755,10 +3812,164 @@
         ]
       }
     },
-    "/api/documents/{id}/content": {
+    "/api/documents/{id}/files": {
+      "post": {
+        "operationId": "postApiDocumentsByIdFiles",
+        "description": "Adds one file to an existing document (multipart/form-data: file, optional label). Max 20 files per document — a full document refuses another file with 409 before the body is read. Same 10 MB cap (Content-Length pre-check + parsed bytes) and magic-byte policy as create; the file lands at sort_order = max + 1 (upload order). Returns the updated document with all files. No public URLs exist — bytes are served only via the per-file content endpoint.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "File added — the updated document comes back",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["document"],
+                  "properties": {
+                    "document": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "household_id",
+                        "member_id",
+                        "name",
+                        "uploaded_by",
+                        "created_at",
+                        "files"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "household_id": {
+                          "type": "string"
+                        },
+                        "member_id": {
+                          "type": ["string", "null"]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "uploaded_by": {
+                          "type": "string"
+                        },
+                        "created_at": {
+                          "type": "string"
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "file_name",
+                              "content_type",
+                              "size_bytes",
+                              "sort_order",
+                              "sha256",
+                              "uploaded_by",
+                              "uploaded_at"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "file_name": {
+                                "type": "string"
+                              },
+                              "content_type": {
+                                "type": "string"
+                              },
+                              "size_bytes": {
+                                "type": "integer"
+                              },
+                              "label": {
+                                "type": ["string", "null"]
+                              },
+                              "sort_order": {
+                                "type": "integer"
+                              },
+                              "sha256": {
+                                "type": "string"
+                              },
+                              "uploaded_by": {
+                                "type": "string"
+                              },
+                              "uploaded_at": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Document not found"
+          },
+          "409": {
+            "description": "The document already holds the maximum of 20 files"
+          },
+          "413": {
+            "description": "File exceeds the 10 MB cap"
+          },
+          "415": {
+            "description": "Unsupported or mismatched file type"
+          },
+          "429": {
+            "description": "Too many uploads"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/api/documents/{id}/files/{fileId}/content": {
       "get": {
-        "operationId": "getApiDocumentsByIdContent",
-        "description": "Streams the document’s bytes, authenticated and household-scoped. Content-Type is the stored mime; disposition=inline previews (audited as view), disposition=attachment downloads (audited as download). Cache-Control is private, no-store — bytes never leak through any cache, and no public or presigned URL exists.",
+        "operationId": "getApiDocumentsByIdFilesByFileIdContent",
+        "description": "Streams one file’s bytes, authenticated and household-scoped (the file must belong to the document, the document to the household). Content-Type is the stored mime; disposition=inline previews (audited as view), disposition=attachment downloads (audited as download). Cache-Control is private, no-store — bytes never leak through any cache, and no public or presigned URL exists.",
         "security": [
           {
             "cookieAuth": []
@@ -3781,6 +3992,14 @@
             },
             "in": "path",
             "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "fileId",
             "required": true
           }
         ],
@@ -3824,6 +4043,49 @@
             "description": "Document not found"
           }
         }
+      }
+    },
+    "/api/documents/{id}/files/{fileId}": {
+      "delete": {
+        "operationId": "deleteApiDocumentsByIdFilesByFileId",
+        "description": "Removes ONE file from a document: the stored object AND its row, with the file_delete audit record in the same batch. Allowed for the household owner, the document’s uploader, or the file’s uploader. The last file may be deleted — the document survives with zero files until someone deletes it. Audit rows outlive the file they name.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only the household owner, the document uploader, or the file uploader can do that"
+          },
+          "404": {
+            "description": "Document or file not found"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "fileId",
+            "required": true
+          }
+        ]
       }
     },
     "/api/auth/login": {
@@ -3898,6 +4160,25 @@
           },
           "403": {
             "description": "Email auth is disabled"
+          },
+          "429": {
+            "description": "Too many attempts from this address; retry_after carries the seconds left",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error", "retry_after"],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "retry_after": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

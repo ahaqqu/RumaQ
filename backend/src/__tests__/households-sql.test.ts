@@ -615,14 +615,20 @@ describe('targeted invite attach over real SQL (#397)', () => {
   it('attaches the redeemer to the profile-only row, preserving id and profile', async () => {
     const memberId = addProfileMember(sqlite, 'h1', 'Adik', '2025-03-02', '2026-11-01 00:00:00')
     // A vault document keyed by the member id (0022) — the thing the attach
-    // must not detach.
+    // must not detach. Free-text name + a document_files row (0025).
     sqlite
       .prepare(
-        `INSERT INTO documents
-           (id, household_id, member_id, category, file_name, mime_type, size_bytes, storage_key, sha256, uploaded_by)
-         VALUES ('doc-1', 'h1', ?, 'akta', 'akta.pdf', 'application/pdf', 1, 'documents/h1/doc-1', '${'a'.repeat(64)}', 'owner')`
+        `INSERT INTO documents (id, household_id, member_id, name, uploaded_by)
+         VALUES ('doc-1', 'h1', ?, 'Akta Lahir', 'owner')`
       )
       .run(memberId)
+    sqlite
+      .prepare(
+        `INSERT INTO document_files
+           (id, document_id, r2_key, file_name, size_bytes, content_type, label, sort_order, sha256, uploaded_by)
+         VALUES ('file-doc-1', 'doc-1', 'documents/h1/doc-1', 'akta.pdf', 1, 'application/pdf', NULL, 1, '${'a'.repeat(64)}', 'owner')`
+      )
+      .run()
 
     const invite = await createInvite(d1, 'h1', 'owner', 'test-enc-key', memberId)
     expect(invite).toMatchObject({ target_member_id: memberId, has_target: true })
@@ -949,5 +955,117 @@ describe('households app over real SQL (cookie path)', () => {
       email: null,
     })
     expect(members.find((m) => m.user_id === 'u1')).toMatchObject({ has_account: true })
+  })
+})
+
+// Session-epoch logout revocation (ahaqqu/RumaQ#405, owner decision: option 2).
+// The middleware now compares the token's epoch claim against
+// users.session_epoch in the SAME single indexed statement as the household
+// resolution. These tests run the app stack (cookie -> middleware -> route)
+// against the real SQLite so the epoch semantics cannot drift from the
+// statement string or the schema default.
+describe('session-epoch middleware over real SQL (cookie path)', () => {
+  let sqlite: Db
+  let d1: D1Database
+  let env: MockEnv
+  // Pre-feature tokens carry NO epoch claim — the additive rollout requires
+  // them to keep working while the stored epoch is still 0.
+  const legacyJwt = async (sub: string) => signJwt({ sub, exp: Date.now() + 60_000 }, 'test-secret')
+  const epochJwt = async (sub: string, epoch: number) =>
+    signJwt({ sub, exp: Date.now() + 60_000, epoch }, 'test-secret')
+
+  beforeEach(() => {
+    resetRateLimit()
+    ;({ sqlite, d1 } = createDb())
+    env = {
+      DB: d1,
+      RECEIPTS: {},
+      BROCHURES: {} as MockEnv['BROCHURES'],
+      DOCUMENTS: {} as MockEnv['DOCUMENTS'],
+      GOOGLE_CLIENT_ID: 'test-client-id',
+      GOOGLE_CLIENT_SECRET: 'test-client-secret',
+      WORKER_JWT_SECRET: 'test-secret',
+      WORKER_ENCRYPTION_KEY: 'test-enc-key',
+      PAGES_ORIGIN: 'http://localhost:5173',
+      EMAIL_AUTH_ENABLED: 'false',
+      ASSETS: undefined as unknown as Fetcher,
+      props: undefined,
+      TEST_MODE: 'true',
+    } as unknown as MockEnv
+
+    createUser(sqlite, 'u1', 'a@b.com')
+    createHouseholdRow(sqlite, 'h1', 'Keluarga Putri', 'u1')
+    addMember(sqlite, 'h1', 'u1', 'owner', '2026-01-01 00:00:00')
+    setActivePointer(sqlite, 'u1', 'h1')
+  })
+
+  it('serves the exact middleware statement: household_id and session_epoch in one row', () => {
+    // Regression guard on the exported string (review C1 pattern): whatever
+    // the middleware binds must be the statement these tests exercise.
+    const row = sqlite.prepare(ACTIVE_HOUSEHOLD_SQL).get('u1', 'u1', 'u1')
+    expect(row).toMatchObject({ household_id: 'h1', session_epoch: 0 })
+  })
+
+  it('accepts a legacy token (no epoch claim) and an explicit epoch-0 token while epoch is 0', async () => {
+    const legacy = await householdsApp.request(
+      '/api/households',
+      { headers: { Cookie: `rumaq_session=${await legacyJwt('u1')}` } },
+      env
+    )
+    expect(legacy.status).toBe(200)
+
+    const explicitZero = await householdsApp.request(
+      '/api/households',
+      { headers: { Cookie: `rumaq_session=${await epochJwt('u1', 0)}` } },
+      env
+    )
+    expect(explicitZero.status).toBe(200)
+  })
+
+  it('rejects both legacy and epoch-0 tokens once the stored epoch has been bumped, accepts the bumped claim', async () => {
+    // The exact bump the logout route runs (apps/auth.ts) — monotonic += 1.
+    sqlite.prepare(`UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?`).run('u1')
+
+    const legacy = await householdsApp.request(
+      '/api/households',
+      { headers: { Cookie: `rumaq_session=${await legacyJwt('u1')}` } },
+      env
+    )
+    expect(legacy.status).toBe(401)
+
+    const stale = await householdsApp.request(
+      '/api/households',
+      { headers: { Cookie: `rumaq_session=${await epochJwt('u1', 0)}` } },
+      env
+    )
+    expect(stale.status).toBe(401)
+
+    // A token re-minted after the logout (login reads the CURRENT epoch into
+    // the claim) is valid again.
+    const fresh = await householdsApp.request(
+      '/api/households',
+      { headers: { Cookie: `rumaq_session=${await epochJwt('u1', 1)}` } },
+      env
+    )
+    expect(fresh.status).toBe(200)
+
+    // The bump never leaks into other users' sessions.
+    createUser(sqlite, 'u2', 'sibling@b.com')
+    addMember(sqlite, 'h1', 'u2', 'member', '2026-01-02 00:00:00')
+    const sibling = await householdsApp.request(
+      '/api/households',
+      { headers: { Cookie: `rumaq_session=${await legacyJwt('u2')}` } },
+      env
+    )
+    expect(sibling.status).toBe(200)
+  })
+
+  it('rejects a token whose claim runs ahead of the stored epoch (no client-trusted epochs)', async () => {
+    const ahead = await householdsApp.request(
+      '/api/households',
+      { headers: { Cookie: `rumaq_session=${await epochJwt('u1', 5)}` } },
+      env
+    )
+    expect(ahead.status).toBe(401)
   })
 })

@@ -21,7 +21,15 @@ export {
   useCreateHouseholdInvite,
   useJoinHousehold,
 } from './households.js'
-export { useDocuments, useUploadDocument, useDeleteDocument } from './documents.js'
+export {
+  DOCUMENTS_BASE_KEY,
+  documentsQueryKey,
+  useDocuments,
+  useCreateDocument,
+  useAddDocumentFile,
+  useDeleteDocument,
+  useDeleteDocumentFile,
+} from './documents.js'
 export { useHistory, usePurchasePatterns, useSendChatMessage } from './history.js'
 export {
   usePrices,

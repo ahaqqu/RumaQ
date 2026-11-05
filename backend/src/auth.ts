@@ -127,6 +127,11 @@ export async function verifyPassword(password: string, stored: string): Promise<
 // is unreachable for sessions this app issued after those guarantees (review
 // A2 keeps join/create behind the same resolution — the respawn makes that
 // safe, rather than exempting the routes from it).
+// Session-epoch revocation (ahaqqu/RumaQ#405): the third subquery rides in
+// the SAME round trip — users.id is the primary key, so it is an indexed
+// seek, keeping the per-request budget at one statement. The middleware
+// compares the epoch signed into the JWT against it; logout bumps the stored
+// value, so every token issued before the bump fails closed.
 export const ACTIVE_HOUSEHOLD_SQL = `SELECT COALESCE(
      (SELECT m.household_id
         FROM household_members m
@@ -138,7 +143,8 @@ export const ACTIVE_HOUSEHOLD_SQL = `SELECT COALESCE(
        WHERE user_id = ?
        ORDER BY joined_at, household_id
        LIMIT 1)
-   ) AS household_id`
+   ) AS household_id,
+   (SELECT session_epoch FROM users WHERE id = ?) AS session_epoch`
 
 export const propsAuthMiddleware = createMiddleware<Env>(async (c, next) => {
   const props = c.env.props
@@ -164,12 +170,24 @@ export const propsAuthMiddleware = createMiddleware<Env>(async (c, next) => {
   }
 
   const row = await c.env.DB.prepare(ACTIVE_HOUSEHOLD_SQL)
-    .bind(payload.sub, payload.sub)
-    .first<{ household_id: string | null }>()
+    .bind(payload.sub, payload.sub, payload.sub)
+    .first<{ household_id: string | null; session_epoch: number | null }>()
 
   const householdId = row?.household_id
 
   if (!householdId) {
+    return c.json({ error: 'Unauthorized' }, 401)
+  }
+
+  // Session-epoch revocation (#405): a token whose epoch claim does not match
+  // the stored value is revoked — logout bumped it. Tokens minted before the
+  // claim existed carry no epoch, and invite-created accounts sit at the
+  // default 0: both normalize to 0 on each side, so pre-feature tokens and
+  // fresh accounts compare equal (additive rollout with no forced re-login).
+  // Only a signed claim is trusted — unsigned payload fields cannot exist
+  // here, verifyJwt already rejected tokens failing the HMAC.
+  const tokenEpoch = typeof payload.epoch === 'number' ? payload.epoch : 0
+  if (tokenEpoch !== (row.session_epoch ?? 0)) {
     return c.json({ error: 'Unauthorized' }, 401)
   }
 

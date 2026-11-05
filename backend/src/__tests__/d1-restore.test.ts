@@ -49,8 +49,10 @@ function canaryRows(): string[] {
     `INSERT INTO items (id, household_id, name) VALUES ('i1', 'h1', 'Beras');`,
     `INSERT INTO stock (id, household_id, item_id, qty) VALUES ('s1', 'h1', 'i1', 2);`,
     `INSERT INTO purchases (id, household_id, date, total) VALUES ('p1', 'h1', '2026-11-03', 15000);`,
-    `INSERT INTO documents (id, household_id, member_id, category, file_name, mime_type, size_bytes, storage_key, sha256, uploaded_by)
-     VALUES ('doc1', 'h1', NULL, 'ktp', 'ktp.jpg', 'image/jpeg', 10, 'documents/h1/doc1', '${sha}', 'u1');`,
+    `INSERT INTO documents (id, household_id, member_id, name, uploaded_by)
+     VALUES ('doc1', 'h1', NULL, 'KTP', 'u1');`,
+    `INSERT INTO document_files (id, document_id, r2_key, file_name, size_bytes, content_type, label, sort_order, sha256, uploaded_by)
+     VALUES ('file-doc1', 'doc1', 'documents/h1/doc1', 'ktp.jpg', 10, 'image/jpeg', NULL, 1, '${sha}', 'u1');`,
   ]
 }
 
