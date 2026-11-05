@@ -945,7 +945,10 @@ describe('migration 0024: users.session_epoch (#405)', () => {
 describe('migration 0025: document names + multi-file (#422)', () => {
   it('backfills names from the old categories and mints attachment #1 per legacy document (up from 0024)', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
-    applyMigrations(db, migrationFiles().filter((file: string) => file < '0025'))
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0025')
+    )
 
     db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
     db.prepare(
@@ -996,22 +999,15 @@ describe('migration 0025: document names + multi-file (#422)', () => {
     // The category list is GONE from the schema — no remnant anywhere.
     const columns = db.prepare('PRAGMA table_info(documents)').all()
     const names = columns.map((c: Record<string, unknown>) => String(c.name))
-    expect(names).toEqual([
-      'id',
-      'household_id',
-      'member_id',
-      'name',
-      'uploaded_by',
-      'created_at',
-    ])
+    expect(names).toEqual(['id', 'household_id', 'member_id', 'name', 'uploaded_by', 'created_at'])
 
     // Names backfilled from the old category's human (EN locale) label —
     // readable starting points the owner can rename freely.
     const nameById = Object.fromEntries(
-      db.prepare('SELECT id, name FROM documents').all().map((r: Record<string, unknown>) => [
-        String(r.id),
-        String(r.name),
-      ])
+      db
+        .prepare('SELECT id, name FROM documents')
+        .all()
+        .map((r: Record<string, unknown>) => [String(r.id), String(r.name)])
     )
     expect(nameById).toEqual({
       'doc-kk': 'Kartu Keluarga',
@@ -1037,14 +1033,14 @@ describe('migration 0025: document names + multi-file (#422)', () => {
     // NULL (optional per the owner decision), upload time = the document's
     // own created_at — that IS when those bytes were uploaded.
     const createdAtById = Object.fromEntries(
-      db.prepare('SELECT id, created_at FROM documents').all().map((r: Record<string, unknown>) => [
-        String(r.id),
-        String(r.created_at),
-      ])
+      db
+        .prepare('SELECT id, created_at FROM documents')
+        .all()
+        .map((r: Record<string, unknown>) => [String(r.id), String(r.created_at)])
     )
-    const files = db
-      .prepare('SELECT * FROM document_files ORDER BY document_id')
-      .all() as Array<Record<string, unknown>>
+    const files = db.prepare('SELECT * FROM document_files ORDER BY document_id').all() as Array<
+      Record<string, unknown>
+    >
     expect(files).toHaveLength(categories.length)
     for (const [id] of categories) {
       const file = files.find((f) => f.document_id === id)
@@ -1089,10 +1085,32 @@ describe('migration 0025: document names + multi-file (#422)', () => {
     )
     // The file FK points at a real document; the label bound is the same 120.
     expect(() =>
-      insertFile.run('f-ghost', 'doc-none', 'documents/h1/x', 'a.jpg', 1, 'image/jpeg', null, 1, 'a'.repeat(64), 'u1')
+      insertFile.run(
+        'f-ghost',
+        'doc-none',
+        'documents/h1/x',
+        'a.jpg',
+        1,
+        'image/jpeg',
+        null,
+        1,
+        'a'.repeat(64),
+        'u1'
+      )
     ).toThrow()
     expect(() =>
-      insertFile.run('f-1', 'doc-1', 'documents/h1/doc-1/f-1', 'a.jpg', 1, 'image/jpeg', 'y'.repeat(121), 1, 'a'.repeat(64), 'u1')
+      insertFile.run(
+        'f-1',
+        'doc-1',
+        'documents/h1/doc-1/f-1',
+        'a.jpg',
+        1,
+        'image/jpeg',
+        'y'.repeat(121),
+        1,
+        'a'.repeat(64),
+        'u1'
+      )
     ).toThrow()
     insertFile.run(
       'f-1',

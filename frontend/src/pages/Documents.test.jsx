@@ -139,8 +139,8 @@ function findByAriaLabel(container, label) {
 }
 
 function pickedFileNames(container) {
-  return [...container.querySelectorAll('[data-testid="picked-file"]')].map((el) =>
-    el.textContent.split(' · ')[0]
+  return [...container.querySelectorAll('[data-testid="picked-file"]')].map(
+    (el) => el.textContent.split(' · ')[0]
   )
 }
 
@@ -232,7 +232,11 @@ describe('Documents', () => {
     const nameInput = container.querySelector('[data-testid="document-name"]')
     fireEvent.change(nameInput, { target: { value: '  Buku Nika  ' } })
     const input = container.querySelector('input[type="file"]')
-    pickFiles(container, input, [jpegFile('page-1.jpg'), jpegFile('page-2.jpg'), jpegFile('page-3.jpg')])
+    pickFiles(container, input, [
+      jpegFile('page-1.jpg'),
+      jpegFile('page-2.jpg'),
+      jpegFile('page-3.jpg'),
+    ])
 
     // Optional per-file labels ride their file (owner decision #422-1).
     const labelInputs = [...container.querySelectorAll('[aria-label^="documents.labelAria"]')]
@@ -310,7 +314,9 @@ describe('Documents', () => {
     const { container } = renderDocuments()
     const viewButton = findByAriaLabel(container, 'documents.view: depan.jpg')
     fireEvent.click(viewButton)
-    await waitFor(() => expect(fetchDocumentContent).toHaveBeenCalledWith('doc-1', 'file-1', 'inline'))
+    await waitFor(() =>
+      expect(fetchDocumentContent).toHaveBeenCalledWith('doc-1', 'file-1', 'inline')
+    )
     await waitFor(() => expect(createObjectURL).toHaveBeenCalled())
     // The dialog is up with the viewer busy/loaded state, labelled by the file.
     const dialog = container.querySelector('[role="dialog"]')
@@ -372,7 +378,10 @@ describe('Documents', () => {
   it('adds files to an existing document sequentially, and refuses going past the 20-file cap client-side', async () => {
     addFileMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-1' } })
     const { container } = renderDocuments()
-    fireEvent.click(findByAriaLabel(container, 'documents.add files') ?? findButton(container, 'documents.addFiles'))
+    fireEvent.click(
+      findByAriaLabel(container, 'documents.add files') ??
+        findButton(container, 'documents.addFiles')
+    )
 
     // The add-files form replaces the row.
     expect(container.textContent).toContain('documents.addFilesTitle')
@@ -392,7 +401,17 @@ describe('Documents', () => {
 
     // A full document (20 files) refuses more — client pre-check, no call.
     vi.mocked(useDocuments).mockReturnValue({
-      data: { documents: [{ ...DOC, files: Array.from({ length: DOCUMENT_MAX_FILES }, (_, i) => ({ ...FILE, id: `f-${i}` })) }] },
+      data: {
+        documents: [
+          {
+            ...DOC,
+            files: Array.from({ length: DOCUMENT_MAX_FILES }, (_, i) => ({
+              ...FILE,
+              id: `f-${i}`,
+            })),
+          },
+        ],
+      },
       isLoading: false,
     })
     const { container: full } = renderDocuments()

@@ -94,7 +94,10 @@ function PickedFiles({ picked, onLabel, onRemove, language }) {
     <ul className="flex flex-col gap-2" data-testid="picked-files">
       {picked.map((entry, index) => (
         <li key={`${entry.file.name}-${index}`} className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-text-muted truncate max-w-[220px]" data-testid="picked-file">
+          <span
+            className="text-sm text-text-muted truncate max-w-[220px]"
+            data-testid="picked-file"
+          >
             {entry.file.name} · {formatBytes(entry.file.size, language)}
           </span>
           <input
@@ -239,7 +242,16 @@ function DocumentViewer({ documentId, file, onClose }) {
 // One file inside its document: name, optional label, size, and the per-file
 // actions (view / download / delete — the delete is the same two-step inline
 // confirm the document row uses).
-function FileRow({ file, onView, onDownload, onDelete, confirmOpen, onToggleConfirm, busy, language }) {
+function FileRow({
+  file,
+  onView,
+  onDownload,
+  onDelete,
+  confirmOpen,
+  onToggleConfirm,
+  busy,
+  language,
+}) {
   const { t } = useTranslation()
   return (
     <div className="flex items-center gap-2 pl-11 py-1.5">
@@ -345,14 +357,25 @@ function DocumentRow({
             >
               {t('documents.deleteConfirmYes')}
             </Button>
-            <Button size="sm" variant="ghost" onClick={onToggleDocConfirm} disabled={removeDocPending}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onToggleDocConfirm}
+              disabled={removeDocPending}
+            >
               {t('common.cancel')}
             </Button>
           </div>
         ) : (
           <div className="flex items-center gap-1.5 shrink-0">
-            <Button size="sm" variant="ghost" onClick={onAddFiles} disabled={doc.files.length >= DOCUMENT_MAX_FILES}>
-              <IconUpload size={15} /> <span className="hidden sm:inline">{t('documents.addFiles')}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onAddFiles}
+              disabled={doc.files.length >= DOCUMENT_MAX_FILES}
+            >
+              <IconUpload size={15} />{' '}
+              <span className="hidden sm:inline">{t('documents.addFiles')}</span>
             </Button>
             <Button
               size="sm"
@@ -416,9 +439,7 @@ export function Documents() {
     () => ({ q: search.trim() || undefined, memberId: memberFilter ?? undefined }),
     [search, memberFilter]
   )
-  const { data: documentsData, isLoading: documentsLoading } = useDocuments(
-    activeId ? filters : {}
-  )
+  const { data: documentsData, isLoading: documentsLoading } = useDocuments(activeId ? filters : {})
   const documents = (documentsData?.documents ?? []).filter((d) => d.household_id === activeId)
 
   const create = useCreateDocument()
@@ -762,7 +783,11 @@ export function Documents() {
             data-testid="document-search"
           />
           {members.length > 0 && (
-            <div role="group" aria-label={t('documents.filterMember')} className="flex flex-wrap items-center gap-2">
+            <div
+              role="group"
+              aria-label={t('documents.filterMember')}
+              className="flex flex-wrap items-center gap-2"
+            >
               {members.map((member) => (
                 <MemberChip
                   key={member.id}
@@ -791,7 +816,9 @@ export function Documents() {
             {documents.map((doc) =>
               addingFor === doc.id ? (
                 <div key={doc.id} className="px-5 py-4 border-b border-border flex flex-col gap-3">
-                  <div className="font-medium text-sm">{t('documents.addFilesTitle', { name: doc.name })}</div>
+                  <div className="font-medium text-sm">
+                    {t('documents.addFilesTitle', { name: doc.name })}
+                  </div>
                   <input
                     ref={addInputRef}
                     type="file"
@@ -802,7 +829,11 @@ export function Documents() {
                     aria-label={t('documents.pickFile')}
                   />
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button size="sm" variant="secondary" onClick={() => addInputRef.current?.click()}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => addInputRef.current?.click()}
+                    >
                       <IconUpload size={15} /> {t('documents.pickFile')}
                     </Button>
                   </div>
@@ -853,9 +884,13 @@ export function Documents() {
                   onDeleteFile={(d, file) => confirmDeleteFile(d, file)}
                   onDeleteDoc={() => confirmDeleteDoc(doc)}
                   fileConfirmKey={fileConfirmKey}
-                  onToggleFileConfirm={(key) => setFileConfirmKey(fileConfirmKey === key ? null : key)}
+                  onToggleFileConfirm={(key) =>
+                    setFileConfirmKey(fileConfirmKey === key ? null : key)
+                  }
                   docConfirmOpen={confirmingDocId === doc.id}
-                  onToggleDocConfirm={() => setConfirmingDocId(confirmingDocId === doc.id ? null : doc.id)}
+                  onToggleDocConfirm={() =>
+                    setConfirmingDocId(confirmingDocId === doc.id ? null : doc.id)
+                  }
                   removeDocPending={remove.isPending}
                   removeFilePending={removeFile.isPending}
                   language={language}

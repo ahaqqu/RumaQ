@@ -156,9 +156,7 @@ function joinRowsFromLog(doc: Row, files: Row[]): Row[] {
   }))
 }
 
-const LIST_ROUTES: [RegExp, (params: unknown[]) => Row[]][] = [
-  [JOIN_ROUTE, () => []],
-]
+const LIST_ROUTES: [RegExp, (params: unknown[]) => Row[]][] = [[JOIN_ROUTE, () => []]]
 
 function uploadForm(
   file: { bytes: Uint8Array; name: string; type: string },
@@ -419,10 +417,7 @@ describe('documents routes', () => {
     const blankName = await documentsApp.request(
       '/api/documents',
       postDocument(
-        uploadForm(
-          { bytes: JPEG_BYTES, name: 'ktp.jpg', type: 'image/jpeg' },
-          { name: '   ' }
-        )
+        uploadForm({ bytes: JPEG_BYTES, name: 'ktp.jpg', type: 'image/jpeg' }, { name: '   ' })
       ),
       env
     )
@@ -573,7 +568,11 @@ describe('documents routes', () => {
     exact[0] = 0xff
     exact[1] = 0xd8
     exact[2] = 0xff
-    const res = await documentsApp.request('/api/documents', chunkedUpload(exact, 'scan-chunked.jpg'), env)
+    const res = await documentsApp.request(
+      '/api/documents',
+      chunkedUpload(exact, 'scan-chunked.jpg'),
+      env
+    )
     expect(res.status).toBe(201)
     const body = (await res.json()) as { document: Row }
     expect(body.document.files[0]).toMatchObject({ size_bytes: 10 * 1024 * 1024 })
@@ -589,7 +588,11 @@ describe('documents routes', () => {
     over[0] = 0xff
     over[1] = 0xd8
     over[2] = 0xff
-    const res = await documentsApp.request('/api/documents', chunkedUpload(over, 'huge-chunked.jpg'), env)
+    const res = await documentsApp.request(
+      '/api/documents',
+      chunkedUpload(over, 'huge-chunked.jpg'),
+      env
+    )
     expect(res.status).toBe(413)
     expect(bucket.objects.size).toBe(0)
     expect(db.log).toHaveLength(0)
@@ -610,11 +613,7 @@ describe('documents routes', () => {
 
     // Content: the escaped key must never reach the adapter (it could serve a
     // sibling namespace's object) — the row is a dead file.
-    const content = await documentsApp.request(
-      '/api/documents/doc-1/files/file-1/content',
-      {},
-      env
-    )
+    const content = await documentsApp.request('/api/documents/doc-1/files/file-1/content', {}, env)
     expect(content.status).toBe(404)
 
     // File delete: refusing protects the sibling namespace even though the
@@ -636,10 +635,7 @@ describe('documents routes', () => {
     const res = await documentsApp.request(
       '/api/documents',
       postDocument(
-        uploadForm(
-          { bytes: TEXT_BYTES, name: 'fake.jpg', type: 'image/jpeg' },
-          { name: 'KTP' }
-        )
+        uploadForm({ bytes: TEXT_BYTES, name: 'fake.jpg', type: 'image/jpeg' }, { name: 'KTP' })
       ),
       env
     )
@@ -719,11 +715,7 @@ describe('documents routes', () => {
     expect(allBody.documents[0]?.files[0]).toMatchObject({ sort_order: 1, label: null })
 
     // q + memberId compose (both bound after the household scope).
-    const filtered = await documentsApp.request(
-      '/api/documents?q=ktp&memberId=m-toddler',
-      {},
-      env
-    )
+    const filtered = await documentsApp.request('/api/documents?q=ktp&memberId=m-toddler', {}, env)
     expect(filtered.status).toBe(200)
     expect(lastParams).toEqual(['h1', 'm-toddler', '%ktp%'])
 
@@ -770,11 +762,7 @@ describe('documents routes', () => {
       // from a DIFFERENT document must miss.
       [FILE_ROW_ROUTE, (params) => (params[1] === 'doc-1' ? FILE_ROW() : null)],
     ])
-    const res = await documentsApp.request(
-      '/api/documents/doc-other/files/file-1/content',
-      {},
-      env
-    )
+    const res = await documentsApp.request('/api/documents/doc-other/files/file-1/content', {}, env)
     expect(res.status).toBe(404)
   })
 
@@ -815,10 +803,7 @@ describe('documents routes', () => {
   })
 
   it('refuses a 21st file with 409 BEFORE any byte is stored (#422 owner decision 3)', async () => {
-    setup([
-      [DOC_ROW_ROUTE, () => DOC_ROW()],
-      COUNT_ROUTE(DOCUMENT_MAX_FILES),
-    ])
+    setup([[DOC_ROW_ROUTE, () => DOC_ROW()], COUNT_ROUTE(DOCUMENT_MAX_FILES)])
     const res = await documentsApp.request(
       '/api/documents/doc-1/files',
       postDocument(
@@ -894,11 +879,7 @@ describe('documents routes', () => {
   })
 
   it('delete-file (uploader): removes the object first, then row + file_delete audit in one batch — no orphan', async () => {
-    setup([
-      MEMBERSHIP_ROUTE,
-      [DOC_ROW_ROUTE, () => DOC_ROW()],
-      [FILE_ROW_ROUTE, () => FILE_ROW()],
-    ])
+    setup([MEMBERSHIP_ROUTE, [DOC_ROW_ROUTE, () => DOC_ROW()], [FILE_ROW_ROUTE, () => FILE_ROW()]])
     await bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
       httpMetadata: { contentType: 'application/pdf' },
     })
@@ -1004,10 +985,7 @@ describe('documents routes', () => {
     const res = await documentsApp.request('/api/documents/doc-1', { method: 'DELETE' }, env)
     expect(res.status).toBe(204)
     // Both objects gone — no orphan.
-    expect(bucket.deleted).toEqual([
-      'documents/h1/doc-1/file-1',
-      'documents/h1/doc-1/file-2',
-    ])
+    expect(bucket.deleted).toEqual(['documents/h1/doc-1/file-1', 'documents/h1/doc-1/file-2'])
     expect(bucket.objects.size).toBe(0)
     // Audit row rides in the same batch as the DELETE, action = 'delete'.
     const audit = db.log.filter((e) => /INSERT INTO document_audit/.test(e.sql))

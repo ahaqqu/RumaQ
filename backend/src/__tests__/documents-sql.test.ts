@@ -148,7 +148,12 @@ describe('documents vault semantics (real SQL)', () => {
       householdId: 'h1',
       memberId: 'm-toddler',
       name: 'Akta Lahir Adik',
-      file: { fileName: 'akta-adik.pdf', bytes: PDF_BYTES, mime: 'application/pdf', label: 'Halaman 1' },
+      file: {
+        fileName: 'akta-adik.pdf',
+        bytes: PDF_BYTES,
+        mime: 'application/pdf',
+        label: 'Halaman 1',
+      },
       uploadedBy: 'u1',
     })
     const linkedMeta = await createDocument(d1, storage, {
@@ -171,9 +176,7 @@ describe('documents vault semantics (real SQL)', () => {
     expect(linkedDoc).toMatchObject({
       name: 'Akta Lahir Adik',
       member_id: 'm-toddler',
-      files: [
-        { file_name: 'akta-adik.pdf', sort_order: 1, label: 'Halaman 1' },
-      ],
+      files: [{ file_name: 'akta-adik.pdf', sort_order: 1, label: 'Halaman 1' }],
     })
     expect(JSON.stringify(linkedDoc)).not.toContain('r2_key')
 

@@ -534,11 +534,7 @@ export function createDocument({
   )
 }
 
-export function addDocumentFile(
-  documentId: string,
-  file: File,
-  label?: string
-): Promise<unknown> {
+export function addDocumentFile(documentId: string, file: File, label?: string): Promise<unknown> {
   const form = new FormData()
   form.append('file', file, file.name)
   if (label) form.append('label', label)

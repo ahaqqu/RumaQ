@@ -36,7 +36,8 @@ export function useDocuments(filters = {}) {
 export function useCreateDocument() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ name, file, label, memberId }) => createDocument({ name, file, label, memberId }),
+    mutationFn: ({ name, file, label, memberId }) =>
+      createDocument({ name, file, label, memberId }),
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: DOCUMENTS_KEY })
     },

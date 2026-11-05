@@ -69,14 +69,8 @@ describe('useDocuments', () => {
       initialProps: { filters: { q: 'ktp' } },
     })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(getDocuments).toHaveBeenCalledWith(
-      { q: 'ktp', memberId: undefined },
-      expect.anything()
-    )
-    expect(documentsQueryKey({ q: 'ktp' })).toEqual([
-      'documents',
-      { q: 'ktp', memberId: null },
-    ])
+    expect(getDocuments).toHaveBeenCalledWith({ q: 'ktp', memberId: undefined }, expect.anything())
+    expect(documentsQueryKey({ q: 'ktp' })).toEqual(['documents', { q: 'ktp', memberId: null }])
     expect(documentsQueryKey({ q: 'ktp' })).not.toEqual(documentsQueryKey({ q: 'akta' }))
     expect(documentsQueryKey({ memberId: 'm-1' })).not.toEqual(documentsQueryKey({ q: 'ktp' }))
   })
@@ -159,9 +153,7 @@ describe('useAddDocumentFile', () => {
     const { result } = renderHook(() => useAddDocumentFile(), {
       wrapper: createWrapper(queryClient),
     })
-    await act(async () =>
-      result.current.mutate({ documentId: 'doc-1', file, label: 'Belakang' })
-    )
+    await act(async () => result.current.mutate({ documentId: 'doc-1', file, label: 'Belakang' }))
 
     expect(addDocumentFile).toHaveBeenCalledWith('doc-1', file, 'Belakang')
     await waitFor(() =>
