@@ -1303,22 +1303,53 @@ describe('migration 0026: document expiry metadata (#426)', () => {
     ).toThrow()
   })
 
-  it('keeps the expiring_within filter on an indexed seek (no scan, no temp B-tree)', () => {
-    // The filter predicate: household scope + expiry window bound, ordered by
-    // the expiry itself. (household_id, expires_on) serves the whole query.
+  it('keeps the expiring_within filter on an indexed seek (no scan), with and without the files join', () => {
+    // The claim is deliberately scoped to what the plan proves (V2-B4): the
+    // household scope + expiry window bound is index-SERVED by
+    // (household_id, expires_on) and never degrades to a table SCAN. The
+    // shipped statement adds the document_files LEFT JOIN and the
+    // created_at/id/sort_order tiebreaker terms, whose sort takes a bounded
+    // per-household TEMP B-TREE — unavoidable once the join rides along (the
+    // same simplification the 0022/0025 listing proofs make), so no
+    // "no TEMP B-TREE" claim is made here. The second plan asserts the seek
+    // survives the real join shape.
     const db = new DatabaseSync(':memory:') as unknown as Db
     applyMigrations(db, migrationFiles())
 
-    const plan = db
+    const filterPlan = db
       .prepare(
         `EXPLAIN QUERY PLAN SELECT id FROM documents
           WHERE household_id = ? AND expires_on IS NOT NULL AND expires_on <= ?
           ORDER BY expires_on ASC`
       )
       .all('h1', '2026-12-31')
-    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
-    expect(detail).toContain('idx_documents_household_expiry')
-    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
+    const filterDetail = filterPlan
+      .map((r: Record<string, unknown>) => String(r.detail))
+      .join(' | ')
+    expect(filterDetail).toContain('idx_documents_household_expiry')
+    expect(filterDetail).not.toMatch(/SCAN/i)
+
+    const joinPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT d.id AS document_id, d.household_id, d.member_id,
+           d.name, d.uploaded_by, d.created_at, d.expires_on, d.remind_days_before,
+           f.id AS file_id, f.file_name, f.size_bytes, f.content_type,
+           f.label, f.sort_order, f.sha256 AS file_sha256,
+           f.uploaded_by AS file_uploaded_by, f.uploaded_at
+         FROM documents d
+         LEFT JOIN document_files f ON f.document_id = d.id
+         WHERE d.household_id = ? AND d.expires_on IS NOT NULL AND d.expires_on <= ?
+         ORDER BY d.expires_on ASC, d.created_at DESC, d.id DESC, f.sort_order ASC, f.id ASC`
+      )
+      .all('h1', '2026-12-31')
+    const joinDetail = joinPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(joinDetail).toContain('idx_documents_household_expiry')
+    expect(joinDetail).not.toMatch(/SCAN documents/i)
+    // Pinned, not hidden: the shipped plan takes the bounded tiebreaker sort —
+    // the assertion says so explicitly so a future "silent" change to the
+    // sort shape cannot go unnoticed in either direction.
+    expect(joinDetail).toContain('USE TEMP B-TREE FOR LAST 4 TERMS OF ORDER BY')
+    expect(joinDetail).toContain('SEARCH f USING INDEX idx_document_files_document')
   })
 
   it('keeps the full chain green on a fresh database (additive; default listing untouched)', () => {
