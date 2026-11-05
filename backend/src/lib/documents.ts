@@ -20,6 +20,17 @@ export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
 export const DOCUMENT_MAX_FILES = 20
 
 /**
+ * Renewal reminder window (#426): the app-level default for
+ * remind_days_before whenever an expiry is set without an explicit window
+ * (the migration 0026 header documents why this default lives in the app and
+ * not as a column DEFAULT). Bounds mirror the PATCH validation: integer
+ * days, 1..365.
+ */
+export const DEFAULT_REMIND_DAYS_BEFORE = 30
+export const REMIND_DAYS_MIN = 1
+export const REMIND_DAYS_MAX = 365
+
+/**
  * Free-text document name and per-file label bound (#422): trimmed, 1-120
  * chars. The app owns trim + non-empty; the schema CHECK (0025) is the
  * backstop for the upper bound.
@@ -46,7 +57,7 @@ export function ensureVaultKey(storageKey: string): void {
   }
 }
 
-/** Audit actions (#422 vocabulary): document-level + file-scoped records. */
+/** Audit actions (#422 vocabulary, widened by #426): document-level + file-scoped records. */
 export type DocumentAction =
   | 'upload' // document create (first file rides in the same batch)
   | 'view' // inline byte stream, per file
@@ -54,6 +65,7 @@ export type DocumentAction =
   | 'delete' // document delete (all files cascade)
   | 'file_add' // file added to an existing document
   | 'file_delete' // single file removed
+  | 'update' // metadata edit (the #426 expiry PATCH)
 
 export type DocumentRow = {
   id: string
@@ -62,6 +74,12 @@ export type DocumentRow = {
   name: string
   uploaded_by: string
   created_at: string
+  // Expiry metadata (#426): ISO YYYY-MM-DD text (0026 — SQLite has no native
+  // DATE), null until someone sets it. remind_days_before is non-null
+  // whenever expires_on is (app-maintained invariant); NULL is read as the
+  // 30-day default.
+  expires_on: string | null
+  remind_days_before: number | null
 }
 
 export type DocumentFileRow = {
@@ -100,6 +118,12 @@ export type DocumentSummary = {
   name: string
   uploaded_by: string
   created_at: string
+  // Expiry metadata (#426): stored columns + the COMPUTED days_until_expiry
+  // (whole days from today, UTC; negative = already expired). Never stored —
+  // a stored copy would rot the moment the calendar moved.
+  expires_on: string | null
+  remind_days_before: number | null
+  days_until_expiry: number | null
   files: DocumentFileSummary[]
 }
 
@@ -261,6 +285,47 @@ export function contentDisposition(kind: 'inline' | 'attachment', fileName: stri
   return `${kind}; filename="${fallback}"; filename*=UTF-8''${encoded}`
 }
 
+// --- Expiry date helpers (#426) -------------------------------------------
+// All date math is UTC calendar-day arithmetic over ISO YYYY-MM-DD text (the
+// 0020/0026 storage shape): both sides parse as UTC midnights, so a whole
+// day is exactly 86,400,000 ms and no DST/timezone can shift a boundary.
+
+/** ISO YYYY-MM-DD for a timestamp, UTC (the storage format for expires_on). */
+export function utcIsoDate(now: Date): string {
+  return now.toISOString().slice(0, 10)
+}
+
+/**
+ * A REAL calendar date in YYYY-MM-DD form — the regex alone accepts
+ * 2026-02-31, so the round-trip through Date.UTC pins month lengths (and
+ * leap years). Used by the PATCH validation; the CHECK-less column relies
+ * on this being the only writer.
+ */
+export function isValidExpiryDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const [year, month, day] = value.split('-').map(Number) as [number, number, number]
+  const roundTrip = new Date(Date.UTC(year, month - 1, day))
+  return (
+    roundTrip.getUTCFullYear() === year &&
+    roundTrip.getUTCMonth() === month - 1 &&
+    roundTrip.getUTCDate() === day
+  )
+}
+
+/**
+ * Whole days from `today` (ISO date) until `expiresOn` (ISO date). Negative
+ * = already expired. Invalid inputs answer null — the projections degrade
+ * to "no expiry" rather than inventing a number.
+ */
+export function daysUntil(expiresOn: string | null, today: string): number | null {
+  if (!expiresOn || !/^\d{4}-\d{2}-\d{2}$/.test(expiresOn)) return null
+  const parse = (iso: string): number => {
+    const [y, m, d] = iso.split('-').map(Number) as [number, number, number]
+    return Date.UTC(y, m - 1, d)
+  }
+  return Math.round((parse(expiresOn) - parse(today)) / 86_400_000)
+}
+
 // One LEFT JOIN round trip carries each document with its files — no second
 // query, no IN-list parameter limits. The LEFT JOIN keeps zero-file documents
 // visible (a file row simply comes back null); JS groups the flat rows.
@@ -271,6 +336,8 @@ type DocumentJoinRow = {
   name: string
   uploaded_by: string
   created_at: string
+  expires_on: string | null
+  remind_days_before: number | null
   file_id: string | null
   file_name: string | null
   size_bytes: number | null
@@ -284,13 +351,14 @@ type DocumentJoinRow = {
 
 const DOCUMENT_JOIN_PROJECTION = `SELECT d.id AS document_id, d.household_id, d.member_id,
        d.name, d.uploaded_by, d.created_at,
+       d.expires_on, d.remind_days_before,
        f.id AS file_id, f.file_name, f.size_bytes, f.content_type,
        f.label, f.sort_order, f.sha256 AS file_sha256,
        f.uploaded_by AS file_uploaded_by, f.uploaded_at
   FROM documents d
   LEFT JOIN document_files f ON f.document_id = d.id`
 
-function groupJoinRows(rows: DocumentJoinRow[]): DocumentSummary[] {
+function groupJoinRows(rows: DocumentJoinRow[], today: string): DocumentSummary[] {
   const byId = new Map<string, DocumentSummary>()
   for (const row of rows) {
     let doc = byId.get(row.document_id)
@@ -302,6 +370,9 @@ function groupJoinRows(rows: DocumentJoinRow[]): DocumentSummary[] {
         name: row.name,
         uploaded_by: row.uploaded_by,
         created_at: row.created_at,
+        expires_on: row.expires_on,
+        remind_days_before: row.remind_days_before,
+        days_until_expiry: daysUntil(row.expires_on, today),
         files: [],
       }
       byId.set(row.document_id, doc)
@@ -325,17 +396,30 @@ function groupJoinRows(rows: DocumentJoinRow[]): DocumentSummary[] {
 
 const DOCUMENTS_ORDER = `ORDER BY d.created_at DESC, d.id DESC, f.sort_order ASC, f.id ASC`
 
+// The expiry view orders by the date that matters (#426): soonest expiry
+// first — the due-soon reading order — with the created_at/id tiebreakers
+// keeping same-expiry rows stable exactly like the default listing.
+const EXPIRY_ORDER = `ORDER BY d.expires_on ASC, d.created_at DESC, d.id DESC, f.sort_order ASC, f.id ASC`
+
 /**
  * List the active household's documents, newest first, each with its files in
  * upload order. Filters compose into the WHERE clause with bound parameters
  * only — no string interpolation of values. `q` is the #422 NAME SEARCH
  * (owner decision 2): a case-insensitive contains-match on the document
  * name; LIKE metacharacters are escaped so the needle is literal.
+ *
+ * `expiringWithin` (#426): N days, 1..365 (validated by the route). Selects
+ * documents whose expiry lands within the next N days — already-expired
+ * documents stay INCLUDED (they are the most due), so the predicate is a
+ * single `expires_on <= horizon` bound and switches the ordering to
+ * soonest-expiry-first (EXPIRY_ORDER). days_until_expiry on the returned
+ * summaries is computed against the same `now` clock.
  */
 export async function listDocuments(
   db: D1Database,
   householdId: string,
-  filters: { q?: string; memberId?: string } = {}
+  filters: { q?: string; memberId?: string; expiringWithin?: number } = {},
+  now: Date = new Date()
 ): Promise<DocumentSummary[]> {
   const conditions = ['d.household_id = ?']
   const params: string[] = [householdId]
@@ -351,15 +435,23 @@ export async function listDocuments(
     conditions.push(`lower(d.name) LIKE ? ESCAPE '\\'`)
     params.push(`%${needle}%`)
   }
+  let order = DOCUMENTS_ORDER
+  if (filters.expiringWithin !== undefined) {
+    const horizon = utcIsoDate(new Date(now.getTime() + filters.expiringWithin * 86_400_000))
+    conditions.push('d.expires_on IS NOT NULL')
+    conditions.push('d.expires_on <= ?')
+    params.push(horizon)
+    order = EXPIRY_ORDER
+  }
   const { results } = await db
     .prepare(
       `${DOCUMENT_JOIN_PROJECTION}
         WHERE ${conditions.join(' AND ')}
-        ${DOCUMENTS_ORDER}`
+        ${order}`
     )
     .bind(...params)
     .all<DocumentJoinRow>()
-  return groupJoinRows(results)
+  return groupJoinRows(results, utcIsoDate(now))
 }
 
 /**
@@ -371,17 +463,18 @@ export async function listDocuments(
 export async function getDocumentWithFiles(
   db: D1Database,
   householdId: string,
-  documentId: string
+  documentId: string,
+  now: Date = new Date()
 ): Promise<DocumentSummary | null> {
   const { results } = await db
     .prepare(`${DOCUMENT_JOIN_PROJECTION} WHERE d.id = ? AND d.household_id = ? ${DOCUMENTS_ORDER}`)
     .bind(documentId, householdId)
     .all<DocumentJoinRow>()
-  const summaries = groupJoinRows(results)
+  const summaries = groupJoinRows(results, utcIsoDate(now))
   return summaries[0] ?? null
 }
 
-/** The documents-only row for authz flows (no join needed to delete). */
+/** The documents-only row for authz/metadata flows (no join needed). */
 export async function getDocumentRow(
   db: D1Database,
   householdId: string,
@@ -390,6 +483,7 @@ export async function getDocumentRow(
   return db
     .prepare(
       `SELECT d.id, d.household_id, d.member_id, d.name,
+              d.expires_on, d.remind_days_before,
               d.uploaded_by, d.created_at
          FROM documents d
         WHERE d.id = ? AND d.household_id = ?`
@@ -458,7 +552,13 @@ export async function isHouseholdMember(
   return row !== null
 }
 
-function insertDocumentStatement(db: D1Database, row: DocumentRow): D1PreparedStatement {
+// Create names the five base columns only — expiry metadata (#426) is not a
+// create-time field: it arrives via PATCH after the document exists, so the
+// new columns stay NULL exactly like every pre-#426 row.
+function insertDocumentStatement(
+  db: D1Database,
+  row: Omit<DocumentRow, 'expires_on' | 'remind_days_before'>
+): D1PreparedStatement {
   return db
     .prepare(
       `INSERT INTO documents (id, household_id, member_id, name, uploaded_by)
@@ -592,9 +692,10 @@ function insertFileAddAuditStatement(
 async function readBackSummary(
   db: D1Database,
   householdId: string,
-  documentId: string
+  documentId: string,
+  now: Date = new Date()
 ): Promise<DocumentSummary> {
-  const stored = await getDocumentWithFiles(db, householdId, documentId)
+  const stored = await getDocumentWithFiles(db, householdId, documentId, now)
   if (!stored) {
     // The batch committed but the read-back found nothing — a database that
     // broken fails every later request too; surface it as a 500.
@@ -729,6 +830,83 @@ export async function addDocumentFile(
 }
 
 /**
+ * The resolved expiry payload for one PATCH (#426): the route validates the
+ * raw fields (date shape, window bounds) and hands the document row plus the
+ * raw PATCH fields here; this resolves the app-level default and maintains
+ * the stored invariant expires_on non-null ⇒ remind_days_before non-null.
+ *
+ *   - clearing the expiry (expires_on: null) clears the window with it —
+ *     a reminder window without an expiry is meaningless,
+ *   - setting/keeping an expiry without an explicit window keeps the
+ *     document's existing window when it already had one (a date correction
+ *     must not silently clobber a chosen window) and otherwise applies the
+ *     DEFAULT_REMIND_DAYS_BEFORE,
+ *   - a window without an expiry (present or being set) is a 400 at the
+ *     route — there is nothing to remind about.
+ */
+export function resolveExpiryUpdate(
+  document: Pick<DocumentRow, 'expires_on' | 'remind_days_before'>,
+  fields: { expiresOn?: string | null; remindDaysBefore?: number }
+): { expiresOn: string | null; remindDaysBefore: number | null } {
+  if (fields.expiresOn === null) {
+    return { expiresOn: null, remindDaysBefore: null }
+  }
+  if (fields.expiresOn !== undefined) {
+    return {
+      expiresOn: fields.expiresOn,
+      remindDaysBefore:
+        fields.remindDaysBefore ?? document.remind_days_before ?? DEFAULT_REMIND_DAYS_BEFORE,
+    }
+  }
+  // Window-only PATCH: the document must already carry an expiry (the route
+  // 400s otherwise) and the window applies to it.
+  return {
+    expiresOn: document.expires_on as string,
+    remindDaysBefore: fields.remindDaysBefore as number,
+  }
+}
+
+/**
+ * Update the expiry metadata (#426). Authorization lives at the route (the
+ * add-file model: any household member — expiry is household-level
+ * information, and the auth middleware already pinned the caller to their
+ * active household). The UPDATE carries the household predicate in its WHERE
+ * (same no-existence-leak shape as every vault statement), and the 'update'
+ * audit record commits in the SAME batch — a metadata change is a document
+ * mutation like any other. Read-back returns the full summary so the route
+ * answers with what actually persisted; `now` feeds the read-back's
+ * days_until_expiry clock (injectable for tests, wall-clock in production).
+ */
+export async function updateDocumentExpiry(
+  db: D1Database,
+  args: {
+    householdId: string
+    documentId: string
+    actorUserId: string
+    expiresOn: string | null
+    remindDaysBefore: number | null
+    now?: Date
+  }
+): Promise<DocumentSummary> {
+  await db.batch([
+    insertAuditStatement(db, {
+      documentId: args.documentId,
+      householdId: args.householdId,
+      actorUserId: args.actorUserId,
+      action: 'update',
+    }),
+    db
+      .prepare(
+        `UPDATE documents
+            SET expires_on = ?, remind_days_before = ?
+          WHERE id = ? AND household_id = ?`
+      )
+      .bind(args.expiresOn, args.remindDaysBefore, args.documentId, args.householdId),
+  ])
+  return readBackSummary(db, args.householdId, args.documentId, args.now)
+}
+
+/**
  * Delete ONE file: household owner, the document's uploader, or the file's
  * own uploader. The adapter object goes first (spec order — R2 delete is
  * idempotent, a failed batch after it is recoverable by retry); the
@@ -848,4 +1026,77 @@ export async function recordDocumentAccess(
     action: args.action,
     fileId: args.fileId,
   }).run()
+}
+
+// --- Renewal reminder sweep (#426) ----------------------------------------
+
+export type DueDocument = {
+  household_id: string
+  id: string
+  name: string
+  expires_on: string
+  remind_days_before: number | null
+  days_until_expiry: number
+}
+
+/**
+ * The due set for the nightly tick (#426): every document whose expiry has
+ * entered its own reminder window (days_until_expiry <= remind_days_before,
+ * the NULL window read as DEFAULT_REMIND_DAYS_BEFORE), across ALL households
+ * — the cron runs with no caller household. Expired documents stay in the
+ * set (they are the most due). One full pass over the expiry-bearing rows
+ * keeps every date computation in this file's helpers (the same daysUntil
+ * the projections use) instead of a second SQL dialect of the rule; vault
+ * sizes are household-scale, so the scan is bounded by design.
+ */
+export async function listDueDocumentReminders(
+  db: D1Database,
+  now: Date = new Date()
+): Promise<DueDocument[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id, household_id, name, expires_on, remind_days_before
+         FROM documents
+        WHERE expires_on IS NOT NULL`
+    )
+    .bind() // Zero-param statement; .bind() keeps the statement shape uniform.
+    .all<{
+      id: string
+      household_id: string
+      name: string
+      expires_on: string
+      remind_days_before: number | null
+    }>()
+  const today = utcIsoDate(now)
+  const due: DueDocument[] = []
+  for (const row of results) {
+    const days = daysUntil(row.expires_on, today)
+    if (days === null) continue
+    const window = row.remind_days_before ?? DEFAULT_REMIND_DAYS_BEFORE
+    if (days <= window) {
+      due.push({ ...row, days_until_expiry: days })
+    }
+  }
+  return due.sort((a, b) => a.expires_on.localeCompare(b.expires_on) || a.id.localeCompare(b.id))
+}
+
+/**
+ * The nightly tick's report (#426): compute the due set and log a compact
+ * summary — v1 renders in-app (the documents page derives due-soon from the
+ * same rows), so this sweep is observability, not a new notification channel
+ * (the #353 retention-sweep precedent: cron piggyback, log as the artifact).
+ * v2 dispatch rides this exact set once a channel exists.
+ */
+export async function logDueDocumentReminders(
+  db: D1Database,
+  now: Date = new Date()
+): Promise<DueDocument[]> {
+  const due = await listDueDocumentReminders(db, now)
+  if (due.length > 0) {
+    const households = new Set(due.map((d) => d.household_id))
+    console.log(
+      `[documents] renewal reminders: ${due.length} document(s) due across ${households.size} household(s)`
+    )
+  }
+  return due
 }

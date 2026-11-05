@@ -803,7 +803,7 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description Lists the active household’s documents, newest first, each with its files in upload order. Optional filters: q (case-insensitive contains-search on the free-text document name — the #422 replacement for the category filter), memberId (both member modes — linked accounts and profile-only members). */
+    /** @description Lists the active household’s documents, newest first, each with its files in upload order. Optional filters: q (case-insensitive contains-search on the free-text document name — the #422 replacement for the category filter), memberId (both member modes — linked accounts and profile-only members), expiring_within (#426: N days, 1-365 — documents whose expiry lands within the next N days, already-expired included; orders those results soonest-expiry-first). Every item carries expires_on, remind_days_before and the COMPUTED days_until_expiry (whole days from today, UTC, negative = expired) — never stored. */
     get: operations['getApiDocuments']
     put?: never
     /** @description Creates a document (multipart/form-data: name, file, optional label for that file, optional memberId). The name is free text — trimmed, 1-120 chars, no preset list (#422). The file becomes attachment #1 (sort_order 1); more files ride POST /documents/{id}/files, max 20 per document. Cap 10 MB enforced on Content-Length before the body is read and again on the parsed bytes; magic bytes must match the declared type (JPEG, PNG, WebP, PDF). memberId accepts both member modes (linked and profile-only). No public URLs exist — bytes are served only via the per-file content endpoint. */
@@ -829,7 +829,8 @@ export interface paths {
     delete: operations['deleteApiDocumentsById']
     options?: never
     head?: never
-    patch?: never
+    /** @description Updates a document’s expiry metadata (#426): expires_on (ISO YYYY-MM-DD, or null to clear — clearing the expiry also clears the reminder window) and/or remind_days_before (integer days, 1-365). At least one field is required. Setting an expiry without a window applies the existing window, or the 30-day default when none was set; a window on a document without an expiry is a 400 (nothing to remind about). Expiry is metadata on the free-text document — the #422 naming and multi-file model are untouched. Every change writes an ‘update’ audit record in the same batch. Household-scoped like every vault route (a foreign household’s id answers 404, no existence leak); any household member may edit, matching the add-files authorization — the metadata is household-level information. */
+    patch: operations['patchApiDocumentsById']
     trace?: never
   }
   '/api/documents/{id}/files': {
@@ -3455,6 +3456,7 @@ export interface operations {
       query?: {
         q?: string
         memberId?: string
+        expiring_within?: number
       }
       header?: never
       path?: never
@@ -3476,6 +3478,9 @@ export interface operations {
               name: string
               uploaded_by: string
               created_at: string
+              expires_on: string | null
+              remind_days_before: number | null
+              days_until_expiry: number | null
               files: {
                 id: string
                 file_name: string
@@ -3533,6 +3538,9 @@ export interface operations {
               name: string
               uploaded_by: string
               created_at: string
+              expires_on: string | null
+              remind_days_before: number | null
+              days_until_expiry: number | null
               files: {
                 id: string
                 file_name: string
@@ -3617,6 +3625,9 @@ export interface operations {
               name: string
               uploaded_by: string
               created_at: string
+              expires_on: string | null
+              remind_days_before: number | null
+              days_until_expiry: number | null
               files: {
                 id: string
                 file_name: string
@@ -3696,6 +3707,81 @@ export interface operations {
       }
     }
   }
+  patchApiDocumentsById: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          /** @description ISO YYYY-MM-DD expiry date; null clears it (and the window) */
+          expires_on?: string | null
+          /** @description Days before expiry the document enters the due-soon window */
+          remind_days_before?: number
+        }
+      }
+    }
+    responses: {
+      /** @description OK — the updated document comes back */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            document: {
+              id: string
+              household_id: string
+              member_id: string | null
+              name: string
+              uploaded_by: string
+              created_at: string
+              expires_on: string | null
+              remind_days_before: number | null
+              days_until_expiry: number | null
+              files: {
+                id: string
+                file_name: string
+                content_type: string
+                size_bytes: number
+                label?: string | null
+                sort_order: number
+                sha256: string
+                uploaded_by: string
+                uploaded_at: string
+              }[]
+            }
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Document not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
   postApiDocumentsByIdFiles: {
     parameters: {
       query?: never
@@ -3729,6 +3815,9 @@ export interface operations {
               name: string
               uploaded_by: string
               created_at: string
+              expires_on: string | null
+              remind_days_before: number | null
+              days_until_expiry: number | null
               files: {
                 id: string
                 file_name: string

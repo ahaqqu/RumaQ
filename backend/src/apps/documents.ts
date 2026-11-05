@@ -11,7 +11,22 @@ import type { Context } from 'hono'
 import { logger } from 'hono/logger'
 import { describeRoute } from 'hono-openapi'
 import type { OpenAPIV3_1 } from 'openapi-types'
-import { object, optional, picklist, pipe, safeParse, string, maxLength } from 'valibot'
+import {
+  integer,
+  maxLength,
+  maxValue,
+  minValue,
+  nullable,
+  number,
+  object,
+  optional,
+  picklist,
+  pipe,
+  regex,
+  safeParse,
+  string,
+  transform,
+} from 'valibot'
 
 import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
@@ -20,6 +35,8 @@ import { ipRateLimitMiddleware, isRateLimited } from '../lib/rate-limit.js'
 import { createR2StorageAdapter } from '../lib/storage.js'
 import {
   DOCUMENT_MAX_BYTES,
+  REMIND_DAYS_MAX,
+  REMIND_DAYS_MIN,
   DocumentForbiddenError,
   DocumentNotFoundError,
   DocumentTooLargeError,
@@ -36,12 +53,15 @@ import {
   getDocumentRow,
   getDocumentWithFiles,
   isHouseholdMember,
+  isValidExpiryDate,
   listDocuments,
   recordDocumentAccess,
+  resolveExpiryUpdate,
   sanitizeDocumentLabel,
   sanitizeDocumentName,
   sanitizeFileName,
   sniffDocumentMime,
+  updateDocumentExpiry,
   type DocumentSummary,
 } from '../lib/documents.js'
 
@@ -53,10 +73,35 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' }
 const listQuerySchema = object({
   q: optional(pipe(string(), maxLength(120))),
   memberId: optional(pipe(string(), maxLength(64))),
+  // #426: expiring_within=N days (1..365, same bounds as the remind window).
+  // Query params arrive as strings — the regex rejects non-digits/overlong
+  // forms before the transform, the range checks after.
+  expiring_within: optional(
+    pipe(
+      string(),
+      regex(/^\d{1,3}$/),
+      transform(Number),
+      minValue(REMIND_DAYS_MIN),
+      maxValue(REMIND_DAYS_MAX)
+    )
+  ),
 })
 
 const dispositionQuerySchema = object({
   disposition: optional(picklist(['inline', 'attachment'])),
+})
+
+// The #426 expiry PATCH body: both fields optional (at least one required —
+// checked in the handler), JSON. expires_on: null CLEARS the expiry (and its
+// window with it); remind_days_before is a plain 1..365 integer — there is
+// no "null window" (clearing happens through the expiry itself), so the
+// stored invariant expires_on non-null ⇒ window non-null survives every
+// accepted request.
+const patchBodySchema = object({
+  expires_on: optional(nullable(string())),
+  remind_days_before: optional(
+    pipe(number(), integer(), minValue(REMIND_DAYS_MIN), maxValue(REMIND_DAYS_MAX))
+  ),
 })
 
 // Upload rate limit: tighter than the global per-IP window — 10 MB bodies
@@ -103,7 +148,18 @@ const documentFileSchema: OpenAPIV3_1.SchemaObject = {
 // The OpenAPI shape for one document — metadata + its files in upload order.
 const documentSummarySchema: OpenAPIV3_1.SchemaObject = {
   type: 'object',
-  required: ['id', 'household_id', 'member_id', 'name', 'uploaded_by', 'created_at', 'files'],
+  required: [
+    'id',
+    'household_id',
+    'member_id',
+    'name',
+    'uploaded_by',
+    'created_at',
+    'expires_on',
+    'remind_days_before',
+    'days_until_expiry',
+    'files',
+  ],
   properties: {
     id: { type: 'string' },
     household_id: { type: 'string' },
@@ -114,6 +170,11 @@ const documentSummarySchema: OpenAPIV3_1.SchemaObject = {
     name: { type: 'string' },
     uploaded_by: { type: 'string' },
     created_at: { type: 'string' },
+    // Expiry metadata (#426): the stored ISO date + window, and the COMPUTED
+    // whole-day distance (negative = already expired) — never stored twice.
+    expires_on: { type: ['string', 'null'] },
+    remind_days_before: { type: ['integer', 'null'] },
+    days_until_expiry: { type: ['integer', 'null'] },
     files: { type: 'array', items: documentFileSchema },
   },
 }
@@ -297,7 +358,7 @@ documentsApp.get(
   '/api/documents',
   describeRoute({
     description:
-      'Lists the active household’s documents, newest first, each with its files in upload order. Optional filters: q (case-insensitive contains-search on the free-text document name — the #422 replacement for the category filter), memberId (both member modes — linked accounts and profile-only members).',
+      'Lists the active household’s documents, newest first, each with its files in upload order. Optional filters: q (case-insensitive contains-search on the free-text document name — the #422 replacement for the category filter), memberId (both member modes — linked accounts and profile-only members), expiring_within (#426: N days, 1-365 — documents whose expiry lands within the next N days, already-expired included; orders those results soonest-expiry-first). Every item carries expires_on, remind_days_before and the COMPUTED days_until_expiry (whole days from today, UTC, negative = expired) — never stored.',
     security: [{ cookieAuth: [] }],
     parameters: [
       {
@@ -311,6 +372,17 @@ documentsApp.get(
         name: 'memberId',
         required: false,
         schema: { type: 'string', description: 'Surrogate member id (both modes)' },
+      },
+      {
+        in: 'query',
+        name: 'expiring_within',
+        required: false,
+        schema: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 365,
+          description: 'Days ahead: documents expiring within N days (expired included)',
+        },
       },
     ],
     responses: {
@@ -338,6 +410,7 @@ documentsApp.get(
     const documents = await listDocuments(c.env.DB, c.get('householdId'), {
       q: parsed.output.q,
       memberId: parsed.output.memberId,
+      expiringWithin: parsed.output.expiring_within,
     })
     const res = c.json({ documents: documents satisfies DocumentSummary[] })
     res.headers.set('Cache-Control', 'private, no-cache')
@@ -451,6 +524,110 @@ documentsApp.get(
       throw new DocumentNotFoundError()
     }
     const res = c.json({ document })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+documentsApp.patch(
+  '/api/documents/:id',
+  describeRoute({
+    description:
+      'Updates a document’s expiry metadata (#426): expires_on (ISO YYYY-MM-DD, or null to clear — clearing the expiry also clears the reminder window) and/or remind_days_before (integer days, 1-365). At least one field is required. Setting an expiry without a window applies the existing window, or the 30-day default when none was set; a window on a document without an expiry is a 400 (nothing to remind about). Expiry is metadata on the free-text document — the #422 naming and multi-file model are untouched. Every change writes an ‘update’ audit record in the same batch. Household-scoped like every vault route (a foreign household’s id answers 404, no existence leak); any household member may edit, matching the add-files authorization — the metadata is household-level information.',
+    security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            properties: {
+              expires_on: {
+                type: ['string', 'null'],
+                description: 'ISO YYYY-MM-DD expiry date; null clears it (and the window)',
+              },
+              remind_days_before: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 365,
+                description: 'Days before expiry the document enters the due-soon window',
+              },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'OK — the updated document comes back',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['document'],
+              properties: { document: documentSummarySchema },
+            },
+          },
+        },
+      },
+      ...JSON_ERROR_RESPONSES,
+    },
+  }),
+  async (c) => {
+    const householdId = c.get('householdId')
+    // Scoped lookup first — the household predicate rides in the SQL, so a
+    // foreign household's id is 404 before any body is read (no leak).
+    const document = await getDocumentRow(c.env.DB, householdId, c.req.param('id'))
+    if (!document) {
+      throw new DocumentNotFoundError()
+    }
+
+    let raw: unknown
+    try {
+      raw = await c.req.json()
+    } catch {
+      throw new DocumentValidationError('Expected a JSON body')
+    }
+    const parsed = safeParse(patchBodySchema, raw)
+    if (!parsed.success) {
+      throw new DocumentValidationError(
+        'Invalid expiry fields: expires_on must be an ISO date or null; remind_days_before an integer 1-365'
+      )
+    }
+    const { expires_on, remind_days_before } = parsed.output
+    if (expires_on === undefined && remind_days_before === undefined) {
+      throw new DocumentValidationError(
+        'Nothing to update: pass expires_on and/or remind_days_before'
+      )
+    }
+    // The regex in the lib pins the SHAPE; this pins the CALENDAR (2026-02-31
+    // is a well-formed non-date).
+    if (expires_on !== undefined && expires_on !== null && !isValidExpiryDate(expires_on)) {
+      throw new DocumentValidationError('expires_on must be a real calendar date (YYYY-MM-DD)')
+    }
+    if (expires_on === null && remind_days_before !== undefined) {
+      throw new DocumentValidationError(
+        'Clearing expires_on also clears the reminder window — omit remind_days_before'
+      )
+    }
+    // Window-only PATCH on an expiry-less document: there is nothing to
+    // remind about, so it is a 400 rather than a silently-dangling window.
+    if (expires_on === undefined && document.expires_on === null) {
+      throw new DocumentValidationError('Set expires_on before setting remind_days_before')
+    }
+
+    const resolved = resolveExpiryUpdate(document, {
+      expiresOn: expires_on,
+      remindDaysBefore: remind_days_before,
+    })
+    const updated = await updateDocumentExpiry(c.env.DB, {
+      householdId,
+      documentId: document.id,
+      actorUserId: c.get('userId'),
+      expiresOn: resolved.expiresOn,
+      remindDaysBefore: resolved.remindDaysBefore,
+    })
+    const res = c.json({ document: updated })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }
