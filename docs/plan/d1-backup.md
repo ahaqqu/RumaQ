@@ -169,10 +169,10 @@ into the existing private bucket under a dedicated `backups/` prefix.**
 - WIB-morning alignment: captures the full previous day of writes (Indonesian
   evening usage peak) _before_ the next usage day starts — RPO ≤ 24 h, layered
   on top of Time Travel's minute-level PITR for anything recent.
-- Publish ordering: the price pipeline publishes at 23:00 UTC (06:00 WIB),
-  ~21 h before the next 03:07 WIB export — every nightly dump already
-  contains the previous day's publish, so RPO ≤ 24 h holds by that ordering
-  alone.
+- Publish ordering: the price pipeline publishes at 13:00 UTC (20:00 WIB,
+  vps PR #20 — was 23:00 UTC / 06:00 WIB until 2026-11-04), ~7 h before the
+  next 20:07 UTC export — every nightly dump already contains that day's
+  publish, so RPO ≤ 24 h holds by that ordering alone.
 - Off-peak WIB night; avoids collision with `smoke.yml` (tops of 00/06/12/18
   UTC), the Worker cron (03:17 UTC), and `audit.yml` (07:00 UTC).
 - Seven-minute past the hour dodges top-of-hour runner congestion.
