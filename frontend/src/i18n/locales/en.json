@@ -97,7 +97,6 @@
     "uploadTitle": "Upload a document",
     "uploadHint": "Give it any name, then add one or more files (JPEG, PNG, WebP, or PDF up to 10 MB each). Only members of this household can ever open them.",
     "pickFile": "Choose file",
-    "changeFile": "Change file",
     "memberLabel": "Belongs to",
     "memberNone": "No one (household)",
     "noAccountShort": "no account",
