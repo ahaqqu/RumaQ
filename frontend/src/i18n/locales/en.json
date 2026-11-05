@@ -143,7 +143,6 @@
     "errorTooManyFiles": "A document can hold at most 20 files.",
     "expiryLabel": "Expiry date",
     "expiryHint": "Optional — when this document expires (passport, insurance, warranty).",
-    "expiryDateNone": "No expiry set",
     "remindLabel": "Remind days before expiry",
     "remindHint": "How many days before expiry it shows as due (1-365).",
     "expiresInDays_one": "Expires in {{count}} day",

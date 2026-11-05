@@ -143,7 +143,6 @@
     "errorTooManyFiles": "Dokumen sudah memuat maksimum 20 berkas.",
     "expiryLabel": "Tanggal kedaluwarsa",
     "expiryHint": "Opsional — kapan dokumen ini kedaluwarsa (paspor, asuransi, garansi).",
-    "expiryDateNone": "Belum ada tanggal kedaluwarsa",
     "remindLabel": "Pengingat sebelum kedaluwarsa",
     "remindHint": "Berapa hari sebelum kedaluwarsa dokumen ditandai (1-365).",
     "expiresInDays_one": "Kedaluwarsa dalam {{count}} hari",
