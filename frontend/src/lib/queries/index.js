@@ -22,6 +22,7 @@ export {
   useJoinHousehold,
 } from './households.js'
 export {
+  DOCUMENTS_BASE_KEY,
   documentsQueryKey,
   useDocuments,
   useCreateDocument,

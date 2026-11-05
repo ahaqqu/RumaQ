@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient } from '@tanstack/react-query'
 import {
-  documentsQueryKey,
+  DOCUMENTS_BASE_KEY,
   useHouseholds,
   useHouseholdMembers,
   useDocuments,
@@ -392,7 +392,11 @@ export function Documents() {
     }
     for (const entry of entries) {
       const head = new Uint8Array(await entry.file.slice(0, 12).arrayBuffer())
-      if (!sniffDocumentMime(head)) return t('documents.errorType')
+      // Review delta D2 #422: the sniffed kind must ALSO agree with the
+      // declared type — a PNG named .jpg would otherwise 415 mid-loop. The
+      // server stays the authority; this mirrors its declared-vs-actual 415.
+      const sniffed = sniffDocumentMime(head)
+      if (!sniffed || sniffed !== entry.file.type) return t('documents.errorType')
     }
     return null
   }
@@ -425,7 +429,11 @@ export function Documents() {
     } finally {
       setProgress(null)
       setBusy(false)
-      queryClient.invalidateQueries({ queryKey: documentsQueryKey() })
+      // Review delta D1 #422: the BARE base key — react-query prefix-matches
+      // array keys, so this reaches EVERY filtered view. documentsQueryKey()
+      // here would be one exact filter object and an active q/member filter
+      // would not match it, leaving the visible list stale.
+      queryClient.invalidateQueries({ queryKey: DOCUMENTS_BASE_KEY })
     }
   }
 

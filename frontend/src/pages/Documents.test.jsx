@@ -16,6 +16,7 @@ vi.mock('../lib/queries/me.js', () => ({
 }))
 
 vi.mock('../lib/queries/index.js', () => ({
+  DOCUMENTS_BASE_KEY: ['documents'],
   documentsQueryKey: (filters = {}) => [
     'documents',
     { q: filters.q ?? null, memberId: filters.memberId ?? null },
@@ -45,6 +46,15 @@ vi.mock('../lib/api', () => ({
   sniffDocumentMime: vi.fn((bytes) => {
     if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
       return 'image/jpeg'
+    }
+    if (
+      bytes.length >= 8 &&
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47
+    ) {
+      return 'image/png'
     }
     if (
       bytes.length >= 4 &&
@@ -269,6 +279,64 @@ describe('Documents', () => {
     expect(addFileMutation.mutateAsync).not.toHaveBeenCalled()
   })
 
+  it('rejects a declared-type mismatch up front too — PNG bytes named .jpg cannot 415 mid-loop (review delta D2 #422)', async () => {
+    const { container } = renderDocuments()
+    const nameInput = container.querySelector('[data-testid="document-name"]')
+    fireEvent.change(nameInput, { target: { value: 'Scan salah' } })
+    // The bytes sniff fine as PNG, but the declared type says image/jpeg —
+    // exactly the mismatch the server 415s, so the pre-batch gate refuses it
+    // the same way (server stays the authority).
+    const bytes = new Uint8Array(10)
+    bytes[0] = 0x89
+    bytes[1] = 0x50
+    bytes[2] = 0x4e
+    bytes[3] = 0x47
+    bytes[4] = 0x0d
+    bytes[5] = 0x0a
+    bytes[6] = 0x1a
+    bytes[7] = 0x0a
+    pickFiles(container, container.querySelector('input[type="file"]'), [
+      new File([bytes], 'fake.jpg', { type: 'image/jpeg' }),
+    ])
+    fireEvent.click(findButton(container, 'documents.uploadAction'))
+    await waitFor(() => expect(container.textContent).toContain('documents.errorType'))
+    expect(createMutation.mutateAsync).not.toHaveBeenCalled()
+    expect(addFileMutation.mutateAsync).not.toHaveBeenCalled()
+  })
+
+  it('invalidates the bare vault base key so a FILTERED view also refreshes (review delta D1 #422)', async () => {
+    createMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-new' } })
+    addFileMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-new' } })
+    // Default gcTime: the seeded filtered entry must SURVIVE unobserved until
+    // the invalidation check (createQueryClient's gcTime: 0 would collect it
+    // before the upload even runs).
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries')
+    // The list the user is LOOKING at: a q-filtered view of the vault cache.
+    // documentsQueryKey()'s exact filter object would NOT match it (filter
+    // properties strict-equal), which is the staleness the delta called out.
+    const filteredKey = ['documents', { q: 'ktp', memberId: null }]
+    client.setQueryData(filteredKey, { documents: [DOC] })
+    const { container } = renderDocuments(client)
+
+    fireEvent.change(container.querySelector('[data-testid="document-search"]'), {
+      target: { value: 'ktp' },
+    })
+    fireEvent.change(container.querySelector('[data-testid="document-name"]'), {
+      target: { value: 'KTP Bapak' },
+    })
+    pickFiles(container, container.querySelector('input[type="file"]'), [jpegFile('ktp.jpg')])
+    fireEvent.click(findButton(container, 'documents.uploadAction'))
+
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1))
+    // The single call is the bare prefix...
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ['documents'] })
+    )
+    // ...and it actually REACHED the filtered view (was a no-op before the fix).
+    await waitFor(() => expect(client.getQueryState(filteredKey)?.isInvalidated).toBe(true))
+  })
+
   it('creates with the first file, then rides the rest through add-file in pick order (labels included)', async () => {
     createMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-new' } })
     addFileMutation.mutateAsync.mockResolvedValue({ document: { id: 'doc-new' } })
@@ -323,9 +391,11 @@ describe('Documents', () => {
     // ONE cache refresh per run (review B3 #422): the two settled add-file
     // calls each carry the updated document, so the runner invalidates once
     // after the loop instead of per settle (~N refetches for one upload).
+    // The BARE base key (review delta D1 #422) — prefix matching reaches
+    // every filtered view.
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1))
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: ['documents', { q: null, memberId: null }] })
+      expect.objectContaining({ queryKey: ['documents'] })
     )
   })
 

@@ -15,6 +15,13 @@ import {
 
 const DOCUMENTS_KEY = ['documents']
 
+// The BARE base key for invalidations (review delta D1 #422): react-query
+// prefix-matches array keys, so invalidating ['documents'] reaches EVERY
+// filtered view. Invalidating documentsQueryKey() instead would be one exact
+// filter object ({ q: null, memberId: null }) — an active search or member
+// filter would NOT match it and its list would go stale.
+export const DOCUMENTS_BASE_KEY = DOCUMENTS_KEY
+
 export function documentsQueryKey(filters = {}) {
   const { q, memberId } = filters
   return [DOCUMENTS_KEY[0], { q: q ?? null, memberId: memberId ?? null }]
