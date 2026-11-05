@@ -5,6 +5,8 @@
 > (scraper). `contract/src/index.ts` is the executable schema; this document is the
 > semantic contract.
 >
+> Product-level explanation: [PRODUCT_METADATA.md](../PRODUCT_METADATA.md).
+>
 > Related: `ahaqqu/RumaQ-pipeline#21` (identity/naming), `ahaqqu/RumaQ#423` (admin
 > rename), `ahaqqu/RumaQ-pipeline#22` (Jev benchmark), and
 > `ahaqqu/RumaQ-pipeline/docs/plan/product-metadata.md` (metadata target).
