@@ -330,9 +330,7 @@ describe('Documents', () => {
 
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1))
     // The single call is the bare prefix...
-    expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: ['documents'] })
-    )
+    expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['documents'] }))
     // ...and it actually REACHED the filtered view (was a no-op before the fix).
     await waitFor(() => expect(client.getQueryState(filteredKey)?.isInvalidated).toBe(true))
   })
@@ -394,9 +392,7 @@ describe('Documents', () => {
     // The BARE base key (review delta D1 #422) — prefix matching reaches
     // every filtered view.
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1))
-    expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: ['documents'] })
-    )
+    expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['documents'] }))
   })
 
   it('attaches a document to a member via the upload select (memberId rides the create payload)', async () => {
