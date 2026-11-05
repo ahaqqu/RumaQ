@@ -60,16 +60,19 @@ function createFakeDb(
           },
           run: async () => {
             log.push({ sql: flat, params })
-            return undefined
+            // D1 reports per-statement meta.changes — the lib reads it off
+            // the guarded insert to map a refused cap to 409.
+            return { meta: { changes: 1 } }
           },
         }),
       }
     },
     batch: async (stmts: unknown[]) => {
-      for (const stmt of stmts as Array<{ run: () => Promise<void> }>) {
-        await stmt.run()
+      const results = []
+      for (const stmt of stmts as Array<{ run: () => Promise<unknown> }>) {
+        results.push(await stmt.run())
       }
-      return []
+      return results
     },
   }
 }
@@ -105,7 +108,9 @@ const WEBP_BYTES = new Uint8Array([
 const TEXT_BYTES = new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]) // "hello"
 
 // The INSERT parameter orders (lib/documents.ts) — the fake read-back
-// reconstructs the rows from what was actually written.
+// reconstructs the rows from what was actually written. `uploaded_at` is NOT
+// in the list: the INSERT omits the column on purpose so the table DEFAULT
+// fills it (review A1 #422) — there is no bound param to echo.
 const DOCUMENT_INSERT_COLUMNS = ['id', 'household_id', 'member_id', 'name', 'uploaded_by'] as const
 const FILE_INSERT_COLUMNS = [
   'id',
@@ -118,8 +123,14 @@ const FILE_INSERT_COLUMNS = [
   'sort_order',
   'sha256',
   'uploaded_by',
-  'uploaded_at',
 ] as const
+
+// The add-file INSERT is the guarded INSERT..SELECT (review A2 #422): neither
+// sort_order (computed in-statement as max+1) nor the cap bound is a plain
+// column value, so the read-back derives sort_order the same way — prior file
+// inserts for the document in the log, plus any seed the test declares for
+// files the fixture already had, plus 1.
+const GUARDED_FILE_INSERT = /INSERT INTO document_files.*SELECT/
 
 // The lib's read-back projection: one flat row per (document, file) pair.
 const JOIN_ROUTE =
@@ -282,14 +293,30 @@ describe('documents routes', () => {
       })
       document = row
     }
-    const fileRows = db.log
-      .filter((entry) => /INSERT INTO document_files/.test(entry.sql))
+    const fileInserts = db.log.filter((entry) => /INSERT INTO document_files/.test(entry.sql))
+    const fileRows = fileInserts
       .filter((entry) => entry.params[1] === params[0])
       .map((entry) => {
         const row: Row = {}
-        FILE_INSERT_COLUMNS.forEach((column, i) => {
-          row[column] = entry.params[i]
-        })
+        if (GUARDED_FILE_INSERT.test(entry.sql)) {
+          // Guarded shape binds [id, doc, key, name, size, ctype, label,
+          // doc(for max+1), sha, uploader, doc(for cap), MAX] — every column
+          // maps 1:1 EXCEPT sort_order (column 7), which is computed
+          // in-statement, and param 7 is the subquery's document_id.
+          FILE_INSERT_COLUMNS.forEach((column, i) => {
+            if (i !== 7) row[column] = entry.params[i]
+          })
+          // sort_order mimics the in-statement max+1: the fixture's
+          // pre-existing files (seed) + prior inserts in the log + 1.
+          const priors = fileInserts.filter(
+            (prior) => prior !== entry && prior.params[1] === params[0]
+          ).length
+          row['sort_order'] = (fileSortSeeds[String(params[0])] ?? 0) + priors + 1
+        } else {
+          FILE_INSERT_COLUMNS.forEach((column, i) => {
+            row[column] = entry.params[i]
+          })
+        }
         return row
       })
     return joinRowsFromLog(document, fileRows)
@@ -307,15 +334,17 @@ describe('documents routes', () => {
     /SELECT COUNT\(\*\) AS cnt FROM document_files WHERE document_id = \?/,
     () => ({ cnt: count }),
   ]
-  const MAX_ORDER_ROUTE: [RegExp, (params: unknown[]) => Row | null] = [
-    /SELECT COALESCE\(MAX\(sort_order\), 0\) AS max_order FROM document_files/,
-    () => ({ max_order: 1 }),
-  ]
+
+  // Files a fixture document ALREADY holds (contiguous 1..n) — the guarded
+  // insert's in-statement sort_order derives from this plus the log's priors.
+  let fileSortSeeds: Record<string, number> = {}
 
   const setup = (
     firstRoutes: [RegExp, (params: unknown[]) => Row | null][] = [],
-    allRoutes: [RegExp, (params: unknown[]) => Row[]][] = LIST_ROUTES
+    allRoutes: [RegExp, (params: unknown[]) => Row[]][] = LIST_ROUTES,
+    options: { fileSortSeeds?: Record<string, number> } = {}
   ) => {
+    fileSortSeeds = options.fileSortSeeds ?? {}
     db = createFakeDb(firstRoutes, allRoutes)
     bucket = createDocumentsStub()
     env = createEnv(db, { DOCUMENTS: bucket as unknown as MockEnv['DOCUMENTS'] })
@@ -772,8 +801,9 @@ describe('documents routes', () => {
 
   it('adds a file to an existing document: sort_order = max + 1, bytes stored, file_add audit carries the file id (#422)', async () => {
     setup(
-      [[DOC_ROW_ROUTE, () => DOC_ROW()], MAX_ORDER_ROUTE, COUNT_ROUTE(1)],
-      [[JOIN_ROUTE, (params) => readBackFromLog(params, DOC_ROW())]]
+      [[DOC_ROW_ROUTE, () => DOC_ROW()], COUNT_ROUTE(1)],
+      [[JOIN_ROUTE, (params) => readBackFromLog(params, DOC_ROW())]],
+      { fileSortSeeds: { 'doc-1': 1 } }
     )
 
     const res = await documentsApp.request(
@@ -803,7 +833,11 @@ describe('documents routes', () => {
     expect(audit[0]?.params[4]).toBe('file_add')
     expect(audit[0]?.params[5]).toBe(body.document.files[0]?.id)
     const fileInsert = db.log.find((e) => /INSERT INTO document_files/.test(e.sql))
-    expect(fileInsert?.params[7]).toBe(2) // sort_order = max(1) + 1
+    // The add-file insert is the guarded INSERT..SELECT: sort_order is
+    // computed IN the statement (max+1) and the cap re-check rides the same
+    // statement — no bound sort_order param to race (review A2 #422).
+    expect(fileInsert?.sql).toContain('WHERE (SELECT COUNT(*) FROM document_files')
+    expect(fileInsert?.sql).toContain('(SELECT COALESCE(MAX(sort_order), 0) + 1')
   })
 
   it('refuses a 21st file with 409 BEFORE any byte is stored (#422 owner decision 3)', async () => {
@@ -1043,7 +1077,7 @@ describe('documents routes', () => {
 
   it('rate-limits bursts of uploads per user (429 with Retry-After) across both upload endpoints', async () => {
     setup(
-      [[DOC_ROW_ROUTE, () => DOC_ROW()], COUNT_ROUTE(0), MAX_ORDER_ROUTE, MEMBER_ROUTE],
+      [[DOC_ROW_ROUTE, () => DOC_ROW()], COUNT_ROUTE(0), MEMBER_ROUTE],
       [[JOIN_ROUTE, (params) => readBackFromLog(params, DOC_ROW())]]
     )
     let last: Response | undefined

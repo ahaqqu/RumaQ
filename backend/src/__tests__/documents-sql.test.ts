@@ -180,6 +180,18 @@ describe('documents vault semantics (real SQL)', () => {
     })
     expect(JSON.stringify(linkedDoc)).not.toContain('r2_key')
 
+    // The DEFAULT-owned timestamps are REAL (review A1 #422): both INSERTs
+    // omit the columns so datetime('now') fills them — a bound '' would store
+    // '' silently, which is exactly the bug the route fake cannot see.
+    const storedDoc = sqlite
+      .prepare('SELECT created_at FROM documents WHERE id = ?')
+      .get(linkedDoc.id)
+    expect(String(storedDoc?.created_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+    const storedFile = sqlite
+      .prepare('SELECT uploaded_at FROM document_files WHERE document_id = ?')
+      .get(linkedDoc.id)
+    expect(String(storedFile?.uploaded_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+
     // Full listing for h1 — only its two documents, newest first, files in
     // upload order. Same-second inserts share created_at (D1's datetime('now')
     // granularity), so pin distinct timestamps before asserting the order.
@@ -316,6 +328,17 @@ describe('documents vault semantics (real SQL)', () => {
     )
     expect(files[19]?.label).toBe(`Halaman ${DOCUMENT_MAX_FILES}`)
 
+    // Every write path got a REAL uploaded_at from the column DEFAULT (review
+    // A1 #422) — the create's file #1 and all 19 add-file inserts alike; a
+    // bound '' would have stored '' on every row.
+    const uploadedAts = sqlite
+      .prepare('SELECT uploaded_at FROM document_files WHERE document_id = ? ORDER BY sort_order')
+      .all(doc.id)
+    expect(uploadedAts).toHaveLength(DOCUMENT_MAX_FILES)
+    for (const row of uploadedAts) {
+      expect(String(row.uploaded_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+    }
+
     // File #21 is refused BEFORE the storage put — the bucket stays at 20.
     await expect(
       addDocumentFile(d1, storage, {
@@ -341,6 +364,95 @@ describe('documents vault semantics (real SQL)', () => {
     expect(file).toMatchObject({ sort_order: 2, label: 'Halaman 2' })
     expect(await getDocumentFileRow(d1, 'h2', doc.id, files[1]!.id)).toBeNull()
     expect(await getDocumentFileRow(d1, 'h1', 'doc-other', files[1]!.id)).toBeNull()
+  })
+
+  it('add-file cap is enforced INSIDE the batch: a stale pre-read cannot exceed the cap and leaves no orphan audit (review A2 #422)', async () => {
+    const { sqlite, d1 } = createDb()
+    const stub = createDocumentsStub()
+    const storage = createR2StorageAdapter(stub as unknown as R2Bucket)
+
+    sqlite.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    sqlite
+      .prepare(
+        `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+      )
+      .run()
+
+    const doc = await createDocument(d1, storage, {
+      householdId: 'h1',
+      memberId: null,
+      name: 'Buku Nika',
+      file: { fileName: 'page-1.jpg', bytes: JPEG_BYTES, mime: 'image/jpeg', label: null },
+      uploadedBy: 'u1',
+    })
+    // Fill to the cap directly — the end state a lost race lands on.
+    const insertSeed = sqlite.prepare(
+      `INSERT INTO document_files
+         (id, document_id, r2_key, file_name, size_bytes, content_type, label, sort_order, sha256, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`
+    )
+    for (let i = 2; i <= DOCUMENT_MAX_FILES; i++) {
+      insertSeed.run(
+        `f-${i}`,
+        doc.id,
+        `documents/h1/${doc.id}/f-${i}`,
+        `page-${i}.jpg`,
+        JPEG_BYTES.byteLength,
+        'image/jpeg',
+        i,
+        'a'.repeat(64),
+        'u1'
+      )
+    }
+
+    // The race, simulated: the COUNT pre-read answers one slot short (the
+    // value it had before a concurrent add committed), while the REAL table
+    // the batch sees is already full. Single-threaded SQLite cannot interleave
+    // the statements naturally, so the stale read is injected at the adapter —
+    // exactly the window D1's concurrent execution opens.
+    const staleD1 = {
+      prepare: (sql: string) => {
+        const inner = d1.prepare(sql)
+        return {
+          bind: (...params: unknown[]) => {
+            const bound = inner.bind(...params)
+            return {
+              first: async <T>() => {
+                if (/SELECT COUNT\(\*\) AS cnt FROM document_files/.test(sql)) {
+                  return { cnt: DOCUMENT_MAX_FILES - 1 } as T
+                }
+                return bound.first<T>()
+              },
+              all: bound.all,
+              run: bound.run,
+            }
+          },
+        }
+      },
+      batch: (stmts: D1PreparedStatement[]) => d1.batch(stmts),
+    } as unknown as D1Database
+
+    // The pre-check passes on the stale count, but the guarded insert's
+    // in-batch WHERE re-check sees the truth and inserts zero rows → 409.
+    await expect(
+      addDocumentFile(staleD1, storage, {
+        householdId: 'h1',
+        documentId: doc.id,
+        file: { fileName: 'page-21.jpg', bytes: JPEG_BYTES, mime: 'image/jpeg', label: null },
+        uploadedBy: 'u1',
+      })
+    ).rejects.toBeInstanceOf(DocumentTooManyFilesError)
+
+    // Nothing leaked past the cap — and the guard-riding audit never wrote a
+    // file_add record for the file that did not land. (The put happened
+    // first — the documented unreferenced-object trade, unreachable by any
+    // route; the stub holds it, no row names it.)
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS c FROM document_files WHERE document_id = ?').get(doc.id)
+    ).toMatchObject({ c: DOCUMENT_MAX_FILES })
+    expect(
+      sqlite.prepare("SELECT COUNT(*) AS c FROM document_audit WHERE action = 'file_add'").get()
+    ).toMatchObject({ c: 0 })
   })
 
   it('delete-file: object gone, row gone, file_delete audit survives naming the file; other files untouched', async () => {

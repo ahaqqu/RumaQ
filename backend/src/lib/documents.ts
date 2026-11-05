@@ -467,13 +467,21 @@ function insertDocumentStatement(db: D1Database, row: DocumentRow): D1PreparedSt
     .bind(row.id, row.household_id, row.member_id, row.name, row.uploaded_by)
 }
 
-function insertFileStatement(db: D1Database, row: DocumentFileRow): D1PreparedStatement {
+// The create-time file insert (always sort_order 1 into an empty document —
+// no cap or ordering race exists there). `uploaded_at` is deliberately OMITTED
+// from the column list so the table DEFAULT (`datetime('now')`) fills it — a
+// bound value, even '', would override the DEFAULT (review A1 of #422), the
+// same shape insertDocumentStatement uses for created_at.
+function insertFileStatement(
+  db: D1Database,
+  row: Omit<DocumentFileRow, 'uploaded_at'>
+): D1PreparedStatement {
   return db
     .prepare(
       `INSERT INTO document_files
          (id, document_id, r2_key, file_name, size_bytes, content_type, label,
-          sort_order, sha256, uploaded_by, uploaded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          sort_order, sha256, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       row.id,
@@ -485,8 +493,45 @@ function insertFileStatement(db: D1Database, row: DocumentFileRow): D1PreparedSt
       row.label,
       row.sort_order,
       row.sha256,
+      row.uploaded_by
+    )
+}
+
+// The add-file insert is GUARDED and self-computing (review A2 of #422):
+//   - sort_order = max(existing) + 1 is a scalar subquery IN the statement,
+//     so two concurrent adds can never read the same max and tie,
+//   - the WHERE clause re-checks the 20-files cap INSIDE the batch's
+//     transaction, so a count read that went stale between the route's
+//     pre-check and the commit cannot exceed the cap.
+// The WHERE refusing (count already at the cap) inserts zero rows: the caller
+// reads meta.changes off the batch result and answers 409.
+function addFileStatement(
+  db: D1Database,
+  row: Omit<DocumentFileRow, 'uploaded_at' | 'sort_order'>
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO document_files
+         (id, document_id, r2_key, file_name, size_bytes, content_type, label,
+          sort_order, sha256, uploaded_by)
+       SELECT ?, ?, ?, ?, ?, ?, ?,
+         (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM document_files WHERE document_id = ?),
+         ?, ?
+       WHERE (SELECT COUNT(*) FROM document_files WHERE document_id = ?) < ?`
+    )
+    .bind(
+      row.id,
+      row.document_id,
+      row.r2_key,
+      row.file_name,
+      row.size_bytes,
+      row.content_type,
+      row.label,
+      row.document_id,
+      row.sha256,
       row.uploaded_by,
-      row.uploaded_at
+      row.document_id,
+      DOCUMENT_MAX_FILES
     )
 }
 
@@ -512,6 +557,35 @@ function insertAuditStatement(
       args.actorUserId,
       args.action,
       args.fileId ?? null
+    )
+}
+
+// The add-file audit rides the SAME guard as the file insert (review A2 of
+// #422): when the cap's WHERE clause refused the insert, this statement must
+// not write a file_add record for a file that never landed. The EXISTS clause
+// sees the file row inserted earlier in the same batch's transaction.
+function insertFileAddAuditStatement(
+  db: D1Database,
+  args: {
+    documentId: string
+    householdId: string
+    actorUserId: string
+    fileId: string
+  }
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action, document_file_id)
+       SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM document_files WHERE id = ?)`
+    )
+    .bind(
+      crypto.randomUUID(),
+      args.documentId,
+      args.householdId,
+      args.actorUserId,
+      'file_add',
+      args.fileId,
+      args.fileId
     )
 }
 
@@ -575,7 +649,8 @@ export async function createDocument(
       sort_order: 1,
       sha256,
       uploaded_by: args.uploadedBy,
-      uploaded_at: '', // D1 default fills it; the read-back below returns truth.
+      // No uploaded_at here: the column is omitted from the INSERT so the
+      // table DEFAULT fills it (a bound '' would store '' — review A1 #422).
     }),
     insertAuditStatement(db, {
       documentId,
@@ -589,11 +664,14 @@ export async function createDocument(
 }
 
 /**
- * Add a file to an existing document (#422). The 20-files cap fires BEFORE
- * the storage put — the bucket never takes bytes the document cannot keep.
- * sort_order = max + 1 keeps upload order deterministic even when files land
- * in the same second. The file row + its 'file_add' audit record commit in
- * one batch, same put-first spec order as createDocument.
+ * Add a file to an existing document (#422). The COUNT pre-check is the
+ * fast path — it refuses BEFORE the storage put, so the bucket never takes
+ * bytes the document cannot keep. The cap is ENFORCED inside the batch: the
+ * guarded insert re-checks the count and computes sort_order = max + 1 in
+ * the statement itself (review A2 #422), so a pre-read that went stale to a
+ * concurrent add cannot exceed the cap or tie the order. The file row and
+ * its guard-riding 'file_add' audit record commit in one batch, same
+ * put-first spec order as createDocument.
  */
 export async function addDocumentFile(
   db: D1Database,
@@ -613,21 +691,14 @@ export async function addDocumentFile(
     throw new DocumentTooManyFilesError()
   }
 
-  const sortRow = await db
-    .prepare(
-      'SELECT COALESCE(MAX(sort_order), 0) AS max_order FROM document_files WHERE document_id = ?'
-    )
-    .bind(args.documentId)
-    .first<{ max_order: number }>()
-
   const fileId = crypto.randomUUID()
   const storageKey = buildDocumentFileKey(args.householdId, args.documentId, fileId)
   const sha256 = await sha256HexBytes(args.file.bytes)
 
   await storage.put(storageKey, args.file.bytes, args.file.mime)
 
-  await db.batch([
-    insertFileStatement(db, {
+  const results = await db.batch([
+    addFileStatement(db, {
       id: fileId,
       document_id: args.documentId,
       r2_key: storageKey,
@@ -635,19 +706,24 @@ export async function addDocumentFile(
       size_bytes: args.file.bytes.byteLength,
       content_type: args.file.mime,
       label: args.file.label,
-      sort_order: (sortRow?.max_order ?? 0) + 1,
       sha256,
       uploaded_by: args.uploadedBy,
-      uploaded_at: '',
+      // No uploaded_at: the column is omitted so the DEFAULT fills it (A1).
     }),
-    insertAuditStatement(db, {
+    insertFileAddAuditStatement(db, {
       documentId: args.documentId,
       householdId: args.householdId,
       actorUserId: args.uploadedBy,
-      action: 'file_add',
       fileId,
     }),
   ])
+  // The guard's WHERE refused: a concurrent add took the last slot between
+  // the pre-check and this batch. 409 — the put orphan (documented, same
+  // trade as every put-first failure) is unreachable by any route.
+  const changes = (results[0] as { meta?: { changes?: number } } | undefined)?.meta?.changes
+  if ((changes ?? 0) === 0) {
+    throw new DocumentTooManyFilesError()
+  }
 
   return readBackSummary(db, args.householdId, args.documentId)
 }
