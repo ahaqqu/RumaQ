@@ -43,6 +43,7 @@ Coverage thresholds are 50/50/50/50 for frontend and backend. New API endpoints 
 ## Code style
 
 - Format + lint + type-check in one pass: `./scripts/style.sh --check` (fix: `./scripts/style.sh`). Under the hood this is `vp check` (Oxfmt + Oxlint).
+- **Pre-commit hook** (husky): every commit runs `bun run style` (`vp check --fix`) and re-stages the fixes; commits with unfixable style errors (e.g. HTML syntax errors) are blocked. Activated automatically by `bun install` (the `prepare` script). The check is whole-tree, matching CI exactly.
 - Frontend rules: [`docs/FRONTEND_CONVENTIONS.md`](docs/FRONTEND_CONVENTIONS.md)
 - Backend rules: [`docs/BACKEND_CONVENTIONS.md`](docs/BACKEND_CONVENTIONS.md)
 
