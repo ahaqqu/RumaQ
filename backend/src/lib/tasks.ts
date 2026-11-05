@@ -196,7 +196,15 @@ const TASK_SELECT = `SELECT t.id, t.household_id, t.title, t.assignee_member_id,
   LEFT JOIN household_members am ON am.id = t.assignee_member_id`
 
 function toTaskRow(row: Omit<TaskRow, 'needs_approval'> & { needs_approval: number }): TaskRow {
-  return { ...row, needs_approval: row.needs_approval === 1 }
+  // needs_approval is DERIVED for reads: true exactly while the assignee is a
+  // profile-only member (0027). The stored column is the write-side flag the
+  // lib maintains on every assignee change — but member removal (SET NULL)
+  // and link-later (#397 attaches an account to the kid's member row) can
+  // leave it stale in either direction, and a flag that lies would send the
+  // approval flow after a task that no longer needs it. The live join is the
+  // truth; approveTask additionally re-checks it inside the guarded UPDATE.
+  const derived = row.assignee_member_id !== null && row.assignee_user_id === null
+  return { ...row, needs_approval: derived }
 }
 
 function toSummary(task: TaskRow): TaskSummary {
@@ -357,7 +365,10 @@ function insertAuditStatement(
 
 // ---------------------------------------------------------------------------
 // Mutations — every write carries its audit row in the SAME batch (the vault's
-// in-transaction rule: an audit row that can be skipped by a crash is a rumor)
+// in-transaction rule: an audit row that can be skipped by a crash is a rumor).
+// Authorization re-derives the caller's member row INSIDE the lib from
+// (householdId, userId) — the vault's discipline — so a route can never hand
+// a caller row from one household to another household's task.
 // ---------------------------------------------------------------------------
 
 /**
@@ -370,14 +381,14 @@ export async function createTask(
   db: D1Database,
   args: {
     householdId: string
-    caller: CallerMember
-    actorUserId: string
+    userId: string
     title: string
     assignee: HouseholdMemberRef | null
     dueDate: string | null
     recurrence: TaskRecurrence | null
   }
 ): Promise<TaskSummary> {
+  const caller = await requireCallerMember(db, args.householdId, args.userId)
   const taskId = crypto.randomUUID()
   const needsApproval = deriveNeedsApproval(args.assignee)
   await db.batch([
@@ -393,7 +404,7 @@ export async function createTask(
         args.householdId,
         args.title,
         args.assignee?.id ?? null,
-        args.caller.memberId,
+        caller.memberId,
         args.dueDate,
         args.recurrence,
         needsApproval ? 1 : 0
@@ -401,7 +412,7 @@ export async function createTask(
     insertAuditStatement(db, {
       taskId,
       householdId: args.householdId,
-      actorUserId: args.actorUserId,
+      actorUserId: args.userId,
       action: 'create',
     }),
   ])
@@ -434,14 +445,14 @@ export async function updateTask(
   db: D1Database,
   args: {
     householdId: string
-    caller: CallerMember
-    actorUserId: string
+    userId: string
     task: TaskRow
     patch: TaskEditPatch
   }
 ): Promise<TaskSummary> {
   const { task } = args
-  if (!isCreator(task, args.caller) && !isOwner(args.caller)) {
+  const caller = await requireCallerMember(db, args.householdId, args.userId)
+  if (!isCreator(task, caller) && !isOwner(caller)) {
     throw new TaskForbiddenError()
   }
 
@@ -481,7 +492,7 @@ export async function updateTask(
     insertAuditStatement(db, {
       taskId: task.id,
       householdId: args.householdId,
-      actorUserId: args.actorUserId,
+      actorUserId: args.userId,
       action: 'update',
     }),
   ])
@@ -505,15 +516,15 @@ export async function completeTask(
   db: D1Database,
   args: {
     householdId: string
-    caller: CallerMember
-    actorUserId: string
+    userId: string
     task: TaskRow
     completedOn: string
   }
 ): Promise<TaskSummary> {
   const { task } = args
+  const caller = await requireCallerMember(db, args.householdId, args.userId)
   const allowed =
-    isAssigneeSelf(task, args.caller) || isCreator(task, args.caller) || isOwner(args.caller)
+    isAssigneeSelf(task, caller) || isCreator(task, caller) || isOwner(caller)
   if (!allowed) {
     throw new TaskForbiddenError(
       'Only the assignee, the creator, or a household owner can complete a task'
@@ -543,7 +554,7 @@ export async function completeTask(
     insertAuditStatement(db, {
       taskId: task.id,
       householdId: args.householdId,
-      actorUserId: args.actorUserId,
+      actorUserId: args.userId,
       action: 'complete',
     }),
   ])
@@ -558,41 +569,58 @@ export async function completeTask(
 /**
  * Approve the completed task (the assigner's acknowledgment — pairs with the
  * future allowance ledger). Creator or owner, only while needs_approval holds
- * and the task is done; the derived flag (0027) and the done status are
+ * and the task is done; the derived flag (toTaskRow) and the done status are
  * checked, not just the column. Re-approval (e.g. by the other parent) is an
  * allowed, audit-recorded overwrite.
+ *
+ * The UPDATE is GUARDED (the vault's addFileStatement pattern): it re-checks
+ * status, the stored flag, AND the live assignee mode INSIDE the batch, so a
+ * flag that went stale between the read and the write — the assignee's member
+ * row was removed, or link-later (#397) attached an account to the kid —
+ * matches no row instead of approving against the derived truth. changes === 0
+ * surfaces as the typed 409.
  */
 export async function approveTask(
   db: D1Database,
   args: {
     householdId: string
-    caller: CallerMember
-    actorUserId: string
+    userId: string
     task: TaskRow
   }
 ): Promise<TaskSummary> {
   const { task } = args
-  if (!isCreator(task, args.caller) && !isOwner(args.caller)) {
+  const caller = await requireCallerMember(db, args.householdId, args.userId)
+  if (!isCreator(task, caller) && !isOwner(caller)) {
     throw new TaskForbiddenError()
   }
   if (!task.needs_approval || task.status !== 'done') {
     throw new TaskConflictError('Task is not awaiting approval')
   }
 
-  await db.batch([
+  const results = await db.batch([
     db
       .prepare(
         `UPDATE household_tasks SET approved_by_member_id = ?, updated_at = datetime('now')
-          WHERE id = ? AND household_id = ?`
+          WHERE id = ? AND household_id = ?
+            AND status = 'done' AND needs_approval = 1
+            AND EXISTS (
+              SELECT 1 FROM household_members am
+               WHERE am.id = household_tasks.assignee_member_id AND am.user_id IS NULL
+            )`
       )
-      .bind(args.caller.memberId, task.id, args.householdId),
+      .bind(caller.memberId, task.id, args.householdId),
     insertAuditStatement(db, {
       taskId: task.id,
       householdId: args.householdId,
-      actorUserId: args.actorUserId,
+      actorUserId: args.userId,
       action: 'approve',
     }),
   ])
+  // The guard refused: the flag went stale between the read and this write.
+  const changes = (results[0] as { meta?: { changes?: number } } | undefined)?.meta?.changes
+  if ((changes ?? 1) === 0) {
+    throw new TaskConflictError('Task is not awaiting approval')
+  }
 
   const stored = await getTaskRow(db, args.householdId, task.id)
   if (!stored) {
@@ -611,13 +639,13 @@ export async function deleteTask(
   db: D1Database,
   args: {
     householdId: string
-    caller: CallerMember
-    actorUserId: string
+    userId: string
     task: TaskRow
   }
 ): Promise<void> {
   const { task } = args
-  if (!isCreator(task, args.caller) && !isOwner(args.caller)) {
+  const caller = await requireCallerMember(db, args.householdId, args.userId)
+  if (!isCreator(task, caller) && !isOwner(caller)) {
     throw new TaskForbiddenError()
   }
 
@@ -625,7 +653,7 @@ export async function deleteTask(
     insertAuditStatement(db, {
       taskId: task.id,
       householdId: args.householdId,
-      actorUserId: args.actorUserId,
+      actorUserId: args.userId,
       action: 'delete',
     }),
     db

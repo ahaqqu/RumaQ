@@ -44,9 +44,13 @@ CREATE TABLE IF NOT EXISTS household_tasks (
   -- Closed set: the board's two columns. NOT NULL with a default so the
   -- INSERT can omit it.
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
-  -- Derived (see the header): 1 while the assignee is a profile-only member.
-  -- INTEGER 0/1 — the persona_enabled/users.is_admin precedent (no BOOLEAN
-  -- type in SQLite).
+  -- The WRITE-side flag (0027 header): maintained by the lib on every
+  -- assignee change — 1 while the assignee is a profile-only member. READS
+  -- derive the value from the live member join instead (lib/tasks.ts
+  -- toTaskRow): a member removal (SET NULL) or link-later (#397 attaches an
+  -- account to the kid's row) can leave this stored flag stale, and the
+  -- approve flow must never trust it over the join. INTEGER 0/1 — the
+  -- persona_enabled/users.is_admin precedent (no BOOLEAN type in SQLite).
   needs_approval INTEGER NOT NULL DEFAULT 0 CHECK (needs_approval IN (0, 1)),
   -- Who acknowledged the completed task (the assigner or an owner); NULL
   -- until the approve action. The approve route guards on needs_approval and
