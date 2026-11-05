@@ -803,10 +803,10 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description Lists the active household’s documents, newest first. Optional filters: memberId (both member modes — linked accounts and profile-only members), category. */
+    /** @description Lists the active household’s documents, newest first, each with its files in upload order. Optional filters: q (case-insensitive contains-search on the free-text document name — the #422 replacement for the category filter), memberId (both member modes — linked accounts and profile-only members). */
     get: operations['getApiDocuments']
     put?: never
-    /** @description Uploads one document (multipart/form-data: file, category, optional memberId) into the active household’s vault. Cap 10 MB enforced on Content-Length before the body is read and again on the parsed bytes; magic bytes must match the declared type (JPEG, PNG, WebP, PDF). memberId accepts both member modes (linked and profile-only). No public URLs exist — bytes are served only via the content endpoint. */
+    /** @description Creates a document (multipart/form-data: name, file, optional label for that file, optional memberId). The name is free text — trimmed, 1-120 chars, no preset list (#422). The file becomes attachment #1 (sort_order 1); more files ride POST /documents/{id}/files, max 20 per document. Cap 10 MB enforced on Content-Length before the body is read and again on the parsed bytes; magic bytes must match the declared type (JPEG, PNG, WebP, PDF). memberId accepts both member modes (linked and profile-only). No public URLs exist — bytes are served only via the per-file content endpoint. */
     post: operations['postApiDocuments']
     delete?: never
     options?: never
@@ -821,29 +821,63 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description Returns one document’s metadata. A document from another household answers the same 404 as a missing one (no existence leak). */
+    /** @description Returns one document’s metadata with its files in upload order. A document from another household answers the same 404 as a missing one (no existence leak). */
     get: operations['getApiDocumentsById']
     put?: never
     post?: never
-    /** @description Hard-deletes a document: the stored object AND the metadata row, with the deletion audit record in the same batch. Uploader or household owner only. Audit rows outlive the document (the deletion record survives). */
+    /** @description Hard-deletes a document: every file’s stored object AND the metadata rows, with the deletion audit record in the same batch (the file rows cascade). Uploader or household owner only. Audit rows outlive the document (the deletion record survives). */
     delete: operations['deleteApiDocumentsById']
     options?: never
     head?: never
     patch?: never
     trace?: never
   }
-  '/api/documents/{id}/content': {
+  '/api/documents/{id}/files': {
     parameters: {
       query?: never
       header?: never
       path?: never
       cookie?: never
     }
-    /** @description Streams the document’s bytes, authenticated and household-scoped. Content-Type is the stored mime; disposition=inline previews (audited as view), disposition=attachment downloads (audited as download). Cache-Control is private, no-store — bytes never leak through any cache, and no public or presigned URL exists. */
-    get: operations['getApiDocumentsByIdContent']
+    get?: never
+    put?: never
+    /** @description Adds one file to an existing document (multipart/form-data: file, optional label). Max 20 files per document — a full document refuses another file with 409 before the body is read. Same 10 MB cap (Content-Length pre-check + parsed bytes) and magic-byte policy as create; the file lands at sort_order = max + 1 (upload order). Returns the updated document with all files. No public URLs exist — bytes are served only via the per-file content endpoint. */
+    post: operations['postApiDocumentsByIdFiles']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/documents/{id}/files/{fileId}/content': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Streams one file’s bytes, authenticated and household-scoped (the file must belong to the document, the document to the household). Content-Type is the stored mime; disposition=inline previews (audited as view), disposition=attachment downloads (audited as download). Cache-Control is private, no-store — bytes never leak through any cache, and no public or presigned URL exists. */
+    get: operations['getApiDocumentsByIdFilesByFileIdContent']
     put?: never
     post?: never
     delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/documents/{id}/files/{fileId}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post?: never
+    /** @description Removes ONE file from a document: the stored object AND its row, with the file_delete audit record in the same batch. Allowed for the household owner, the document’s uploader, or the file’s uploader. The last file may be deleted — the document survives with zero files until someone deletes it. Audit rows outlive the file they name. */
+    delete: operations['deleteApiDocumentsByIdFilesByFileId']
     options?: never
     head?: never
     patch?: never
@@ -3419,8 +3453,8 @@ export interface operations {
   getApiDocuments: {
     parameters: {
       query?: {
+        q?: string
         memberId?: string
-        category?: 'kartu_keluarga' | 'ktp' | 'kartu_anak' | 'akta' | 'paspor' | 'bpjs' | 'lainnya'
       }
       header?: never
       path?: never
@@ -3439,21 +3473,20 @@ export interface operations {
               id: string
               household_id: string
               member_id: string | null
-              /** @enum {string} */
-              category:
-                | 'kartu_keluarga'
-                | 'ktp'
-                | 'kartu_anak'
-                | 'akta'
-                | 'paspor'
-                | 'bpjs'
-                | 'lainnya'
-              file_name: string
-              mime_type: string
-              size_bytes: number
-              sha256: string
+              name: string
               uploaded_by: string
               created_at: string
+              files: {
+                id: string
+                file_name: string
+                content_type: string
+                size_bytes: number
+                label?: string | null
+                sort_order: number
+                sha256: string
+                uploaded_by: string
+                uploaded_at: string
+              }[]
             }[]
           }
         }
@@ -3477,10 +3510,10 @@ export interface operations {
     requestBody: {
       content: {
         'multipart/form-data': {
+          name: string
           /** Format: binary */
           file: string
-          /** @enum {string} */
-          category: 'kartu_keluarga' | 'ktp' | 'kartu_anak' | 'akta' | 'paspor' | 'bpjs' | 'lainnya'
+          label?: string
           memberId?: string
         }
       }
@@ -3497,21 +3530,20 @@ export interface operations {
               id: string
               household_id: string
               member_id: string | null
-              /** @enum {string} */
-              category:
-                | 'kartu_keluarga'
-                | 'ktp'
-                | 'kartu_anak'
-                | 'akta'
-                | 'paspor'
-                | 'bpjs'
-                | 'lainnya'
-              file_name: string
-              mime_type: string
-              size_bytes: number
-              sha256: string
+              name: string
               uploaded_by: string
               created_at: string
+              files: {
+                id: string
+                file_name: string
+                content_type: string
+                size_bytes: number
+                label?: string | null
+                sort_order: number
+                sha256: string
+                uploaded_by: string
+                uploaded_at: string
+              }[]
             }
           }
         }
@@ -3582,21 +3614,20 @@ export interface operations {
               id: string
               household_id: string
               member_id: string | null
-              /** @enum {string} */
-              category:
-                | 'kartu_keluarga'
-                | 'ktp'
-                | 'kartu_anak'
-                | 'akta'
-                | 'paspor'
-                | 'bpjs'
-                | 'lainnya'
-              file_name: string
-              mime_type: string
-              size_bytes: number
-              sha256: string
+              name: string
               uploaded_by: string
               created_at: string
+              files: {
+                id: string
+                file_name: string
+                content_type: string
+                size_bytes: number
+                label?: string | null
+                sort_order: number
+                sha256: string
+                uploaded_by: string
+                uploaded_at: string
+              }[]
             }
           }
         }
@@ -3665,7 +3696,106 @@ export interface operations {
       }
     }
   }
-  getApiDocumentsByIdContent: {
+  postApiDocumentsByIdFiles: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'multipart/form-data': {
+          /** Format: binary */
+          file: string
+          label?: string
+        }
+      }
+    }
+    responses: {
+      /** @description File added — the updated document comes back */
+      201: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            document: {
+              id: string
+              household_id: string
+              member_id: string | null
+              name: string
+              uploaded_by: string
+              created_at: string
+              files: {
+                id: string
+                file_name: string
+                content_type: string
+                size_bytes: number
+                label?: string | null
+                sort_order: number
+                sha256: string
+                uploaded_by: string
+                uploaded_at: string
+              }[]
+            }
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Document not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description The document already holds the maximum of 20 files */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description File exceeds the 10 MB cap */
+      413: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unsupported or mismatched file type */
+      415: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Too many uploads */
+      429: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiDocumentsByIdFilesByFileIdContent: {
     parameters: {
       query?: {
         disposition?: 'inline' | 'attachment'
@@ -3673,6 +3803,7 @@ export interface operations {
       header?: never
       path: {
         id: string
+        fileId: string
       }
       cookie?: never
     }
@@ -3705,6 +3836,48 @@ export interface operations {
         content?: never
       }
       /** @description Document not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  deleteApiDocumentsByIdFilesByFileId: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+        fileId: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Deleted */
+      204: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only the household owner, the document uploader, or the file uploader can do that */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Document or file not found */
       404: {
         headers: {
           [name: string]: unknown

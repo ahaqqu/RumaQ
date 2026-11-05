@@ -1,16 +1,23 @@
 import { describe, it, expect, beforeEach } from 'vite-plus/test'
-import { documentsApp } from '../apps/documents.js'
-import { sniffDocumentMime, sanitizeFileName, contentDisposition } from '../lib/documents.js'
+import { documentsApp, UPLOAD_TRANSPORT_SLACK } from '../apps/documents.js'
+import {
+  sniffDocumentMime,
+  sanitizeFileName,
+  sanitizeDocumentName,
+  sanitizeDocumentLabel,
+  contentDisposition,
+  DOCUMENT_MAX_FILES,
+} from '../lib/documents.js'
 import { resetRateLimit } from '../lib/rate-limit.js'
 import { createDocumentsStub, type MockEnv } from './support/env.js'
 
-// The document routes (ahaqqu/RumaQ#388) run a fixed query chain per request
-// (scoped lookup, membership checks, batched writes), so this file routes the
-// fake D1 on SQL fragments — the households.test.ts idiom — and pairs it with
-// the R2Bucket-shaped in-memory stub (support/env.ts) so the REAL R2
-// StorageAdapter runs in every route test: assertions cover what was actually
-// stored and deleted, not mock call counts. Synthetic bytes only — no real
-// documents, no real PII in fixtures.
+// The document routes (ahaqqu/RumaQ#422 rework of #388) run a fixed query
+// chain per request (scoped lookup, membership checks, batched writes), so
+// this file routes the fake D1 on SQL fragments — the households.test.ts
+// idiom — and pairs it with the R2Bucket-shaped in-memory stub
+// (support/env.ts) so the REAL R2 StorageAdapter runs in every route test:
+// assertions cover what was actually stored and deleted, not mock call
+// counts. Synthetic bytes only — no real documents, no real PII in fixtures.
 
 type Row = Record<string, unknown>
 
@@ -93,26 +100,64 @@ const WEBP_BYTES = new Uint8Array([
 ])
 const TEXT_BYTES = new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]) // "hello"
 
-// The INSERT INTO documents parameter order (lib/documents.ts) — the fake
-// read-back reconstructs the row from what was actually written.
-const DOCUMENT_INSERT_COLUMNS = [
+// The INSERT parameter orders (lib/documents.ts) — the fake read-back
+// reconstructs the rows from what was actually written.
+const DOCUMENT_INSERT_COLUMNS = ['id', 'household_id', 'member_id', 'name', 'uploaded_by'] as const
+const FILE_INSERT_COLUMNS = [
   'id',
-  'household_id',
-  'member_id',
-  'category',
+  'document_id',
+  'r2_key',
   'file_name',
-  'mime_type',
   'size_bytes',
-  'storage_key',
+  'content_type',
+  'label',
+  'sort_order',
   'sha256',
   'uploaded_by',
+  'uploaded_at',
 ] as const
 
-const SCOPED_DOC_ROUTE =
-  /SELECT d\.id, d\.household_id, d\.member_id, d\.category.*WHERE d\.id = \? AND d\.household_id = \?/
+// The lib's read-back projection: one flat row per (document, file) pair.
+const JOIN_ROUTE =
+  /SELECT d\.id AS document_id, d\.household_id, d\.member_id, d\.name.*LEFT JOIN document_files f/
+
+// The documents-only row the authz flows start from.
+const DOC_ROW_ROUTE =
+  /SELECT d\.id, d\.household_id, d\.member_id, d\.name.*WHERE d\.id = \? AND d\.household_id = \?/
+
+const FILE_ROW_ROUTE =
+  /SELECT f\.id, f\.document_id, f\.r2_key.*JOIN documents d ON d\.id = f\.document_id/
+
+function joinRowsFromLog(doc: Row, files: Row[]): Row[] {
+  // The projection aliases d.id AS document_id — shape the fake rows the way
+  // the real SQL hands them to the lib's grouping.
+  const base = {
+    document_id: doc.id,
+    household_id: doc.household_id,
+    member_id: doc.member_id ?? null,
+    name: doc.name,
+    uploaded_by: doc.uploaded_by,
+    created_at: doc.created_at,
+  }
+  if (files.length === 0) {
+    return [{ ...base, file_id: null }]
+  }
+  return files.map((file) => ({
+    ...base,
+    file_id: file.id,
+    file_name: file.file_name,
+    size_bytes: file.size_bytes,
+    content_type: file.content_type,
+    label: file.label ?? null,
+    sort_order: file.sort_order,
+    file_sha256: file.sha256,
+    file_uploaded_by: file.uploaded_by,
+    uploaded_at: file.uploaded_at,
+  }))
+}
 
 const LIST_ROUTES: [RegExp, (params: unknown[]) => Row[]][] = [
-  [/SELECT d\.id, d\.household_id, d\.member_id, d\.category/, () => []],
+  [JOIN_ROUTE, () => []],
 ]
 
 function uploadForm(
@@ -139,19 +184,31 @@ function DOC_ROW(overrides: Row = {}): Row {
     id: 'doc-1',
     household_id: 'h1',
     member_id: null,
-    category: 'akta',
-    file_name: 'akta.pdf',
-    mime_type: 'application/pdf',
-    size_bytes: PDF_BYTES.byteLength,
-    storage_key: 'documents/h1/doc-1',
-    sha256: 'a'.repeat(64),
+    name: 'Akta Lahir Adik',
     uploaded_by: 'u1',
     created_at: '2026-11-04 00:00:00',
     ...overrides,
   }
 }
 
-describe('magic-byte sniffer', () => {
+function FILE_ROW(overrides: Row = {}): Row {
+  return {
+    id: 'file-1',
+    document_id: 'doc-1',
+    r2_key: 'documents/h1/doc-1/file-1',
+    file_name: 'depan.jpg',
+    size_bytes: JPEG_BYTES.byteLength,
+    content_type: 'image/jpeg',
+    label: null,
+    sort_order: 1,
+    sha256: 'a'.repeat(64),
+    uploaded_by: 'u1',
+    uploaded_at: '2026-11-04 00:00:00',
+    ...overrides,
+  }
+}
+
+describe('upload sanitizers', () => {
   it('recognizes JPEG (FF D8 FF), PNG, WebP (RIFF/WEBP), and PDF (%PDF-)', () => {
     expect(sniffDocumentMime(JPEG_BYTES)).toBe('image/jpeg')
     expect(sniffDocumentMime(PNG_BYTES)).toBe('image/png')
@@ -166,7 +223,23 @@ describe('magic-byte sniffer', () => {
     expect(sniffDocumentMime(new Uint8Array(0))).toBeNull()
   })
 
-  it('pins the sanitize + header helpers: no paths, no control chars, RFC 5987 names', () => {
+  it('pins the free-text name sanitizer: trim, control chars, 120-char cap (#422)', () => {
+    expect(sanitizeDocumentName('  Kartu Keluarga  ')).toBe('Kartu Keluarga')
+    expect(sanitizeDocumentName('KTP\u0000\u001f Bapak')).toBe('KTP Bapak')
+    expect(sanitizeDocumentName('   ')).toBeNull()
+    expect(sanitizeDocumentName('')).toBeNull()
+    expect(sanitizeDocumentName('x'.repeat(200))).toBe('x'.repeat(120))
+  })
+
+  it('pins the optional label sanitizer: absent/empty → null, trim, 120-char cap', () => {
+    expect(sanitizeDocumentLabel(undefined)).toBeNull()
+    expect(sanitizeDocumentLabel('')).toBeNull()
+    expect(sanitizeDocumentLabel('   ')).toBeNull()
+    expect(sanitizeDocumentLabel(' Halaman 3 ')).toBe('Halaman 3')
+    expect(sanitizeDocumentLabel('y'.repeat(150))).toBe('y'.repeat(120))
+  })
+
+  it('pins the file-name sanitize + header helpers: no paths, no control chars, RFC 5987 names', () => {
     expect(sanitizeFileName('../../etc/passwd')).toBe('passwd')
     expect(sanitizeFileName('C:\\Users\\akta.pdf')).toBe('akta.pdf')
     expect(sanitizeFileName('a\u0000b.pdf')).toBe('ab.pdf')
@@ -189,20 +262,53 @@ describe('documents routes', () => {
   let env: MockEnv
   let bucket: ReturnType<typeof createDocumentsStub>
 
-  // The scoped lookup's read-back: the route re-SELECTs after the batch, so
-  // the fake answers from the insert log — the test sees the row that was
-  // truly written, not a parallel fixture. Reads `db` at call time.
-  function readBackFromLog(params: unknown[]): Row | null {
-    const inserts = db.log.filter((entry) => /INSERT INTO documents/.test(entry.sql))
-    const last = inserts[inserts.length - 1]
-    if (!last) return null
-    if (params[0] !== last.params[0]) return null // wrong document id
-    const row: Row = { created_at: '2026-11-04 00:00:00' }
-    DOCUMENT_INSERT_COLUMNS.forEach((column, i) => {
-      row[column] = last.params[i]
-    })
-    return row
+  // The lib's read-back: createDocument/addDocumentFile re-SELECT the joined
+  // projection after the batch, so the fake answers from the insert log — the
+  // test sees the rows that were truly written, not a parallel fixture.
+  // The DOCUMENT row comes from the last INSERT INTO documents in the log
+  // (create) or the doc fixture passed in (add-file, where no document row is
+  // inserted); the FILE rows come from every INSERT INTO document_files for
+  // that document id.
+  function readBackFromLog(params: unknown[], doc: Row): Row[] {
+    const docInserts = db.log.filter((entry) => /INSERT INTO documents \(/.test(entry.sql))
+    const lastDoc = docInserts[docInserts.length - 1]
+    let document = doc
+    if (lastDoc && lastDoc.params[0] === params[0]) {
+      const row: Row = { created_at: '2026-11-04 00:00:00' }
+      DOCUMENT_INSERT_COLUMNS.forEach((column, i) => {
+        row[column] = lastDoc.params[i]
+      })
+      document = row
+    }
+    const fileRows = db.log
+      .filter((entry) => /INSERT INTO document_files/.test(entry.sql))
+      .filter((entry) => entry.params[1] === params[0])
+      .map((entry) => {
+        const row: Row = {}
+        FILE_INSERT_COLUMNS.forEach((column, i) => {
+          row[column] = entry.params[i]
+        })
+        return row
+      })
+    return joinRowsFromLog(document, fileRows)
   }
+
+  const MEMBER_ROUTE: [RegExp, (params: unknown[]) => Row | null] = [
+    /SELECT id FROM household_members WHERE id = \? AND household_id = \?/,
+    (params) => ({ id: params[0] as string }),
+  ]
+  const MEMBERSHIP_ROUTE: [RegExp, (params: unknown[]) => Row | null] = [
+    /SELECT h\.id, h\.name, m\.role/,
+    () => ({ id: 'h1', name: 'R', role: 'member' }),
+  ]
+  const COUNT_ROUTE = (count: number): [RegExp, (params: unknown[]) => Row | null] => [
+    /SELECT COUNT\(\*\) AS cnt FROM document_files WHERE document_id = \?/,
+    () => ({ cnt: count }),
+  ]
+  const MAX_ORDER_ROUTE: [RegExp, (params: unknown[]) => Row | null] = [
+    /SELECT COALESCE\(MAX\(sort_order\), 0\) AS max_order FROM document_files/,
+    () => ({ max_order: 1 }),
+  ]
 
   const setup = (
     firstRoutes: [RegExp, (params: unknown[]) => Row | null][] = [],
@@ -228,21 +334,15 @@ describe('documents routes', () => {
     expect(unauth.status).toBe(401)
   })
 
-  it('uploads a JPEG happy path: bytes stored under documents/<household>/, row + upload audit in one batch', async () => {
-    setup([
-      [
-        /SELECT id FROM household_members WHERE id = \? AND household_id = \?/,
-        (params) => ({ id: params[0] as string }),
-      ],
-      [SCOPED_DOC_ROUTE, readBackFromLog],
-    ])
+  it('creates a document with a free-text name + first file: bytes under documents/<household>/<doc>/<file>, three rows in one batch (#422)', async () => {
+    setup([MEMBER_ROUTE], [[JOIN_ROUTE, (params) => readBackFromLog(params, DOC_ROW())]])
 
     const res = await documentsApp.request(
       '/api/documents',
       postDocument(
         uploadForm(
           { bytes: JPEG_BYTES, name: 'ktp-bapak.jpg', type: 'image/jpeg' },
-          { category: 'ktp' }
+          { name: '  KTP Bapak  ' }
         )
       ),
       env
@@ -250,56 +350,107 @@ describe('documents routes', () => {
     expect(res.status).toBe(201)
     const body = (await res.json()) as { document: Row }
     expect(body.document).toMatchObject({
-      category: 'ktp',
-      file_name: 'ktp-bapak.jpg',
-      mime_type: 'image/jpeg',
-      size_bytes: JPEG_BYTES.byteLength,
+      name: 'KTP Bapak', // trimmed — no preset list anywhere
       household_id: 'h1',
       member_id: null,
       uploaded_by: 'u1',
-      sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      files: [
+        {
+          file_name: 'ktp-bapak.jpg',
+          content_type: 'image/jpeg',
+          size_bytes: JPEG_BYTES.byteLength,
+          label: null,
+          sort_order: 1,
+          sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+          uploaded_by: 'u1',
+        },
+      ],
     })
-    // storage_key is an internal handle — never in the response.
-    expect(body.document.storage_key).toBeUndefined()
+    // r2_key is an internal handle — never in the response.
+    expect(JSON.stringify(body.document)).not.toContain('r2_key')
 
-    // The bytes are really there, under the dedicated prefix, with the sniffed
+    // The bytes are really there, under the per-file key, with the sniffed
     // content type.
     expect(bucket.objects.size).toBe(1)
     const key = [...bucket.objects.keys()][0]!
-    expect(key.startsWith('documents/h1/')).toBe(true)
+    expect(key).toMatch(/^documents\/h1\/[0-9a-f-]{36}\/[0-9a-f-]{36}$/)
     const stored = bucket.objects.get(key)
     expect(stored?.httpMetadata?.contentType).toBe('image/jpeg')
     expect(Array.from(stored!.bytes)).toEqual(Array.from(JPEG_BYTES))
 
-    // One batch: the document row + the 'upload' audit record (the action
-    // rides as the fifth bound parameter).
+    // One batch: the document row + the file row + the 'upload' audit record.
     const batched = db.log.filter(
       (entry) =>
-        /INSERT INTO documents/.test(entry.sql) || /INSERT INTO document_audit/.test(entry.sql)
+        /INSERT INTO documents \(/.test(entry.sql) ||
+        /INSERT INTO document_files/.test(entry.sql) ||
+        /INSERT INTO document_audit/.test(entry.sql)
     )
-    expect(batched).toHaveLength(2)
+    expect(batched).toHaveLength(3)
     expect(batched.find((e) => /document_audit/.test(e.sql))?.params[4]).toBe('upload')
+  })
+
+  it('carries the optional per-file label through create (owner decision #422-1)', async () => {
+    setup([MEMBER_ROUTE], [[JOIN_ROUTE, (params) => readBackFromLog(params, DOC_ROW())]])
+
+    const res = await documentsApp.request(
+      '/api/documents',
+      postDocument(
+        uploadForm(
+          { bytes: JPEG_BYTES, name: 'ktp.jpg', type: 'image/jpeg' },
+          { name: 'KTP', label: 'Halaman depan' }
+        )
+      ),
+      env
+    )
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { document: Row }
+    expect(body.document.files[0]).toMatchObject({ label: 'Halaman depan' })
+  })
+
+  it('rejects a missing or whitespace name with 400 — free text does not mean anonymous', async () => {
+    setup()
+    const noName = await documentsApp.request(
+      '/api/documents',
+      postDocument(uploadForm({ bytes: JPEG_BYTES, name: 'ktp.jpg', type: 'image/jpeg' })),
+      env
+    )
+    expect(noName.status).toBe(400)
+
+    const blankName = await documentsApp.request(
+      '/api/documents',
+      postDocument(
+        uploadForm(
+          { bytes: JPEG_BYTES, name: 'ktp.jpg', type: 'image/jpeg' },
+          { name: '   ' }
+        )
+      ),
+      env
+    )
+    expect(blankName.status).toBe(400)
+    expect(bucket.objects.size).toBe(0)
   })
 
   it('relates a document to a profile-only member (no account) via memberId', async () => {
     let memberParams: unknown[] = []
-    setup([
+    setup(
       [
-        /SELECT id FROM household_members WHERE id = \? AND household_id = \?/,
-        (params) => {
-          memberParams = params
-          return { id: params[0] as string }
-        },
+        [
+          /SELECT id FROM household_members WHERE id = \? AND household_id = \?/,
+          (params) => {
+            memberParams = params
+            return { id: params[0] as string }
+          },
+        ],
       ],
-      [SCOPED_DOC_ROUTE, readBackFromLog],
-    ])
+      [[JOIN_ROUTE, (params) => readBackFromLog(params, DOC_ROW())]]
+    )
 
     const res = await documentsApp.request(
       '/api/documents',
       postDocument(
         uploadForm(
           { bytes: PDF_BYTES, name: 'akta-adik.pdf', type: 'application/pdf' },
-          { category: 'akta', memberId: 'm-toddler' }
+          { name: 'Akta Adik', memberId: 'm-toddler' }
         )
       ),
       env
@@ -318,7 +469,7 @@ describe('documents routes', () => {
       postDocument(
         uploadForm(
           { bytes: JPEG_BYTES, name: 'ktp.jpg', type: 'image/jpeg' },
-          { category: 'ktp', memberId: 'm-other-household' }
+          { name: 'KTP', memberId: 'm-other-household' }
         )
       ),
       env
@@ -337,7 +488,7 @@ describe('documents routes', () => {
     const res = await documentsApp.request(
       '/api/documents',
       postDocument(
-        uploadForm({ bytes: big, name: 'huge.jpg', type: 'image/jpeg' }, { category: 'ktp' })
+        uploadForm({ bytes: big, name: 'huge.jpg', type: 'image/jpeg' }, { name: 'KTP' })
       ),
       env
     )
@@ -347,10 +498,7 @@ describe('documents routes', () => {
   })
 
   it('accepts an exactly-10 MB file — the pre-check slack absorbs multipart overhead, the exact cap governs the bytes (review A1)', async () => {
-    setup([
-      [/SELECT id FROM household_members WHERE id = \? AND household_id = \?/, () => ({ id: 'm' })],
-      [SCOPED_DOC_ROUTE, readBackFromLog],
-    ])
+    setup([MEMBER_ROUTE], [[JOIN_ROUTE, (params) => readBackFromLog(params, DOC_ROW())]])
     const exact = new Uint8Array(10 * 1024 * 1024)
     exact[0] = 0xff
     exact[1] = 0xd8
@@ -358,13 +506,13 @@ describe('documents routes', () => {
     const res = await documentsApp.request(
       '/api/documents',
       postDocument(
-        uploadForm({ bytes: exact, name: 'scan-big.jpg', type: 'image/jpeg' }, { category: 'ktp' })
+        uploadForm({ bytes: exact, name: 'scan-big.jpg', type: 'image/jpeg' }, { name: 'KTP' })
       ),
       env
     )
     expect(res.status).toBe(201)
     const body = (await res.json()) as { document: Row }
-    expect(body.document.size_bytes).toBe(10 * 1024 * 1024)
+    expect(body.document.files[0]).toMatchObject({ size_bytes: 10 * 1024 * 1024 })
     expect(bucket.objects.size).toBe(1)
   })
 
@@ -378,28 +526,24 @@ describe('documents routes', () => {
         `Content-Disposition: form-data; name="file"; filename="${fileName}"\r\n` +
         `Content-Type: image/jpeg\r\n\r\n`
     )
-    const categoryPart = encoder.encode(
-      `--${boundary}\r\n` + `Content-Disposition: form-data; name="category"\r\n\r\n` + `ktp\r\n`
+    const namePart = encoder.encode(
+      `--${boundary}\r\n` + `Content-Disposition: form-data; name="name"\r\n\r\n` + `KTP\r\n`
     )
     const tail = encoder.encode(`--${boundary}--\r\n`)
     const full = new Uint8Array(
-      head.byteLength +
-        fileBytes.byteLength +
-        2 + // the file part's terminating CRLF
-        categoryPart.byteLength +
-        tail.byteLength
+      head.byteLength + fileBytes.byteLength + 2 + namePart.byteLength + tail.byteLength
     )
     let cursor = 0
     full.set(head, cursor)
     cursor += head.byteLength
     full.set(fileBytes, cursor)
     cursor += fileBytes.byteLength
-    // The file part's terminating CRLF rides in front of the category part's
+    // The file part's terminating CRLF rides in front of the name part's
     // opening boundary.
     full.set(encoder.encode('\r\n'), cursor)
     cursor += 2
-    full.set(categoryPart, cursor)
-    cursor += categoryPart.byteLength
+    full.set(namePart, cursor)
+    cursor += namePart.byteLength
     full.set(tail, cursor)
     let offset = 0
     const stream = new ReadableStream<Uint8Array>({
@@ -424,22 +568,15 @@ describe('documents routes', () => {
   }
 
   it('parses a chunked (no Content-Length) exactly-10 MB upload through the bounded path (review A2)', async () => {
-    setup([
-      [/SELECT id FROM household_members WHERE id = \? AND household_id = \?/, () => ({ id: 'm' })],
-      [SCOPED_DOC_ROUTE, readBackFromLog],
-    ])
+    setup([MEMBER_ROUTE], [[JOIN_ROUTE, (params) => readBackFromLog(params, DOC_ROW())]])
     const exact = new Uint8Array(10 * 1024 * 1024)
     exact[0] = 0xff
     exact[1] = 0xd8
     exact[2] = 0xff
-    const res = await documentsApp.request(
-      '/api/documents',
-      chunkedUpload(exact, 'scan-chunked.jpg'),
-      env
-    )
+    const res = await documentsApp.request('/api/documents', chunkedUpload(exact, 'scan-chunked.jpg'), env)
     expect(res.status).toBe(201)
     const body = (await res.json()) as { document: Row }
-    expect(body.document.size_bytes).toBe(10 * 1024 * 1024)
+    expect(body.document.files[0]).toMatchObject({ size_bytes: 10 * 1024 * 1024 })
     expect(bucket.objects.size).toBe(1)
   })
 
@@ -452,30 +589,42 @@ describe('documents routes', () => {
     over[0] = 0xff
     over[1] = 0xd8
     over[2] = 0xff
-    const res = await documentsApp.request(
-      '/api/documents',
-      chunkedUpload(over, 'huge-chunked.jpg'),
-      env
-    )
+    const res = await documentsApp.request('/api/documents', chunkedUpload(over, 'huge-chunked.jpg'), env)
     expect(res.status).toBe(413)
     expect(bucket.objects.size).toBe(0)
     expect(db.log).toHaveLength(0)
   })
 
+  it('exposes the transport slack through the app module (the pre-parse bound is cap + slack)', () => {
+    // Pinned so the A1 contract cannot silently drift: the slack exists to
+    // let an exactly-10 MB multipart body reach the exact post-parse cap.
+    expect(UPLOAD_TRANSPORT_SLACK).toBe(64 * 1024)
+  })
+
   it('refuses to touch storage when a row carries a key outside the vault namespace (review B1)', async () => {
     setup([
-      [/SELECT h.id, h.name, m.role/, () => ({ id: 'h1', name: 'R', role: 'owner' })],
-      [SCOPED_DOC_ROUTE, () => DOC_ROW({ storage_key: 'receipts/h1/escaped.jpg' })],
+      MEMBERSHIP_ROUTE,
+      [DOC_ROW_ROUTE, () => DOC_ROW()],
+      [FILE_ROW_ROUTE, () => FILE_ROW({ r2_key: 'receipts/h1/escaped.jpg' })],
     ])
 
     // Content: the escaped key must never reach the adapter (it could serve a
-    // sibling namespace's object) — the row is a dead document.
-    const content = await documentsApp.request('/api/documents/doc-1/content', {}, env)
+    // sibling namespace's object) — the row is a dead file.
+    const content = await documentsApp.request(
+      '/api/documents/doc-1/files/file-1/content',
+      {},
+      env
+    )
     expect(content.status).toBe(404)
 
-    // Delete: refusing protects the sibling namespace even though the row
-    // technically matches the scope.
-    const del = await documentsApp.request('/api/documents/doc-1', { method: 'DELETE' }, env)
+    // File delete: refusing protects the sibling namespace even though the
+    // row technically matches the scope — the vault-key guard answers the
+    // same 404 a missing row would.
+    const del = await documentsApp.request(
+      '/api/documents/doc-1/files/file-1',
+      { method: 'DELETE' },
+      env
+    )
     expect(del.status).toBe(404)
     expect(bucket.deleted).toHaveLength(0)
     expect(bucket.objects.size).toBe(0)
@@ -487,7 +636,10 @@ describe('documents routes', () => {
     const res = await documentsApp.request(
       '/api/documents',
       postDocument(
-        uploadForm({ bytes: TEXT_BYTES, name: 'fake.jpg', type: 'image/jpeg' }, { category: 'ktp' })
+        uploadForm(
+          { bytes: TEXT_BYTES, name: 'fake.jpg', type: 'image/jpeg' },
+          { name: 'KTP' }
+        )
       ),
       env
     )
@@ -496,7 +648,7 @@ describe('documents routes', () => {
     const res2 = await documentsApp.request(
       '/api/documents',
       postDocument(
-        uploadForm({ bytes: PDF_BYTES, name: 'image.pdf', type: 'image/png' }, { category: 'ktp' })
+        uploadForm({ bytes: PDF_BYTES, name: 'image.pdf', type: 'image/png' }, { name: 'KTP' })
       ),
       env
     )
@@ -504,45 +656,55 @@ describe('documents routes', () => {
     expect(bucket.objects.size).toBe(0)
   })
 
-  it('rejects off-allowlist declared types, unknown categories, and missing files with 400/415', async () => {
-    setup()
+  it('rejects missing files and non-multipart bodies with 400', async () => {
+    // The add-file path resolves the document BEFORE parsing, so it needs a
+    // document to find.
+    setup([[DOC_ROW_ROUTE, () => DOC_ROW()]])
     const notMultipart = await documentsApp.request('/api/documents', { method: 'POST' }, env)
     expect(notMultipart.status).toBe(400)
 
-    const badCategory = await documentsApp.request(
-      '/api/documents',
-      postDocument(
-        uploadForm(
-          { bytes: JPEG_BYTES, name: 'ktp.jpg', type: 'image/jpeg' },
-          { category: 'ijazah' }
-        )
-      ),
-      env
-    )
-    expect(badCategory.status).toBe(400)
-
     const noFileForm = new FormData()
-    noFileForm.append('category', 'ktp')
+    noFileForm.append('name', 'KTP')
     const noFile = await documentsApp.request('/api/documents', postDocument(noFileForm), env)
     expect(noFile.status).toBe(400)
+
+    const addFileNoFile = new FormData()
+    addFileNoFile.append('label', 'depan')
+    const addFile = await documentsApp.request(
+      '/api/documents/doc-1/files',
+      postDocument(addFileNoFile),
+      env
+    )
+    expect(addFile.status).toBe(400)
+    expect(bucket.objects.size).toBe(0)
   })
 
-  it('lists documents newest first and honors memberId/category filters', async () => {
+  it('lists documents newest first with q (name search) and memberId filters composing', async () => {
+    let lastParams: unknown[] = []
     setup(
       [],
       [
         [
-          /SELECT d\.id, d\.household_id, d\.member_id, d\.category/,
+          JOIN_ROUTE,
           (params) => {
+            lastParams = params
             // The scope predicate is always bound; filters append their own.
             expect(params[0]).toBe('h1')
             if (params.length === 3) {
-              return [DOC_ROW({ id: 'doc-filtered', member_id: params[1], category: params[2] })]
+              return joinRowsFromLog(
+                DOC_ROW({ id: 'doc-filtered', member_id: params[1], name: params[2] }),
+                []
+              )
             }
             if (params.length === 2) {
-              return [DOC_ROW({ id: 'doc-filtered' })]
+              return joinRowsFromLog(DOC_ROW({ id: 'doc-filtered' }), [])
             }
-            return [DOC_ROW({ id: 'doc-new' }), DOC_ROW({ id: 'doc-old' })]
+            return [
+              ...joinRowsFromLog(DOC_ROW({ id: 'doc-new', name: 'KTP Bapak' }), [
+                FILE_ROW({ id: 'f-1', sort_order: 1 }),
+              ]),
+              ...joinRowsFromLog(DOC_ROW({ id: 'doc-old', name: 'Akta Adik' }), []),
+            ]
           },
         ],
       ]
@@ -550,26 +712,29 @@ describe('documents routes', () => {
 
     const all = await documentsApp.request('/api/documents', {}, env)
     expect(all.status).toBe(200)
-    const allBody = (await all.json()) as { documents: Row[] }
+    const allBody = (await all.json()) as { documents: Array<Row> }
     expect(allBody.documents.map((d) => d.id)).toEqual(['doc-new', 'doc-old'])
+    // Files arrive in upload order inside the document payload.
+    expect(allBody.documents[0]?.files).toHaveLength(1)
+    expect(allBody.documents[0]?.files[0]).toMatchObject({ sort_order: 1, label: null })
 
+    // q + memberId compose (both bound after the household scope).
     const filtered = await documentsApp.request(
-      '/api/documents?memberId=m-toddler&category=akta',
+      '/api/documents?q=ktp&memberId=m-toddler',
       {},
       env
     )
     expect(filtered.status).toBe(200)
-    const filteredBody = (await filtered.json()) as { documents: Row[] }
-    expect(filteredBody.documents[0]?.member_id).toBe('m-toddler')
+    expect(lastParams).toEqual(['h1', 'm-toddler', '%ktp%'])
 
-    const badFilter = await documentsApp.request('/api/documents?category=ijazah', {}, env)
+    const badFilter = await documentsApp.request('/api/documents?q=' + 'x'.repeat(121), {}, env)
     expect(badFilter.status).toBe(400)
   })
 
   it('answers 404 for a foreign household document before any authz decision', async () => {
     setup([
       [
-        SCOPED_DOC_ROUTE,
+        DOC_ROW_ROUTE,
         // The scoped query misses for ids belonging to other households —
         // exactly the shape the route receives. No role lookup ever runs.
         () => null,
@@ -579,114 +744,311 @@ describe('documents routes', () => {
     const meta = await documentsApp.request('/api/documents/doc-foreign', {}, env)
     expect(meta.status).toBe(404)
     const content = await documentsApp.request(
-      '/api/documents/doc-foreign/content?disposition=inline',
+      '/api/documents/doc-foreign/files/file-1/content?disposition=inline',
       {},
       env
     )
     expect(content.status).toBe(404)
+    const addFile = await documentsApp.request(
+      '/api/documents/doc-foreign/files',
+      postDocument(
+        uploadForm({ bytes: JPEG_BYTES, name: 'x.jpg', type: 'image/jpeg' }, { name: 'x' })
+      ),
+      env
+    )
+    expect(addFile.status).toBe(404)
     const del = await documentsApp.request('/api/documents/doc-foreign', { method: 'DELETE' }, env)
     expect(del.status).toBe(404)
     // No existence leak: the response body is the generic not-found error.
     expect(await meta.json()).toMatchObject({ error: 'Document not found' })
   })
 
-  it('streams content inline with stored mime, private no-store, and audits a view', async () => {
-    setup([[SCOPED_DOC_ROUTE, () => DOC_ROW({ storage_key: 'documents/h1/doc-1' })]])
-    await bucket.put('documents/h1/doc-1', PDF_BYTES, {
-      httpMetadata: { contentType: 'application/pdf' },
-    })
-
-    const res = await documentsApp.request('/api/documents/doc-1/content', {}, env)
-    expect(res.status).toBe(200)
-    expect(res.headers.get('Content-Type')).toBe('application/pdf')
-    expect(res.headers.get('Content-Disposition')).toContain('inline')
-    expect(res.headers.get('Content-Disposition')).toContain('akta.pdf')
-    expect(res.headers.get('Cache-Control')).toBe('private, no-store')
-    const bytes = new Uint8Array(await res.arrayBuffer())
-    expect(Array.from(bytes)).toEqual(Array.from(PDF_BYTES))
-    // View audited (inline default).
-    expect(db.log.filter((e) => /INSERT INTO document_audit/.test(e.sql))[0]?.params[4]).toBe(
-      'view'
+  it('answers 404 for a file of another document even within the household (file lookup joins the document)', async () => {
+    setup([
+      [DOC_ROW_ROUTE, () => DOC_ROW()],
+      // The file lookup binds fileId + documentId + householdId — a file id
+      // from a DIFFERENT document must miss.
+      [FILE_ROW_ROUTE, (params) => (params[1] === 'doc-1' ? FILE_ROW() : null)],
+    ])
+    const res = await documentsApp.request(
+      '/api/documents/doc-other/files/file-1/content',
+      {},
+      env
     )
+    expect(res.status).toBe(404)
   })
 
-  it('disposition=attachment streams with attachment header and audits a download', async () => {
-    setup([[SCOPED_DOC_ROUTE, () => DOC_ROW({ storage_key: 'documents/h1/doc-1' })]])
-    await bucket.put('documents/h1/doc-1', JPEG_BYTES, {
+  it('adds a file to an existing document: sort_order = max + 1, bytes stored, file_add audit carries the file id (#422)', async () => {
+    setup(
+      [[DOC_ROW_ROUTE, () => DOC_ROW()], MAX_ORDER_ROUTE, COUNT_ROUTE(1)],
+      [[JOIN_ROUTE, (params) => readBackFromLog(params, DOC_ROW())]]
+    )
+
+    const res = await documentsApp.request(
+      '/api/documents/doc-1/files',
+      postDocument(
+        uploadForm(
+          { bytes: JPEG_BYTES, name: 'belakang.jpg', type: 'image/jpeg' },
+          { label: 'Belakang' }
+        )
+      ),
+      env
+    )
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { document: Row }
+    expect(body.document.files).toHaveLength(1)
+    expect(body.document.files[0]).toMatchObject({ label: 'Belakang', sort_order: 2 })
+
+    // The bytes are under the document's namespace with the next sort_order.
+    expect(bucket.objects.size).toBe(1)
+    const key = [...bucket.objects.keys()][0]!
+    expect(key).toMatch(/^documents\/h1\/doc-1\/[0-9a-f-]{36}$/)
+
+    // One batch: file row + 'file_add' audit, and the audit row NAMES the
+    // file (sixth bound parameter).
+    const audit = db.log.filter((e) => /INSERT INTO document_audit/.test(e.sql))
+    expect(audit).toHaveLength(1)
+    expect(audit[0]?.params[4]).toBe('file_add')
+    expect(audit[0]?.params[5]).toBe(body.document.files[0]?.id)
+    const fileInsert = db.log.find((e) => /INSERT INTO document_files/.test(e.sql))
+    expect(fileInsert?.params[7]).toBe(2) // sort_order = max(1) + 1
+  })
+
+  it('refuses a 21st file with 409 BEFORE any byte is stored (#422 owner decision 3)', async () => {
+    setup([
+      [DOC_ROW_ROUTE, () => DOC_ROW()],
+      COUNT_ROUTE(DOCUMENT_MAX_FILES),
+    ])
+    const res = await documentsApp.request(
+      '/api/documents/doc-1/files',
+      postDocument(
+        uploadForm({ bytes: JPEG_BYTES, name: 'extra.jpg', type: 'image/jpeg' }, { name: 'x' })
+      ),
+      env
+    )
+    expect(res.status).toBe(409)
+    expect(bucket.objects.size).toBe(0)
+    expect(db.log).toHaveLength(0)
+  })
+
+  it('streams one file’s content inline with stored mime, private no-store, and audits a view per file', async () => {
+    setup([
+      [DOC_ROW_ROUTE, () => DOC_ROW()],
+      [FILE_ROW_ROUTE, () => FILE_ROW()],
+    ])
+    await bucket.put('documents/h1/doc-1/file-1', JPEG_BYTES, {
+      httpMetadata: { contentType: 'image/jpeg' },
+    })
+
+    const res = await documentsApp.request('/api/documents/doc-1/files/file-1/content', {}, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toBe('image/jpeg')
+    expect(res.headers.get('Content-Disposition')).toContain('inline')
+    expect(res.headers.get('Content-Disposition')).toContain('depan.jpg')
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store')
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    expect(Array.from(bytes)).toEqual(Array.from(JPEG_BYTES))
+    // View audited (inline default) with the file id in the record.
+    const audit = db.log.filter((e) => /INSERT INTO document_audit/.test(e.sql))
+    expect(audit).toHaveLength(1)
+    expect(audit[0]?.params[4]).toBe('view')
+    expect(audit[0]?.params[5]).toBe('file-1')
+  })
+
+  it('disposition=attachment streams with the attachment header and audits a download; a bad disposition is a 400', async () => {
+    setup([
+      [DOC_ROW_ROUTE, () => DOC_ROW()],
+      [FILE_ROW_ROUTE, () => FILE_ROW()],
+    ])
+    await bucket.put('documents/h1/doc-1/file-1', JPEG_BYTES, {
       httpMetadata: { contentType: 'image/jpeg' },
     })
 
     const res = await documentsApp.request(
-      '/api/documents/doc-1/content?disposition=attachment',
+      '/api/documents/doc-1/files/file-1/content?disposition=attachment',
       {},
       env
     )
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Disposition')).toContain('attachment')
-    expect(db.log.filter((e) => /INSERT INTO document_audit/.test(e.sql))[0]?.params[4]).toBe(
-      'download'
-    )
+    const audit = db.log.filter((e) => /INSERT INTO document_audit/.test(e.sql))
+    expect(audit[0]?.params[4]).toBe('download')
+
     const bad = await documentsApp.request(
-      '/api/documents/doc-1/content?disposition=weird',
+      '/api/documents/doc-1/files/file-1/content?disposition=weird',
       {},
       env
     )
     expect(bad.status).toBe(400)
   })
 
-  it('returns 404 when the row exists but the object is gone (dead document, no leak)', async () => {
-    setup([[SCOPED_DOC_ROUTE, () => DOC_ROW({ storage_key: 'documents/h1/doc-ghost' })]])
+  it('returns 404 when the file row exists but the object is gone (dead file, no leak)', async () => {
+    setup([
+      [DOC_ROW_ROUTE, () => DOC_ROW()],
+      [FILE_ROW_ROUTE, () => FILE_ROW({ r2_key: 'documents/h1/doc-1/file-ghost' })],
+    ])
     // Nothing put into storage under that key.
-    const res = await documentsApp.request('/api/documents/doc-1/content', {}, env)
+    const res = await documentsApp.request('/api/documents/doc-1/files/file-1/content', {}, env)
     expect(res.status).toBe(404)
   })
 
-  it('delete (uploader): removes the object first, then row + delete audit in one batch — no orphan object', async () => {
+  it('delete-file (uploader): removes the object first, then row + file_delete audit in one batch — no orphan', async () => {
     setup([
-      [/SELECT h.id, h.name, m.role/, () => ({ id: 'h1', name: 'R', role: 'member' })],
-      [SCOPED_DOC_ROUTE, () => DOC_ROW({ storage_key: 'documents/h1/doc-1', uploaded_by: 'u1' })],
+      MEMBERSHIP_ROUTE,
+      [DOC_ROW_ROUTE, () => DOC_ROW()],
+      [FILE_ROW_ROUTE, () => FILE_ROW()],
     ])
-    await bucket.put('documents/h1/doc-1', PDF_BYTES, {
+    await bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
       httpMetadata: { contentType: 'application/pdf' },
+    })
+
+    const res = await documentsApp.request(
+      '/api/documents/doc-1/files/file-1',
+      { method: 'DELETE' },
+      env
+    )
+    expect(res.status).toBe(204)
+    // The stub recorded the delete and the map is empty — no orphan.
+    expect(bucket.deleted).toEqual(['documents/h1/doc-1/file-1'])
+    expect(bucket.objects.size).toBe(0)
+    // Audit row rides in the same batch as the DELETE, action names the file.
+    const audit = db.log.filter((e) => /INSERT INTO document_audit/.test(e.sql))
+    expect(audit).toHaveLength(1)
+    expect(audit[0]?.params[4]).toBe('file_delete')
+    expect(audit[0]?.params[5]).toBe('file-1')
+    expect(
+      db.log.some((e) =>
+        /DELETE FROM document_files WHERE id = \? AND document_id = \?/.test(e.sql)
+      )
+    ).toBe(true)
+  })
+
+  it('delete-file authz: household owner, document uploader, and file uploader may; a plain member cannot (403)', async () => {
+    // A member (u2) uploaded the FILE; the caller is u1 (the document
+    // uploader but not an owner).
+    const fileRoutes: [RegExp, (params: unknown[]) => Row | null][] = [
+      [DOC_ROW_ROUTE, () => DOC_ROW({ uploaded_by: 'u1' })],
+      [FILE_ROW_ROUTE, () => FILE_ROW({ uploaded_by: 'u2' })],
+    ]
+
+    // Document uploader may remove another member's file.
+    setup([MEMBERSHIP_ROUTE, ...fileRoutes])
+    await bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
+      httpMetadata: { contentType: 'application/pdf' },
+    })
+    const uploaderRes = await documentsApp.request(
+      '/api/documents/doc-1/files/file-1',
+      { method: 'DELETE' },
+      env
+    )
+    expect(uploaderRes.status).toBe(204)
+    expect(bucket.deleted).toEqual(['documents/h1/doc-1/file-1'])
+
+    // Owner path.
+    setup([
+      [/SELECT h\.id, h\.name, m\.role/, () => ({ id: 'h1', name: 'R', role: 'owner' })],
+      ...fileRoutes,
+    ])
+    await bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
+      httpMetadata: { contentType: 'application/pdf' },
+    })
+    const ownerRes = await documentsApp.request(
+      '/api/documents/doc-1/files/file-1',
+      { method: 'DELETE' },
+      env
+    )
+    expect(ownerRes.status).toBe(204)
+
+    // Plain member path — forbidden, object untouched.
+    setup([
+      [/SELECT h\.id, h\.name, m\.role/, () => ({ id: 'h1', name: 'R', role: 'member' })],
+      [
+        DOC_ROW_ROUTE,
+        () => DOC_ROW({ uploaded_by: 'u3' }), // not the caller either
+      ],
+      ...fileRoutes.slice(1),
+    ])
+    await bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
+      httpMetadata: { contentType: 'application/pdf' },
+    })
+    const memberRes = await documentsApp.request(
+      '/api/documents/doc-1/files/file-1',
+      { method: 'DELETE' },
+      env
+    )
+    expect(memberRes.status).toBe(403)
+    expect(bucket.deleted).toHaveLength(0)
+    expect(bucket.objects.size).toBe(1)
+    // No write ever ran.
+    expect(db.log).toHaveLength(0)
+  })
+
+  const FILES_LIST_ROUTE: [RegExp, (params: unknown[]) => Row[]] = [
+    /SELECT id, document_id, r2_key, file_name, size_bytes, content_type/,
+    () => [
+      FILE_ROW({ id: 'file-1', r2_key: 'documents/h1/doc-1/file-1' }),
+      FILE_ROW({ id: 'file-2', r2_key: 'documents/h1/doc-1/file-2', sort_order: 2 }),
+    ],
+  ]
+
+  it('delete-document: every file object goes first, then the row (files cascade) + delete audit in one batch', async () => {
+    setup([MEMBERSHIP_ROUTE, [DOC_ROW_ROUTE, () => DOC_ROW()]], [FILES_LIST_ROUTE])
+    await bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
+      httpMetadata: { contentType: 'application/pdf' },
+    })
+    await bucket.put('documents/h1/doc-1/file-2', JPEG_BYTES, {
+      httpMetadata: { contentType: 'image/jpeg' },
     })
 
     const res = await documentsApp.request('/api/documents/doc-1', { method: 'DELETE' }, env)
     expect(res.status).toBe(204)
-    // The stub recorded the delete and the map is empty — no orphan.
-    expect(bucket.deleted).toEqual(['documents/h1/doc-1'])
+    // Both objects gone — no orphan.
+    expect(bucket.deleted).toEqual([
+      'documents/h1/doc-1/file-1',
+      'documents/h1/doc-1/file-2',
+    ])
     expect(bucket.objects.size).toBe(0)
     // Audit row rides in the same batch as the DELETE, action = 'delete'.
     const audit = db.log.filter((e) => /INSERT INTO document_audit/.test(e.sql))
     expect(audit).toHaveLength(1)
     expect(audit[0]?.params[4]).toBe('delete')
+    expect(audit[0]?.params[5]).toBe(null)
     expect(
       db.log.some((e) => /DELETE FROM documents WHERE id = \? AND household_id = \?/.test(e.sql))
     ).toBe(true)
   })
 
-  it('delete: household owner may remove another member’s upload; plain member cannot (403)', async () => {
-    const docRoutes: [RegExp, (params: unknown[]) => Row | null][] = [
-      [SCOPED_DOC_ROUTE, () => DOC_ROW({ storage_key: 'documents/h1/doc-1', uploaded_by: 'u2' })],
+  it('delete-document: household owner may remove another member’s upload; plain member cannot (403)', async () => {
+    const SINGLE_FILE_LIST_ROUTE: [RegExp, (params: unknown[]) => Row[]] = [
+      /SELECT id, document_id, r2_key, file_name, size_bytes, content_type/,
+      () => [FILE_ROW({ r2_key: 'documents/h1/doc-1/file-1' })],
     ]
 
     // Owner path.
-    setup([
-      [/SELECT h.id, h.name, m.role/, () => ({ id: 'h1', name: 'R', role: 'owner' })],
-      ...docRoutes,
-    ])
-    await bucket.put('documents/h1/doc-1', PDF_BYTES, {
+    setup(
+      [
+        [/SELECT h\.id, h\.name, m\.role/, () => ({ id: 'h1', name: 'R', role: 'owner' })],
+        [DOC_ROW_ROUTE, () => DOC_ROW({ uploaded_by: 'u2' })],
+      ],
+      [SINGLE_FILE_LIST_ROUTE]
+    )
+    await bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
       httpMetadata: { contentType: 'application/pdf' },
     })
     const ownerRes = await documentsApp.request('/api/documents/doc-1', { method: 'DELETE' }, env)
     expect(ownerRes.status).toBe(204)
-    expect(bucket.deleted).toEqual(['documents/h1/doc-1'])
+    expect(bucket.deleted).toEqual(['documents/h1/doc-1/file-1'])
 
     // Member path — forbidden, object untouched.
-    setup([
-      [/SELECT h.id, h.name, m.role/, () => ({ id: 'h1', name: 'R', role: 'member' })],
-      ...docRoutes,
-    ])
-    await bucket.put('documents/h1/doc-1', PDF_BYTES, {
+    setup(
+      [
+        [/SELECT h\.id, h\.name, m\.role/, () => ({ id: 'h1', name: 'R', role: 'member' })],
+        [DOC_ROW_ROUTE, () => DOC_ROW({ uploaded_by: 'u2' })],
+      ],
+      [SINGLE_FILE_LIST_ROUTE]
+    )
+    await bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
       httpMetadata: { contentType: 'application/pdf' },
     })
     const memberRes = await documentsApp.request('/api/documents/doc-1', { method: 'DELETE' }, env)
@@ -697,19 +1059,21 @@ describe('documents routes', () => {
     expect(db.log).toHaveLength(0)
   })
 
-  it('rate-limits bursts of uploads per user (429 with Retry-After)', async () => {
-    setup([
-      [/SELECT id FROM household_members WHERE id = \? AND household_id = \?/, () => ({ id: 'm' })],
-      [SCOPED_DOC_ROUTE, readBackFromLog],
-    ])
+  it('rate-limits bursts of uploads per user (429 with Retry-After) across both upload endpoints', async () => {
+    setup(
+      [[DOC_ROW_ROUTE, () => DOC_ROW()], COUNT_ROUTE(0), MAX_ORDER_ROUTE, MEMBER_ROUTE],
+      [[JOIN_ROUTE, (params) => readBackFromLog(params, DOC_ROW())]]
+    )
     let last: Response | undefined
-    for (let i = 0; i < 21; i++) {
+    // The window holds a full maxed document (20) plus add-file calls — the
+    // limit itself is 40; drive past it with creates.
+    for (let i = 0; i < 41; i++) {
       last = await documentsApp.request(
         '/api/documents',
         postDocument(
           uploadForm(
             { bytes: JPEG_BYTES, name: `ktp-${i}.jpg`, type: 'image/jpeg' },
-            { category: 'ktp' }
+            { name: `KTP ${i}` }
           )
         ),
         env
