@@ -87,14 +87,15 @@ function MemberChip({ member, pressed, onSelect }) {
 // A picked-files list shared by the create flow and the add-files flow: each
 // picked file shows its name + size and an OPTIONAL free-text label (#422
 // owner decision 1 — unnamed files are fine).
-function PickedFiles({ picked, onLabel, onRemove, t }) {
+function PickedFiles({ picked, onLabel, onRemove, language }) {
+  const { t } = useTranslation()
   if (picked.length === 0) return null
   return (
     <ul className="flex flex-col gap-2" data-testid="picked-files">
       {picked.map((entry, index) => (
         <li key={`${entry.file.name}-${index}`} className="flex flex-wrap items-center gap-2">
           <span className="text-sm text-text-muted truncate max-w-[220px]" data-testid="picked-file">
-            {entry.file.name} · {formatBytes(entry.file.size, t.language)}
+            {entry.file.name} · {formatBytes(entry.file.size, language)}
           </span>
           <input
             className="flex-1 min-w-[160px] max-w-[280px] text-sm"
@@ -124,7 +125,7 @@ function PickedFiles({ picked, onLabel, onRemove, t }) {
 // revoked on close/unmount. Images render inline; PDF via the object embed.
 // Per file since #422 — the content endpoint is /documents/:id/files/:fileId.
 function DocumentViewer({ documentId, file, onClose }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const [objectUrl, setObjectUrl] = useState(null)
   const [error, setError] = useState(false)
   const dialogRef = useRef(null)
@@ -231,7 +232,6 @@ function DocumentViewer({ documentId, file, onClose }) {
           <p className="text-sm text-text-muted">{t('documents.viewerUnsupported')}</p>
         )}
       </div>
-      {void i18n}
     </div>
   )
 }
@@ -239,7 +239,7 @@ function DocumentViewer({ documentId, file, onClose }) {
 // One file inside its document: name, optional label, size, and the per-file
 // actions (view / download / delete — the delete is the same two-step inline
 // confirm the document row uses).
-function FileRow({ doc, file, onView, onDownload, onDelete, confirmOpen, onToggleConfirm, busy }) {
+function FileRow({ file, onView, onDownload, onDelete, confirmOpen, onToggleConfirm, busy, language }) {
   const { t } = useTranslation()
   return (
     <div className="flex items-center gap-2 pl-11 py-1.5">
@@ -249,7 +249,7 @@ function FileRow({ doc, file, onView, onDownload, onDelete, confirmOpen, onToggl
           {file.label && <span className="text-text-muted"> · {file.label}</span>}
         </span>
         <span className="text-sm text-text-muted ml-2 shrink-0">
-          {formatBytes(file.size_bytes, t.language)}
+          {formatBytes(file.size_bytes, language)}
         </span>
       </div>
       {confirmOpen ? (
@@ -314,8 +314,9 @@ function DocumentRow({
   onToggleDocConfirm,
   removeDocPending,
   removeFilePending,
-  t,
+  language,
 }) {
+  const { t } = useTranslation()
   return (
     <div className="px-5 py-4 border-b border-border last:border-b-0">
       <div className="flex items-center gap-3">
@@ -327,7 +328,7 @@ function DocumentRow({
           <div className="text-sm text-text-muted truncate">
             {t('documents.filesCount', { count: doc.files.length })}
             {memberName && <> · {memberName}</>}
-            {doc.created_at && <> · {formatDate(doc.created_at, t.language)}</>}
+            {doc.created_at && <> · {formatDate(doc.created_at, language)}</>}
           </div>
         </div>
         {docConfirmOpen ? (
@@ -370,8 +371,8 @@ function DocumentRow({
           {doc.files.map((file) => (
             <FileRow
               key={file.id}
-              doc={doc}
               file={file}
+              language={language}
               onView={() => onViewFile(doc, file)}
               onDownload={() => onDownloadFile(doc, file)}
               onDelete={() => onDeleteFile(doc, file)}
@@ -388,7 +389,7 @@ function DocumentRow({
 
 export function Documents() {
   const { t, i18n } = useTranslation()
-  const tLang = { language: i18n.language }
+  const language = i18n.language
   const createInputRef = useRef(null)
   const addInputRef = useRef(null)
 
@@ -711,7 +712,7 @@ export function Documents() {
             picked={pickedFiles}
             onLabel={setPickedLabel(setPickedFiles)}
             onRemove={removePicked(setPickedFiles)}
-            t={tLang}
+            language={language}
           />
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-sm min-w-0">
@@ -809,7 +810,7 @@ export function Documents() {
                     picked={addPicked}
                     onLabel={setPickedLabel(setAddPicked)}
                     onRemove={removePicked(setAddPicked)}
-                    t={tLang}
+                    language={language}
                   />
                   <div className="flex items-center gap-2">
                     <Button
@@ -857,7 +858,7 @@ export function Documents() {
                   onToggleDocConfirm={() => setConfirmingDocId(confirmingDocId === doc.id ? null : doc.id)}
                   removeDocPending={remove.isPending}
                   removeFilePending={removeFile.isPending}
-                  t={tLang}
+                  language={language}
                 />
               )
             )}
