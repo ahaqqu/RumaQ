@@ -48,7 +48,7 @@ Setup steps and the full variable table: [`docs/ARCHITECTURE.md` §8](ARCHITECTU
 - Every D1 query touching household-scoped data filters by `household_id`/`user_id`; final mutations re-check ownership (defense in depth).
 - AI prompts are built from the current household only and pass store **labels**, not internal IDs — covered by `backend/src/__tests__/prompt-isolation.test.ts`.
 - Receipt images sit in a private R2 bucket and are only readable through the household-checked proxy `GET /api/purchases/:id/receipt`.
-- Document-vault files (ahaqqu/RumaQ#388) live under the `documents/` prefix of the same private bucket and stream only through the household-scoped, auth-required `GET /api/documents/{id}/content` (`Cache-Control: private, no-store`, view/download audited per request). No public or presigned URLs exist for them.
+- Document-vault files (ahaqqu/RumaQ#388; multi-file per document since #422) live under the `documents/` prefix of the same private bucket and stream only through the household-scoped, auth-required, per-file `GET /api/documents/{id}/files/{fileId}/content` (`Cache-Control: private, no-store`, view/download audited per request; the file must belong to the named document). No public or presigned URLs exist for them.
 - AI keys are encrypted at rest with AES-GCM (PBKDF2-derived 256-bit key, random IV) and never returned by the API — only a `has_ai_key` flag.
 
 ## Dependency & vulnerability management
