@@ -261,20 +261,6 @@ export function contentDisposition(kind: 'inline' | 'attachment', fileName: stri
   return `${kind}; filename="${fallback}"; filename*=UTF-8''${encoded}`
 }
 
-function toFileSummary(row: DocumentFileRow): DocumentFileSummary {
-  return {
-    id: row.id,
-    file_name: row.file_name,
-    content_type: row.content_type,
-    size_bytes: row.size_bytes,
-    label: row.label,
-    sort_order: row.sort_order,
-    sha256: row.sha256,
-    uploaded_by: row.uploaded_by,
-    uploaded_at: row.uploaded_at,
-  }
-}
-
 // One LEFT JOIN round trip carries each document with its files — no second
 // query, no IN-list parameter limits. The LEFT JOIN keeps zero-file documents
 // visible (a file row simply comes back null); JS groups the flat rows.

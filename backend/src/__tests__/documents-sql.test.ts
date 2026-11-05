@@ -255,6 +255,7 @@ describe('documents vault semantics (real SQL)', () => {
     })
     void kk
     void akta
+    void fifty
 
     // Case-insensitive contains, needle in either case, mid-name.
     expect((await listDocuments(d1, 'h1', { q: 'ktp' })).map((d) => d.id)).toEqual([])

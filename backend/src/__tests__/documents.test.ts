@@ -21,6 +21,10 @@ import { createDocumentsStub, type MockEnv } from './support/env.js'
 
 type Row = Record<string, unknown>
 
+// Every document payload embeds its file summaries — model it so the tests
+// can index `files` without unknown-narrowing noise (#422 multi-file).
+type WithFiles = Row & { files: Row[] }
+
 type FakeDb = {
   prepare: (sql: string) => {
     bind: (...params: unknown[]) => {
@@ -346,7 +350,7 @@ describe('documents routes', () => {
       env
     )
     expect(res.status).toBe(201)
-    const body = (await res.json()) as { document: Row }
+    const body = (await res.json()) as { document: WithFiles }
     expect(body.document).toMatchObject({
       name: 'KTP Bapak', // trimmed — no preset list anywhere
       household_id: 'h1',
@@ -401,7 +405,7 @@ describe('documents routes', () => {
       env
     )
     expect(res.status).toBe(201)
-    const body = (await res.json()) as { document: Row }
+    const body = (await res.json()) as { document: WithFiles }
     expect(body.document.files[0]).toMatchObject({ label: 'Halaman depan' })
   })
 
@@ -451,7 +455,7 @@ describe('documents routes', () => {
       env
     )
     expect(res.status).toBe(201)
-    const body = (await res.json()) as { document: Row }
+    const body = (await res.json()) as { document: WithFiles }
     expect(body.document.member_id).toBe('m-toddler')
     // The member lookup scoped to the household ran with both params bound.
     expect(memberParams).toEqual(['m-toddler', 'h1'])
@@ -506,7 +510,7 @@ describe('documents routes', () => {
       env
     )
     expect(res.status).toBe(201)
-    const body = (await res.json()) as { document: Row }
+    const body = (await res.json()) as { document: WithFiles }
     expect(body.document.files[0]).toMatchObject({ size_bytes: 10 * 1024 * 1024 })
     expect(bucket.objects.size).toBe(1)
   })
@@ -574,7 +578,7 @@ describe('documents routes', () => {
       env
     )
     expect(res.status).toBe(201)
-    const body = (await res.json()) as { document: Row }
+    const body = (await res.json()) as { document: WithFiles }
     expect(body.document.files[0]).toMatchObject({ size_bytes: 10 * 1024 * 1024 })
     expect(bucket.objects.size).toBe(1)
   })
@@ -708,7 +712,7 @@ describe('documents routes', () => {
 
     const all = await documentsApp.request('/api/documents', {}, env)
     expect(all.status).toBe(200)
-    const allBody = (await all.json()) as { documents: Array<Row> }
+    const allBody = (await all.json()) as { documents: Array<WithFiles> }
     expect(allBody.documents.map((d) => d.id)).toEqual(['doc-new', 'doc-old'])
     // Files arrive in upload order inside the document payload.
     expect(allBody.documents[0]?.files).toHaveLength(1)
@@ -783,7 +787,7 @@ describe('documents routes', () => {
       env
     )
     expect(res.status).toBe(201)
-    const body = (await res.json()) as { document: Row }
+    const body = (await res.json()) as { document: WithFiles }
     expect(body.document.files).toHaveLength(1)
     expect(body.document.files[0]).toMatchObject({ label: 'Belakang', sort_order: 2 })
 
