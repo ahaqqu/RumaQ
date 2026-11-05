@@ -74,6 +74,8 @@ import { requireAdmin } from '../lib/admin.js'
 import { groundPlanItem } from '../lib/grounding.js'
 import { escapeLike } from '../lib/sql.js'
 import { ipRateLimitMiddleware } from '../lib/rate-limit.js'
+import { resolveEnabledPluginIds } from '../plugins/enablement.js'
+import { PLUGIN_MANIFESTS } from '../plugins/manifests.js'
 import { computeRunOutDays } from '../lib/stock.js'
 import { computePatterns } from '../lib/patterns.js'
 import {
@@ -558,6 +560,12 @@ apiApp.get(
                     isAdmin: { type: 'boolean' },
                   },
                 },
+                enabledPlugins: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description:
+                    'Plugin ids enabled for the ACTIVE household (plugin architecture #435). Additive and optional: ABSENT means every catalog plugin is enabled — legacy clients, a rolled-back deploy, or a failed enablement read all read the same safe default. Enforcement lives server-side in the plugin gate (404 fail-closed), never in this list.',
+                },
               },
             },
           },
@@ -578,9 +586,32 @@ apiApp.get(
         picture: string | null
         is_admin: number
       }>()
+
+    // Plugin advertisement (§4.5): the enabled set keyed to the ACTIVE
+    // household (auth resolved it above), ids only. The additive-nullish
+    // rule (#435): a response WITHOUT the field means all catalog plugins
+    // enabled — legacy clients, a rolled-back deploy and a failed enablement
+    // read (the resolver returns null) all land on the same safe default.
+    // Advertisement fails OPEN while the plugin gate still fails CLOSED —
+    // a client can never gain access it lacks.
+    const enabledPlugins = await resolveEnabledPluginIds(
+      c.env.DB,
+      c.get('householdId'),
+      PLUGIN_MANIFESTS
+    )
+
     // Response shape is the openapi contract — project the row explicitly so
     // the raw is_admin column never leaks into the JSON.
-    const res = c.json({
+    const payload: {
+      user: {
+        id: string
+        email: string | null
+        name: string | null
+        picture: string | null
+        isAdmin: boolean
+      } | null
+      enabledPlugins?: string[]
+    } = {
       user: user
         ? {
             id: user.id,
@@ -590,7 +621,11 @@ apiApp.get(
             isAdmin: user.is_admin === 1,
           }
         : null,
-    })
+    }
+    if (enabledPlugins !== null) {
+      payload.enabledPlugins = enabledPlugins
+    }
+    const res = c.json(payload)
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }

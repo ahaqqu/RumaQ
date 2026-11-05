@@ -1050,6 +1050,8 @@ export interface operations {
               picture?: string | null
               isAdmin?: boolean
             }
+            /** @description Plugin ids enabled for the ACTIVE household (plugin architecture #435). Additive and optional: ABSENT means every catalog plugin is enabled — legacy clients, a rolled-back deploy, or a failed enablement read all read the same safe default. Enforcement lives server-side in the plugin gate (404 fail-closed), never in this list. */
+            enabledPlugins?: string[]
           }
         }
       }
