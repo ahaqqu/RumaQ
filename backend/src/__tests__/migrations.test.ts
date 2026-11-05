@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vite-plus/test'
+import { PLUGIN_ENABLEMENT_SQL, HOUSEHOLD_ENABLEMENT_ROWS_SQL } from '../plugins/enablement.js'
+import { deploymentFlagKey } from '../plugins/flags.js'
 // The backend tsconfig pins `types` to @cloudflare/workers-types, so Node
 // builtin imports carry no declarations. These suppressions are contained to
 // this file: the migration chain is real SQL exercised against a real SQLite
@@ -1534,5 +1536,143 @@ describe('migration 0027: household tasks (#429)', () => {
     const audit = auditPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
     expect(audit).toContain('idx_household_task_audit_task')
     expect(audit).not.toMatch(/\bSCAN\b|TEMP B-TREE/i)
+  })
+})
+
+// Plugin enablement rows (ahaqqu/RumaQ#435, phase A): one row per
+// (household, plugin) for the household's EXPLICIT choice. The composite PK
+// is BOTH the uniqueness constraint and the household_id-prefix index every
+// read seeks — EXPLAIN proves the resolver's exact statements (imported from
+// plugins/enablement.ts, the ACTIVE_HOUSEHOLD_SQL pattern: the real-SQL test
+// runs the EXACT statement the middleware runs) seek the implicit PK index
+// with no table scan. The ABSENT-row resolution (manifest.defaultEnabled)
+// and the fail-closed read posture live in the resolver, table-tested in
+// plugin-enablement.test.ts. NOTE: 0027 is reserved for the in-flight #429
+// task-assignments branch — 0028/0029 are numbered to let both land.
+describe('migration 0028: household_plugins (#435)', () => {
+  it('records explicit choices only: PK uniqueness, status CHECK, cascade, config_json', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+
+    const insert = db.prepare(
+      `INSERT INTO household_plugins (household_id, plugin_id, status) VALUES (?, ?, ?)`
+    )
+    insert.run('h1', 'documents', 'enabled')
+    // The composite PK: one row per (household, plugin) — a household cannot
+    // hold two opinions about one plugin.
+    expect(() => insert.run('h1', 'documents', 'disabled')).toThrow()
+    // The status CHECK is a real constraint, not just an app-side enum.
+    expect(() => insert.run('h1', 'other', 'paused')).toThrow()
+
+    // config_json (small non-secret per-plugin settings, §4.6) is
+    // representable now so ticket 3 writes it without a schema change; the
+    // updated_at default fills itself.
+    insert.run('h1', 'other-plugin', 'disabled')
+    db.prepare(
+      `UPDATE household_plugins SET config_json = ? WHERE household_id = ? AND plugin_id = ?`
+    ).run('{"order":"alpha"}', 'h1', 'other-plugin')
+    const row = db.prepare(`SELECT * FROM household_plugins WHERE plugin_id = 'other-plugin'`).get()
+    expect(row).toMatchObject({
+      household_id: 'h1',
+      plugin_id: 'other-plugin',
+      status: 'disabled',
+      config_json: '{"order":"alpha"}',
+    })
+    expect(row).toHaveProperty('updated_at')
+
+    // Deleting the household cascades its enablement rows — they are
+    // household-scoped facts (unlike the lifecycle audit table, which is
+    // deliberately FK-less, plan §3.4; it arrives in ticket 5).
+    db.prepare('DELETE FROM households WHERE id = ?').run('h1')
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM household_plugins').all()).toEqual([{ cnt: 0 }])
+  })
+
+  it('keeps the gate reads and the bootstrap listing on PK-prefix seeks (no scan)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    // The per-request gate read: one indexed seek — the planned §3.6 cost.
+    const gatePlan = db
+      .prepare(`EXPLAIN QUERY PLAN ${PLUGIN_ENABLEMENT_SQL}`)
+      .all('h1', 'documents')
+    const gate = gatePlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(gate).toContain('SEARCH household_plugins')
+    expect(gate).not.toMatch(/SCAN|TEMP B-TREE/i)
+
+    // The bootstrap advertisement read: household-prefix seek.
+    const listPlan = db.prepare(`EXPLAIN QUERY PLAN ${HOUSEHOLD_ENABLEMENT_ROWS_SQL}`).all('h1')
+    const list = listPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(list).toContain('SEARCH household_plugins')
+    expect(list).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+
+  it('keeps the full chain green on a fresh database (additive, no backfill)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(household_plugins)').all()
+    expect(columns.map((c: Record<string, unknown>) => c.name)).toEqual([
+      'household_id',
+      'plugin_id',
+      'status',
+      'config_json',
+      'updated_at',
+    ])
+    // Phase A ships ZERO rows — the manifest default covers every existing
+    // household (no grandfathering backfill, plan §4.3).
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM household_plugins').all()).toEqual([{ cnt: 0 }])
+  })
+})
+
+// Deployment flags (ahaqqu/RumaQ#435, phase A): the ops kill-switch as data
+// (§3.3 — a config-file flag is a deploy; an incident lever must not be).
+// The reader (plugins/flags.ts) takes the WHOLE tiny table once per isolate
+// with a ≤30 s cache and fails OPEN on a read error — the deliberate opposite
+// of household enablement, which fails closed. A whole-table read needs no
+// lookup index (the table is a handful of rows by design); the interesting
+// constraints here are the key PK and the closed value domain.
+describe('migration 0029: deployment_flags (#435)', () => {
+  it('stores the kill-switch as data: one row per key, on/off value domain', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const insert = db.prepare(`INSERT INTO deployment_flags (key, value) VALUES (?, ?)`)
+    insert.run(deploymentFlagKey('documents'), 'off')
+    // PK: one opinion per flag key.
+    expect(() => insert.run(deploymentFlagKey('documents'), 'on')).toThrow()
+    // The value CHECK is a real constraint.
+    expect(() => insert.run(deploymentFlagKey('other'), 'maybe')).toThrow()
+
+    // The reader's key construction and the row shape agree.
+    const rows = db.prepare(`SELECT * FROM deployment_flags`).all()
+    expect(rows).toEqual([
+      expect.objectContaining({ key: 'plugin.documents.available', value: 'off' }),
+    ])
+    expect(rows[0]).toHaveProperty('updated_at')
+
+    // Flipping the lever is an UPDATE, not a deploy — the whole point (§3.3).
+    db.prepare(`UPDATE deployment_flags SET value = 'on' WHERE key = ?`).run(
+      deploymentFlagKey('documents')
+    )
+    expect(
+      db
+        .prepare(`SELECT value FROM deployment_flags WHERE key = ?`)
+        .get(deploymentFlagKey('documents'))
+    ).toMatchObject({ value: 'on' })
+  })
+
+  it('keeps the full chain green on a fresh database (additive)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(deployment_flags)').all()
+    expect(columns.map((c: Record<string, unknown>) => c.name)).toEqual([
+      'key',
+      'value',
+      'updated_at',
+    ])
   })
 })

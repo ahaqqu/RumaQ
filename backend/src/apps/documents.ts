@@ -32,6 +32,7 @@ import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { ipRateLimitMiddleware, isRateLimited } from '../lib/rate-limit.js'
+import { pluginGate } from '../plugins/gate.js'
 import { createR2StorageAdapter } from '../lib/storage.js'
 import {
   REMIND_DAYS_MAX,
@@ -213,6 +214,20 @@ documentsApp.use('/api/documents/:id', propsAuthMiddleware)
 documentsApp.use('/api/documents/:id/files', propsAuthMiddleware)
 documentsApp.use('/api/documents/:id/files/:fileId', propsAuthMiddleware)
 documentsApp.use('/api/documents/:id/files/:fileId/content', propsAuthMiddleware)
+
+// Plugin enablement gate (ahaqqu/RumaQ#435, plugin architecture §4.3) — the
+// household-aware middleware installs AFTER auth INSIDE the app (dispatch is
+// path-only in the gateway; the household is unknown until propsAuthMiddleware
+// has resolved it). Same five patterns as the auth lines; registration order
+// puts auth first, so the gate always sees the resolved household. Disabled /
+// deployment-off answers 404 fail-closed. Phase A: every household resolves
+// enabled (manifest default, no rows exist), so behavior is bit-for-bit
+// identical except the one planned indexed read per request (§3.6).
+documentsApp.use('/api/documents', pluginGate('documents'))
+documentsApp.use('/api/documents/:id', pluginGate('documents'))
+documentsApp.use('/api/documents/:id/files', pluginGate('documents'))
+documentsApp.use('/api/documents/:id/files/:fileId', pluginGate('documents'))
+documentsApp.use('/api/documents/:id/files/:fileId/content', pluginGate('documents'))
 
 // One parsed upload — the file plus the string multipart fields, already
 // bounded by the pre-parse cap. Both POST routes funnel through here so the
