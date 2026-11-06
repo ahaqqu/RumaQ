@@ -264,7 +264,11 @@ put_worker_secrets() {
     return
   fi
 
-  local secrets=(GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY HAQITA_INGEST_SECRET)
+  # Only the four gateway secrets are deploy-managed. HAQITA_INGEST_SECRET is
+  # deliberately absent: it is set and rotated out-of-band (operator-owned), so
+  # CI writing the repo's stale copy once silently clobbered the rotated Worker
+  # value and 401'd every internal endpoint (ahaqqu/RumaQ#456).
+  local secrets=(GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY)
   for name in "${secrets[@]}"; do
     local val="${!name:-}"
     if [[ -z $val ]]; then

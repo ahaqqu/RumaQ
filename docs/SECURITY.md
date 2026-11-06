@@ -43,6 +43,8 @@ Setup steps and the full variable table: [`docs/ARCHITECTURE.md` §8](ARCHITECTU
 
 **Rotation consequences:** changing `WORKER_ENCRYPTION_KEY` makes previously stored AI keys undecryptable — users must re-enter their key after rotation (plan a notice). Rotating `WORKER_JWT_SECRET` signs everyone out.
 
+`HAQITA_INGEST_SECRET` is operator-owned and rotated out-of-band; the CI deploy deliberately never writes it (ahaqqu/RumaQ#456), so rotating it is a `cf workers secrets update` plus the matching update of the pipeline's box env — never a deploy.
+
 ## Data isolation & privacy
 
 - Every D1 query touching household-scoped data filters by `household_id`/`user_id`; final mutations re-check ownership (defense in depth).
