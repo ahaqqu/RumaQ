@@ -876,7 +876,7 @@ export interface paths {
     }
     get?: never
     put?: never
-    /** @description Reads one file’s expiry date with the caller’s own AI provider (vision model: ai_vision_model, falling back to ai_model; server key/model when no user key is set). Image files only (JPEG, PNG, WebP — PDFs are refused). Returns a SUGGESTED expires_on (null when the model found no date) and the model asked; nothing is written — the user confirms through PATCH /api/documents/{id}. Every attempt records an ai_usage_events row (failures included) and an outcome log line; document content is never logged. */
+    /** @description Reads one file’s expiry date with the caller’s own AI provider (vision model: ai_vision_model, falling back to ai_model; server key/model when no user key is set). Image files only (JPEG, PNG, WebP — PDFs are refused). Returns a SUGGESTED expires_on (null when the model found no date) and the model asked; nothing is written — the user confirms through PATCH /api/documents/{id}. Every attempt records an ai_usage_events row (failures included) and an outcome log line, and the byte read is audited as a document_audit ‘ocr’ record naming the file; document content is never logged. */
     post: operations['postApiDocumentsByIdFilesByFileIdExtractExpiry']
     delete?: never
     options?: never
@@ -4142,13 +4142,6 @@ export interface operations {
             model: string | null
           }
         }
-      }
-      /** @description Validation error */
-      400: {
-        headers: {
-          [name: string]: unknown
-        }
-        content?: never
       }
       /** @description Unauthorized */
       401: {
