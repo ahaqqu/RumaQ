@@ -20,13 +20,47 @@ export type PortId = (typeof KNOWN_PORT_IDS)[number]
 
 /**
  * Cron tasks are declared with their scope NOW (§4.3) so the field does not
- * need a breaking change when the first task lands (ticket 7). No plugin in
- * phase A declares one — the vault has none.
+ * need a breaking change when the first task lands (ticket 7, #441). No
+ * plugin declares one yet — the vault has none ("No plugin in v1 needs
+ * either", §4.3); the first real declaration rides the next task that needs
+ * scheduling (#426 v2 dispatch, #433 reminders, #429 recurrence sweeps).
+ *
+ * Deliberately NO cadence field: every declared task rides the nightly
+ * plugin-tasks cron invocation, and adding a cadence LATER is additive (an
+ * absent field can default to nightly) — while `scope` had to exist now
+ * because adding it later would be breaking (the plan's own rationale,
+ * §4.3). A speculative cadence nobody consumes would bake in semantics
+ * before the first real task shapes them (§4.2: nothing created
+ * speculatively).
  */
 export type PluginCronTask = {
+  /**
+   * Task name, unique within the plugin (manifest validation) and the key
+   * binding the declaration to its handler on the registration (below) and
+   * naming every failure log line. Snake_case like capabilities.
+   */
+  name: string
   /** 'global' ignores enablement; 'household' iterates the enabled set. */
   scope: 'global' | 'household'
 }
+
+/**
+ * One invocation of a plugin-declared cron task (ticket 7, #441) — the
+ * generalized form of the PluginPurgeJob seam (core owns WHEN via the
+ * nightly plugin-tasks cron; the plugin owns the HOW). A 'global' task gets
+ * one call per tick with no household; a 'household' task gets one call per
+ * ENABLED household (the §4.3 truth table — an absent enablement row
+ * resolves to the manifest default, a read error fails closed).
+ */
+export type PluginCronTaskArgs = {
+  db: D1Database
+  /** The household this invocation serves — present for 'household' scope,
+   * absent for 'global' (a global task has no caller household, exactly
+   * like the cron itself). */
+  householdId?: string
+}
+
+export type PluginCronTaskHandler = (args: PluginCronTaskArgs) => Promise<void>
 
 /**
  * The server manifest — a static typed object (never JSON, never scanned
@@ -56,7 +90,12 @@ export type PluginManifest = {
    * once the list is explicit).
    */
   ownedTables: readonly string[]
-  /** Deferred scheduling handoff (ticket 7). */
+  /**
+   * Scheduled tasks (§4.3, ticket 7 #441): declared name + scope; the
+   * implementation binds on the registration (cronTaskHandlers) because this
+   * manifest must stay pure data. No shipped plugin declares one yet — the
+   * first declaration rides the first task that needs scheduling.
+   */
   cronTasks?: readonly PluginCronTask[]
 }
 
@@ -108,21 +147,32 @@ export type PluginPurgeJob = (args: {
  * mounts + metadata" — exactly what the factory returns. `purge` rides the
  * registration when the manifest declares the 'purge' capability: the core
  * cron tick and the household-dissolution drain call it through this seam,
- * never through plugin internals (T7 will generalize plugin-declared
- * scheduled tasks on top of the same seam — this is deliberately the only
- * job-shaped hook until then). `purgeBudgetFloor` is the job's per-chunk
+ * never through plugin internals. `purgeBudgetFloor` is the job's per-chunk
  * minimum (the documents plugin: DOCUMENT_MAX_FILES — a chunk deletes whole
  * documents only, and one document may hold that many files): the driver
  * treats a remaining budget below the floor as EXHAUSTED instead of handing
  * out a sub-floor chunk the job would have to refuse (P1-A2, PR #474
  * review — a 15-file vault left a 1–19 remainder that threw and starved
  * every household behind it). Required alongside `purge`.
+ *
+ * `cronTaskHandlers` is ticket 7's (#441) generalized handoff: the MANIFEST
+ * declares each task (name + scope — pure data, manifests.ts must stay
+ * importable by the frontend parity test), the REGISTRATION binds each
+ * declared name to its implementation. The driver (lib/plugin-cron.ts) runs
+ * every declared task on the plugin-tasks cron invocation, per-task and
+ * per-household try/catch isolated. A declared name without a handler (or a
+ * handler without a declaration) is a compose-time drift caught by
+ * cronTaskBindingViolations + plugin-registry.test.ts; the driver also
+ * soft-guards (logs the drift, runs the rest) so a binding bug can never
+ * take the nightly tick down (the V1-A1 lesson).
  */
 export type PluginRegistration = {
   manifest: PluginManifest
   app: Hono<Env>
   purge?: PluginPurgeJob
   purgeBudgetFloor?: number
+  /** Handlers keyed by the manifest's cronTasks[].name (see above). */
+  cronTaskHandlers?: Readonly<Record<string, PluginCronTaskHandler>>
 }
 
 /**

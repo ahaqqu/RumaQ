@@ -1,4 +1,12 @@
 import { bindings, defineConfig, triggers } from 'cf/config'
+// The two cron strings (ticket 7, #441) — one source shared with gateway.ts's
+// dispatch. This module is import-free constants by design, so the config
+// bundle carries it without dragging a module graph along. The .ts extension
+// is deliberate: BOTH consumers of this config — the cf CLI and
+// @cloudflare/vite-plugin — load it through Node's native ESM resolver
+// (registerConfigHooks: type-stripping, no .js → .ts extension rewriting), so
+// a .js specifier would fail in both; .ts is the only specifier both resolve.
+import { CORE_CRON_SCHEDULE, PLUGIN_TASKS_CRON_SCHEDULE } from './src/cron-schedules.ts'
 
 /**
  * Single source of truth for the Worker configuration (replaces the four
@@ -56,9 +64,24 @@ export default defineConfig({
       notFoundHandling: 'single-page-application',
       runWorkerFirst: ['/api/*'],
     },
-    // Daily AI-usage retention sweep (issue #353): scheduled handler in
-    // gateway.ts deletes ai_usage_events older than one year. Off-peak UTC.
-    triggers: [triggers.scheduled({ schedule: '17 3 * * *' })],
+    // TWO cron schedules (ticket 7, #441 — the strings live in
+    // src/cron-schedules.ts, shared with gateway.ts's dispatch, which reads
+    // ScheduledController.cron). Each trigger fires its OWN scheduled
+    // invocation with its OWN per-invocation subrequest cap (50 on the free
+    // plan; the free plan allows three triggers per Worker):
+    //
+    //   CORE_CRON_SCHEDULE — the original nightly tick, unchanged: #353 usage
+    //   retention, #426 expiry sweep, #439 purge chunks (worst case 48/50
+    //   with one purge-capable plugin — plugin-purge.ts's accounting).
+    //
+    //   PLUGIN_TASKS_CRON_SCHEDULE — the generalized plugin-task handoff
+    //   (#441, lib/plugin-cron.ts), isolated from the core tick's budget by
+    //   being its own invocation; a no-op nightly until a plugin declares a
+    //   task. Both schedules stay off-peak UTC.
+    triggers: [
+      triggers.scheduled({ schedule: CORE_CRON_SCHEDULE }),
+      triggers.scheduled({ schedule: PLUGIN_TASKS_CRON_SCHEDULE }),
+    ],
     // Workers Logs persistence (#451): keeps structured ingest-rejection lines
     // queryable in the dashboard instead of dying with the invocation logs.
     observability: { enabled: true },

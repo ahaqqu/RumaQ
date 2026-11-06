@@ -5,6 +5,8 @@ import {
   HOUSEHOLD_CATALOG_ROWS_SQL,
   PLUGIN_PURGE_STATE_SQL,
   PLUGIN_PURGE_ROW_SQL,
+  HOUSEHOLDS_ENABLED_BY_DEFAULT_SQL,
+  HOUSEHOLDS_ENABLED_EXPLICIT_SQL,
 } from '../plugins/enablement.js'
 import { PURGING_HOUSEHOLDS_SQL } from '../lib/plugin-purge.js'
 import { deploymentFlagKey } from '../plugins/flags.js'
@@ -2243,6 +2245,73 @@ describe('setPluginEnablement audit guard (lib/plugins.ts, #437)', () => {
     expect(db.prepare('SELECT id, action FROM household_plugin_audit ORDER BY id').all()).toEqual([
       { id: 'a1', action: 'plugin_disabled' },
       { id: 'a2', action: 'plugin_enabled' },
+    ])
+  })
+})
+
+// The cron driver's enabled-set reads (ticket 7, #441 — lib/plugin-cron.ts
+// resolves each household-scoped task's set through plugins/enablement.ts).
+// Both statements are pinned here because the nightly invocation's cost is
+// part of their contract:
+//
+//   - the default-ON statement scans households (bounded by design —
+//     household-scale table, nightly cadence, the #426 expiry sweep's own
+//     rationale) with the NOT EXISTS probe riding the household_plugins
+//     composite PK's (household_id, plugin_id) prefix per row;
+//   - the default-OFF statement scans household_plugins (bounded by design —
+//     one row per expressed household choice, §3.2; no dedicated index is
+//     added for this cold nightly read, the 0035 header's own tradeoff).
+//
+// Neither may grow a TEMP B-TREE: there is nothing to sort.
+describe('migration 0028 chain: the cron driver enabled-set reads (#441)', () => {
+  it('the default-ON statement probes the enablement PK per household (no sort)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const plan = db
+      .prepare(`EXPLAIN QUERY PLAN ${HOUSEHOLDS_ENABLED_BY_DEFAULT_SQL}`)
+      .all('documents')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    // The households scan is the designed shape (bounded, nightly) — pinned,
+    // not hidden, so a silent change to either side is noticed.
+    expect(detail).toContain('SCAN households')
+    expect(detail).toContain(
+      'SEARCH household_plugins USING INDEX sqlite_autoindex_household_plugins_1'
+    )
+    expect(detail).not.toMatch(/TEMP B-TREE/i)
+  })
+
+  it('the default-OFF statement scans the enablement rows (no sort, no new index)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const plan = db
+      .prepare(`EXPLAIN QUERY PLAN ${HOUSEHOLDS_ENABLED_EXPLICIT_SQL}`)
+      .all('documents')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(detail).toContain('SCAN household_plugins')
+    expect(detail).not.toMatch(/TEMP B-TREE/i)
+  })
+
+  it('answers the driver with real rows per the §4.3 truth table', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(`INSERT INTO households (id, name, created_by) VALUES ('h1', 'A', 'u1')`).run()
+    db.prepare(`INSERT INTO households (id, name, created_by) VALUES ('h2', 'B', 'u1')`).run()
+    const row = db.prepare(
+      'INSERT INTO household_plugins (household_id, plugin_id, status) VALUES (?, ?, ?)'
+    )
+    row.run('h1', 'on-plugin', 'disabled')
+    row.run('h1', 'off-plugin', 'enabled')
+
+    // default ON: the explicit disabled row wins for h1, h2 rides the default.
+    expect(db.prepare(HOUSEHOLDS_ENABLED_BY_DEFAULT_SQL).all('on-plugin')).toEqual([
+      { household_id: 'h2' },
+    ])
+    // default OFF: only the explicit enabled rows answer.
+    expect(db.prepare(HOUSEHOLDS_ENABLED_EXPLICIT_SQL).all('off-plugin')).toEqual([
+      { household_id: 'h1' },
     ])
   })
 })

@@ -207,4 +207,51 @@ describe('worker scheduled handler (1-year AI usage retention, #353)', () => {
     )
     logSpy.mockRestore()
   })
+
+  // Ticket 7 (#441): the Worker carries TWO cron schedules (cron-schedules.ts)
+  // and this handler tells them apart via ScheduledController.cron. The core
+  // schedule (and anything unrecognized — the tests above pass no cron at
+  // all) runs the core tick; the plugin-tasks schedule runs ONLY the plugin
+  // task driver, so the two workloads never share an invocation's 50-
+  // subrequest budget.
+  it('dispatches the plugin-task driver on the plugin-tasks schedule, with zero core-sweep spend', async () => {
+    const { PLUGIN_TASKS_CRON_SCHEDULE } = await import('../cron-schedules.js')
+    const env = createMockEnv()
+    const waitUntil = vi.fn()
+    const ctx = { waitUntil } as unknown as ExecutionContext
+
+    await gateway.scheduled(
+      { cron: PLUGIN_TASKS_CRON_SCHEDULE } as ScheduledController,
+      env as unknown as Parameters<typeof gateway.scheduled>[1],
+      ctx
+    )
+
+    // The driver is the invocation's only work. No shipped plugin declares a
+    // task yet, so the driver costs ZERO subrequests (no enabled-set read,
+    // no core sweep) — the budget claim the second trigger exists to honor.
+    expect(waitUntil).toHaveBeenCalledTimes(1)
+    const tasks = waitUntil.mock.calls.map((call) => call[0]) as Promise<unknown>[]
+    await Promise.all(tasks)
+    expect(env.DB.prepare).not.toHaveBeenCalled()
+  })
+
+  it('keeps the core tick on the core schedule (both cron strings dispatch explicitly)', async () => {
+    const { CORE_CRON_SCHEDULE } = await import('../cron-schedules.js')
+    const env = createMockEnv()
+    env.DB.prepare = vi.fn().mockReturnThis()
+    env.DB.bind = vi.fn().mockReturnThis()
+    ;(env.DB as unknown as { run: unknown }).run = vi.fn().mockResolvedValue(undefined)
+    ;(env.DB as unknown as { all: unknown }).all = vi.fn().mockResolvedValue({ results: [] })
+    const waitUntil = vi.fn()
+    const ctx = { waitUntil } as unknown as ExecutionContext
+
+    await gateway.scheduled(
+      { cron: CORE_CRON_SCHEDULE } as ScheduledController,
+      env as unknown as Parameters<typeof gateway.scheduled>[1],
+      ctx
+    )
+
+    expect(waitUntil).toHaveBeenCalledTimes(3)
+    expect(env.DB.prepare).toHaveBeenCalledWith('DELETE FROM ai_usage_events WHERE ts < ?')
+  })
 })

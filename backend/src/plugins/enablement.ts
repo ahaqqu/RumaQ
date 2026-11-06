@@ -45,6 +45,65 @@ export const PLUGIN_PURGE_ROW_SQL =
  * tests pass the same two fields. */
 export type EnablementSpec = Pick<PluginManifest, 'id' | 'defaultEnabled'>
 
+// --- The cron driver's enabled set (ticket 7, #441) -------------------------
+// A household-scoped cron task iterates the ENABLED set of its plugin across
+// ALL households (§4.3: "a household-scoped task iterates the enabled set
+// from one query") — the per-request reads above are PK-prefix seeks by
+// household, which cannot list a plugin's enabled set, so the driver gets
+// its own statement per defaultEnabled branch. Both resolve by the same §4.3
+// truth table the gate applies; a read error fails CLOSED for the plugin's
+// task (skipped for the night, logged) and stays open for core — the
+// resolver's own posture, one section up.
+
+/** defaultEnabled = true: every household EXCEPT those that explicitly
+ * disabled the plugin. The NOT EXISTS rides the composite PK's (household_id,
+ * plugin_id) prefix for the probe; the outer scan of households is bounded by
+ * design (household-scale table, nightly cadence — the #426 expiry sweep's
+ * own scan rationale). EXPLAIN-pinned in migrations.test.ts. Both statements
+ * answer the SAME column shape (household_id) so the driver's reader is
+ * statement-agnostic. */
+export const HOUSEHOLDS_ENABLED_BY_DEFAULT_SQL = `SELECT id AS household_id FROM households
+ WHERE NOT EXISTS (
+   SELECT 1 FROM household_plugins
+    WHERE household_plugins.household_id = households.id
+      AND household_plugins.plugin_id = ?
+      AND household_plugins.status = 'disabled'
+ )`
+
+/** defaultEnabled = false: only households that explicitly enabled the
+ * plugin — no defaults to apply, so the enablement rows alone answer. The
+ * plugin_id filter cannot ride the (household_id, plugin_id) PK (second
+ * column) and gets no dedicated index: the 0035 header's own tradeoff — a
+ * full index on a cold nightly read is write overhead on the enablement hot
+ * path — and the row count is bounded by the expressed household choices
+ * (§3.2: zero rows for households that never toggled anything). */
+export const HOUSEHOLDS_ENABLED_EXPLICIT_SQL =
+  "SELECT household_id FROM household_plugins WHERE plugin_id = ? AND status = 'enabled'"
+
+/**
+ * The enabled set for the cron driver (ticket 7, #441): every household the
+ * plugin's household-scoped task serves, resolved by the same truth table as
+ * resolvePluginEnabled (absent row → manifest default; explicit row wins).
+ * Returns null on a read error — the resolver convention (the function above)
+ * — and the DRIVER turns that into the fail-closed posture (the task skips
+ * this tick, logged); this module never decides that, it only reports.
+ */
+export async function resolveEnabledHouseholdIds(
+  db: D1Database,
+  spec: EnablementSpec
+): Promise<string[] | null> {
+  try {
+    const statement = spec.defaultEnabled
+      ? HOUSEHOLDS_ENABLED_BY_DEFAULT_SQL
+      : HOUSEHOLDS_ENABLED_EXPLICIT_SQL
+    const { results } = await db.prepare(statement).bind(spec.id).all<{ household_id: string }>()
+    return results.map((row) => row.household_id)
+  } catch (err) {
+    console.error(`[plugins] enabled-set read failed for ${spec.id}; the caller fails closed`, err)
+    return null
+  }
+}
+
 /**
  * §4.3 truth table — explicit rows always win; an absent row falls back to
  * the manifest default; a read error FAILS CLOSED (denies the plugin).

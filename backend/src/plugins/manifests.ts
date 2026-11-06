@@ -132,10 +132,23 @@ export function validatePluginManifests(manifests: readonly PluginManifest[]): M
       }
     }
 
+    const seenCronTasks = new Set<string>()
     for (const task of manifest.cronTasks ?? []) {
       if (task.scope !== 'global' && task.scope !== 'household') {
         violations.push(`${label}: cron task scope must be 'global' or 'household'`)
       }
+      // The name binds the declaration to its handler on the registration
+      // (cronTaskHandlers, ticket 7 #441) and names every failure log line —
+      // the capability slug rule keeps those artifacts greppable.
+      if (typeof task.name !== 'string' || !CAPABILITY_PATTERN.test(task.name)) {
+        violations.push(
+          `${label}: cron task name ${JSON.stringify(task.name)} must be a snake_case slug`
+        )
+      }
+      if (seenCronTasks.has(task.name)) {
+        violations.push(`${label}: duplicate cron task name ${JSON.stringify(task.name)}`)
+      }
+      seenCronTasks.add(task.name)
     }
   }
 
