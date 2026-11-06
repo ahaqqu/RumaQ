@@ -1384,3 +1384,441 @@ describe('api routes remaining branches', () => {
     expect(res.status).toBe(404)
   })
 })
+
+// Canonical product admin (#423). These pin the HTTP surface — auth chain,
+// valibot bodies, and the typed-error → status/code mapping — by driving the
+// REAL lib over sequenced fake-DB reads. The write semantics (guarded batch,
+// alias approval, audit, index bumps) are pinned on real SQLite in
+// canonical-products.test.ts.
+describe('/api/admin/products', () => {
+  // The shared in-memory limiter counts every request in this file under the
+  // 'unknown' IP; lift the ceiling for this block so the auth/mapping matrix
+  // cannot 429 after the rest of the suite's traffic.
+  function productEnv(overrides: Record<string, unknown> = {}) {
+    return createMockEnv({
+      props: { userId: 'u1', householdId: 'h1' },
+      RATE_LIMIT_MAX_REQUESTS: '10000',
+      ...overrides,
+    })
+  }
+  const NOW = '2026-11-07T00:00:00.000Z'
+
+  function productRow(over: Record<string, unknown> = {}) {
+    return {
+      id: 'prod-1',
+      product_key: 'beras--ramos--5-kg',
+      name: 'Beras Ramos 5 kg',
+      brand: null,
+      unit: '5 kg',
+      status: 'provisional',
+      metadata_version: 1,
+      first_seen_at: NOW,
+      last_seen_at: NOW,
+      updated_at: NOW,
+      ...over,
+    }
+  }
+
+  function auditRow(over: Record<string, unknown> = {}) {
+    return {
+      id: 'audit-1',
+      product_id: 'prod-1',
+      product_key: 'beras--ramos--5-kg',
+      actor_user_id: 'u1',
+      action: 'rename',
+      old_name: 'Beras Lama',
+      new_name: 'Beras Ramos 5 kg',
+      reason: null,
+      metadata_version_before: 1,
+      metadata_version_after: 2,
+      reverts_audit_id: null,
+      created_at: NOW,
+      ...over,
+    }
+  }
+
+  function renameRequest(body: unknown) {
+    return {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }
+  }
+
+  function revertRequest(body: unknown = {}) {
+    return {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }
+  }
+
+  const PRODUCT_PATH = '/api/admin/products/beras--ramos--5-kg'
+  const RENAME_PATH = `${PRODUCT_PATH}/rename`
+  const REVERT_PATH = `${PRODUCT_PATH}/audit/audit-1/revert`
+
+  it('returns 401 without a session on every product admin route', async () => {
+    const env = productEnv({ props: undefined })
+    const calls: Array<[string, string, RequestInit]> = [
+      ['GET', PRODUCT_PATH, {}],
+      ['POST', RENAME_PATH, renameRequest({ canonicalName: 'X', expectedMetadataVersion: 1 })],
+      ['POST', REVERT_PATH, revertRequest()],
+    ]
+    for (const [method, path, init] of calls) {
+      const res = await apiApp.request(path, { method, ...init }, env)
+      expect(res.status).toBe(401)
+    }
+  })
+
+  it('returns 403 for non-admin users on every product admin route', async () => {
+    const env = productEnv()
+    env.DB.first = vi.fn().mockResolvedValue({ is_admin: 0 })
+    const calls: Array<[string, string, RequestInit]> = [
+      ['GET', PRODUCT_PATH, {}],
+      ['POST', RENAME_PATH, renameRequest({ canonicalName: 'X', expectedMetadataVersion: 1 })],
+      ['POST', REVERT_PATH, revertRequest()],
+    ]
+    for (const [method, path, init] of calls) {
+      const res = await apiApp.request(path, { method, ...init }, env)
+      expect(res.status).toBe(403)
+    }
+  })
+
+  it('returns 400 for a rename body missing the required fields', async () => {
+    const env = productEnv()
+    env.DB.first = vi.fn().mockResolvedValue({ is_admin: 1 })
+    const res = await apiApp.request(RENAME_PATH, renameRequest({}), env)
+    expect(res.status).toBe(400)
+  })
+
+  it('returns 400 for a blank, oversize, or control-character canonical name', async () => {
+    for (const canonicalName of ['   ', 'x'.repeat(501), 'Beras\nRamos']) {
+      const env = productEnv()
+      env.DB.first = vi.fn().mockResolvedValue({ is_admin: 1 })
+      const res = await apiApp.request(
+        RENAME_PATH,
+        renameRequest({ canonicalName, expectedMetadataVersion: 1 }),
+        env
+      )
+      expect(res.status).toBe(400)
+      if (canonicalName === '   ') {
+        const body = (await res.json()) as { error: string }
+        expect(body.error).toMatch(/blank/i)
+      }
+    }
+  })
+
+  it('returns 400 for an oversize or newline-carrying revert reason', async () => {
+    for (const reason of ['x'.repeat(201), 'bad\nreason']) {
+      const env = productEnv()
+      env.DB.first = vi.fn().mockResolvedValue({ is_admin: 1 })
+      const res = await apiApp.request(REVERT_PATH, revertRequest({ reason }), env)
+      expect(res.status).toBe(400)
+    }
+  })
+
+  it('serves the product identity payload with private no-cache headers', async () => {
+    const env = productEnv()
+    env.DB.first = vi.fn().mockResolvedValue({ is_admin: 1 })
+    env.DB.batch = vi.fn().mockResolvedValue([
+      { results: [productRow()] },
+      {
+        results: [
+          {
+            name: 'Beras Ramos',
+            store_slug: 'superindo',
+            status: 'candidate',
+            source: 'ocr',
+            first_seen_at: NOW,
+            last_seen_at: NOW,
+          },
+        ],
+      },
+      { results: [{ observations: 3, stores: 2 }] },
+      { results: [auditRow()] },
+    ])
+
+    const res = await apiApp.request(PRODUCT_PATH, {}, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toMatch(/private, no-cache/)
+    const body = (await res.json()) as any
+    expect(body.product).toMatchObject({
+      id: 'prod-1',
+      productKey: 'beras--ramos--5-kg',
+      name: 'Beras Ramos 5 kg',
+      status: 'provisional',
+      metadataVersion: 1,
+    })
+    expect(body.aliases).toEqual([
+      {
+        name: 'Beras Ramos',
+        storeSlug: 'superindo',
+        status: 'candidate',
+        source: 'ocr',
+        firstSeenAt: NOW,
+        lastSeenAt: NOW,
+      },
+    ])
+    expect(body.stats).toEqual({ observations: 3, stores: 2 })
+    expect(body.audit).toEqual([
+      expect.objectContaining({
+        id: 'audit-1',
+        action: 'rename',
+        oldName: 'Beras Lama',
+        metadataVersionBefore: 1,
+        metadataVersionAfter: 2,
+      }),
+    ])
+  })
+
+  it('returns 404 for an unknown product identity', async () => {
+    const env = productEnv()
+    env.DB.first = vi.fn().mockResolvedValue({ is_admin: 1 })
+    env.DB.batch = vi.fn().mockResolvedValue([])
+    const res = await apiApp.request(PRODUCT_PATH, {}, env)
+    expect(res.status).toBe(404)
+  })
+
+  it('renames through the HTTP layer and returns {product, warnings, audit, indexVersion}', async () => {
+    const env = productEnv()
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ is_admin: 1 })
+      .mockResolvedValueOnce(productRow())
+    env.DB.all = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({ results: [] })
+    env.DB.batch = vi
+      .fn()
+      .mockResolvedValueOnce([
+        { meta: { changes: 1 } },
+        { meta: { changes: 2 } },
+        { meta: { changes: 1 } },
+        { meta: { changes: 1 } },
+      ])
+      .mockResolvedValueOnce([
+        { results: [productRow({ name: 'Beras Ramos Premium', metadata_version: 2 })] },
+        {
+          results: [
+            auditRow({ new_name: 'Beras Ramos Premium', metadata_version_after: 2, reason: 'fix' }),
+          ],
+        },
+        { results: [{ version: 1 }] },
+      ])
+
+    const res = await apiApp.request(
+      RENAME_PATH,
+      renameRequest({
+        canonicalName: 'Beras Ramos Premium',
+        expectedMetadataVersion: 1,
+        reason: 'fix',
+      }),
+      env
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toMatch(/private, no-cache/)
+    const body = (await res.json()) as any
+    expect(body.product).toMatchObject({ name: 'Beras Ramos Premium', metadataVersion: 2 })
+    expect(body.warnings).toEqual([])
+    expect(body.indexVersion).toBe(1)
+    expect(body.audit).toHaveLength(1)
+    expect(body.audit[0]).toMatchObject({ action: 'rename', reason: 'fix' })
+    expect(env.DB.batch).toHaveBeenCalledTimes(2)
+  })
+
+  it('maps a duplicate canonical name to 409 duplicate_name with conflicts[] and writes nothing', async () => {
+    const env = productEnv()
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ is_admin: 1 })
+      .mockResolvedValueOnce(productRow())
+    env.DB.all = vi.fn().mockResolvedValueOnce({
+      results: [{ productKey: 'gula--gulaku--1-kg', name: 'Gula Pasir', source: 'product' }],
+    })
+
+    const res = await apiApp.request(
+      RENAME_PATH,
+      renameRequest({ canonicalName: 'Gula Pasir', expectedMetadataVersion: 1 }),
+      env
+    )
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({
+      error: 'duplicate_name',
+      conflicts: [{ productKey: 'gula--gulaku--1-kg', name: 'Gula Pasir', source: 'product' }],
+    })
+    expect(env.DB.batch).not.toHaveBeenCalled()
+  })
+
+  it('maps a similar name to 409 similar_name with warnings[] and writes nothing', async () => {
+    const env = productEnv()
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ is_admin: 1 })
+      .mockResolvedValueOnce(productRow())
+    env.DB.all = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({
+        results: [{ productKey: 'beras--ramos--5-kg-super', name: 'Beras Ramos 5 kg Super' }],
+      })
+      .mockResolvedValueOnce({ results: [] })
+
+    const res = await apiApp.request(
+      RENAME_PATH,
+      renameRequest({ canonicalName: 'Beras Ramos 5 kg Super Extra', expectedMetadataVersion: 1 }),
+      env
+    )
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({
+      error: 'similar_name',
+      warnings: [
+        {
+          productKey: 'beras--ramos--5-kg-super',
+          name: 'Beras Ramos 5 kg Super',
+          similarity: 0.833,
+        },
+      ],
+    })
+    expect(env.DB.batch).not.toHaveBeenCalled()
+  })
+
+  it('maps a stale expectedMetadataVersion to 409 stale_product with current{name, metadataVersion}', async () => {
+    const env = productEnv()
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ is_admin: 1 })
+      .mockResolvedValueOnce(productRow({ metadata_version: 2 }))
+
+    const res = await apiApp.request(
+      RENAME_PATH,
+      renameRequest({ canonicalName: 'Beras Ramos Premium', expectedMetadataVersion: 1 }),
+      env
+    )
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({
+      error: 'stale_product',
+      current: { name: 'Beras Ramos 5 kg', metadataVersion: 2 },
+    })
+    expect(env.DB.batch).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 when renaming an unknown product', async () => {
+    const env = productEnv()
+    env.DB.first = vi.fn().mockResolvedValueOnce({ is_admin: 1 }).mockResolvedValueOnce(null)
+    const res = await apiApp.request(
+      RENAME_PATH,
+      renameRequest({ canonicalName: 'Beras Ramos Premium', expectedMetadataVersion: 1 }),
+      env
+    )
+    expect(res.status).toBe(404)
+  })
+
+  it('reverts the latest rename and returns the mutation envelope', async () => {
+    const env = productEnv()
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ is_admin: 1 })
+      .mockResolvedValueOnce(productRow({ name: 'Beras Ramos Premium', metadata_version: 2 }))
+      .mockResolvedValueOnce({
+        id: 'audit-1',
+        product_id: 'prod-1',
+        action: 'rename',
+        old_name: 'Beras Ramos 5 kg',
+        new_name: 'Beras Ramos Premium',
+        metadata_version_after: 2,
+      })
+    env.DB.batch = vi
+      .fn()
+      .mockResolvedValueOnce([
+        { meta: { changes: 1 } },
+        { meta: { changes: 1 } },
+        { meta: { changes: 1 } },
+      ])
+      .mockResolvedValueOnce([
+        { results: [productRow({ name: 'Beras Ramos 5 kg', metadata_version: 3 })] },
+        {
+          results: [
+            auditRow({
+              id: 'audit-2',
+              action: 'revert',
+              old_name: 'Beras Ramos Premium',
+              new_name: 'Beras Ramos 5 kg',
+              metadata_version_before: 2,
+              metadata_version_after: 3,
+              reverts_audit_id: 'audit-1',
+            }),
+          ],
+        },
+        { results: [{ version: 2 }] },
+      ])
+
+    const res = await apiApp.request(REVERT_PATH, revertRequest({ reason: 'wrong label' }), env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toMatch(/private, no-cache/)
+    const body = (await res.json()) as any
+    expect(body.product).toMatchObject({ name: 'Beras Ramos 5 kg', metadataVersion: 3 })
+    expect(body.indexVersion).toBe(2)
+    expect(body.audit[0]).toMatchObject({
+      action: 'revert',
+      revertsAuditId: 'audit-1',
+      metadataVersionBefore: 2,
+      metadataVersionAfter: 3,
+    })
+  })
+
+  it('maps a non-latest or already-compensated rename to 409 stale_revert', async () => {
+    const env = productEnv()
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ is_admin: 1 })
+      .mockResolvedValueOnce(productRow({ name: 'Beras Ramos Premium', metadata_version: 2 }))
+      .mockResolvedValueOnce({
+        id: 'audit-1',
+        product_id: 'prod-1',
+        action: 'rename',
+        old_name: 'Beras Ramos 5 kg',
+        new_name: 'Beras Ramos Premium',
+        metadata_version_after: 1,
+      })
+
+    const res = await apiApp.request(REVERT_PATH, revertRequest(), env)
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'stale_revert' })
+    expect(env.DB.batch).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 for an unknown audit entry or an audit entry of another product', async () => {
+    for (const target of [
+      null,
+      {
+        id: 'audit-1',
+        product_id: 'prod-other',
+        action: 'rename',
+        old_name: 'X',
+        new_name: 'Y',
+        metadata_version_after: 2,
+      },
+    ]) {
+      const env = productEnv()
+      env.DB.first = vi
+        .fn()
+        .mockResolvedValueOnce({ is_admin: 1 })
+        .mockResolvedValueOnce(productRow())
+        .mockResolvedValueOnce(target)
+      const res = await apiApp.request(REVERT_PATH, revertRequest(), env)
+      expect(res.status).toBe(404)
+      expect(await res.json()).toEqual({ error: 'Audit entry not found' })
+      expect(env.DB.batch).not.toHaveBeenCalled()
+    }
+  })
+
+  it('returns 404 when reverting on an unknown product', async () => {
+    const env = productEnv()
+    env.DB.first = vi.fn().mockResolvedValueOnce({ is_admin: 1 }).mockResolvedValueOnce(null)
+    const res = await apiApp.request(REVERT_PATH, revertRequest(), env)
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'Product not found' })
+  })
+})

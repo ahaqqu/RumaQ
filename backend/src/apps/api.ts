@@ -19,6 +19,7 @@ import {
   pipe,
   regex,
   transform,
+  boolean,
 } from 'valibot'
 import {
   SCRAPE_STORE_SLUGS,
@@ -71,6 +72,19 @@ import {
   undoReviewDecision,
   exportReviewDecisions,
 } from '../lib/match-review.js'
+import {
+  AuditNotFoundError,
+  DuplicateNameError,
+  InvalidNameError,
+  InvalidReasonError,
+  ProductNotFoundError,
+  SimilarNameError,
+  StaleProductError,
+  StaleRevertError,
+  getProductIdentity,
+  renameProduct,
+  revertProductRename,
+} from '../lib/canonical-products.js'
 import { requireAdmin } from '../lib/admin.js'
 import { groundPlanItem } from '../lib/grounding.js'
 import { escapeLike } from '../lib/sql.js'
@@ -187,6 +201,34 @@ function cacheHitRate(cachedTokens: number | null, inputTokens: number): number 
 // change nothing downstream (docs/294-design-pm.md §4).
 const reviewDecisionSchema = object({
   decision: picklist(['approved', 'rejected']),
+})
+
+// Admin canonical product rename (#423). The lib trims/collapses the name; the
+// wire schema only enforces the contract's rawText(500) ceiling and keeps
+// control characters out (the lib rejects them too, for direct callers).
+const NO_CONTROL_CHARS = /^[^\p{Cc}]*$/u
+
+const productRenameSchema = object({
+  canonicalName: pipe(string(), minLength(1), maxLength(500)),
+  expectedMetadataVersion: pipe(number(), integer(), minValue(0)),
+  reason: optional(
+    pipe(
+      string(),
+      maxLength(200),
+      regex(NO_CONTROL_CHARS, 'Reason must not contain control characters.')
+    )
+  ),
+  acknowledgeWarnings: optional(boolean()),
+})
+
+const productRevertSchema = object({
+  reason: optional(
+    pipe(
+      string(),
+      maxLength(200),
+      regex(NO_CONTROL_CHARS, 'Reason must not contain control characters.')
+    )
+  ),
 })
 
 const apiApp = new Hono<Env>()
@@ -584,6 +626,12 @@ apiApp.use('/api/admin/scrape/commands/:id/events', propsAuthMiddleware)
 apiApp.use('/api/admin/review', propsAuthMiddleware)
 apiApp.use('/api/admin/review/export', propsAuthMiddleware)
 apiApp.use('/api/admin/review/:id/decision', propsAuthMiddleware)
+// Canonical product admin (#423): the same per-path discipline as the review
+// queue — the identity read, the rename, and the revert each get a line
+// (#292: a use-line does not cover subpaths).
+apiApp.use('/api/admin/products/:productKey', propsAuthMiddleware)
+apiApp.use('/api/admin/products/:productKey/rename', propsAuthMiddleware)
+apiApp.use('/api/admin/products/:productKey/audit/:auditId/revert', propsAuthMiddleware)
 apiApp.use('/api/ai-key/*', propsAuthMiddleware)
 
 apiApp.get(
@@ -3256,6 +3304,308 @@ apiApp.delete(
     const res = c.json({ item })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
+  }
+)
+
+// ---------------------------------------------------------------------------
+// Admin canonical product rename/revert (#423, pipeline contract v2). The
+// backend owns price_products.name, so a rename is a label fix: product_key
+// and UUID never move, the old wording is approved where a candidate already
+// exists, and the canonical index version advances exactly once. The settled
+// decisions (status stays provisional, latest rename only, hard duplicate 409,
+// acknowledgeable similar warnings) live in lib/canonical-products.ts — these
+// handlers stay HTTP-only.
+// ---------------------------------------------------------------------------
+const PRODUCT_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    productKey: { type: 'string' },
+    name: { type: 'string' },
+    brand: { type: ['string', 'null'] },
+    unit: { type: ['string', 'null'] },
+    status: { type: 'string', enum: ['canonical', 'provisional', 'needs_review'] },
+    metadataVersion: { type: 'integer', minimum: 1 },
+    firstSeenAt: { type: ['string', 'null'] },
+    lastSeenAt: { type: ['string', 'null'] },
+    updatedAt: { type: ['string', 'null'] },
+  },
+}
+
+const PRODUCT_ALIAS_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    name: { type: 'string' },
+    storeSlug: { type: 'string' },
+    status: { type: 'string', enum: ['candidate', 'approved'] },
+    source: { type: 'string', enum: ['ocr', 'catalog', 'admin'] },
+    firstSeenAt: { type: 'string' },
+    lastSeenAt: { type: 'string' },
+  },
+}
+
+const PRODUCT_AUDIT_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    action: { type: 'string', enum: ['rename', 'revert'] },
+    oldName: { type: 'string' },
+    newName: { type: 'string' },
+    reason: { type: ['string', 'null'] },
+    actorUserId: { type: 'string' },
+    metadataVersionBefore: { type: 'integer' },
+    metadataVersionAfter: { type: 'integer' },
+    revertsAuditId: { type: ['string', 'null'] },
+    createdAt: { type: 'string' },
+  },
+}
+
+const PRODUCT_IDENTITY_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    product: PRODUCT_SCHEMA,
+    aliases: { type: 'array', items: PRODUCT_ALIAS_SCHEMA },
+    stats: {
+      type: 'object',
+      properties: {
+        observations: { type: 'integer' },
+        stores: { type: 'integer' },
+      },
+    },
+    audit: { type: 'array', items: PRODUCT_AUDIT_SCHEMA },
+  },
+}
+
+const SIMILAR_NAME_WARNING_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    productKey: { type: 'string' },
+    name: { type: 'string' },
+    similarity: { type: 'number', minimum: 0, maximum: 1 },
+  },
+}
+
+const RENAME_CONFLICT_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    productKey: { type: 'string' },
+    name: { type: 'string' },
+    source: { type: 'string', enum: ['product', 'alias'] },
+  },
+}
+
+const PRODUCT_MUTATION_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    product: PRODUCT_SCHEMA,
+    warnings: { type: 'array', items: SIMILAR_NAME_WARNING_SCHEMA },
+    audit: { type: 'array', items: PRODUCT_AUDIT_SCHEMA },
+    indexVersion: { type: 'integer', minimum: 0 },
+  },
+}
+
+// 409 body for rename: exactly one of conflicts/warnings/current is present,
+// keyed by `error` ('duplicate_name' | 'similar_name' | 'stale_product').
+const RENAME_CONFLICT_RESPONSE_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    error: { type: 'string' },
+    conflicts: { type: 'array', items: RENAME_CONFLICT_SCHEMA },
+    warnings: { type: 'array', items: SIMILAR_NAME_WARNING_SCHEMA },
+    current: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        metadataVersion: { type: 'integer' },
+      },
+    },
+  },
+}
+
+const PRODUCT_KEY_PARAMETER = {
+  in: 'path',
+  name: 'productKey',
+  required: true,
+  schema: { type: 'string', maxLength: 300 },
+} as const
+
+apiApp.get(
+  '/api/admin/products/:productKey',
+  describeRoute({
+    description:
+      'Canonical product identity: the product row, every alias (candidate and approved), observation stats, and the last 10 audit rows newest first (admin-only).',
+    security: [{ cookieAuth: [] }],
+    parameters: [PRODUCT_KEY_PARAMETER],
+    responses: {
+      200: {
+        description: 'OK',
+        content: { 'application/json': { schema: PRODUCT_IDENTITY_SCHEMA } },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      404: { description: 'Unknown product' },
+    },
+  }),
+  requireAdmin,
+  async (c) => {
+    const identity = await getProductIdentity(c.env.DB, c.req.param('productKey'))
+    if (!identity) return c.json({ error: 'Product not found' }, 404)
+    const res = c.json(identity)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+apiApp.post(
+  '/api/admin/products/:productKey/rename',
+  describeRoute({
+    description:
+      'Rename the canonical product (admin-only). 409 duplicate_name when another product or approved alias already carries the name; 409 similar_name (overridable with acknowledgeWarnings) for near-duplicates; 409 stale_product when expectedMetadataVersion no longer matches. status stays provisional and the canonical index version advances once.',
+    security: [{ cookieAuth: [] }],
+    parameters: [PRODUCT_KEY_PARAMETER],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['canonicalName', 'expectedMetadataVersion'],
+            properties: {
+              canonicalName: { type: 'string', minLength: 1, maxLength: 500 },
+              expectedMetadataVersion: { type: 'integer', minimum: 0 },
+              reason: { type: 'string', maxLength: 200 },
+              acknowledgeWarnings: { type: 'boolean' },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'OK',
+        content: { 'application/json': { schema: PRODUCT_MUTATION_SCHEMA } },
+      },
+      400: {
+        description:
+          'Validation error: invalid body, or a blank/oversize/control-character name or reason',
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      404: { description: 'Unknown product' },
+      409: {
+        description:
+          'duplicate_name (conflicts[]), similar_name (warnings[]), or stale_product (current{name, metadataVersion})',
+        content: { 'application/json': { schema: RENAME_CONFLICT_RESPONSE_SCHEMA } },
+      },
+    },
+  }),
+  requireAdmin,
+  sValidator('json', productRenameSchema),
+  async (c) => {
+    const body = c.req.valid('json')
+    try {
+      const result = await renameProduct(c.env.DB, {
+        productKey: c.req.param('productKey'),
+        canonicalName: body.canonicalName,
+        expectedMetadataVersion: body.expectedMetadataVersion,
+        actorUserId: c.get('userId'),
+        reason: body.reason ?? null,
+        acknowledgeWarnings: body.acknowledgeWarnings ?? false,
+      })
+      const res = c.json(result)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (error) {
+      if (error instanceof ProductNotFoundError) {
+        return c.json({ error: 'Product not found' }, 404)
+      }
+      if (error instanceof DuplicateNameError) {
+        return c.json({ error: 'duplicate_name', conflicts: error.conflicts }, 409)
+      }
+      if (error instanceof SimilarNameError) {
+        return c.json({ error: 'similar_name', warnings: error.warnings }, 409)
+      }
+      if (error instanceof StaleProductError) {
+        return c.json({ error: 'stale_product', current: error.current }, 409)
+      }
+      if (error instanceof InvalidNameError || error instanceof InvalidReasonError) {
+        return c.json({ error: error.message }, 400)
+      }
+      throw error
+    }
+  }
+)
+
+apiApp.post(
+  '/api/admin/products/:productKey/audit/:auditId/revert',
+  describeRoute({
+    description:
+      'Append a compensating revert for the LATEST rename of this product (admin-only): restores the previous canonical name, writes a revert audit row (old/new swapped, revertsAuditId set), and bumps the canonical index version once. An older rename or a second compensation is 409 stale_revert.',
+    security: [{ cookieAuth: [] }],
+    parameters: [
+      PRODUCT_KEY_PARAMETER,
+      {
+        in: 'path',
+        name: 'auditId',
+        required: true,
+        schema: { type: 'string', maxLength: 100 },
+      },
+    ],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            properties: { reason: { type: 'string', maxLength: 200 } },
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'OK',
+        content: { 'application/json': { schema: PRODUCT_MUTATION_SCHEMA } },
+      },
+      400: { description: 'Validation error (invalid body or reason)' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      404: { description: 'Unknown product or audit entry' },
+      409: {
+        description:
+          'stale_revert: the audit row is not the latest rename, or it was already compensated',
+        content: { 'application/json': { schema: { type: 'object' } } },
+      },
+    },
+  }),
+  requireAdmin,
+  sValidator('json', productRevertSchema),
+  async (c) => {
+    try {
+      const result = await revertProductRename(c.env.DB, {
+        productKey: c.req.param('productKey'),
+        auditId: c.req.param('auditId'),
+        actorUserId: c.get('userId'),
+        reason: c.req.valid('json').reason ?? null,
+      })
+      const res = c.json(result)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (error) {
+      if (error instanceof ProductNotFoundError) {
+        return c.json({ error: 'Product not found' }, 404)
+      }
+      if (error instanceof AuditNotFoundError) {
+        return c.json({ error: 'Audit entry not found' }, 404)
+      }
+      if (error instanceof StaleRevertError) {
+        return c.json({ error: 'stale_revert' }, 409)
+      }
+      if (error instanceof InvalidReasonError) {
+        return c.json({ error: error.message }, 400)
+      }
+      throw error
+    }
   }
 )
 

@@ -1953,6 +1953,587 @@
         ]
       }
     },
+    "/api/admin/products/{productKey}": {
+      "get": {
+        "operationId": "getApiAdminProductsByProductKey",
+        "description": "Canonical product identity: the product row, every alias (candidate and approved), observation stats, and the last 10 audit rows newest first (admin-only).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "productKey",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "product": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "productKey": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "brand": {
+                          "type": ["string", "null"]
+                        },
+                        "unit": {
+                          "type": ["string", "null"]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["canonical", "provisional", "needs_review"]
+                        },
+                        "metadataVersion": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "firstSeenAt": {
+                          "type": ["string", "null"]
+                        },
+                        "lastSeenAt": {
+                          "type": ["string", "null"]
+                        },
+                        "updatedAt": {
+                          "type": ["string", "null"]
+                        }
+                      }
+                    },
+                    "aliases": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "storeSlug": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": ["candidate", "approved"]
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": ["ocr", "catalog", "admin"]
+                          },
+                          "firstSeenAt": {
+                            "type": "string"
+                          },
+                          "lastSeenAt": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "stats": {
+                      "type": "object",
+                      "properties": {
+                        "observations": {
+                          "type": "integer"
+                        },
+                        "stores": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "audit": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string",
+                            "enum": ["rename", "revert"]
+                          },
+                          "oldName": {
+                            "type": "string"
+                          },
+                          "newName": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": ["string", "null"]
+                          },
+                          "actorUserId": {
+                            "type": "string"
+                          },
+                          "metadataVersionBefore": {
+                            "type": "integer"
+                          },
+                          "metadataVersionAfter": {
+                            "type": "integer"
+                          },
+                          "revertsAuditId": {
+                            "type": ["string", "null"]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Unknown product"
+          }
+        }
+      }
+    },
+    "/api/admin/products/{productKey}/rename": {
+      "post": {
+        "operationId": "postApiAdminProductsByProductKeyRename",
+        "description": "Rename the canonical product (admin-only). 409 duplicate_name when another product or approved alias already carries the name; 409 similar_name (overridable with acknowledgeWarnings) for near-duplicates; 409 stale_product when expectedMetadataVersion no longer matches. status stays provisional and the canonical index version advances once.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "productKey",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["canonicalName", "expectedMetadataVersion"],
+                "properties": {
+                  "canonicalName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "expectedMetadataVersion": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "acknowledgeWarnings": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "product": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "productKey": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "brand": {
+                          "type": ["string", "null"]
+                        },
+                        "unit": {
+                          "type": ["string", "null"]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["canonical", "provisional", "needs_review"]
+                        },
+                        "metadataVersion": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "firstSeenAt": {
+                          "type": ["string", "null"]
+                        },
+                        "lastSeenAt": {
+                          "type": ["string", "null"]
+                        },
+                        "updatedAt": {
+                          "type": ["string", "null"]
+                        }
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "productKey": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "similarity": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          }
+                        }
+                      }
+                    },
+                    "audit": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string",
+                            "enum": ["rename", "revert"]
+                          },
+                          "oldName": {
+                            "type": "string"
+                          },
+                          "newName": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": ["string", "null"]
+                          },
+                          "actorUserId": {
+                            "type": "string"
+                          },
+                          "metadataVersionBefore": {
+                            "type": "integer"
+                          },
+                          "metadataVersionAfter": {
+                            "type": "integer"
+                          },
+                          "revertsAuditId": {
+                            "type": ["string", "null"]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "indexVersion": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error: invalid body, or a blank/oversize/control-character name or reason"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Unknown product"
+          },
+          "409": {
+            "description": "duplicate_name (conflicts[]), similar_name (warnings[]), or stale_product (current{name, metadataVersion})",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "conflicts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "productKey": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": ["product", "alias"]
+                          }
+                        }
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "productKey": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "similarity": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          }
+                        }
+                      }
+                    },
+                    "current": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "metadataVersion": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/products/{productKey}/audit/{auditId}/revert": {
+      "post": {
+        "operationId": "postApiAdminProductsByProductKeyAuditByAuditIdRevert",
+        "description": "Append a compensating revert for the LATEST rename of this product (admin-only): restores the previous canonical name, writes a revert audit row (old/new swapped, revertsAuditId set), and bumps the canonical index version once. An older rename or a second compensation is 409 stale_revert.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "productKey",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            }
+          },
+          {
+            "in": "path",
+            "name": "auditId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "product": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "productKey": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "brand": {
+                          "type": ["string", "null"]
+                        },
+                        "unit": {
+                          "type": ["string", "null"]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["canonical", "provisional", "needs_review"]
+                        },
+                        "metadataVersion": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "firstSeenAt": {
+                          "type": ["string", "null"]
+                        },
+                        "lastSeenAt": {
+                          "type": ["string", "null"]
+                        },
+                        "updatedAt": {
+                          "type": ["string", "null"]
+                        }
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "productKey": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "similarity": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          }
+                        }
+                      }
+                    },
+                    "audit": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string",
+                            "enum": ["rename", "revert"]
+                          },
+                          "oldName": {
+                            "type": "string"
+                          },
+                          "newName": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": ["string", "null"]
+                          },
+                          "actorUserId": {
+                            "type": "string"
+                          },
+                          "metadataVersionBefore": {
+                            "type": "integer"
+                          },
+                          "metadataVersionAfter": {
+                            "type": "integer"
+                          },
+                          "revertsAuditId": {
+                            "type": ["string", "null"]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "indexVersion": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (invalid body or reason)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Unknown product or audit entry"
+          },
+          "409": {
+            "description": "stale_revert: the audit row is not the latest rename, or it was already compensated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/prices": {
       "get": {
         "operationId": "getApiPrices",
