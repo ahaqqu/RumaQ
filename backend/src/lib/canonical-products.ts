@@ -24,8 +24,8 @@
 //   ships. When that endpoint lands, it MUST bump the canonical index version
 //   with the same gated `indexBumpStatement` helper used below — a rename or
 //   alias change that does not move the version is invisible to the pipeline.
-//   The helper is intentionally unexported until a second caller exists; export
-//   it then, do not copy the SQL.
+//   The helper is exported (decision 4) so that endpoint imports it instead of
+//   copying the SQL.
 //
 // Every mutation is ONE `db.batch` call (never chunked: a multi-chunk batch is
 // not atomic) and every statement after the guarded product UPDATE is gated on
@@ -492,12 +492,12 @@ async function findSimilarNames(
  * matched nothing, the audit row does not exist and the version does not move,
  * so a stale request writes nothing at all.
  *
- * Not exported: #423 ships no alias-approval endpoint, so there is no second
- * caller yet. The future alias-approval endpoint must export and reuse this
- * helper — never re-inline the SQL, or a write can land without the pipeline
- * noticing.
+ * Exported per #423 decision 4: the future alias-approval endpoint imports this
+ * helper instead of re-inlining the SQL, or an approved alias can land without
+ * the pipeline ever noticing. Nothing else calls it yet (#423 ships no alias
+ * endpoint), and both writers below already share it.
  */
-function indexBumpStatement(db: D1Database, auditId: string): D1PreparedStatement {
+export function indexBumpStatement(db: D1Database, auditId: string): D1PreparedStatement {
   return db
     .prepare(
       `UPDATE canonical_index_state
