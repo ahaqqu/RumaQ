@@ -3,6 +3,7 @@ import { render, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { Calendar } from './Calendar.jsx'
+import { nextBirthday } from '../lib/household-date.js'
 
 vi.mock('../lib/queries/me.js', () => ({
   useMe: vi.fn(),
@@ -308,12 +309,13 @@ describe('Calendar page', () => {
       (input) => input.getAttribute('aria-label') === 'calendar.titleLabel'
     )
     expect(titleInput.value).toBe('calendar.birthdayTitle')
-    // Adik's stored birth_date (2022-06-15) prefills the NEXT June 15 only in
-    // a June view; in other months the date stays whatever the user had.
+    // Adik's stored birth_date (2022-06-15) prefills the NEXT occurrence on
+    // or after today — in every month, not just June. The expected value
+    // comes from the same lib math the component calls (the clamp/rollover
+    // cases are pinned with fixed inputs in household-date.test.js), so this
+    // assertion never needs a month-conditional skip.
     const dateInput = container.querySelector('input[type="date"]')
-    if (month.month === 5) {
-      expect(dateInput.value).toBe(`${month.year}-06-15`)
-    }
+    expect(dateInput.value).toBe(nextBirthday(MEMBERS.members[2].birth_date, month.today))
   })
 
   it('edits an event through the inline form', async () => {
@@ -339,7 +341,85 @@ describe('Calendar page', () => {
     const [{ id, payload }] = update.mutate.mock.calls[0]
     expect(id).toBe('e1')
     expect(payload.title).toBe('Kontrol dokter — lab')
-    expect(payload.visibility).toBe('all')
+    // Untouched fields ride as ABSENT — the backend reads that as "leave as
+    // stored" (the lib's re-affirmation branch), which is what lets a
+    // depleted members event take a title-only edit.
+    expect(payload.visibility).toBeUndefined()
+  })
+
+  it('sends member_ids only when the audience changed', async () => {
+    const update = mutation()
+    vi.mocked(useUpdateCalendarEvent).mockReturnValue(update)
+    useCalendar.mockImplementation(() => ({
+      data: { entries: [{ ...MEMBERS_EVENT, date: month.iso(12) }] },
+      isLoading: false,
+    }))
+    const { container } = renderCalendar()
+    fireEvent.click(container.querySelector(`[data-testid="day-${month.iso(12)}"]`))
+    fireEvent.click(findButton(container, 'calendar.edit'))
+    const editFields = container.querySelector('[data-testid="event-edit-fields"]')
+    const editTitle = editFields.querySelector('input')
+    fireEvent.change(editTitle, { target: { value: 'Surprise untuk ayah — pindah hari' } })
+    fireEvent.click(
+      [...editFields.querySelectorAll('button')].find((b) =>
+        b.textContent.includes('calendar.saveEdit')
+      )
+    )
+    await waitFor(() => expect(update.mutate).toHaveBeenCalled())
+    const [{ payload }] = update.mutate.mock.calls[0]
+    expect(payload.title).toBe('Surprise untuk ayah — pindah hari')
+    expect(payload.member_ids).toBeUndefined()
+    expect(payload.visibility).toBeUndefined()
+  })
+
+  it('a depleted members event takes a title-only edit without re-affirming the empty audience', async () => {
+    const update = mutation()
+    vi.mocked(useUpdateCalendarEvent).mockReturnValue(update)
+    useCalendar.mockImplementation(() => ({
+      data: { entries: [{ ...MEMBERS_EVENT, member_ids: [], date: month.iso(12) }] },
+      isLoading: false,
+    }))
+    const { container } = renderCalendar()
+    fireEvent.click(container.querySelector(`[data-testid="day-${month.iso(12)}"]`))
+    fireEvent.click(findButton(container, 'calendar.edit'))
+    const editFields = container.querySelector('[data-testid="event-edit-fields"]')
+    const editTitle = editFields.querySelector('input')
+    fireEvent.change(editTitle, { target: { value: 'Surprise — catatan saja' } })
+    fireEvent.click(
+      [...editFields.querySelectorAll('button')].find((b) =>
+        b.textContent.includes('calendar.saveEdit')
+      )
+    )
+    await waitFor(() => expect(update.mutate).toHaveBeenCalled())
+    const [{ payload }] = update.mutate.mock.calls[0]
+    // member_ids: [] or an explicit visibility 'members' is exactly the
+    // depleted re-affirmation the backend answers with a 400 — neither rides.
+    expect(payload).not.toHaveProperty('member_ids')
+    expect(payload).not.toHaveProperty('visibility')
+  })
+
+  it('rides the replacement audience through the PATCH when the chips move', async () => {
+    const update = mutation()
+    vi.mocked(useUpdateCalendarEvent).mockReturnValue(update)
+    useCalendar.mockImplementation(() => ({
+      data: { entries: [{ ...MEMBERS_EVENT, date: month.iso(12) }] },
+      isLoading: false,
+    }))
+    const { container } = renderCalendar()
+    fireEvent.click(container.querySelector(`[data-testid="day-${month.iso(12)}"]`))
+    fireEvent.click(findButton(container, 'calendar.edit'))
+    const editFields = container.querySelector('[data-testid="event-edit-fields"]')
+    fireEvent.click(findChip(editFields, 'Ayah'))
+    fireEvent.click(
+      [...editFields.querySelectorAll('button')].find((b) =>
+        b.textContent.includes('calendar.saveEdit')
+      )
+    )
+    await waitFor(() => expect(update.mutate).toHaveBeenCalled())
+    const [{ payload }] = update.mutate.mock.calls[0]
+    expect(payload.member_ids).toEqual(['m-anak', 'm-ayah'])
+    // Visibility was not touched, so it stays absent.
+    expect(payload.visibility).toBeUndefined()
   })
 
   it('deletes an event after confirmation', () => {

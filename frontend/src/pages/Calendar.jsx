@@ -24,6 +24,7 @@ import {
   IconKey,
 } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
+import { isoOf, nextBirthday, parseISO, todayISO } from '../lib/household-date.js'
 
 // Household calendar (ahaqqu/RumaQ#430): one shared family month view over the
 // union endpoint — stored events (kind: 'event', CRUD on /api/calendar/events)
@@ -50,20 +51,10 @@ function calendarErrorKey(error) {
   return 'calendar.errorGeneric'
 }
 
-// The household calendar day as ISO YYYY-MM-DD, pinned at UTC+7 (WIB) — the
-// frontend MIRROR of the backend's householdIsoDate (lib/document-expiry.ts,
-// #426; duplicated with this comment tying the two together — the Tasks page
-// carries the same mirror).
-function todayISO() {
-  return new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)
-}
-
-function parseISO(iso) {
-  return new Date(`${iso}T00:00:00Z`)
-}
-
-function isoOf(date) {
-  return date.toISOString().slice(0, 10)
+// Set equality for audience id lists (both are unique — the draft is built
+// from chip toggles, the stored list from a PK'd table): did the chips move?
+function sameMembers(a, b) {
+  return a.length === b.length && a.every((id) => b.includes(id))
 }
 
 /** The visible month's cell grid: Monday-start weeks (the household calendar
@@ -87,21 +78,6 @@ function monthCells(year, month) {
 function monthWindow(year, month) {
   const last = new Date(Date.UTC(year, month + 1, 0))
   return { from: isoOf(new Date(Date.UTC(year, month, 1))), to: isoOf(last) }
-}
-
-/** Next occurrence of the member's birth month/day on or after `today` (the
- * birthday preset). Feb 29 clamps to Feb 28 in non-leap years — the same
- * clamping idea as the tasks domain's monthly roll-forward. */
-function nextBirthday(birthDate, today) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return null
-  const [, month, day] = birthDate.split('-').map(Number)
-  const baseYear = Number(today.slice(0, 4))
-  for (let year = baseYear; year <= baseYear + 1; year++) {
-    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
-    const iso = `${year}-${String(month).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`
-    if (iso >= today) return iso
-  }
-  return null
 }
 
 const PRESETS = ['birthday', 'school', 'mudik', 'tax']
@@ -506,10 +482,21 @@ export function Calendar() {
     })
   }
 
-  const saveEdit = () => {
+  // The PATCH carries visibility and member_ids only when the edit actually
+  // TOUCHED them — absent fields mean "leave as stored" (the lib's
+  // re-affirmation branch). A depleted members event (every audience row
+  // cascaded away from member removal) then still takes a title/date/time
+  // edit: re-affirming it as-is — visibility 'members' with an empty
+  // audience — is exactly what the backend refuses (ahaqqu/RumaQ#468 review
+  // C1-A2).
+  const saveEdit = (entry) => {
     if (!editDraft) return
     const title = editDraft.title.trim()
     if (!title || !editDraft.date) return
+    const visibilityChanged = editDraft.visibility !== entry.visibility
+    const audienceChanged =
+      editDraft.visibility === 'members' &&
+      !sameMembers(editDraft.member_ids, entry.member_ids ?? [])
     updateEvent.mutate(
       {
         id: editingEventId,
@@ -517,8 +504,8 @@ export function Calendar() {
           title,
           date: editDraft.date,
           time: editDraft.time || null,
-          visibility: editDraft.visibility,
-          ...(editDraft.visibility === 'members' ? { member_ids: editDraft.member_ids } : {}),
+          ...(visibilityChanged ? { visibility: editDraft.visibility } : {}),
+          ...(audienceChanged ? { member_ids: editDraft.member_ids } : {}),
         },
       },
       {
@@ -585,7 +572,7 @@ export function Calendar() {
                     : openEdit(entry)
                 }
                 onDelete={() => remove(entry)}
-                onSaveEdit={saveEdit}
+                onSaveEdit={() => saveEdit(entry)}
                 editDraft={editDraft}
                 setEditDraft={setEditDraft}
                 editPending={updateEvent.isPending}
