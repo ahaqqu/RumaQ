@@ -243,6 +243,8 @@ const requireIngestSecret: MiddlewareHandler<Env> = async (c, next) => {
   // (#425, #448) were undiagnosable after the fact because the Worker never
   // logged WHY a call was rejected. Route + candidate count separate the
   // surfaces; token LENGTH only — the token's content is never logged.
+  // tokenLength is UTF-16 code units (JS .length) while the compare path
+  // hashes UTF-8 bytes — identical for ASCII secrets; don't "fix" either side.
   const logRejection = (
     evt: 'ingest_401' | 'ingest_503',
     tokenLength: number,
