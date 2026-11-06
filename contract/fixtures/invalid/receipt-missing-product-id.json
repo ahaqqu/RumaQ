@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 2,
+  "scrapedAt": "2026-11-05T23:00:05Z",
+  "indexVersion": 42,
+  "accepted": 1,
+  "skipped": 0,
+  "productsCreated": 1,
+  "observationsUpserted": 1,
+  "products": [
+    {
+      "productKey": "filma-minyak-goreng-pch-2l--filma--2-l",
+      "status": "created"
+    }
+  ]
+}

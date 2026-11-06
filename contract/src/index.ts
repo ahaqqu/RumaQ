@@ -14,8 +14,10 @@ import {
   pipe,
   record,
   regex,
+  safeParse,
   strictObject,
   string,
+  union,
   type InferOutput,
 } from 'valibot'
 
@@ -30,6 +32,12 @@ import {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 const isoDate = () => pipe(string(), regex(DATE_RE, 'Expected a YYYY-MM-DD date.'))
+
+const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
+const isoTimestamp = () => pipe(string(), regex(TIMESTAMP_RE, 'Expected an ISO 8601 timestamp.'))
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const uuid = () => pipe(string(), regex(UUID_RE, 'Expected a UUID.'))
 
 // JSON payloads from the scraper carry explicit nulls for absent values, so
 // non-required fields are nullish (null | undefined), not just optional.
@@ -108,6 +116,170 @@ export const ingestPayloadSchema = strictObject({
 export type IngestPayload = InferOutput<typeof ingestPayloadSchema>
 export type IngestStore = InferOutput<typeof ingestStoreSchema>
 export type IngestItem = InferOutput<typeof ingestItemSchema>
+
+// ---------------------------------------------------------------------------
+// Pipeline contract v2 — canonical ownership boundary.
+//
+// The pipeline sends raw observations; RumaQ owns the canonical product,
+// status, and approved aliases. This section is additive until the backend
+// and scraper switch to it together; the v1 schemas above remain the live
+// ingest shape during that transition.
+// ---------------------------------------------------------------------------
+
+export const PIPELINE_CONTRACT_VERSION = 2 as const
+
+const rawText = (max: number) => pipe(string(), minLength(1), maxLength(max))
+
+export const ingestItemV2Schema = strictObject({
+  productKey: rawText(300),
+  rawName: rawText(500),
+  rawBrand: nullish(pipe(string(), maxLength(200))),
+  rawUnit: nullish(pipe(string(), maxLength(200))),
+  category: nullish(pipe(string(), maxLength(50))),
+  taxoVersion: nullish(pipe(string(), maxLength(50))),
+  storeSlug: rawText(100),
+  price: pipe(number(), integer(), minValue(0)),
+  originalPrice: nullish(pipe(number(), integer(), minValue(0))),
+  effectiveUnitPrice: nullish(number()),
+  unitQty: nullish(pipe(number(), gtValue(0))),
+  unitQtyUnit: nullish(picklist(['g', 'ml', 'pcs'])),
+  unitPrice: nullish(pipe(number(), integer(), minValue(0))),
+  promoType: nullish(pipe(string(), maxLength(100))),
+  promoLabel: nullish(pipe(string(), maxLength(200))),
+  validFrom: nullish(isoDate()),
+  validUntil: nullish(isoDate()),
+  observedDate: nullish(isoDate()),
+  matchMethod: nullish(picklist(['exact', 'embedding', 'ai', 'solo'])),
+  matchConfidence: pipe(number(), minValue(0), maxValue(1)),
+  brochureUrl: nullish(pipe(string(), maxLength(500))),
+  sourceUrl: nullish(pipe(string(), maxLength(500))),
+  page: nullish(pipe(number(), integer(), minValue(0))),
+  ocrModel: nullish(pipe(string(), maxLength(100))),
+})
+
+export const ingestPayloadV2Schema = strictObject({
+  schemaVersion: literal(PIPELINE_CONTRACT_VERSION),
+  scrapedAt: isoTimestamp(),
+  stores: array(ingestStoreSchema),
+  items: array(ingestItemV2Schema),
+})
+
+export type IngestItemV2 = InferOutput<typeof ingestItemV2Schema>
+export type IngestPayloadV2 = InferOutput<typeof ingestPayloadV2Schema>
+
+export const productSizeSchema = strictObject({
+  quantity: nullish(pipe(number(), gtValue(0))),
+  unit: nullish(picklist(['g', 'ml', 'pcs'])),
+  packCount: nullish(pipe(number(), integer(), minValue(1))),
+  totalQuantity: nullish(pipe(number(), gtValue(0))),
+  packaging: nullish(pipe(string(), maxLength(100))),
+  quantityMin: nullish(pipe(number(), gtValue(0))),
+  quantityMax: nullish(pipe(number(), gtValue(0))),
+})
+
+export const approvedAliasSchema = strictObject({
+  name: rawText(500),
+  storeSlug: rawText(100),
+  firstSeenAt: isoTimestamp(),
+  lastSeenAt: isoTimestamp(),
+  source: picklist(['ocr', 'catalog', 'admin']),
+})
+
+export const canonicalProductSchema = strictObject({
+  id: uuid(),
+  productKey: rawText(300),
+  canonicalName: rawText(500),
+  brand: nullish(pipe(string(), maxLength(200))),
+  productType: nullish(pipe(string(), maxLength(100))),
+  variant: nullish(pipe(string(), maxLength(200))),
+  size: nullish(productSizeSchema),
+  description: nullish(pipe(string(), maxLength(1000))),
+  category: nullish(pipe(string(), maxLength(50))),
+  categoryVersion: nullish(pipe(string(), maxLength(50))),
+  status: picklist(['canonical', 'provisional', 'needs_review']),
+  metadataVersion: pipe(number(), integer(), minValue(1)),
+  firstSeenAt: isoTimestamp(),
+  lastSeenAt: isoTimestamp(),
+  updatedAt: isoTimestamp(),
+  aliases: array(approvedAliasSchema),
+})
+
+export const canonicalIndexSchema = strictObject({
+  schemaVersion: literal(PIPELINE_CONTRACT_VERSION),
+  indexVersion: pipe(number(), integer(), minValue(0)),
+  generatedAt: isoTimestamp(),
+  products: array(canonicalProductSchema),
+})
+
+export const ingestReceiptProductSchema = strictObject({
+  productKey: rawText(300),
+  productId: uuid(),
+  status: picklist(['created', 'existing']),
+})
+
+export const ingestReceiptSchema = strictObject({
+  schemaVersion: literal(PIPELINE_CONTRACT_VERSION),
+  scrapedAt: isoTimestamp(),
+  indexVersion: pipe(number(), integer(), minValue(0)),
+  accepted: pipe(number(), integer(), minValue(0)),
+  skipped: literal(0),
+  productsCreated: pipe(number(), integer(), minValue(0)),
+  observationsUpserted: pipe(number(), integer(), minValue(0)),
+  products: array(ingestReceiptProductSchema),
+})
+
+export const apiErrorIssueSchema = strictObject({
+  path: array(union([string(), number()])),
+  message: pipe(string(), minLength(1)),
+})
+
+export const apiErrorSchema = strictObject({
+  error: pipe(string(), minLength(1)),
+  issues: nullish(array(apiErrorIssueSchema)),
+})
+
+export type ProductSize = InferOutput<typeof productSizeSchema>
+export type ApprovedAlias = InferOutput<typeof approvedAliasSchema>
+export type CanonicalProduct = InferOutput<typeof canonicalProductSchema>
+export type CanonicalIndex = InferOutput<typeof canonicalIndexSchema>
+export type IngestReceiptProduct = InferOutput<typeof ingestReceiptProductSchema>
+export type IngestReceipt = InferOutput<typeof ingestReceiptSchema>
+export type ApiErrorIssue = InferOutput<typeof apiErrorIssueSchema>
+export type ApiError = InferOutput<typeof apiErrorSchema>
+
+/**
+ * Semantic validation shared by both sides of the v2 boundary: the schema
+ * checks shape, and this helper checks that every item references a store
+ * declared in the payload. The backend and the scraper both call it before
+ * writing or sending, so an undeclared store cannot be silently skipped.
+ */
+export function validateIngestV2(
+  input: unknown
+): { success: true; output: IngestPayloadV2 } | { success: false; issues: ApiErrorIssue[] } {
+  const parsed = safeParse(ingestPayloadV2Schema, input)
+  if (!parsed.success) {
+    return {
+      success: false,
+      issues: parsed.issues.map((issue) => ({
+        path: (issue.path ?? []).map((item) =>
+          typeof item.key === 'number' ? item.key : String(item.key)
+        ),
+        message: issue.message,
+      })),
+    }
+  }
+  const stores = new Set(parsed.output.stores.map((store) => store.slug))
+  const issues: ApiErrorIssue[] = []
+  parsed.output.items.forEach((item, index) => {
+    if (!stores.has(item.storeSlug)) {
+      issues.push({
+        path: ['items', index, 'storeSlug'],
+        message: `Store '${item.storeSlug}' is not declared in stores.`,
+      })
+    }
+  })
+  return issues.length > 0 ? { success: false, issues } : { success: true, output: parsed.output }
+}
 
 // Issue #362: one per-item reject the report carries — the monitor's direct
 // answer to "which items, why" without ssh (the log keeps the full audit
