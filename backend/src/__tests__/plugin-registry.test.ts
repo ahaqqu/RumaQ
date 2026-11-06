@@ -11,6 +11,7 @@ import {
   validatePluginManifests,
   type ManifestViolation,
 } from '../plugins/manifests.js'
+import { CORE_GATEWAY_PREFIXES } from '../plugins/core-prefixes.js'
 import { pluginRegistry, matchPlugin } from '../plugins/registry.js'
 import type { PluginManifest, PortId } from '../plugins/types.js'
 
@@ -65,6 +66,27 @@ describe('plugin manifest validation (#435)', () => {
     expect(
       violationsOf(baseManifest(), baseManifest({ id: 'tester2', routePrefix: '/api/tester' }))
     ).toContain('manifest tester2: duplicate routePrefix')
+  })
+
+  it('routePrefixes never claim a core-reserved gateway prefix (#437 S1-A2)', () => {
+    // The gateway dispatches the core domains ahead of matchPlugin — a
+    // manifest claiming one of their prefixes would be silently shadowed
+    // (its routes 404 into the core app forever). The exact prefix, and any
+    // subpath of it, are build-time violations; a boundary-neighbor
+    // ('/api/plugins-x') is not a collision and stays legal.
+    expect(violationsOf(baseManifest({ id: 'catalog', routePrefix: '/api/plugins' }))).toContain(
+      'manifest catalog: routePrefix "/api/plugins" collides with the core-reserved prefix /api/plugins (the gateway dispatches core ahead of plugins)'
+    )
+    expect(
+      violationsOf(baseManifest({ id: 'catalog', routePrefix: '/api/plugins/sub' }))
+    ).toHaveLength(1)
+    expect(
+      violationsOf(baseManifest({ id: 'authed', routePrefix: '/api/auth/login' }))
+    ).toHaveLength(1)
+    for (const corePrefix of CORE_GATEWAY_PREFIXES) {
+      expect(violationsOf(baseManifest({ routePrefix: corePrefix }))).toHaveLength(1)
+    }
+    expect(violationsOf(baseManifest({ routePrefix: '/api/plugins-x' }))).toEqual([])
   })
 
   it('defaultEnabled is a boolean, capabilities are snake_case and unique', () => {

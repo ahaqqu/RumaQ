@@ -6,6 +6,7 @@
 // that binds manifests to apps, and the gate (gate.ts) reads manifests from
 // here so it never pulls the apps in.
 import { documentsManifest } from './documents/manifest.js'
+import { CORE_GATEWAY_PREFIXES } from './core-prefixes.js'
 import { KNOWN_PORT_IDS, type PluginManifest } from './types.js'
 
 /** Registration order IS dispatch order — the documents plugin is plugin #1.
@@ -73,6 +74,23 @@ export function validatePluginManifests(manifests: readonly PluginManifest[]): M
       violations.push(`${label}: duplicate routePrefix`)
     }
     seenPrefixes.add(manifest.routePrefix)
+
+    // Core-prefix reservation (S1-A2, PR #470 review): the gateway
+    // dispatches the core domains AHEAD of matchPlugin, so a manifest
+    // claiming a core prefix (or any subpath of one) would be silently
+    // shadowed — its routes would 404 into the core app forever while
+    // validation stayed green. core-prefixes.ts owns the list and its
+    // lockstep rule with the gateway's dispatch blocks.
+    for (const corePrefix of CORE_GATEWAY_PREFIXES) {
+      if (
+        manifest.routePrefix === corePrefix ||
+        manifest.routePrefix.startsWith(`${corePrefix}/`)
+      ) {
+        violations.push(
+          `${label}: routePrefix ${JSON.stringify(manifest.routePrefix)} collides with the core-reserved prefix ${corePrefix} (the gateway dispatches core ahead of plugins)`
+        )
+      }
+    }
 
     if (typeof manifest.defaultEnabled !== 'boolean') {
       violations.push(`${label}: defaultEnabled must be a boolean`)

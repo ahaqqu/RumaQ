@@ -109,6 +109,7 @@ describe('manifest module purity (the frontend parity test imports manifests.ts)
     expect(graph).toEqual([
       'plugins/manifests.ts',
       'plugins/documents/manifest.ts',
+      'plugins/core-prefixes.ts',
       'plugins/types.ts',
     ])
     expect(violations).toEqual([])

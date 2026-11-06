@@ -11,7 +11,7 @@ import type { Env } from '../types.js'
 import { pluginManifestById, PLUGIN_MANIFESTS } from '../plugins/manifests.js'
 import type { PluginManifest } from '../plugins/types.js'
 import { HOUSEHOLD_ENABLEMENT_ROWS_SQL } from '../plugins/enablement.js'
-import { deploymentFlagKey, getDeploymentFlags } from '../plugins/flags.js'
+import { isPluginDeploymentAvailable } from '../plugins/flags.js'
 import { requireOwner } from './households.js'
 
 export type PluginEnablementStatus = 'enabled' | 'disabled'
@@ -65,17 +65,6 @@ function pluginPlanEntitled(): boolean {
   return true
 }
 
-/** The one deployment-flags read serves every row (≤30 s isolate cache). */
-async function deploymentAvailability(
-  env: Pick<Env['Bindings'], 'DB'>,
-  pluginId: string
-): Promise<boolean> {
-  const flags = await getDeploymentFlags(env)
-  // Fail-open is flags.ts's own posture: a null map means the read failed.
-  if (!flags) return true
-  return flags.get(deploymentFlagKey(pluginId)) !== 'off'
-}
-
 /**
  * The settings catalog (§4.5): every registered manifest in registry order,
  * each with its three-layer posture. Any member of the household may read it
@@ -94,7 +83,9 @@ export async function getPluginCatalog(
   const entries: PluginCatalogEntry[] = []
   for (const manifest of PLUGIN_MANIFESTS) {
     const { enabled, source } = resolveEnablement(manifest, rows)
-    const deploymentAvailable = await deploymentAvailability(env, manifest.id)
+    // flags.ts owns the kill-switch read and its fail-open posture; its
+    // ≤30 s isolate cache makes the per-row reads one table read.
+    const deploymentAvailable = await isPluginDeploymentAvailable(env, manifest.id)
     const planEntitled = pluginPlanEntitled()
     entries.push({
       id: manifest.id,
@@ -112,16 +103,32 @@ export async function getPluginCatalog(
 }
 
 /** The enablement row this lib writes — the 0028 shape with the settings
- * column untouched (config_json belongs to a later ticket, §4.6). */
-const ENABLEMENT_UPSERT_SQL = `INSERT INTO household_plugins (household_id, plugin_id, status, updated_at)
+ * column untouched (config_json belongs to a later ticket, §4.6). Exported
+ * alongside AUDIT_INSERT_SQL so the real-SQL guard test (migrations.test.ts)
+ * can run the exact batch, not a transcription of it. */
+export const ENABLEMENT_UPSERT_SQL = `INSERT INTO household_plugins (household_id, plugin_id, status, updated_at)
 VALUES (?, ?, ?, datetime('now'))
 ON CONFLICT (household_id, plugin_id)
 DO UPDATE SET status = excluded.status, updated_at = datetime('now')`
 
 /** The lifecycle receipt (0032): what changed, for whom, by whom. Plain
- * handles everywhere — the receipt outlives the household (plan §3.4). */
-const AUDIT_INSERT_SQL = `INSERT INTO household_plugin_audit (id, household_id, plugin_id, actor_user_id, action)
-VALUES (?, ?, ?, ?, ?)`
+ * handles everywhere — the receipt outlives the household (plan §3.4).
+ * The INSERT..SELECT form re-checks the transition INSIDE the batch (S1-A4,
+ * PR #470 review): D1 serializes the batch, not the surrounding read, so
+ * two concurrent identical toggles can both pass setPluginEnablement's
+ * idempotency check — the guard lets only the FIRST commit a receipt, and
+ * §3.6's enable-funnel metrics never see one transition twice. The audit
+ * statement runs BEFORE the upsert in the batch so the COALESCE reads the
+ * row as committed pre-batch (the upsert would otherwise make every
+ * transition look like a no-op); an absent row resolves to the manifest
+ * default, bound as the same 'enabled'/'disabled' vocabulary the outside
+ * check compares. */
+export const AUDIT_INSERT_SQL = `INSERT INTO household_plugin_audit (id, household_id, plugin_id, actor_user_id, action)
+SELECT ?, ?, ?, ?, ?
+WHERE COALESCE(
+  (SELECT status FROM household_plugins WHERE household_id = ? AND plugin_id = ?),
+  ?
+) <> ?`
 
 /**
  * The owner-only enable/disable (§4.3: "a row per (household, plugin),
@@ -130,6 +137,16 @@ VALUES (?, ?, ?, ?, ?)`
  * a plugin to the state it already resolves to is an idempotent NO-OP: no
  * write, no audit row (§3.6's enable-funnel metrics read the rows; redundant
  * calls must not manufacture adoption). Returns the fresh posture.
+ *
+ * Concurrency (S1-A4, PR #470 review): the idempotency read is outside the
+ * batch — D1 serializes the batch, not the surrounding read. A duplicate
+ * concurrent toggle therefore still runs its batch; the audit receipt is
+ * guarded in-batch (AUDIT_INSERT_SQL) so one transition yields exactly one
+ * receipt, and the duplicate's upsert re-lands the same value. The narrow
+ * residual window: a no-op decided on a stale read can miss another owner's
+ * just-committed opposite transition — the fresh posture the response
+ * returns plus the UI's onSettled invalidation reconcile it; a true fix
+ * would need the read inside the transaction, which D1 batches cannot do.
  */
 export async function setPluginEnablement(
   env: Pick<Env['Bindings'], 'DB'>,
@@ -159,14 +176,21 @@ export async function setPluginEnablement(
   }
 
   await env.DB.batch([
-    env.DB.prepare(ENABLEMENT_UPSERT_SQL).bind(args.householdId, manifest.id, args.status),
+    // The receipt FIRST: its in-batch guard must read the row as committed
+    // pre-batch (see AUDIT_INSERT_SQL) — the upsert below lands the new
+    // status and would make every transition look like a no-op.
     env.DB.prepare(AUDIT_INSERT_SQL).bind(
       crypto.randomUUID(),
       args.householdId,
       manifest.id,
       args.userId,
-      args.status === 'enabled' ? 'plugin_enabled' : 'plugin_disabled'
+      args.status === 'enabled' ? 'plugin_enabled' : 'plugin_disabled',
+      args.householdId,
+      manifest.id,
+      manifest.defaultEnabled ? 'enabled' : 'disabled',
+      args.status
     ),
+    env.DB.prepare(ENABLEMENT_UPSERT_SQL).bind(args.householdId, manifest.id, args.status),
   ])
 
   return buildEntry(env, manifest, { enabled: args.status === 'enabled', source: 'household' })
@@ -177,7 +201,8 @@ async function buildEntry(
   manifest: PluginManifest,
   enablement: { enabled: boolean; source: PluginEnablementSource }
 ): Promise<PluginCatalogEntry> {
-  const deploymentAvailable = await deploymentAvailability(env, manifest.id)
+  // flags.ts owns the kill-switch read and its fail-open posture.
+  const deploymentAvailable = await isPluginDeploymentAvailable(env, manifest.id)
   const planEntitled = pluginPlanEntitled()
   return {
     id: manifest.id,
