@@ -431,11 +431,26 @@ export WORKER_ENCRYPTION_KEY=...
 ./scripts/deploy.sh cloudflare
 ```
 
-`HAQITA_INGEST_SECRET` is never part of that path — set and rotate it out-of-band only (the box's copy must move in the same window):
+`HAQITA_INGEST_SECRET` is never part of that path — set and rotate it out-of-band only. Three copies must move in the same window, and CI updates none of them:
+
+1. **the Worker secret** (the authority) — `cf workers secrets update`, below;
+2. **the pipeline box's env** (`RUMAQ_INGEST_SECRET` in the private pipeline repo);
+3. **the GitHub repo secret of the same name** — read-only, used only by the 6-hourly Production Smoke freshness check (`scripts/github/check-price-freshness.sh`). Leave it stale and that step fails 401 on every run and opens a `Smoke test failure` issue a day; update it with the rotation, or delete it to disarm the staleness alert.
 
 ```bash
 cf workers secrets update HAQITA_INGEST_SECRET --worker api --text <value> --type secret_text
 ```
+
+For a rotation that does not 401 the nightly at all, use the successor secret the ingest middleware already accepts — in this order:
+
+```bash
+cf workers secrets update HAQITA_INGEST_SECRET_NEXT --worker api --text <new> --type secret_text   # 1. Worker accepts both
+# 2. point the box at <new> and let one nightly run succeed
+cf workers secrets update HAQITA_INGEST_SECRET      --worker api --text <new> --type secret_text   # 3. promote
+cf workers secrets delete HAQITA_INGEST_SECRET_NEXT --worker api                                   # 4. close the window
+```
+
+`requireIngestSecret` (`backend/src/apps/api.ts`) accepts every non-empty candidate while both exist, so no step has a mismatched window. Nothing promotes `_NEXT` automatically: the deploy writes neither secret, so every step is the operator's.
 
 **Important:** Rotating `WORKER_ENCRYPTION_KEY` invalidates every stored AI API key because they are encrypted with the old key. After rotation, all users must re-enter their AI key in Settings. Rotating `WORKER_JWT_SECRET` only invalidates active sessions; users simply log in again.
 

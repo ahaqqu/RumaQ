@@ -43,7 +43,7 @@ Setup steps and the full variable table: [`docs/ARCHITECTURE.md` §8](ARCHITECTU
 
 **Rotation consequences:** changing `WORKER_ENCRYPTION_KEY` makes previously stored AI keys undecryptable — users must re-enter their key after rotation (plan a notice). Rotating `WORKER_JWT_SECRET` signs everyone out.
 
-`HAQITA_INGEST_SECRET` is operator-owned and rotated out-of-band; the CI deploy deliberately never writes it (ahaqqu/RumaQ#456), so rotating it is a `cf workers secrets update` plus the matching update of the pipeline's box env — never a deploy.
+`HAQITA_INGEST_SECRET` is operator-owned and rotated out-of-band; the CI deploy deliberately never writes it (ahaqqu/RumaQ#456), so rotating it is a `cf workers secrets update` plus the matching move of the two consumers — the pipeline's box env and the read-only GitHub repo secret the smoke freshness check authenticates with — and never a deploy. [`docs/ARCHITECTURE.md` §8](ARCHITECTURE.md) lists the three copies and the successor-secret (`HAQITA_INGEST_SECRET_NEXT`) path that rotates without a 401 window.
 
 ## Data isolation & privacy
 
