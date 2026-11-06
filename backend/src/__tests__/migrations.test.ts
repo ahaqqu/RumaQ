@@ -2163,6 +2163,231 @@ describe('migration 0032: household_plugin_audit (#437)', () => {
   })
 })
 
+// Canonical product rename audit (ahaqqu/RumaQ#423, PR A of A/B/C): the
+// append-only receipt for admin renames — plain handles, no FK (the 0027/0032
+// pattern) — plus the two NOCASE expression indexes the duplicate-name guard
+// seeks. The interesting behaviors are the DEFAULTs the batch INSERT omits,
+// the closed action vocabulary, the receipt outliving the product it names,
+// and the fact that a collation index only answers a matching collation.
+describe('migration 0037: price_product_audit (#423)', () => {
+  // The migration is additive and D1 already holds price rows when it runs
+  // (the 0030/0031 shape), so the case applies 0037 on TOP of the chain
+  // rather than on a fresh database.
+  function preAuditDb(): Db {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    // D1 enforces foreign keys; node:sqlite must too for the cascade
+    // assertion below to mean anything.
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0037')
+    )
+    return db
+  }
+
+  function apply0037(db: Db): void {
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0037_price_product_audit.sql'), 'utf8'))
+  }
+
+  // The row the rename batch writes: every column except the DEFAULTed
+  // created_at, with a NULL reason on most renames. action is a parameter so
+  // the CHECK test reuses the same statement.
+  function insertReceipt(db: Db, id: string, action = 'rename'): void {
+    db.prepare(
+      `INSERT INTO price_product_audit
+         (id, product_id, product_key, actor_user_id, action, old_name, new_name,
+          metadata_version_before, metadata_version_after)
+       VALUES (?, 'prod-1', 'beras--ramos--5-kg', 'u1', ?,
+               'Beras Ramos 5kg', 'Beras Ramos Premium', 1, 2)`
+    ).run(id, action)
+  }
+
+  it('adds the table on top of the existing chain and fills the INSERT defaults', () => {
+    const db = preAuditDb()
+    // Nothing of this file exists beforehand — the shape assertions below
+    // must not be satisfied by another migration.
+    expect(
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master
+            WHERE name IN ('price_product_audit', 'idx_price_product_audit_product',
+                           'idx_products_name_nocase', 'idx_aliases_name_nocase')`
+        )
+        .all()
+    ).toEqual([])
+
+    apply0037(db)
+
+    // The column order and NOT NULL surface the batch INSERT writes against.
+    // id is declared NOT NULL explicitly: on a rowid table a TEXT PRIMARY KEY
+    // does not imply it (the 0021 note).
+    const columns = db.prepare('PRAGMA table_info(price_product_audit)').all()
+    expect(columns.map((c: Record<string, unknown>) => c.name)).toEqual([
+      'id',
+      'product_id',
+      'product_key',
+      'actor_user_id',
+      'action',
+      'old_name',
+      'new_name',
+      'reason',
+      'metadata_version_before',
+      'metadata_version_after',
+      'reverts_audit_id',
+      'created_at',
+    ])
+    const notNull = Object.fromEntries(
+      columns.map((c: Record<string, unknown>): [string, unknown] => [String(c.name), c.notnull])
+    )
+    expect(notNull).toMatchObject({
+      id: 1,
+      product_id: 1,
+      product_key: 1,
+      actor_user_id: 1,
+      action: 1,
+      old_name: 1,
+      new_name: 1,
+      metadata_version_before: 1,
+      metadata_version_after: 1,
+      reason: 0,
+      reverts_audit_id: 0,
+      created_at: 1,
+    })
+
+    insertReceipt(db, 'aud-1')
+    const row = db.prepare(`SELECT * FROM price_product_audit WHERE id = 'aud-1'`).get()
+    expect(row).toMatchObject({
+      product_id: 'prod-1',
+      product_key: 'beras--ramos--5-kg',
+      actor_user_id: 'u1',
+      action: 'rename',
+      old_name: 'Beras Ramos 5kg',
+      new_name: 'Beras Ramos Premium',
+      reason: null,
+      reverts_audit_id: null,
+    })
+    expect(String(row?.created_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+
+    // A revert is its own appended receipt, naming the rename it compensates.
+    // Plain TEXT, so there is no FK ordering to satisfy and no dangling
+    // reference can block pruning an old receipt.
+    db.prepare(
+      `INSERT INTO price_product_audit
+         (id, product_id, product_key, actor_user_id, action, old_name, new_name, reason,
+          metadata_version_before, metadata_version_after, reverts_audit_id)
+       VALUES ('aud-2', 'prod-1', 'beras--ramos--5-kg', 'u1', 'revert',
+               'Beras Ramos Premium', 'Beras Ramos 5kg', 'Undo the rename', 2, 3, 'aud-1')`
+    ).run()
+    expect(db.prepare(`SELECT * FROM price_product_audit WHERE id = 'aud-2'`).get()).toMatchObject({
+      action: 'revert',
+      reason: 'Undo the rename',
+      reverts_audit_id: 'aud-1',
+      metadata_version_before: 2,
+      metadata_version_after: 3,
+    })
+  })
+
+  it('rejects any action outside the rename/revert vocabulary', () => {
+    const db = preAuditDb()
+    apply0037(db)
+
+    insertReceipt(db, 'aud-rename')
+    // The closed domain (the 0001/0027 CHECK pattern): a rename trail only
+    // ever appends the edit or its compensation — no 'create'/'delete'/'undo'
+    // event, and the vocabulary is case-sensitive.
+    for (const bogus of ['create', 'delete', 'renamed', 'RENAME']) {
+      expect(() => insertReceipt(db, `aud-${bogus}`, bogus)).toThrow()
+    }
+    expect(db.prepare('SELECT action FROM price_product_audit').all()).toEqual([
+      { action: 'rename' },
+    ])
+  })
+
+  it('seeks the duplicate-name lookups on the NOCASE expression indexes', () => {
+    const db = preAuditDb()
+    apply0037(db)
+
+    // The guard's exact shape: bind the candidate name and force the NOCASE
+    // comparison. Collation is part of the index, so the plain `name = ?`
+    // (BINARY) form cannot use it — the statement and the index have to
+    // agree, which is why this plan is pinned rather than assumed.
+    const planFor = (sql: string) =>
+      db
+        .prepare(`EXPLAIN QUERY PLAN ${sql}`)
+        .all('Beras Ramos 5kg')
+        .map((r: Record<string, unknown>) => String(r.detail))
+        .join(' | ')
+
+    const products = planFor('SELECT id FROM price_products WHERE name = ? COLLATE NOCASE')
+    expect(products).toContain('USING INDEX idx_products_name_nocase')
+    expect(products).not.toMatch(/SCAN price_products/i)
+
+    const aliases = planFor('SELECT id FROM price_product_aliases WHERE name = ? COLLATE NOCASE')
+    expect(aliases).toContain('USING INDEX idx_aliases_name_nocase')
+    expect(aliases).not.toMatch(/SCAN price_product_aliases/i)
+
+    // The index is only half the contract — it must also answer the question
+    // case-insensitively, which is what makes it duplicate DETECTION.
+    db.prepare(
+      `INSERT INTO price_products (id, product_key, name)
+       VALUES ('prod-1', 'beras--ramos--5-kg', 'Beras Ramos 5kg')`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_product_aliases
+         (id, product_id, store_slug, name, first_seen_at, last_seen_at)
+       VALUES ('al-1', 'prod-1', 'lotte-mart', 'Beras Ramos', '2026-11-01T00:00:00Z',
+               '2026-11-01T00:00:00Z')`
+    ).run()
+    expect(
+      db
+        .prepare('SELECT id FROM price_products WHERE name = ? COLLATE NOCASE')
+        .all('BERAS ramos 5KG')
+    ).toEqual([{ id: 'prod-1' }])
+    expect(
+      db
+        .prepare('SELECT id FROM price_product_aliases WHERE name = ? COLLATE NOCASE')
+        .all('beras RAMOS')
+    ).toEqual([{ id: 'al-1' }])
+  })
+
+  it('keeps the receipt when the product row is deleted (plain handles, no FK)', () => {
+    const db = preAuditDb()
+    apply0037(db)
+
+    db.prepare(
+      `INSERT INTO price_products (id, product_key, name)
+       VALUES ('prod-1', 'beras--ramos--5-kg', 'Beras Ramos 5kg')`
+    ).run()
+    // The alias is data about the product and cascades (0030); the receipt is
+    // a fact about the catalog and must not — the 0027/0032 distinction.
+    db.prepare(
+      `INSERT INTO price_product_aliases
+         (id, product_id, store_slug, name, first_seen_at, last_seen_at)
+       VALUES ('al-1', 'prod-1', 'lotte-mart', 'Beras Ramos', '2026-11-01T00:00:00Z',
+               '2026-11-01T00:00:00Z')`
+    ).run()
+    insertReceipt(db, 'aud-1')
+
+    // FK enforcement is ON: the delete itself must succeed (no FK points at
+    // price_products from the audit table) and take only the alias with it.
+    db.prepare(`DELETE FROM price_products WHERE id = 'prod-1'`).run()
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM price_products').get()).toEqual({ cnt: 0 })
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM price_product_aliases').get()).toEqual({
+      cnt: 0,
+    })
+    expect(db.prepare('SELECT * FROM price_product_audit').all()).toEqual([
+      expect.objectContaining({
+        id: 'aud-1',
+        product_id: 'prod-1',
+        product_key: 'beras--ramos--5-kg',
+        action: 'rename',
+        old_name: 'Beras Ramos 5kg',
+        new_name: 'Beras Ramos Premium',
+      }),
+    ])
+  })
+})
+
 // The enablement writer's in-batch receipt guard (lib/plugins.ts
 // AUDIT_INSERT_SQL, S1-A2's sibling finding S1-A4 from the PR #470 review):
 // two concurrent identical toggles both pass the outside idempotency read —

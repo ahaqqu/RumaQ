@@ -5,6 +5,11 @@ DELETE FROM plan_items;
 -- first; canonical_index_state is a counter and is deliberately left alone
 -- (the version only has to be monotonic, never zero).
 DELETE FROM price_product_aliases;
+-- Rename receipts (migration 0037) are receipts, not children: plain handles,
+-- no FK, so deleting the products above cascades nothing into them and reset
+-- has to clear them explicitly or a scenario's admin history leaks into the
+-- next one's product detail read.
+DELETE FROM price_product_audit;
 DELETE FROM price_observations;
 DELETE FROM price_products;
 DELETE FROM price_sources;
