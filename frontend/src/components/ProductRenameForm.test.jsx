@@ -243,6 +243,42 @@ describe('ProductRenameForm', () => {
     })
   })
 
+  it('withdraws the acknowledgement when the name changes after the 409', () => {
+    const { container, getByTestId } = renderForm()
+    const acknowledge = () =>
+      [...container.querySelectorAll('button')].find(
+        (b) => b.textContent === 'rename.similarAnyway'
+      )
+    typeName(container, 'Beras Ramos 5 Kg')
+    fireEvent.click(submitButton(container))
+    act(() => {
+      lastRenameOptions().onError(
+        new ApiError('similar_name', 409, null, {
+          error: 'similar_name',
+          warnings: [{ productKey: 'other-product', name: 'Beras Ramos 5kg', similarity: 0.9 }],
+        })
+      )
+    })
+    expect(acknowledge()).not.toBeUndefined()
+
+    // The warnings describe "Beras Ramos 5 Kg" only: acknowledging them for a
+    // different draft would let the edited name past the similar-name guard.
+    typeName(container, 'Beras Ramos Kiloan Super')
+    expect(acknowledge()).toBeUndefined()
+    expect(getByTestId('rename-similar')).not.toBeUndefined()
+
+    // Back to the name the warnings belong to — the override returns.
+    typeName(container, 'Beras Ramos 5 Kg')
+    expect(acknowledge()).not.toBeUndefined()
+    fireEvent.click(acknowledge())
+    expect(lastRenameVariables()).toEqual({
+      productKey: PRODUCT_KEY,
+      canonicalName: 'Beras Ramos 5 Kg',
+      expectedMetadataVersion: 3,
+      acknowledgeWarnings: true,
+    })
+  })
+
   it('maps 409 stale_product to a refetch, keeps the typed name and never resubmits', () => {
     const { container, getByTestId } = renderForm()
     typeName(container, 'Beras Ramos Premium 5 kg')

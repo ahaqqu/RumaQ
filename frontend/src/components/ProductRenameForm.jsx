@@ -85,7 +85,7 @@ function SimilarWarnings({ warnings }) {
 // The form's one result slot: success confirmations, the three overridable /
 // terminal conflicts, and the revert notices. A new attempt replaces the old
 // notice, so a message from a previous name never lingers.
-function RenameNotice({ notice, busy, onAcknowledge }) {
+function RenameNotice({ notice, busy, canAcknowledge, onAcknowledge }) {
   const { t } = useTranslation()
   if (!notice) return null
 
@@ -155,9 +155,20 @@ function RenameNotice({ notice, busy, onAcknowledge }) {
         </div>
         <p className="mt-1">{t('rename.similarDesc')}</p>
         <SimilarWarnings warnings={notice.warnings} />
-        <Button variant="danger" size="sm" className="mt-2" disabled={busy} onClick={onAcknowledge}>
-          {t('rename.similarAnyway')}
-        </Button>
+        {/* The acknowledgement waives the warnings above, so it only exists
+            while the draft still holds the name they were raised for. Once the
+            name is edited the plain submit asks the server again. */}
+        {canAcknowledge && (
+          <Button
+            variant="danger"
+            size="sm"
+            className="mt-2"
+            disabled={busy}
+            onClick={onAcknowledge}
+          >
+            {t('rename.similarAnyway')}
+          </Button>
+        )}
       </div>
     )
   }
@@ -237,6 +248,10 @@ export function ProductRenameForm({ productKey, onClose }) {
   // same name can only 409 again. A committed name is equally final — the form
   // stays open showing it, and resubmitting it would only 400.
   const duplicateBlocked = notice?.kind === 'duplicate' && trimmedName === notice.name
+  // A similar-name 409 answers exactly one name. Editing the draft makes that
+  // answer stale: acknowledging it would waive warnings about a name nobody
+  // has seen, so the override only exists while the two still match.
+  const canAcknowledge = notice?.kind === 'similar' && trimmedName === notice.name
   const committed =
     notice?.kind === 'success' || notice?.kind === 'revertSuccess' ? notice.name : null
   const canSubmit =
@@ -419,7 +434,12 @@ export function ProductRenameForm({ productKey, onClose }) {
             </p>
           </div>
 
-          <RenameNotice notice={notice} busy={busy} onAcknowledge={() => submitName(true)} />
+          <RenameNotice
+            notice={notice}
+            busy={busy}
+            canAcknowledge={canAcknowledge}
+            onAcknowledge={() => submitName(true)}
+          />
 
           <div className="flex flex-col gap-1">
             <label htmlFor={reasonId} className="text-sm font-medium text-text-muted">
