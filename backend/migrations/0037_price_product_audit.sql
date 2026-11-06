@@ -14,13 +14,15 @@
 -- rename an applied migration: wrangler keys its d1_migrations table by
 -- filename, so a rename re-runs the file (the 0030 warning).
 --
--- An audit row is a RECEIPT, not a child of the product (the 0032/0027
--- pattern): product_id and actor_user_id are PLAIN TEXT handles with no FK,
--- so the record "an admin renamed this, and to what" survives the product
--- row it names and the account that made the change. That is the deliberate
--- opposite of price_product_aliases (0030), whose ON DELETE CASCADE FK dies
--- with its product — an alias is data about a product, a receipt is a fact
--- about the catalog.
+-- An audit row is a RECEIPT, not a child of the product (the 0032 pattern):
+-- product_id and actor_user_id are PLAIN TEXT handles with no FK, so the
+-- record "an admin renamed this, and to what" survives the product row it
+-- names and the account that made the change. 0022/0027 keep only the NAMED
+-- handle (document_id/task_id) plain so the trail outlives that row — they
+-- still FK the household and the actor; 0032 is the one that drops both.
+-- That is the deliberate opposite of price_product_aliases (0030), whose
+-- ON DELETE CASCADE FK dies with its product — an alias is data about a
+-- product, a receipt is a fact about the catalog.
 CREATE TABLE IF NOT EXISTS price_product_audit (
   -- Dashed UUID at runtime; TEXT PK NOT NULL per the 0021 note — on rowid
   -- tables a TEXT PRIMARY KEY does NOT imply NOT NULL.
@@ -61,6 +63,14 @@ CREATE TABLE IF NOT EXISTS price_product_audit (
 -- newest-first (GET /api/admin/products/:productKey). Matches the
 -- 0022/0027/0032 audit-feed index pair; pinned by an EXPLAIN in
 -- migrations.test.ts.
+--
+-- created_at is datetime('now') — SECOND resolution — so same-second rows
+-- tie, and this feed's tie order is whatever the plan returns. That is fine
+-- for a display read; anything that must decide THE latest rename (the revert
+-- route's "latest rename only" rule) orders by metadata_version_after
+-- instead, which is strictly increasing per product because every audited
+-- write bumps it. Nothing here forbids two 'revert' rows naming one rename:
+-- the route's expectedMetadataVersion CAS owns that rule.
 CREATE INDEX IF NOT EXISTS idx_price_product_audit_product
   ON price_product_audit(product_id, created_at);
 

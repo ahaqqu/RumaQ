@@ -2164,7 +2164,7 @@ describe('migration 0032: household_plugin_audit (#437)', () => {
 })
 
 // Canonical product rename audit (ahaqqu/RumaQ#423, PR A of A/B/C): the
-// append-only receipt for admin renames — plain handles, no FK (the 0027/0032
+// append-only receipt for admin renames — plain handles, no FK (the 0032
 // pattern) — plus the two NOCASE expression indexes the duplicate-name guard
 // seeks. The interesting behaviors are the DEFAULTs the batch INSERT omits,
 // the closed action vocabulary, the receipt outliving the product it names,
@@ -2381,7 +2381,7 @@ describe('migration 0037: price_product_audit (#423)', () => {
        VALUES ('prod-1', 'beras--ramos--5-kg', 'Beras Ramos 5kg')`
     ).run()
     // The alias is data about the product and cascades (0030); the receipt is
-    // a fact about the catalog and must not — the 0027/0032 distinction.
+    // a fact about the catalog and must not — the 0030/0032 distinction.
     db.prepare(
       `INSERT INTO price_product_aliases
          (id, product_id, store_slug, name, first_seen_at, last_seen_at)
