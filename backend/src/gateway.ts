@@ -3,6 +3,7 @@ import { authApp } from './apps/auth.js'
 import { apiApp } from './apps/api.js'
 import { householdsApp } from './apps/households.js'
 import { tasksApp } from './apps/tasks.js'
+import { calendarApp } from './apps/calendar.js'
 import { matchPlugin } from './plugins/registry.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
 import { logDueDocumentReminders } from './lib/document-expiry.js'
@@ -72,6 +73,15 @@ export const gateway = {
       // Household tasks (ahaqqu/RumaQ#429) — same domain-app pattern.
       if (path === '/api/tasks' || path.startsWith('/api/tasks/')) {
         return tasksApp.fetch(request, env, ctx)
+      }
+
+      // Household calendar (ahaqqu/RumaQ#430) — core domain, NOT a plugin:
+      // the shared family calendar (stored events + derive-on-read document
+      // deadlines) is a household fixture like tasks, not an enablement
+      // choice. One app, one prefix: /api/calendar serves the view union,
+      // /api/calendar/events the stored-event CRUD.
+      if (path === '/api/calendar' || path.startsWith('/api/calendar/')) {
+        return calendarApp.fetch(request, env, ctx)
       }
 
       // Plugin dispatch (ahaqqu/RumaQ#435, plugin architecture §4.3): the

@@ -920,6 +920,58 @@ export interface paths {
     patch: operations['patchApiTasksById']
     trace?: never
   }
+  '/api/calendar': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description The shared household calendar — ONE union of two entry kinds. kind=event: stored events (0031) inside the optional from/to window that the caller may READ — visibility=all is household-wide, visibility=members only to the listed members plus the creator. kind=deadline: DERIVED on read from the household’s documents (expires_on set, #426) — KTP/STNK/SIM/paspor renewals surface automatically; never stored, so an expires_on edit reflects on the next read. The window filters both kinds; remind_days_before (#426) drives each deadline’s due_soon flag, not the window itself (far-future renewals stay plannable on their month). Entries come back day-chronological (date, all-day first, time, title). */
+    get: operations['getApiCalendar']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/calendar/events': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** @description Creates a calendar event: free-text title (trimmed, 1-120 chars — no preset categories, the #422 philosophy), a real calendar date (2026-02-31 is a 400), optional 24h HH:MM time (null/absent = all-day), and visibility: all (default) or members with a non-empty member_ids audience (any household member — linked or profile-only, 0021; ids are validated against this household, duplicates deduped). The creator is implicitly a reader and manager of the event. The create audit record commits in the same batch. */
+    post: operations['postApiCalendarEvents']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/calendar/events/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post?: never
+    /** @description Hard-deletes an event: creator or household owner; a caller who cannot see it answers 404 (the scoped lookup runs first). The deletion audit record commits in the SAME batch as the delete and survives it (household_calendar_event_audit.event_id is a plain TEXT handle — no FK), so the household’s event history outlives the row. The audience rows cascade with the event (0031). */
+    delete: operations['deleteApiCalendarEventsById']
+    options?: never
+    head?: never
+    /** @description Edits an event: title, date, time (null clears it — all-day), visibility, and member_ids (the audience, replaced atomically). Creator or household owner; a caller who cannot SEE the event (restricted visibility, foreign household) answers the same 404 as a missing one — the scoped lookup runs before any body read. Cross-field rules: member_ids requires the resulting visibility to be members (sending it while the event resolves to all is a 400), and a members event must keep a non-empty audience — the creator is implicitly included, but at least one listed member is required. Every edit writes its audit row in the same batch. */
+    patch: operations['patchApiCalendarEventsById']
+    trace?: never
+  }
   '/api/auth/login': {
     parameters: {
       query?: never
@@ -4261,6 +4313,270 @@ export interface operations {
       }
       /** @description The task’s state refuses the action (already done, not awaiting approval) */
       409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiCalendar: {
+    parameters: {
+      query?: {
+        from?: string
+        to?: string
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            entries: (
+              | {
+                  /** @enum {string} */
+                  kind: 'event'
+                  id: string
+                  household_id: string
+                  title: string
+                  /** @description YYYY-MM-DD */
+                  date: string
+                  /** @description HH:MM (24h), or null */
+                  time: string | null
+                  /** @enum {string} */
+                  visibility: 'all' | 'members'
+                  /** @description The audience when visibility=members; null when visibility=all */
+                  member_ids: string[] | null
+                  created_by_member_id: string | null
+                  created_at: string
+                  updated_at: string
+                }
+              | {
+                  /** @enum {string} */
+                  kind: 'deadline'
+                  id: string
+                  document_id: string
+                  /** @description The document’s free-text name (#422) */
+                  title: string
+                  /** @description The document’s expires_on (YYYY-MM-DD) */
+                  date: string
+                  member_id: string | null
+                  /** @description Whole days; negative = expired */
+                  days_until_expiry: number
+                  /** @description Within the document’s own remind window (#426) */
+                  due_soon: boolean
+                }
+            )[]
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  postApiCalendarEvents: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          title: string
+          /** @description YYYY-MM-DD */
+          date: string
+          /** @description HH:MM (24h); omit or null for all-day */
+          time?: string | null
+          /** @enum {string} */
+          visibility?: 'all' | 'members'
+          /** @description Required non-empty when visibility=members; forbidden otherwise */
+          member_ids?: string[]
+        }
+      }
+    }
+    responses: {
+      /** @description Created */
+      201: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            event: {
+              /** @enum {string} */
+              kind: 'event'
+              id: string
+              household_id: string
+              title: string
+              /** @description YYYY-MM-DD */
+              date: string
+              /** @description HH:MM (24h), or null */
+              time: string | null
+              /** @enum {string} */
+              visibility: 'all' | 'members'
+              /** @description The audience when visibility=members; null when visibility=all */
+              member_ids: string[] | null
+              created_by_member_id: string | null
+              created_at: string
+              updated_at: string
+            }
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Event not found (unknown id, another household’s, or not visible to you) */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  deleteApiCalendarEventsById: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Deleted */
+      204: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only the creator or a household owner can do that */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Event not found (unknown id, another household’s, or not visible to you) */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  patchApiCalendarEventsById: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody?: {
+      content: {
+        'application/json': {
+          title?: string
+          /** @description YYYY-MM-DD */
+          date?: string
+          /** @description HH:MM (24h); null clears (all-day) */
+          time?: string | null
+          /** @enum {string} */
+          visibility?: 'all' | 'members'
+          /** @description The replacement audience; requires resulting visibility=members */
+          member_ids?: string[]
+        }
+      }
+    }
+    responses: {
+      /** @description OK — the updated event comes back */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            event: {
+              /** @enum {string} */
+              kind: 'event'
+              id: string
+              household_id: string
+              title: string
+              /** @description YYYY-MM-DD */
+              date: string
+              /** @description HH:MM (24h), or null */
+              time: string | null
+              /** @enum {string} */
+              visibility: 'all' | 'members'
+              /** @description The audience when visibility=members; null when visibility=all */
+              member_ids: string[] | null
+              created_by_member_id: string | null
+              created_at: string
+              updated_at: string
+            }
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only the creator or a household owner can do that */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Event not found (unknown id, another household’s, or not visible to you) */
+      404: {
         headers: {
           [name: string]: unknown
         }
