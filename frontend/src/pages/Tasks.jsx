@@ -23,6 +23,7 @@ import {
   IconRefresh,
 } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
+import { parseISO, todayISO } from '../lib/household-date.js'
 
 // Household tasks (ahaqqu/RumaQ#429): per-member family task assignments.
 // Two views over the same endpoint — the per-member "My tasks" list (mine=1)
@@ -46,7 +47,7 @@ function taskErrorKey(error) {
 
 function formatDate(value, language) {
   if (!value) return null
-  const date = new Date(`${value}T00:00:00Z`)
+  const date = parseISO(value)
   if (Number.isNaN(date.getTime())) return null
   return new Intl.DateTimeFormat(language, {
     day: 'numeric',
@@ -54,16 +55,6 @@ function formatDate(value, language) {
     year: 'numeric',
     timeZone: 'UTC',
   }).format(date)
-}
-
-// The household calendar day as ISO YYYY-MM-DD, pinned at UTC+7 (WIB) — the
-// frontend MIRROR of the backend's householdIsoDate (lib/document-expiry.ts,
-// #426; the frontend cannot import backend lib code, so the constant offset
-// is duplicated with this comment tying the two together — thermos A3
-// decision). A plain-UTC "today" left the overdue highlight ~7 hours late
-// every WIB night: a chore due yesterday kept its highlight until 07:00.
-function todayISO() {
-  return new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)
 }
 
 // The assignee chip — the member-chip component the vault and the roster use:

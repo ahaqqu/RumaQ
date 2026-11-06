@@ -24,6 +24,7 @@ import {
   IconKey,
 } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
+import { isoOf, parseISO, todayISO } from '../lib/household-date.js'
 
 // Household calendar (ahaqqu/RumaQ#430): one shared family month view over the
 // union endpoint — stored events (kind: 'event', CRUD on /api/calendar/events)
@@ -48,22 +49,6 @@ function calendarErrorKey(error) {
   const status = error instanceof ApiError ? error.status : undefined
   if (status === 403) return 'calendar.onlyCreatorOwner'
   return 'calendar.errorGeneric'
-}
-
-// The household calendar day as ISO YYYY-MM-DD, pinned at UTC+7 (WIB) — the
-// frontend MIRROR of the backend's householdIsoDate (lib/document-expiry.ts,
-// #426; duplicated with this comment tying the two together — the Tasks page
-// carries the same mirror).
-function todayISO() {
-  return new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)
-}
-
-function parseISO(iso) {
-  return new Date(`${iso}T00:00:00Z`)
-}
-
-function isoOf(date) {
-  return date.toISOString().slice(0, 10)
 }
 
 /** The visible month's cell grid: Monday-start weeks (the household calendar
