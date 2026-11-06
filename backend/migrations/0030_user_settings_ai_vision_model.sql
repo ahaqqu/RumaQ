@@ -1,0 +1,14 @@
+-- Vision-model setting for vault document OCR (ahaqqu/RumaQ#433): expiry-date
+-- extraction runs on the USER'S OWN AI provider (ai_provider / ai_base_url /
+-- encrypted_ai_key — unchanged), and this column lets them pick WHICH model
+-- does the vision work, separate from the text model (chat, plans, receipts).
+--
+-- Nullable TEXT add (the 0008 ai_base_url/ai_model shape): NULL means "no
+-- explicit vision model" and the resolution in lib/ai-access.ts falls back to
+-- ai_model — one field, not two, for users who run one model for everything.
+-- Only when the whole access falls back to the server key (RUMAQ_SERVER_AI_*)
+-- does the server's model apply; the server's model name is never mixed into
+-- a user-keyed call. No backfill: every existing user simply keeps the
+-- fallback behavior. Model ids share the ai_model charset (schemas.ts
+-- AI_MODEL_REGEX — they go into request bodies and, for Gemini, the URL path).
+ALTER TABLE user_settings ADD COLUMN ai_vision_model TEXT;

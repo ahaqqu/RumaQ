@@ -699,6 +699,21 @@ export function deleteDocumentFile(documentId: string, fileId: string): Promise<
   )
 }
 
+// Expiry-date OCR (issue #433): the backend reads the file with the USER'S
+// OWN AI provider (vision model: ai_vision_model → ai_model; server fallback)
+// and returns a SUGGESTION. Nothing is written server-side — the answer only
+// becomes data when the user saves it through updateDocumentExpiry.
+export function extractDocumentExpiry(
+  documentId: string,
+  fileId: string
+): Promise<{ expires_on: string | null; model: string | null }> {
+  return unwrap(
+    client.POST('/api/documents/{id}/files/{fileId}/extract-expiry', {
+      params: { path: { id: documentId, fileId } },
+    })
+  )
+}
+
 export function getDocumentMeta(id: string, signal?: AbortSignal): Promise<unknown> {
   return unwrap(client.GET('/api/documents/{id}', { params: { path: { id } }, signal }))
 }

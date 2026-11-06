@@ -54,7 +54,8 @@ endpoints (`shared.steps.js` `Before` hook), and scenarios run with
 
 Notes for writing new E2E scenarios:
 
-- `TEST_MODE` mocks all AI endpoints (chat, plan generate, receipt scan) — no
+- `TEST_MODE` mocks all AI endpoints (chat, plan generate, receipt scan, the
+  vault's expiry-date read #433) — no
   real AI key is needed; set one via `PATCH /api/settings` when a flow
   requires `has_ai_key`, and drop the persisted query cache afterwards (the
   app caches settings for 5 minutes in IndexedDB).

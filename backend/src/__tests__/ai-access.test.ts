@@ -16,6 +16,7 @@ function userSettings(overrides: Record<string, unknown> = {}) {
     ai_provider: 'openai',
     ai_base_url: null,
     ai_model: null,
+    ai_vision_model: null,
     ai_thinking_level: null,
     encrypted_ai_key: ENCRYPTED_KEY,
     ...overrides,
@@ -69,6 +70,58 @@ describe('resolveAiAccess', () => {
 
     const stale = await resolveAiAccess(baseEnv, userSettings({ ai_thinking_level: 'extreme' }))
     expect(stale?.thinkingLevel).toBeNull()
+  })
+
+  // Vision-model precedence (issue #433): explicit vision → user text model →
+  // provider default; the server's model ONLY on the server-fallback branch.
+  describe('vision model resolution', () => {
+    it('prefers the explicit vision model over the text model', async () => {
+      const access = await resolveAiAccess(
+        baseEnv,
+        userSettings({ ai_model: 'text-model', ai_vision_model: 'vision-model' })
+      )
+      expect(access?.visionModel).toBe('vision-model')
+      // The text model is untouched — chat keeps using it.
+      expect(access?.model).toBe('text-model')
+    })
+
+    it('falls back to the text model when no vision model is set', async () => {
+      const access = await resolveAiAccess(baseEnv, userSettings({ ai_model: 'text-model' }))
+      expect(access?.visionModel).toBe('text-model')
+    })
+
+    it('resolves to null (provider default) when the user set neither model', async () => {
+      const access = await resolveAiAccess(baseEnv, userSettings())
+      expect(access?.visionModel).toBeNull()
+    })
+
+    it('never leaks the server model into a user-keyed call', async () => {
+      const access = await resolveAiAccess(
+        {
+          ...baseEnv,
+          RUMAQ_SERVER_AI_PROVIDER: 'gemini',
+          RUMAQ_SERVER_AI_KEY: 'sk-server',
+          RUMAQ_SERVER_AI_MODEL: 'gemini-3.6-pro',
+        },
+        userSettings()
+      )
+      expect(access?.keySource).toBe('user')
+      expect(access?.visionModel).toBeNull()
+    })
+
+    it('uses the server model for vision when the whole access falls back to the server key', async () => {
+      const access = await resolveAiAccess(
+        {
+          ...baseEnv,
+          RUMAQ_SERVER_AI_PROVIDER: 'gemini',
+          RUMAQ_SERVER_AI_KEY: 'sk-server',
+          RUMAQ_SERVER_AI_MODEL: 'gemini-3.6-pro',
+        },
+        null
+      )
+      expect(access?.keySource).toBe('server')
+      expect(access?.visionModel).toBe('gemini-3.6-pro')
+    })
   })
 })
 

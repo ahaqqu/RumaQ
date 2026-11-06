@@ -133,6 +133,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
   const [provider, setProvider] = useState('gemini')
   const [customBaseUrl, setCustomBaseUrl] = useState('')
   const [customModel, setCustomModel] = useState('')
+  const [customVisionModel, setCustomVisionModel] = useState('')
   const [thinkingLevel, setThinkingLevel] = useState('')
   const [saved, setSaved] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -183,6 +184,9 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
     }
     if (settingsData.ai_model) {
       setCustomModel(settingsData.ai_model)
+    }
+    if (settingsData.ai_vision_model) {
+      setCustomVisionModel(settingsData.ai_vision_model)
     }
     setThinkingLevel(settingsData.ai_thinking_level || '')
     if (settingsData.has_ai_key) {
@@ -257,6 +261,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
       ai_provider: provider,
       ai_base_url: customBaseUrl.trim(),
       ai_model: customModel.trim(),
+      ai_vision_model: customVisionModel.trim(),
       ai_thinking_level: thinkingLevel,
     }
     setAiKey(draft.trim() || null)
@@ -393,6 +398,23 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                   onSubmit={save}
                   placeholder={AI_PROVIDER_DEFAULTS[provider]}
                   ariaLabel={t('settings.model')}
+                  action={
+                    <>
+                      <IconCheck size={15} /> {t('settings.save')}
+                    </>
+                  }
+                />
+              </Setting>
+
+              {/* Issue #433: the vision model the vault's document OCR uses —
+                  same validation/storage path as the text model above. */}
+              <Setting title={t('settings.visionModel')} desc={t('settings.visionModelDesc')} stack>
+                <InlineInput
+                  value={customVisionModel}
+                  onChange={setCustomVisionModel}
+                  onSubmit={save}
+                  placeholder={t('settings.visionModelPlaceholder')}
+                  ariaLabel={t('settings.visionModel')}
                   action={
                     <>
                       <IconCheck size={15} /> {t('settings.save')}

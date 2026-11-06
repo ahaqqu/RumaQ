@@ -48,6 +48,33 @@ Rules:
 - Do NOT include any text outside the JSON.`
 }
 
+// The vault's expiry-date extraction prompt (issue #433). LOAD-BEARING and
+// owner-reviewed like the pipeline prompts: the model's answer feeds the
+// expiry editor, so the rules pin WHICH date counts (validity end — never an
+// issuance, registration, purchase, or effective-from date) and how the many
+// Indonesian/English document printings map to one ISO date. KTP has no
+// expiry — returning null there is correct, not a failure.
+export function buildExpiryExtractionPrompt(): string {
+  return `You are a document OCR assistant. Look at the scanned document image and find the date the document's VALIDITY ENDS (its expiry date).
+
+Return ONLY valid JSON in this exact format:
+{ "expires_on": "YYYY-MM-DD or null" }
+
+What counts as the expiry date:
+- The date the document STOPS being valid: "Berlaku s/d", "Masa Berlaku", "Berlaku Hingga", "Valid Until", "Valid Thru", "Date of Expiry", "Expiry Date", "Kedaluwarsa", "Sampai Dengan".
+- Examples by document type: passport → "Date of Expiry"/"Tanggal Kedaluwarsa"; SIM (driver licence) → "Berlaku Hingga"; STNK → "MASA BERLAKU S/D" (the LATER date shown, not "TGL JATUH TEMPO"); insurance policy → the period END date; warranty card → end of the warranty period.
+
+What does NOT count (never return these):
+- Issue, issuance, registration, purchase, or effective-from dates: "Tanggal Terbit", "Diterbitkan", "Issued on", "Tgl Pembelian", "Tanggal Effective", "Valid From".
+- Payment due dates, instalment schedules, or any other date on the page.
+
+Rules:
+- Convert whatever printed format you find (DD-MM-YYYY, DD/MM/YYYY, "DD MMM YYYY", Indonesian month names like MEI/AGT/DES) into YYYY-MM-DD.
+- Documents that never expire (for example a KTP/e-KTP marked "SEUMUR HIDUP") have no expiry: return null.
+- If the expiry date is absent, unreadable, or ambiguous, return null. Never guess.
+- Do NOT include any text outside the JSON.`
+}
+
 type ChatMessage = {
   role: 'user' | 'assistant' | 'system'
   content: string | ChatContentPart[]
@@ -527,4 +554,35 @@ export async function extractReceiptItems(
     date: result.date ? String(result.date) : undefined,
     items,
   }
+}
+
+// The raw model answer for the vault's expiry extraction (issue #433): the
+// date field is validated by the caller (lib/document-ocr.ts) — this layer
+// owns the provider call and the strict JSON parse only, mirroring
+// extractReceiptItems.
+export type RawExpiryExtraction = {
+  expires_on?: string | null
+}
+
+export async function extractExpiryDate(
+  imageBuffer: ArrayBuffer,
+  imageType: string,
+  provider: string,
+  apiKey: string,
+  opts?: AiCallOpts
+): Promise<RawExpiryExtraction> {
+  const imageData = toDataUri(imageBuffer, imageType)
+
+  const messages: ChatMessage[] = [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: buildExpiryExtractionPrompt() },
+        { type: 'image_url', image_url: { url: imageData } },
+      ],
+    },
+  ]
+
+  const content = await callProvider(provider, apiKey, messages, opts)
+  return parseJsonResponse<RawExpiryExtraction>(content)
 }

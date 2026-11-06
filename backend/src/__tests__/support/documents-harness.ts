@@ -332,12 +332,15 @@ export function createDocumentsHarness() {
   function setup(
     firstRoutes: [RegExp, (params: unknown[]) => Row | null][] = [],
     allRoutes: [RegExp, (params: unknown[]) => Row[]][] = LIST_ROUTES,
-    options: { fileSortSeeds?: Record<string, number> } = {}
+    options: { fileSortSeeds?: Record<string, number>; envOverrides?: Partial<MockEnv> } = {}
   ) {
     fileSortSeeds = options.fileSortSeeds ?? {}
     db = createFakeDb(firstRoutes, allRoutes)
     bucket = createDocumentsStub()
-    env = createEnv(db, { DOCUMENTS: bucket as unknown as MockEnv['DOCUMENTS'] })
+    env = createEnv(db, {
+      DOCUMENTS: bucket as unknown as MockEnv['DOCUMENTS'],
+      ...options.envOverrides,
+    })
     app = createDocumentsPlugin({
       ports: {
         // Same cast idiom as the env line above — the stub is R2Bucket-shaped

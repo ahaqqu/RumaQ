@@ -11,6 +11,7 @@ import {
   useDeleteDocument,
   useDeleteDocumentFile,
   useUpdateDocumentExpiry,
+  useExtractDocumentExpiry,
 } from '../lib/queries/index.js'
 import {
   ApiError,
@@ -38,6 +39,7 @@ import {
   IconCheck,
   IconEye,
   IconCalendarBlank,
+  IconSpark,
 } from '../components/icons.jsx'
 
 // Error vocabulary mirrors the backend's documents app: the status picks the
@@ -49,6 +51,10 @@ function documentErrorKey(error) {
   if (status === 413) return 'documents.errorTooLarge'
   if (status === 415) return 'documents.errorType'
   if (status === 409) return 'documents.errorTooManyFiles'
+  // The read-date OCR (#433): 402 = no AI provider configured (Settings), a
+  // 502 the provider/answer failed — both keep the user in control.
+  if (status === 402) return 'documents.errorAiNotConfigured'
+  if (status === 502) return 'documents.errorOcr'
   return 'documents.errorGeneric'
 }
 
@@ -135,18 +141,25 @@ function PickedFiles({ picked, onLabel, onRemove, language }) {
 
 // One file inside its document: name, optional label, size, and the per-file
 // actions (view / download / delete — the delete is the same two-step inline
-// confirm the document row uses).
+// confirm the document row uses). Image files also get the OPT-IN read-date
+// action (#433): the backend OCRs the image with the user's own AI provider
+// and the suggestion prefills the expiry editor — the user still saves.
 function FileRow({
   file,
   onView,
   onDownload,
   onDelete,
+  onReadDate,
+  readDateBusy,
   confirmOpen,
   onToggleConfirm,
   busy,
   language,
 }) {
   const { t } = useTranslation()
+  // The vault allowlist is image/jpeg|png|webp + application/pdf; the vision
+  // call reads images only, so the action hides itself for PDFs.
+  const isImage = /^image\//.test(file.content_type)
   return (
     <div className="flex items-center gap-2 pl-11 py-1.5">
       <div className="min-w-0 flex-1">
@@ -191,6 +204,21 @@ function FileRow({
           >
             <IconDownload size={15} />
           </Button>
+          {isImage && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onReadDate}
+              disabled={readDateBusy}
+              aria-label={`${t('documents.readDate')}: ${file.file_name}`}
+              data-testid="read-date"
+            >
+              <IconSpark size={15} />
+              <span className="hidden sm:inline">
+                {readDateBusy ? t('documents.readingDate') : t('documents.readDate')}
+              </span>
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -213,6 +241,8 @@ function DocumentRow({
   onViewFile,
   onDownloadFile,
   onDeleteFile,
+  onReadDate,
+  readDateFileKey,
   onDeleteDoc,
   onEditExpiry,
   fileConfirmKey,
@@ -308,6 +338,8 @@ function DocumentRow({
               onView={() => onViewFile(doc, file)}
               onDownload={() => onDownloadFile(doc, file)}
               onDelete={() => onDeleteFile(doc, file)}
+              onReadDate={() => onReadDate(doc, file)}
+              readDateBusy={readDateFileKey === `${doc.id}:${file.id}`}
               confirmOpen={fileConfirmKey === `${doc.id}:${file.id}`}
               onToggleConfirm={() => onToggleFileConfirm(`${doc.id}:${file.id}`)}
               busy={removeFilePending}
@@ -362,6 +394,7 @@ export function Documents() {
   const remove = useDeleteDocument()
   const removeFile = useDeleteDocumentFile()
   const updateExpiry = useUpdateDocumentExpiry()
+  const extractExpiry = useExtractDocumentExpiry()
 
   // Create draft state — its own form, like the Household add form. picked
   // files carry an optional per-file label; the create call takes the FIRST
@@ -381,6 +414,9 @@ export function Documents() {
   // The #426 expiry editor: which document is being edited and its draft.
   const [expiryEditingId, setExpiryEditingId] = useState(null)
   const [expiryDraft, setExpiryDraft] = useState({ expiresOn: '', remindDays: '' })
+  // The #433 read-date action: which file is being OCR'd (busy flag) — an
+  // explicit per-file call, never automatic (cost control + consent).
+  const [readDateFileKey, setReadDateFileKey] = useState(null)
 
   const openExpiryEdit = (doc) => {
     setFeedback(null)
@@ -395,6 +431,33 @@ export function Documents() {
   const closeExpiryEdit = () => {
     setExpiryEditingId(null)
     setExpiryDraft({ expiresOn: '', remindDays: '' })
+  }
+
+  // The opt-in read-date action (#433): OCR the file with the user's own AI
+  // provider, then prefill the expiry editor with the SUGGESTION. The model
+  // never writes — the date only persists when the user saves the editor
+  // (saveExpiry → PATCH). A "no date found" answer is feedback, not an error.
+  const readDateFromFile = async (doc, file) => {
+    setFeedback(null)
+    setActionError(null)
+    setReadDateFileKey(`${doc.id}:${file.id}`)
+    try {
+      const result = await extractExpiry.mutateAsync({ documentId: doc.id, fileId: file.id })
+      if (result?.expires_on) {
+        setExpiryEditingId(doc.id)
+        setExpiryDraft({
+          expiresOn: result.expires_on,
+          remindDays: doc.remind_days_before ?? DOCUMENT_DEFAULT_REMIND_DAYS,
+        })
+        setFeedback(t('documents.expiryRead', { name: file.file_name }))
+      } else {
+        setFeedback(t('documents.expiryReadNone', { name: file.file_name }))
+      }
+    } catch (err) {
+      setActionError(t(documentErrorKey(err)))
+    } finally {
+      setReadDateFileKey(null)
+    }
   }
 
   // Save the expiry draft: a cleared date ALWAYS sends expires_on: null — the
@@ -885,6 +948,8 @@ export function Documents() {
                     }}
                     onDownloadFile={download}
                     onDeleteFile={(d, file) => confirmDeleteFile(d, file)}
+                    onReadDate={readDateFromFile}
+                    readDateFileKey={readDateFileKey}
                     onDeleteDoc={() => confirmDeleteDoc(doc)}
                     fileConfirmKey={fileConfirmKey}
                     onToggleFileConfirm={(key) =>

@@ -979,8 +979,8 @@ apiApp.get(
   async (c) => {
     const settings = await c.env.DB.prepare(
       `SELECT motion_preference, language, ai_provider, ai_base_url, ai_model,
-               ai_thinking_level, persona_user_role, persona_ai_role, persona_enabled,
-               theme_hue, active_household_id, encrypted_ai_key
+               ai_vision_model, ai_thinking_level, persona_user_role, persona_ai_role,
+               persona_enabled, theme_hue, active_household_id, encrypted_ai_key
         FROM user_settings WHERE user_id = ?`
     )
       .bind(c.get('userId'))
@@ -990,6 +990,7 @@ apiApp.get(
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_vision_model: string | null
         ai_thinking_level: string | null
         persona_user_role: string | null
         persona_ai_role: string | null
@@ -1014,6 +1015,7 @@ apiApp.get(
       ai_provider: settings?.ai_provider ?? null,
       ai_base_url: settings?.ai_base_url ?? null,
       ai_model: settings?.ai_model ?? null,
+      ai_vision_model: settings?.ai_vision_model ?? null,
       ai_thinking_level: settings?.ai_thinking_level ?? null,
       persona_user_role: settings?.persona_user_role ?? null,
       persona_ai_role: settings?.persona_ai_role ?? null,
@@ -1049,6 +1051,12 @@ apiApp.patch(
               ai_key: { type: 'string', minLength: 1 },
               ai_base_url: { type: 'string', maxLength: 500 },
               ai_model: { type: 'string', maxLength: 200 },
+              ai_vision_model: {
+                type: 'string',
+                maxLength: 200,
+                description:
+                  'Vision model for vault document OCR (issue #433); empty/omitted falls back to ai_model',
+              },
               ai_thinking_level: { type: 'string', enum: ['low', 'medium', 'high', ''] },
               persona_user_role: { type: 'string' },
               persona_ai_role: { type: 'string' },
@@ -1112,6 +1120,13 @@ apiApp.patch(
       updates.push('ai_model = ?')
       params.push(trimmed === '' ? null : trimmed)
     }
+    if (fields.ai_vision_model !== undefined) {
+      const trimmed = fields.ai_vision_model.trim()
+      updates.push('ai_vision_model = ?')
+      // Empty string clears the field (the ai_model rule): no explicit vision
+      // model means the OCR path falls back to ai_model.
+      params.push(trimmed === '' ? null : trimmed)
+    }
     if (fields.ai_thinking_level !== undefined) {
       updates.push('ai_thinking_level = ?')
       params.push(fields.ai_thinking_level === '' ? null : fields.ai_thinking_level)
@@ -1152,8 +1167,8 @@ apiApp.patch(
 
     const settings = await c.env.DB.prepare(
       `SELECT motion_preference, language, ai_provider, ai_base_url, ai_model,
-              ai_thinking_level, persona_user_role, persona_ai_role, persona_enabled,
-              theme_hue, encrypted_ai_key
+              ai_vision_model, ai_thinking_level, persona_user_role, persona_ai_role,
+              persona_enabled, theme_hue, encrypted_ai_key
         FROM user_settings WHERE user_id = ?`
     )
       .bind(c.get('userId'))
@@ -1163,6 +1178,7 @@ apiApp.patch(
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_vision_model: string | null
         ai_thinking_level: string | null
         persona_user_role: string | null
         persona_ai_role: string | null
@@ -1177,6 +1193,7 @@ apiApp.patch(
       ai_provider: settings?.ai_provider ?? null,
       ai_base_url: settings?.ai_base_url ?? null,
       ai_model: settings?.ai_model ?? null,
+      ai_vision_model: settings?.ai_vision_model ?? null,
       ai_thinking_level: settings?.ai_thinking_level ?? null,
       persona_user_role: settings?.persona_user_role ?? null,
       persona_ai_role: settings?.persona_ai_role ?? null,
@@ -1375,7 +1392,7 @@ apiApp.get(
     const today = new Date().toISOString().slice(0, 10)
 
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key
+      `SELECT ai_provider, ai_base_url, ai_model, ai_vision_model, ai_thinking_level, encrypted_ai_key
         FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
@@ -1619,7 +1636,7 @@ apiApp.post(
     const { message, history } = c.req.valid('json')
 
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key,
+      `SELECT ai_provider, ai_base_url, ai_model, ai_vision_model, ai_thinking_level, encrypted_ai_key,
               persona_enabled, persona_user_role, persona_ai_role
          FROM user_settings WHERE user_id = ?`
     )
@@ -1628,6 +1645,7 @@ apiApp.post(
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_vision_model: string | null
         ai_thinking_level: string | null
         encrypted_ai_key: string | null
         persona_enabled: number | null
@@ -1810,7 +1828,7 @@ apiApp.post(
     }
 
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key
+      `SELECT ai_provider, ai_base_url, ai_model, ai_vision_model, ai_thinking_level, encrypted_ai_key
         FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
@@ -1818,6 +1836,7 @@ apiApp.post(
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_vision_model: string | null
         ai_thinking_level: string | null
         encrypted_ai_key: string | null
       }>()
@@ -3836,7 +3855,7 @@ apiApp.post(
     const householdId = c.get('householdId')
 
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key, currency
+      `SELECT ai_provider, ai_base_url, ai_model, ai_vision_model, ai_thinking_level, encrypted_ai_key, currency
         FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
@@ -3844,6 +3863,7 @@ apiApp.post(
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_vision_model: string | null
         ai_thinking_level: string | null
         encrypted_ai_key: string | null
         currency: string | null

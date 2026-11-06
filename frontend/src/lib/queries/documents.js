@@ -6,6 +6,7 @@ import {
   deleteDocument,
   deleteDocumentFile,
   updateDocumentExpiry,
+  extractDocumentExpiry,
 } from '../api'
 
 // The document vault (ahaqqu/RumaQ#422 rework) — server-state for the
@@ -100,5 +101,16 @@ export function useUpdateDocumentExpiry() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: DOCUMENTS_KEY })
     },
+  })
+}
+
+// Expiry-date OCR (#433): an explicit per-file "Read date" action against the
+// USER'S OWN AI provider (the backend resolves the vision model). NO cache
+// invalidation — this is a pure read over stored bytes, and its answer is a
+// SUGGESTION the page holds in form state; the vault cache only changes when
+// the user confirms through useUpdateDocumentExpiry above.
+export function useExtractDocumentExpiry() {
+  return useMutation({
+    mutationFn: ({ documentId, fileId }) => extractDocumentExpiry(documentId, fileId),
   })
 }
