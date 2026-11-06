@@ -2,6 +2,7 @@ import { Outlet, createRootRoute } from '@tanstack/react-router'
 import React, { Suspense } from 'react'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { PersonaProvider } from '../context/PersonaContext.jsx'
+import { PluginCatalogProvider } from '../plugins/context.jsx'
 import { AppProvider } from '../context/AppContext.jsx'
 import { AppShell } from '../components/AppShell.jsx'
 import { Login } from '../pages/Login.jsx'
@@ -35,9 +36,15 @@ function AuthGate() {
 
   return (
     <PersonaProvider initialPersona={initialPersona}>
-      <AppShell>
-        <Outlet />
-      </AppShell>
+      {/* Plugin catalog (#436): enablement comes from /api/me, which is only
+          meaningful once authenticated, so the provider lives inside the
+          auth branch — AppShell's nav filter and the plugin route gates read
+          it from here. */}
+      <PluginCatalogProvider>
+        <AppShell>
+          <Outlet />
+        </AppShell>
+      </PluginCatalogProvider>
     </PersonaProvider>
   )
 }

@@ -3,6 +3,7 @@ import { render, fireEvent } from '@testing-library/react'
 import React from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AppProvider } from '../context/AppContext.jsx'
+import { PluginCatalogProvider } from '../plugins/context.jsx'
 import { AppShell } from './AppShell.jsx'
 import {
   useSettings,
@@ -62,7 +63,13 @@ function renderWithProviders(ui) {
     React.createElement(
       QueryClientProvider,
       { client: queryClient },
-      React.createElement(AppProvider, null, ui)
+      React.createElement(
+        AppProvider,
+        null,
+        // The shell's nav filter reads the plugin catalog (#436); useMe is
+        // module-mocked above, so the provider sees the same payload.
+        React.createElement(PluginCatalogProvider, null, ui)
+      )
     )
   )
 }
@@ -208,6 +215,33 @@ describe('AppShell', () => {
     const adminView = renderWithProviders(React.createElement(AppShell, null, null))
     expect(adminView.container.textContent).toContain('Household admin')
     expect(adminView.container.textContent).toContain('Scraper Monitor')
+  })
+
+  it('keeps plugin nav entries when /api/me omits enabledPlugins (legacy payloads)', () => {
+    // The beforeEach useMe payload carries no enabledPlugins field — the
+    // additive contract (#436, plan §4.5) reads absent as all enabled.
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    expect(container.querySelector('a[href="/documents"]')).toBeTruthy()
+  })
+
+  it('hides a disabled plugin from the sidebar and the mobile drawer', () => {
+    vi.mocked(useMe).mockReturnValue({
+      data: {
+        user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: null },
+        enabledPlugins: [],
+      },
+      isLoading: false,
+    })
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    expect(container.querySelector('a[href="/documents"]')).toBeNull()
+    // The filter feeds every render site — the drawer must not keep showing
+    // a disabled surface (plan §4.5).
+    fireEvent.click(container.querySelector('button[aria-label="Open menu"]'))
+    const drawer = container.querySelector('aside[role="dialog"]')
+    expect(drawer).toBeTruthy()
+    expect(drawer.querySelector('a[href="/documents"]')).toBeNull()
+    // Core household-admin entries are unaffected.
+    expect(drawer.querySelector('a[href="/household"]')).toBeTruthy()
   })
 
   it('renders the account block without a logout button (logout lives in Settings)', () => {

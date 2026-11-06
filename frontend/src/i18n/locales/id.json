@@ -627,6 +627,10 @@
     "reload": "Muat ulang",
     "dismiss": "Abaikan"
   },
+  "plugins": {
+    "disabledTitle": "{{feature}} dimatikan",
+    "disabledDesc": "Fitur ini nonaktif untuk keluargamu. Pemilik keluarga dapat menyalakannya kembali di Pengaturan."
+  },
   "common": {
     "from": "dari",
     "today": "hari ini",

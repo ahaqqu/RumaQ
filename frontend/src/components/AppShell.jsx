@@ -15,7 +15,6 @@ import {
   IconSliders,
   IconSpark,
   IconUsers,
-  IconFolderLock,
   IconTask,
   IconClose,
   BrandMark,
@@ -24,6 +23,7 @@ import { useApp } from '../context/AppContext.jsx'
 import { useMe } from '../lib/queries/me.js'
 import { useSettings, useUpdateSettings, useHouseholds } from '../lib/queries/index.js'
 import { cn } from '../lib/cn.js'
+import { usePluginCatalog } from '../plugins/context.jsx'
 import { Assistant } from './Assistant.jsx'
 import { OfflineBanner } from './OfflineBanner.jsx'
 import { Button } from './Button.jsx'
@@ -57,12 +57,13 @@ const ADMIN_NAV = [
 // ADMIN_NAV it belongs to every authenticated user — being a household member
 // (not users.is_admin) is the authorization for viewing it; owners get the
 // invite/remove affordances inside the screen itself.
-// The document vault (issue #388) rides the same group — every household
-// member keeps family documents; owners manage members inside the screens.
+// The document vault (issue #388) used to ride this list — it is now a plugin
+// catalog contribution (plugins/documents/catalog.tsx) rendered alongside it
+// below, filtered by enablement (#436): a disabled plugin drops out of every
+// render site instead of keeping a dead link here.
 const HOUSEHOLD_NAV = [
   { id: 'household', key: 'nav.household', Icon: IconUsers, to: '/household' },
   { id: 'tasks', key: 'nav.tasks', Icon: IconTask, to: '/tasks' },
-  { id: 'documents', key: 'nav.documents', Icon: IconFolderLock, to: '/documents' },
 ]
 
 // The mobile drawer is the super-app menu: primary screens first — History
@@ -176,6 +177,11 @@ export function AppShell({ children }) {
   }, [drawerOpen])
 
   const user = me?.user
+  // Plugin catalog entries, already filtered to the active household's
+  // enabled set (plugins/context.jsx — filter once in the provider, feed
+  // every render site: the navItems title lookup below, the sidebar, and the
+  // mobile drawer; plan §4.5).
+  const { nav: pluginNav } = usePluginCatalog()
   const householdName = settings?.active_household_name
   // The identity card mirrors the Figma household card ("Keluarga Putri · 4
   // people"): the count rides the households list, keyed off the active id.
@@ -196,8 +202,15 @@ export function AppShell({ children }) {
   // backend, backed by the users.is_admin grant). Household members is
   // everyone's; both share the HOUSEHOLD ADMIN group.
   const navItems = user?.isAdmin
-    ? [...NAV, ...HOUSEHOLD_NAV, ...ADMIN_NAV]
-    : [...NAV, ...HOUSEHOLD_NAV]
+    ? [
+        ...NAV,
+        ...pluginNav.main,
+        ...HOUSEHOLD_NAV,
+        ...pluginNav.household,
+        ...ADMIN_NAV,
+        ...pluginNav.admin,
+      ]
+    : [...NAV, ...pluginNav.main, ...HOUSEHOLD_NAV, ...pluginNav.household]
   const currentNav = navItems.find((n) => n.to === currentRouteId)
   const title = currentNav ? t(currentNav.key) : t('nav.home')
   const isActive = (to) => matches.some((m) => m.routeId === to)
@@ -279,6 +292,7 @@ export function AppShell({ children }) {
 
         <nav className="flex flex-col gap-1.5" aria-label={t('nav.mainNav')}>
           {NAV.map(renderNavItem)}
+          {pluginNav.main.map(renderNavItem)}
         </nav>
 
         <div className="flex flex-col gap-4">
@@ -287,7 +301,9 @@ export function AppShell({ children }) {
           </div>
           <nav className="flex flex-col gap-1.5" aria-label={t('nav.adminGroup')}>
             {HOUSEHOLD_NAV.map(renderNavItem)}
+            {pluginNav.household.map(renderNavItem)}
             {user?.isAdmin && ADMIN_NAV.map(renderNavItem)}
+            {user?.isAdmin && pluginNav.admin.map(renderNavItem)}
           </nav>
         </div>
 
@@ -405,6 +421,16 @@ export function AppShell({ children }) {
                   <item.Icon size={21} className="shrink-0" /> {t(item.key)}
                 </NavItem>
               ))}
+              {pluginNav.main.map((item) => (
+                <NavItem
+                  key={item.id}
+                  to={item.to}
+                  active={isActive(item.to)}
+                  onClick={() => setDrawerOpen(false)}
+                >
+                  <item.Icon size={21} className="shrink-0" /> {t(item.key)}
+                </NavItem>
+              ))}
             </nav>
 
             <nav className="flex flex-col gap-1" aria-label={t('nav.settings')}>
@@ -432,8 +458,29 @@ export function AppShell({ children }) {
                     <item.Icon size={21} className="shrink-0" /> {t(item.key)}
                   </NavItem>
                 ))}
+                {pluginNav.household.map((item) => (
+                  <NavItem
+                    key={item.id}
+                    to={item.to}
+                    active={isActive(item.to)}
+                    onClick={() => setDrawerOpen(false)}
+                  >
+                    <item.Icon size={21} className="shrink-0" /> {t(item.key)}
+                  </NavItem>
+                ))}
                 {user?.isAdmin &&
                   ADMIN_NAV.map((item) => (
+                    <NavItem
+                      key={item.id}
+                      to={item.to}
+                      active={isActive(item.to)}
+                      onClick={() => setDrawerOpen(false)}
+                    >
+                      <item.Icon size={21} className="shrink-0" /> {t(item.key)}
+                    </NavItem>
+                  ))}
+                {user?.isAdmin &&
+                  pluginNav.admin.map((item) => (
                     <NavItem
                       key={item.id}
                       to={item.to}
