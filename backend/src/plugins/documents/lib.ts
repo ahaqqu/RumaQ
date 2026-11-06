@@ -172,6 +172,22 @@ export class DocumentForbiddenError extends Error {
 }
 
 /**
+ * The purge write-gate's 409 (ticket 5, #439): a purge drain (pending or
+ * running) is in flight for this household's vault, so new uploads are
+ * refused — a document landing between the drain's final empty read and the
+ * 'done' transition would be erased with the purged data, the exact silent
+ * loss this ticket exists to prevent. Reads stay open (the household can
+ * still see what the drain has not reached yet); deletions stay open (they
+ * only ever shrink the drain's work).
+ */
+export class DocumentPurgeActiveError extends Error {
+  constructor(message = 'This vault is being purged — uploads are paused until it completes') {
+    super(message)
+    this.name = 'DocumentPurgeActiveError'
+  }
+}
+
+/**
  * Magic-byte sniffing: the ONLY source of truth for what a file really is.
  * The client-declared mime is advisory — it must agree with the sniffed type
  * or the upload is rejected (declared-vs-actual mismatch). JPEG FF D8 FF,

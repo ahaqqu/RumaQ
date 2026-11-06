@@ -505,6 +505,19 @@ export function setPluginEnablement(
   )
 }
 
+// The purge initiation (ticket 5, #439): the typed confirmation rides the
+// body; the server re-checks it against the manifest name (never trust the
+// client). Nothing is deleted by this call — it marks the drain 'pending';
+// the nightly chunk driver does the bytes-before-rows work.
+export function requestPluginPurge(pluginId: string, confirm: string): Promise<unknown> {
+  return unwrap(
+    client.POST('/api/plugins/{pluginId}/purge', {
+      params: { path: { pluginId } },
+      body: { confirm },
+    })
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Document vault (ahaqqu/RumaQ#422 rework of the #388 MVP) — private
 // per-household documents with free-text names and N files each. Metadata

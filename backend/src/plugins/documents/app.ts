@@ -42,6 +42,7 @@ import { ipRateLimitMiddleware, isRateLimited } from '../../lib/rate-limit.js'
 import { pluginGate } from '../gate.js'
 import type { PluginDeps, PluginRegistration } from '../types.js'
 import { documentsManifest } from './manifest.js'
+import { createDocumentsPurgeJob } from './purge.js'
 import {
   REMIND_DAYS_MAX,
   REMIND_DAYS_MIN,
@@ -52,6 +53,7 @@ import {
   DOCUMENT_MAX_BYTES,
   DocumentForbiddenError,
   DocumentNotFoundError,
+  DocumentPurgeActiveError,
   DocumentTooLargeError,
   DocumentTooManyFilesError,
   DocumentUnsupportedTypeError,
@@ -75,6 +77,7 @@ import {
   updateDocumentExpiry,
   type DocumentSummary,
 } from './lib.js'
+import { resolvePluginPurgeActive } from '../enablement.js'
 
 const NO_CACHE = { 'Cache-Control': 'private, no-cache' }
 // Byte bodies are session-scoped secrets: the browser must not memoize them
@@ -358,6 +361,18 @@ function enforceUploadRate(userId: string): { limited: boolean; retryAfter: numb
   return isRateLimited(`doc-upload:${userId}`, UPLOAD_RATE_WINDOW_MS, UPLOAD_RATE_MAX)
 }
 
+// The purge write-gate (ticket 5, #439): refuse uploads while a vault purge
+// is pending/running (409). One PK-prefix seek per upload — uploads are
+// already multipart-heavy, and the gate is what stops a document from
+// landing in the drain's final-read race window. The resolver fails CLOSED
+// (blocks writes on a read error): a refused upload retries; an upload that
+// slips into an unverified drain window is data loss.
+async function enforcePurgeWriteGate(db: Context<Env>['env']['DB'], householdId: string) {
+  if (await resolvePluginPurgeActive(db, householdId, 'documents')) {
+    throw new DocumentPurgeActiveError()
+  }
+}
+
 /**
  * The documents plugin factory (the #435 contract, ticket 4 #438): the
  * registry builds ports.storage from the DOCUMENTS binding wiring and
@@ -389,6 +404,9 @@ export function createDocumentsPlugin(deps: PluginDeps): PluginRegistration {
     if (err instanceof DocumentTooLargeError) return c.json({ error: err.message }, 413)
     if (err instanceof DocumentUnsupportedTypeError) return c.json({ error: err.message }, 415)
     if (err instanceof DocumentTooManyFilesError) {
+      return c.json({ error: err.message }, 409, NO_CACHE)
+    }
+    if (err instanceof DocumentPurgeActiveError) {
       return c.json({ error: err.message }, 409, NO_CACHE)
     }
     if (err instanceof DocumentNotFoundError) return c.json({ error: err.message }, 404, NO_CACHE)
@@ -505,6 +523,7 @@ export function createDocumentsPlugin(deps: PluginDeps): PluginRegistration {
           },
         },
         ...JSON_ERROR_RESPONSES,
+        409: { description: 'A purge drain is in flight for this vault — uploads are paused' },
         413: { description: 'File exceeds the 10 MB cap' },
         415: { description: 'Unsupported or mismatched file type' },
         429: { description: 'Too many uploads' },
@@ -520,6 +539,10 @@ export function createDocumentsPlugin(deps: PluginDeps): PluginRegistration {
           'Retry-After': String(retryAfter),
         })
       }
+
+      // The purge write-gate runs BEFORE the body is read: a drain in
+      // flight refuses uploads before the client pays for a 10 MB POST.
+      await enforcePurgeWriteGate(c.env.DB, householdId)
 
       const upload = await parseUpload(c)
 
@@ -718,7 +741,10 @@ export function createDocumentsPlugin(deps: PluginDeps): PluginRegistration {
           },
         },
         ...JSON_ERROR_RESPONSES,
-        409: { description: 'The document already holds the maximum of 20 files' },
+        409: {
+          description:
+            'The document already holds the maximum of 20 files, or a purge drain is in flight for this vault (uploads paused)',
+        },
         413: { description: 'File exceeds the 10 MB cap' },
         415: { description: 'Unsupported or mismatched file type' },
         429: { description: 'Too many uploads' },
@@ -734,6 +760,9 @@ export function createDocumentsPlugin(deps: PluginDeps): PluginRegistration {
           'Retry-After': String(retryAfter),
         })
       }
+
+      // The purge write-gate, same as create: before the body is read.
+      await enforcePurgeWriteGate(c.env.DB, householdId)
 
       // Scoped lookup first (no existence leak), cap check inside the lib
       // BEFORE any byte touches storage.
@@ -915,5 +944,13 @@ export function createDocumentsPlugin(deps: PluginDeps): PluginRegistration {
     }
   )
 
-  return { manifest: documentsManifest, app: documentsApp }
+  return {
+    manifest: documentsManifest,
+    app: documentsApp,
+    // The purge job (ticket 5, #439) rides the registration, closing over
+    // the SAME injected port the routes use — the core cron tick and the
+    // household-dissolution drain call it through PluginPurgeJob, never
+    // through plugin internals. Bytes go through the port, never inline R2.
+    purge: createDocumentsPurgeJob(storage),
+  }
 }

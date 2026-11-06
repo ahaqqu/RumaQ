@@ -3,7 +3,7 @@ import { render, fireEvent, waitFor } from '@testing-library/react'
 import React from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PluginFeatures } from './PluginFeatures.jsx'
-import { getPluginCatalog, setPluginEnablement } from '../lib/api'
+import { getPluginCatalog, requestPluginPurge, setPluginEnablement } from '../lib/api'
 
 // The section rides the REAL query hooks — only the network layer is mocked
 // (the context.test.jsx idiom). That matters for the failed-toggle alert: a
@@ -16,6 +16,7 @@ vi.mock('../lib/api', async (importOriginal) => ({
   ...(await importOriginal()),
   getPluginCatalog: vi.fn(),
   setPluginEnablement: vi.fn(),
+  requestPluginPurge: vi.fn(),
 }))
 
 // The server row the catalog endpoint answers for the documents plugin —
@@ -54,6 +55,7 @@ const waitForSwitch = (container) =>
 beforeEach(() => {
   vi.mocked(getPluginCatalog).mockReset()
   vi.mocked(setPluginEnablement).mockReset()
+  vi.mocked(requestPluginPurge).mockReset()
 })
 
 describe('PluginFeatures (settings catalog, issue #437)', () => {
@@ -160,5 +162,132 @@ describe('PluginFeatures (settings catalog, issue #437)', () => {
     // The rollback: the switch snapped back to the honest (enabled) state —
     // the alert is the failure signal, the switch position is the truth.
     expect(container.querySelector('[role="switch"]').getAttribute('aria-checked')).toBe('true')
+  })
+})
+
+// The purge lifecycle surface (ticket 5, #439): owner-only danger action,
+// typed-confirmation dialog (a checkbox is a misclick away — the typed
+// string is the deliberate act §3.4 requires), honest drain-state lines.
+// The REAL hook end-to-end (no hook mocks) — the mutation's onSuccess close
+// and the alert-on-failure behavior are what a second observer could never
+// have seen seeded.
+describe('PluginFeatures — purge lifecycle (ticket 5, #439)', () => {
+  it('offers the owner the danger action on a purge-capable plugin; members get neither button nor state action', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow()] })
+    const owner = renderSection(true)
+    const button = await waitFor(() => {
+      const btn = [...owner.container.querySelectorAll('button')].find((b) =>
+        b.textContent.includes('plugins.purge.action')
+      )
+      expect(btn).toBeTruthy()
+      return btn
+    })
+    owner.unmount()
+
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow()] })
+    const member = renderSection(false)
+    await waitFor(() => expect(member.container.textContent).toContain('plugins.stateOn'))
+    expect(
+      [...member.container.querySelectorAll('button')].some((b) =>
+        b.textContent.includes('plugins.purge.action')
+      )
+    ).toBe(false)
+    void button
+  })
+
+  it('opens the typed-confirmation dialog; submit stays disabled until the name matches exactly', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow()] })
+    vi.mocked(requestPluginPurge).mockResolvedValue(documentsRow())
+    const { container } = renderSection(true)
+
+    const action = await waitFor(() => {
+      const btn = [...container.querySelectorAll('button')].find((b) =>
+        b.textContent.includes('plugins.purge.action')
+      )
+      expect(btn).toBeTruthy()
+      return btn
+    })
+    fireEvent.click(action)
+    await waitFor(() => {
+      const el = container.querySelector('[role="dialog"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(container.textContent).toContain('plugins.purge.dialogWarning')
+
+    const input = container.querySelector('#purge-confirm-input')
+    const submit = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('plugins.purge.dialogConfirm')
+    )
+    // A checkbox would pass here; the typed gate must not.
+    expect(submit.disabled).toBe(true)
+    fireEvent.change(input, { target: { value: 'documents' } }) // case matters
+    expect(submit.disabled).toBe(true)
+    fireEvent.change(input, { target: { value: 'Documents' } })
+    expect(submit.disabled).toBe(false)
+
+    fireEvent.click(submit)
+    await waitFor(() => expect(requestPluginPurge).toHaveBeenCalledWith('documents', 'Documents'))
+  })
+
+  it('keeps the dialog open on a failed initiation and renders the alert', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow()] })
+    vi.mocked(requestPluginPurge).mockRejectedValue(new Error('boom'))
+    const { container } = renderSection(true)
+
+    const action = await waitFor(() => {
+      const btn = [...container.querySelectorAll('button')].find((b) =>
+        b.textContent.includes('plugins.purge.action')
+      )
+      expect(btn).toBeTruthy()
+      return btn
+    })
+    fireEvent.click(action)
+    await waitFor(() => expect(container.querySelector('[role="dialog"]')).not.toBeNull())
+
+    fireEvent.change(container.querySelector('#purge-confirm-input'), {
+      target: { value: 'Documents' },
+    })
+    const submit = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('plugins.purge.dialogConfirm')
+    )
+    fireEvent.click(submit)
+    await waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull())
+    expect(container.textContent).toContain('plugins.purge.errorGeneric')
+    // The dialog did NOT close on failure — the alert is the only surface.
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull()
+  })
+
+  it('hides the action and shows the uploads-paused line while a drain is in flight', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({
+      plugins: [
+        documentsRow({
+          purge: { state: 'running', requested_at: '2026-11-06 03:00:00', completed_at: null },
+        }),
+      ],
+    })
+    const { container } = renderSection(true)
+    await waitFor(() => expect(container.textContent).toContain('plugins.purge.stateRunning'))
+    expect(
+      [...container.querySelectorAll('button')].some((b) =>
+        b.textContent.includes('plugins.purge.action')
+      )
+    ).toBe(false)
+  })
+
+  it('shows the completion line once the drain is done', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({
+      plugins: [
+        documentsRow({
+          purge: {
+            state: 'done',
+            requested_at: '2026-11-06 03:00:00',
+            completed_at: '2026-11-07 03:00:00',
+          },
+        }),
+      ],
+    })
+    const { container } = renderSection(true)
+    await waitFor(() => expect(container.textContent).toContain('plugins.purge.stateDone'))
   })
 })

@@ -75,12 +75,47 @@ export type PluginPorts = {
 export type PluginDeps = { ports: PluginPorts }
 
 /**
+ * One purge-chunk outcome (§3.4 — "purge is a job, not a request"): what the
+ * chunk spent and whether the household's purge has nothing left to do.
+ * `objects` feeds the core driver's per-invocation subrequest budget (50 on
+ * the Workers free plan — each storage delete IS one subrequest); `drained`
+ * tells the driver it may write the completion receipt / dissolve.
+ */
+export type PluginPurgeChunk = {
+  /** Storage objects deleted by this chunk (the subrequest spend). */
+  objects: number
+  /** True when the plugin has no rows left to purge for this household. */
+  drained: boolean
+}
+
+/**
+ * The per-plugin purge job (ticket 5, §3.4): one CHUNK of one household's
+ * purge, bytes-before-rows, idempotent per document — callable as many times
+ * as the drain needs, resuming from the row's cursor. The plugin owns the
+ * HOW (its index, its port); the core driver (lib/plugin-purge.ts) owns the
+ * WHEN (the nightly cron tick) and the budget. Initiation (the typed
+ * confirmation, the pending state) is core's; the job only ever drains.
+ */
+export type PluginPurgeJob = (args: {
+  db: D1Database
+  householdId: string
+  /** Max storage objects this chunk may delete — the subrequest budget. */
+  maxObjects: number
+}) => Promise<PluginPurgeChunk>
+
+/**
  * One plugin's contribution: its manifest + the mounted Hono app. "Route
- * mounts + metadata" — exactly what the factory returns.
+ * mounts + metadata" — exactly what the factory returns. `purge` rides the
+ * registration when the manifest declares the 'purge' capability: the core
+ * cron tick and the household-dissolution drain call it through this seam,
+ * never through plugin internals (T7 will generalize plugin-declared
+ * scheduled tasks on top of the same seam — this is deliberately the only
+ * job-shaped hook until then).
  */
 export type PluginRegistration = {
   manifest: PluginManifest
   app: Hono<Env>
+  purge?: PluginPurgeJob
 }
 
 /**
