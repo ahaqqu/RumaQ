@@ -8,6 +8,7 @@
   - Branch Workers are cleaned up automatically via `scripts/github/cleanup-branch.sh` when the PR is closed.
   - When changing host configuration (nginx, units, env path, sudoers), change it in [ahaqqu/vps](https://github.com/ahaqqu/vps) under `rumaq/`; never edit the box directly or add a second bootstrap/apply path here.
 - When the request is scraper or data-pipeline work (store plugins, scraping, OCR, matching, publish, groceries), execute it in /home/ahaqqu/Projects/RumaQ-pipeline under that repo's AGENTS.md; RumaQ remains the conversation home and the publish backend.
+- When the request concerns DokumenQ, AutQ, or ahaqqu/vps, execute it in that repo under its `AGENTS.md`; RumaQ remains the conversation home. When work is orchestrated by the manager, follow `.agents/skills/manager/SKILL.md`.
 - When a change touches both sides (contract/ here + pipeline consumption), ship the RumaQ PR first, then `./scripts/sync-contract.sh <sha>` in a pipeline PR.
 - When writing automation (automation-local/live), target the app only — the scraper has no harness in this repo.
 - `scripts/test.sh` is the single entrypoint for all tests (unit, automation-local, automation-live). Run `./scripts/test.sh unit frontend` etc.

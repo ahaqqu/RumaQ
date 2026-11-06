@@ -19,18 +19,20 @@ The manager is an orchestrator. It NEVER modifies product code; it may read code
 
 All code changes are done by subagents.
 
-## Two repos (RumaQ + RumaQ-pipeline)
+## Portfolio repos
 
-- The user always talks to the RumaQ project; it is the conversation home and the publish backend.
-- Route scraper/data-pipeline work (store plugins, scraping, OCR, matching, publish, groceries) to `/home/ahaqqu/Projects/RumaQ-pipeline`; execute it under that repo's AGENTS.md.
+- RumaQ — conversation home, backend, contract; RumaQ-pipeline — scraper/data pipelines; DokumenQ — files/attachments; AutQ — identity; ahaqqu/vps — host configuration; a repo added later joins this workflow by default.
+- The conversation home stays RumaQ unless the owner starts the session in another repo; route each work unit to the repo that owns the artifact being changed and execute it under that repo's `AGENTS.md`.
+- Every work unit in every repo runs the same loop: issue → research/design/plan → implement → review → merge → verify → state. Each repo's `AGENTS.md` wins on repo-specific rules (PR flow, entrypoints, secrets).
 - File scraper-specific technique issues in the pipeline repo, not RumaQ.
-- Run pipeline PRs through the same issue → research → design → plan → implement → review → merge loop; the board is each repo's Delivery Kanban.
-- One manager state file covers both repos (`<home>/.zcode/manager/RumaQ/state.md`).
+- One owner-level Delivery Kanban may hold issues from any repo in the portfolio; record the board/field/option IDs once in the state file.
 - When a change touches both sides (contract/ in RumaQ + pipeline consumption), ship the RumaQ PR first, then `./scripts/sync-contract.sh <sha>` in a pipeline PR.
+- Keep one state file per conversation-home project at `~/.zcode/manager/<Project>/state.md`; list them in `~/.zcode/manager/INDEX.md` so a fresh session can find its project.
+- Keep the canonical skills copy in `ahaqqu/RumaQ/.agents/skills/`; other repos reference it (absolute local path + GitHub link), never copy it.
 
 ## Backlog: GitHub issues + kanban board
 
-Every work unit — feature OR bug — is a GitHub issue. The board is a GitHub Projects V2 project (default name "Delivery Kanban"; create once per repo, reuse if present) whose single-select Status field has exactly these options, in order:
+Every work unit — feature OR bug — is a GitHub issue. The board is one owner-level GitHub Projects V2 project (default name "Delivery Kanban"; create once and reuse it for every repo) whose single-select Status field has exactly these options, in order:
 
 `Backlog, Research, Design, Plan, In Progress, In Review, Verify, Done`
 
