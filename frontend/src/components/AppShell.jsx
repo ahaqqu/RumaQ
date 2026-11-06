@@ -16,6 +16,7 @@ import {
   IconSpark,
   IconUsers,
   IconTask,
+  IconCalendarBlank,
   IconClose,
   BrandMark,
 } from './icons.jsx'
@@ -52,6 +53,8 @@ const ADMIN_NAV = [
   { id: 'aiUsage', key: 'nav.aiUsage', Icon: IconSpark, to: '/admin/ai-usage' },
 ]
 
+// The shared calendar (issue #430) is a CORE household feature, not a plugin:
+// it rides this static list next to tasks (no catalog registration).
 // Household management (issue #331): the "Household members" screen lives in
 // the HOUSEHOLD ADMIN group per the redesign. Unlike the operator surfaces in
 // ADMIN_NAV it belongs to every authenticated user — being a household member
@@ -64,6 +67,7 @@ const ADMIN_NAV = [
 const HOUSEHOLD_NAV = [
   { id: 'household', key: 'nav.household', Icon: IconUsers, to: '/household' },
   { id: 'tasks', key: 'nav.tasks', Icon: IconTask, to: '/tasks' },
+  { id: 'calendar', key: 'nav.calendar', Icon: IconCalendarBlank, to: '/calendar' },
 ]
 
 // The mobile drawer is the super-app menu: primary screens first — History

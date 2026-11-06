@@ -708,3 +708,62 @@ export function patchTask(
 export function deleteTask(id: string): Promise<unknown> {
   return unwrap(client.DELETE('/api/tasks/{id}', { params: { path: { id } } }))
 }
+
+// ---------------------------------------------------------------------------
+// Household calendar (ahaqqu/RumaQ#430) — the shared family calendar. ONE
+// read surface: GET /api/calendar returns the day-ordered UNION of stored
+// events (kind: 'event') and derived document-deadline entries (kind:
+// 'deadline' — the #426 expiry metadata surfacing automatically, never
+// stored). Stored-event CRUD rides /api/calendar/events. Visibility ids are
+// the surrogate member ids (both modes, 0021).
+// ---------------------------------------------------------------------------
+
+export type CalendarVisibility = 'all' | 'members'
+
+export type CalendarListFilters = {
+  // The window bounds, inclusive ISO dates (YYYY-MM-DD); absent = unbounded
+  // on that side. The month view sends [first, last] of the visible month.
+  from?: string
+  to?: string
+}
+
+export function getCalendar(
+  filters: CalendarListFilters = {},
+  signal?: AbortSignal
+): Promise<unknown> {
+  return unwrap(
+    client.GET('/api/calendar', {
+      params: { query: { from: filters.from, to: filters.to } },
+      signal,
+    })
+  )
+}
+
+export function createCalendarEvent(payload: {
+  title: string
+  date: string
+  time?: string | null
+  visibility?: CalendarVisibility
+  member_ids?: string[]
+}): Promise<unknown> {
+  return unwrap(client.POST('/api/calendar/events', { body: payload }))
+}
+
+export function patchCalendarEvent(
+  id: string,
+  payload: {
+    title?: string
+    date?: string
+    time?: string | null
+    visibility?: CalendarVisibility
+    member_ids?: string[]
+  }
+): Promise<unknown> {
+  return unwrap(
+    client.PATCH('/api/calendar/events/{id}', { params: { path: { id } }, body: payload })
+  )
+}
+
+export function deleteCalendarEvent(id: string): Promise<unknown> {
+  return unwrap(client.DELETE('/api/calendar/events/{id}', { params: { path: { id } } }))
+}

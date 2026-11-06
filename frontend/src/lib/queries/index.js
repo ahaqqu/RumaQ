@@ -39,6 +39,14 @@ export {
   useUpdateTask,
   useDeleteTask,
 } from './tasks.js'
+export {
+  CALENDAR_BASE_KEY,
+  calendarQueryKey,
+  useCalendar,
+  useCreateCalendarEvent,
+  useUpdateCalendarEvent,
+  useDeleteCalendarEvent,
+} from './calendar.js'
 export { useHistory, usePurchasePatterns, useSendChatMessage } from './history.js'
 export {
   usePrices,
