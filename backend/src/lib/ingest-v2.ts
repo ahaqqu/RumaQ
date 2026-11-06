@@ -12,7 +12,7 @@ import {
 } from '@rumaq/contract'
 
 import type { Statement } from './d1.js'
-import { SELECT_IN_CHUNK, runBatch, selectIn } from './d1.js'
+import { BATCH_CHUNK, SELECT_IN_CHUNK, assertQueryBudget, runBatch, selectIn } from './d1.js'
 
 type ExistingProduct = {
   id: string
@@ -318,6 +318,21 @@ export async function ingestPricesV2(
       db.prepare('UPDATE canonical_index_state SET version = version + 1 WHERE id = 1')
     )
   }
+
+  // One invocation, one D1 query budget: the reads above, one batch per 50
+  // statements below, and the version read after them. Over the budget D1
+  // stops the invocation part-way through the chunks — the earlier ones
+  // committed, the bump (the last statement) never applied — so refuse here,
+  // before the canonical write, instead of shipping content stamped with an
+  // older indexVersion. The store upsert above is the only write that precedes
+  // this check: idempotent price_sources metadata, outside the canonical index.
+  assertQueryBudget(
+    Math.ceil(payload.stores.length / BATCH_CHUNK) +
+      (slugs.length ? Math.ceil(slugs.length / SELECT_IN_CHUNK) : 0) +
+      (keys.length ? Math.ceil(keys.length / SELECT_IN_CHUNK) : 0) +
+      Math.ceil(statements.length / BATCH_CHUNK) +
+      1
+  )
 
   await runBatch(db, statements)
 

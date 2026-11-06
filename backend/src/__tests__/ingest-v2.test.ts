@@ -3,6 +3,7 @@ import { parse } from 'valibot'
 
 import { apiApp } from '../apps/api.js'
 import { getCanonicalIndex, ingestPricesV2 } from '../lib/ingest-v2.js'
+import { D1_QUERY_BUDGET, D1QueryBudgetExceededError } from '../lib/d1.js'
 import { ingestPayloadV2Schema } from '@rumaq/contract'
 import type { Env } from '../types.js'
 import fixture from '../../../contract/fixtures/valid/ingest-v2.json'
@@ -41,9 +42,14 @@ function applyMigrations(db: SqliteDb): void {
   }
 }
 
-type ShimTrace = { statements: string[]; batchSizes: number[] }
+type ShimTrace = { statements: string[]; batchSizes: number[]; queries: number }
 
 function sqliteD1(db: SqliteDb, trace?: ShimTrace): D1Database {
+  // Each call below is one query against D1's per-invocation budget, a batch
+  // included — that is the number the ingest guard has to agree with.
+  const charge = () => {
+    if (trace) trace.queries += 1
+  }
   const prepare = (sql: string) => ({
     sql,
     params: [] as unknown[],
@@ -52,15 +58,18 @@ function sqliteD1(db: SqliteDb, trace?: ShimTrace): D1Database {
       return this
     },
     async all() {
+      charge()
       trace?.statements.push(sql)
       return { results: db.prepare(sql).all(...this.params) }
     },
     async first() {
+      charge()
       trace?.statements.push(sql)
       const rows = db.prepare(sql).all(...this.params)
       return rows.length > 0 ? rows[0] : null
     },
     async run() {
+      charge()
       trace?.statements.push(sql)
       const info = db.prepare(sql).run(...this.params)
       return { success: true, meta: { changes: Number(info.changes ?? 0) } }
@@ -73,6 +82,7 @@ function sqliteD1(db: SqliteDb, trace?: ShimTrace): D1Database {
     // shim matches both properties so a partial write and a chunked read are
     // testable instead of silently passing.
     async batch(statements: Array<ReturnType<typeof prepare>>) {
+      charge()
       trace?.batchSizes.push(statements.length)
       for (const stmt of statements) trace?.statements.push(stmt.sql)
       db.exec('BEGIN')
@@ -308,7 +318,7 @@ describe('ingestPricesV2', () => {
   it('reads the index version and the rows it stamps in one transaction', async () => {
     const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
     applyMigrations(sqlite)
-    const trace: ShimTrace = { statements: [], batchSizes: [] }
+    const trace: ShimTrace = { statements: [], batchSizes: [], queries: 0 }
     const db = sqliteD1(sqlite, trace)
     await ingestPricesV2(db, payload())
     trace.batchSizes.length = 0
@@ -364,7 +374,7 @@ describe('ingestPricesV2', () => {
   it('chunks the write path under the D1 limits at catalog scale', async () => {
     const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
     applyMigrations(sqlite)
-    const trace: ShimTrace = { statements: [], batchSizes: [] }
+    const trace: ShimTrace = { statements: [], batchSizes: [], queries: 0 }
     const db = sqliteD1(sqlite, trace)
 
     const count = 100
@@ -403,6 +413,62 @@ describe('ingestPricesV2', () => {
     for (const statement of trace.statements) {
       expect((statement.match(/\?/g) ?? []).length).toBeLessThanOrEqual(100)
     }
+  })
+})
+
+// D1's per-invocation query budget is a hard stop, not a tuning knob: past it
+// the invocation dies mid-chunk, and the chunks that already committed carry
+// the version they had before the ingest (lib/d1.ts). So the guard has to fire
+// before the canonical write, and its arithmetic has to match what the path
+// really issues — otherwise the ceiling it promises is fiction.
+describe('ingestPricesV2 query budget', () => {
+  function bulkPayload(count: number) {
+    return parse(ingestPayloadV2Schema, {
+      schemaVersion: 2,
+      scrapedAt: '2026-11-05T23:00:05Z',
+      stores: [
+        { slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' },
+        { slug: 'superindo', name: 'Superindo', region: 'jakarta' },
+      ],
+      items: Array.from({ length: count }, (_, index) => ({
+        productKey: `bulk-item-${index}--acme--1-pcs`,
+        rawName: `Bulk Item ${index}`,
+        storeSlug: index % 2 === 0 ? 'lotte-mart' : 'superindo',
+        price: 1000 + index,
+        matchConfidence: 1,
+      })),
+    })
+  }
+
+  it('refuses a payload over the budget before the canonical write', async () => {
+    const { sqlite, db } = setup()
+    // 1,700 items — the nightly catalog size the budget is sized against —
+    // needs ~125 queries, so D1 would abort it after ~30 of 103 batches.
+    await expect(ingestPricesV2(db, bulkPayload(1700))).rejects.toThrow(D1QueryBudgetExceededError)
+    // A refused payload must not half-write: no product, alias or observation
+    // may land, or the index version ends up older than its content.
+    for (const table of ['price_products', 'price_product_aliases', 'price_observations']) {
+      expect(sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count).toBe(0)
+    }
+  })
+
+  it('accepts the largest cold catalog the budget allows', async () => {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyMigrations(sqlite)
+    const trace: ShimTrace = { statements: [], batchSizes: [], queries: 0 }
+    const db = sqliteD1(sqlite, trace)
+    // 649 items is the cold ceiling: every product is a new INSERT, so the
+    // path spends exactly the 50 queries the guard estimated — one per read,
+    // per batch and for the version read, the number D1 counts.
+    const receipt = await ingestPricesV2(db, bulkPayload(649))
+    expect(receipt.productsCreated).toBe(649)
+    expect(trace.queries).toBe(D1_QUERY_BUDGET)
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM price_products').get()?.count).toBe(649)
+  })
+
+  it('refuses the first catalog size that would cross the budget', async () => {
+    const { db } = setup()
+    await expect(ingestPricesV2(db, bulkPayload(650))).rejects.toThrow(D1QueryBudgetExceededError)
   })
 })
 
