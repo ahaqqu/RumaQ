@@ -301,6 +301,68 @@ describe('ProductRenameForm', () => {
     })
   })
 
+  it('submits the version the refetch produced after a stale_product', () => {
+    const { container, rerender } = render(<ProductRenameForm productKey={PRODUCT_KEY} />)
+    typeName(container, 'Beras Ramos Premium 5 kg')
+    fireEvent.click(submitButton(container))
+    expect(lastRenameVariables().expectedMetadataVersion).toBe(3)
+    act(() => {
+      lastRenameOptions().onError(
+        new ApiError('stale_product', 409, null, {
+          error: 'stale_product',
+          current: { name: 'Beras Ramos 5kg', metadataVersion: 4 },
+        })
+      )
+    })
+
+    // The re-read identity lands with a newer version: the typed name survives
+    // and the next submit echoes the version it now knows about.
+    mockIdentity(identity({ product: { ...identity().product, metadataVersion: 4 } }))
+    rerender(<ProductRenameForm productKey={PRODUCT_KEY} />)
+    expect(nameInput(container).value).toBe('Beras Ramos Premium 5 kg')
+    fireEvent.click(submitButton(container))
+    expect(lastRenameVariables()).toEqual({
+      productKey: PRODUCT_KEY,
+      canonicalName: 'Beras Ramos Premium 5 kg',
+      expectedMetadataVersion: 4,
+    })
+  })
+
+  it('refuses a second submit while the rename is in flight', () => {
+    vi.mocked(useRenameProduct).mockReturnValue({ mutate: renameMutate, isPending: true })
+    const { container } = renderForm()
+    typeName(container, 'Beras Ramos Premium 5 kg')
+    // The button swaps to its busy label and disables itself…
+    expect(submitButton(container)).toBeUndefined()
+    expect(container.textContent).toContain('rename.submitBusy')
+    // …and the form's other entry point (Enter in the name input) is guarded
+    // too, so one rename can never fire two mutations.
+    fireEvent.submit(container.querySelector('form'))
+    expect(renameMutate).not.toHaveBeenCalled()
+  })
+
+  it('maps 404, 403, 400 and network failures to localized copy without stalling', () => {
+    const cases = [
+      { error: new ApiError('RAW_404_PRODUCT', 404), key: 'rename.errorNotFound' },
+      { error: new ApiError('RAW_403_FORBIDDEN', 403), key: 'rename.errorForbidden' },
+      { error: new ApiError('RAW_400_NAME_MUST_DIFFER', 400), key: 'rename.errorInvalid' },
+      { error: new Error('RAW_NETWORK_FAILURE'), key: 'rename.errorGeneric' },
+    ]
+    for (const { error, key } of cases) {
+      const { container, getByTestId, unmount } = renderForm()
+      typeName(container, 'Beras Ramos Premium 5 kg')
+      fireEvent.click(submitButton(container))
+      act(() => {
+        lastRenameOptions().onError(error)
+      })
+      // Never the raw server string, and never a stuck busy state.
+      expect(getByTestId('rename-error').textContent).toBe(key)
+      expect(container.textContent).not.toContain(error.message)
+      expect(submitButton(container).disabled).toBe(false)
+      unmount()
+    }
+  })
+
   it('maps 409 stale_product to a refetch, keeps the typed name and never resubmits', () => {
     const { container, getByTestId } = renderForm()
     typeName(container, 'Beras Ramos Premium 5 kg')
