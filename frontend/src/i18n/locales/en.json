@@ -627,6 +627,10 @@
     "reload": "Reload",
     "dismiss": "Dismiss"
   },
+  "plugins": {
+    "disabledTitle": "{{feature}} is turned off",
+    "disabledDesc": "This feature is off for your household. A household owner can turn it back on in Settings."
+  },
   "common": {
     "from": "from",
     "today": "today",
