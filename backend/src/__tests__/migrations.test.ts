@@ -2599,22 +2599,24 @@ describe('migration 0028 chain: the cron driver enabled-set reads (#441)', () =>
 
 // Vision-model setting (ahaqqu/RumaQ#433): the nullable ai_vision_model add
 // on user_settings — the vault's OCR resolves it ahead of ai_model. Pure
-// additivity (the 0008 ai_model shape), numbered 0031 AFTER the #454
-// canonical-products migration claimed 0030 first (the renumber note in that
-// file: wrangler keys the applied set on the filename).
-describe('migration 0031: user_settings.ai_vision_model (#433)', () => {
-  it('adds the nullable vision-model column on top of the pre-0031 schema; old rows stay null', () => {
+// additivity (the 0008 ai_model shape), numbered 0033: origin/main shipped
+// 0030 (#454 canonical products), 0031 (#430 calendar) and 0032 (#437 plugin
+// audit) after this branch forked, and 0035/0036 were reserved for the later
+// plugin work — 0033/0034 are this PR's slots (wrangler keys the applied set
+// on the filename, so a number is claimed exactly once).
+describe('migration 0033: user_settings.ai_vision_model (#433)', () => {
+  it('adds the nullable vision-model column on top of the pre-0033 schema; old rows stay null', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
     applyMigrations(
       db,
-      migrationFiles().filter((file: string) => file < '0031')
+      migrationFiles().filter((file: string) => file < '0033')
     )
 
     db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
     // The pre-#433 settings row (the INSERT the settings bootstrap writes).
     db.prepare(`INSERT INTO user_settings (user_id) VALUES ('u1')`).run()
 
-    db.exec(readFileSync(join(MIGRATIONS_DIR, '0031_user_settings_ai_vision_model.sql'), 'utf8'))
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0033_user_settings_ai_vision_model.sql'), 'utf8'))
 
     // Existing users keep the fallback behavior (NULL = no explicit vision
     // model — resolution falls to ai_model); no backfill.
@@ -2645,12 +2647,12 @@ describe('migration 0031: user_settings.ai_vision_model (#433)', () => {
 // ships bytes to the caller's AI provider leaves a durable row — 'ocr', not
 // 'view': a view previews bytes to the household, an OCR discloses them to a
 // third party, and the audit trail must keep the two apart.
-describe('migration 0032: document_audit ocr action (#433)', () => {
-  it('copies every pre-0032 audit row verbatim through the rebuild', () => {
+describe('migration 0034: document_audit ocr action (#433)', () => {
+  it('copies every pre-0034 audit row verbatim through the rebuild', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
     applyMigrations(
       db,
-      migrationFiles().filter((file: string) => file < '0032')
+      migrationFiles().filter((file: string) => file < '0034')
     )
 
     db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
@@ -2678,7 +2680,7 @@ describe('migration 0032: document_audit ocr action (#433)', () => {
       '2026-11-02 00:00:00'
     )
 
-    db.exec(readFileSync(join(MIGRATIONS_DIR, '0032_document_audit_ocr_action.sql'), 'utf8'))
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0034_document_audit_ocr_action.sql'), 'utf8'))
 
     const audit = db.prepare('SELECT * FROM document_audit ORDER BY id').all()
     expect(audit).toHaveLength(2)

@@ -58,7 +58,7 @@ export function ensureVaultKey(storageKey: string): void {
 /**
  * Audit actions (#422 vocabulary, widened by #426, then #433): document-level
  * + file-scoped records. 'ocr' marks the expiry read that ships the file's
- * bytes to the caller's AI provider (migration 0032) — kept distinct from
+ * bytes to the caller's AI provider (migration 0034) — kept distinct from
  * 'view' so the audit trail can tell a household preview from a third-party
  * disclosure.
  */

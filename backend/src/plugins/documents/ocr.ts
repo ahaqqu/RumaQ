@@ -50,10 +50,7 @@ function enforceOcrRate(userId: string): { limited: boolean; retryAfter: number 
   return isRateLimited(`doc-ocr:${userId}`, OCR_RATE_WINDOW_MS, OCR_RATE_MAX)
 }
 
-export function registerExpiryOcrRoutes(
-  documentsApp: Hono<Env>,
-  storage: StorageAdapter
-): void {
+export function registerExpiryOcrRoutes(documentsApp: Hono<Env>, storage: StorageAdapter): void {
   documentsApp.post(
     '/api/documents/:id/files/:fileId/extract-expiry',
     describeRoute({

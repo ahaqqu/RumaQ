@@ -6,7 +6,7 @@ export type UserAiSettings = {
   ai_provider: string | null
   ai_base_url: string | null
   ai_model: string | null
-  // Explicit vision model (0031, issue #433) — the vault's document OCR uses
+  // Explicit vision model (0033, issue #433) — the vault's document OCR uses
   // it INSTEAD of ai_model when set. Same charset as ai_model.
   ai_vision_model: string | null
   ai_thinking_level: string | null

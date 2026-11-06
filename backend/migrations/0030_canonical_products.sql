@@ -9,8 +9,6 @@
 -- renumber to 0031_* BEFORE the file is applied anywhere: wrangler keys its
 -- migration table on the filename, so renaming an applied migration re-runs
 -- these ALTER TABLEs ("duplicate column name").
--- RESOLVED (PR #452): it landed second and renumbered to
--- 0031_user_settings_ai_vision_model.sql; no 0030 collision remains.
 
 ALTER TABLE price_products ADD COLUMN product_type TEXT;
 ALTER TABLE price_products ADD COLUMN variant TEXT;
