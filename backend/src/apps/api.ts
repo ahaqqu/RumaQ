@@ -204,12 +204,18 @@ const reviewDecisionSchema = object({
 })
 
 // Admin canonical product rename (#423). The lib trims/collapses the name; the
-// wire schema only enforces the contract's rawText(500) ceiling and keeps
-// control characters out (the lib rejects them too, for direct callers).
+// wire schema enforces the contract's rawText(500) ceiling and keeps control
+// characters out of both text fields, so bad input 400s in the standard valibot
+// shape (the lib re-checks, for direct callers).
 const NO_CONTROL_CHARS = /^[^\p{Cc}]*$/u
 
 const productRenameSchema = object({
-  canonicalName: pipe(string(), minLength(1), maxLength(500)),
+  canonicalName: pipe(
+    string(),
+    minLength(1),
+    maxLength(500),
+    regex(NO_CONTROL_CHARS, 'Canonical name must not contain control characters.')
+  ),
   expectedMetadataVersion: pipe(number(), integer(), minValue(0)),
   reason: optional(
     pipe(
