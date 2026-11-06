@@ -46,6 +46,7 @@
 // pattern).
 
 import { DEFAULT_REMIND_DAYS_BEFORE, daysUntil, householdIsoDate } from './document-expiry.js'
+import { selectIn } from './d1.js'
 import type { HouseholdRole } from './households.js'
 
 export const EVENT_TITLE_MAX = 120
@@ -63,8 +64,6 @@ export type CallerMember = {
   memberId: string
   role: HouseholdRole
 }
-
-export type HouseholdMemberRef = { id: string }
 
 export type CalendarEventRow = {
   id: string
@@ -342,20 +341,27 @@ export async function requireCallerMember(
 }
 
 /**
- * The member a visibility list references — scoped to the household, so a
- * valid id from ANOTHER household cannot be referenced; the route turns null
- * into a 400 (a body-reference problem, not an addressable-resource probe —
- * the documents resolveMemberId pattern). Both modes (0021) reference here.
+ * The subset of `memberIds` that are members of THIS household — one chunked
+ * IN pass (the selectIn helper, the getEventMembers pattern) instead of one
+ * round trip per id. Scoped to the household, so a valid id from ANOTHER
+ * household resolves as missing; the route diffs the set against its input
+ * and 400s on the first absent id (a body-reference problem, not an
+ * addressable-resource probe — the documents resolveMemberId pattern). Both
+ * modes (0021) reference here.
  */
-export async function getHouseholdMember(
+export async function findHouseholdMembers(
   db: D1Database,
   householdId: string,
-  memberId: string
-): Promise<HouseholdMemberRef | null> {
-  return db
-    .prepare('SELECT id FROM household_members WHERE id = ? AND household_id = ?')
-    .bind(memberId, householdId)
-    .first<HouseholdMemberRef>()
+  memberIds: string[]
+): Promise<Set<string>> {
+  if (memberIds.length === 0) return new Set()
+  const rows = await selectIn<{ id: string }>(
+    db,
+    'SELECT id FROM household_members WHERE household_id = ? AND id IN',
+    memberIds,
+    [householdId]
+  )
+  return new Set(rows.map((row) => row.id))
 }
 
 /**

@@ -46,8 +46,8 @@ import {
   CalendarValidationError,
   createEvent,
   deleteEvent,
+  findHouseholdMembers,
   getEventForActor,
-  getHouseholdMember,
   isValidEventTime,
   listCalendarEntries,
   requireCallerMember,
@@ -513,21 +513,21 @@ function resolveAudience(visibility: 'all' | 'members', memberIds: string[] | un
 
 // Every referenced id must be a member of THIS household — both modes (0021).
 // The unknown case is a body-reference problem (400), not an addressable
-// resource probe (the documents resolveMemberId pattern).
+// resource probe (the documents resolveMemberId pattern); the 400 names the
+// first missing id so a bad payload is diagnosable without a roster dump.
+// One chunked IN pass resolves the whole list (lib findHouseholdMembers) —
+// the per-id round-trip loop is gone.
 async function resolveMemberIds(
   db: Env['Bindings']['DB'],
   householdId: string,
   ids: string[]
 ): Promise<string[]> {
-  const resolved: string[] = []
-  for (const id of ids) {
-    const member = await getHouseholdMember(db, householdId, id)
-    if (!member) {
-      throw new CalendarValidationError('Member not found in this household')
-    }
-    resolved.push(member.id)
+  const known = await findHouseholdMembers(db, householdId, ids)
+  const missing = ids.find((id) => !known.has(id))
+  if (missing) {
+    throw new CalendarValidationError(`Member not found in this household: ${missing}`)
   }
-  return resolved
+  return ids
 }
 
 // The EventSummary type is re-exported for the tests' shape assertions.
