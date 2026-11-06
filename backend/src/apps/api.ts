@@ -239,14 +239,34 @@ const requireIngestSecret: MiddlewareHandler<Env> = async (c, next) => {
   // 401s the nightly. Every non-empty candidate is compared on every request
   // — no precedence, no early exit — so a match on one secret cannot be
   // timed apart from the other.
+  // Rejections emit one structured line (#451): both ingest-auth incidents
+  // (#425, #448) were undiagnosable after the fact because the Worker never
+  // logged WHY a call was rejected. Route + candidate count separate the
+  // surfaces; token LENGTH only — the token's content is never logged.
+  const logRejection = (
+    evt: 'ingest_401' | 'ingest_503',
+    tokenLength: number,
+    candidateCount: number
+  ) =>
+    console.log(
+      JSON.stringify({
+        evt,
+        route: new URL(c.req.url).pathname,
+        tokenLength,
+        candidates: candidateCount,
+        matched: false,
+        ray: c.req.header('cf-ray') ?? null,
+      })
+    )
+  const header = c.req.header('Authorization') || ''
+  const token = header.startsWith('Bearer ') ? header.slice(7) : ''
   const candidates = [c.env.HAQITA_INGEST_SECRET, c.env.HAQITA_INGEST_SECRET_NEXT].filter(
     (secret): secret is string => typeof secret === 'string' && secret.length > 0
   )
   if (candidates.length === 0) {
+    logRejection('ingest_503', token.length, 0)
     return c.json({ error: 'Ingest endpoint not configured' }, 503)
   }
-  const header = c.req.header('Authorization') || ''
-  const token = header.startsWith('Bearer ') ? header.slice(7) : ''
   let accepted = false
   for (const secret of candidates) {
     if (token && (await timingSafeEqualStrings(token, secret))) {
@@ -254,6 +274,7 @@ const requireIngestSecret: MiddlewareHandler<Env> = async (c, next) => {
     }
   }
   if (!accepted) {
+    logRejection('ingest_401', token.length, candidates.length)
     return c.json({ error: 'Unauthorized' }, 401, {
       'WWW-Authenticate': 'Bearer realm="rumaq-ingest"',
     })
