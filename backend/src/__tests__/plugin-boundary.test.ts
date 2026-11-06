@@ -12,10 +12,32 @@ import { fileURLToPath } from 'node:url'
 // (§4.1): a plugin may import core's published API, its own module, and
 // env.DB — nothing else.
 //
-// The allow-list ships EMPTY in ticket 1: enforcement exists BEFORE the move
-// it polices, so ticket 4's vault re-home is reviewed against a rule, not by
-// eye. An entry lands only by deliberate, reviewed decision.
-const ALLOWED_CORE_IMPORTS: readonly string[] = []
+// The allow-list shipped EMPTY in ticket 1 (enforcement existed BEFORE the
+// move it polices). Ticket 4 (#438) is the deliberate, reviewed decision the
+// design anticipated: the vault re-home names exactly the core surface it
+// consumes as its published API — the request stack helpers, the shared
+// vault/calendar expiry policy, and port #1. Entries are per-module, never
+// per-directory: a future plugin must name its own consumption, not inherit
+// the vault's.
+const ALLOWED_CORE_IMPORTS: readonly string[] = [
+  // Env type (Hono<Env>, c.env.DB) — type-only, erased at transform.
+  'types.ts',
+  // The per-app request stack (§4.1 guarantees: CORS, auth, rate limiting).
+  'cors.ts',
+  'auth.ts',
+  'lib/rate-limit.ts',
+  // Shared expiry policy (#426): the vault owns the rules; calendar/tasks
+  // and the cron sweep consume them from core — genuinely shared, so they
+  // stayed in lib/ and the plugin imports them like any published utility.
+  'lib/document-expiry.ts',
+  // sha256HexBytes (the per-file content hash at put() time).
+  'lib/crypto.ts',
+  // getMembership (§4.1 forbidden-3: household facts come from core helpers,
+  // never SQL against core tables).
+  'lib/households.ts',
+  // Port #1 (§4.2): the StorageAdapter contract the registry injects.
+  'ports/storage/index.ts',
+]
 
 // The declared core→plugin composition surfaces (§2: "core calls plugins
 // only via declared surfaces"). Both live INSIDE plugins/ as root modules;
@@ -139,8 +161,23 @@ function findBoundaryViolations(
 const realRead = (file: SourceFile) => readFileSync(join(BACKEND_SRC, file), 'utf8')
 
 describe('plugin import boundary (#435)', () => {
-  it('ships an EMPTY allow-list — ticket 4 is policed from the first line it moves', () => {
-    expect(ALLOWED_CORE_IMPORTS).toEqual([])
+  it('the allow-list is exactly the reviewed T4 set — additions fail here first', () => {
+    // Ticket 1 shipped this list empty; ticket 4 (#438) filled it with the
+    // vault's named consumption. Every future entry must land in THIS
+    // assertion too — an undeclared import is a boundary change, so growing
+    // the list is a reviewed test diff, never silent drift.
+    expect([...ALLOWED_CORE_IMPORTS].sort()).toEqual(
+      [
+        'types.ts',
+        'cors.ts',
+        'auth.ts',
+        'lib/rate-limit.ts',
+        'lib/document-expiry.ts',
+        'lib/crypto.ts',
+        'lib/households.ts',
+        'ports/storage/index.ts',
+      ].sort()
+    )
   })
 
   it('every backend source file passes the boundary rules', () => {
@@ -156,11 +193,16 @@ describe('plugin import boundary (#435)', () => {
   })
 
   it('the checker itself fires on every rule (a deaf checker is worse than none)', () => {
+    // The fixture file is deliberately NOT named app.ts: since ticket 4 the
+    // real app.ts's core imports (auth, cors, rate-limit, …) ARE the reviewed
+    // allow-list, so an unlisted core module — the paywall — plays the
+    // violation here (allow-listed imports must stay silent; the ship-tree
+    // test above already proves the real app passes).
     const synthetic: Record<SourceFile, string> = {
-      'plugins/documents/app.ts': [
+      'plugins/documents/unlisted.ts': [
         "import { helper } from '../../lib/should-not-reach.js'",
         "import { otherPluginThing } from '../other/thing.js'",
-        "import { propsAuthMiddleware } from '../../auth.js'",
+        "import { requireEntitlement } from '../../lib/entitlements.js'",
       ].join('\n'),
       // require() + a non-.ts file: both would be invisible to a from-only,
       // .ts-only scan (PL1-B4) — the checker must fire on them too.
@@ -175,14 +217,16 @@ describe('plugin import boundary (#435)', () => {
     const violations = findBoundaryViolations(Object.keys(synthetic), (file) => synthetic[file])
     expect(
       violations.some((v) =>
-        v.startsWith('plugins/documents/app.ts imports core internal lib/should-not-reach.ts')
+        v.startsWith('plugins/documents/unlisted.ts imports core internal lib/should-not-reach.ts')
       )
     ).toBe(true)
     expect(
-      violations.some((v) => v.startsWith('plugins/documents/app.ts imports core internal auth.ts'))
+      violations.some((v) =>
+        v.startsWith('plugins/documents/unlisted.ts imports core internal lib/entitlements.ts')
+      )
     ).toBe(true)
     expect(
-      violations.some((v) => v.startsWith('plugins/documents/app.ts imports another plugin'))
+      violations.some((v) => v.startsWith('plugins/documents/unlisted.ts imports another plugin'))
     ).toBe(true)
     expect(
       violations.some((v) =>

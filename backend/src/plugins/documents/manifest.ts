@@ -1,8 +1,8 @@
 // The documents plugin manifest (ahaqqu/RumaQ#435 — plugin architecture phase
-// A, docs/plan/plugin-architecture.md §4.3). Phase A DECLARES the vault
-// without moving anything: the app still lives at apps/documents.ts (ticket 4
-// re-homes it as createDocumentsPlugin), every URL and table is unchanged,
-// and behavior is bit-for-bit identical (§3.5 phase A row).
+// A, docs/plan/plugin-architecture.md §4.3). Since ticket 4 (#438) this is
+// the real first-class entry: the app lives HERE as the createDocumentsPlugin
+// factory (app.ts) — the registry composes it with injected ports.storage —
+// and every URL and table is unchanged (§3.5 phase C row).
 import type { PluginManifest } from '../types.js'
 
 // `as const satisfies` keeps the literal types (`id: 'documents'`, not
@@ -22,10 +22,10 @@ export const documentsManifest = {
   // surface in the settings catalog (ticket 3). Nothing consumes these in
   // phase A; they are declared because the manifest is the catalog's source.
   capabilities: ['purge', 'export'],
-  // StorageAdapter (lib/storage.ts) is the vault's adapter seam — port #1.
-  // Declared here even though the app still constructs its R2 adapter inline
-  // (three createR2StorageAdapter sites, ticket 4 removes them via
-  // PluginPorts injection).
+  // StorageAdapter (ports/storage) is the vault's adapter seam — port #1.
+  // The registry builds the R2 adapter from the DOCUMENTS binding wiring and
+  // injects it into the factory (app.ts); the plugin reads no binding except
+  // env.DB (§4.1 forbidden-4).
   ports: ['storage'],
   // Declared ownership (§4.1 forbidden-2): disjointness across plugins is
   // tested, never inferred from the <plugin>_ prefix — document_audit

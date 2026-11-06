@@ -1,7 +1,9 @@
-// Document vault domain logic (ahaqqu/RumaQ#422 rework of the #388 MVP).
-// Routes in apps/documents.ts stay HTTP-shaped; every rule lives here so the
-// name/label bounds, the size cap, the files-per-document cap, the magic-byte
-// policy and the audit vocabulary have exactly one definition.
+// Document vault domain logic (ahaqqu/RumaQ#422 rework of the #388 MVP) —
+// the documents plugin's own module (re-homed from lib/documents.ts by
+// ticket 4, plugin architecture §4.7). Routes in app.ts stay HTTP-shaped;
+// every rule lives here so the name/label bounds, the size cap, the
+// files-per-document cap, the magic-byte policy and the audit vocabulary
+// have exactly one definition.
 //
 // Authorization model: documents scope to the caller's ACTIVE household (the
 // auth middleware resolves it — same substrate as receipts). Every lookup
@@ -9,11 +11,16 @@
 // nonexistent id are indistinguishable: both answer 404 (no existence leak,
 // the households-app pattern). Document delete is owner-or-uploader; file
 // delete is owner, document-uploader, or file-uploader.
+//
+// Imports: core's published API only (crypto, household membership, the
+// shared expiry helpers, the StorageAdapter port) + this plugin's own
+// modules — the plugin import boundary (plugin-boundary.test.ts) polices it.
 
-import { sha256HexBytes } from './crypto.js'
-import { buildDocumentFileKey, isDocumentKey, type StorageAdapter } from './storage.js'
-import { getMembership } from './households.js'
-import { daysUntil, householdIsoDate } from './document-expiry.js'
+import { sha256HexBytes } from '../../lib/crypto.js'
+import type { StorageAdapter } from '../../ports/storage/index.js'
+import { buildDocumentFileKey, isDocumentKey } from './keys.js'
+import { getMembership } from '../../lib/households.js'
+import { daysUntil, householdIsoDate } from '../../lib/document-expiry.js'
 
 export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
 

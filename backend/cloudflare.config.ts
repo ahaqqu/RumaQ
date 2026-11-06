@@ -67,7 +67,7 @@ export default defineConfig({
       RECEIPTS: bindings.r2({ name: bucketName }),
       // Document vault (issue #388): the SAME private bucket as RECEIPTS under
       // a dedicated binding — the vault's keys carry the documents/ prefix
-      // (lib/storage.ts), so no new infrastructure and no shared code path.
+      // (plugins/documents/keys.ts), so no new infrastructure and no shared code path.
       // Swapping to the #391 file service later changes only this binding and
       // the StorageAdapter implementation.
       DOCUMENTS: bindings.r2({ name: bucketName }),

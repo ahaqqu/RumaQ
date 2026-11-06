@@ -19,8 +19,8 @@ export type Env = {
      * RECEIPTS, bound under its own name so the vault's StorageAdapter wiring
      * never touches the receipts code path (and vice versa). Objects live
      * under the documents/<household_id>/<document_id> key prefix
-     * (lib/storage.ts); swapping to the #391 file service later is a
-     * config + adapter change, no route edits.
+     * (plugins/documents/keys.ts); swapping to the #391 file service later is
+     * a config + adapter change, no route edits.
      */
     DOCUMENTS: R2Bucket
     GOOGLE_CLIENT_ID: string

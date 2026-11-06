@@ -12,8 +12,10 @@ import {
   type ManifestViolation,
 } from '../plugins/manifests.js'
 import { CORE_GATEWAY_PREFIXES } from '../plugins/core-prefixes.js'
-import { pluginRegistry, matchPlugin } from '../plugins/registry.js'
+import { pluginRegistrations, matchPlugin } from '../plugins/registry.js'
+import { createDocumentsPlugin } from '../plugins/documents/app.js'
 import type { PluginManifest, PortId } from '../plugins/types.js'
+import { createMockEnv } from './support/env.js'
 
 const PLUGINS_DIR = join(dirname(fileURLToPath(import.meta.url)), '../plugins')
 
@@ -130,28 +132,52 @@ describe('plugin manifest validation (#435)', () => {
 
 // §4.3: the registry list. Registration order IS dispatch order; the
 // prefix match is boundary-aware (the exact semantics the gateway's
-// hand-wired documents check had).
+// hand-wired documents check had). Since ticket 4 (#438) the registry
+// composes factories per env (ports built from the bindings, WeakMap-memoized
+// per isolate) — these tests use a stub env with an in-memory vault bucket.
 describe('plugin registry (#435)', () => {
+  const env = createMockEnv() as unknown as Parameters<typeof matchPlugin>[1]
+  const registrations = pluginRegistrations(env)
+
   it('registers the documents plugin FIRST — it is plugin #1', () => {
-    expect(pluginRegistry.length).toBeGreaterThanOrEqual(1)
-    expect(pluginRegistry[0].manifest.id).toBe('documents')
+    expect(registrations.length).toBeGreaterThanOrEqual(1)
+    expect(registrations[0].manifest.id).toBe('documents')
   })
 
   it('every registered manifest is the canonical object (no copies)', () => {
-    for (const registration of pluginRegistry) {
+    for (const registration of registrations) {
       expect(PLUGIN_MANIFESTS).toContain(registration.manifest)
     }
   })
 
+  it('composition memoizes per env (the factory runs once per wiring)', () => {
+    expect(pluginRegistrations(env)).toBe(registrations)
+    // A different env object composes fresh — the same test-env-per-test
+    // lifecycle the route tests rely on for their own injected buckets.
+    expect(
+      pluginRegistrations(createMockEnv() as unknown as Parameters<typeof matchPlugin>[1])
+    ).not.toBe(registrations)
+  })
+
+  it('a factory without its required port fails at construction, never mid-request (T4 #438)', () => {
+    // The port-injection contract's fail-fast side: ports are wired by the
+    // registry (composeRegistrations), so a missing storage adapter is a
+    // wiring mistake — thrown when the plugin is constructed, not 500s on
+    // some later upload.
+    expect(() => createDocumentsPlugin({ ports: {} })).toThrow('ports.storage')
+  })
+
   it('dispatch matches boundary-aware: /api/documents-x never reaches the vault', () => {
-    expect(matchPlugin('/api/documents')?.manifest.id).toBe('documents')
-    expect(matchPlugin('/api/documents/doc-1/files/f-1/content')?.manifest.id).toBe('documents')
-    expect(matchPlugin('/api/documents-x')).toBeUndefined()
-    expect(matchPlugin('/api/documentsx')).toBeUndefined()
+    expect(matchPlugin('/api/documents', env)?.manifest.id).toBe('documents')
+    expect(matchPlugin('/api/documents/doc-1/files/f-1/content', env)?.manifest.id).toBe(
+      'documents'
+    )
+    expect(matchPlugin('/api/documents-x', env)).toBeUndefined()
+    expect(matchPlugin('/api/documentsx', env)).toBeUndefined()
     // Core domains are not plugins — they stay hand-wired in the gateway.
-    expect(matchPlugin('/api/households')).toBeUndefined()
-    expect(matchPlugin('/api/me')).toBeUndefined()
-    expect(matchPlugin('/api/')).toBeUndefined()
+    expect(matchPlugin('/api/households', env)).toBeUndefined()
+    expect(matchPlugin('/api/me', env)).toBeUndefined()
+    expect(matchPlugin('/api/', env)).toBeUndefined()
   })
 
   it('the gate resolves manifests by id and unknown ids answer nothing', () => {

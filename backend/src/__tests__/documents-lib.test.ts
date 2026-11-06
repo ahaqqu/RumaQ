@@ -5,7 +5,7 @@ import {
   sanitizeDocumentName,
   sanitizeDocumentLabel,
   contentDisposition,
-} from '../lib/documents.js'
+} from '../plugins/documents/lib.js'
 import { householdIsoDate, isValidExpiryDate, daysUntil } from '../lib/document-expiry.js'
 import {
   JPEG_BYTES,

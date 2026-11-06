@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vite-plus/test'
-import { documentsApp } from '../apps/documents.js'
+
 import { resetRateLimit } from '../lib/rate-limit.js'
 import {
   createDocumentsHarness,
@@ -25,7 +25,7 @@ describe('documents routes — files (stream, delete)', () => {
   })
 
   it('refuses to touch storage when a row carries a key outside the vault namespace (review B1)', async () => {
-    const { env, bucket } = h.setup([
+    const { env, bucket, app } = h.setup([
       MEMBERSHIP_ROUTE,
       [DOC_ROW_ROUTE, () => DOC_ROW()],
       [FILE_ROW_ROUTE, () => FILE_ROW({ r2_key: 'receipts/h1/escaped.jpg' })],
@@ -33,24 +33,20 @@ describe('documents routes — files (stream, delete)', () => {
 
     // Content: the escaped key must never reach the adapter (it could serve a
     // sibling namespace's object) — the row is a dead file.
-    const content = await documentsApp.request('/api/documents/doc-1/files/file-1/content', {}, env)
+    const content = await app.request('/api/documents/doc-1/files/file-1/content', {}, env)
     expect(content.status).toBe(404)
 
     // File delete: refusing protects the sibling namespace even though the
     // row technically matches the scope — the vault-key guard answers the
     // same 404 a missing row would.
-    const del = await documentsApp.request(
-      '/api/documents/doc-1/files/file-1',
-      { method: 'DELETE' },
-      env
-    )
+    const del = await app.request('/api/documents/doc-1/files/file-1', { method: 'DELETE' }, env)
     expect(del.status).toBe(404)
     expect(bucket.deleted).toHaveLength(0)
     expect(bucket.objects.size).toBe(0)
   })
 
   it('streams one file’s content inline with stored mime, private no-store, and audits a view per file', async () => {
-    const { db, env, bucket } = h.setup([
+    const { db, env, bucket, app } = h.setup([
       [DOC_ROW_ROUTE, () => DOC_ROW()],
       [FILE_ROW_ROUTE, () => FILE_ROW()],
     ])
@@ -58,7 +54,7 @@ describe('documents routes — files (stream, delete)', () => {
       httpMetadata: { contentType: 'image/jpeg' },
     })
 
-    const res = await documentsApp.request('/api/documents/doc-1/files/file-1/content', {}, env)
+    const res = await app.request('/api/documents/doc-1/files/file-1/content', {}, env)
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('image/jpeg')
     expect(res.headers.get('Content-Disposition')).toContain('inline')
@@ -75,7 +71,7 @@ describe('documents routes — files (stream, delete)', () => {
   })
 
   it('disposition=attachment streams with the attachment header and audits a download; a bad disposition is a 400', async () => {
-    const { db, env, bucket } = h.setup([
+    const { db, env, bucket, app } = h.setup([
       [DOC_ROW_ROUTE, () => DOC_ROW()],
       [FILE_ROW_ROUTE, () => FILE_ROW()],
     ])
@@ -83,7 +79,7 @@ describe('documents routes — files (stream, delete)', () => {
       httpMetadata: { contentType: 'image/jpeg' },
     })
 
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents/doc-1/files/file-1/content?disposition=attachment',
       {},
       env
@@ -93,7 +89,7 @@ describe('documents routes — files (stream, delete)', () => {
     const audit = db.log.filter((e) => /INSERT INTO document_audit/.test(e.sql))
     expect(audit[0]?.params[4]).toBe('download')
 
-    const bad = await documentsApp.request(
+    const bad = await app.request(
       '/api/documents/doc-1/files/file-1/content?disposition=weird',
       {},
       env
@@ -102,17 +98,17 @@ describe('documents routes — files (stream, delete)', () => {
   })
 
   it('returns 404 when the file row exists but the object is gone (dead file, no leak)', async () => {
-    const { env } = h.setup([
+    const { env, app } = h.setup([
       [DOC_ROW_ROUTE, () => DOC_ROW()],
       [FILE_ROW_ROUTE, () => FILE_ROW({ r2_key: 'documents/h1/doc-1/file-ghost' })],
     ])
     // Nothing put into storage under that key.
-    const res = await documentsApp.request('/api/documents/doc-1/files/file-1/content', {}, env)
+    const res = await app.request('/api/documents/doc-1/files/file-1/content', {}, env)
     expect(res.status).toBe(404)
   })
 
   it('delete-file (uploader): removes the object first, then row + file_delete audit in one batch — no orphan', async () => {
-    const { db, env, bucket } = h.setup([
+    const { db, env, bucket, app } = h.setup([
       MEMBERSHIP_ROUTE,
       [DOC_ROW_ROUTE, () => DOC_ROW()],
       [FILE_ROW_ROUTE, () => FILE_ROW()],
@@ -121,11 +117,7 @@ describe('documents routes — files (stream, delete)', () => {
       httpMetadata: { contentType: 'application/pdf' },
     })
 
-    const res = await documentsApp.request(
-      '/api/documents/doc-1/files/file-1',
-      { method: 'DELETE' },
-      env
-    )
+    const res = await app.request('/api/documents/doc-1/files/file-1', { method: 'DELETE' }, env)
     expect(res.status).toBe(204)
     // The stub recorded the delete and the map is empty — no orphan.
     expect(bucket.deleted).toEqual(['documents/h1/doc-1/file-1'])
@@ -155,7 +147,7 @@ describe('documents routes — files (stream, delete)', () => {
     await uploader.bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
       httpMetadata: { contentType: 'application/pdf' },
     })
-    const uploaderRes = await documentsApp.request(
+    const uploaderRes = await uploader.app.request(
       '/api/documents/doc-1/files/file-1',
       { method: 'DELETE' },
       uploader.env
@@ -171,7 +163,7 @@ describe('documents routes — files (stream, delete)', () => {
     await owner.bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
       httpMetadata: { contentType: 'application/pdf' },
     })
-    const ownerRes = await documentsApp.request(
+    const ownerRes = await owner.app.request(
       '/api/documents/doc-1/files/file-1',
       { method: 'DELETE' },
       owner.env
@@ -190,7 +182,7 @@ describe('documents routes — files (stream, delete)', () => {
     await member.bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
       httpMetadata: { contentType: 'application/pdf' },
     })
-    const memberRes = await documentsApp.request(
+    const memberRes = await member.app.request(
       '/api/documents/doc-1/files/file-1',
       { method: 'DELETE' },
       member.env
@@ -211,7 +203,7 @@ describe('documents routes — files (stream, delete)', () => {
   ]
 
   it('delete-document: every file object goes first, then the row (files cascade) + delete audit in one batch', async () => {
-    const { db, env, bucket } = h.setup(
+    const { db, env, bucket, app } = h.setup(
       [MEMBERSHIP_ROUTE, [DOC_ROW_ROUTE, () => DOC_ROW()]],
       [FILES_LIST_ROUTE()]
     )
@@ -222,7 +214,7 @@ describe('documents routes — files (stream, delete)', () => {
       httpMetadata: { contentType: 'image/jpeg' },
     })
 
-    const res = await documentsApp.request('/api/documents/doc-1', { method: 'DELETE' }, env)
+    const res = await app.request('/api/documents/doc-1', { method: 'DELETE' }, env)
     expect(res.status).toBe(204)
     // Both objects gone — no orphan.
     expect(bucket.deleted).toEqual(['documents/h1/doc-1/file-1', 'documents/h1/doc-1/file-2'])
@@ -254,7 +246,7 @@ describe('documents routes — files (stream, delete)', () => {
     await owner.bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
       httpMetadata: { contentType: 'application/pdf' },
     })
-    const ownerRes = await documentsApp.request(
+    const ownerRes = await owner.app.request(
       '/api/documents/doc-1',
       { method: 'DELETE' },
       owner.env
@@ -273,7 +265,7 @@ describe('documents routes — files (stream, delete)', () => {
     await member.bucket.put('documents/h1/doc-1/file-1', PDF_BYTES, {
       httpMetadata: { contentType: 'application/pdf' },
     })
-    const memberRes = await documentsApp.request(
+    const memberRes = await member.app.request(
       '/api/documents/doc-1',
       { method: 'DELETE' },
       member.env

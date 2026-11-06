@@ -14,11 +14,25 @@
 
 import { apiApp } from '../../backend/src/apps/api.js'
 import { householdsApp } from '../../backend/src/apps/households.js'
-import { documentsApp } from '../../backend/src/apps/documents.js'
+import { createDocumentsPlugin } from '../../backend/src/plugins/documents/app.js'
 import { tasksApp } from '../../backend/src/apps/tasks.js'
 import { calendarApp } from '../../backend/src/apps/calendar.js'
 import { pluginsApp } from '../../backend/src/apps/plugins.js'
 import { authApp } from '../../backend/src/apps/auth.js'
+
+// The documents plugin is a factory since ticket 4 (#438) — the registry
+// injects ports.storage from the DOCUMENTS binding. The docs pipeline only
+// reads describeRoute metadata (handlers never run), so a no-op adapter
+// satisfies the port here; script-local, like the auth path remap below.
+const documentsApp = createDocumentsPlugin({
+  ports: {
+    storage: {
+      put: async () => {},
+      get: async () => null,
+      delete: async () => {},
+    },
+  },
+}).app
 
 export const API_APPS: { name: string; app: typeof apiApp }[] = [
   { name: 'api', app: apiApp },
