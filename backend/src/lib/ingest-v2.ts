@@ -11,7 +11,7 @@ import {
 } from '@rumaq/contract'
 
 import type { Statement } from './d1.js'
-import { runBatch, selectIn } from './d1.js'
+import { SELECT_IN_CHUNK, runBatch, selectIn } from './d1.js'
 
 type ExistingProduct = {
   id: string
@@ -53,8 +53,11 @@ type AliasRow = {
   source: string
 }
 
-function provisionalName(rawName: string): string {
-  return rawName.trim() || rawName
+// The schema enforces a non-empty rawName but not a non-blank one ("   " is
+// valid), and a blank canonical name would ship in the index for the pipeline
+// to match on. Fall back to the frozen key, which is always present.
+function provisionalName(rawName: string, productKey: string): string {
+  return rawName.trim() || productKey
 }
 
 export async function ingestPricesV2(
@@ -100,7 +103,12 @@ export async function ingestPricesV2(
   }
 
   const keys = [...new Set(payload.items.map((item) => item.productKey))]
-  const itemByKey = new Map(payload.items.map((item) => [item.productKey, item]))
+  // First item per key, so a payload carrying the same productKey twice names
+  // the product deterministically instead of last-wins by array order.
+  const itemByKey = new Map<string, IngestPayloadV2['items'][number]>()
+  for (const item of payload.items) {
+    if (!itemByKey.has(item.productKey)) itemByKey.set(item.productKey, item)
+  }
   const existingRows = keys.length
     ? await selectIn<ExistingProduct>(
         db,
@@ -116,7 +124,14 @@ export async function ingestPricesV2(
     ...newIdByKey,
   ])
   const now = new Date().toISOString()
-  const observedDefault = payload.scrapedAt.slice(0, 10)
+  // Contract §4.2: the UTC date of scrapedAt. The schema only checks the
+  // timestamp prefix, so an offset-carrying value validates too — parsing
+  // (not slicing) is what makes the date UTC; an unparseable suffix falls
+  // back to the literal prefix.
+  const scrapedAtMs = Date.parse(payload.scrapedAt)
+  const observedDefault = Number.isNaN(scrapedAtMs)
+    ? payload.scrapedAt.slice(0, 10)
+    : new Date(scrapedAtMs).toISOString().slice(0, 10)
   const statements: Statement[] = []
 
   for (const key of newKeys) {
@@ -132,7 +147,7 @@ export async function ingestPricesV2(
         .bind(
           newIdByKey.get(key)!,
           key,
-          provisionalName(item.rawName),
+          provisionalName(item.rawName, key),
           item.rawBrand?.trim() || null,
           item.rawUnit?.trim() || null,
           item.category ?? null,
@@ -144,18 +159,40 @@ export async function ingestPricesV2(
     )
   }
 
-  for (const row of existingRows) {
-    const item = itemByKey.get(row.product_key)
+  // Existing products: one statement per 90 keys for the shared timestamps
+  // (every row gets the same `now`), instead of one statement per product —
+  // the per-invocation D1 query budget is the tightest limit at catalog
+  // scale (lib/d1.ts). The category proposal is a per-key value, so it stays
+  // one statement per affected product, and only for the rows this SELECT
+  // proved are still unclassified: the steady state is zero, exactly the
+  // #373 fill discipline.
+  for (let i = 0; i < existingRows.length; i += SELECT_IN_CHUNK) {
+    const chunk = existingRows.slice(i, i + SELECT_IN_CHUNK).map((row) => row.product_key)
     statements.push(
       db
         .prepare(
           `UPDATE price_products
-           SET last_seen_at = ?, updated_at = ?,
-               category = COALESCE(category, ?),
-               category_version = COALESCE(category_version, ?)
-           WHERE product_key = ?`
+           SET last_seen_at = ?, updated_at = ?
+           WHERE product_key IN (${chunk.map(() => '?').join(',')})`
         )
-        .bind(now, now, item?.category ?? null, item?.taxoVersion ?? null, row.product_key)
+        .bind(now, now, ...chunk)
+    )
+  }
+
+  for (const row of existingRows) {
+    if (row.category !== null) continue
+    const item = itemByKey.get(row.product_key)
+    if (!item?.category) continue
+    // category and categoryVersion move together: an existing category was
+    // not produced by this taxonomy version, so it keeps both of its values.
+    statements.push(
+      db
+        .prepare(
+          `UPDATE price_products
+           SET category = ?, category_version = ?
+           WHERE product_key = ? AND category IS NULL`
+        )
+        .bind(item.category, item.taxoVersion ?? null, row.product_key)
     )
   }
 
@@ -180,7 +217,22 @@ export async function ingestPricesV2(
     )
   }
 
+  // One statement per observation key: a payload repeating
+  // (productKey, storeSlug, observedDate) upserts the same row, so emitting
+  // both statements would inflate the receipt and spend query budget on a
+  // no-op. The last item for a key wins, matching the statement order this
+  // loop replaces.
+  const observationByKey = new Map<string, IngestPayloadV2['items'][number]>()
   for (const item of payload.items) {
+    const observationKey = [
+      productIdByKey.get(item.productKey),
+      sourceIdBySlug.get(item.storeSlug),
+      item.observedDate ?? observedDefault,
+    ].join('\u0000')
+    observationByKey.set(observationKey, item)
+  }
+
+  for (const item of observationByKey.values()) {
     statements.push(
       db
         .prepare(
@@ -262,7 +314,7 @@ export async function ingestPricesV2(
     accepted: payload.items.length,
     skipped: 0,
     productsCreated: newKeys.length,
-    observationsUpserted: payload.items.length,
+    observationsUpserted: observationByKey.size,
     products: keys.map((key) => ({
       productKey: key,
       productId: productIdByKey.get(key)!,
