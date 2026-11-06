@@ -15,10 +15,13 @@ import type { PluginCatalogEntry } from '../types.js'
 export const documentsCatalog = {
   id: 'documents',
   labelKey: 'nav.documents',
+  // Reuses the vault screen's own subtitle as the catalog description (T3,
+  // issue #437) — one sentence, already translated both ways.
+  descriptionKey: 'documents.subtitle',
   routePath: '/documents',
   navGroup: 'household',
   icon: IconFolderLock,
-  // Mirrors documentsManifest.capabilities — declared for the settings
-  // catalog's lifecycle copy (ticket 3); nothing renders them yet.
+  // Mirrors documentsManifest.capabilities — the settings catalog renders
+  // these as the plugin's declared data capabilities (T3).
   capabilities: ['purge', 'export'],
 } as const satisfies PluginCatalogEntry

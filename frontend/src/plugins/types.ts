@@ -29,6 +29,9 @@ export type PluginCatalogEntry = {
   id: string
   /** i18n key for the display label (en + id locales are mandatory). */
   labelKey: string
+  /** i18n key for the settings catalog's one-line description (T3); en + id
+   * mandatory — registry.test.js resolves it against BOTH locales. */
+  descriptionKey: string
   /** The route path this plugin owns, e.g. '/documents'. Never moves. */
   routePath: string
   /** Which nav group the entry renders into. */

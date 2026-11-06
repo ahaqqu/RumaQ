@@ -972,6 +972,40 @@ export interface paths {
     patch: operations['patchApiCalendarEventsById']
     trace?: never
   }
+  '/api/plugins': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Returns the plugin settings catalog for the ACTIVE household (plugin architecture #437): every registered plugin with its capabilities and its three-layer effective-access posture (§3.3) — deployment availability (ops, 404), plan entitlement (403), household enablement (the owner toggle; routes 404 while off). Readable by every household member; only the enablement write is owner-only. */
+    get: operations['getApiPlugins']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/plugins/{pluginId}/enablement': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    /** @description Sets one plugin's household enablement (owner-only; non-owners get 403). Writes the household_plugins row and a plugin_enabled / plugin_disabled lifecycle audit event in one batch. Setting the state the plugin already resolves to is an idempotent no-op (no row rewrite, no audit event). Returns the plugin's fresh posture. */
+    put: operations['putApiPluginsByPluginIdEnablement']
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/auth/login': {
     parameters: {
       query?: never
@@ -4576,6 +4610,139 @@ export interface operations {
         content?: never
       }
       /** @description Event not found (unknown id, another household’s, or not visible to you) */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiPlugins: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            plugins: {
+              /** @description Stable plugin slug — the manifest id */
+              id: string
+              /** @description Human label (EN); customer copy stays in i18n */
+              name: string
+              /** @description Declared capability ids (snake_case) for the catalog surface */
+              capabilities: string[]
+              /** @description The manifest default for households that never expressed a choice */
+              default_enabled: boolean
+              /** @description The household layer, resolved: the household_plugins row wins over the manifest default (§4.3 truth table) */
+              enabled: boolean
+              /**
+               * @description Whether the resolved state is the manifest default or an explicit household choice
+               * @enum {string}
+               */
+              source: 'default' | 'household'
+              /** @description The ops kill-switch layer: false means this deployment paused the plugin (routes answer 404) */
+              deployment_available: boolean
+              /** @description The plan layer: false would deny plugin routes with 403 (the only actionable denial). No plugin declares entitlements yet, so this is true tonight */
+              plan_entitled: boolean
+              /** @description Effective access (§3.3): deployment_available AND plan_entitled AND enabled — what the plugin gate enforces */
+              available: boolean
+            }[]
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  putApiPluginsByPluginIdEnablement: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        pluginId: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          /**
+           * @description The household enablement state to set
+           * @enum {string}
+           */
+          status: 'enabled' | 'disabled'
+        }
+      }
+    }
+    responses: {
+      /** @description OK — the new (or unchanged) posture */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            /** @description Stable plugin slug — the manifest id */
+            id: string
+            /** @description Human label (EN); customer copy stays in i18n */
+            name: string
+            /** @description Declared capability ids (snake_case) for the catalog surface */
+            capabilities: string[]
+            /** @description The manifest default for households that never expressed a choice */
+            default_enabled: boolean
+            /** @description The household layer, resolved: the household_plugins row wins over the manifest default (§4.3 truth table) */
+            enabled: boolean
+            /**
+             * @description Whether the resolved state is the manifest default or an explicit household choice
+             * @enum {string}
+             */
+            source: 'default' | 'household'
+            /** @description The ops kill-switch layer: false means this deployment paused the plugin (routes answer 404) */
+            deployment_available: boolean
+            /** @description The plan layer: false would deny plugin routes with 403 (the only actionable denial). No plugin declares entitlements yet, so this is true tonight */
+            plan_entitled: boolean
+            /** @description Effective access (§3.3): deployment_available AND plan_entitled AND enabled — what the plugin gate enforces */
+            available: boolean
+          }
+        }
+      }
+      /** @description Invalid status */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only household owners can do that */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Household or plugin not found */
       404: {
         headers: {
           [name: string]: unknown

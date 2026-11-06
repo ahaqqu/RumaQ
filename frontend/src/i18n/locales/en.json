@@ -693,7 +693,22 @@
   },
   "plugins": {
     "disabledTitle": "{{feature}} is turned off",
-    "disabledDesc": "This feature is off for your household. A household owner can turn it back on in Settings."
+    "disabledDesc": "This feature is off for your household. A household owner can turn it back on in Household admin.",
+    "catalogTitle": "Features",
+    "catalogSubtitle": "Built-in features for this household. Owners can turn each one on or off.",
+    "membersHint": "Only household owners can change these.",
+    "stateOn": "On",
+    "stateOff": "Off",
+    "deploymentOff": "Temporarily unavailable",
+    "deploymentOffHint": "Paused for this deployment — an operator can turn it back on.",
+    "planExcluded": "Not included in your plan",
+    "retentionNote": "Data is kept while a feature is off — turning it back on brings everything back.",
+    "toggleAria": "Turn {{feature}} on or off",
+    "errorGeneric": "Couldn't save that change. Please try again.",
+    "capabilities": {
+      "purge": "Purge",
+      "export": "Export"
+    }
   },
   "common": {
     "from": "from",

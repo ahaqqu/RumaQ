@@ -693,7 +693,22 @@
   },
   "plugins": {
     "disabledTitle": "{{feature}} dimatikan",
-    "disabledDesc": "Fitur ini nonaktif untuk keluargamu. Pemilik keluarga dapat menyalakannya kembali di Pengaturan."
+    "disabledDesc": "Fitur ini nonaktif untuk keluargamu. Pemilik keluarga dapat menyalakannya kembali di Admin keluarga.",
+    "catalogTitle": "Fitur",
+    "catalogSubtitle": "Fitur bawaan untuk keluarga ini. Pemilik dapat menyalakan atau mematikan masing-masing.",
+    "membersHint": "Hanya pemilik keluarga yang dapat mengubah ini.",
+    "stateOn": "Aktif",
+    "stateOff": "Nonaktif",
+    "deploymentOff": "Sementara tidak tersedia",
+    "deploymentOffHint": "Dijeda untuk deployment ini — operator dapat menyalakannya kembali.",
+    "planExcluded": "Tidak termasuk dalam paketmu",
+    "retentionNote": "Data tetap tersimpan saat fitur dimatikan — menyalakannya kembali mengembalikan semuanya.",
+    "toggleAria": "Nyalakan atau matikan {{feature}}",
+    "errorGeneric": "Perubahan gagal disimpan. Coba lagi.",
+    "capabilities": {
+      "purge": "Hapus permanen",
+      "export": "Ekspor"
+    }
   },
   "common": {
     "from": "dari",

@@ -17,6 +17,7 @@ import { householdsApp } from '../../backend/src/apps/households.js'
 import { documentsApp } from '../../backend/src/apps/documents.js'
 import { tasksApp } from '../../backend/src/apps/tasks.js'
 import { calendarApp } from '../../backend/src/apps/calendar.js'
+import { pluginsApp } from '../../backend/src/apps/plugins.js'
 import { authApp } from '../../backend/src/apps/auth.js'
 
 export const API_APPS: { name: string; app: typeof apiApp }[] = [
@@ -25,5 +26,6 @@ export const API_APPS: { name: string; app: typeof apiApp }[] = [
   { name: 'documents', app: documentsApp },
   { name: 'tasks', app: tasksApp },
   { name: 'calendar', app: calendarApp },
+  { name: 'plugins', app: pluginsApp },
   { name: 'auth', app: authApp },
 ]

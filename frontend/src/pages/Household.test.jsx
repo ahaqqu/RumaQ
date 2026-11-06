@@ -37,6 +37,11 @@ vi.mock('../lib/queries/index.js', () => ({
   useHouseholdInvite: vi.fn(),
   useCreateHouseholdInvite: vi.fn(),
   useJoinHousehold: vi.fn(),
+  // The plugin settings catalog section (issue #437) rides the same barrel —
+  // the page tests stub it inert; the section's own behavior is pinned in
+  // plugins/PluginFeatures.test.jsx.
+  usePluginCatalog: vi.fn(() => ({ data: { plugins: [] }, isPending: false, isError: false })),
+  useSetPluginEnablement: vi.fn(() => ({ mutate: vi.fn(), isPending: false, isError: false })),
 }))
 
 import { useMe } from '../lib/queries/me.js'

@@ -483,6 +483,29 @@ export function joinHousehold(code: string): Promise<unknown> {
 }
 
 // ---------------------------------------------------------------------------
+// Plugin settings catalog (ahaqqu/RumaQ#437 — plugin architecture ticket 3).
+// Keyed to the ACTIVE household server-side (auth middleware), the same
+// household /api/me advertises enabledPlugins for — the catalog, the toggle
+// and the nav gating always describe the same household.
+// ---------------------------------------------------------------------------
+
+export function getPluginCatalog(signal?: AbortSignal): Promise<unknown> {
+  return unwrap(client.GET('/api/plugins', { signal }))
+}
+
+export function setPluginEnablement(
+  pluginId: string,
+  status: 'enabled' | 'disabled'
+): Promise<unknown> {
+  return unwrap(
+    client.PUT('/api/plugins/{pluginId}/enablement', {
+      params: { path: { pluginId } },
+      body: { status },
+    })
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Document vault (ahaqqu/RumaQ#422 rework of the #388 MVP) — private
 // per-household documents with free-text names and N files each. Metadata
 // rides the typed client; the per-file content endpoint bypasses it
