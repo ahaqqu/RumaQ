@@ -2350,6 +2350,28 @@ describe('migration 0037: price_product_audit (#423)', () => {
     ).toEqual([{ id: 'al-1' }])
   })
 
+  it('keeps the per-product history read on the audit index (no scan, no sort)', () => {
+    const db = preAuditDb()
+    apply0037(db)
+
+    // The admin detail surface's exact statement (PR B): one product's
+    // receipts, newest first, bounded. The (product_id, created_at) pair lets
+    // SQLite walk that product's range backwards — a scan or a temp B-tree
+    // here would mean the index is not doing its one job.
+    const detail = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT * FROM price_product_audit
+          WHERE product_id = ?
+          ORDER BY created_at DESC
+          LIMIT 10`
+      )
+      .all('prod-1')
+      .map((r: Record<string, unknown>) => String(r.detail))
+      .join(' | ')
+    expect(detail).toContain('USING INDEX idx_price_product_audit_product')
+    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+
   it('keeps the receipt when the product row is deleted (plain handles, no FK)', () => {
     const db = preAuditDb()
     apply0037(db)
