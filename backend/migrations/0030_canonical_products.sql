@@ -3,6 +3,12 @@
 -- stable UUID, and aliases; the pipeline's raw observation fields stay on the
 -- observation. Existing price_products rows become provisional until the
 -- operator's one-time price-domain reset; no data is migrated.
+--
+-- NUMBERING NOTE (PR #454): open PR #452 also adds a 0030_* migration
+-- (0030_user_settings_ai_vision_model.sql). Whichever PR lands second must
+-- renumber to 0031_* BEFORE the file is applied anywhere: wrangler keys its
+-- migration table on the filename, so renaming an applied migration re-runs
+-- these ALTER TABLEs ("duplicate column name").
 
 ALTER TABLE price_products ADD COLUMN product_type TEXT;
 ALTER TABLE price_products ADD COLUMN variant TEXT;
@@ -26,10 +32,14 @@ SET updated_at = COALESCE(last_seen_at, first_seen_at, strftime('%Y-%m-%dT%H:%M:
 CREATE INDEX IF NOT EXISTS idx_products_status ON price_products(status);
 
 -- Aliases are internal until an admin approves them. Candidate aliases are
--- written by ingest; only approved rows enter the canonical index.
+-- written by ingest; only approved rows enter the canonical index. The FK
+-- cascades: an alias has no meaning without its product, and D1 enforces
+-- foreign keys, so a plain REFERENCES would make every product delete (the
+-- operator reset, the test reset fixture, a future admin delete) fail while
+-- an alias still points at the row.
 CREATE TABLE IF NOT EXISTS price_product_aliases (
   id TEXT PRIMARY KEY,
-  product_id TEXT NOT NULL REFERENCES price_products(id),
+  product_id TEXT NOT NULL REFERENCES price_products(id) ON DELETE CASCADE,
   store_slug TEXT NOT NULL,
   name TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'candidate'
