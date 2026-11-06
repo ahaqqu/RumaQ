@@ -413,6 +413,45 @@ describe('renameProduct — real-SQLite semantics', () => {
     expect(indexVersion(sqlite)).toBe(1)
   })
 
+  it("does not approve another product's candidate alias carrying the old wording", async () => {
+    const sqlite = freshDb()
+    insertProduct(sqlite)
+    insertProduct(sqlite, {
+      id: 'prod-2',
+      productKey: 'gula--gulaku--1-kg',
+      name: 'Gula Pasir Gulaku 1 kg',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-own',
+      productId: 'prod-1',
+      storeSlug: 'superindo',
+      name: 'Beras Ramos 5 kg',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-other',
+      productId: 'prod-2',
+      storeSlug: 'lotte-mart',
+      name: 'Beras Ramos 5 kg',
+    })
+
+    await renameProduct(sqliteD1(sqlite), {
+      productKey: 'beras--ramos--5-kg',
+      canonicalName: 'Beras Ramos Premium',
+      expectedMetadataVersion: 1,
+      actorUserId: 'admin-1',
+    })
+
+    // Same wording, different product: only the renamed product's own row may
+    // flip. Approving another product's candidate would publish a wrong
+    // store->product alias into the canonical index.
+    expect(
+      sqlite.prepare('SELECT id, status FROM price_product_aliases ORDER BY id').all()
+    ).toEqual([
+      { id: 'alias-other', status: 'candidate' },
+      { id: 'alias-own', status: 'approved' },
+    ])
+  })
+
   it('rejects a stale expectedMetadataVersion and writes nothing', async () => {
     const sqlite = freshDb()
     insertProduct(sqlite)
