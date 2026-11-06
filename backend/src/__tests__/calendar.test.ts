@@ -99,15 +99,17 @@ const CALLER_ROUTE: [RegExp, (params: unknown[]) => Row | null] = [
   (params) => CALLER_ROWS[String(params[1])] ?? null,
 ]
 
-const MEMBER_ROUTE: [RegExp, (params: unknown[]) => Row | null] = [
-  /SELECT id FROM household_members WHERE id = \? AND household_id = \?/,
-  (params) => {
-    // Adik (profile-only) and the linked members are addressable in h1.
-    if (['m-anak', 'm-ayah', 'm-ibu'].includes(String(params[0]))) {
-      return { id: String(params[0]) }
-    }
-    return null
-  },
+// The audience resolution rides ONE batched IN lookup (lib
+// findHouseholdMembers): params[0] is the household scope, params[1..] are
+// the requested ids. Adik (profile-only) and the linked members are
+// addressable in h1.
+const MEMBER_LIST_ROUTE: [RegExp, (params: unknown[]) => Row[]] = [
+  /SELECT id FROM household_members WHERE household_id = \? AND id IN/,
+  (params) =>
+    params
+      .slice(1)
+      .filter((id) => ['m-anak', 'm-ayah', 'm-ibu'].includes(String(id)))
+      .map((id) => ({ id: String(id) })),
 ]
 
 // visibility comes back from SQLite as TEXT — the fake carries the column as
@@ -293,7 +295,7 @@ describe('calendar routes', () => {
     allRoutes: [RegExp, (params: unknown[]) => Row[]][] = [],
     userId = 'u1'
   ) => {
-    db = createFakeDb([CALLER_ROUTE, MEMBER_ROUTE, eventRoute(base)], allRoutes)
+    db = createFakeDb([CALLER_ROUTE, eventRoute(base)], [MEMBER_LIST_ROUTE, ...allRoutes])
     return createEnv(db, userId)
   }
 
@@ -312,7 +314,7 @@ describe('calendar routes', () => {
   })
 
   it('401s without a session on every method', async () => {
-    const env = createEnv(createFakeDb([CALLER_ROUTE, MEMBER_ROUTE, eventRoute(ALL_EVENT)]), 'u1', {
+    const env = createEnv(createFakeDb([CALLER_ROUTE, eventRoute(ALL_EVENT)]), 'u1', {
       props: undefined,
     })
     for (const [method, path] of [

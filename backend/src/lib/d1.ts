@@ -1,4 +1,4 @@
-// Shared D1 batching helpers for the price ingest paths.
+// Shared D1 batching helpers.
 //
 // A db.batch() call counts as ONE query against D1's per-invocation budget
 // (50 on the free plan); within it, the per-query limits (100 bound
@@ -9,7 +9,8 @@ export const BATCH_CHUNK = 50
 // D1 also caps bound parameters per QUERY at 100 — an IN list must ride
 // under that ceiling, or a catalog of ≥100 products fails the whole ingest
 // with "too many SQL variables at offset …" (observed on the first 382-item
-// live publish). 90 leaves headroom for any fixed parameters a caller adds.
+// live publish). 90 leaves headroom for any fixed parameters a caller adds
+// (the calendar's household_id rides as one leading bind).
 export const SELECT_IN_CHUNK = 90
 
 // The budget those constants defend, stated once so a write path can refuse a
@@ -41,14 +42,23 @@ export async function runBatch(db: D1Database, statements: Statement[]): Promise
   }
 }
 
-export async function selectIn<Row>(db: D1Database, sql: string, values: string[]): Promise<Row[]> {
+/** Runs `sql` with an IN-list appended, one chunked pass per SELECT_IN_CHUNK
+ * values. `leadingBinds` ride BEFORE the chunk's placeholders (a scoping
+ * predicate like `WHERE household_id = ?`), keeping every query under D1's
+ * 100-bound-parameter ceiling. */
+export async function selectIn<Row>(
+  db: D1Database,
+  sql: string,
+  values: string[],
+  leadingBinds: string[] = []
+): Promise<Row[]> {
   const rows: Row[] = []
   for (let i = 0; i < values.length; i += SELECT_IN_CHUNK) {
     const chunk = values.slice(i, i + SELECT_IN_CHUNK)
     const placeholders = chunk.map(() => '?').join(',')
     const { results } = await db
       .prepare(`${sql} (${placeholders})`)
-      .bind(...chunk)
+      .bind(...leadingBinds, ...chunk)
       .all<Row>()
     rows.push(...(results ?? []))
   }
