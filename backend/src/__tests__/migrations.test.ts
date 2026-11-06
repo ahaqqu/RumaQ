@@ -1686,3 +1686,85 @@ describe('migration 0029: deployment_flags (#435)', () => {
     ])
   })
 })
+
+// Canonical product boundary for pipeline contract v2 (ahaqqu/RumaQ#454): the
+// migration is additive, and D1 already holds price rows when it runs, so the
+// interesting behavior is on TOP of existing data — the NOT NULL defaults for
+// rows that predate the columns, the updated_at backfill, the seeded
+// canonical-index counter, and the alias FK that D1 enforces (node:sqlite does
+// too, so the cascade assertion is real).
+describe('migration 0030: canonical products (#454)', () => {
+  it('adds the canonical columns on top of a pre-0030 database with rows', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0030')
+    )
+
+    db.prepare(
+      `INSERT INTO price_sources (id, slug, name) VALUES ('src-1', 'lotte-mart', 'Lotte Mart')`
+    ).run()
+    // A row with both timestamps in the legacy shapes a v1 writer produced
+    // (ISO, and SQLite's datetime('now')) and a row with neither.
+    db.prepare(
+      `INSERT INTO price_products (id, product_key, name, category, first_seen_at, last_seen_at)
+       VALUES ('prod-1', 'beras--ramos--5-kg', 'Beras Ramos 5kg', 'beras',
+               '2026-10-24T23:00:05Z', '2026-10-25 10:00:00')`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_products (id, product_key, name) VALUES ('prod-2', 'gula--gulaku--1-kg', 'Gula')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0030_canonical_products.sql'), 'utf8'))
+
+    // Existing rows are provisional, versioned, and keep their category; the
+    // backfill copies last_seen_at so updated_at is never NULL afterwards.
+    expect(db.prepare("SELECT * FROM price_products WHERE id = 'prod-1'").get()).toMatchObject({
+      status: 'provisional',
+      metadata_version: 1,
+      category: 'beras',
+      category_version: null,
+      updated_at: '2026-10-25 10:00:00',
+    })
+    // A row with no timestamps at all falls back to the migration's clock.
+    const bare = db.prepare("SELECT * FROM price_products WHERE id = 'prod-2'").get()!
+    expect(bare).toMatchObject({ status: 'provisional', metadata_version: 1 })
+    expect(bare.updated_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
+
+    // One seeded counter row — the ingest's `version = version + 1` needs it.
+    expect(db.prepare('SELECT * FROM canonical_index_state').all()).toEqual([{ id: 1, version: 0 }])
+
+    // The new domain constraints are real, not documentation.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO price_products (id, product_key, name, status)
+           VALUES ('prod-3', 'k3', 'N', 'bogus')`
+        )
+        .run()
+    ).toThrow()
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO price_product_aliases
+             (id, product_id, store_slug, name, status, first_seen_at, last_seen_at)
+           VALUES ('a1', 'prod-1', 'lotte-mart', 'N', 'bogus', 't', 't')`
+        )
+        .run()
+    ).toThrow()
+
+    // An alias belongs to its product: deleting the product takes it along
+    // (a plain REFERENCES would fail here — D1 enforces foreign keys).
+    db.prepare(
+      `INSERT INTO price_product_aliases
+         (id, product_id, store_slug, name, first_seen_at, last_seen_at)
+       VALUES ('a2', 'prod-1', 'lotte-mart', 'Beras Ramos', '2026-11-01T00:00:00Z',
+               '2026-11-01T00:00:00Z')`
+    ).run()
+    db.prepare("DELETE FROM price_products WHERE id = 'prod-1'").run()
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM price_product_aliases').get()).toEqual({
+      cnt: 0,
+    })
+  })
+})
