@@ -1095,6 +1095,19 @@ describe('api routes edge cases', () => {
     expect(await res.text()).toBe('asset')
   })
 
+  it('unmatched /api path answers typed JSON 404, never the SPA shell (QA-F1)', async () => {
+    const assets = { fetch: vi.fn().mockResolvedValue(new Response('<html>shell</html>')) }
+    const env = createMockEnv({ ASSETS: assets })
+    for (const path of ['/api/definitely-not-a-route', '/api/', '/api']) {
+      const res = await apiApp.request(path, {}, env)
+      expect(res.status, path).toBe(404)
+      expect(res.headers.get('content-type'), path).toContain('application/json')
+      expect(res.headers.get('cache-control'), path).toBe('private, no-cache')
+      expect(await res.json(), path).toEqual({ error: 'Not found' })
+    }
+    expect(assets.fetch).not.toHaveBeenCalled()
+  })
+
   it('notFound returns 404 without ASSETS', async () => {
     const env = createMockEnv()
     const res = await apiApp.request('/unknown', {}, env)

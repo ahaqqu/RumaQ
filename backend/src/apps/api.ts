@@ -4425,6 +4425,14 @@ apiApp.patch(
 )
 
 apiApp.notFound(async (c) => {
+  // QA-F1 (run 2026-11-07-01, ticket #483): an unmatched /api path must
+  // answer the API's typed JSON 404, never the SPA shell — the ASSETS
+  // fallback exists for the frontend's client-side routes, and an API client
+  // (pipeline contract consumers included) must never receive HTML (or the
+  // asset server's 405 on non-GET) from an /api/* path.
+  if (c.req.path === '/api' || c.req.path.startsWith('/api/')) {
+    return c.json({ error: 'Not found' }, 404, { 'Cache-Control': 'private, no-cache' })
+  }
   if (c.env.ASSETS) {
     return c.env.ASSETS.fetch(c.req.raw)
   }
