@@ -2303,6 +2303,40 @@ describe('migration 0037: price_product_audit (#423)', () => {
     ])
   })
 
+  it('rejects a second compensation for the same rename (partial unique index)', () => {
+    const db = preAuditDb()
+    apply0037(db)
+
+    // Every rename carries a NULL reverts_audit_id, so the partial index never
+    // sees them — any number of renames coexist.
+    insertReceipt(db, 'aud-rename-1')
+    insertReceipt(db, 'aud-rename-2')
+    insertReceipt(db, 'aud-rename-3')
+
+    const compensate = (id: string, target: string) =>
+      db
+        .prepare(
+          `INSERT INTO price_product_audit
+             (id, product_id, product_key, actor_user_id, action, old_name, new_name,
+              metadata_version_before, metadata_version_after, reverts_audit_id)
+           VALUES (?, 'prod-1', 'beras--ramos--5-kg', 'u1', 'revert', 'Beras Ramos Premium',
+                   'Beras Ramos 5kg', 2, 3, ?)`
+        )
+        .run(id, target)
+
+    // Two different renames are each revertable once.
+    compensate('aud-revert-1', 'aud-rename-1')
+    compensate('aud-revert-2', 'aud-rename-2')
+    // The same rename is not: the route's expectedMetadataVersion CAS stays the
+    // primary guard, and the partial unique index is the storage-level backstop
+    // for any writer that forgets it.
+    expect(() => compensate('aud-revert-1b', 'aud-rename-1')).toThrow()
+
+    expect(
+      db.prepare(`SELECT id FROM price_product_audit WHERE action = 'revert' ORDER BY id`).all()
+    ).toEqual([{ id: 'aud-revert-1' }, { id: 'aud-revert-2' }])
+  })
+
   it('seeks the duplicate-name lookups on the NOCASE expression indexes', () => {
     const db = preAuditDb()
     apply0037(db)

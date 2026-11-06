@@ -69,10 +69,19 @@ CREATE TABLE IF NOT EXISTS price_product_audit (
 -- for a display read; anything that must decide THE latest rename (the revert
 -- route's "latest rename only" rule) orders by metadata_version_after
 -- instead, which is strictly increasing per product because every audited
--- write bumps it. Nothing here forbids two 'revert' rows naming one rename:
--- the route's expectedMetadataVersion CAS owns that rule.
+-- write bumps it.
 CREATE INDEX IF NOT EXISTS idx_price_product_audit_product
   ON price_product_audit(product_id, created_at);
+
+-- One compensation per rename, structurally. Partial, so the NULL
+-- reverts_audit_id of every rename never collides — two rows only conflict
+-- when they name the SAME rename. The revert route's expectedMetadataVersion
+-- CAS stays the primary guard (it 409s a stale second request before the
+-- write); this index is the storage-level backstop for any writer that
+-- forgets it. Pinned by the 0037 test that compensates two different renames
+-- and then expects a second compensation for the first rename to be rejected.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_price_product_audit_revert_once
+  ON price_product_audit(reverts_audit_id) WHERE reverts_audit_id IS NOT NULL;
 
 -- Duplicate-name detection for the rename guard (409 duplicate_name): before
 -- writing, the rename route asks whether a product or an approved alias
