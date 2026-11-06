@@ -20,3 +20,6 @@ backend/.cloudflare
 
 # Local Lighthouse CI artifacts
 .lighthouseci/
+
+# Owner inbox — maintained locally by the manager, never committed
+/docs/MANUAL_ACTIONS.md
