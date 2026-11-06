@@ -32,12 +32,18 @@ import { join, dirname } from 'node:path'
 // @ts-expect-error — no node types in this tsconfig
 import { fileURLToPath } from 'node:url'
 
-import { createDocumentsPurgeJob, documentPageSql } from '../plugins/documents/purge.js'
-import { addDocumentFile, createDocument } from '../plugins/documents/lib.js'
-import { PURGE_INITIATE_SQL } from '../lib/plugins.js'
 import {
+  createDocumentsPurgeJob,
+  documentPageSql,
+  PluginPurgeCancelledError,
+} from '../plugins/documents/purge.js'
+import { addDocumentFile, createDocument } from '../plugins/documents/lib.js'
+import { PURGE_CANCEL_SQL, PURGE_INITIATE_SQL } from '../lib/plugins.js'
+import {
+  PURGING_HOUSEHOLDS_SQL,
   PURGE_TICK_OBJECT_BUDGET,
   drainPluginPurgesForHousehold,
+  ensurePurgePending,
   runPluginPurgeTick,
 } from '../lib/plugin-purge.js'
 import { cancelPluginPurge } from '../lib/plugins.js'
@@ -1062,5 +1068,185 @@ describe('plugin purge — the owner cancel lever (P1-A3)', () => {
       expect.anything()
     )
     errorSpy.mockRestore()
+  })
+})
+
+// P1R2-A5 (PR #474 review): the cancel lever NULLs the enablement row's
+// purge_state mid-drain. A chunk called on that state must REFUSE with the
+// typed error — proceeding would erase every remaining document past the
+// cancel (the lever clears the cursor too, so the re-read starts from the
+// oldest), complete with NO receipt, and then spin forever (objects: 0,
+// drained: false — the completion guard needs an active state to land
+// 'done').
+describe('documents purge job — the cancelled drain refuses its chunks (P1R2-A5)', () => {
+  it('cancel mid-drain → the next chunk throws the typed error; remaining documents and no-receipt hold', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+    const { bucket, storage } = createDetectorStorage(sqlite)
+    const job = createDocumentsPurgeJob(storage)
+
+    // Three 15-file documents: a 20-budget chunk carries only the FIRST
+    // (a second would hit 30 > 20 — the P1-A2 floor), so the drain is
+    // genuinely PART-WAY when cancelled.
+    for (let i = 0; i < 3; i++) {
+      seedDocument(sqlite, {
+        householdId: 'h1',
+        documentId: `d${i}`,
+        fileId: `f${i}`,
+        createdAt: `2026-11-01 10:0${i}:00`,
+        fileCount: 15,
+      })
+    }
+    requestPurge(sqlite, 'h1', 'u-h1')
+
+    // Drain one document, then the owner cancels mid-drain (the REAL
+    // cancel SQL — state and cursor both back to the NULL resting state).
+    const chunk1 = await job({ db: d1, householdId: 'h1', maxObjects: 20 })
+    expect(chunk1).toEqual({ objects: 15, drained: false })
+    sqlite.prepare(PURGE_CANCEL_SQL).run('h1', 'documents')
+
+    // The drain's next chunk call refuses with the typed error.
+    await expect(job({ db: d1, householdId: 'h1', maxObjects: 20 })).rejects.toThrow(
+      PluginPurgeCancelledError
+    )
+    // Nothing moved past the cancel: two documents with their bytes and
+    // rows intact, no receipt — the owner's data survived the lever.
+    expect(docCount(sqlite, 'h1')).toBe(2)
+    expect(receiptRows(sqlite)).toEqual([])
+    void bucket
+  })
+
+  it('the nightly tick isolates the read→chunk cancel race: the refused household logs, the healthy one drains', async () => {
+    const { sqlite } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+    seedHousehold(sqlite, 'h2', 'Rumah Lain')
+    const { bucket } = createDetectorStorage(sqlite)
+
+    for (let i = 0; i < 2; i++) {
+      seedDocument(sqlite, {
+        householdId: 'h1',
+        documentId: `d-h1-${i}`,
+        fileId: `f-h1-${i}`,
+        createdAt: `2026-11-01 10:0${i}:00`,
+      })
+    }
+    seedDocument(sqlite, {
+      householdId: 'h2',
+      documentId: 'd-h2',
+      fileId: 'f-h2',
+      createdAt: '2026-11-02 10:00:00',
+    })
+    requestPurge(sqlite, 'h1', 'u-h1')
+    requestPurge(sqlite, 'h2', 'u-h2')
+
+    // The race window, made real: the tick's work-set seek ANSWERS first
+    // (h1 and h2 still pending — the pre-cancel snapshot), then the owner's
+    // cancel lands before the chunk call. The proxy runs the REAL cancel
+    // SQL right after delegating the first work-set read — the exact
+    // interleaving the read→chunk gap allows and the work-set filter alone
+    // cannot exclude.
+    const base = createD1Adapter(sqlite)
+    let workSetReads = 0
+    const raceDb = {
+      prepare: (sql: string) => {
+        const stmt = base.prepare(sql)
+        if (sql === PURGING_HOUSEHOLDS_SQL && workSetReads === 0) {
+          workSetReads += 1
+          return {
+            ...stmt,
+            bind: (...params: unknown[]) => {
+              const bound = stmt.bind(...params)
+              return {
+                ...bound,
+                all: async () => {
+                  const result = await bound.all()
+                  sqlite.prepare(PURGE_CANCEL_SQL).run('h1', 'documents')
+                  return result
+                },
+              }
+            },
+          }
+        }
+        return stmt
+      },
+      batch: base.batch,
+    } as unknown as D1Database
+    const env = {
+      DB: raceDb,
+      DOCUMENTS: bucket,
+      BROCHURES: {},
+      RECEIPTS: {},
+      GOOGLE_CLIENT_ID: 'x',
+      GOOGLE_CLIENT_SECRET: 'x',
+      WORKER_JWT_SECRET: 'x',
+      WORKER_ENCRYPTION_KEY: 'x',
+      PAGES_ORIGIN: 'http://localhost:5173',
+      EMAIL_AUTH_ENABLED: 'false',
+      props: { userId: 'u-h1', householdId: 'h1' },
+      TEST_MODE: 'true',
+    } as unknown as Parameters<typeof runPluginPurgeTick>[0]
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const night = await runPluginPurgeTick(env, PURGE_TICK_OBJECT_BUDGET)
+    // h1's chunk refused (typed throw → isolated, logged, never fatal);
+    // h2 still drained its chunk the same night.
+    expect(night).toEqual({ objects: 1, chunks: 1, failed: 1 })
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('chunk failed'),
+      expect.anything()
+    )
+    errorSpy.mockRestore()
+    // h1 untouched past the cancel (2 documents, no receipt); h2's rows are
+    // gone (its receipt lands on the next night's completion chunk, the
+    // driver's chunk shape).
+    expect(docCount(sqlite, 'h1')).toBe(2)
+    expect(docCount(sqlite, 'h2')).toBe(0)
+    expect(receiptRows(sqlite)).toEqual([])
+  })
+})
+
+// P1R2-B2 (PR #474 review): the drain's ensurePurgePending materializes an
+// absent enablement row at the manifest's RESOLVED default (the initiation
+// endpoint's own shape), never a hardcoded 'enabled' — a future
+// default-off purge-capable plugin must not gain enablement as a side
+// effect of a drain. The spec is the EnablementSpec slice (the gate's own
+// pattern): the drain passes the real manifest, this test pins the two
+// resolution directions against the exact exported function.
+describe('plugin purge — ensurePurgePending materializes the manifest default (P1R2-B2)', () => {
+  it('an absent row lands at the spec default (off → disabled, on → enabled); an existing row keeps the household choice', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+
+    await ensurePurgePending(d1, 'h1', { id: 'future-plugin', defaultEnabled: false }, 'u-h1')
+    expect(
+      sqlite
+        .prepare(
+          "SELECT status, purge_state FROM household_plugins WHERE household_id = 'h1' AND plugin_id = 'future-plugin'"
+        )
+        .get()
+    ).toMatchObject({ status: 'disabled', purge_state: 'pending' })
+
+    await ensurePurgePending(d1, 'h1', { id: 'other-plugin', defaultEnabled: true }, 'u-h1')
+    expect(
+      sqlite
+        .prepare(
+          "SELECT status, purge_state FROM household_plugins WHERE household_id = 'h1' AND plugin_id = 'other-plugin'"
+        )
+        .get()
+    ).toMatchObject({ status: 'enabled', purge_state: 'pending' })
+
+    // The explicit-choice branch is untouched: an EXISTING row is upserted
+    // at its own status regardless of the default.
+    sqlite
+      .prepare("UPDATE household_plugins SET status = 'enabled' WHERE plugin_id = 'future-plugin'")
+      .run()
+    await ensurePurgePending(d1, 'h1', { id: 'future-plugin', defaultEnabled: false }, 'u-h1')
+    expect(
+      sqlite
+        .prepare(
+          "SELECT status FROM household_plugins WHERE household_id = 'h1' AND plugin_id = 'future-plugin'"
+        )
+        .get()
+    ).toMatchObject({ status: 'enabled' })
   })
 })

@@ -1,6 +1,10 @@
 // Document vault routes (ahaqqu/RumaQ#422 rework of the #388 MVP) — the
 // documents PLUGIN's app (re-homed from apps/documents.ts by ticket 4,
-// plugin architecture §4.3/§4.7). Construction is a FACTORY, not a
+// plugin architecture §4.3/§4.7). The re-home rewrote enough of the file
+// that git's default 50% rename threshold misses the move — the pre-move
+// history needs
+// `git log --follow --find-renames=30% -- backend/src/plugins/documents/app.ts`.
+// Construction is a FACTORY, not a
 // module-level singleton: createDocumentsPlugin(deps) receives the plugin's
 // ports (the registry builds the storage adapter from the DOCUMENTS binding
 // wiring and injects it — plugin code reads no binding except env.DB), so

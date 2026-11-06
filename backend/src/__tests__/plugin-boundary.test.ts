@@ -16,28 +16,32 @@ import { fileURLToPath } from 'node:url'
 // move it polices). Ticket 4 (#438) is the deliberate, reviewed decision the
 // design anticipated: the vault re-home names exactly the core surface it
 // consumes as its published API — the request stack helpers, the shared
-// vault/calendar expiry policy, and port #1. Entries are per-module, never
-// per-directory: a future plugin must name its own consumption, not inherit
-// the vault's.
-const ALLOWED_CORE_IMPORTS: readonly string[] = [
-  // Env type (Hono<Env>, c.env.DB) — type-only, erased at transform.
-  'types.ts',
-  // The per-app request stack (§4.1 guarantees: CORS, auth, rate limiting).
-  'cors.ts',
-  'auth.ts',
-  'lib/rate-limit.ts',
-  // Shared expiry policy (#426): the vault owns the rules; calendar/tasks
-  // and the cron sweep consume them from core — genuinely shared, so they
-  // stayed in lib/ and the plugin imports them like any published utility.
-  'lib/document-expiry.ts',
-  // sha256HexBytes (the per-file content hash at put() time).
-  'lib/crypto.ts',
-  // getMembership (§4.1 forbidden-3: household facts come from core helpers,
-  // never SQL against core tables).
-  'lib/households.ts',
-  // Port #1 (§4.2): the StorageAdapter contract the registry injects.
-  'ports/storage/index.ts',
-]
+// vault/calendar expiry policy, and port #1. The list is PER-PLUGIN
+// (V1-B4, PR #473 review — it shipped global, which would have let a future
+// plugin silently inherit the vault's grants): each plugin owns its map
+// entry and names its own consumption; a new plugin starts EMPTY and
+// inherits nothing. Entries are per-module, never per-directory.
+const ALLOWED_CORE_IMPORTS_BY_PLUGIN: Readonly<Record<string, readonly string[]>> = {
+  documents: [
+    // Env type (Hono<Env>, c.env.DB) — type-only, erased at transform.
+    'types.ts',
+    // The per-app request stack (§4.1 guarantees: CORS, auth, rate limiting).
+    'cors.ts',
+    'auth.ts',
+    'lib/rate-limit.ts',
+    // Shared expiry policy (#426): the vault owns the rules; calendar/tasks
+    // and the cron sweep consume them from core — genuinely shared, so they
+    // stayed in lib/ and the plugin imports them like any published utility.
+    'lib/document-expiry.ts',
+    // sha256HexBytes (the per-file content hash at put() time).
+    'lib/crypto.ts',
+    // getMembership (§4.1 forbidden-3: household facts come from core helpers,
+    // never SQL against core tables).
+    'lib/households.ts',
+    // Port #1 (§4.2): the StorageAdapter contract the registry injects.
+    'ports/storage/index.ts',
+  ],
+}
 
 // The declared core→plugin composition surfaces (§2: "core calls plugins
 // only via declared surfaces"). Both live INSIDE plugins/ as root modules;
@@ -135,11 +139,13 @@ function findBoundaryViolations(
       const info = classify(file, specifier)
       if (owner) {
         // Rule 1 — plugin → core: published API (plugin-root modules) only;
-        // core internals need the (empty) allow-list. Rule 2 — no sibling
-        // plugins (§2: plugins never import another plugin).
-        if (info.kind === 'core-internal' && !ALLOWED_CORE_IMPORTS.includes(info.target)) {
+        // core internals need THIS plugin's allow-list entry (an unlisted
+        // plugin starts empty). Rule 2 — no sibling plugins (§2: plugins
+        // never import another plugin).
+        const allowed = ALLOWED_CORE_IMPORTS_BY_PLUGIN[owner] ?? []
+        if (info.kind === 'core-internal' && !allowed.includes(info.target)) {
           violations.push(
-            `${file} imports core internal ${info.target} ('${specifier}') — plugins import core's published API only (plan §4.1); add to ALLOWED_CORE_IMPORTS only by deliberate review`
+            `${file} imports core internal ${info.target} ('${specifier}') — plugins import core's published API only (plan §4.1); add to ALLOWED_CORE_IMPORTS_BY_PLUGIN['${owner}'] only by deliberate review`
           )
         }
         if (info.kind === 'plugin-owned' && info.pluginId !== owner) {
@@ -161,12 +167,15 @@ function findBoundaryViolations(
 const realRead = (file: SourceFile) => readFileSync(join(BACKEND_SRC, file), 'utf8')
 
 describe('plugin import boundary (#435)', () => {
-  it('the allow-list is exactly the reviewed T4 set — additions fail here first', () => {
-    // Ticket 1 shipped this list empty; ticket 4 (#438) filled it with the
-    // vault's named consumption. Every future entry must land in THIS
-    // assertion too — an undeclared import is a boundary change, so growing
-    // the list is a reviewed test diff, never silent drift.
-    expect([...ALLOWED_CORE_IMPORTS].sort()).toEqual(
+  it("each plugin's allow-list is exactly its reviewed set — additions fail here first", () => {
+    // Ticket 1 shipped the list empty; ticket 4 (#438) filled the documents
+    // entry with the vault's named consumption. Every future entry must land
+    // in THIS assertion too — an undeclared import is a boundary change, so
+    // growing a plugin's list is a reviewed test diff, never silent drift.
+    // And the map itself stays per-plugin (V1-B4): documents holds the only
+    // grants; a new plugin starts EMPTY and inherits nothing.
+    expect(Object.keys(ALLOWED_CORE_IMPORTS_BY_PLUGIN).sort()).toEqual(['documents'])
+    expect([...ALLOWED_CORE_IMPORTS_BY_PLUGIN.documents].sort()).toEqual(
       [
         'types.ts',
         'cors.ts',

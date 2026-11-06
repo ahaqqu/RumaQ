@@ -25,8 +25,8 @@ const NO_CACHE = { 'Cache-Control': 'private, no-cache' }
 
 /**
  * One gate per plugin, installed on every path pattern the plugin's auth
- * lines cover — apps/documents.ts registers auth and the gate from ONE shared
- * pattern list, so the pairing is structural (`use(path)` does not cover
+ * lines cover — plugins/documents/app.ts registers auth and the gate from
+ * ONE shared pattern list, so the pairing is structural (`use(path)` does not cover
  * subpaths, the #292 landmine). Registered after the auth middleware so the
  * household variable is always set when the gate runs.
  */
