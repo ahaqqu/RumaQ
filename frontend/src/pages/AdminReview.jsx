@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from '@tanstack/react-router'
 import { useMe } from '../lib/queries/me.js'
@@ -92,22 +92,44 @@ function EvidenceImage({ url }) {
   )
 }
 
+// Click-to-copy for the row's reference id (#480). Best-effort and silent:
+// the clipboard API may be unavailable (permissions, insecure context), and
+// copying is a convenience — the full UUID stays visible in the button title.
+async function copyItemId(id) {
+  try {
+    await navigator.clipboard.writeText(id)
+  } catch {
+    // Silent by design.
+  }
+}
+
 // PM asymmetry note (§2): B is NOT a parallel observation of the same
 // instant — it is the canonical entry's most recent sighting. The honest
-// column labels ("Matched item" / "Catalog entry (last seen)") carry that.
+// column labels ("Matched item" / "Catalog entry (last seen)") moved into
+// ONE list header (#480); each side is named by that header via
+// aria-labelledby instead of repeating the label per card.
 // Issue #380: each side also carries its evidence block — the page image
 // behind the extraction, the retailer page it came from, and (right side)
 // when the entry was last seen.
-function SideCard({ label, name, brand, unit, price, store, imageUrl, sourceUrl, observedAt }) {
+function SideCard({
+  labelledBy,
+  name,
+  brand,
+  unit,
+  price,
+  store,
+  imageUrl,
+  sourceUrl,
+  observedAt,
+}) {
   const { t, i18n } = useTranslation()
   return (
-    <div className="min-w-0 flex-1">
-      <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-1.5">
-        {label}
-      </div>
+    <div role="group" aria-labelledby={labelledBy} className="min-w-0 flex-1">
       <div className="text-sm font-medium leading-snug">{name}</div>
+      {/* #480: no more "— · —". Both missing reads as one muted sentence;
+          one value renders alone; both keep the brand · unit pair. */}
       <div className="text-xs text-text-muted mt-1">
-        {brand ?? '—'} · {unit ?? '—'}
+        {brand && unit ? `${brand} · ${unit}` : brand || unit || t('review.noBrandUnit')}
       </div>
       <div className="text-sm mt-1.5">{formatPrice(price)}</div>
       <div className="text-xs text-text-muted mt-0.5">{store}</div>
@@ -143,7 +165,15 @@ function SideCard({ label, name, brand, unit, price, store, imageUrl, sourceUrl,
   )
 }
 
-function ReviewRow({ item, sourceNames, busy, onDecide, onUndo }) {
+function ReviewRow({
+  item,
+  sourceNames,
+  itemSideLabelId,
+  entrySideLabelId,
+  busy,
+  onDecide,
+  onUndo,
+}) {
   const { t, i18n } = useTranslation()
   const decided = item.status !== 'pending'
   const runTo = item.runId ? `/admin/prices?run=${encodeURIComponent(item.runId)}` : '/admin/prices'
@@ -158,7 +188,7 @@ function ReviewRow({ item, sourceNames, busy, onDecide, onUndo }) {
     <div className="border-b border-border last:border-b-0 px-5 py-4">
       <div className="flex items-stretch gap-4">
         <SideCard
-          label={t('review.matchedItem')}
+          labelledBy={itemSideLabelId}
           name={item.itemName}
           brand={item.itemBrand}
           unit={item.itemUnit}
@@ -169,7 +199,7 @@ function ReviewRow({ item, sourceNames, busy, onDecide, onUndo }) {
         />
         <div className="self-stretch w-px bg-border" aria-hidden="true" />
         <SideCard
-          label={t('review.catalogEntry')}
+          labelledBy={entrySideLabelId}
           name={item.entryName}
           brand={item.entryBrand}
           unit={item.entryUnit}
@@ -181,11 +211,24 @@ function ReviewRow({ item, sourceNames, busy, onDecide, onUndo }) {
         />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-text-muted">
-        <Chip variant="default">
+        {/* #480: the short reference id, full UUID in the title, click to
+            copy it for a conversation ("that #31b35444 one"). */}
+        <button
+          type="button"
+          onClick={() => copyItemId(item.id)}
+          title={item.id}
+          aria-label={t('review.copyItemId')}
+          className="font-mono text-text-muted hover:text-text hover:underline"
+        >
+          #{item.id.slice(0, 8)}
+        </button>
+        <Chip variant="default" title={t('review.confidenceHint')}>
           {t('review.confidence')} {Math.round(item.confidence * 100)}%
         </Chip>
         <Chip variant="loc">{t(methodKey(item.matchMethod))}</Chip>
-        <Chip variant="default">{t(reasonKey(item.reason))}</Chip>
+        <Chip variant="default">
+          {t('review.flagPrefix')} {t(reasonKey(item.reason))}
+        </Chip>
         <span>{t('review.flagCount', { count: item.flagCount })}</span>
         <span>·</span>
         <span>{formatClock(item.lastFlaggedAt, i18n.language)}</span>
@@ -236,6 +279,10 @@ function ReviewRow({ item, sourceNames, busy, onDecide, onUndo }) {
 
 export function AdminReview() {
   const { t } = useTranslation()
+  // #480: one list header names both sides; every row's SideCard points at
+  // these label ids (unique even if the page ever mounts twice).
+  const itemSideLabelId = useId()
+  const entrySideLabelId = useId()
   const { data: me } = useMe()
   const isAdmin = me?.user?.isAdmin === true
   const [status, setStatus] = useState('pending')
@@ -295,6 +342,10 @@ export function AdminReview() {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div className="max-w-[62ch]">
           <p className="text-md text-text-muted leading-snug">{t('review.lead')}</p>
+          {/* #480: a 100% match can still be here — say review is flag-driven.
+              The record-only note below stays as the "nothing changes" caveat. */}
+          <p className="text-xs text-text-muted leading-snug mt-2">{t('review.whyReview')}</p>
+          <p className="text-xs text-text leading-snug mt-2">{t('review.decisionRubric')}</p>
           <p className="text-xs text-text-muted mt-2">{t('review.decisionsNote')}</p>
         </div>
         <div className="flex flex-col items-end gap-1.5">
@@ -364,11 +415,34 @@ export function AdminReview() {
           </PanelHead>
           <PanelBody className="!py-0 !px-0">
             <div className="flex flex-col">
+              {/* #480: the two side labels live here once, in the same
+                  two-column proportions as each row (flex + w-px divider). */}
+              <div className="flex items-stretch gap-4 border-b border-border px-5 py-3">
+                <div className="min-w-0 flex-1">
+                  <span
+                    id={itemSideLabelId}
+                    className="text-xs font-semibold text-text-muted uppercase tracking-wide"
+                  >
+                    {t('review.matchedItem')}
+                  </span>
+                </div>
+                <div className="self-stretch w-px bg-border" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <span
+                    id={entrySideLabelId}
+                    className="text-xs font-semibold text-text-muted uppercase tracking-wide"
+                  >
+                    {t('review.catalogEntry')}
+                  </span>
+                </div>
+              </div>
               {items.map((item) => (
                 <ReviewRow
                   key={item.id}
                   item={item}
                   sourceNames={sourceNames}
+                  itemSideLabelId={itemSideLabelId}
+                  entrySideLabelId={entrySideLabelId}
                   busy={busy}
                   onDecide={(id, decision) => decide.mutate({ id, decision })}
                   onUndo={(id) => undo.mutate({ id })}
