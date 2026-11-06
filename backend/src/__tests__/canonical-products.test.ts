@@ -598,6 +598,51 @@ describe('renameProduct — real-SQLite semantics', () => {
     expect(indexVersion(sqlite)).toBe(1)
   })
 
+  it('lists the product-name conflict even when alias conflicts can fill the limit', async () => {
+    const sqlite = freshDb()
+    insertProduct(sqlite, { name: 'Beras Ramos Lama 5 kg' })
+    insertProduct(sqlite, {
+      id: 'prod-target',
+      productKey: 'target--x--1-kg',
+      name: 'Beras Ramos 5 kg',
+    })
+    // Twenty-one other products carry the candidate name as an approved alias:
+    // ordered aliases-first, the 20-row budget is spent on aliases and the
+    // product-name collision above never reaches the 409 body.
+    for (let i = 0; i < 21; i += 1) {
+      insertProduct(sqlite, {
+        id: `prod-alias-${i}`,
+        productKey: `alias-${i}--x--1-kg`,
+        name: `Other Product ${i}`,
+      })
+      insertAlias(sqlite, {
+        id: `alias-${i}`,
+        productId: `prod-alias-${i}`,
+        storeSlug: 'superindo',
+        name: 'Beras Ramos 5 kg',
+        status: 'approved',
+      })
+    }
+
+    const failure = await renameProduct(sqliteD1(sqlite), {
+      productKey: 'beras--ramos--5-kg',
+      canonicalName: 'Beras Ramos 5 kg',
+      expectedMetadataVersion: 1,
+      actorUserId: 'admin-1',
+    }).then(
+      () => null,
+      (error: DuplicateNameError) => error
+    )
+
+    expect(failure).toBeInstanceOf(DuplicateNameError)
+    expect(failure!.conflicts).toHaveLength(20)
+    expect(failure!.conflicts[0]).toMatchObject({
+      source: 'product',
+      name: 'Beras Ramos 5 kg',
+      productKey: 'target--x--1-kg',
+    })
+  })
+
   it("allows a case-only rename and promoting the product's own approved alias wording", async () => {
     const sqlite = freshDb()
     insertProduct(sqlite)

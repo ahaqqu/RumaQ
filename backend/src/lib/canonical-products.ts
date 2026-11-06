@@ -398,13 +398,17 @@ async function findDuplicateConflicts(
          SELECT p.product_key AS productKey, p.name AS name, 'product' AS source
          FROM price_products p
          WHERE p.name = ? COLLATE NOCASE AND p.id <> ?
-         UNION ALL
+         UNION
          SELECT p.product_key AS productKey, a.name AS name, 'alias' AS source
          FROM price_product_aliases a
          JOIN price_products p ON p.id = a.product_id
          WHERE a.name = ? COLLATE NOCASE AND a.status = 'approved' AND a.product_id <> ?
        )
-       ORDER BY source, productKey
+       -- Products before aliases: one name can be an approved alias for many
+       -- products, and a 409 that lists only aliases hides the harder
+       -- product-name collision. UNION (not UNION ALL) collapses the same other
+       -- product's per-store rows before the LIMIT, so they cannot eat the budget.
+       ORDER BY source = 'alias', productKey
        LIMIT 20`
     )
     .bind(canonicalName, productId, canonicalName, productId)
