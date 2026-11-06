@@ -1,18 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
-import { render, fireEvent } from '@testing-library/react'
+import { render, fireEvent, waitFor } from '@testing-library/react'
 import React from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PluginFeatures } from './PluginFeatures.jsx'
+import { getPluginCatalog, setPluginEnablement } from '../lib/api'
 
-// The section reads only its two query hooks — mock the module, not the
-// network: these tests pin RENDERING and the owner-only affordance, while
-// the cache plumbing (optimistic toggle + ['me'] invalidation) is pinned in
-// lib/queries/plugins.test.js.
-vi.mock('../lib/queries/index.js', () => ({
-  usePluginCatalog: vi.fn(),
-  useSetPluginEnablement: vi.fn(),
+// The section rides the REAL query hooks — only the network layer is mocked
+// (the context.test.jsx idiom). That matters for the failed-toggle alert: a
+// second useMutation observer never sees a mutation it did not trigger, so
+// seeding error state through a hook mock can never prove the alert actually
+// fires. Here a rejected toggle flows through the hoisted panel-owned
+// mutation end-to-end. The pure cache plumbing (optimistic toggle + ['me']
+// invalidation) stays pinned in lib/queries/plugins.test.js.
+vi.mock('../lib/api', async (importOriginal) => ({
+  ...(await importOriginal()),
+  getPluginCatalog: vi.fn(),
+  setPluginEnablement: vi.fn(),
 }))
-
-import { usePluginCatalog, useSetPluginEnablement } from '../lib/queries/index.js'
 
 // The server row the catalog endpoint answers for the documents plugin —
 // the posture fields drive the honest layer display (issue #437).
@@ -29,26 +33,34 @@ const documentsRow = (overrides = {}) => ({
   ...overrides,
 })
 
-function mutation(overrides = {}) {
-  return { mutate: vi.fn(), isPending: false, isError: false, ...overrides }
-}
-
 function renderSection(isOwner) {
-  return render(React.createElement(PluginFeatures, { isOwner }))
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <PluginFeatures isOwner={isOwner} />
+    </QueryClientProvider>
+  )
+  return { queryClient, ...view }
 }
 
-describe('PluginFeatures (settings catalog, issue #437)', () => {
-  beforeEach(() => {
-    vi.mocked(useSetPluginEnablement).mockReturnValue(mutation())
+// Resolves once the catalog rows rendered, handing back the (first) switch.
+const waitForSwitch = (container) =>
+  waitFor(() => {
+    const sw = container.querySelector('[role="switch"]')
+    expect(sw).not.toBeNull()
+    return sw
   })
 
-  it('renders every catalog plugin with label, description and capability chips', () => {
-    vi.mocked(usePluginCatalog).mockReturnValue({
-      data: { plugins: [documentsRow()] },
-      isPending: false,
-      isError: false,
-    })
+beforeEach(() => {
+  vi.mocked(getPluginCatalog).mockReset()
+  vi.mocked(setPluginEnablement).mockReset()
+})
+
+describe('PluginFeatures (settings catalog, issue #437)', () => {
+  it('renders every catalog plugin with label, description and capability chips', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow()] })
     const { container } = renderSection(true)
+    await waitForSwitch(container)
     expect(container.textContent).toContain('nav.documents')
     expect(container.textContent).toContain('documents.subtitle')
     // The capabilities surface: one chip per declared capability, copy from
@@ -58,49 +70,39 @@ describe('PluginFeatures (settings catalog, issue #437)', () => {
     expect(container.textContent).toContain('plugins.capabilities.export')
   })
 
-  it('gives the owner a switch reflecting the household layer, wired to the toggle', () => {
-    vi.mocked(usePluginCatalog).mockReturnValue({
-      data: { plugins: [documentsRow({ enabled: true })] },
-      isPending: false,
-      isError: false,
-    })
-    const mutate = vi.fn()
-    vi.mocked(useSetPluginEnablement).mockReturnValue(mutation({ mutate }))
+  it('gives the owner a switch reflecting the household layer, wired to the toggle', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow({ enabled: true })] })
+    vi.mocked(setPluginEnablement).mockResolvedValue(documentsRow({ enabled: false }))
     const { container } = renderSection(true)
 
-    const sw = container.querySelector('[role="switch"]')
-    expect(sw).not.toBeNull()
+    const sw = await waitForSwitch(container)
     expect(sw.getAttribute('aria-checked')).toBe('true')
 
     fireEvent.click(sw)
-    expect(mutate).toHaveBeenCalledWith({ pluginId: 'documents', status: 'disabled' })
+    await waitFor(() => expect(setPluginEnablement).toHaveBeenCalledWith('documents', 'disabled'))
   })
 
-  it('shows the retention promise on a disabled plugin (disable never deletes, §3.4)', () => {
-    vi.mocked(usePluginCatalog).mockReturnValue({
-      data: { plugins: [documentsRow({ enabled: false, available: false })] },
-      isPending: false,
-      isError: false,
+  it('shows the retention promise on a disabled plugin (disable never deletes, §3.4)', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({
+      plugins: [documentsRow({ enabled: false, available: false })],
     })
-    const mutate = vi.fn()
-    vi.mocked(useSetPluginEnablement).mockReturnValue(mutation({ mutate }))
+    vi.mocked(setPluginEnablement).mockResolvedValue(documentsRow())
     const { container } = renderSection(true)
 
-    const sw = container.querySelector('[role="switch"]')
+    const sw = await waitForSwitch(container)
     expect(sw.getAttribute('aria-checked')).toBe('false')
     expect(container.textContent).toContain('plugins.retentionNote')
 
     fireEvent.click(sw)
-    expect(mutate).toHaveBeenCalledWith({ pluginId: 'documents', status: 'enabled' })
+    await waitFor(() => expect(setPluginEnablement).toHaveBeenCalledWith('documents', 'enabled'))
   })
 
-  it('reports the ops layer honestly: deployment-off outranks the toggle state', () => {
-    vi.mocked(usePluginCatalog).mockReturnValue({
-      data: { plugins: [documentsRow({ deployment_available: false, available: false })] },
-      isPending: false,
-      isError: false,
+  it('reports the ops layer honestly: deployment-off outranks the toggle state', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({
+      plugins: [documentsRow({ deployment_available: false, available: false })],
     })
     const { container } = renderSection(true)
+    await waitForSwitch(container)
     expect(container.textContent).toContain('plugins.deploymentOff')
     // The switch stays — the household choice is still recordable while the
     // deployment layer is paused; the layer lines explain the 404.
@@ -108,38 +110,55 @@ describe('PluginFeatures (settings catalog, issue #437)', () => {
     expect(container.textContent).not.toContain('plugins.retentionNote')
   })
 
-  it('reports the plan layer honestly: unentitled shows the 403 sentence', () => {
-    vi.mocked(usePluginCatalog).mockReturnValue({
-      data: { plugins: [documentsRow({ plan_entitled: false, available: false })] },
-      isPending: false,
-      isError: false,
+  it('reports the plan layer honestly: unentitled shows the 403 sentence', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({
+      plugins: [documentsRow({ plan_entitled: false, available: false })],
     })
     const { container } = renderSection(true)
+    await waitForSwitch(container)
     expect(container.textContent).toContain('plugins.planExcluded')
   })
 
-  it('renders members read-only: state chip instead of a switch, plus the hint', () => {
-    vi.mocked(usePluginCatalog).mockReturnValue({
-      data: { plugins: [documentsRow({ enabled: false, available: false })] },
-      isPending: false,
-      isError: false,
+  it('renders members read-only: state chip instead of a switch, plus the hint', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({
+      plugins: [documentsRow({ enabled: false, available: false })],
     })
     const { container } = renderSection(false)
+    await waitFor(() => expect(container.textContent).toContain('plugins.stateOff'))
     expect(container.querySelector('[role="switch"]')).toBeNull()
     expect(container.textContent).toContain('plugins.membersHint')
-    expect(container.textContent).toContain('plugins.stateOff')
   })
 
-  it('surfaces a mutation failure once, panel-wide', () => {
-    vi.mocked(usePluginCatalog).mockReturnValue({
-      data: { plugins: [documentsRow()] },
-      isPending: false,
-      isError: false,
-    })
-    vi.mocked(useSetPluginEnablement).mockReturnValue(mutation({ isError: true }))
+  it('shows only the toggled row pending while the mutation is in flight', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow()] })
+    // Never settles: the mutation stays pending for the whole test.
+    vi.mocked(setPluginEnablement).mockReturnValue(new Promise(() => {}))
     const { container } = renderSection(true)
+
+    const sw = await waitForSwitch(container)
+    fireEvent.click(sw)
+    await waitFor(() => expect(container.querySelector('[role="switch"]').disabled).toBe(true))
+  })
+
+  it('surfaces a failed toggle once, panel-wide, and rolls the switch back', async () => {
+    // The REAL hook end-to-end (no hook mocks): the toggle rejects, the
+    // optimistic flip rolls back to the honest cache state, and the hoisted
+    // panel-owned mutation renders exactly one alert — the failure feedback
+    // a second observer could never have seen (S1-A1, PR #470 review).
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow({ enabled: true })] })
+    vi.mocked(setPluginEnablement).mockRejectedValue(new Error('forbidden'))
+    const { container } = renderSection(true)
+
+    const sw = await waitForSwitch(container)
+    fireEvent.click(sw)
+
+    await waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull())
+    // Exactly one alert, panel-wide, with the generic failure copy.
     const alerts = [...container.querySelectorAll('[role="alert"]')]
     expect(alerts).toHaveLength(1)
     expect(alerts[0].textContent).toContain('plugins.errorGeneric')
+    // The rollback: the switch snapped back to the honest (enabled) state —
+    // the alert is the failure signal, the switch position is the truth.
+    expect(container.querySelector('[role="switch"]').getAttribute('aria-checked')).toBe('true')
   })
 })

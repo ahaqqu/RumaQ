@@ -89,7 +89,11 @@ export const gateway = {
       // the CORE-owned enablement surface — household_plugins CRUD + the
       // lifecycle audit. Deliberately NOT a plugin and dispatched AHEAD of the
       // registry's prefix matching: it must answer even when every plugin is
-      // disabled, because it is the thing that re-enables them.
+      // disabled, because it is the thing that re-enables them. This block —
+      // like every core dispatch above — is one of CORE_GATEWAY_PREFIXES
+      // (plugins/core-prefixes.ts): validatePluginManifests rejects any
+      // manifest claiming one of these prefixes, so matchPlugin below can
+      // never shadow a core app. Keep the two in lockstep when adding one.
       if (path === '/api/plugins' || path.startsWith('/api/plugins/')) {
         return pluginsApp.fetch(request, env, ctx)
       }

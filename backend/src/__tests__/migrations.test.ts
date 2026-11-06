@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vite-plus/test'
 import { PLUGIN_ENABLEMENT_SQL, HOUSEHOLD_ENABLEMENT_ROWS_SQL } from '../plugins/enablement.js'
 import { deploymentFlagKey } from '../plugins/flags.js'
+import { AUDIT_INSERT_SQL, ENABLEMENT_UPSERT_SQL } from '../lib/plugins.js'
 import { EVENT_SELECT, VISIBLE_PREDICATE } from '../lib/calendar.js'
 // The backend tsconfig pins `types` to @cloudflare/workers-types, so Node
 // builtin imports carry no declarations. These suppressions are contained to
@@ -2074,5 +2075,91 @@ describe('migration 0032: household_plugin_audit (#437)', () => {
     const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
     expect(detail).toContain('idx_household_plugin_audit_household')
     expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+})
+
+// The enablement writer's in-batch receipt guard (lib/plugins.ts
+// AUDIT_INSERT_SQL, S1-A2's sibling finding S1-A4 from the PR #470 review):
+// two concurrent identical toggles both pass the outside idempotency read —
+// D1 serializes the batch, not the surrounding read — so the guard is the
+// only thing standing between one transition and a doubled receipt. That is
+// SQL semantics, so it is pinned here against a real SQLite engine, not the
+// route tests' fake D1 (whose batch just logs).
+describe('setPluginEnablement audit guard (lib/plugins.ts, #437)', () => {
+  // documents' manifest default is enabled — the vocabulary the guard's
+  // absent-row branch binds.
+  function seededDb(): Db {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    return db
+  }
+
+  // The exact batch setPluginEnablement runs — the GUARDED receipt first
+  // (it must read the row pre-upsert), then the upsert — inside one
+  // transaction, matching D1's batch atomicity.
+  function runToggleBatch(db: Db, status: 'enabled' | 'disabled', receiptId: string): void {
+    db.exec('BEGIN')
+    db.prepare(AUDIT_INSERT_SQL).run(
+      receiptId,
+      'h1',
+      'documents',
+      'u1',
+      status === 'enabled' ? 'plugin_enabled' : 'plugin_disabled',
+      'h1',
+      'documents',
+      'enabled',
+      status
+    )
+    db.prepare(ENABLEMENT_UPSERT_SQL).run('h1', 'documents', status)
+    db.exec('COMMIT')
+  }
+
+  const receiptCount = (db: Db) =>
+    (
+      db.prepare(`SELECT COUNT(*) AS cnt FROM household_plugin_audit`).all() as Array<{
+        cnt: number
+      }>
+    )[0].cnt
+
+  it('writes the receipt for a real transition (absent row resolves to the default)', () => {
+    // The common first-disable path: no household_plugins row yet, the
+    // manifest default ('enabled') is the resolved state — the guard's
+    // COALESCE default branch must let the receipt through.
+    const db = seededDb()
+    runToggleBatch(db, 'disabled', 'a1')
+    expect(receiptCount(db)).toBe(1)
+    expect(
+      db
+        .prepare(
+          `SELECT status FROM household_plugins WHERE household_id = 'h1' AND plugin_id = 'documents'`
+        )
+        .get()
+    ).toEqual({ status: 'disabled' })
+  })
+
+  it('skips the receipt when a concurrent identical toggle already committed', () => {
+    const db = seededDb()
+    // The race winner: absent row, disable → receipt + row 'disabled'.
+    runToggleBatch(db, 'disabled', 'a1')
+    // The duplicate: its outside read happened BEFORE the commit (it also
+    // saw an absent row), but its batch runs after — the guard must see the
+    // committed row and skip the receipt; the upsert re-lands the same value.
+    runToggleBatch(db, 'disabled', 'a2')
+    expect(receiptCount(db)).toBe(1)
+    expect(db.prepare('SELECT id FROM household_plugin_audit').get()).toEqual({ id: 'a1' })
+  })
+
+  it('still audits a real transition when a committed row states the opposite', () => {
+    const db = seededDb()
+    runToggleBatch(db, 'disabled', 'a1')
+    runToggleBatch(db, 'enabled', 'a2')
+    expect(db.prepare('SELECT id, action FROM household_plugin_audit ORDER BY id').all()).toEqual([
+      { id: 'a1', action: 'plugin_disabled' },
+      { id: 'a2', action: 'plugin_enabled' },
+    ])
   })
 })

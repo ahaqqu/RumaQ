@@ -219,6 +219,39 @@ describe('plugin dispatch through the gateway (#435)', () => {
     expect(await res.json()).toEqual({ error: 'Not found' })
     expect(calls).toEqual([])
   })
+
+  it('the core catalog answers through the gateway while every plugin is disabled (#437)', async () => {
+    // The load-bearing dispatch claim of the settings catalog (issue #437):
+    // /api/plugins is a CORE surface the gateway serves AHEAD of matchPlugin,
+    // so it must answer 200 with the catalog even when no plugin is usable —
+    // here the deployment kill-switch is off (and the household never chose).
+    // Driven through gateway.fetch like the tests above: reordering the
+    // gateway's dispatch blocks (or dropping the carve-out) fails HERE.
+    // The catalog's own reads (enablement rows, deployment flags) ride the
+    // fake's all() routes; the absent-row default keeps the documents row
+    // `enabled: true` while the flag layer denies effective access.
+    const { env } = h.setup(
+      [],
+      [
+        [/SELECT plugin_id, status FROM household_plugins WHERE household_id = \?/, () => []],
+        DEPLOYMENT_FLAG_ROWS(FLAG_OFF),
+      ]
+    )
+    const res = await gateway.fetch(
+      new Request('https://rumaq.test/api/plugins'),
+      gatewayEnv(env),
+      dispatchCtx
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { plugins: Array<Record<string, unknown>> }
+    expect(body.plugins.map((p) => p.id)).toContain('documents')
+    expect(body.plugins[0]).toMatchObject({
+      id: 'documents',
+      enabled: true,
+      deployment_available: false,
+      available: false,
+    })
+  })
 })
 
 describe('PluginId stays a literal union (#435)', () => {
