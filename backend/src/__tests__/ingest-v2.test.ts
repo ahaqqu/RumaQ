@@ -377,7 +377,10 @@ describe('ingestPricesV2', () => {
     const trace: ShimTrace = { statements: [], batchSizes: [], queries: 0 }
     const db = sqliteD1(sqlite, trace)
 
-    const count = 100
+    // 205 keys — the automation suite's bulk-catalog size (bulkCatalogueSnapshot)
+    // — so an IN list that stopped being chunked would bind 205 parameters and
+    // fail the ceiling assertion below; at exactly 100 it would still pass.
+    const count = 205
     const items = Array.from({ length: count }, (_, index) => ({
       productKey: `bulk-item-${index}--acme--1-pcs`,
       rawName: `Bulk Item ${index}`,
@@ -408,8 +411,8 @@ describe('ingestPricesV2', () => {
     // 50-statement chunk D1's per-invocation budget is sized for.
     expect(trace.batchSizes.length).toBeGreaterThan(1)
     expect(Math.max(...trace.batchSizes)).toBeLessThanOrEqual(50)
-    // 100 keys exceed SELECT_IN_CHUNK: every statement stays under D1's
-    // 100-bound-parameter ceiling for a query.
+    // 205 keys are past SELECT_IN_CHUNK, so this only holds if selectIn still
+    // chunks: every statement stays under D1's 100-bound-parameter ceiling.
     for (const statement of trace.statements) {
       expect((statement.match(/\?/g) ?? []).length).toBeLessThanOrEqual(100)
     }
@@ -535,5 +538,21 @@ describe('POST /api/internal/ingest/prices v2 boundary', () => {
 
     const unauthorized = await apiApp.request('/api/internal/canonical-index', {}, env(db))
     expect(unauthorized.status).toBe(401)
+  })
+})
+
+// The shim is the only D1 stand-in the write path is tested against, so its
+// transaction has to behave like D1's: a batch that fails part-way must leave
+// nothing behind, or a future partial-write assertion would pass against a
+// rollback that never happened.
+describe('sqlite D1 shim', () => {
+  it('rolls a failed batch back as one transaction', async () => {
+    const { sqlite, db } = setup()
+    const insert = (slug: string) =>
+      db.prepare("INSERT INTO price_sources (id, slug, name) VALUES ('src-1', ?, 'S')").bind(slug)
+    await expect(db.batch([insert('a'), insert('b')])).rejects.toThrow()
+    expect(
+      sqlite.prepare("SELECT COUNT(*) AS count FROM price_sources WHERE id = 'src-1'").get()?.count
+    ).toBe(0)
   })
 })
