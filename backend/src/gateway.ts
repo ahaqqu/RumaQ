@@ -10,7 +10,8 @@ import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
 import { logDueDocumentReminders } from './lib/document-expiry.js'
 import { PURGE_TICK_OBJECT_BUDGET, runPluginPurgeTick } from './lib/plugin-purge.js'
 import { runPluginCronTasks } from './lib/plugin-cron.js'
-import { PLUGIN_TASKS_CRON_SCHEDULE } from './cron-schedules.js'
+import { runReviewAiSweep } from './lib/review-ai.js'
+import { PLUGIN_TASKS_CRON_SCHEDULE, REVIEW_AI_CRON_SCHEDULE } from './cron-schedules.js'
 
 const AUTH_ROUTES = new Set([
   '/api/auth/login',
@@ -133,11 +134,11 @@ export const gateway = {
     })
   },
 
-  // Cron dispatch (triggers.scheduled in cloudflare.config.ts — TWO
-  // schedules since ticket 7, cron-schedules.ts carries the strings and the
-  // budget rationale). Each trigger is its own invocation with its own
-  // per-invocation subrequest cap, and the handler tells them apart via
-  // ScheduledController.cron:
+  // Cron dispatch (triggers.scheduled in cloudflare.config.ts — THREE
+  // schedules since the AI review sweep (#484), cron-schedules.ts carries the
+  // strings and the budget rationale). Each trigger is its own invocation with
+  // its own per-invocation subrequest cap, and the handler tells them apart
+  // via ScheduledController.cron:
   //
   //   CORE_CRON_SCHEDULE ('17 3 * * *') — usage records are deleted after one
   //   year (issue #353), the document expiry sweep (#426) computes + logs the
@@ -154,8 +155,13 @@ export const gateway = {
   //   declares a task yet, so this invocation is a no-op until the first
   //   declaration lands.
   //
+  //   REVIEW_AI_CRON_SCHEDULE ('*/30 * * * *') — the AI match-review sweep
+  //   (#484): lib/review-ai.ts's runReviewAiSweep, which is itself the mode
+  //   gate (only `auto` makes provider calls; manual/assist return before the
+  //   first one) and is bounded to ≤20 pending items per tick.
+  //
   // Anything else (undefined in tests / local tooling) falls through to the
-  // core tick — the safe default, never the plugin fan-out.
+  // core tick — the safe default, never the plugin fan-out or the AI sweep.
   async scheduled(
     controller: ScheduledController,
     env: Env['Bindings'],
@@ -169,6 +175,18 @@ export const gateway = {
           if (summary.ran + summary.failed > 0) {
             console.log(`[plugin-cron] tick: ${summary.ran} ran, ${summary.failed} failed`)
           }
+        })
+      )
+      return
+    }
+    if (controller.cron === REVIEW_AI_CRON_SCHEDULE) {
+      ctx.waitUntil(
+        runReviewAiSweep(env).catch((err: unknown) => {
+          // A failed sweep must never fail the invocation or the next tick:
+          // no verdict was written, the item stays pending, the next tick
+          // retries it (the same degrade-on-failure posture as a provider
+          // error).
+          console.error('[review-ai] cron sweep failed', err)
         })
       )
       return

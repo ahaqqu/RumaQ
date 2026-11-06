@@ -430,7 +430,10 @@ async function callOpenCode(
   )
 }
 
-function parseJsonResponse<T>(content: string): T {
+// Exported for the review reviewer (lib/review-ai.ts): one JSON-extraction
+// policy across every structured AI answer (fenced/prose-wrapped blocks are
+// tolerated here, then each caller applies its OWN strict field validation).
+export function parseJsonResponse<T>(content: string): T {
   const jsonMatch = content.match(/\{[\s\S]*\}/)
   if (!jsonMatch) {
     throw new Error('AI response did not contain valid JSON')

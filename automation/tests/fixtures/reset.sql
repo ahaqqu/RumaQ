@@ -20,9 +20,16 @@ DELETE FROM price_runs;
 -- events go first; reset must reopen the one-run-at-a-time queue.
 DELETE FROM scrape_run_events;
 DELETE FROM scrape_commands;
--- Match review queue (migration 0013) — no FK dependents; reset must return
--- the triage queue to a clean slate between scenarios.
+-- Match review queue (migration 0013) — reset must return the triage queue to
+-- a clean slate between scenarios. AI verdicts (migration 0038) reference the
+-- pair with ON DELETE CASCADE, but reset deletes them explicitly FIRST so the
+-- clean slate never depends on FK enforcement being on in every harness.
+DELETE FROM review_ai_verdicts;
 DELETE FROM match_review_items;
+-- Operator runtime settings (migration 0038): the AI review mode is a global
+-- switch, so a scenario that enables auto must not leak that mode into the
+-- next scenario. The absent row degrades to the 'assist' default (#484).
+DELETE FROM app_settings;
 DELETE FROM plans;
 DELETE FROM purchase_items;
 DELETE FROM purchases;

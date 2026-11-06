@@ -2723,3 +2723,66 @@ describe('migration 0034: document_audit ocr action (#433)', () => {
     expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
   })
 })
+
+// AI review of match-review items (ahaqqu/RumaQ#484, backend PR 1): the mode
+// switch's key/value table + the per-pair verdict cache + the decision
+// provenance column. The lib-level semantics (floor, cache, agreement) live in
+// review-ai.test.ts; here the migration chain itself is exercised — the
+// backfill for rows that predate 0038 and the seed the admin UI reads.
+describe('migration 0038: review AI (#484)', () => {
+  function insertPre0038ReviewItem(db: Db): void {
+    db.prepare(
+      `INSERT INTO match_review_items
+         (id, item_product_key, entry_product_key, pair_data, reason, match_method,
+          confidence, run_started_at, first_flagged_at, last_flagged_at)
+       VALUES ('rev-1', 'item-a', 'entry-a', '{}', 'price_ratio', 'exact', 1,
+               '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')`
+    ).run()
+  }
+
+  it('seeds review_mode=assist and backfills decided_source=human on pre-0038 rows', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0038')
+    )
+    insertPre0038ReviewItem(db)
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0038_review_ai.sql'), 'utf8'))
+
+    // Default mode is approve-with-AI; the AI-access owner is NOT seeded (the
+    // cron starts on the server-key fallback until an admin enables auto).
+    expect(db.prepare('SELECT key, value FROM app_settings').all()).toEqual([
+      { key: 'review_mode', value: 'assist' },
+    ])
+    // Every pre-existing decision was a human one — the column's default is
+    // the backfill.
+    expect(
+      db.prepare('SELECT decided_source FROM match_review_items WHERE id = ?').get('rev-1')
+    ).toMatchObject({ decided_source: 'human' })
+  })
+
+  it('keeps the full chain green and enforces the verdict vocabulary + cascade', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    // node:sqlite defaults FKs OFF; D1 enforces them.
+    db.exec('PRAGMA foreign_keys = ON')
+    insertPre0038ReviewItem(db)
+
+    const insert = db.prepare(
+      `INSERT INTO review_ai_verdicts (id, review_item_id, verdict, confidence, mode)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    expect(() => insert.run('v1', 'rev-1', 'maybe', 0.9, 'assist')).toThrow()
+    expect(() => insert.run('v2', 'rev-1', 'same', 0.9, 'manual')).toThrow()
+    insert.run('v3', 'rev-1', 'same', 0.9, 'assist')
+    // One verdict per review item — the cache's uniqueness.
+    expect(() => insert.run('v4', 'rev-1', 'different', 0.2, 'assist')).toThrow()
+
+    // The verdict is a CHILD of the pair: deleting the item drops it.
+    db.prepare('DELETE FROM match_review_items WHERE id = ?').run('rev-1')
+    expect(db.prepare('SELECT COUNT(*) AS count FROM review_ai_verdicts').get()).toMatchObject({
+      count: 0,
+    })
+  })
+})

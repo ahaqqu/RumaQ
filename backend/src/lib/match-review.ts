@@ -13,6 +13,28 @@ import type { ReviewItemPair } from '@rumaq/contract'
 export type ReviewStatus = 'pending' | 'approved' | 'rejected'
 export type ReviewDecision = 'approved' | 'rejected'
 
+// AI-review vocabulary (issue #484, migration 0038). It lives here — with the
+// table whose rows it stores — so the queue read (which joins the verdict) and
+// lib/review-ai.ts (which writes it) cannot drift on the value domain.
+export type ReviewVerdictName = 'same' | 'different'
+export type HumanAgreement = 'agreed' | 'disagreed'
+/** Who produced the item's current decision; null = no decision (pending). */
+export type ReviewDecisionSource = 'human' | 'ai_assist' | 'ai_auto'
+
+/**
+ * One cached AI verdict as the queue carries it (issue #484): the model's
+ * answer plus the provenance that makes a verdict comparable across a
+ * settings-driven model change. Null on the item = not evaluated (yet).
+ */
+export type CachedReviewVerdict = {
+  verdict: ReviewVerdictName
+  confidence: number
+  reason: string | null
+  /** The model that produced it; null = the provider default applied. */
+  model: string | null
+  humanAgreement: HumanAgreement | null
+}
+
 // Same budget math as ingest.ts: one db.batch() is one query against D1's
 // per-invocation limit; 50 statements of 11 binds each keeps both the query
 // budget and the per-statement parameter cap comfortable. The producer caps
@@ -90,11 +112,21 @@ type ReviewRow = {
   status: string
   decided_at: string | null
   decided_by: string | null
+  // The decision's provenance (0038): 'human' | 'ai_assist' | 'ai_auto',
+  // null on a pending row. Tolerated as string from the DB, narrowed below.
+  decided_source: string | null
   flag_count: number
   first_flagged_at: string
   last_flagged_at: string
   run_started_at: string
   run_id?: string | null
+  // The cached AI verdict (0038), aliased off the LEFT JOIN; every field is
+  // null together when the item has never been evaluated.
+  ai_verdict: string | null
+  ai_confidence: number | null
+  ai_reason: string | null
+  ai_model: string | null
+  ai_human_agreement: string | null
 }
 
 export type ReviewItem = ReviewItemPair & {
@@ -102,6 +134,10 @@ export type ReviewItem = ReviewItemPair & {
   status: ReviewStatus
   decidedAt: string | null
   decidedBy: string | null
+  /** Who produced the current decision (issue #484); null while pending. */
+  decidedSource: ReviewDecisionSource | null
+  /** The cached AI verdict + agreement (issue #484); null = not evaluated. */
+  aiVerdict: CachedReviewVerdict | null
   flagCount: number
   firstFlaggedAt: string
   lastFlaggedAt: string
@@ -134,6 +170,24 @@ function parsePair(json: string): ReviewItemPair | null {
   }
 }
 
+function toDecisionSource(value: string | null): ReviewDecisionSource | null {
+  return value === 'human' || value === 'ai_assist' || value === 'ai_auto' ? value : null
+}
+
+function toCachedVerdict(row: ReviewRow): CachedReviewVerdict | null {
+  if (row.ai_verdict !== 'same' && row.ai_verdict !== 'different') return null
+  return {
+    verdict: row.ai_verdict,
+    confidence: row.ai_confidence ?? 0,
+    reason: row.ai_reason,
+    model: row.ai_model,
+    humanAgreement:
+      row.ai_human_agreement === 'agreed' || row.ai_human_agreement === 'disagreed'
+        ? row.ai_human_agreement
+        : null,
+  }
+}
+
 function toReviewItem(row: ReviewRow): ReviewItem | null {
   const pair = parsePair(row.pair_data)
   if (!pair) return null
@@ -145,6 +199,8 @@ function toReviewItem(row: ReviewRow): ReviewItem | null {
       : 'pending') as ReviewStatus,
     decidedAt: row.decided_at,
     decidedBy: row.decided_by,
+    decidedSource: toDecisionSource(row.decided_source),
+    aiVerdict: toCachedVerdict(row),
     flagCount: row.flag_count,
     firstFlaggedAt: row.first_flagged_at,
     lastFlaggedAt: row.last_flagged_at,
@@ -259,6 +315,19 @@ function enrichEntryEvidence<T extends EvidenceCarrier>(
   }
 }
 
+// One projection for BOTH reads of a review row — the list page and the
+// decide/undo re-read — so the response shape can never drift between them
+// (it already repeated the run join; issue #484 adds the verdict join). A
+// LEFT JOIN means an unevaluated item's ai_* columns are uniformly NULL.
+const REVIEW_ROW_COLUMNS = `r.id, r.pair_data, r.status, r.decided_at, r.decided_by,
+        r.decided_source, r.flag_count, r.first_flagged_at, r.last_flagged_at,
+        r.run_started_at, p.id AS run_id,
+        v.verdict AS ai_verdict, v.confidence AS ai_confidence, v.reason AS ai_reason,
+        v.model AS ai_model, v.human_agreement AS ai_human_agreement`
+
+const REVIEW_ROW_JOINS = `LEFT JOIN price_runs p ON p.run_started_at = r.run_started_at
+      LEFT JOIN review_ai_verdicts v ON v.review_item_id = r.id`
+
 /**
  * One page of the review queue, newest flags first, plus the exact
  * per-status counts. Offset pagination on purpose: last_flagged_at mutates
@@ -266,6 +335,10 @@ function enrichEntryEvidence<T extends EvidenceCarrier>(
  * table is order-of-hundreds and the UI appends pages, so offsets are
  * honest. Counts come from one GROUP BY: exact at any size, independent of
  * paging.
+ *
+ * Deliberately NO AI here (issue #484): the list read is the hot path and
+ * must never wait on a provider. Verdicts are computed by the explicit
+ * evaluate route or the cron sweep and merely JOINED in when cached.
  */
 export async function listReviewItems(
   db: D1Database,
@@ -278,10 +351,9 @@ export async function listReviewItems(
   const [pageResult, countResult, filteredResult] = await db.batch([
     db
       .prepare(
-        `SELECT r.id, r.pair_data, r.status, r.decided_at, r.decided_by, r.flag_count,
-                r.first_flagged_at, r.last_flagged_at, r.run_started_at, p.id AS run_id
+        `SELECT ${REVIEW_ROW_COLUMNS}
          FROM match_review_items r
-         LEFT JOIN price_runs p ON p.run_started_at = r.run_started_at
+         ${REVIEW_ROW_JOINS}
          WHERE (? = 'all' OR r.status = ?)
          -- Pairs flagged by the same run share last_flagged_at; the natural
          -- key tie-break makes the total order deterministic so an offset
@@ -325,10 +397,9 @@ export async function listReviewItems(
 async function getReviewRow(db: D1Database, id: string): Promise<ReviewItem | null> {
   const row = await db
     .prepare(
-      `SELECT r.id, r.pair_data, r.status, r.decided_at, r.decided_by, r.flag_count,
-              r.first_flagged_at, r.last_flagged_at, r.run_started_at, p.id AS run_id
+      `SELECT ${REVIEW_ROW_COLUMNS}
        FROM match_review_items r
-       LEFT JOIN price_runs p ON p.run_started_at = r.run_started_at
+       ${REVIEW_ROW_JOINS}
        WHERE r.id = ?`
     )
     .bind(id)
@@ -345,34 +416,68 @@ async function getReviewRow(db: D1Database, id: string): Promise<ReviewItem | nu
 /**
  * Record a human verdict (last verdict wins — deciding twice overwrites).
  * Returns the updated row, or null for an unknown id (404 at the route).
+ *
+ * Issue #484: `agreement` is the AI-assist path — the human accepted or
+ * rejected a CACHED AI verdict. It records the verdict's human_agreement and
+ * the item's `decided_source='ai_assist'`; without it (or without a verdict
+ * to agree with) the decision carries plain human provenance. Both writes are
+ * one batch, so the decision and its agreement can never disagree.
  */
 export async function decideReviewItem(
   db: D1Database,
   id: string,
   decision: ReviewDecision,
-  userId: string
+  userId: string,
+  agreement?: HumanAgreement
 ): Promise<ReviewItem | null> {
-  await db
-    .prepare(
-      'UPDATE match_review_items SET status = ?, decided_at = ?, decided_by = ? WHERE id = ?'
+  const verdict = await db
+    .prepare('SELECT id FROM review_ai_verdicts WHERE review_item_id = ?')
+    .bind(id)
+    .first<{ id: string }>()
+  const decidedSource: ReviewDecisionSource = agreement && verdict ? 'ai_assist' : 'human'
+  const statements = [
+    db
+      .prepare(
+        `UPDATE match_review_items
+         SET status = ?, decided_at = ?, decided_by = ?, decided_source = ?
+         WHERE id = ?`
+      )
+      .bind(decision, new Date().toISOString(), userId, decidedSource, id),
+  ]
+  if (agreement && verdict) {
+    statements.push(
+      db
+        .prepare('UPDATE review_ai_verdicts SET human_agreement = ? WHERE review_item_id = ?')
+        .bind(agreement, id)
     )
-    .bind(decision, new Date().toISOString(), userId, id)
-    .run()
+  }
+  await db.batch(statements)
   return getReviewRow(db, id)
 }
 
 /**
  * Undo a verdict: back to pending, decision fields cleared. Undoing an
- * already-pending row is an idempotent no-op. Returns the row, or null for
- * an unknown id.
+ * already-pending row is an idempotent no-op. Returns the row, or null for an
+ * unknown id.
+ *
+ * The provenance goes with the decision (issue #484): a pending row has no
+ * source, and the verdict's human_agreement described the decision being
+ * undone. The cached verdict itself STAYS — verdicts are cached forever, so
+ * re-deciding (or a later auto sweep) needs no new provider call.
  */
 export async function undoReviewDecision(db: D1Database, id: string): Promise<ReviewItem | null> {
-  await db
-    .prepare(
-      "UPDATE match_review_items SET status = 'pending', decided_at = NULL, decided_by = NULL WHERE id = ?"
-    )
-    .bind(id)
-    .run()
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE match_review_items
+         SET status = 'pending', decided_at = NULL, decided_by = NULL, decided_source = NULL
+         WHERE id = ?`
+      )
+      .bind(id),
+    db
+      .prepare('UPDATE review_ai_verdicts SET human_agreement = NULL WHERE review_item_id = ?')
+      .bind(id),
+  ])
   return getReviewRow(db, id)
 }
 

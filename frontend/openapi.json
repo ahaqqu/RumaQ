@@ -1567,6 +1567,32 @@
                           "decidedBy": {
                             "type": ["string", "null"]
                           },
+                          "decidedSource": {
+                            "type": ["string", "null"],
+                            "enum": ["human", "ai_assist", "ai_auto", null]
+                          },
+                          "aiVerdict": {
+                            "type": ["object", "null"],
+                            "properties": {
+                              "verdict": {
+                                "type": "string",
+                                "enum": ["same", "different"]
+                              },
+                              "confidence": {
+                                "type": "number"
+                              },
+                              "reason": {
+                                "type": ["string", "null"]
+                              },
+                              "model": {
+                                "type": ["string", "null"]
+                              },
+                              "humanAgreement": {
+                                "type": ["string", "null"],
+                                "enum": ["agreed", "disagreed", null]
+                              }
+                            }
+                          },
                           "flagCount": {
                             "type": "integer"
                           },
@@ -1616,6 +1642,164 @@
         }
       }
     },
+    "/api/admin/review/mode": {
+      "get": {
+        "operationId": "getApiAdminReviewMode",
+        "description": "AI review mode and whether the acting admin has a usable AI provider (admin-only). Modes: manual (no AI calls), assist (AI proposes, human decides — default), auto (AI decides at/above the confidence floor).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": ["manual", "assist", "auto"]
+                    },
+                    "aiConfigured": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putApiAdminReviewMode",
+        "description": "Set the AI review mode (admin-only). Enabling auto records the acting admin as the AI-access owner for the cron and kicks a bounded background sweep (≤10 items).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["mode"],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": ["manual", "assist", "auto"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": ["manual", "assist", "auto"]
+                    },
+                    "aiConfigured": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
+      }
+    },
+    "/api/admin/review/evaluate": {
+      "post": {
+        "operationId": "postApiAdminReviewEvaluate",
+        "description": "Evaluate up to 10 pending review items without a verdict using the acting admin’s AI access (admin-only, synchronous). Never runs in manual mode; returns 200 with evaluated:0 and aiConfigured:false when no provider is configured. Verdicts are cached forever; auto mode also applies verdicts at/above the confidence floor.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "evaluated": {
+                      "type": "integer"
+                    },
+                    "applied": {
+                      "type": "integer"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": ["manual", "assist", "auto"]
+                    },
+                    "aiConfigured": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
+      }
+    },
     "/api/admin/review/export": {
       "get": {
         "operationId": "getApiAdminReviewExport",
@@ -1648,7 +1832,7 @@
     "/api/admin/review/{id}/decision": {
       "post": {
         "operationId": "postApiAdminReviewByIdDecision",
-        "description": "Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins.",
+        "description": "Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins. Send agreement when the caller is accepting or rejecting the cached AI verdict (records ai_assist provenance).",
         "security": [
           {
             "cookieAuth": []
@@ -1665,6 +1849,10 @@
                   "decision": {
                     "type": "string",
                     "enum": ["approved", "rejected"]
+                  },
+                  "agreement": {
+                    "type": "string",
+                    "enum": ["agreed", "disagreed"]
                   }
                 }
               }
@@ -1762,6 +1950,32 @@
                         },
                         "decidedBy": {
                           "type": ["string", "null"]
+                        },
+                        "decidedSource": {
+                          "type": ["string", "null"],
+                          "enum": ["human", "ai_assist", "ai_auto", null]
+                        },
+                        "aiVerdict": {
+                          "type": ["object", "null"],
+                          "properties": {
+                            "verdict": {
+                              "type": "string",
+                              "enum": ["same", "different"]
+                            },
+                            "confidence": {
+                              "type": "number"
+                            },
+                            "reason": {
+                              "type": ["string", "null"]
+                            },
+                            "model": {
+                              "type": ["string", "null"]
+                            },
+                            "humanAgreement": {
+                              "type": ["string", "null"],
+                              "enum": ["agreed", "disagreed", null]
+                            }
+                          }
                         },
                         "flagCount": {
                           "type": "integer"
@@ -1908,6 +2122,32 @@
                         },
                         "decidedBy": {
                           "type": ["string", "null"]
+                        },
+                        "decidedSource": {
+                          "type": ["string", "null"],
+                          "enum": ["human", "ai_assist", "ai_auto", null]
+                        },
+                        "aiVerdict": {
+                          "type": ["object", "null"],
+                          "properties": {
+                            "verdict": {
+                              "type": "string",
+                              "enum": ["same", "different"]
+                            },
+                            "confidence": {
+                              "type": "number"
+                            },
+                            "reason": {
+                              "type": ["string", "null"]
+                            },
+                            "model": {
+                              "type": ["string", "null"]
+                            },
+                            "humanAgreement": {
+                              "type": ["string", "null"],
+                              "enum": ["agreed", "disagreed", null]
+                            }
+                          }
                         },
                         "flagCount": {
                           "type": "integer"
