@@ -32,6 +32,9 @@ import {
   generatePlan,
   savePlan,
   updatePlanItem,
+  getAdminProduct,
+  renameProduct,
+  revertProductRename,
 } from './api'
 
 // The client is mocked at the openapi-fetch boundary: these tests cover the
@@ -463,6 +466,70 @@ describe('api', () => {
     expect(clientMock.PATCH).toHaveBeenCalledWith('/api/plans/{id}/items/{itemId}', {
       params: { path: { id: 'pl1', itemId: 'i1' } },
       body: { status: 'bought' },
+    })
+  })
+
+  describe('admin canonical products (#423)', () => {
+    const identity = {
+      product: { productKey: 'minyak--bimoli--1-l', name: 'Minyak Bimoli', metadataVersion: 3 },
+      aliases: [],
+      stats: { observations: 4, stores: 2 },
+      audit: [],
+    }
+
+    it('getAdminProduct reads the identity for a product key', async () => {
+      clientMock.GET.mockResolvedValueOnce(ok(identity))
+      await expect(getAdminProduct('minyak--bimoli--1-l')).resolves.toEqual(identity)
+      expect(clientMock.GET).toHaveBeenCalledWith('/api/admin/products/{productKey}', {
+        params: { path: { productKey: 'minyak--bimoli--1-l' } },
+        signal: undefined,
+      })
+    })
+
+    it('renameProduct posts the optimistic version and the acknowledgement flag', async () => {
+      clientMock.POST.mockResolvedValueOnce(
+        ok({ product: { name: 'Minyak Goreng Bimoli' }, warnings: [], audit: [], indexVersion: 7 })
+      )
+      const result = await renameProduct('k', {
+        canonicalName: 'Minyak Goreng Bimoli',
+        expectedMetadataVersion: 3,
+        reason: 'wrong label',
+        acknowledgeWarnings: true,
+      })
+      expect(result.indexVersion).toBe(7)
+      expect(clientMock.POST).toHaveBeenCalledWith('/api/admin/products/{productKey}/rename', {
+        params: { path: { productKey: 'k' } },
+        body: {
+          canonicalName: 'Minyak Goreng Bimoli',
+          expectedMetadataVersion: 3,
+          reason: 'wrong label',
+          acknowledgeWarnings: true,
+        },
+      })
+    })
+
+    it('revertProductRename addresses the audit row with an empty body by default', async () => {
+      clientMock.POST.mockResolvedValueOnce(
+        ok({ product: { name: 'Minyak Bimoli' }, warnings: [], audit: [], indexVersion: 8 })
+      )
+      await revertProductRename('k', 'audit-1')
+      expect(clientMock.POST).toHaveBeenCalledWith(
+        '/api/admin/products/{productKey}/audit/{auditId}/revert',
+        { params: { path: { productKey: 'k', auditId: 'audit-1' } }, body: {} }
+      )
+    })
+
+    it('carries the structured rename 409 body on ApiError.body', async () => {
+      const conflicts = [{ productKey: 'other', name: 'Minyak Bimoli', source: 'product' }]
+      clientMock.POST.mockResolvedValueOnce(fail({ error: 'duplicate_name', conflicts }, 409))
+      await expect(
+        renameProduct('k', { canonicalName: 'Minyak Bimoli', expectedMetadataVersion: 3 })
+      ).rejects.toMatchObject({
+        name: 'ApiError',
+        status: 409,
+        message: 'duplicate_name',
+        body: { error: 'duplicate_name', conflicts },
+      })
     })
   })
 })

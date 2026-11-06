@@ -24,6 +24,10 @@ vi.mock('../lib/queries/index.js', () => ({
   usePriceBrochures: vi.fn(),
 }))
 
+// #423: the expanded detail asks who is looking (the rename action is
+// admin-only) — this suite renders the shopper's view.
+vi.mock('../lib/queries/me.js', () => ({ useMe: vi.fn() }))
+
 import {
   usePrices,
   usePriceSources,
@@ -32,6 +36,7 @@ import {
   usePricePromos,
   usePriceBrochures,
 } from '../lib/queries/index.js'
+import { useMe } from '../lib/queries/me.js'
 
 const navigate = vi.fn()
 let mockHash = ''
@@ -137,6 +142,7 @@ describe('Prices', () => {
     mockView = ''
     navigate.mockClear()
     Element.prototype.scrollIntoView = vi.fn()
+    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
     vi.mocked(usePriceSources).mockReturnValue({
       data: [
         { slug: 'lotte-mart', name: 'Lotte Mart' },

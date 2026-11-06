@@ -9,6 +9,7 @@ import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
 import { Button } from '../components/Button.jsx'
+import { ProductRenameForm } from '../components/ProductRenameForm.jsx'
 import { formatPrice } from '../lib/pricesHelpers.js'
 import { cn } from '../lib/cn.js'
 import { IconWarning, IconReview, IconDownload } from '../components/icons.jsx'
@@ -139,6 +140,7 @@ function SideCard({
   imageUrl,
   sourceUrl,
   observedAt,
+  action,
 }) {
   const { t, i18n } = useTranslation()
   return (
@@ -179,6 +181,7 @@ function SideCard({
           )}
         </div>
       </div>
+      {action}
     </div>
   )
 }
@@ -188,11 +191,15 @@ function ReviewRow({
   sourceNames,
   itemSideLabelId,
   entrySideLabelId,
+  isAdmin,
   busy,
   onDecide,
   onUndo,
 }) {
   const { t, i18n } = useTranslation()
+  // #423: the rename form expands under the row that opened it, so each row
+  // owns its own open state.
+  const [renameOpen, setRenameOpen] = useState(false)
   const decided = item.status !== 'pending'
   const runTo = item.runId ? `/admin/prices?run=${encodeURIComponent(item.runId)}` : '/admin/prices'
   // Issue #380: per-side evidence — the page image only renders for the
@@ -229,6 +236,21 @@ function ReviewRow({
             imageUrl={entryImageUrl}
             sourceUrl={entryPageUrl}
             observedAt={item.entryObservedAt ?? null}
+            action={
+              // #423: the canonical entry side owns the rename action — the
+              // pair's frozen labels are what the admin is looking at.
+              isAdmin && item.entryProductKey ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-2"
+                  aria-expanded={renameOpen}
+                  onClick={() => setRenameOpen((open) => !open)}
+                >
+                  {renameOpen ? t('rename.close') : t('rename.action')}
+                </Button>
+              ) : null
+            }
           />
         }
       />
@@ -296,6 +318,18 @@ function ReviewRow({
           </>
         )}
       </div>
+      {renameOpen && isAdmin && item.entryProductKey && (
+        <div className="mt-3">
+          {/* The pair keeps the frozen catalog label it was flagged with; only
+              the canonical product name moves (the rename is identity-neutral,
+              the audit trail is the record of it). */}
+          <p className="text-xs text-text-muted mb-2">{t('rename.frozenPairNote')}</p>
+          <ProductRenameForm
+            productKey={item.entryProductKey}
+            onClose={() => setRenameOpen(false)}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -460,6 +494,7 @@ export function AdminReview() {
                   sourceNames={sourceNames}
                   itemSideLabelId={itemSideLabelId}
                   entrySideLabelId={entrySideLabelId}
+                  isAdmin={isAdmin}
                   busy={busy}
                   onDecide={(id, decision) => decide.mutate({ id, decision })}
                   onUndo={(id) => undo.mutate({ id })}
