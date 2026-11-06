@@ -146,20 +146,19 @@ export type PluginPurgeJob = (args: {
  * One archive of one household's per-plugin export (ticket 6, #440 — plan
  * §3.4's "export event recorded"): the bytes stream out through `stream`
  * (per-entry buffered — the plugin's largest single file, never the whole
- * vault, is the memory ceiling), `filename` names the download and
- * `disposition` is the finished Content-Disposition header value (built
- * with the plugin's own helpers — core never imports plugin internals to
- * construct one), and `nextCursor` is the OPAQUE continuation handle the
- * client sends back for the next archive — null when this archive was the
- * last (a vault bigger than one archive's file budget exports as several
- * sequential archives; whole documents, never a document split in two).
+ * vault, is the memory ceiling), `disposition` is the finished
+ * Content-Disposition header value (built with the plugin's own helpers —
+ * core never imports plugin internals to construct one), and `nextCursor`
+ * is the OPAQUE continuation handle the client sends back for the next
+ * archive — null when this archive was the last (a vault bigger than one
+ * archive's file budget exports as several sequential archives; whole
+ * documents, never a document split in two).
  * The plugin owns HOW (its index, its port, its archive shape); core owns
  * WHEN/authz (the owner-only route, the capability check, the file budget)
  * — the exact seam split PluginPurgeJob already established.
  */
 export type PluginExportArchive = {
   stream: ReadableStream<Uint8Array>
-  filename: string
   disposition: string
   nextCursor: string | null
 }

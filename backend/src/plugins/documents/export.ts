@@ -55,7 +55,17 @@ const DOC_PAGE_MAX = 50
  * replayed against the ACTIVE household, and a household must never
  * consume another household's cursor (it would silently export a slice
  * of the wrong data window). Serialized as base64url(JSON) — opaque to
- * the client, verified here. */
+ * the client, verified here.
+ *
+ * SNAPSHOT SEMANTICS (T6-A4): the chain is keyset-paginated, not a frozen
+ * snapshot — a document uploaded while the chain is in flight joins a LATER
+ * archive unless it commits in the same second as the cursor position with
+ * a smaller id (the purge driver's known same-second class, which export
+ * does not re-seek for: the remedy is re-requesting the export, whose first
+ * archive is a fresh snapshot). An upper watermark was considered and
+ * rejected: created_at's 1-second resolution leaves the identical hole at
+ * the watermark boundary, so it would add cursor complexity without closing
+ * the class. Documented in the route description + ARCHITECTURE.md. */
 type ExportCursor = { household_id: string; created_at: string; id: string }
 
 function encodeCursor(cursor: ExportCursor): string {
@@ -99,11 +109,26 @@ function decodeCursor(raw: string): ExportCursor | null {
 // ---------------------------------------------------------------------------
 
 function csvField(value: string | number | null): string {
-  const text = value === null ? '' : String(value)
-  if (text.includes('"') || text.includes(',') || text.includes('\r') || text.includes('\n')) {
-    return `"${text.replaceAll('"', '""')}"`
+  // Numbers are schema-controlled columns (size_bytes, sort_order,
+  // remind_days_before) — never user text — so they skip the formula guard:
+  // prefixing them would corrupt a legitimately negative number's cell.
+  const text = typeof value === 'number' ? String(value) : (value ?? '')
+  // Spreadsheet formula-injection guard (OWASP CSV injection, T6-A3): a cell
+  // whose TEXT a household member controls and that opens with `= + - @` or
+  // a tab/CR executes as a formula when the CSV opens in Excel/Sheets —
+  // quoting does NOT save it (evaluation happens after the quotes are
+  // parsed). The standard remedy prefixes a literal apostrophe so the cell
+  // renders as text.
+  const guarded = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text
+  if (
+    guarded.includes('"') ||
+    guarded.includes(',') ||
+    guarded.includes('\r') ||
+    guarded.includes('\n')
+  ) {
+    return `"${guarded.replaceAll('"', '""')}"`
   }
-  return text
+  return guarded
 }
 
 function csvTable(header: string[], rows: Array<Array<string | number | null>>): string {
@@ -306,13 +331,32 @@ export function createDocumentsExportJob(storage: StorageAdapter): PluginExportJ
       pageFileCount += docFiles.length
     }
 
-    // Continuation: a trimmed page has its excluded document IN the page
-    // (next cursor, no probe); an untrimmed FULL page might have a 51st
-    // document (one probe); an untrimmed short page is keyset exhaustion
-    // (no cursor, no probe). Worst-case spend stays ≤ 45 subrequests.
+    // The zero-trim guard — purge parity (purge.ts's identical refusal). A
+    // page whose FIRST document already exceeds the file budget would
+    // otherwise emit a 0-document archive + receipt + no cursor: a silent
+    // chain end that looks like a completed export. Unreachable while the
+    // budget floor (maxFiles ≥ DOCUMENT_MAX_FILES) holds — a single document
+    // fits by construction — the guard exists so the invariant can never be
+    // argued away by a future edit (T6-A5).
+    if (docRows.length > 0 && included.length === 0) {
+      throw new Error('export archive trimmed to zero documents — budget accounting bug')
+    }
+
+    // Continuation: a trimmed page has its excluded document IN the page —
+    // the cursor is UNCONDITIONAL there (the excluded document is the proof
+    // of more, so the probe is skipped and one D1 read per chained archive
+    // is saved, T6-A2); an untrimmed FULL page might have a 51st document —
+    // one probe decides; an untrimmed short page is keyset exhaustion (no
+    // cursor, no probe). Worst-case spend stays ≤ 45 subrequests.
     const last = included[included.length - 1] ?? null
     let nextCursor: string | null = null
-    if (last && (trimmed || docRows.length === DOC_PAGE_MAX)) {
+    if (last && trimmed) {
+      nextCursor = encodeCursor({
+        household_id: householdId,
+        created_at: last.created_at,
+        id: last.id,
+      })
+    } else if (last && docRows.length === DOC_PAGE_MAX) {
       const probe = await db
         .prepare(
           `SELECT 1 FROM documents d
@@ -476,12 +520,13 @@ export function createDocumentsExportJob(storage: StorageAdapter): PluginExportJ
       pad(generatedAt.getUTCHours()) +
       pad(generatedAt.getUTCMinutes()) +
       pad(generatedAt.getUTCSeconds())
-    const filename = `rumaq-${documentsManifest.id}-export-${stamp}.zip`
 
     return {
       stream: zipStream(entries),
-      filename,
-      disposition: contentDisposition('attachment', filename),
+      disposition: contentDisposition(
+        'attachment',
+        `rumaq-${documentsManifest.id}-export-${stamp}.zip`
+      ),
       nextCursor,
     } satisfies PluginExportArchive
   }

@@ -17,6 +17,7 @@ import { createR2StorageAdapter } from '../ports/storage/r2.js'
 import { EXPORT_ARCHIVE_FILE_BUDGET } from '../lib/plugin-export.js'
 import { PluginExportCursorError } from '../plugins/types.js'
 import { crc32 } from '../lib/zip.js'
+import { parseZip, type ParsedEntry } from './support/zipreader.js'
 import { createDocumentsStub } from './support/env.js'
 import type { Env } from '../types.js'
 
@@ -154,54 +155,11 @@ function createRouteEnv(
 }
 
 // ---------------------------------------------------------------------------
-// The hand-written ZIP reader (same discipline as zip.test.ts): signatures,
-// method 0, UTF-8 flag, local headers where the directory says, CRC
-// recomputed over the extracted bytes, CD ending exactly at the EOCD.
+// The archive reader is the SHARED hand-written one (support/zipreader.ts —
+// T6-B1, the same discipline zip.test.ts pins): signatures, method 0, UTF-8
+// flag, local headers where the directory says, CRC recomputed over the
+// extracted bytes, CD ending exactly at the EOCD.
 // ---------------------------------------------------------------------------
-
-type ParsedEntry = { name: string; crc: number; size: number; bytes: Uint8Array<ArrayBuffer> }
-
-function parseZip(bytes: Uint8Array<ArrayBuffer>): Map<string, ParsedEntry> {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  let eocd = -1
-  for (let i = bytes.length - 22; i >= 0; i--) {
-    if (view.getUint32(i, true) === 0x06054b50) {
-      eocd = i
-      break
-    }
-  }
-  if (eocd < 0) throw new Error('no EOCD record found')
-  const total = view.getUint16(eocd + 10, true)
-  const cdOffset = view.getUint32(eocd + 16, true)
-  const entries = new Map<string, ParsedEntry>()
-  let at = cdOffset
-  for (let n = 0; n < total; n++) {
-    if (view.getUint32(at, true) !== 0x02014b50) throw new Error('bad central directory signature')
-    const flags = view.getUint16(at + 8, true)
-    const method = view.getUint16(at + 10, true)
-    const crc = view.getUint32(at + 16, true)
-    const size = view.getUint32(at + 20, true)
-    const nameLen = view.getUint16(at + 28, true)
-    const extraLen = view.getUint16(at + 30, true)
-    const commentLen = view.getUint16(at + 32, true)
-    const localOffset = view.getUint32(at + 42, true)
-    const name = new TextDecoder().decode(bytes.subarray(at + 46, at + 46 + nameLen))
-    if (method !== 0) throw new Error(`entry ${name}: not stored (method ${method})`)
-    if ((flags & 0x0800) !== 0x0800) throw new Error(`entry ${name}: UTF-8 flag not set`)
-    if (view.getUint32(localOffset, true) !== 0x04034b50) {
-      throw new Error(`entry ${name}: bad local header signature`)
-    }
-    const lfhNameLen = view.getUint16(localOffset + 26, true)
-    const lfhExtraLen = view.getUint16(localOffset + 28, true)
-    const dataStart = localOffset + 30 + lfhNameLen + lfhExtraLen
-    const data = bytes.subarray(dataStart, dataStart + size)
-    if (crc32(data) !== crc) throw new Error(`entry ${name}: CRC mismatch over extracted bytes`)
-    entries.set(name, { name, crc, size, bytes: data })
-    at += 46 + nameLen + extraLen + commentLen
-  }
-  if (at !== eocd) throw new Error('central directory does not end at the EOCD record')
-  return entries
-}
 
 async function readArchive(res: Response): Promise<Map<string, ParsedEntry>> {
   return parseZip(new Uint8Array(await res.arrayBuffer()))
@@ -614,6 +572,47 @@ describe('plugin export — one archive, bytes + metadata (real SQL, #440)', () 
     expect([...entries.keys()]).toContain(`files/${doc}/1-akta bayi₂ “resmi”.pdf`)
     expect([...entries.get(`files/${doc}/1-akta bayi₂ “resmi”.pdf`)!.bytes]).toEqual([...PDF])
   })
+
+  it('guards spreadsheet formula injection: user-controlled cells get the apostrophe guard (T6-A3)', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1')
+    const bucket = createDocumentsStub()
+    const storage = await createStorage(bucket)
+    // A member-uploaded document whose NAME opens with `=` (free text per
+    // #422 — validation strips control characters, not formulas) and a file
+    // row whose NAME opens with `@`, inserted directly: whatever lands in
+    // the table, the CSV writer is the last line of defense before Excel /
+    // Sheets evaluate the cell as a formula (quoting alone does not save
+    // it — evaluation happens after the quotes are parsed).
+    const doc = await seedDoc(d1, storage, {
+      householdId: 'h1',
+      name: '=HYPERLINK("http://evil.example","click")',
+      files: [{ fileName: 'safe.pdf', bytes: PDF, mime: 'application/pdf' }],
+    })
+    sqlite
+      .prepare(
+        `INSERT INTO document_files
+           (id, document_id, r2_key, file_name, size_bytes, content_type, sort_order, sha256, uploaded_by)
+         VALUES ('f-cmd', ?, 'documents/h1/x/cmd.pdf', '@cmd|calc !A0', 5, 'application/pdf', 2, 'c', 'u-h1')`
+      )
+      .run(doc)
+
+    const env = createRouteEnv(sqlite, bucket, { userId: 'u-h1', householdId: 'h1' })
+    const res = await pluginsApp.request('/api/plugins/documents/export', {}, env)
+    expect(res.status).toBe(200)
+    const entries = await readArchive(res)
+
+    const docRows = csvRecords(entries.get('documents.csv')).slice(1)
+    expect(docRows[0][3]).toBe(`'=HYPERLINK("http://evil.example","click")`)
+    const fileRows = csvRecords(entries.get('files.csv')).slice(1)
+    const cmdRow = fileRows.find((r) => r[3].includes('@cmd'))
+    expect(cmdRow![3]).toBe(`'@cmd|calc !A0`)
+    // Numbers are schema-controlled columns — never user text — so the guard
+    // does not corrupt them (no spurious apostrophe on a numeric cell).
+    expect(cmdRow![5]).toBe('5')
+    // Unflagged names pass through untouched.
+    expect(fileRows.some((r) => r[3] === 'safe.pdf')).toBe(true)
+  })
 })
 
 describe('plugin export — chunked archives over the subrequest budget (#440)', () => {
@@ -869,5 +868,54 @@ describe('plugin export — chunked archives over the subrequest budget (#440)',
         maxFiles: DOCUMENT_MAX_FILES - 1,
       })
     ).rejects.toThrow(/below the per-document maximum/)
+  })
+
+  it('refuses a zero-trim page: a first document over the budget must not silently end the chain (T6-A5, purge parity)', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1')
+    const bucket = createDocumentsStub()
+    const storage = await createStorage(bucket)
+    // One document whose file count EXCEEDS the budget, inserted below the
+    // lib's per-document cap by hand (the hand-edited / schema-drift state
+    // the guard exists for). With maxFiles = DOCUMENT_MAX_FILES the floor
+    // guard passes, the first page holds only this document, and the trim
+    // loop includes nothing — without the guard that would emit a 0-document
+    // archive + receipt + no cursor: a silent chain end that looks like a
+    // completed export. The purge chunk throws on exactly this shape.
+    sqlite
+      .prepare(
+        `INSERT INTO documents (id, household_id, name, uploaded_by)
+         VALUES ('d-big', 'h1', 'Terlalu besar', 'u-h1')`
+      )
+      .run()
+    for (let i = 1; i <= DOCUMENT_MAX_FILES + 1; i++) {
+      sqlite
+        .prepare(
+          `INSERT INTO document_files
+             (id, document_id, r2_key, file_name, size_bytes, content_type, sort_order, sha256, uploaded_by)
+           VALUES (?, 'd-big', ?, ?, 5, 'application/pdf', ?, 's', 'u-h1')`
+        )
+        .run(`f-big-${i}`, `documents/h1/d-big/f${i}.pdf`, `f${i}.pdf`, i)
+    }
+    const job = createDocumentsExportJob(storage)
+    await expect(
+      job({
+        db: d1,
+        householdId: 'h1',
+        actorUserId: 'u-h1',
+        cursor: null,
+        maxFiles: DOCUMENT_MAX_FILES,
+      })
+    ).rejects.toThrow(/trimmed to zero documents/)
+    // The receipt rides the page batch (T5 pattern — one D1 subrequest with
+    // the document page), so it committed BEFORE the guard threw: the attempt
+    // is audited even though no archive streamed, and the job's throw is a
+    // failed request (500), never a silent 0-document archive.
+    const receipts = sqlite
+      .prepare(
+        `SELECT COUNT(*) AS cnt FROM household_plugin_audit WHERE action = 'plugin_exported'`
+      )
+      .get() as { cnt: number }
+    expect(receipts.cnt).toBe(1)
   })
 })

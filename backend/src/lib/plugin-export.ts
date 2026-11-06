@@ -28,14 +28,16 @@ import type { Env } from '../types.js'
  * may spend (the plugin validates it can fit a whole document and trims to
  * whole documents). The accounting, every statement counted:
  *
- *   per archive  = 1 D1 read (requireOwner's membership lookup)
+ *   per archive  = 1 D1 read (propsAuthMiddleware's active-household
+ *                  lookup — it runs before the route does)
+ *                + 1 D1 read (requireOwner's membership lookup)
  *                + 1 D1 batch (the 'plugin_exported' receipt + the document
  *                  page) + 1 D1 read (the page's file rows)
- *                + ≤ 1 D1 read (the continuation probe — skipped when the
- *                  page outcome already decides)
+ *                + ≤ 1 D1 read (the continuation probe — only an untrimmed
+ *                  full page probes)
  *                + `maxFiles` storage reads (1 subrequest each)
  *
- *   worst case   = 40 files + 4 D1 = 44 < 50 (the free-plan cap).
+ *   worst case   = 40 files + 5 D1 = 45 < 50 (the free-plan cap).
  *
  * A vault with more than 40 files exports across sequential archives —
  * the cursor header chains them — rather than exceeding the invocation
