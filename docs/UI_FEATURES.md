@@ -101,6 +101,7 @@ so you waste less food, shop in fewer trips, and spend less.
 
 - **Scraper monitor:** see whether last night's price scrape succeeded, per-run outcomes (stores scraped, items matched, publish results, errors), and when the last success was.
 - **Review queue:** judge AI-flagged product matches side by side (approve/reject/undo), filter by status, export decisions.
+- **Rename a canonical product:** fix a product's name without changing its identity — see the current name, the observed name variants (store/status/source) and observation stats; preview old → new; add an optional reason; see whether the new name collides with an existing product (blocked) or is only similar to one (warned, overridable). The audit trail keeps every change, and the latest rename can be reverted after a confirmation. Reachable from a product's price detail and from the review queue's catalog side (the flagged pair keeps its frozen label).
 - **Scrape now:** trigger an on-demand scrape of selected stores and watch the live log until it finishes.
 - **AI usage:** totals (calls, input/output tokens, cache hit rate) and a per-user breakdown over the last 24 hours / 7 days / 30 days.
 

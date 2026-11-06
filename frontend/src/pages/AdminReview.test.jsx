@@ -18,13 +18,21 @@ vi.mock('../lib/queries/review.js', () => ({
   useUndoReview: vi.fn(),
 }))
 
-vi.mock('../lib/api', () => ({
+vi.mock('../lib/api', async (importOriginal) => ({
+  ...(await importOriginal()),
   fetchReviewExport: vi.fn(),
+}))
+
+vi.mock('../lib/queries/products.js', () => ({
+  useProductIdentity: vi.fn(),
+  useRenameProduct: vi.fn(),
+  useRevertRename: vi.fn(),
 }))
 
 import { useMe } from '../lib/queries/me.js'
 import { usePriceSources } from '../lib/queries/index.js'
 import { useReviewItems, useDecideReview, useUndoReview } from '../lib/queries/review.js'
+import { useProductIdentity, useRenameProduct, useRevertRename } from '../lib/queries/products.js'
 import { fetchReviewExport } from '../lib/api'
 
 const decideMutate = vi.fn()
@@ -103,13 +111,29 @@ describe('AdminReview', () => {
         { slug: 'superindo', name: 'Superindo' },
       ],
     })
-    vi.mocked(useReviewItems).mockImplementation(() => {
-      const value = mockReviewData()
-      console.log('IMPL-RET', JSON.stringify(value).slice(0, 90))
-      return value
-    })
+    vi.mocked(useReviewItems).mockReturnValue(mockReviewData())
     vi.mocked(useDecideReview).mockReturnValue({ mutate: decideMutate, isPending: false })
     vi.mocked(useUndoReview).mockReturnValue({ mutate: undoMutate, isPending: false })
+    vi.mocked(useProductIdentity).mockReturnValue({
+      data: {
+        product: {
+          productKey: reviewItem.entryProductKey,
+          name: reviewItem.entryName,
+          brand: reviewItem.entryBrand,
+          unit: reviewItem.entryUnit,
+          status: 'provisional',
+          metadataVersion: 3,
+        },
+        aliases: [],
+        stats: { observations: 7, stores: 2 },
+        audit: [],
+      },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
+    vi.mocked(useRenameProduct).mockReturnValue({ mutate: vi.fn(), isPending: false })
+    vi.mocked(useRevertRename).mockReturnValue({ mutate: vi.fn(), isPending: false })
   })
 
   it('shows the forbidden state for non-admins', () => {
@@ -479,6 +503,59 @@ describe('AdminReview', () => {
       expect(itemSide.children[1].textContent).toBe('5 kg')
       expect(entrySide.children[1].textContent).toBe('Ramos')
       expect(container.textContent).not.toContain('—')
+    })
+  })
+
+  describe('issue #423 — canonical rename action', () => {
+    function renameToggle(container) {
+      return [...container.querySelectorAll('button')].find((button) =>
+        ['rename.action', 'rename.close'].includes(button.textContent)
+      )
+    }
+
+    it('offers the rename action on the canonical entry side only', () => {
+      const { container } = renderAdmin()
+      const [itemSide, entrySide] = sideGroups(container)
+      expect(renameToggle(itemSide)).toBeUndefined()
+      const toggle = renameToggle(entrySide)
+      expect(toggle).not.toBeUndefined()
+      expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    })
+
+    it('opens the shared rename form for the entry product key with the frozen-label note', () => {
+      const { container } = renderAdmin()
+      fireEvent.click(renameToggle(container))
+      expect(renameToggle(container).textContent).toBe('rename.close')
+      expect(renameToggle(container).getAttribute('aria-expanded')).toBe('true')
+      expect(useProductIdentity).toHaveBeenCalledWith(reviewItem.entryProductKey, {
+        enabled: true,
+      })
+      expect(container.textContent).toContain('rename.frozenPairNote')
+      expect(container.querySelector('[data-testid="product-rename-form"]')).not.toBeNull()
+      // The form edits the canonical entry name; the pair's own label is frozen.
+      expect(container.querySelector('[data-testid="rename-current-name"]').textContent).toBe(
+        reviewItem.entryName
+      )
+    })
+
+    it('collapses the form again from the row action', () => {
+      const { container } = renderAdmin()
+      fireEvent.click(renameToggle(container))
+      expect(container.querySelector('[data-testid="product-rename-form"]')).not.toBeNull()
+      fireEvent.click(renameToggle(container))
+      expect(container.querySelector('[data-testid="product-rename-form"]')).toBeNull()
+      expect(container.textContent).not.toContain('rename.frozenPairNote')
+    })
+
+    it('shows no rename action to a non-admin', () => {
+      // The page's admin gate returns the forbidden state before any row can
+      // render, so this pins the surface's check (rows carry no gate of their
+      // own — see the #423 review, B1).
+      vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
+      const { container } = renderAdmin()
+      expect(container.textContent).not.toContain('rename.action')
+      expect(container.textContent).not.toContain('rename.frozenPairNote')
+      expect(useProductIdentity).not.toHaveBeenCalled()
     })
   })
 })

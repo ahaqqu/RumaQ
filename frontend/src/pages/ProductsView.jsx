@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useLocation, useNavigate } from '@tanstack/react-router'
 import { usePrices, usePriceMeta, usePriceSources, usePriceDetail } from '../lib/queries/index.js'
+import { useMe } from '../lib/queries/me.js'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
 import { Badge } from '../components/Badge.jsx'
+import { Button } from '../components/Button.jsx'
+import { ProductRenameForm } from '../components/ProductRenameForm.jsx'
 import { IconSearch, IconWarning, IconClock } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
 import {
@@ -122,9 +125,13 @@ function Sparkline({ history, sourceSlug }) {
   )
 }
 
-function PriceDetail({ productKey }) {
+function PriceDetail({ productKey, isAdmin }) {
   const { t } = useTranslation()
   const { data, isLoading } = usePriceDetail(productKey)
+  // Admin-only canonical rename (#423): the action lives in the expanded
+  // detail, so an admin fixes the label right where the bad name shows up.
+  const [renameOpen, setRenameOpen] = useState(false)
+  const renameFormId = useId()
 
   if (isLoading) {
     return (
@@ -141,6 +148,24 @@ function PriceDetail({ productKey }) {
 
   return (
     <div className="px-5 py-3 border-t border-border bg-surface-sunken/40">
+      {isAdmin && (
+        <div className="mb-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={renameOpen}
+            aria-controls={renameOpen ? renameFormId : undefined}
+            onClick={() => setRenameOpen((open) => !open)}
+          >
+            {renameOpen ? t('rename.close') : t('rename.action')}
+          </Button>
+          {renameOpen && (
+            <div id={renameFormId} className="mt-2">
+              <ProductRenameForm productKey={productKey} onClose={() => setRenameOpen(false)} />
+            </div>
+          )}
+        </div>
+      )}
       <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
         {t('prices.currentPrices')}
       </div>
@@ -215,6 +240,10 @@ export function ProductsView({ search, setSearch, source, setSource, category, s
   const [sort, setSort] = useState('cheapest')
   const [expandedKey, setExpandedKey] = useState(null)
   const debouncedSearch = useDebouncedValue(search.trim(), 300)
+  // #423: the canonical rename action is admin-only; a shopper never sees it
+  // and never triggers the identity read behind it.
+  const { data: me } = useMe()
+  const isAdmin = me?.user?.isAdmin === true
 
   const { data, isLoading, isError } = usePrices({
     q: debouncedSearch || undefined,
@@ -481,7 +510,9 @@ export function ProductsView({ search, setSearch, source, setSource, category, s
                           </div>
                         </div>
                       </button>
-                      {expanded && <PriceDetail productKey={product.product_key} />}
+                      {expanded && (
+                        <PriceDetail productKey={product.product_key} isAdmin={isAdmin} />
+                      )}
                     </div>
                   )
                 })}

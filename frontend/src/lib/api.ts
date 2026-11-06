@@ -19,12 +19,23 @@ export class ApiError extends Error {
   // instead of inviting an immediate retry into the same window
   // (review T4-B6). null when absent or unparseable.
   readonly retryAfterSeconds: number | null
+  // The parsed error body, when the server sent JSON. Most errors only carry
+  // `error`, but the canonical product rename/revert 409s are STRUCTURED
+  // (conflicts / warnings / current / stale_revert) — the rename form maps
+  // those fields to inline copy instead of parsing a message string.
+  readonly body: unknown
 
-  constructor(message: string, status: number, retryAfterSeconds: number | null = null) {
+  constructor(
+    message: string,
+    status: number,
+    retryAfterSeconds: number | null = null,
+    body: unknown = undefined
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.retryAfterSeconds = retryAfterSeconds
+    this.body = body
   }
 }
 
@@ -49,7 +60,8 @@ async function unwrap<T>(resultPromise: Promise<unknown>): Promise<T> {
     throw new ApiError(
       body?.error || `Request failed: ${result.response.status}`,
       result.response.status,
-      retryAfterFrom(result.response)
+      retryAfterFrom(result.response),
+      result.error
     )
   }
   return (result.data ?? null) as T
@@ -411,6 +423,123 @@ export async function fetchReviewExport(): Promise<Blob> {
     throw new ApiError(`Export failed: ${res.status}`, res.status)
   }
   return res.blob()
+}
+
+// ---------------------------------------------------------------------------
+// Admin canonical products (ahaqqu/RumaQ#423). The identity is the rename
+// form's source of truth: the canonical row (with the optimistic
+// `metadataVersion` every rename must send back), every alias as evidence,
+// observation stats, and the last 10 audit rows newest first. The route's 409
+// bodies are structured (conflicts / warnings / current), which is why
+// ApiError carries the parsed body. Shapes mirror the backend's
+// PRODUCT_IDENTITY_SCHEMA (backend/src/apps/api.ts) — the generated schema
+// keeps every field optional, so the required fields are narrowed once here.
+// ---------------------------------------------------------------------------
+
+export type ProductStatus = 'canonical' | 'provisional' | 'needs_review'
+export type ProductAliasStatus = 'candidate' | 'approved'
+export type ProductAliasSource = 'ocr' | 'catalog' | 'admin'
+
+export type CanonicalProduct = {
+  id: string
+  productKey: string
+  name: string
+  brand: string | null
+  unit: string | null
+  status: ProductStatus
+  metadataVersion: number
+  firstSeenAt: string | null
+  lastSeenAt: string | null
+  updatedAt: string | null
+}
+
+export type ProductAlias = {
+  name: string
+  storeSlug: string
+  status: ProductAliasStatus
+  source: ProductAliasSource
+  firstSeenAt: string
+  lastSeenAt: string
+}
+
+export type ProductAuditEntry = {
+  id: string
+  action: 'rename' | 'revert'
+  oldName: string
+  newName: string
+  reason: string | null
+  actorUserId: string
+  metadataVersionBefore: number
+  metadataVersionAfter: number
+  revertsAuditId: string | null
+  createdAt: string
+}
+
+export type ProductIdentity = {
+  product: CanonicalProduct
+  aliases: ProductAlias[]
+  stats: { observations: number; stores: number }
+  audit: ProductAuditEntry[]
+}
+
+export type RenameProductBody = {
+  canonicalName: string
+  expectedMetadataVersion: number
+  reason?: string
+  acknowledgeWarnings?: boolean
+}
+
+// 409 duplicate_name payload: another product (or its approved alias) already
+// carries the name. There is deliberately no acknowledge path.
+export type RenameConflict = { productKey: string; name: string; source: 'product' | 'alias' }
+
+// 409 similar_name payload, and the `warnings` a successful overridden rename
+// returns: near-duplicates the admin chose to keep as separate products.
+export type SimilarNameWarning = { productKey: string; name: string; similarity: number }
+
+// 200 body of both canonical writes. `indexVersion` is the canonical-index
+// version the pipeline reads on its next run.
+export type ProductMutationResult = {
+  product: CanonicalProduct
+  warnings: SimilarNameWarning[]
+  audit: ProductAuditEntry[]
+  indexVersion: number
+}
+
+export function getAdminProduct(
+  productKey: string,
+  signal?: AbortSignal
+): Promise<ProductIdentity> {
+  return unwrap(
+    client.GET('/api/admin/products/{productKey}', { params: { path: { productKey } }, signal })
+  )
+}
+
+export function renameProduct(
+  productKey: string,
+  body: RenameProductBody
+): Promise<ProductMutationResult> {
+  return unwrap(
+    client.POST('/api/admin/products/{productKey}/rename', {
+      params: { path: { productKey } },
+      body,
+    })
+  )
+}
+
+// Reverts the LATEST rename only (linear history): the backend 409s with
+// `stale_revert` for an older rename or a second compensation.
+export function revertProductRename(
+  productKey: string,
+  auditId: string,
+  body: { reason?: string } = {}
+): Promise<ProductMutationResult> {
+  return unwrap(
+    client.POST('/api/admin/products/{productKey}/audit/{auditId}/revert', {
+      params: { path: { productKey, auditId } },
+      body,
+    })
+  )
 }
 
 // ---------------------------------------------------------------------------

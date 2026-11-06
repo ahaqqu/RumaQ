@@ -25,6 +25,44 @@ describe('locale files', () => {
     expect(id).not.toBeNull()
   })
 
+  // Canonical product rename (#423, PR C). The parity tests above prove the
+  // shape; these pin that the namespace actually exists in both files and that
+  // the Indonesian copy is translated rather than an English copy-paste.
+  describe('rename namespace (#423)', () => {
+    // Values that are format-only (placeholders, digits, units of measure) or
+    // identical in both languages by design.
+    const LANGUAGE_NEUTRAL = new Set([
+      'previewOldToNew',
+      'duplicateConflict',
+      'similarRow',
+      'reasonCount',
+      'aliasSourceOcr',
+      'aliasSourceAdmin',
+    ])
+
+    it('exists in both locales with the same keys', () => {
+      expect(en.rename).toBeDefined()
+      expect(id.rename).toBeDefined()
+      expect(Object.keys(id.rename).sort()).toEqual(Object.keys(en.rename).sort())
+    })
+
+    it('has real Indonesian copy, not English copies', () => {
+      for (const [key, value] of Object.entries(en.rename)) {
+        if (LANGUAGE_NEUTRAL.has(key)) continue
+        expect(id.rename[key], `rename.${key} is untranslated`).not.toBe(value)
+      }
+    })
+
+    it('pins the primary action copy', () => {
+      expect(en.rename.action).toBe('Rename')
+      expect(id.rename.action).toBe('Ganti nama')
+      expect(en.rename.submit).toBe('Save new name')
+      expect(id.rename.submit).toBe('Simpan nama baru')
+      expect(en.rename.frozenPairNote).toContain('frozen catalog label')
+      expect(id.rename.frozenPairNote).toContain('label katalognya')
+    })
+  })
+
   it('en and id have the same top-level keys', () => {
     const enKeys = Object.keys(en).sort()
     const idKeys = Object.keys(id).sort()

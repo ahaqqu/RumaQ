@@ -56,6 +56,13 @@ export {
 } from './calendar.js'
 export { useHistory, usePurchasePatterns, useSendChatMessage } from './history.js'
 export {
+  PRODUCT_IDENTITY_BASE_KEY,
+  productIdentityQueryKey,
+  useProductIdentity,
+  useRenameProduct,
+  useRevertRename,
+} from './products.js'
+export {
   usePrices,
   usePriceMeta,
   usePriceSources,
