@@ -2,10 +2,10 @@ import { bindings, defineConfig, triggers } from 'cf/config'
 // The two cron strings (ticket 7, #441) — one source shared with gateway.ts's
 // dispatch. This module is import-free constants by design, so the config
 // bundle carries it without dragging a module graph along. The .ts extension
-// is deliberate: the cf CLI loads this config through Node's native ESM
-// resolver (type-stripping, no Vite), which does not rewrite .js → .ts the
-// way the bundler does — an explicit .ts is the only specifier both Node and
-// the bundler resolve.
+// is deliberate: BOTH consumers of this config — the cf CLI and
+// @cloudflare/vite-plugin — load it through Node's native ESM resolver
+// (registerConfigHooks: type-stripping, no .js → .ts extension rewriting), so
+// a .js specifier would fail in both; .ts is the only specifier both resolve.
 import { CORE_CRON_SCHEDULE, PLUGIN_TASKS_CRON_SCHEDULE } from './src/cron-schedules.ts'
 
 /**

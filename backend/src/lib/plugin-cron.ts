@@ -36,8 +36,8 @@
 // the purge-cancel rationale in lib/plugins.ts), a nightly failure would
 // repeat for a poisoned household with no retention story and no reader, and
 // widening the CHECK would need a table rebuild. If a durable failure row is
-// ever wanted, migration 0036 is free and this module is the one place a
-// writer slots in.
+// ever wanted, the next free migration slot takes it and this module is the
+// one place a writer slots in.
 
 import { pluginRegistrations } from '../plugins/registry.js'
 import { resolveEnabledHouseholdIds } from '../plugins/enablement.js'

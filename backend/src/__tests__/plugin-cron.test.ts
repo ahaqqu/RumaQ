@@ -23,18 +23,9 @@ import { describe, it, expect, vi } from 'vite-plus/test'
 //     drain's cursor and state (the other seam on the nightly crons) resume
 //     untouched after a plugin task fails.
 //
-// The backend tsconfig pins `types` to @cloudflare/workers-types, so Node
-// builtin imports carry no declarations — same contained suppressions as
-// plugin-purge.test.ts.
-// @ts-expect-error — no node types in this tsconfig
-import { DatabaseSync } from 'node:sqlite'
-// @ts-expect-error — no node types in this tsconfig
-import { readFileSync, readdirSync } from 'node:fs'
-// @ts-expect-error — no node types in this tsconfig
-import { join, dirname } from 'node:path'
-// @ts-expect-error — no node types in this tsconfig
-import { fileURLToPath } from 'node:url'
-
+// The D1-shaped adapter + migration chain loader (and the node: builtin
+// suppressions) live in ./support/d1-sqlite.js — shared with the other
+// real-SQL suites instead of duplicated per file.
 import { Hono } from 'hono'
 import { runPluginCronTasks, cronTaskBindingViolations } from '../lib/plugin-cron.js'
 import { runPluginPurgeTick } from '../lib/plugin-purge.js'
@@ -47,68 +38,7 @@ import {
 import { pluginRegistrations } from '../plugins/registry.js'
 import type { PluginCronTaskHandler, PluginRegistration } from '../plugins/types.js'
 import { createDocumentsStub } from './support/env.js'
-
-type Db = {
-  exec(sql: string): void
-  prepare(sql: string): {
-    run(...params: unknown[]): { changes: number }
-    get(...params: unknown[]): Record<string, unknown> | undefined
-    all(...params: unknown[]): Array<Record<string, unknown>>
-  }
-}
-
-const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../migrations')
-
-function migrationFiles(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((name: string) => name.endsWith('.sql'))
-    .sort()
-}
-
-// A D1-shaped adapter over node:sqlite — only the surface the driver and the
-// purge tick use — with batch() wrapped in a transaction (the purge
-// completion batch's atomicity is exercised, not assumed). `guard` lets a
-// test fail specific statements at prepare time (the read-error fixtures).
-function createD1Adapter(sqlite: Db, guard?: (sql: string) => void): D1Database {
-  const runBound = (sql: string, params: unknown[]) => {
-    const info = sqlite.prepare(sql).run(...params)
-    return { meta: { changes: info.changes } }
-  }
-  return {
-    prepare: (sql: string) => {
-      guard?.(sql)
-      return {
-        bind: (...params: unknown[]) => ({
-          first: async <T>() => (sqlite.prepare(sql).get(...params) as T | undefined) ?? null,
-          all: async <T>() => ({ results: sqlite.prepare(sql).all(...params) as T[] }),
-          run: async () => runBound(sql, params),
-        }),
-      }
-    },
-    batch: async (stmts: Array<{ run: () => Promise<unknown> }>) => {
-      sqlite.exec('BEGIN')
-      try {
-        const results = []
-        for (const stmt of stmts) {
-          results.push(await stmt.run())
-        }
-        sqlite.exec('COMMIT')
-        return results
-      } catch (err) {
-        sqlite.exec('ROLLBACK')
-        throw err
-      }
-    },
-  } as unknown as D1Database
-}
-
-function createDb(): { sqlite: Db; d1: D1Database } {
-  const sqlite = new DatabaseSync(':memory:') as unknown as Db
-  for (const file of migrationFiles()) {
-    sqlite.exec(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'))
-  }
-  return { sqlite, d1: createD1Adapter(sqlite) }
-}
+import { createDb, createD1Adapter, type Db } from './support/d1-sqlite.js'
 
 function seedHousehold(sqlite: Db, id: string, name: string): void {
   sqlite.prepare('INSERT INTO users (id, email) VALUES (?, ?)').run(`u-${id}`, `${id}@b.com`)

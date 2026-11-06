@@ -5,6 +5,8 @@ import {
   HOUSEHOLD_CATALOG_ROWS_SQL,
   PLUGIN_PURGE_STATE_SQL,
   PLUGIN_PURGE_ROW_SQL,
+  HOUSEHOLDS_ENABLED_BY_DEFAULT_SQL,
+  HOUSEHOLDS_ENABLED_EXPLICIT_SQL,
 } from '../plugins/enablement.js'
 import { PURGING_HOUSEHOLDS_SQL } from '../lib/plugin-purge.js'
 import { deploymentFlagKey } from '../plugins/flags.js'
@@ -2267,15 +2269,7 @@ describe('migration 0028 chain: the cron driver enabled-set reads (#441)', () =>
     applyMigrations(db, migrationFiles())
 
     const plan = db
-      .prepare(
-        `EXPLAIN QUERY PLAN SELECT id AS household_id FROM households
-         WHERE NOT EXISTS (
-           SELECT 1 FROM household_plugins
-            WHERE household_plugins.household_id = households.id
-              AND household_plugins.plugin_id = ?
-              AND household_plugins.status = 'disabled'
-         )`
-      )
+      .prepare(`EXPLAIN QUERY PLAN ${HOUSEHOLDS_ENABLED_BY_DEFAULT_SQL}`)
       .all('documents')
     const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
     // The households scan is the designed shape (bounded, nightly) — pinned,
@@ -2292,9 +2286,7 @@ describe('migration 0028 chain: the cron driver enabled-set reads (#441)', () =>
     applyMigrations(db, migrationFiles())
 
     const plan = db
-      .prepare(
-        "EXPLAIN QUERY PLAN SELECT household_id FROM household_plugins WHERE plugin_id = ? AND status = 'enabled'"
-      )
+      .prepare(`EXPLAIN QUERY PLAN ${HOUSEHOLDS_ENABLED_EXPLICIT_SQL}`)
       .all('documents')
     const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
     expect(detail).toContain('SCAN household_plugins')
@@ -2314,26 +2306,12 @@ describe('migration 0028 chain: the cron driver enabled-set reads (#441)', () =>
     row.run('h1', 'off-plugin', 'enabled')
 
     // default ON: the explicit disabled row wins for h1, h2 rides the default.
-    expect(
-      db
-        .prepare(
-          `SELECT id AS household_id FROM households
-           WHERE NOT EXISTS (
-             SELECT 1 FROM household_plugins
-              WHERE household_plugins.household_id = households.id
-                AND household_plugins.plugin_id = ?
-                AND household_plugins.status = 'disabled'
-           )`
-        )
-        .all('on-plugin')
-    ).toEqual([{ household_id: 'h2' }])
+    expect(db.prepare(HOUSEHOLDS_ENABLED_BY_DEFAULT_SQL).all('on-plugin')).toEqual([
+      { household_id: 'h2' },
+    ])
     // default OFF: only the explicit enabled rows answer.
-    expect(
-      db
-        .prepare(
-          "SELECT household_id FROM household_plugins WHERE plugin_id = ? AND status = 'enabled'"
-        )
-        .all('off-plugin')
-    ).toEqual([{ household_id: 'h1' }])
+    expect(db.prepare(HOUSEHOLDS_ENABLED_EXPLICIT_SQL).all('off-plugin')).toEqual([
+      { household_id: 'h1' },
+    ])
   })
 })
