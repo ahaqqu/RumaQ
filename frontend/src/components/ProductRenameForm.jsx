@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError } from '../lib/api'
 import { useProductIdentity, useRenameProduct, useRevertRename } from '../lib/queries/products.js'
@@ -215,12 +215,21 @@ export function ProductRenameForm({ productKey, onClose }) {
   const nameId = useId()
   const previewId = useId()
   const reasonId = useId()
+  const noticeId = useId()
+  const noticeRef = useRef(null)
   // null means "follow the loaded name": the input starts pre-filled with the
   // current name but is not pinned, so a stale re-read moves the untouched
   // prefill. A typed value pins it (the stale_product path keeps it).
   const [draftName, setDraftName] = useState(null)
   const [reason, setReason] = useState('')
   const [notice, setNotice] = useState(null)
+  // Focus follows the answer: a keyboard user must land on the explanation (a
+  // duplicate/similar/stale 409 or the success block), and the submit button
+  // disables itself after a success, which would otherwise drop focus to
+  // <body>. The notice's own role="alert"/"status" still does the announcement.
+  useEffect(() => {
+    if (notice) noticeRef.current?.focus()
+  }, [notice])
   const identityQuery = useProductIdentity(productKey, { enabled: Boolean(productKey) })
   const rename = useRenameProduct()
   const revert = useRevertRename()
@@ -252,6 +261,10 @@ export function ProductRenameForm({ productKey, onClose }) {
   // answer stale: acknowledging it would waive warnings about a name nobody
   // has seen, so the override only exists while the two still match.
   const canAcknowledge = notice?.kind === 'similar' && trimmedName === notice.name
+  // These are answers about the name field; stale/404/403 are about the product
+  // or the route, so they carry no field association.
+  const nameInvalid =
+    notice?.kind === 'duplicate' || notice?.kind === 'similar' || notice?.kind === 'invalid'
   const committed =
     notice?.kind === 'success' || notice?.kind === 'revertSuccess' ? notice.name : null
   const canSubmit =
@@ -417,7 +430,8 @@ export function ProductRenameForm({ productKey, onClose }) {
               id={nameId}
               value={newName}
               maxLength={NAME_MAX}
-              aria-describedby={previewId}
+              aria-invalid={nameInvalid || undefined}
+              aria-describedby={notice ? `${previewId} ${noticeId}` : previewId}
               onChange={(event) => setDraftName(event.target.value)}
               placeholder={t('rename.newNamePlaceholder')}
               className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
@@ -434,12 +448,22 @@ export function ProductRenameForm({ productKey, onClose }) {
             </p>
           </div>
 
-          <RenameNotice
-            notice={notice}
-            busy={busy}
-            canAcknowledge={canAcknowledge}
-            onAcknowledge={() => submitName(true)}
-          />
+          {notice && (
+            <div
+              id={noticeId}
+              ref={noticeRef}
+              tabIndex={-1}
+              data-testid="rename-notice"
+              className="outline-none"
+            >
+              <RenameNotice
+                notice={notice}
+                busy={busy}
+                canAcknowledge={canAcknowledge}
+                onAcknowledge={() => submitName(true)}
+              />
+            </div>
+          )}
 
           <div className="flex flex-col gap-1">
             <label htmlFor={reasonId} className="text-sm font-medium text-text-muted">

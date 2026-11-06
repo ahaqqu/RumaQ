@@ -211,6 +211,28 @@ describe('ProductRenameForm', () => {
     expect(submitButton(container).disabled).toBe(false)
   })
 
+  it('focuses the notice and marks the name field invalid on a name conflict', () => {
+    const { container, getByTestId } = renderForm()
+    typeName(container, 'Beras Ramos')
+    fireEvent.click(submitButton(container))
+    act(() => {
+      lastRenameOptions().onError(
+        new ApiError('duplicate_name', 409, null, {
+          error: 'duplicate_name',
+          conflicts: [{ productKey: 'other-product', name: 'Beras Ramos', source: 'product' }],
+        })
+      )
+    })
+
+    // The answer is the first error, so it takes focus; the input owns the
+    // relationship (invalid + described by the notice) for the way back.
+    const notice = getByTestId('rename-notice')
+    expect(document.activeElement).toBe(notice)
+    const input = nameInput(container)
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+    expect(input.getAttribute('aria-describedby').split(' ')).toContain(notice.id)
+  })
+
   it('maps 409 similar_name to warnings resubmitted with acknowledgeWarnings', () => {
     const { container, getByTestId } = renderForm()
     typeName(container, 'Beras Ramos 5 Kg')
@@ -386,6 +408,9 @@ describe('ProductRenameForm', () => {
     const success = getByTestId('rename-success')
     expect(success.textContent).toContain('rename.successTitle')
     expect(success.textContent).toContain('rename.successBody')
+    // Focus lands on the confirmation instead of being dropped to <body> when
+    // the submit button disables itself.
+    expect(document.activeElement).toBe(getByTestId('rename-notice'))
     // The form stays open showing the committed name; resubmitting it is final.
     expect(nameInput(container).value).toBe('Beras Ramos Premium 5 kg')
     expect(submitButton(container).disabled).toBe(true)
