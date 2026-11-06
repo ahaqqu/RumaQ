@@ -709,6 +709,11 @@
       "purge": "Purge",
       "export": "Export"
     },
+    "export": {
+      "action": "Download archive",
+      "note": "Documents and files download as a zip archive with their metadata. A large vault downloads as several parts \u2014 keep them all.",
+      "errorGeneric": "Couldn\u2019t download the archive. Please try again."
+    },
     "purge": {
       "action": "Delete all data",
       "dialogTitle": "Delete all {{feature}} data",

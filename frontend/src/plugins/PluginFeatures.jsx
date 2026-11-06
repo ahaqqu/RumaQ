@@ -10,6 +10,7 @@ import {
   useRequestPluginPurge,
   useSetPluginEnablement,
 } from '../lib/queries/index.js'
+import { fetchPluginExport } from '../lib/api'
 import { PLUGIN_CATALOG } from './registry.js'
 
 /**
@@ -201,6 +202,66 @@ function purgeDraining(plugin) {
   return plugin.purge?.state === 'pending' || plugin.purge?.state === 'running'
 }
 
+// The export action (ticket 6, #440): owner-only like the purge it
+// precedes — the archive IS the whole household's data in one payload, an
+// exfiltration-sized download members have no business triggering (the
+// per-file downloads stay member-visible; the bulk one is owner-tier).
+// §3.4's "the UI routes it through export-first": the ghost button sits
+// ABOVE the danger action in the same row. NOT gated by a drain — reads
+// stay open while one runs, and exporting what remains is still useful.
+// A vault over the per-archive budget chains several downloads (the
+// server's continuation cursor); the loop triggers one anchor download per
+// part — the browser may ask once to allow multiple downloads.
+function ExportAction({ entry }) {
+  const { t } = useTranslation()
+  const [exporting, setExporting] = useState(false)
+  const [failed, setFailed] = useState(false)
+  async function handleExport() {
+    setExporting(true)
+    setFailed(false)
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10)
+      let cursor
+      let part = 0
+      do {
+        part++
+        // eslint-disable-next-line no-await-in-loop -- the sequence is
+        // inherently sequential: each part's cursor comes from the previous
+        // response, and browsers serialize real downloads anyway.
+        const { blob, nextCursor } = await fetchPluginExport(entry.id, cursor)
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = `${entry.id}-export-${dateStamp}${part > 1 ? `-part-${part}` : ''}.zip`
+        anchor.click()
+        URL.revokeObjectURL(url)
+        cursor = nextCursor
+      } while (cursor)
+    } catch {
+      // No toast system in the app — an inline line next to the button is
+      // the codebase's surface for one-shot action failures (the AdminReview
+      // export's idiom): a failed download (expired session, 5xx) must not
+      // be silent.
+      setFailed(true)
+    } finally {
+      setExporting(false)
+    }
+  }
+  return (
+    <div className="mt-2.5">
+      <Button variant="ghost" size="sm" disabled={exporting} onClick={handleExport}>
+        {t('plugins.export.action')}
+      </Button>
+      <div className="text-xs text-text-muted mt-1">{t('plugins.export.note')}</div>
+      {failed && (
+        <div role="alert" className="text-sm text-danger mt-1.5">
+          {t('plugins.export.errorGeneric')}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function PluginRow({ entry, plugin, isOwner, mutation, onPurge }) {
   const { t } = useTranslation()
   // The mutation is panel-owned (hoisted into PluginFeatures) — per-row
@@ -210,6 +271,7 @@ function PluginRow({ entry, plugin, isOwner, mutation, onPurge }) {
   const toggle = () =>
     mutation.mutate({ pluginId: entry.id, status: plugin.enabled ? 'disabled' : 'enabled' })
   const canPurge = isOwner && entry.capabilities.includes('purge')
+  const canExport = isOwner && entry.capabilities.includes('export')
   return (
     <div className="px-5 py-4 border-b border-border last:border-b-0">
       <div className="flex items-start gap-3">
@@ -226,6 +288,7 @@ function PluginRow({ entry, plugin, isOwner, mutation, onPurge }) {
           </div>
           <Posture plugin={plugin} />
           <PurgeState purge={plugin.purge} isOwner={isOwner} pluginId={entry.id} />
+          {canExport && <ExportAction entry={entry} />}
           {canPurge && !purgeDraining(plugin) && (
             <div className="mt-2.5">
               <Button variant="danger" size="sm" onClick={() => onPurge(plugin)}>

@@ -35,6 +35,10 @@ const ALLOWED_CORE_IMPORTS_BY_PLUGIN: Readonly<Record<string, readonly string[]>
     'lib/document-expiry.ts',
     // sha256HexBytes (the per-file content hash at put() time).
     'lib/crypto.ts',
+    // zipStream/ZipEntry (ticket 6 #440: the export job's dependency-free
+    // stored-ZIP writer — genuinely shared archive infrastructure, consumed
+    // by the vault export the same way any future plugin's export would).
+    'lib/zip.ts',
     // getMembership (§4.1 forbidden-3: household facts come from core helpers,
     // never SQL against core tables).
     'lib/households.ts',
@@ -183,6 +187,7 @@ describe('plugin import boundary (#435)', () => {
         'lib/rate-limit.ts',
         'lib/document-expiry.ts',
         'lib/crypto.ts',
+        'lib/zip.ts',
         'lib/households.ts',
         'ports/storage/index.ts',
       ].sort()

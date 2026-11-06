@@ -143,6 +143,66 @@ export type PluginPurgeJob = (args: {
 }) => Promise<PluginPurgeChunk>
 
 /**
+ * One archive of one household's per-plugin export (ticket 6, #440 — plan
+ * §3.4's "export event recorded"): the bytes stream out through `stream`
+ * (per-entry buffered — the plugin's largest single file, never the whole
+ * vault, is the memory ceiling), `filename` names the download and
+ * `disposition` is the finished Content-Disposition header value (built
+ * with the plugin's own helpers — core never imports plugin internals to
+ * construct one), and `nextCursor` is the OPAQUE continuation handle the
+ * client sends back for the next archive — null when this archive was the
+ * last (a vault bigger than one archive's file budget exports as several
+ * sequential archives; whole documents, never a document split in two).
+ * The plugin owns HOW (its index, its port, its archive shape); core owns
+ * WHEN/authz (the owner-only route, the capability check, the file budget)
+ * — the exact seam split PluginPurgeJob already established.
+ */
+export type PluginExportArchive = {
+  stream: ReadableStream<Uint8Array>
+  filename: string
+  disposition: string
+  nextCursor: string | null
+}
+
+/**
+ * The export continuation cursor is not usable: unparseable (it came from
+ * this endpoint's own header, so garbage means tampering or truncation —
+ * a silent restart would duplicate the first archive under a new name) or
+ * issued for another household (a stale tab after a household switch must
+ * never silently export a wrong data slice). Lives in the CONTRACT module
+ * because the plugin job throws it and the core route maps it to 400 —
+ * core cannot import plugin-owned error classes (§4.1 boundary), and this
+ * module is the one shared surface both sides already import.
+ */
+export class PluginExportCursorError extends Error {
+  constructor(message = 'Invalid export cursor') {
+    super(message)
+    this.name = 'PluginExportCursorError'
+  }
+}
+
+/**
+ * The per-plugin export job (ticket 6, #440): one archive of one
+ * household's data. Read-only by design — it must never block on, gate, or
+ * mutate the purge machinery (§3.4: export-then-purge are independent owner
+ * actions; reads stay open while a drain is in flight). Writes exactly one
+ * record: its 'plugin_exported' lifecycle receipt (core's
+ * household_plugin_audit — the same table the purge job writes its
+ * completion receipt into, the T5 precedent for a plugin writing core's
+ * audit).
+ */
+export type PluginExportJob = (args: {
+  db: D1Database
+  householdId: string
+  /** The owner the receipt names (the only user the route admits). */
+  actorUserId: string
+  /** The continuation cursor from a previous archive, if the client sent one. */
+  cursor: string | null
+  /** Max storage files this archive may include — the subrequest budget. */
+  maxFiles: number
+}) => Promise<PluginExportArchive>
+
+/**
  * One plugin's contribution: its manifest + the mounted Hono app. "Route
  * mounts + metadata" — exactly what the factory returns. `purge` rides the
  * registration when the manifest declares the 'purge' capability: the core
@@ -165,6 +225,11 @@ export type PluginPurgeJob = (args: {
  * cronTaskBindingViolations + plugin-registry.test.ts; the driver also
  * soft-guards (logs the drift, runs the rest) so a binding bug can never
  * take the nightly tick down (the V1-A1 lesson).
+ *
+ * `export` rides the registration the same way when the manifest declares
+ * the 'export' capability (ticket 6, #440): the owner-only catalog route
+ * dispatches through this seam — core never reaches into plugin internals
+ * for the archive bytes.
  */
 export type PluginRegistration = {
   manifest: PluginManifest
@@ -173,6 +238,7 @@ export type PluginRegistration = {
   purgeBudgetFloor?: number
   /** Handlers keyed by the manifest's cronTasks[].name (see above). */
   cronTaskHandlers?: Readonly<Record<string, PluginCronTaskHandler>>
+  export?: PluginExportJob
 }
 
 /**

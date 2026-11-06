@@ -32,6 +32,11 @@ import {
   setPluginEnablement,
   type PluginCatalogEntry,
 } from '../lib/plugins.js'
+import {
+  PluginExportCursorError,
+  PluginExportUnsupportedError,
+  resolvePluginExport,
+} from '../lib/plugin-export.js'
 import { HouseholdNotFoundError, HouseholdForbiddenError } from '../lib/households.js'
 
 // Per-household fact — never cached at the edge (every other authenticated
@@ -151,11 +156,18 @@ pluginsApp.use('*', ipRateLimitMiddleware)
 pluginsApp.use('/api/plugins', propsAuthMiddleware)
 pluginsApp.use('/api/plugins/:pluginId/enablement', propsAuthMiddleware)
 pluginsApp.use('/api/plugins/:pluginId/purge', propsAuthMiddleware)
+pluginsApp.use('/api/plugins/:pluginId/export', propsAuthMiddleware)
 
 pluginsApp.onError((err, c) => {
   if (err instanceof HouseholdNotFoundError) return c.json({ error: err.message }, 404, NO_CACHE)
   if (err instanceof HouseholdForbiddenError) return c.json({ error: err.message }, 403, NO_CACHE)
   if (err instanceof PluginNotFoundError) return c.json({ error: err.message }, 404, NO_CACHE)
+  if (err instanceof PluginExportUnsupportedError) {
+    return c.json({ error: err.message }, 409, NO_CACHE)
+  }
+  if (err instanceof PluginExportCursorError) {
+    return c.json({ error: err.message }, 400, NO_CACHE)
+  }
   if (err instanceof PluginPurgeUnsupportedError) {
     return c.json({ error: err.message }, 409, NO_CACHE)
   }
@@ -343,6 +355,61 @@ pluginsApp.delete(
     const res = c.json(plugin satisfies PluginCatalogEntry)
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
+  }
+)
+
+pluginsApp.get(
+  '/api/plugins/:pluginId/export',
+  describeRoute({
+    description:
+      "Downloads one archive of one plugin's data for the ACTIVE household (owner-only; non-owners get 403) — the export-before-purge capability (plugin architecture ticket 6, #440, §3.4). Read-only: it never touches the purge machinery and stays available while a drain is in flight (the write gate pauses uploads, never reads). The archive is a stored (uncompressed) ZIP: the plugin's file bytes at their archive paths, a documents.csv and a files.csv with the full metadata (RFC 4180, UTF-8 + BOM), and a trailing manifest.json whose counts report what the stream delivered (a 0-byte entry where files.csv reports size_bytes > 0 marks bytes that were unavailable at export time; audit rows are internal receipts and are NOT included). Whole documents only — a document's files never split across archives — and at most 40 files per archive (the free plan's 50-subrequest cap: 4 D1 statements + 40 storage reads), so a larger vault chains sequential downloads via the X-Export-Next-Cursor response header: send that cursor back as ?cursor= until the header is absent. The cursor is bound to the issuing household (a foreign one is a 400). Writes one plugin_exported lifecycle receipt per archive (owner as actor). No gating with purge: export early, purge whenever the household chooses.",
+    security: [{ cookieAuth: [] }],
+    parameters: [
+      {
+        name: 'cursor',
+        in: 'query',
+        required: false,
+        schema: { type: 'string' },
+        description:
+          'The continuation cursor from a previous archive’s X-Export-Next-Cursor header — omit for the first archive',
+      },
+    ],
+    responses: {
+      200: {
+        description:
+          'OK — the archive stream. X-Export-Next-Cursor carries the continuation cursor when another archive remains (absent = this was the last)',
+        content: {
+          'application/zip': { schema: { type: 'string', format: 'binary' } },
+        },
+      },
+      400: { description: 'Invalid or foreign-household export cursor' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Only household owners can do that' },
+      404: { description: 'Household or plugin not found' },
+      409: { description: 'The plugin does not declare the export capability' },
+    },
+  }),
+  sValidator('param', pluginParamsSchema),
+  async (c) => {
+    const { pluginId } = c.req.valid('param')
+    const archive = await resolvePluginExport(c.env, {
+      householdId: c.get('householdId'),
+      userId: c.get('userId'),
+      pluginId,
+      cursor: c.req.query('cursor') || null,
+    })
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': archive.disposition,
+      // Byte bodies are session-scoped secrets (the per-file content
+      // endpoint's NO_STORE rule) — an export is the whole vault in one
+      // body; no cache anywhere may hold it.
+      'Cache-Control': 'private, no-store',
+    }
+    if (archive.nextCursor) {
+      headers['X-Export-Next-Cursor'] = archive.nextCursor
+    }
+    return new Response(archive.stream, { headers })
   }
 )
 
