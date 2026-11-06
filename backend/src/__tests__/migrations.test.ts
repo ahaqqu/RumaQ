@@ -1585,6 +1585,16 @@ describe('migration 0028: household_plugins (#435)', () => {
     })
     expect(row).toHaveProperty('updated_at')
 
+    // config_json carries the same CHECK discipline as `status`: real JSON or
+    // NULL, never garbage (a settings writer's bug must not poison the column).
+    expect(() =>
+      db
+        .prepare(
+          `UPDATE household_plugins SET config_json = ? WHERE household_id = ? AND plugin_id = ?`
+        )
+        .run('not json', 'h1', 'other-plugin')
+    ).toThrow()
+
     // Deleting the household cascades its enablement rows — they are
     // household-scoped facts (unlike the lifecycle audit table, which is
     // deliberately FK-less, plan §3.4; it arrives in ticket 5).

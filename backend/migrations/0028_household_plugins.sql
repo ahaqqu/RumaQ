@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS household_plugins (
   status TEXT NOT NULL CHECK (status IN ('enabled', 'disabled')),
   -- Small non-secret per-plugin settings (§4.6) — unused in phase A, shipped
   -- now so the settings catalog (ticket 3) does not need a schema change.
-  config_json TEXT,
+  -- CHECKed the same way `status` is: NULL is legal (no settings yet), a
+  -- non-NULL value must be real JSON (json_valid, SQLite-native).
+  config_json TEXT CHECK (config_json IS NULL OR json_valid(config_json)),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   -- The composite PRIMARY KEY IS both the uniqueness constraint (one row per
   -- household + plugin, plan §6) and the household_id-prefix index every read

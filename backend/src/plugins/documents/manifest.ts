@@ -5,7 +5,10 @@
 // and behavior is bit-for-bit identical (§3.5 phase A row).
 import type { PluginManifest } from '../types.js'
 
-export const documentsManifest: PluginManifest = {
+// `as const satisfies` keeps the literal types (`id: 'documents'`, not
+// `id: string`) while still checking every field against PluginManifest —
+// the annotation form would widen the id and with it PluginId (manifests.ts).
+export const documentsManifest = {
   id: 'documents',
   name: 'Documents',
   version: '0.1.0',
@@ -28,4 +31,4 @@ export const documentsManifest: PluginManifest = {
   // tested, never inferred from the <plugin>_ prefix — document_audit
   // deliberately does not share the documents_ prefix.
   ownedTables: ['documents', 'document_files', 'document_audit'],
-}
+} as const satisfies PluginManifest

@@ -8,7 +8,10 @@
 // A disabled (or not-available) plugin answers 404 with the standard error
 // envelope — fail closed, consistent with the foreign-household posture
 // (§3.2). Not a secrecy claim: the settings catalog advertises every plugin
-// anyway (ticket 3).
+// anyway (ticket 3), so enablement is deliberately not hidden (plan §4.3).
+// Acknowledged consequence: this 404 is distinguishable from a route-miss 404
+// (no-cache header + the error envelope) and from a plain apiApp 404 — a
+// sanctioned oracle for tests/ops, not a leak to close.
 import { createMiddleware } from 'hono/factory'
 import type { MiddlewareHandler } from 'hono'
 import type { Env } from '../types.js'
@@ -22,7 +25,8 @@ const NO_CACHE = { 'Cache-Control': 'private, no-cache' }
 
 /**
  * One gate per plugin, installed on every path pattern the plugin's auth
- * lines cover (apps/documents.ts mirrors them — `use(path)` does not cover
+ * lines cover — apps/documents.ts registers auth and the gate from ONE shared
+ * pattern list, so the pairing is structural (`use(path)` does not cover
  * subpaths, the #292 landmine). Registered after the auth middleware so the
  * household variable is always set when the gate runs.
  */

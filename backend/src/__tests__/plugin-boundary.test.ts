@@ -35,7 +35,9 @@ function listSourceFiles(dir: string): SourceFile[] {
         if (entry.name === '__tests__') return [] // tests import everything, by design
         return listSourceFiles(full)
       }
-      if (!/\.(ts|tsx)$/.test(entry.name) || entry.name.endsWith('.d.ts')) return []
+      // esbuild bundles plain .js/.mjs/.cjs alongside .ts — the wall must see
+      // every file that could end up in the Worker bundle.
+      if (!/\.(ts|tsx|js|mjs|cjs)$/.test(entry.name) || entry.name.endsWith('.d.ts')) return []
       return [relative(BACKEND_SRC, full).split('\\').join('/')]
     }
   )
@@ -45,6 +47,9 @@ const IMPORT_PATTERNS = [
   /\bfrom\s+['"]([^'"]+)['"]/g, // static + type-only imports
   /\bimport\s*\(\s*['"]([^'"]+)['"]/g, // dynamic import()
   /^\s*import\s+['"]([^'"]+)['"]/gm, // bare side-effect imports
+  // require() never runs in a Worker, but esbuild BUNDLES it — a plugin that
+  // requires core internals would still ship the violation, so the wall sees it.
+  /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
 ]
 
 function importSpecifiers(source: string): string[] {
@@ -157,6 +162,9 @@ describe('plugin import boundary (#435)', () => {
         "import { otherPluginThing } from '../other/thing.js'",
         "import { propsAuthMiddleware } from '../../auth.js'",
       ].join('\n'),
+      // require() + a non-.ts file: both would be invisible to a from-only,
+      // .ts-only scan (PL1-B4) — the checker must fire on them too.
+      'plugins/documents/legacy.js': "const x = require('../../lib/should-not-reach.js')",
       'apps/api.ts': "import { documentsManifest } from '../plugins/documents/manifest.js'\n",
       'plugins/gate.ts': "import { something } from './documents/manifest.js'\n",
       'plugins/documents/clean.ts': [
@@ -175,6 +183,11 @@ describe('plugin import boundary (#435)', () => {
     ).toBe(true)
     expect(
       violations.some((v) => v.startsWith('plugins/documents/app.ts imports another plugin'))
+    ).toBe(true)
+    expect(
+      violations.some((v) =>
+        v.startsWith('plugins/documents/legacy.js imports core internal lib/should-not-reach')
+      )
     ).toBe(true)
     expect(
       violations.some((v) =>

@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vite-plus/test'
+import { describe, it, expect, beforeEach, vi } from 'vite-plus/test'
 import { documentsApp } from '../apps/documents.js'
+import { gateway } from '../gateway.js'
+import { pluginGate } from '../plugins/gate.js'
 import { resetRateLimit } from '../lib/rate-limit.js'
 import {
   createDocumentsHarness,
@@ -156,5 +158,78 @@ describe('plugin gate — documents routes (#435)', () => {
     expect(enabled.status).toBe(404)
     expect(await enabled.json()).toEqual({ error: 'Document not found' })
     expect(callsEnabled).toHaveLength(1)
+  })
+})
+
+describe('plugin dispatch through the gateway (#435)', () => {
+  const h = createDocumentsHarness()
+
+  beforeEach(() => {
+    resetRateLimit()
+  })
+
+  // matchPlugin dispatch is gateway-level wiring (gateway.ts) — the in-app
+  // gate tests above prove the gate itself, not that the gateway still routes
+  // plugin prefixes into the vault. Driven through gateway.fetch so a
+  // registry/gateway wiring break fails HERE, not only in production.
+  const dispatchCtx = { waitUntil: vi.fn() } as unknown as ExecutionContext
+  // Same cast as households.test.ts — the harness env is a mock, the gateway
+  // wants the real Bindings shape.
+  const gatewayEnv = (e: ReturnType<typeof createEnv>) =>
+    e as unknown as Parameters<typeof gateway.fetch>[1]
+
+  it('dispatches /api/documents into the vault (enabled default: the handler answers)', async () => {
+    const calls: string[] = []
+    const { env } = h.setup([], [SPY_JOIN_ROUTE(calls)])
+    const res = await gateway.fetch(
+      new Request('https://rumaq.test/api/documents'),
+      gatewayEnv(env),
+      dispatchCtx
+    )
+    expect(res.status).toBe(200)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('a disabled household still reaches the gate through the dispatch: 404', async () => {
+    const calls: string[] = []
+    const { env } = h.setup(
+      [HOUSEHOLD_PLUGIN_ROW({ plugin_id: 'documents', status: 'disabled' })],
+      [SPY_JOIN_ROUTE(calls)]
+    )
+    const res = await gateway.fetch(
+      new Request('https://rumaq.test/api/documents'),
+      gatewayEnv(env),
+      dispatchCtx
+    )
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'Not found' })
+    expect(calls).toEqual([])
+  })
+
+  it('the boundary guard holds at the gateway: /api/documents-x never dispatches', async () => {
+    const calls: string[] = []
+    const { env } = h.setup([], [SPY_JOIN_ROUTE(calls)])
+    const res = await gateway.fetch(
+      new Request('https://rumaq.test/api/documents-x'),
+      gatewayEnv(env),
+      dispatchCtx
+    )
+    // Falls through to apiApp (no such route there) — never into the vault.
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'Not found' })
+    expect(calls).toEqual([])
+  })
+})
+
+describe('PluginId stays a literal union (#435)', () => {
+  it("a typo'd plugin id is a compile error, not a silent runtime 404", () => {
+    // Runtime the gate just answers 404 for an unknown id; the type system is
+    // what must catch this. The @ts-expect-error line FAILS `tsc` the moment
+    // PluginId widens back to string (the gate's own compile-time tripwire).
+    expect(() => {
+      // @ts-expect-error — PluginId is derived from the manifests; 'documents'
+      // is the only valid id and this typo must be a tsc error.
+      pluginGate('documentz-typo')
+    }).not.toThrow()
   })
 })

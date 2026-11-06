@@ -207,27 +207,33 @@ documentsApp.onError((err, c) => {
   return c.json({ error: 'Internal server error' }, 500, NO_CACHE)
 })
 
-// apiApp.use(path) does not cover subpaths (#292 landmine) — every path gets
-// its own line here too.
-documentsApp.use('/api/documents', propsAuthMiddleware)
-documentsApp.use('/api/documents/:id', propsAuthMiddleware)
-documentsApp.use('/api/documents/:id/files', propsAuthMiddleware)
-documentsApp.use('/api/documents/:id/files/:fileId', propsAuthMiddleware)
-documentsApp.use('/api/documents/:id/files/:fileId/content', propsAuthMiddleware)
+// apiApp.use(path) does not cover subpaths (#292 landmine) — every pattern
+// gets its own registration, for auth AND the gate alike.
 
-// Plugin enablement gate (ahaqqu/RumaQ#435, plugin architecture §4.3) — the
-// household-aware middleware installs AFTER auth INSIDE the app (dispatch is
-// path-only in the gateway; the household is unknown until propsAuthMiddleware
-// has resolved it). Same five patterns as the auth lines; registration order
-// puts auth first, so the gate always sees the resolved household. Disabled /
-// deployment-off answers 404 fail-closed. Phase A: every household resolves
-// enabled (manifest default, no rows exist), so behavior is bit-for-bit
-// identical except the one planned indexed read per request (§3.6).
-documentsApp.use('/api/documents', pluginGate('documents'))
-documentsApp.use('/api/documents/:id', pluginGate('documents'))
-documentsApp.use('/api/documents/:id/files', pluginGate('documents'))
-documentsApp.use('/api/documents/:id/files/:fileId', pluginGate('documents'))
-documentsApp.use('/api/documents/:id/files/:fileId/content', pluginGate('documents'))
+// Auth + the plugin enablement gate (ahaqqu/RumaQ#435, plugin architecture
+// §4.3) install in ONE pass over the same pattern list, so the pairing is
+// structural: a new vault pattern cannot acquire auth without the gate, and
+// registration order puts auth first on every pattern (the household is
+// unknown until propsAuthMiddleware has resolved it, so the gate must always
+// see it). Disabled / deployment-off answers 404 fail-closed. Phase A: every
+// household resolves enabled (manifest default, no rows exist), so behavior
+// is bit-for-bit identical except the one planned indexed read per request
+// (§3.6).
+const VAULT_PROTECTED_PATTERNS = [
+  '/api/documents',
+  '/api/documents/:id',
+  '/api/documents/:id/files',
+  '/api/documents/:id/files/:fileId',
+  '/api/documents/:id/files/:fileId/content',
+] as const
+
+// Stateless middleware — one gate instance serves every pattern.
+const documentsGate = pluginGate('documents')
+
+for (const pattern of VAULT_PROTECTED_PATTERNS) {
+  documentsApp.use(pattern, propsAuthMiddleware)
+  documentsApp.use(pattern, documentsGate)
+}
 
 // One parsed upload — the file plus the string multipart fields, already
 // bounded by the pre-parse cap. Both POST routes funnel through here so the

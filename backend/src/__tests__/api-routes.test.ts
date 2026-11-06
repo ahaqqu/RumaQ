@@ -49,6 +49,38 @@ describe('api routes', () => {
     expect(res.status).toBe(200)
   })
 
+  // Route-level pin for the plugin advertisement (§4.5, #435): the handler
+  // must COPY the resolver's output into the payload — ids only, not manifest
+  // objects. The enablement rows come back through the REAL statement the
+  // route issues, so a wiring break (field dropped, resolver bypassed) fails
+  // these instead of being absorbed by a mock default (#422-A3 lesson).
+  it('/api/me advertises enabledPlugins as ids-only from the enablement rows', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValue({ id: 'u1', email: 'a@b.com', name: 'Alice', picture: null })
+    env.DB.all = vi
+      .fn()
+      .mockResolvedValue({ results: [{ plugin_id: 'documents', status: 'enabled' }] })
+    const res = await apiApp.request('/api/me', {}, env)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { enabledPlugins?: unknown }
+    expect(body.enabledPlugins).toEqual(['documents'])
+  })
+
+  it('/api/me omits enabledPlugins when the enablement read fails and still answers 200', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValue({ id: 'u1', email: 'a@b.com', name: 'Alice', picture: null })
+    env.DB.all = vi.fn().mockRejectedValue(new Error('D1 unavailable'))
+    const res = await apiApp.request('/api/me', {}, env)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { enabledPlugins?: unknown }
+    // The additive-nullish rule: absent field = all catalog plugins enabled.
+    expect('enabledPlugins' in body).toBe(false)
+  })
+
   it('/api/stock returns stock list', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.all = vi.fn().mockResolvedValue({ results: [{ id: 's1', name: 'Milk' }] })

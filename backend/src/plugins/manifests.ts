@@ -8,11 +8,14 @@
 import { documentsManifest } from './documents/manifest.js'
 import { KNOWN_PORT_IDS, type PluginManifest } from './types.js'
 
-/** Registration order IS dispatch order — the documents plugin is plugin #1. */
-export const PLUGIN_MANIFESTS: readonly PluginManifest[] = [documentsManifest]
+/** Registration order IS dispatch order — the documents plugin is plugin #1.
+ * `as const satisfies` keeps each manifest's `id` a literal (the annotation
+ * form would widen it to string), so the derived union below is real. */
+export const PLUGIN_MANIFESTS = [documentsManifest] as const satisfies readonly PluginManifest[]
 
 /** Compile-time plugin ids (derived from the list — adding a plugin extends
- * the union automatically, and a typo'd id fails the build). */
+ * the union automatically, and a typo'd id in pluginGate(...) or a manifest
+ * reference fails `tsc`). */
 export type PluginId = (typeof PLUGIN_MANIFESTS)[number]['id']
 
 const manifestsById = new Map<string, PluginManifest>(
