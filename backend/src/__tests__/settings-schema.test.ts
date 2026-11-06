@@ -59,6 +59,33 @@ describe('settingsPatchSchema', () => {
     }
   })
 
+  // The vision model (issue #433) shares ai_model's pipe — maxLength(200) +
+  // AI_MODEL_REGEX — and the charset is LOAD-BEARING: model ids interpolate
+  // into request bodies and, for Gemini, the URL path (review T4-B5).
+  it('accepts a valid ai_vision_model id (the ai_model charset)', () => {
+    for (const model of ['gemini-3.6-flash', 'gpt-5.1-vision', 'llama3.3:70b', 'qwen2.5@2024']) {
+      const result = safeParse(settingsPatchSchema, { ai_vision_model: model })
+      expect(result.success).toBe(true)
+      if (result.success) {
+        expect(result.output.ai_vision_model).toBe(model)
+      }
+    }
+  })
+
+  it('rejects an overlong ai_vision_model', () => {
+    const result = safeParse(settingsPatchSchema, { ai_vision_model: 'g'.repeat(201) })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects ai_vision_model values outside the ai_model charset', () => {
+    // A query-string injection shape (`?key=`) and a leading punctuation
+    // character both violate AI_MODEL_REGEX.
+    for (const model of ['gemini?key=exfil', '-leading-dash']) {
+      const result = safeParse(settingsPatchSchema, { ai_vision_model: model })
+      expect(result.success).toBe(false)
+    }
+  })
+
   it('rejects invalid ai_provider', () => {
     const result = safeParse(settingsPatchSchema, {
       ai_provider: 'invalid-ai',

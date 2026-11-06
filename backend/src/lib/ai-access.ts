@@ -6,11 +6,44 @@ export type UserAiSettings = {
   ai_provider: string | null
   ai_base_url: string | null
   ai_model: string | null
-  // Explicit vision model (0030, issue #433) — the vault's document OCR uses
+  // Explicit vision model (0031, issue #433) — the vault's document OCR uses
   // it INSTEAD of ai_model when set. Same charset as ai_model.
   ai_vision_model: string | null
   ai_thinking_level: string | null
   encrypted_ai_key: string | null
+}
+
+// The AI-settings projection, owned HERE (review T4-B3): every hand-written
+// user_settings SELECT that feeds resolveAiAccess builds its column list from
+// this constant, so the next AI settings column touches this file — not the
+// six-plus call sites that previously each repeated the projection (the
+// ai_thinking_level → ai_vision_model drift pattern). Call sites needing
+// extra columns interpolate the constant and append their own.
+export const USER_AI_SETTINGS_COLUMNS = [
+  'ai_provider',
+  'ai_base_url',
+  'ai_model',
+  'ai_vision_model',
+  'ai_thinking_level',
+  'encrypted_ai_key',
+].join(', ')
+
+/**
+ * The one loader for the caller's AI settings (review T4-B3): every AI call
+ * site reads the SAME projection through this helper instead of hand-rolling
+ * its own `SELECT … FROM user_settings` (the seventh copy at the #433 OCR
+ * route was the signal). The `.first<>()` cast cannot catch a missed column —
+ * `normalizeModel(undefined)` degrades silently to the provider default — so
+ * the projection must exist in exactly one place.
+ */
+export async function loadUserAiSettings(
+  db: D1Database,
+  userId: string
+): Promise<UserAiSettings | null> {
+  return db
+    .prepare(`SELECT ${USER_AI_SETTINGS_COLUMNS} FROM user_settings WHERE user_id = ?`)
+    .bind(userId)
+    .first<UserAiSettings>()
 }
 
 export type AiAccess = {

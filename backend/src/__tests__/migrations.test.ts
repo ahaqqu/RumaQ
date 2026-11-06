@@ -2596,3 +2596,128 @@ describe('migration 0028 chain: the cron driver enabled-set reads (#441)', () =>
     ])
   })
 })
+
+// Vision-model setting (ahaqqu/RumaQ#433): the nullable ai_vision_model add
+// on user_settings — the vault's OCR resolves it ahead of ai_model. Pure
+// additivity (the 0008 ai_model shape), numbered 0031 AFTER the #454
+// canonical-products migration claimed 0030 first (the renumber note in that
+// file: wrangler keys the applied set on the filename).
+describe('migration 0031: user_settings.ai_vision_model (#433)', () => {
+  it('adds the nullable vision-model column on top of the pre-0031 schema; old rows stay null', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0031')
+    )
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    // The pre-#433 settings row (the INSERT the settings bootstrap writes).
+    db.prepare(`INSERT INTO user_settings (user_id) VALUES ('u1')`).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0031_user_settings_ai_vision_model.sql'), 'utf8'))
+
+    // Existing users keep the fallback behavior (NULL = no explicit vision
+    // model — resolution falls to ai_model); no backfill.
+    const old = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get('u1')
+    expect(old).toMatchObject({ user_id: 'u1', ai_vision_model: null })
+
+    // The explicit choice is representable — the ai_model charset (model ids
+    // go into request bodies and, for Gemini, the URL path).
+    db.prepare('UPDATE user_settings SET ai_vision_model = ? WHERE user_id = ?').run(
+      'gemini-3.6-flash',
+      'u1'
+    )
+    expect(
+      db.prepare('SELECT ai_vision_model FROM user_settings WHERE user_id = ?').get('u1')
+    ).toMatchObject({ ai_vision_model: 'gemini-3.6-flash' })
+  })
+
+  it('keeps the full chain green on a fresh database (additive)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(user_settings)').all()
+    expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('ai_vision_model')
+  })
+})
+
+// OCR audit action (ahaqqu/RumaQ#433, review T4-A1): the document_audit
+// CHECK widens once more (the 0026 rebuild shape) so the expiry read that
+// ships bytes to the caller's AI provider leaves a durable row — 'ocr', not
+// 'view': a view previews bytes to the household, an OCR discloses them to a
+// third party, and the audit trail must keep the two apart.
+describe('migration 0032: document_audit ocr action (#433)', () => {
+  it('copies every pre-0032 audit row verbatim through the rebuild', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0032')
+    )
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    const insertAuditSql = `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action, document_file_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    db.prepare(insertAuditSql).run(
+      'aud-1',
+      'doc-1',
+      'h1',
+      'u1',
+      'upload',
+      null,
+      '2026-11-01 00:00:00'
+    )
+    db.prepare(insertAuditSql).run(
+      'aud-2',
+      'doc-1',
+      'h1',
+      'u1',
+      'view',
+      'f-1',
+      '2026-11-02 00:00:00'
+    )
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0032_document_audit_ocr_action.sql'), 'utf8'))
+
+    const audit = db.prepare('SELECT * FROM document_audit ORDER BY id').all()
+    expect(audit).toHaveLength(2)
+    expect(audit[0]).toMatchObject({
+      id: 'aud-1',
+      action: 'upload',
+      document_file_id: null,
+      created_at: '2026-11-01 00:00:00',
+    })
+    expect(audit[1]).toMatchObject({ id: 'aud-2', action: 'view', document_file_id: 'f-1' })
+  })
+
+  it('accepts ocr and keeps rejecting unknown actions; the lookup index survives the rebuild', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+
+    const insertAudit = db.prepare(
+      `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action, document_file_id)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    // The OCR read is representable, file-scoped like a view/download.
+    expect(() => insertAudit.run('aud-ocr', 'doc-1', 'h1', 'u1', 'ocr', 'f-1')).not.toThrow()
+    // The CHECK is still real.
+    expect(() => insertAudit.run('aud-bad', 'doc-1', 'h1', 'u1', 'share', null)).toThrow()
+
+    // The per-document audit lookup still seeks (the 0022/0025 contract).
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT action FROM document_audit
+          WHERE document_id = ? ORDER BY created_at`
+      )
+      .all('doc-1')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(detail).toContain('idx_document_audit_document')
+    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+})

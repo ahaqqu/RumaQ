@@ -55,7 +55,25 @@ function documentErrorKey(error) {
   // 502 the provider/answer failed — both keep the user in control.
   if (status === 402) return 'documents.errorAiNotConfigured'
   if (status === 502) return 'documents.errorOcr'
+  // Rate-limited (the upload and OCR limiters both key per user and send
+  // Retry-After): the copy says to wait instead of inviting an immediate
+  // retry into the same window (review T4-B6).
+  if (status === 429) return 'documents.errorSlowDown'
   return 'documents.errorGeneric'
+}
+
+// The interpolated form of the mapping above: most statuses carry no value,
+// but a 429's Retry-After is worth surfacing — the user should know when to
+// come back (review T4-B6). Errors thrown by code paths that never parse
+// headers (test mocks, the blob fetch) have no retryAfterSeconds and fall
+// back to the plain slow-down copy.
+function documentErrorCopy(t, error) {
+  const key = documentErrorKey(error)
+  const seconds = error instanceof ApiError ? error.retryAfterSeconds : null
+  if (key === 'documents.errorSlowDown' && seconds != null) {
+    return t('documents.errorSlowDownRetry', { seconds })
+  }
+  return t(key)
 }
 
 function formatBytes(bytes, language) {
@@ -139,11 +157,20 @@ function PickedFiles({ picked, onLabel, onRemove, language }) {
   )
 }
 
+// The exact mime trio the expiry-OCR endpoint accepts — mirrors
+// EXPIRY_OCR_MIME_TYPES in backend/src/lib/document-ocr.ts (review T4-B4).
+// Deliberately NOT a broad /^image\//: a future vault image type must not
+// show a "Read date" button whose call answers 415. The two lists are
+// independent text (frontend cannot import backend lib code); keep them in
+// lockstep.
+const EXPIRY_OCR_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
 // One file inside its document: name, optional label, size, and the per-file
 // actions (view / download / delete — the delete is the same two-step inline
-// confirm the document row uses). Image files also get the OPT-IN read-date
-// action (#433): the backend OCRs the image with the user's own AI provider
-// and the suggestion prefills the expiry editor — the user still saves.
+// confirm the document row uses). OCR-readable files also get the OPT-IN
+// read-date action (#433): the backend OCRs the image with the user's own AI
+// provider and the suggestion prefills the expiry editor — the user still
+// saves.
 function FileRow({
   file,
   onView,
@@ -157,9 +184,7 @@ function FileRow({
   language,
 }) {
   const { t } = useTranslation()
-  // The vault allowlist is image/jpeg|png|webp + application/pdf; the vision
-  // call reads images only, so the action hides itself for PDFs.
-  const isImage = /^image\//.test(file.content_type)
+  const ocrSupported = EXPIRY_OCR_IMAGE_TYPES.has(file.content_type)
   return (
     <div className="flex items-center gap-2 pl-11 py-1.5">
       <div className="min-w-0 flex-1">
@@ -204,7 +229,7 @@ function FileRow({
           >
             <IconDownload size={15} />
           </Button>
-          {isImage && (
+          {ocrSupported && (
             <Button
               size="sm"
               variant="ghost"
@@ -449,12 +474,12 @@ export function Documents() {
           expiresOn: result.expires_on,
           remindDays: doc.remind_days_before ?? DOCUMENT_DEFAULT_REMIND_DAYS,
         })
-        setFeedback(t('documents.expiryRead', { name: file.file_name }))
+        setFeedback(t('documents.expiryRead', { date: result.expires_on, name: file.file_name }))
       } else {
         setFeedback(t('documents.expiryReadNone', { name: file.file_name }))
       }
     } catch (err) {
-      setActionError(t(documentErrorKey(err)))
+      setActionError(documentErrorCopy(t, err))
     } finally {
       setReadDateFileKey(null)
     }
@@ -498,7 +523,7 @@ export function Documents() {
       closeExpiryEdit()
       setFeedback(t('documents.expirySaved', { name: doc.name }))
     } catch (err) {
-      setActionError(t(documentErrorKey(err)))
+      setActionError(documentErrorCopy(t, err))
     }
   }
 
@@ -575,7 +600,7 @@ export function Documents() {
       setActionError(null)
       onDone()
     } catch (err) {
-      setActionError(t(documentErrorKey(err)))
+      setActionError(documentErrorCopy(t, err))
     } finally {
       setProgress(null)
       setBusy(false)
@@ -621,7 +646,7 @@ export function Documents() {
         },
       })
     } catch (err) {
-      setActionError(t(documentErrorKey(err)))
+      setActionError(documentErrorCopy(t, err))
     } finally {
       setBusy(false)
     }
@@ -663,7 +688,7 @@ export function Documents() {
       // in-memory copy the browser is already writing out.
       setTimeout(() => URL.revokeObjectURL(url), 10_000)
     } catch (err) {
-      setActionError(t(documentErrorKey(err)))
+      setActionError(documentErrorCopy(t, err))
     }
   }
 
@@ -678,7 +703,7 @@ export function Documents() {
         },
         onError: (err) => {
           setConfirmingDocId(null)
-          setActionError(t(documentErrorKey(err)))
+          setActionError(documentErrorCopy(t, err))
         },
       }
     )
@@ -695,7 +720,7 @@ export function Documents() {
         },
         onError: (err) => {
           setFileConfirmKey(null)
-          setActionError(t(documentErrorKey(err)))
+          setActionError(documentErrorCopy(t, err))
         },
       }
     )

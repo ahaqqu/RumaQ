@@ -46,11 +46,9 @@ const ALLOWED_CORE_IMPORTS_BY_PLUGIN: Readonly<Record<string, readonly string[]>
     'ports/storage/index.ts',
     // The AI seam for the vault's expiry OCR (#433): the route resolves the
     // caller's own provider through the one loader (user key → server
-    // fallback), the lib owns the provider call, and document-ocr owns the
-    // OCR round-trip rules. Granted per-module on purpose — the vault gets
-    // exactly the AI surface its "Read date" action consumes, not all of
-    // lib/.
-    'lib/ai.ts',
+    // fallback) and document-ocr owns the provider call plus the round-trip
+    // rules. Granted per-module on purpose — the vault gets exactly the AI
+    // surface its "Read date" action consumes, not all of lib/.
     'lib/ai-access.ts',
     'lib/document-ocr.ts',
   ],
@@ -199,7 +197,6 @@ describe('plugin import boundary (#435)', () => {
         'lib/zip.ts',
         'lib/households.ts',
         'ports/storage/index.ts',
-        'lib/ai.ts',
         'lib/ai-access.ts',
         'lib/document-ocr.ts',
       ].sort()

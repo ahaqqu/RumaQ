@@ -14,12 +14,28 @@ const client = createClient<paths>({ credentials: 'include' })
 
 export class ApiError extends Error {
   readonly status: number
+  // Seconds until a rate-limit window resets, when the server sent a
+  // Retry-After header — surfaced so the UI can say when to come back
+  // instead of inviting an immediate retry into the same window
+  // (review T4-B6). null when absent or unparseable.
+  readonly retryAfterSeconds: number | null
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, retryAfterSeconds: number | null = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.retryAfterSeconds = retryAfterSeconds
   }
+}
+
+// The Retry-After header the 429 responses send (upload and OCR limiters,
+// documents.ts / documents-ocr.ts): plain seconds. HTTP-date forms do not
+// occur in this API; anything non-numeric degrades to null.
+function retryAfterFrom(response: Response): number | null {
+  const header = response.headers.get('Retry-After')
+  if (header === null) return null
+  const seconds = Number(header)
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null
 }
 
 async function unwrap<T>(resultPromise: Promise<unknown>): Promise<T> {
@@ -32,7 +48,8 @@ async function unwrap<T>(resultPromise: Promise<unknown>): Promise<T> {
     const body = result.error as { error?: string } | undefined
     throw new ApiError(
       body?.error || `Request failed: ${result.response.status}`,
-      result.response.status
+      result.response.status,
+      retryAfterFrom(result.response)
     )
   }
   return (result.data ?? null) as T

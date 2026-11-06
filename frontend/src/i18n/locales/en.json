@@ -233,6 +233,8 @@
     "errorGeneric": "Something went wrong. Please try again.",
     "errorAiNotConfigured": "AI provider not configured — set it up in Settings first.",
     "errorOcr": "Could not read a date from this file. Try again or type the date manually.",
+    "errorSlowDown": "Too many requests. Please wait a moment and try again.",
+    "errorSlowDownRetry": "Too many requests. Please try again in {{seconds}} seconds.",
     "nameLabel": "Document name",
     "namePlaceholder": "e.g. Kartu Keluarga",
     "searchLabel": "Search by name",

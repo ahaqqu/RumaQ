@@ -3,6 +3,7 @@ import { resetRateLimit } from '../lib/rate-limit.js'
 import {
   isExpiryOcrSupported,
   normalizeExpirySuggestion,
+  runExpiryOcr,
   DocumentOcrError,
   logExpiryOcrOutcome,
 } from '../lib/document-ocr.js'
@@ -101,16 +102,97 @@ describe('document-ocr lib (issue #433)', () => {
     expect(isExpiryOcrSupported('application/pdf')).toBe(false)
   })
 
-  it('passes a real calendar date through and null for "no date found"', () => {
+  it('passes a real calendar date through and JSON null for "no date found"', () => {
     expect(normalizeExpirySuggestion('2027-06-05')).toBe('2027-06-05')
     expect(normalizeExpirySuggestion(null)).toBeNull()
-    expect(normalizeExpirySuggestion(undefined)).toBeNull()
+    // JSON null is the ONLY "no date found" (review T4-A3): a missing key
+    // (undefined — an off-schema answer like `{"expiry_date": ...}` or `{}`)
+    // is a rejection, not a silent "no date".
+    expect(() => normalizeExpirySuggestion(undefined)).toThrow(DocumentOcrError)
   })
 
   it('rejects garbage answers instead of guessing (wrong type, wrong shape, non-calendar)', () => {
     for (const bad of [5, '05-06-2027', '2026-02-31', '2027-6-5', '']) {
       expect(() => normalizeExpirySuggestion(bad)).toThrow(DocumentOcrError)
     }
+  })
+
+  // The audit invariant lives ONCE in runExpiryOcr (review T4-B2) — testable
+  // here without HTTP: the usage event + outcome line land on every path
+  // that reaches the provider decision, exactly once.
+  describe('runExpiryOcr audit pairing', () => {
+    const access = {
+      provider: 'openai',
+      apiKey: 'sk-user-secret',
+      baseUrl: null,
+      model: null,
+      visionModel: 'vision-model',
+      thinkingLevel: null,
+      keySource: 'user' as const,
+    }
+    const args = {
+      access,
+      imageBytes: new ArrayBuffer(8),
+      contentType: 'image/jpeg',
+      userId: 'u1',
+      householdId: 'h1',
+      documentId: 'doc-1',
+      fileId: 'file-1',
+    }
+
+    function fakeEnv(testMode: string) {
+      const runs: Array<{ sql: string; params: unknown[] }> = []
+      const env = {
+        DB: {
+          prepare: (sql: string) => ({
+            bind: (...params: unknown[]) => ({
+              run: async () => {
+                runs.push({ sql, params })
+              },
+            }),
+          }),
+        },
+        TEST_MODE: testMode,
+      }
+      return { env: env as unknown as Parameters<typeof runExpiryOcr>[0], runs }
+    }
+
+    it('writes the usage event + outcome line exactly once on the success path', async () => {
+      const { env, runs } = fakeEnv('true')
+      const { suggestion, outcome } = await runExpiryOcr(env, args)
+      expect(suggestion).toBe('2027-06-05')
+      expect(outcome).toBe('suggested')
+      expect(runs).toHaveLength(1)
+      expect(runs[0].sql).toContain('INSERT INTO ai_usage_events')
+      // provider, model, key_source bind at positions 4, 5, 9.
+      expect(runs[0].params[4]).toBe('openai')
+      expect(runs[0].params[5]).toBe('vision-model')
+      expect(runs[0].params[9]).toBe('user')
+    })
+
+    it('still pairs the audit exactly once when the provider fails, then rethrows', async () => {
+      const { env, runs } = fakeEnv('false')
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error('socket hung up'))
+      try {
+        await expect(runExpiryOcr(env, args)).rejects.toThrow('socket hung up')
+      } finally {
+        vi.restoreAllMocks()
+      }
+      expect(runs).toHaveLength(1)
+      expect(runs[0].sql).toContain('INSERT INTO ai_usage_events')
+    })
+
+    it('still pairs the audit exactly once when the answer fails validation', async () => {
+      const { env, runs } = fakeEnv('false')
+      globalThis.fetch = vi.fn().mockResolvedValue(openAiAnswer('{"expires_on": "2026-02-31"}'))
+      try {
+        await expect(runExpiryOcr(env, args)).rejects.toThrow(DocumentOcrError)
+      } finally {
+        vi.restoreAllMocks()
+      }
+      expect(runs).toHaveLength(1)
+      expect(runs[0].sql).toContain('INSERT INTO ai_usage_events')
+    })
   })
 
   it('logs model + outcome only — never document content', () => {
@@ -281,6 +363,17 @@ describe('documents routes — expiry OCR (#433)', () => {
     const logText = logSpy.mock.calls.map((call) => call.join(' ')).join('\n')
     expect(logText).toContain('outcome=failed')
     expect(logText).not.toContain('sk-user-secret')
+
+    // The byte READ itself is durably audited even though the call failed —
+    // the document_audit 'ocr' row names the document and the file (T4-A1).
+    const audit = db.log.find((entry) => /INSERT INTO document_audit/.test(entry.sql))
+    expect(audit).toBeTruthy()
+    // Binds: id, document_id, household_id, actor_user_id, action, file_id.
+    expect(audit?.params[1]).toBe('doc-1')
+    expect(audit?.params[2]).toBe('h1')
+    expect(audit?.params[3]).toBe('u1')
+    expect(audit?.params[4]).toBe('ocr')
+    expect(audit?.params[5]).toBe('file-1')
   })
 
   it('rejects a well-formed non-calendar model answer with 502 (outcome=rejected)', async () => {
@@ -319,6 +412,54 @@ describe('documents routes — expiry OCR (#433)', () => {
     expect(logText).toContain('outcome=no_date')
     // A KTP-style "no expiry" still consumed a provider call — event recorded.
     expect(db.log.some((entry) => /INSERT INTO ai_usage_events/.test(entry.sql))).toBe(true)
+  })
+
+  it('rejects an OFF-SCHEMA answer (missing expires_on key) with 502 — only JSON null means "no date found"', async () => {
+    // Review T4-A3: `{"expiry_date": ...}` / `{}` used to masquerade as a
+    // legitimate "no expiry" 200; the module contract says wrong shape =
+    // rejection.
+    const encrypted = await encryptAiKey('sk-user-secret', ENV_KEY)
+    const { env, bucket, app } = h.setup(userKeyRoutes(userSettingsRow(encrypted)), [], {
+      envOverrides: { TEST_MODE: 'false', WORKER_ENCRYPTION_KEY: ENV_KEY } as Partial<MockEnv>,
+    })
+    seedBucket(bucket, JPEG_BYTES, 'image/jpeg')
+
+    globalThis.fetch = vi.fn().mockResolvedValue(openAiAnswer('{"expiry_date": "2027-06-05"}'))
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    const res = await app.request(OCR_PATH, { method: 'POST' }, env)
+    expect(res.status).toBe(502)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toMatch(/could not read an expiry date/i)
+    const logText = logSpy.mock.calls.map((call) => call.join(' ')).join('\n')
+    expect(logText).toContain('outcome=rejected')
+  })
+
+  it('audits the byte read as a durable document_audit ocr row on the success path (T4-A1)', async () => {
+    const { db, env, bucket, app } = h.setup(userKeyRoutes({}))
+    Object.assign(env, serverAiEnv())
+    seedBucket(bucket, JPEG_BYTES, 'image/jpeg')
+
+    const res = await app.request(OCR_PATH, { method: 'POST' }, env)
+    expect(res.status).toBe(200)
+
+    const audit = db.log.find((entry) => /INSERT INTO document_audit/.test(entry.sql))
+    expect(audit).toBeTruthy()
+    // Binds: id, document_id, household_id, actor_user_id, action, file_id.
+    expect(audit?.params[1]).toBe('doc-1')
+    expect(audit?.params[2]).toBe('h1')
+    expect(audit?.params[3]).toBe('u1')
+    expect(audit?.params[4]).toBe('ocr')
+    expect(audit?.params[5]).toBe('file-1')
+  })
+
+  it('leaves no document_audit row on the pre-read rejections (404/415/402/429 audit nothing)', async () => {
+    // The T4-A5 boundary: pre-provider rejections (no read, no billing) keep
+    // the empty-audit posture of every other vault route.
+    const { db, env, app } = h.setup(userKeyRoutes({}))
+    const res = await app.request(OCR_PATH, { method: 'POST' }, env)
+    expect(res.status).toBe(402)
+    expect(db.log.some((entry) => /INSERT INTO document_audit/.test(entry.sql))).toBe(false)
   })
 
   it('rate-limits bursts of read-date calls per user', async () => {

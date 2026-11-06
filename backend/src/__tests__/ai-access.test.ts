@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import {
   deleteExpiredAiUsageEvents,
+  loadUserAiSettings,
   recordAiUsageEvent,
   resolveAiAccess,
+  USER_AI_SETTINGS_COLUMNS,
 } from '../lib/ai-access.js'
 
 // Same key pair the api-routes tests use, so encrypted_ai_key decrypts.
@@ -122,6 +124,44 @@ describe('resolveAiAccess', () => {
       expect(access?.keySource).toBe('server')
       expect(access?.visionModel).toBe('gemini-3.6-pro')
     })
+  })
+})
+
+// The single settings loader (review T4-B3): the AI projection lives in ONE
+// place, so a missed column cannot silently degrade to the provider default
+// the way the seven hand-rolled SELECTs could.
+describe('loadUserAiSettings', () => {
+  function createDb(first: unknown) {
+    const firstFn = vi.fn().mockResolvedValue(first)
+    const bind = vi.fn().mockReturnValue({ first: firstFn })
+    const prepare = vi.fn().mockReturnValue({ bind })
+    return { db: { prepare } as unknown as D1Database, prepare, bind, firstFn }
+  }
+
+  it('selects exactly the owned AI projection and hands the row through', async () => {
+    const row = {
+      ai_provider: 'openai',
+      ai_base_url: null,
+      ai_model: 'gpt-5.1',
+      ai_vision_model: 'vision-model',
+      ai_thinking_level: 'low',
+      encrypted_ai_key: 'enc',
+    }
+    const { db, prepare, bind, firstFn } = createDb(row)
+
+    const settings = await loadUserAiSettings(db, 'u1')
+
+    expect(prepare).toHaveBeenCalledWith(
+      expect.stringContaining(`SELECT ${USER_AI_SETTINGS_COLUMNS} FROM user_settings`)
+    )
+    expect(bind).toHaveBeenCalledWith('u1')
+    expect(firstFn).toHaveBeenCalled()
+    expect(settings).toEqual(row)
+  })
+
+  it('returns null when the user has no settings row', async () => {
+    const { db } = createDb(null)
+    expect(await loadUserAiSettings(db, 'u2')).toBeNull()
   })
 })
 

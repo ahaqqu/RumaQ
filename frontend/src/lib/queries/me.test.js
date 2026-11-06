@@ -11,11 +11,17 @@ vi.mock('openapi-fetch', () => ({
   default: () => clientMock,
 }))
 
-const ok = (data) => ({ data, error: undefined, response: { ok: true, status: 200 } })
+// The response stub models the real fetch Response surface unwrap() reads —
+// status/ok plus the headers it inspects (Retry-After on 429s).
+const ok = (data) => ({
+  data,
+  error: undefined,
+  response: { ok: true, status: 200, headers: { get: () => null } },
+})
 const fail = (error, status = 500) => ({
   data: undefined,
   error,
-  response: { ok: false, status },
+  response: { ok: false, status, headers: { get: () => null } },
 })
 
 beforeEach(() => {
