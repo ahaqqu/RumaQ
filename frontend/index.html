@@ -8,9 +8,15 @@
       name="description"
       content="RumaQ — household shopping & inventory assistant. Track stock, plan purchases, and log receipts in one place."
     />
+    <!-- Favicon: denser standalone variant of BrandMark (frontend/src/components/icons.jsx)
+         — accent tile (30% radius) holding the lucide `sprout` glyph at 70% of the
+         tile with stroke-width 2 (lucide canonical), per owner call: at tab size the
+         component-parity version read thin with too much empty margin. Path data
+         stays in sync with the installed lucide-react (dist/esm/icons/sprout.mjs);
+         PNGs regenerate via scripts/generate-brand-icons.sh. -->
     <link
       rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231c77c4'/><path d='M16 7 7 14.2V24a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V14.2L16 7z' fill='none' stroke='%23fff' stroke-width='2' stroke-linejoin='round'/><path d='M16 15l1.2 2.8 2.8 1.2-2.8 1.2L16 23l-1.2-2.8L12 19l2.8-1.2z' fill='%23fff'/></svg>"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9.6' fill='%23245c43'/><g transform='translate(4.8 4.8) scale(0.93333)' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 9.536V7a4 4 0 0 1 4-4h1.5a.5.5 0 0 1 .5.5V5a4 4 0 0 1-4 4 4 4 0 0 0-4 4c0 2 1 3 1 5a5 5 0 0 1-1 3'/><path d='M4 9a5 5 0 0 1 8 4 5 5 0 0 1-8-4'/><path d='M5 21h14'/></g></svg>"
     />
     <title>RumaQ</title>
   </head>

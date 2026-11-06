@@ -1,6 +1,10 @@
 DELETE FROM plan_items;
 -- Haqita price data (global tables, migration 0007). plan_items references
--- price_observations, so these must go after plan_items.
+-- price_observations, so these must go after plan_items. Aliases (migration
+-- 0030) reference price_products — D1 enforces foreign keys, so they go
+-- first; canonical_index_state is a counter and is deliberately left alone
+-- (the version only has to be monotonic, never zero).
+DELETE FROM price_product_aliases;
 DELETE FROM price_observations;
 DELETE FROM price_products;
 DELETE FROM price_sources;

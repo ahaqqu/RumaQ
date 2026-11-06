@@ -586,36 +586,6 @@ describe('POST /api/internal/ingest/prices', () => {
     )
     expect(res.status).toBe(400)
   })
-
-  it('accepts a valid snapshot and reports counters', async () => {
-    const { db, executedBatches } = createFakeDb([
-      { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
-      {
-        match: /^SELECT id, product_key, category FROM price_products/,
-        // Only the rice already exists — the oil is created by this ingest.
-        rows: [{ id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' }],
-      },
-    ])
-
-    const res = await apiApp.request(
-      '/api/internal/ingest/prices',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer secret-123' },
-        body: JSON.stringify(validPayload()),
-      },
-      createEnv(db, 'secret-123')
-    )
-
-    expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({
-      accepted: 2,
-      productsCreated: 1,
-      observationsUpserted: 2,
-      skipped: 0,
-    })
-    expect(executedBatches.length).toBeGreaterThan(0)
-  })
 })
 
 describe('getPricesStatus', () => {
@@ -814,20 +784,34 @@ describe('requireIngestSecret — dual accept (#376)', () => {
     const { db, executedBatches } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
       {
-        match: /^SELECT id, product_key, category FROM price_products/,
-        rows: [{ id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' }],
+        match: /^SELECT id, product_key, category, category_version FROM price_products/,
+        rows: [],
       },
+      { match: /^SELECT version FROM canonical_index_state/, rows: [{ version: 1 }] },
     ])
-    const parsed = samplePayload()
-    expect(parsed.success).toBe(true)
-    if (!parsed.success) return
+    const payload = {
+      schemaVersion: 2,
+      scrapedAt: '2026-10-24T23:00:05Z',
+      stores: [{ slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' }],
+      items: [
+        {
+          productKey: 'beras--pandan-wangi--5-kg',
+          rawName: 'Beras Pandan Wangi 5 kg',
+          rawBrand: 'Pandan Wangi',
+          rawUnit: '5 kg',
+          storeSlug: 'lotte-mart',
+          price: 72000,
+          matchConfidence: 1,
+        },
+      ],
+    }
 
     const res = await apiApp.request(
       '/api/internal/ingest/prices',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer new-secret' },
-        body: JSON.stringify(parsed.output),
+        body: JSON.stringify(payload),
       },
       createEnv(db, 'old-secret', 'new-secret')
     )

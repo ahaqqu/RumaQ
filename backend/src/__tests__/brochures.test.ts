@@ -488,15 +488,15 @@ describe('sweepUnreferencedBrochures', () => {
     // one-year grace (since 2026-01-02) and only ages further, so it is
     // swept relative to any realistic now.
     const payload = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       scrapedAt: '2026-10-24T23:00:05Z',
       stores: [{ slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' }],
       items: [
         {
           productKey: 'beras--pandan-wangi--5-kg',
-          name: 'Beras Pandan Wangi 5 kg',
-          brand: 'Pandan Wangi',
-          unit: '5 kg',
+          rawName: 'Beras Pandan Wangi 5 kg',
+          rawBrand: 'Pandan Wangi',
+          rawUnit: '5 kg',
           storeSlug: 'lotte-mart',
           price: 72000,
           brochureUrl: '/api/brochures/lotte-mart/20250101/swept.jpg',
@@ -507,7 +507,11 @@ describe('sweepUnreferencedBrochures', () => {
     }
     const { db } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
-      { match: /^SELECT id, product_key FROM price_products/, rows: [] },
+      {
+        match: /^SELECT id, product_key, category, category_version FROM price_products/,
+        rows: [],
+      },
+      { match: /^SELECT version FROM canonical_index_state/, rows: [{ version: 1 }] },
     ])
     const brochures = createBrochuresStub()
     await brochures.put('lotte-mart/20250101/swept.jpg', pngBytes)
@@ -524,10 +528,20 @@ describe('sweepUnreferencedBrochures', () => {
     )
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({
+      schemaVersion: 2,
+      scrapedAt: '2026-10-24T23:00:05Z',
+      indexVersion: 1,
       accepted: 1,
+      skipped: 0,
       productsCreated: 1,
       observationsUpserted: 1,
-      skipped: 0,
+      products: [
+        {
+          productKey: 'beras--pandan-wangi--5-kg',
+          productId: expect.any(String),
+          status: 'created',
+        },
+      ],
     })
     // The sweep ran: the old unreferenced object is gone, the fresh one stays.
     expect(brochures.objects.has('lotte-mart/20250101/swept.jpg')).toBe(false)
@@ -536,15 +550,15 @@ describe('sweepUnreferencedBrochures', () => {
 
   it('a sweep failure is a logged no-op — the ingest response keeps its shape', async () => {
     const payload = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       scrapedAt: '2026-10-24T23:00:05Z',
       stores: [{ slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' }],
       items: [
         {
           productKey: 'beras--pandan-wangi--5-kg',
-          name: 'Beras Pandan Wangi 5 kg',
-          brand: 'Pandan Wangi',
-          unit: '5 kg',
+          rawName: 'Beras Pandan Wangi 5 kg',
+          rawBrand: 'Pandan Wangi',
+          rawUnit: '5 kg',
           storeSlug: 'lotte-mart',
           price: 72000,
           matchMethod: 'exact',
@@ -554,7 +568,11 @@ describe('sweepUnreferencedBrochures', () => {
     }
     const { db } = createFakeDb([
       { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
-      { match: /^SELECT id, product_key FROM price_products/, rows: [] },
+      {
+        match: /^SELECT id, product_key, category, category_version FROM price_products/,
+        rows: [],
+      },
+      { match: /^SELECT version FROM canonical_index_state/, rows: [{ version: 1 }] },
     ])
     const broken = createBrochuresStub()
     ;(broken as unknown as { list: () => Promise<never> }).list = () =>
@@ -571,10 +589,20 @@ describe('sweepUnreferencedBrochures', () => {
     )
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({
+      schemaVersion: 2,
+      scrapedAt: '2026-10-24T23:00:05Z',
+      indexVersion: 1,
       accepted: 1,
+      skipped: 0,
       productsCreated: 1,
       observationsUpserted: 1,
-      skipped: 0,
+      products: [
+        {
+          productKey: 'beras--pandan-wangi--5-kg',
+          productId: expect.any(String),
+          status: 'created',
+        },
+      ],
     })
   })
 })
