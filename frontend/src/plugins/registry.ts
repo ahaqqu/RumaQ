@@ -6,7 +6,7 @@
 // manifests.ts): it must never import a page or a route, and the provider
 // (context.jsx) reads entries from here so the composition stays one place.
 import { documentsCatalog } from './documents/catalog.js'
-import type { PluginCatalogEntry } from './types.js'
+import type { PluginCatalogEntry, PluginNavGroup } from './types.js'
 
 /** Registration order IS render order within a nav group — the documents
  * plugin is plugin #1, mirroring the server's PLUGIN_MANIFESTS ordering. */
@@ -24,8 +24,14 @@ export type CatalogPluginId = (typeof PLUGIN_CATALOG)[number]['id']
 /** The nav groups the shell actually renders plugin entries into (AppShell's
  * NAV / HOUSEHOLD_NAV / ADMIN_NAV groups). A catalog entry outside this set
  * would silently never render, so the provider folds on this list and
- * registry.test.js pins every entry's navGroup against it. */
-export const PLUGIN_NAV_GROUPS = ['main', 'household', 'admin'] as const
+ * registry.test.js pins every entry's navGroup against it. `satisfies` ties
+ * the list to the PluginNavGroup union it mirrors — the two fail tsc instead
+ * of drifting apart silently. */
+export const PLUGIN_NAV_GROUPS = [
+  'main',
+  'household',
+  'admin',
+] as const satisfies readonly PluginNavGroup[]
 
 const catalogById = new Map<string, PluginCatalogEntry>(
   PLUGIN_CATALOG.map((entry) => [entry.id, entry])

@@ -21,11 +21,12 @@ vi.mock('../lib/api', () => ({
 const user = { id: 'u1', email: 'a@b.com', name: 'Alice', isAdmin: false }
 
 function CatalogProbe() {
-  const { nav, isEnabled } = usePluginCatalog()
+  const { nav, navAll, isEnabled } = usePluginCatalog()
   return (
     <div data-testid="probe">
       {JSON.stringify({
         household: nav.household.map((entry) => entry.to),
+        allHousehold: navAll.household.map((entry) => entry.to),
         documentsEnabled: isEnabled('documents'),
       })}
     </div>
@@ -65,6 +66,22 @@ describe('PluginCatalogProvider', () => {
     renderCatalog()
     await waitFor(() => expect(probeState().documentsEnabled).toBe(false))
     expect(probeState().household).not.toContain('/documents')
+    // navAll stays unfiltered for the page-title lookup: a disabled plugin's
+    // route must still resolve to its real name, not the "Home" fallback.
+    expect(probeState().allHousehold).toContain('/documents')
+  })
+
+  it('drops malformed array ELEMENTS so a corrupt payload still fails open', async () => {
+    // A typed backend never sends these (api-schema: string[]), but the
+    // fail-open contract (plan §4.5) governs the payload, not the sender: a
+    // Set built from [123] would miss every string id and silently hide all
+    // plugin surfaces — the fail-closed posture the plan reserves for the
+    // server. Non-string elements are dropped before the Set; any surviving
+    // string ids keep working.
+    vi.mocked(getMe).mockResolvedValue({ user, enabledPlugins: [123, null, 'documents'] })
+    renderCatalog()
+    await waitFor(() => expect(probeState().documentsEnabled).toBe(true))
+    expect(probeState().household).toContain('/documents')
   })
 
   it('re-derives the catalog when the household-switch refetch lands (#436)', async () => {
