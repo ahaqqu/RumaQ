@@ -26,17 +26,18 @@ import {
   scrapeCommandCreateSchema,
   scrapeEventsPostSchema,
   scrapeFinishSchema,
+  validateIngestV2,
 } from '@rumaq/contract'
 import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { encryptAiKey, decryptAiKey, timingSafeEqualStrings } from '../lib/crypto.js'
+import { runReportSchema, getPricesStatus } from '../lib/ingest.js'
 import {
-  ingestPayloadSchema,
-  runReportSchema,
-  ingestPrices,
-  getPricesStatus,
-} from '../lib/ingest.js'
+  CanonicalIndexIntegrityError,
+  getCanonicalIndex,
+  ingestPricesV2,
+} from '../lib/ingest-v2.js'
 import {
   LATEST_OBSERVATION_SUBQUERY,
   LATEST_OBSERVATION_PREDICATE,
@@ -260,29 +261,52 @@ const requireIngestSecret: MiddlewareHandler<Env> = async (c, next) => {
   await next()
 }
 
-apiApp.post(
-  '/api/internal/ingest/prices',
-  requireIngestSecret,
-  sValidator('json', ingestPayloadSchema),
-  async (c) => {
-    const result = await ingestPrices(c.env.DB, c.req.valid('json'))
-    // Brochure retention sweep (issue #293): piggybacks on the ingest — the
-    // daily tick that is exactly when the referenced set changes — never a
-    // cron (a preview worker inheriting the trigger would sweep production
-    // from preview code). Best-effort: a sweep failure is a logged no-op and
-    // never fails the ingest response or alters its shape.
-    try {
-      if (c.env.BROCHURES) {
-        await sweepUnreferencedBrochures(c.env.DB, c.env.BROCHURES, {
-          log: (message) => console.log(message),
-        })
-      }
-    } catch (error) {
-      console.warn('[brochures] retention sweep failed:', error)
-    }
-    return c.json(result)
+apiApp.post('/api/internal/ingest/prices', requireIngestSecret, async (c) => {
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400)
   }
-)
+  const validated = validateIngestV2(body)
+  if (!validated.success) {
+    return c.json({ error: 'Validation failed', issues: validated.issues }, 400)
+  }
+  const result = await ingestPricesV2(c.env.DB, validated.output)
+  // Brochure retention sweep: piggybacks on the ingest — the daily tick that
+  // is exactly when the referenced set changes — never a cron (a preview
+  // worker inheriting the trigger would sweep production from preview code).
+  // Best-effort: a sweep failure is a logged no-op and never fails the
+  // ingest response or alters its shape.
+  try {
+    if (c.env.BROCHURES) {
+      await sweepUnreferencedBrochures(c.env.DB, c.env.BROCHURES, {
+        log: (message) => console.log(message),
+      })
+    }
+  } catch (error) {
+    console.warn('[brochures] retention sweep failed:', error)
+  }
+  return c.json(result, 200, { 'Cache-Control': 'no-store' })
+})
+
+// Read-only canonical snapshot for the scraper's match pass. The pipeline
+// caches it locally; this endpoint never reads observations or prices.
+// A stored row that cannot satisfy the contract is a typed failure: the log
+// carries the offending product, the client gets a stable data-free body
+// (contract §7 — never the valibot/internal message, the generic onError
+// path would echo err.message).
+apiApp.get('/api/internal/canonical-index', requireIngestSecret, async (c) => {
+  try {
+    const index = await getCanonicalIndex(c.env.DB)
+    return c.json(index, 200, { 'Cache-Control': 'no-store' })
+  } catch (error) {
+    if (!(error instanceof CanonicalIndexIntegrityError)) throw error
+    return c.json({ error: 'Canonical index does not match the contract' }, 500, {
+      'Cache-Control': 'no-store',
+    })
+  }
+})
 
 // Brochure image upload from the rumaq-scraper (issue #293): the scraper
 // holds no R2 credentials — this PUT rides the same bearer channel as the
