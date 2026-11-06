@@ -1024,6 +1024,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/plugins/{pluginId}/export': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Downloads one archive of one plugin's data for the ACTIVE household (owner-only; non-owners get 403) — the export-before-purge capability (plugin architecture ticket 6, #440, §3.4). Read-only: it never touches the purge machinery and stays available while a drain is in flight (the write gate pauses uploads, never reads). The archive is a stored (uncompressed) ZIP: the plugin's file bytes at their archive paths, a documents.csv and a files.csv with the full metadata (RFC 4180, UTF-8 + BOM, user-controlled cells guarded against spreadsheet formula execution), and a trailing manifest.json whose counts report what the stream delivered (a 0-byte entry where files.csv reports size_bytes > 0 marks bytes that were unavailable at export time; audit rows are internal receipts and are NOT included). Whole documents only — a document's files never split across archives — and at most 40 files per archive (the free plan's 50-subrequest cap: 5 D1 statements + 40 storage reads), so a larger vault chains sequential downloads via the X-Export-Next-Cursor response header: send that cursor back as ?cursor= until the header is absent. The cursor is bound to the issuing household (a foreign one is a 400). The chain is keyset-paginated, not a frozen snapshot: a document uploaded mid-chain is picked up by a later archive unless it commits in the same second as the cursor with a smaller id (the purge driver's known same-second class) — re-request the export to collect stragglers. Writes one plugin_exported lifecycle receipt per archive (owner as actor). No gating with purge: export early, purge whenever the household chooses. */
+    get: operations['getApiPluginsByPluginIdExport']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/auth/login': {
     parameters: {
       query?: never
@@ -4974,6 +4991,66 @@ export interface operations {
         content?: never
       }
       /** @description No purge is in flight (nothing to cancel) */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiPluginsByPluginIdExport: {
+    parameters: {
+      query?: {
+        /** @description The continuation cursor from a previous archive’s X-Export-Next-Cursor header — omit for the first archive */
+        cursor?: string
+      }
+      header?: never
+      path: {
+        pluginId: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK — the archive stream. X-Export-Next-Cursor carries the continuation cursor when another archive remains (absent = this was the last) */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/zip': string
+        }
+      }
+      /** @description Invalid or foreign-household export cursor */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only household owners can do that */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Household or plugin not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description The plugin does not declare the export capability */
       409: {
         headers: {
           [name: string]: unknown

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PluginFeatures } from './PluginFeatures.jsx'
 import {
   cancelPluginPurge,
+  fetchPluginExport,
   getPluginCatalog,
   requestPluginPurge,
   setPluginEnablement,
@@ -23,6 +24,7 @@ vi.mock('../lib/api', async (importOriginal) => ({
   setPluginEnablement: vi.fn(),
   requestPluginPurge: vi.fn(),
   cancelPluginPurge: vi.fn(),
+  fetchPluginExport: vi.fn(),
 }))
 
 // The server row the catalog endpoint answers for the documents plugin —
@@ -63,6 +65,7 @@ beforeEach(() => {
   vi.mocked(setPluginEnablement).mockReset()
   vi.mocked(requestPluginPurge).mockReset()
   vi.mocked(cancelPluginPurge).mockReset()
+  vi.mocked(fetchPluginExport).mockReset()
 })
 
 describe('PluginFeatures (settings catalog, issue #437)', () => {
@@ -329,5 +332,138 @@ describe('PluginFeatures — purge lifecycle (ticket 5, #439)', () => {
     })
     const { container } = renderSection(true)
     await waitFor(() => expect(container.textContent).toContain('plugins.purge.stateDone'))
+  })
+})
+
+// The export surface (ticket 6, #440): owner-only ghost action ABOVE the
+// danger purge button (§3.4's export-first routing), chained downloads for
+// a vault over the per-archive budget, inline alert on failure — the
+// AdminReview export's idiom, since a failed download has no other surface.
+// jsdom has no blob-URL store and never navigates on anchor.click(): both
+// edges are stubbed, and the download act is pinned via the click spy.
+describe('PluginFeatures — export action (ticket 6, #440)', () => {
+  let clickSpy
+  beforeEach(() => {
+    clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    URL.createObjectURL = vi.fn(() => 'blob:mock')
+    URL.revokeObjectURL = vi.fn()
+  })
+
+  const exportBlob = () => new Blob(['zip-bytes'], { type: 'application/zip' })
+
+  it('offers the owner the export action and the multi-part note; members get neither', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow()] })
+    const owner = renderSection(true)
+    await waitFor(() =>
+      expect(
+        [...owner.container.querySelectorAll('button')].some((b) =>
+          b.textContent.includes('plugins.export.action')
+        )
+      ).toBe(true)
+    )
+    expect(owner.container.textContent).toContain('plugins.export.note')
+    owner.unmount()
+
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow()] })
+    const member = renderSection(false)
+    await waitFor(() => expect(member.container.textContent).toContain('plugins.stateOn'))
+    expect(
+      [...member.container.querySelectorAll('button')].some((b) =>
+        b.textContent.includes('plugins.export.action')
+      )
+    ).toBe(false)
+    expect(member.container.textContent).not.toContain('plugins.export.note')
+  })
+
+  it('downloads the archive and follows the continuation cursor across parts', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow()] })
+    vi.mocked(fetchPluginExport)
+      .mockResolvedValueOnce({ blob: exportBlob(), nextCursor: 'cursor-part-2' })
+      .mockResolvedValueOnce({ blob: exportBlob(), nextCursor: null })
+    const { container } = renderSection(true)
+
+    const button = await waitFor(() => {
+      const btn = [...container.querySelectorAll('button')].find((b) =>
+        b.textContent.includes('plugins.export.action')
+      )
+      expect(btn).toBeTruthy()
+      return btn
+    })
+    fireEvent.click(button)
+
+    await waitFor(() => expect(fetchPluginExport).toHaveBeenCalledTimes(2))
+    expect(fetchPluginExport).toHaveBeenNthCalledWith(1, 'documents', undefined)
+    expect(fetchPluginExport).toHaveBeenNthCalledWith(2, 'documents', 'cursor-part-2')
+    await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(2))
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(2)
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2)
+    // The second part's download name carries the part index so the owner's
+    // downloads folder keeps the sequence ordered (stamp = today, UTC — the
+    // same `toISOString().slice(0, 10)` the handler builds).
+    const secondAnchor = clickSpy.mock.instances[1]
+    expect(secondAnchor.download).toBe(
+      `documents-export-${new Date().toISOString().slice(0, 10)}-part-2.zip`
+    )
+    // No alert — the sequence succeeded.
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('shows the inline alert on a failed download and stays silent otherwise', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow()] })
+    vi.mocked(fetchPluginExport).mockRejectedValue(new Error('boom'))
+    const { container } = renderSection(true)
+
+    const button = await waitFor(() => {
+      const btn = [...container.querySelectorAll('button')].find((b) =>
+        b.textContent.includes('plugins.export.action')
+      )
+      expect(btn).toBeTruthy()
+      return btn
+    })
+    fireEvent.click(button)
+    await waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull())
+    expect(container.textContent).toContain('plugins.export.errorGeneric')
+    // The button re-enables — the failure is retryable.
+    await waitFor(() => expect(button.disabled).toBe(false))
+  })
+
+  it('keeps the button pending for the whole chained download', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [documentsRow()] })
+    vi.mocked(fetchPluginExport).mockReturnValue(new Promise(() => {}))
+    const { container } = renderSection(true)
+
+    const button = await waitFor(() => {
+      const btn = [...container.querySelectorAll('button')].find((b) =>
+        b.textContent.includes('plugins.export.action')
+      )
+      expect(btn).toBeTruthy()
+      return btn
+    })
+    fireEvent.click(button)
+    await waitFor(() => expect(button.disabled).toBe(true))
+  })
+
+  it('stays available while a purge drain is in flight (reads stay open; export does not gate on purge)', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({
+      plugins: [
+        documentsRow({
+          purge: { state: 'running', requested_at: '2026-11-06 03:00:00', completed_at: null },
+        }),
+      ],
+    })
+    const { container } = renderSection(true)
+    await waitFor(() => expect(container.textContent).toContain('plugins.purge.stateRunning'))
+    // The purge action hides itself during the drain; the export does not —
+    // exporting what the drain has not reached yet is exactly the point.
+    expect(
+      [...container.querySelectorAll('button')].some((b) =>
+        b.textContent.includes('plugins.purge.action')
+      )
+    ).toBe(false)
+    expect(
+      [...container.querySelectorAll('button')].some((b) =>
+        b.textContent.includes('plugins.export.action')
+      )
+    ).toBe(true)
   })
 })

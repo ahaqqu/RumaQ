@@ -47,6 +47,7 @@ import { pluginGate } from '../gate.js'
 import type { PluginDeps, PluginRegistration } from '../types.js'
 import { documentsManifest } from './manifest.js'
 import { createDocumentsPurgeJob } from './purge.js'
+import { createDocumentsExportJob } from './export.js'
 import {
   REMIND_DAYS_MAX,
   REMIND_DAYS_MIN,
@@ -962,5 +963,10 @@ export function createDocumentsPlugin(deps: PluginDeps): PluginRegistration {
     // job must refuse (P1-A2, PR #474 review).
     purge: createDocumentsPurgeJob(storage),
     purgeBudgetFloor: DOCUMENT_MAX_FILES,
+    // The export job (ticket 6, #440) rides the registration the same way:
+    // the owner-only catalog route dispatches through PluginExportJob —
+    // core owns the authz and the file budget, the plugin owns the archive
+    // (its index, its port). Read-only by design; no gating with the purge.
+    export: createDocumentsExportJob(storage),
   }
 }

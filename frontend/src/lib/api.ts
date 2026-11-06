@@ -529,6 +529,28 @@ export function cancelPluginPurge(pluginId: string): Promise<unknown> {
   )
 }
 
+// The per-plugin archive export (ticket 6, #440): an owner-only ZIP download
+// of the plugin's data for the ACTIVE household — the export-before-purge
+// capability. Hand-written like fetchReviewExport: the typed client's JSON
+// unwrap has no blob path, and archive bytes must land in a Blob, never be
+// parsed as JSON. A vault over the per-archive file budget chains sequential
+// archives: the response's X-Export-Next-Cursor header carries the
+// continuation cursor — when present, send it back as ?cursor= until the
+// header is absent. The cursor is bound to the issuing household; a foreign
+// one is a 400.
+export async function fetchPluginExport(
+  pluginId: string,
+  cursor?: string,
+  signal?: AbortSignal
+): Promise<{ blob: Blob; nextCursor: string | null }> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
+  const res = await fetch(`/api/plugins/${pluginId}/export${query}`, { signal })
+  if (!res.ok) {
+    throw new ApiError(`Export failed: ${res.status}`, res.status)
+  }
+  return { blob: await res.blob(), nextCursor: res.headers.get('X-Export-Next-Cursor') }
+}
+
 // ---------------------------------------------------------------------------
 // Document vault (ahaqqu/RumaQ#422 rework of the #388 MVP) — private
 // per-household documents with free-text names and N files each. Metadata

@@ -709,6 +709,11 @@
       "purge": "Hapus permanen",
       "export": "Ekspor"
     },
+    "export": {
+      "action": "Unduh arsip",
+      "note": "Dokumen dan berkas diunduh sebagai arsip zip beserta metadatanya. Brankas besar diunduh dalam beberapa bagian \u2014 simpan semuanya.",
+      "errorGeneric": "Tidak bisa mengunduh arsip. Coba lagi."
+    },
     "purge": {
       "action": "Hapus semua data",
       "dialogTitle": "Hapus semua data {{feature}}",
