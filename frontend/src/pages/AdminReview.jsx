@@ -20,6 +20,10 @@ import { IconWarning, IconReview, IconDownload } from '../components/icons.jsx'
 
 const FILTERS = ['pending', 'approved', 'rejected', 'all']
 
+// The two column labels (#480) share one treatment; their ids are the
+// aria-labelledby targets every row's sides point at.
+const SIDE_LABEL_CLASS = 'text-xs font-semibold text-text-muted uppercase tracking-wide'
+
 function formatClock(iso, locale) {
   return new Date(iso).toLocaleString(locale, {
     day: '2-digit',
@@ -108,6 +112,20 @@ async function copyItemId(id) {
 // column labels ("Matched item" / "Catalog entry (last seen)") moved into
 // ONE list header (#480); each side is named by that header via
 // aria-labelledby instead of repeating the label per card.
+//
+// Thermos B1 (#480): the header labels only line up with the rows if both
+// sides use the same column proportions, so the two-column shell lives here
+// once instead of being repeated at every call site.
+function SideColumns({ className, left, right }) {
+  return (
+    <div className={cn('flex items-stretch gap-4', className)}>
+      <div className="min-w-0 flex-1">{left}</div>
+      <div className="self-stretch w-px bg-border" aria-hidden="true" />
+      <div className="min-w-0 flex-1">{right}</div>
+    </div>
+  )
+}
+
 // Issue #380: each side also carries its evidence block — the page image
 // behind the extraction, the retailer page it came from, and (right side)
 // when the entry was last seen.
@@ -124,7 +142,7 @@ function SideCard({
 }) {
   const { t, i18n } = useTranslation()
   return (
-    <div role="group" aria-labelledby={labelledBy} className="min-w-0 flex-1">
+    <div role="group" aria-labelledby={labelledBy}>
       <div className="text-sm font-medium leading-snug">{name}</div>
       {/* #480: no more "— · —". Both missing reads as one muted sentence;
           one value renders alone; both keep the brand · unit pair. */}
@@ -184,43 +202,48 @@ function ReviewRow({
   const itemPageUrl = externalPageUrl(item.itemSourceUrl)
   const entryImageUrl = servableImage(item.entryBrochureUrl)
   const entryPageUrl = externalPageUrl(item.entrySourceUrl)
+  const shortId = `#${item.id.slice(0, 8)}`
   return (
     <div className="border-b border-border last:border-b-0 px-5 py-4">
-      <div className="flex items-stretch gap-4">
-        <SideCard
-          labelledBy={itemSideLabelId}
-          name={item.itemName}
-          brand={item.itemBrand}
-          unit={item.itemUnit}
-          price={item.itemPrice}
-          store={sourceNames[item.itemStore] ?? item.itemStore}
-          imageUrl={itemImageUrl}
-          sourceUrl={itemPageUrl}
-        />
-        <div className="self-stretch w-px bg-border" aria-hidden="true" />
-        <SideCard
-          labelledBy={entrySideLabelId}
-          name={item.entryName}
-          brand={item.entryBrand}
-          unit={item.entryUnit}
-          price={item.entryPrice}
-          store={sourceNames[item.entryStore] ?? item.entryStore}
-          imageUrl={entryImageUrl}
-          sourceUrl={entryPageUrl}
-          observedAt={item.entryObservedAt ?? null}
-        />
-      </div>
+      <SideColumns
+        left={
+          <SideCard
+            labelledBy={itemSideLabelId}
+            name={item.itemName}
+            brand={item.itemBrand}
+            unit={item.itemUnit}
+            price={item.itemPrice}
+            store={sourceNames[item.itemStore] ?? item.itemStore}
+            imageUrl={itemImageUrl}
+            sourceUrl={itemPageUrl}
+          />
+        }
+        right={
+          <SideCard
+            labelledBy={entrySideLabelId}
+            name={item.entryName}
+            brand={item.entryBrand}
+            unit={item.entryUnit}
+            price={item.entryPrice}
+            store={sourceNames[item.entryStore] ?? item.entryStore}
+            imageUrl={entryImageUrl}
+            sourceUrl={entryPageUrl}
+            observedAt={item.entryObservedAt ?? null}
+          />
+        }
+      />
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-text-muted">
         {/* #480: the short reference id, full UUID in the title, click to
-            copy it for a conversation ("that #31b35444 one"). */}
+            copy it for a conversation ("that #31b35444 one"). The label
+            carries the short id too (WCAG 2.5.3 label-in-name). */}
         <button
           type="button"
           onClick={() => copyItemId(item.id)}
           title={item.id}
-          aria-label={t('review.copyItemId')}
+          aria-label={t('review.copyItemId', { id: shortId })}
           className="font-mono text-text-muted hover:text-text hover:underline"
         >
-          #{item.id.slice(0, 8)}
+          {shortId}
         </button>
         <Chip variant="default" title={t('review.confidenceHint')}>
           {t('review.confidence')} {Math.round(item.confidence * 100)}%
@@ -416,26 +439,20 @@ export function AdminReview() {
           <PanelBody className="!py-0 !px-0">
             <div className="flex flex-col">
               {/* #480: the two side labels live here once, in the same
-                  two-column proportions as each row (flex + w-px divider). */}
-              <div className="flex items-stretch gap-4 border-b border-border px-5 py-3">
-                <div className="min-w-0 flex-1">
-                  <span
-                    id={itemSideLabelId}
-                    className="text-xs font-semibold text-text-muted uppercase tracking-wide"
-                  >
+                  two-column proportions as each row (SideColumns). */}
+              <SideColumns
+                className="border-b border-border px-5 py-3"
+                left={
+                  <span id={itemSideLabelId} className={SIDE_LABEL_CLASS}>
                     {t('review.matchedItem')}
                   </span>
-                </div>
-                <div className="self-stretch w-px bg-border" aria-hidden="true" />
-                <div className="min-w-0 flex-1">
-                  <span
-                    id={entrySideLabelId}
-                    className="text-xs font-semibold text-text-muted uppercase tracking-wide"
-                  >
+                }
+                right={
+                  <span id={entrySideLabelId} className={SIDE_LABEL_CLASS}>
                     {t('review.catalogEntry')}
                   </span>
-                </div>
-              </div>
+                }
+              />
               {items.map((item) => (
                 <ReviewRow
                   key={item.id}

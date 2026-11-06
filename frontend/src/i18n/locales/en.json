@@ -786,7 +786,7 @@
     "undo": "Undo",
     "matchedItem": "Matched item",
     "catalogEntry": "Catalog entry (last seen)",
-    "copyItemId": "Copy item id",
+    "copyItemId": "Copy item id {{id}}",
     "noBrandUnit": "No brand or unit recorded",
     "reasonPriceRatio": "Price ratio",
     "reasonVerifierUnresolved": "Verifier unresolved",

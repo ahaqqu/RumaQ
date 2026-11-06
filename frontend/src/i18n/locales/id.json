@@ -786,7 +786,7 @@
     "undo": "Batalkan",
     "matchedItem": "Item yang cocok",
     "catalogEntry": "Entri katalog (terakhir terlihat)",
-    "copyItemId": "Salin id item",
+    "copyItemId": "Salin id item {{id}}",
     "noBrandUnit": "Merek atau unit tidak tercatat",
     "reasonPriceRatio": "Rasio harga",
     "reasonVerifierUnresolved": "Verifier tidak tuntas",

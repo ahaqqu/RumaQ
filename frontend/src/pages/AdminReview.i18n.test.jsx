@@ -172,10 +172,18 @@ describe('AdminReview — initialized i18n copy (issue #480)', () => {
     expect(container.textContent).not.toContain('— · —')
   })
 
+  it('names the copy button with the visible short id (label-in-name, thermos A2)', () => {
+    const { container } = renderAdmin()
+    const idButton = container.querySelector(`button[title="${reviewItem.id}"]`)
+    expect(idButton.textContent).toBe('#31b35444')
+    // The accessible name must CONTAIN the visible text — not replace it.
+    expect(idButton.getAttribute('aria-label')).toBe('Copy item id #31b35444')
+  })
+
   it('carries the Indonesian rubric, why-review line, and fallback copy', () => {
     expect(id.review.decisionRubric).toBe(ID_RUBRIC)
     expect(id.review.noBrandUnit).toBe('Merek atau unit tidak tercatat')
-    expect(id.review.copyItemId).toBe('Salin id item')
+    expect(id.review.copyItemId).toBe('Salin id item {{id}}')
     expect(id.review.whyReview).toBe(ID_WHY_REVIEW)
     expect(id.review.confidence).toBe('Keyakinan cocok')
     expect(id.review.confidenceHint).toBe(ID_CONFIDENCE_HINT)

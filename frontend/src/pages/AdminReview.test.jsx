@@ -378,7 +378,13 @@ describe('AdminReview', () => {
       expect(idButton).not.toBeNull()
       expect(idButton.textContent).toBe('#31b35444')
       expect(idButton.className).toContain('font-mono')
-      // The accessible name comes from i18n, not the bare fragment.
+      // Keyboard reachable: a real button, not a click-only span (thermos A2).
+      expect(idButton.tagName).toBe('BUTTON')
+      expect(idButton.getAttribute('type')).toBe('button')
+      // The accessible name comes from i18n, not the bare fragment. Here the
+      // suite's raw-key t() ignores interpolation; the real EN name (which
+      // carries the visible short id, WCAG 2.5.3) is pinned in
+      // AdminReview.i18n.test.jsx.
       expect(idButton.getAttribute('aria-label')).toBe('review.copyItemId')
     })
 
