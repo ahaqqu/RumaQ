@@ -11,6 +11,7 @@ import {
   useDeleteDocument,
   useDeleteDocumentFile,
   useUpdateDocumentExpiry,
+  useExtractDocumentExpiry,
 } from '../lib/queries/index.js'
 import {
   ApiError,
@@ -38,6 +39,7 @@ import {
   IconCheck,
   IconEye,
   IconCalendarBlank,
+  IconSpark,
 } from '../components/icons.jsx'
 
 // Error vocabulary mirrors the backend's documents app: the status picks the
@@ -49,7 +51,29 @@ function documentErrorKey(error) {
   if (status === 413) return 'documents.errorTooLarge'
   if (status === 415) return 'documents.errorType'
   if (status === 409) return 'documents.errorTooManyFiles'
+  // The read-date OCR (#433): 402 = no AI provider configured (Settings), a
+  // 502 the provider/answer failed — both keep the user in control.
+  if (status === 402) return 'documents.errorAiNotConfigured'
+  if (status === 502) return 'documents.errorOcr'
+  // Rate-limited (the upload and OCR limiters both key per user and send
+  // Retry-After): the copy says to wait instead of inviting an immediate
+  // retry into the same window (review T4-B6).
+  if (status === 429) return 'documents.errorSlowDown'
   return 'documents.errorGeneric'
+}
+
+// The interpolated form of the mapping above: most statuses carry no value,
+// but a 429's Retry-After is worth surfacing — the user should know when to
+// come back (review T4-B6). Errors thrown by code paths that never parse
+// headers (test mocks, the blob fetch) have no retryAfterSeconds and fall
+// back to the plain slow-down copy.
+function documentErrorCopy(t, error) {
+  const key = documentErrorKey(error)
+  const seconds = error instanceof ApiError ? error.retryAfterSeconds : null
+  if (key === 'documents.errorSlowDown' && seconds != null) {
+    return t('documents.errorSlowDownRetry', { seconds })
+  }
+  return t(key)
 }
 
 function formatBytes(bytes, language) {
@@ -133,20 +157,34 @@ function PickedFiles({ picked, onLabel, onRemove, language }) {
   )
 }
 
+// The exact mime trio the expiry-OCR endpoint accepts — mirrors
+// EXPIRY_OCR_MIME_TYPES in backend/src/lib/document-ocr.ts (review T4-B4).
+// Deliberately NOT a broad /^image\//: a future vault image type must not
+// show a "Read date" button whose call answers 415. The two lists are
+// independent text (frontend cannot import backend lib code); keep them in
+// lockstep.
+const EXPIRY_OCR_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
 // One file inside its document: name, optional label, size, and the per-file
 // actions (view / download / delete — the delete is the same two-step inline
-// confirm the document row uses).
+// confirm the document row uses). OCR-readable files also get the OPT-IN
+// read-date action (#433): the backend OCRs the image with the user's own AI
+// provider and the suggestion prefills the expiry editor — the user still
+// saves.
 function FileRow({
   file,
   onView,
   onDownload,
   onDelete,
+  onReadDate,
+  readDateBusy,
   confirmOpen,
   onToggleConfirm,
   busy,
   language,
 }) {
   const { t } = useTranslation()
+  const ocrSupported = EXPIRY_OCR_IMAGE_TYPES.has(file.content_type)
   return (
     <div className="flex items-center gap-2 pl-11 py-1.5">
       <div className="min-w-0 flex-1">
@@ -191,6 +229,21 @@ function FileRow({
           >
             <IconDownload size={15} />
           </Button>
+          {ocrSupported && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onReadDate}
+              disabled={readDateBusy}
+              aria-label={`${t('documents.readDate')}: ${file.file_name}`}
+              data-testid="read-date"
+            >
+              <IconSpark size={15} />
+              <span className="hidden sm:inline">
+                {readDateBusy ? t('documents.readingDate') : t('documents.readDate')}
+              </span>
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -213,6 +266,8 @@ function DocumentRow({
   onViewFile,
   onDownloadFile,
   onDeleteFile,
+  onReadDate,
+  readDateFileKey,
   onDeleteDoc,
   onEditExpiry,
   fileConfirmKey,
@@ -308,6 +363,8 @@ function DocumentRow({
               onView={() => onViewFile(doc, file)}
               onDownload={() => onDownloadFile(doc, file)}
               onDelete={() => onDeleteFile(doc, file)}
+              onReadDate={() => onReadDate(doc, file)}
+              readDateBusy={readDateFileKey === `${doc.id}:${file.id}`}
               confirmOpen={fileConfirmKey === `${doc.id}:${file.id}`}
               onToggleConfirm={() => onToggleFileConfirm(`${doc.id}:${file.id}`)}
               busy={removeFilePending}
@@ -362,6 +419,7 @@ export function Documents() {
   const remove = useDeleteDocument()
   const removeFile = useDeleteDocumentFile()
   const updateExpiry = useUpdateDocumentExpiry()
+  const extractExpiry = useExtractDocumentExpiry()
 
   // Create draft state — its own form, like the Household add form. picked
   // files carry an optional per-file label; the create call takes the FIRST
@@ -381,6 +439,9 @@ export function Documents() {
   // The #426 expiry editor: which document is being edited and its draft.
   const [expiryEditingId, setExpiryEditingId] = useState(null)
   const [expiryDraft, setExpiryDraft] = useState({ expiresOn: '', remindDays: '' })
+  // The #433 read-date action: which file is being OCR'd (busy flag) — an
+  // explicit per-file call, never automatic (cost control + consent).
+  const [readDateFileKey, setReadDateFileKey] = useState(null)
 
   const openExpiryEdit = (doc) => {
     setFeedback(null)
@@ -395,6 +456,33 @@ export function Documents() {
   const closeExpiryEdit = () => {
     setExpiryEditingId(null)
     setExpiryDraft({ expiresOn: '', remindDays: '' })
+  }
+
+  // The opt-in read-date action (#433): OCR the file with the user's own AI
+  // provider, then prefill the expiry editor with the SUGGESTION. The model
+  // never writes — the date only persists when the user saves the editor
+  // (saveExpiry → PATCH). A "no date found" answer is feedback, not an error.
+  const readDateFromFile = async (doc, file) => {
+    setFeedback(null)
+    setActionError(null)
+    setReadDateFileKey(`${doc.id}:${file.id}`)
+    try {
+      const result = await extractExpiry.mutateAsync({ documentId: doc.id, fileId: file.id })
+      if (result?.expires_on) {
+        setExpiryEditingId(doc.id)
+        setExpiryDraft({
+          expiresOn: result.expires_on,
+          remindDays: doc.remind_days_before ?? DOCUMENT_DEFAULT_REMIND_DAYS,
+        })
+        setFeedback(t('documents.expiryRead', { date: result.expires_on, name: file.file_name }))
+      } else {
+        setFeedback(t('documents.expiryReadNone', { name: file.file_name }))
+      }
+    } catch (err) {
+      setActionError(documentErrorCopy(t, err))
+    } finally {
+      setReadDateFileKey(null)
+    }
   }
 
   // Save the expiry draft: a cleared date ALWAYS sends expires_on: null — the
@@ -435,7 +523,7 @@ export function Documents() {
       closeExpiryEdit()
       setFeedback(t('documents.expirySaved', { name: doc.name }))
     } catch (err) {
-      setActionError(t(documentErrorKey(err)))
+      setActionError(documentErrorCopy(t, err))
     }
   }
 
@@ -512,7 +600,7 @@ export function Documents() {
       setActionError(null)
       onDone()
     } catch (err) {
-      setActionError(t(documentErrorKey(err)))
+      setActionError(documentErrorCopy(t, err))
     } finally {
       setProgress(null)
       setBusy(false)
@@ -558,7 +646,7 @@ export function Documents() {
         },
       })
     } catch (err) {
-      setActionError(t(documentErrorKey(err)))
+      setActionError(documentErrorCopy(t, err))
     } finally {
       setBusy(false)
     }
@@ -600,7 +688,7 @@ export function Documents() {
       // in-memory copy the browser is already writing out.
       setTimeout(() => URL.revokeObjectURL(url), 10_000)
     } catch (err) {
-      setActionError(t(documentErrorKey(err)))
+      setActionError(documentErrorCopy(t, err))
     }
   }
 
@@ -615,7 +703,7 @@ export function Documents() {
         },
         onError: (err) => {
           setConfirmingDocId(null)
-          setActionError(t(documentErrorKey(err)))
+          setActionError(documentErrorCopy(t, err))
         },
       }
     )
@@ -632,7 +720,7 @@ export function Documents() {
         },
         onError: (err) => {
           setFileConfirmKey(null)
-          setActionError(t(documentErrorKey(err)))
+          setActionError(documentErrorCopy(t, err))
         },
       }
     )
@@ -885,6 +973,8 @@ export function Documents() {
                     }}
                     onDownloadFile={download}
                     onDeleteFile={(d, file) => confirmDeleteFile(d, file)}
+                    onReadDate={readDateFromFile}
+                    readDateFileKey={readDateFileKey}
                     onDeleteDoc={() => confirmDeleteDoc(doc)}
                     fileConfirmKey={fileConfirmKey}
                     onToggleFileConfirm={(key) =>

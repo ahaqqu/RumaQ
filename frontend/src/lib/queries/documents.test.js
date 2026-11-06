@@ -9,6 +9,7 @@ import {
   useDeleteDocument,
   useDeleteDocumentFile,
   useUpdateDocumentExpiry,
+  useExtractDocumentExpiry,
   documentsQueryKey,
 } from './documents.js'
 import {
@@ -18,6 +19,7 @@ import {
   deleteDocument,
   deleteDocumentFile,
   updateDocumentExpiry,
+  extractDocumentExpiry,
 } from '../api'
 
 vi.mock('../api', () => ({
@@ -27,6 +29,7 @@ vi.mock('../api', () => ({
   deleteDocument: vi.fn(),
   deleteDocumentFile: vi.fn(),
   updateDocumentExpiry: vi.fn(),
+  extractDocumentExpiry: vi.fn(),
 }))
 
 function createWrapper(queryClient) {
@@ -295,5 +298,33 @@ describe('useUpdateDocumentExpiry', () => {
         expect.objectContaining({ queryKey: ['documents'] })
       )
     )
+  })
+})
+
+// The #433 read-date OCR: a pure read over stored bytes — the suggestion
+// rides back as data, and the vault cache is deliberately NOT invalidated
+// (only the user-confirmed PATCH above changes vault state).
+describe('useExtractDocumentExpiry', () => {
+  let queryClient
+
+  beforeEach(() => {
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    vi.clearAllMocks()
+  })
+
+  it('posts to the per-file extraction endpoint and returns the suggestion', async () => {
+    extractDocumentExpiry.mockResolvedValue({ expires_on: '2031-05-20', model: 'vision-model' })
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+
+    const { result } = renderHook(() => useExtractDocumentExpiry(), {
+      wrapper: createWrapper(queryClient),
+    })
+    await act(async () => result.current.mutate({ documentId: 'doc-1', fileId: 'file-1' }))
+
+    expect(extractDocumentExpiry).toHaveBeenCalledWith('doc-1', 'file-1')
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(result.current.data).toEqual({ expires_on: '2031-05-20', model: 'vision-model' })
+    // No invalidation: the extraction itself writes nothing server-side.
+    expect(invalidateSpy).not.toHaveBeenCalled()
   })
 })

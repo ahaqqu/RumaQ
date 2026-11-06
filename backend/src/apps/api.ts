@@ -88,8 +88,10 @@ import {
 } from '../lib/receipts.js'
 import { extractReceiptItems, usageCollector, type TokenUsage } from '../lib/ai.js'
 import {
+  loadUserAiSettings,
   resolveAiAccess,
   recordAiUsageEvent,
+  USER_AI_SETTINGS_COLUMNS,
   type AiAccess,
   type UserAiSettings,
 } from '../lib/ai-access.js'
@@ -977,10 +979,12 @@ apiApp.get(
     },
   }),
   async (c) => {
+    // The AI column half comes from USER_AI_SETTINGS_COLUMNS (T4-B3) — this
+    // serializer does not own the AI projection.
     const settings = await c.env.DB.prepare(
-      `SELECT motion_preference, language, ai_provider, ai_base_url, ai_model,
-               ai_thinking_level, persona_user_role, persona_ai_role, persona_enabled,
-               theme_hue, active_household_id, encrypted_ai_key
+      `SELECT motion_preference, language, ${USER_AI_SETTINGS_COLUMNS},
+               persona_user_role, persona_ai_role,
+               persona_enabled, theme_hue, active_household_id
         FROM user_settings WHERE user_id = ?`
     )
       .bind(c.get('userId'))
@@ -990,6 +994,7 @@ apiApp.get(
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_vision_model: string | null
         ai_thinking_level: string | null
         persona_user_role: string | null
         persona_ai_role: string | null
@@ -1014,6 +1019,7 @@ apiApp.get(
       ai_provider: settings?.ai_provider ?? null,
       ai_base_url: settings?.ai_base_url ?? null,
       ai_model: settings?.ai_model ?? null,
+      ai_vision_model: settings?.ai_vision_model ?? null,
       ai_thinking_level: settings?.ai_thinking_level ?? null,
       persona_user_role: settings?.persona_user_role ?? null,
       persona_ai_role: settings?.persona_ai_role ?? null,
@@ -1049,6 +1055,12 @@ apiApp.patch(
               ai_key: { type: 'string', minLength: 1 },
               ai_base_url: { type: 'string', maxLength: 500 },
               ai_model: { type: 'string', maxLength: 200 },
+              ai_vision_model: {
+                type: 'string',
+                maxLength: 200,
+                description:
+                  'Vision model for vault document OCR (issue #433); empty/omitted falls back to ai_model',
+              },
               ai_thinking_level: { type: 'string', enum: ['low', 'medium', 'high', ''] },
               persona_user_role: { type: 'string' },
               persona_ai_role: { type: 'string' },
@@ -1112,6 +1124,13 @@ apiApp.patch(
       updates.push('ai_model = ?')
       params.push(trimmed === '' ? null : trimmed)
     }
+    if (fields.ai_vision_model !== undefined) {
+      const trimmed = fields.ai_vision_model.trim()
+      updates.push('ai_vision_model = ?')
+      // Empty string clears the field (the ai_model rule): no explicit vision
+      // model means the OCR path falls back to ai_model.
+      params.push(trimmed === '' ? null : trimmed)
+    }
     if (fields.ai_thinking_level !== undefined) {
       updates.push('ai_thinking_level = ?')
       params.push(fields.ai_thinking_level === '' ? null : fields.ai_thinking_level)
@@ -1150,10 +1169,11 @@ apiApp.patch(
         .run()
     }
 
+    // Same USER_AI_SETTINGS_COLUMNS half as the GET (T4-B3).
     const settings = await c.env.DB.prepare(
-      `SELECT motion_preference, language, ai_provider, ai_base_url, ai_model,
-              ai_thinking_level, persona_user_role, persona_ai_role, persona_enabled,
-              theme_hue, encrypted_ai_key
+      `SELECT motion_preference, language, ${USER_AI_SETTINGS_COLUMNS},
+              persona_user_role, persona_ai_role,
+              persona_enabled, theme_hue
         FROM user_settings WHERE user_id = ?`
     )
       .bind(c.get('userId'))
@@ -1163,6 +1183,7 @@ apiApp.patch(
         ai_provider: string | null
         ai_base_url: string | null
         ai_model: string | null
+        ai_vision_model: string | null
         ai_thinking_level: string | null
         persona_user_role: string | null
         persona_ai_role: string | null
@@ -1177,6 +1198,7 @@ apiApp.patch(
       ai_provider: settings?.ai_provider ?? null,
       ai_base_url: settings?.ai_base_url ?? null,
       ai_model: settings?.ai_model ?? null,
+      ai_vision_model: settings?.ai_vision_model ?? null,
       ai_thinking_level: settings?.ai_thinking_level ?? null,
       persona_user_role: settings?.persona_user_role ?? null,
       persona_ai_role: settings?.persona_ai_role ?? null,
@@ -1374,12 +1396,7 @@ apiApp.get(
     const userId = c.get('userId')
     const today = new Date().toISOString().slice(0, 10)
 
-    const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key
-        FROM user_settings WHERE user_id = ?`
-    )
-      .bind(userId)
-      .first<UserAiSettings>()
+    const settings = await loadUserAiSettings(c.env.DB, userId)
 
     // Resolved fresh so provider/key_source always reflect the user's current
     // configuration, not the state when past events were recorded.
@@ -1618,22 +1635,21 @@ apiApp.post(
     const householdId = c.get('householdId')
     const { message, history } = c.req.valid('json')
 
+    // The AI half rides USER_AI_SETTINGS_COLUMNS (T4-B3); the persona fields
+    // are chat-specific extras appended by this call site.
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key,
+      `SELECT ${USER_AI_SETTINGS_COLUMNS},
               persona_enabled, persona_user_role, persona_ai_role
          FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
-      .first<{
-        ai_provider: string | null
-        ai_base_url: string | null
-        ai_model: string | null
-        ai_thinking_level: string | null
-        encrypted_ai_key: string | null
-        persona_enabled: number | null
-        persona_user_role: string | null
-        persona_ai_role: string | null
-      }>()
+      .first<
+        UserAiSettings & {
+          persona_enabled: number | null
+          persona_user_role: string | null
+          persona_ai_role: string | null
+        }
+      >()
 
     const access = await resolveAiAccess(c.env, settings)
     if (!access) {
@@ -1809,18 +1825,7 @@ apiApp.post(
       return c.json({ error: validationError }, 400)
     }
 
-    const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key
-        FROM user_settings WHERE user_id = ?`
-    )
-      .bind(userId)
-      .first<{
-        ai_provider: string | null
-        ai_base_url: string | null
-        ai_model: string | null
-        ai_thinking_level: string | null
-        encrypted_ai_key: string | null
-      }>()
+    const settings = await loadUserAiSettings(c.env.DB, userId)
 
     const access = await resolveAiAccess(c.env, settings)
     if (!access) {
@@ -3835,19 +3840,14 @@ apiApp.post(
     const userId = c.get('userId')
     const householdId = c.get('householdId')
 
+    // The AI half rides USER_AI_SETTINGS_COLUMNS (T4-B3); currency is a
+    // plan-generation-specific extra appended by this call site.
     const settings = await c.env.DB.prepare(
-      `SELECT ai_provider, ai_base_url, ai_model, ai_thinking_level, encrypted_ai_key, currency
+      `SELECT ${USER_AI_SETTINGS_COLUMNS}, currency
         FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
-      .first<{
-        ai_provider: string | null
-        ai_base_url: string | null
-        ai_model: string | null
-        ai_thinking_level: string | null
-        encrypted_ai_key: string | null
-        currency: string | null
-      }>()
+      .first<UserAiSettings & { currency: string | null }>()
 
     const access = await resolveAiAccess(c.env, settings)
     if (!access) {

@@ -55,7 +55,13 @@ export function ensureVaultKey(storageKey: string): void {
   }
 }
 
-/** Audit actions (#422 vocabulary, widened by #426): document-level + file-scoped records. */
+/**
+ * Audit actions (#422 vocabulary, widened by #426, then #433): document-level
+ * + file-scoped records. 'ocr' marks the expiry read that ships the file's
+ * bytes to the caller's AI provider (migration 0034) — kept distinct from
+ * 'view' so the audit trail can tell a household preview from a third-party
+ * disclosure.
+ */
 export type DocumentAction =
   | 'upload' // document create (first file rides in the same batch)
   | 'view' // inline byte stream, per file
@@ -64,6 +70,7 @@ export type DocumentAction =
   | 'file_add' // file added to an existing document
   | 'file_delete' // single file removed
   | 'update' // metadata edit (the #426 expiry PATCH)
+  | 'ocr' // expiry read sent to the user's AI provider (#433)
 
 export type DocumentRow = {
   id: string
@@ -1029,9 +1036,12 @@ export async function deleteDocument(
 }
 
 /**
- * One audit record for a served byte stream — 'view' for inline, 'download'
- * for attachment (the route picks by disposition and calls this). Per file
- * since #422: the record names the exact file.
+ * One audit record for a byte access — 'view' for inline, 'download' for
+ * attachment (the route picks by disposition and calls this), and 'ocr' for
+ * the expiry read that ships the bytes to the user's AI provider (#433,
+ * review T4-A1: the read is audited like every other byte access, and the
+ * action keeps the third-party disclosure distinct from a household preview).
+ * Per file since #422: the record names the exact file.
  */
 export async function recordDocumentAccess(
   db: D1Database,
@@ -1040,7 +1050,7 @@ export async function recordDocumentAccess(
     fileId: string
     householdId: string
     actorUserId: string
-    action: 'view' | 'download'
+    action: 'view' | 'download' | 'ocr'
   }
 ): Promise<void> {
   await insertAuditStatement(db, {

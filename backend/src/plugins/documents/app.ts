@@ -48,6 +48,7 @@ import type { PluginDeps, PluginRegistration } from '../types.js'
 import { documentsManifest } from './manifest.js'
 import { createDocumentsPurgeJob } from './purge.js'
 import { createDocumentsExportJob } from './export.js'
+import { registerExpiryOcrRoutes } from './ocr.js'
 import {
   REMIND_DAYS_MAX,
   REMIND_DAYS_MIN,
@@ -220,6 +221,7 @@ const VAULT_PROTECTED_PATTERNS = [
   '/api/documents/:id/files',
   '/api/documents/:id/files/:fileId',
   '/api/documents/:id/files/:fileId/content',
+  '/api/documents/:id/files/:fileId/extract-expiry',
 ] as const
 
 // Stateless middleware — one gate instance serves every pattern.
@@ -881,6 +883,14 @@ export function createDocumentsPlugin(deps: PluginDeps): PluginRegistration {
       })
     }
   )
+
+  // Expiry-date OCR (ahaqqu/RumaQ#433) lives in ./ocr.ts — the vault app file
+  // stays under the 1k review bar and the OCR route's HTTP mapping is one
+  // module. Auth + the plugin gate for its path are installed by the
+  // VAULT_PROTECTED_PATTERNS loop above (the canonical wiring point), BEFORE
+  // this registration. The route reads bytes through the injected storage
+  // port, exactly like every other vault byte path.
+  registerExpiryOcrRoutes(documentsApp, storage)
 
   documentsApp.delete(
     '/api/documents/:id/files/:fileId',

@@ -36,6 +36,7 @@ export {
   useDeleteDocument,
   useDeleteDocumentFile,
   useUpdateDocumentExpiry,
+  useExtractDocumentExpiry,
 } from './documents.js'
 export {
   TASKS_BASE_KEY,

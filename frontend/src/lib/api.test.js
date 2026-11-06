@@ -50,11 +50,17 @@ vi.mock('openapi-fetch', () => ({
   default: () => clientMock,
 }))
 
-const ok = (data) => ({ data, error: undefined, response: { ok: true, status: 200 } })
+// The response stub models the real fetch Response surface unwrap() reads —
+// status/ok plus the headers it inspects (Retry-After on 429s).
+const ok = (data) => ({
+  data,
+  error: undefined,
+  response: { ok: true, status: 200, headers: { get: () => null } },
+})
 const fail = (error, status = 500) => ({
   data: undefined,
   error,
-  response: { ok: false, status },
+  response: { ok: false, status, headers: { get: () => null } },
 })
 
 beforeEach(() => {
@@ -114,6 +120,28 @@ describe('api', () => {
       status: 401,
       message: 'Unauthorized',
     })
+  })
+
+  it('carries the Retry-After seconds a 429 sent (T4-B6)', async () => {
+    clientMock.GET.mockResolvedValueOnce({
+      data: undefined,
+      error: { error: 'Too many OCR requests. Please slow down.' },
+      response: { ok: false, status: 429, headers: { get: () => '45' } },
+    })
+    await expect(getMe()).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 429,
+      retryAfterSeconds: 45,
+    })
+  })
+
+  it('degrades a missing or non-numeric Retry-After to null, not a crash', async () => {
+    clientMock.GET.mockResolvedValueOnce({
+      data: undefined,
+      error: { error: 'Too many uploads.' },
+      response: { ok: false, status: 429, headers: { get: () => 'Wed, 21 Oct 2026 07:28:00 GMT' } },
+    })
+    await expect(getMe()).rejects.toMatchObject({ status: 429, retryAfterSeconds: null })
   })
 
   it('login constructs correct redirect URL', () => {

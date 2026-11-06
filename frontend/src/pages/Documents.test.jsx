@@ -33,6 +33,7 @@ vi.mock('../lib/queries/index.js', () => ({
   useDeleteDocument: vi.fn(),
   useDeleteDocumentFile: vi.fn(),
   useUpdateDocumentExpiry: vi.fn(),
+  useExtractDocumentExpiry: vi.fn(),
 }))
 
 vi.mock('../lib/api', () => ({
@@ -87,6 +88,7 @@ import {
   useDeleteDocument,
   useDeleteDocumentFile,
   useUpdateDocumentExpiry,
+  useExtractDocumentExpiry,
 } from '../lib/queries/index.js'
 import { fetchDocumentContent, DOCUMENT_MAX_FILES } from '../lib/api'
 
@@ -781,5 +783,110 @@ describe('Documents — expiry surfaces (#426)', () => {
     fireEvent.click(findButton(container, 'documents.cancel'))
     expect(container.querySelector('[data-testid="expiry-edit"]')).toBeNull()
     expect(updateExpiryMutation.mutateAsync).not.toHaveBeenCalled()
+  })
+})
+
+// Read-date OCR (#433): the per-file "Read date" action calls the user's own
+// AI provider through the backend and PREFILLS the expiry editor with the
+// suggestion — the model never writes; only the user's save (PATCH) does.
+// Image files only (PDFs have no button). i18n runs uninitialized here, so
+// assertions read the raw keys — same idiom as the suite above.
+describe('Documents — read-date OCR (#433)', () => {
+  let extractMutation
+  let updateExpiryMutation
+
+  function docWithFiles(overrides = {}) {
+    return {
+      ...DOC,
+      files: [
+        {
+          id: 'file-jpg',
+          file_name: 'paspor-depan.jpg',
+          content_type: 'image/jpeg',
+          size_bytes: 1024,
+        },
+        {
+          id: 'file-pdf',
+          file_name: 'polis.pdf',
+          content_type: 'application/pdf',
+          size_bytes: 2048,
+        },
+      ],
+      ...overrides,
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    extractMutation = mutation()
+    vi.mocked(useMe).mockReturnValue({ data: { user: { id: 'u1' } } })
+    vi.mocked(useHouseholds).mockReturnValue({ data: HOUSEHOLDS, isLoading: false })
+    vi.mocked(useHouseholdMembers).mockReturnValue({ data: MEMBERS, isLoading: false })
+    vi.mocked(useDocuments).mockReturnValue({
+      data: { documents: [docWithFiles()] },
+      isLoading: false,
+    })
+    vi.mocked(useCreateDocument).mockReturnValue(mutation())
+    vi.mocked(useAddDocumentFile).mockReturnValue(mutation())
+    vi.mocked(useDeleteDocument).mockReturnValue(mutation())
+    vi.mocked(useDeleteDocumentFile).mockReturnValue(mutation())
+    updateExpiryMutation = mutation()
+    vi.mocked(useUpdateDocumentExpiry).mockReturnValue(updateExpiryMutation)
+    vi.mocked(useExtractDocumentExpiry).mockReturnValue(extractMutation)
+  })
+
+  it('offers Read date on image files only — PDFs get no button', () => {
+    const { container } = renderDocuments()
+    const buttons = [...container.querySelectorAll('[data-testid="read-date"]')]
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].getAttribute('aria-label')).toContain('documents.readDate')
+    expect(buttons[0].getAttribute('aria-label')).toContain('paspor-depan.jpg')
+  })
+
+  it('prefills the expiry editor with the suggestion and writes only through the user save', async () => {
+    extractMutation.mutateAsync.mockResolvedValue({
+      expires_on: '2031-05-20',
+      model: 'vision-model',
+    })
+    const { container } = renderDocuments()
+    fireEvent.click(container.querySelector('[data-testid="read-date"]'))
+    await waitFor(() =>
+      expect(extractMutation.mutateAsync).toHaveBeenCalledWith({
+        documentId: 'doc-1',
+        fileId: 'file-jpg',
+      })
+    )
+    // The editor opens prefilled — the suggestion is a draft, not a write.
+    await waitFor(() =>
+      expect(container.querySelector('[data-testid="expiry-date"]').value).toBe('2031-05-20')
+    )
+    expect(container.textContent).toContain('documents.expiryRead')
+
+    // The user confirms: the PATCH carries the suggested date.
+    updateExpiryMutation.mutateAsync.mockResolvedValue({ document: {} })
+    fireEvent.click(container.querySelector('[data-testid="expiry-save"]'))
+    await waitFor(() =>
+      expect(updateExpiryMutation.mutateAsync).toHaveBeenCalledWith({
+        id: 'doc-1',
+        payload: expect.objectContaining({ expires_on: '2031-05-20' }),
+      })
+    )
+  })
+
+  it('reports a no-date answer as feedback without opening the editor', async () => {
+    extractMutation.mutateAsync.mockResolvedValue({ expires_on: null, model: 'vision-model' })
+    const { container } = renderDocuments()
+    fireEvent.click(container.querySelector('[data-testid="read-date"]'))
+    await waitFor(() => expect(container.textContent).toContain('documents.expiryReadNone'))
+    expect(container.querySelector('[data-testid="expiry-edit"]')).toBeNull()
+  })
+
+  it('maps a not-configured provider (402) to copy that points at Settings', async () => {
+    const { ApiError } = await import('../lib/api')
+    extractMutation.mutateAsync.mockRejectedValue(new ApiError('not configured', 402))
+    const { container } = renderDocuments()
+    fireEvent.click(container.querySelector('[data-testid="read-date"]'))
+    await waitFor(() => expect(container.textContent).toContain('documents.errorAiNotConfigured'))
+    expect(container.querySelector('[data-testid="expiry-edit"]')).toBeNull()
   })
 })

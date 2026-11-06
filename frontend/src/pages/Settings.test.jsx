@@ -18,6 +18,8 @@ const mockSettings = {
   motion_preference: 'standard',
   currency: 'idr',
   ai_provider: 'gemini',
+  ai_model: 'gemini-3.6-flash',
+  ai_vision_model: 'gemini-3.6-vision',
   persona_user_role: null,
   persona_ai_role: null,
   persona_enabled: false,
@@ -266,6 +268,28 @@ describe('Settings', () => {
     const { container } = renderWithQuery(React.createElement(Settings, baseProps))
     expect(container.querySelector('input[aria-label="settings.customBaseUrl"]')).toBeNull()
     expect(container.querySelector('input[aria-label="settings.model"]')).toBeTruthy()
+  })
+
+  // The vision model (#433): rendered beside the text model, hydrated from
+  // the settings, and saved through the same PATCH payload.
+  it('shows the vision model input hydrated from the stored setting', () => {
+    const { container } = renderWithQuery(React.createElement(Settings, baseProps))
+    const visionInput = container.querySelector('input[aria-label="settings.visionModel"]')
+    expect(visionInput).toBeTruthy()
+    expect(visionInput.value).toBe('gemini-3.6-vision')
+  })
+
+  it('saves ai_vision_model through the settings PATCH', async () => {
+    mockMutateAsync.mockResolvedValue({ ...mockSettings })
+    const { container } = renderWithQuery(React.createElement(Settings, baseProps))
+    const visionInput = container.querySelector('input[aria-label="settings.visionModel"]')
+    fireEvent.change(visionInput, { target: { value: 'my-vision-model' } })
+    // The vision row's own save button submits the whole settings payload.
+    fireEvent.click(visionInput.parentElement.querySelector('button'))
+    await waitFor(() => expect(mockMutateAsync).toHaveBeenCalled())
+    const payload = mockMutateAsync.mock.calls[0][0]
+    expect(payload.ai_vision_model).toBe('my-vision-model')
+    expect(payload.ai_model).toBe('gemini-3.6-flash')
   })
 
   it('adds location with Enter key', () => {

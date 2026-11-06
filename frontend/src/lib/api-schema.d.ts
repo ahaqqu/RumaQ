@@ -867,6 +867,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/documents/{id}/files/{fileId}/extract-expiry': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** @description Reads one file’s expiry date with the caller’s own AI provider (vision model: ai_vision_model, falling back to ai_model; server key/model when no user key is set). Image files only (JPEG, PNG, WebP — PDFs are refused). Returns a SUGGESTED expires_on (null when the model found no date) and the model asked; nothing is written — the user confirms through PATCH /api/documents/{id}. Every attempt records an ai_usage_events row (failures included) and an outcome log line, and the byte read is audited as a document_audit ‘ocr’ record naming the file; document content is never logged. */
+    post: operations['postApiDocumentsByIdFilesByFileIdExtractExpiry']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/documents/{id}/files/{fileId}': {
     parameters: {
       query?: never
@@ -1333,6 +1350,8 @@ export interface operations {
           ai_key?: string
           ai_base_url?: string
           ai_model?: string
+          /** @description Vision model for vault document OCR (issue #433); empty/omitted falls back to ai_model */
+          ai_vision_model?: string
           /** @enum {string} */
           ai_thinking_level?: 'low' | 'medium' | 'high' | ''
           persona_user_role?: string
@@ -4092,6 +4111,75 @@ export interface operations {
       }
       /** @description Document not found */
       404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  postApiDocumentsByIdFilesByFileIdExtractExpiry: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+        fileId: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK — the suggested expiry date (null when none was found) and the vision model used */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            /** @description ISO YYYY-MM-DD or null */
+            expires_on: string | null
+            model: string | null
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description AI provider not configured */
+      402: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Document not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an image file (JPEG, PNG, WebP) */
+      415: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Too many OCR requests */
+      429: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description The provider call or its answer failed validation */
+      502: {
         headers: {
           [name: string]: unknown
         }

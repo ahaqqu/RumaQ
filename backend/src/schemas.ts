@@ -30,6 +30,10 @@ export const settingsPatchSchema = strictObject({
   ai_key: optional(pipe(string(), minLength(1))),
   ai_base_url: optional(pipe(string(), maxLength(500))),
   ai_model: optional(pipe(string(), maxLength(200), regex(AI_MODEL_REGEX))),
+  // Issue #433: the vision model for vault document OCR — resolved ahead of
+  // ai_model for vision work. Same charset as ai_model (ids go into request
+  // bodies and, for Gemini, the URL path).
+  ai_vision_model: optional(pipe(string(), maxLength(200), regex(AI_MODEL_REGEX))),
   ai_thinking_level: optional(union([picklist(['low', 'medium', 'high']), literal('')])),
   persona_user_role: optional(string()),
   persona_ai_role: optional(string()),
