@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test'
 import { render, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
@@ -32,7 +32,7 @@ const undoMutate = vi.fn()
 const fetchNextPage = vi.fn()
 
 const reviewItem = {
-  id: 'rev-1',
+  id: '31b35444-4c2b-4b8e-9a4f-0d2c6e7f8a90',
   itemProductKey: 'beras-ramos-5kg----5-kg',
   itemName: 'Beras Ramos 5 kg',
   itemBrand: null,
@@ -87,6 +87,11 @@ function renderAdmin() {
   )
 }
 
+// Each SideCard is a role="group" named by its header label (#480).
+function sideGroups(container) {
+  return [...container.querySelectorAll('[role="group"][aria-labelledby]')]
+}
+
 // The suite's i18n mock returns raw keys, so assertions match keys.
 describe('AdminReview', () => {
   beforeEach(() => {
@@ -114,10 +119,12 @@ describe('AdminReview', () => {
     expect(container.textContent).not.toContain('review.matchedItem')
   })
 
-  it('renders the lead, the decisions note, and the exact count badges', () => {
+  it('renders the lead, the why-review line, the decision rubric, and the exact count badges', () => {
     const { container } = renderAdmin()
     expect(container.textContent).toContain('review.lead')
+    expect(container.textContent).toContain('review.whyReview')
     expect(container.textContent).toContain('review.decisionsNote')
+    expect(container.textContent).toContain('review.decisionRubric')
     expect(container.textContent).toContain('review.pending')
     expect(container.textContent).toContain('3')
     expect(container.textContent).toContain('review.approved')
@@ -144,12 +151,15 @@ describe('AdminReview', () => {
 
   it('renders the side-by-side pair with honest labels and store display names', () => {
     const { container } = renderAdmin()
+    const sides = sideGroups(container)
     expect(container.textContent).toContain('review.matchedItem')
     expect(container.textContent).toContain('review.catalogEntry')
     expect(container.textContent).toContain('Beras Ramos 5 kg')
     expect(container.textContent).toContain('Beras Ramos 5kg')
-    // Null brand/unit render as an em dash, never an empty string.
-    expect(container.textContent).toContain('— · 5 kg')
+    // #480: one brand/unit value renders alone (no dash placeholder); both
+    // keep the brand · unit pair.
+    expect(sides[0].children[1].textContent).toBe('5 kg')
+    expect(sides[1].children[1].textContent).toBe('Ramos · 5 kg')
     // Slugs resolve via the source-name convention.
     expect(container.textContent).toContain('Lotte Mart')
     expect(container.textContent).toContain('Superindo')
@@ -285,9 +295,9 @@ describe('AdminReview', () => {
     const { container, getByText } = renderAdmin()
     expect(container.textContent).not.toContain('review.undo')
     fireEvent.click(getByText('review.approve'))
-    expect(decideMutate).toHaveBeenCalledWith({ id: 'rev-1', decision: 'approved' })
+    expect(decideMutate).toHaveBeenCalledWith({ id: reviewItem.id, decision: 'approved' })
     fireEvent.click(getByText('review.reject'))
-    expect(decideMutate).toHaveBeenCalledWith({ id: 'rev-1', decision: 'rejected' })
+    expect(decideMutate).toHaveBeenCalledWith({ id: reviewItem.id, decision: 'rejected' })
   })
 
   it('shows the verdict line with Undo on a decided row', () => {
@@ -297,7 +307,7 @@ describe('AdminReview', () => {
     const { container, getByText } = renderAdmin()
     expect(container.textContent).toContain('review.approved')
     fireEvent.click(getByText('review.undo'))
-    expect(undoMutate).toHaveBeenCalledWith({ id: 'rev-1' })
+    expect(undoMutate).toHaveBeenCalledWith({ id: reviewItem.id })
   })
 
   it('shows the showing line and appends the next page with Load more', () => {
@@ -354,5 +364,121 @@ describe('AdminReview', () => {
     await waitFor(() => expect(container.textContent).toContain('review.exportFailed'))
     fireEvent.click(getByText('review.export'))
     await waitFor(() => expect(container.textContent).not.toContain('review.exportFailed'))
+  })
+
+  describe('issue #480 — reference id, one side-label header, brand/unit line', () => {
+    afterEach(() => {
+      // The copy test installs a fake clipboard; never leak it into the next test.
+      delete navigator.clipboard
+    })
+
+    it('shows the short reference id with the full UUID in the title', () => {
+      const { container } = renderAdmin()
+      const idButton = container.querySelector(`button[title="${reviewItem.id}"]`)
+      expect(idButton).not.toBeNull()
+      expect(idButton.textContent).toBe('#31b35444')
+      expect(idButton.className).toContain('font-mono')
+      // Keyboard reachable: a real button, not a click-only span (thermos A2).
+      expect(idButton.tagName).toBe('BUTTON')
+      expect(idButton.getAttribute('type')).toBe('button')
+      // The accessible name comes from i18n, not the bare fragment. Here the
+      // suite's raw-key t() ignores interpolation; the real EN name (which
+      // carries the visible short id, WCAG 2.5.3) is pinned in
+      // AdminReview.i18n.test.jsx.
+      expect(idButton.getAttribute('aria-label')).toBe('review.copyItemId')
+    })
+
+    it('copies the full UUID when the reference id is clicked', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+      const { container } = renderAdmin()
+      fireEvent.click(container.querySelector(`button[title="${reviewItem.id}"]`))
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(reviewItem.id))
+    })
+
+    it('stays silent when the clipboard API is unavailable', () => {
+      // jsdom has no navigator.clipboard at all — the click must not throw.
+      const { container } = renderAdmin()
+      const idButton = container.querySelector(`button[title="${reviewItem.id}"]`)
+      expect(() => fireEvent.click(idButton)).not.toThrow()
+    })
+
+    it('renders both side labels once, in the list header, even with several rows', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [reviewItem, { ...reviewItem, id: 'aaaa1111-2222-4333-8444-555566667777' }],
+        })
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent.match(/review\.matchedItem/g)).toHaveLength(1)
+      expect(container.textContent.match(/review\.catalogEntry/g)).toHaveLength(1)
+      // Every row's sides take their accessible name from the header labels.
+      const sides = sideGroups(container)
+      expect(sides).toHaveLength(4)
+      const headerLabels = sides.map((side) => {
+        const label = document.getElementById(side.getAttribute('aria-labelledby'))
+        expect(label).not.toBeNull()
+        return label.textContent
+      })
+      expect(headerLabels).toEqual([
+        'review.matchedItem',
+        'review.catalogEntry',
+        'review.matchedItem',
+        'review.catalogEntry',
+      ])
+    })
+
+    it('renders one muted no-brand-unit line when both values are missing', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            {
+              ...reviewItem,
+              itemBrand: null,
+              itemUnit: null,
+              entryBrand: null,
+              entryUnit: null,
+            },
+          ],
+        })
+      )
+      const { container } = renderAdmin()
+      const [itemSide, entrySide] = sideGroups(container)
+      // The brand/unit line is the side card's second child, right under the name.
+      expect(itemSide.children[1].textContent).toBe('review.noBrandUnit')
+      expect(entrySide.children[1].textContent).toBe('review.noBrandUnit')
+      expect(container.textContent).not.toContain('— · —')
+      expect(container.textContent).not.toContain('—')
+    })
+
+    it('names the confidence chip and labels the reason as the review flag', () => {
+      const { container } = renderAdmin()
+      const confidence = container.querySelector('[title="review.confidenceHint"]')
+      expect(confidence).not.toBeNull()
+      expect(confidence.textContent).toBe('review.confidence 100%')
+      // The reason chip reads as the flag, not as a second verdict.
+      expect(container.textContent).toContain('review.flagPrefix review.reasonPriceRatio')
+    })
+
+    it('renders a lone brand or unit without dash placeholders', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            {
+              ...reviewItem,
+              itemBrand: null,
+              itemUnit: '5 kg',
+              entryBrand: 'Ramos',
+              entryUnit: null,
+            },
+          ],
+        })
+      )
+      const { container } = renderAdmin()
+      const [itemSide, entrySide] = sideGroups(container)
+      expect(itemSide.children[1].textContent).toBe('5 kg')
+      expect(entrySide.children[1].textContent).toBe('Ramos')
+      expect(container.textContent).not.toContain('—')
+    })
   })
 })
