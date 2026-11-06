@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 2,
+  "indexVersion": 42,
+  "generatedAt": "2026-11-05T22:55:00Z",
+  "products": [
+    {
+      "id": "0b6f6f0e-6e0e-4f0e-9a0e-000000000001",
+      "productKey": "filma-minyak-goreng-pch-2l--filma--2-l",
+      "canonicalName": "Filma Minyak Goreng Pouch 2 L",
+      "brand": "Filma",
+      "productType": "Minyak Goreng",
+      "variant": null,
+      "size": {
+        "quantity": 2000,
+        "unit": "ml",
+        "packCount": 1,
+        "totalQuantity": 2000,
+        "packaging": "Pouch",
+        "quantityMin": null,
+        "quantityMax": null
+      },
+      "description": "Filma Minyak Goreng 2 L",
+      "category": "minyak-goreng",
+      "categoryVersion": "v0.2",
+      "status": "canonical",
+      "metadataVersion": 1,
+      "firstSeenAt": "2026-10-26T00:00:00Z",
+      "lastSeenAt": "2026-11-05T00:00:00Z",
+      "updatedAt": "2026-11-05T22:50:00Z",
+      "aliases": [
+        {
+          "name": "FILMA MINYAK GORENG PCH 2L",
+          "storeSlug": "superindo",
+          "firstSeenAt": "2026-10-26T00:00:00Z",
+          "lastSeenAt": "2026-11-05T00:00:00Z",
+          "source": "ocr"
+        }
+      ]
+    }
+  ]
+}
