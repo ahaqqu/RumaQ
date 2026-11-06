@@ -515,14 +515,15 @@ export function setPluginEnablement(
 // cookie-authenticated, same-origin fetch.
 // ---------------------------------------------------------------------------
 
-// Same caps as the backend (lib/documents.ts) — the client pre-checks exist
-// to fail fast before bytes ever leave the device.
+// Same caps as the backend (plugins/documents/lib.ts) — the client
+// pre-checks exist to fail fast before bytes ever leave the device.
 export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
 export const DOCUMENT_MAX_FILES = 20
 export const DOCUMENT_NAME_MAX = 120
-// The #426 remind-window default + bounds (lib/documents.ts owns the rule;
-// the client mirrors them for its edit form pre-checks and the due-soon
-// derivation, and the server re-validates — never trust the client).
+// The #426 remind-window default + bounds (plugins/documents/lib.ts owns
+// the rule; the client mirrors them for its edit form pre-checks and the
+// due-soon derivation, and the server re-validates — never trust the
+// client).
 export const DOCUMENT_DEFAULT_REMIND_DAYS = 30
 export const DOCUMENT_REMIND_DAYS_MIN = 1
 export const DOCUMENT_REMIND_DAYS_MAX = 365

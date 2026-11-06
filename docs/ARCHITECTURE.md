@@ -59,16 +59,20 @@ rumaq/
 │   │   │   ├── households.ts # Household member management domain app
 │   │   │   ├── tasks.ts      # Household tasks domain app
 │   │   │   ├── calendar.ts   # Household calendar domain app
-│   │   │   ├── documents.ts  # Document vault domain app (becomes a plugin
-│   │   │   │                 #   factory when it re-homes into plugins/)
 │   │   │   ├── plugins.ts    # Plugin settings catalog domain app (#437):
 │   │   │   │                 #   /api/plugins + owner-only enablement toggle
 │   │   │   └── api.ts      # Single Hono app for cached routes (/api/*)
 │   │   ├── plugins/        # Plugin core (ahaqqu/RumaQ#435): manifest types,
-│   │   │                   #   registry + dispatch, enablement gate (404
+│   │   │                   #   registry + dispatch (factories composed per
+│   │   │                   #   env with injected ports), enablement gate (404
 │   │   │                   #   fail-closed), deployment flags (fail-open),
-│   │   │                   #   port/factory contracts — plugins/<id>/ holds
-│   │   │                   #   each plugin's manifest
+│   │   │                   #   port/factory contracts — plugins/documents/
+│   │   │                   #   holds the document vault (T4 #438: app.ts
+│   │   │                   #   factory, lib.ts, keys.ts, manifest.ts)
+│   │   ├── ports/          # Typed port contracts core owns and plugins
+│   │   │                   #   consume (§4.2): ports/storage/ = the
+│   │   │                   #   StorageAdapter interface + private-R2 adapter
+│   │   │                   #   (port #1, injected by the registry)
 │   │   └── __tests__/      # Backend tests
 │   ├── migrations/         # D1 schema migrations
 │   └── cloudflare.config.ts # Single Worker config (env-driven; used by the
@@ -501,7 +505,7 @@ If usage grows, the first upgrade is Workers Paid ($5/mo) for higher request and
 - [x] R2 objects are private; frontend receives receipt images through `GET /api/purchases/:id/receipt` (proxy stream). R2 signed URLs are out of current scope (open security item).
 - [x] Document vault bytes stream only through the household-scoped, per-file `GET /api/documents/{id}/files/{fileId}/content` (#422 — a document holds up to 20 files; auth + `household_id` in the SQL predicate, and the file must belong to the named document; foreign ids answer 404 with no existence leak). Uploads are capped at 10 MB per file (Content-Length pre-check + post-parse), magic-byte sniffed (declared-vs-actual mismatch = 415), and audited; no public or presigned URLs exist for documents.
 - [x] Plugin enablement is enforced server-side (#435): the household-aware gate sits after auth inside each plugin app and answers 404 fail-closed on a disabled household (privacy posture) or an enablement read error, while the deployment flag (`deployment_flags`) fails open on a read error (availability posture). The two postures are documented in `backend/src/plugins/` and never unified. `/api/me`'s `enabledPlugins` is advertisement only — enforcement never rides it.
-- [x] The plugin import boundary is test-enforced (`plugin-boundary.test.ts`, #435): plugin code imports core's published API (the `plugins/` root modules), its own module, and `env.DB` — nothing else; the allow-list ships empty and every rule demonstrably fires in the test.
+- [x] The plugin import boundary is test-enforced (`plugin-boundary.test.ts`, #435): plugin code imports core's published API (the `plugins/` root modules), its own module, and `env.DB` — nothing else; the allow-list names exactly the core surface the vault consumes (empty until ticket 4 #438 re-homed the vault, which is the reviewed decision that filled it) and every rule demonstrably fires in the test.
 - [x] D1 queries are parameterized; no string concatenation.
 - [x] Every D1 query that reads or writes household-scoped data filters by `household_id` or `user_id`.
 - [x] Same-origin app + API: no cross-origin API calls in production. CORS keeps localhost dev origins allowed and defaults to the canonical `rumaq.ahaqqu.com` origin (`PAGES_ORIGIN` overrides it); unknown origins are rejected.
