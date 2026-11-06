@@ -519,6 +519,57 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/admin/products/{productKey}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Canonical product identity: the product row, every alias (candidate and approved), observation stats, and the last 10 audit rows newest first (admin-only). */
+    get: operations['getApiAdminProductsByProductKey']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/admin/products/{productKey}/rename': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** @description Rename the canonical product (admin-only). 409 duplicate_name when another product or approved alias already carries the name; 409 similar_name (overridable with acknowledgeWarnings) for near-duplicates; 409 stale_product when expectedMetadataVersion no longer matches. status stays provisional and the canonical index version advances once. */
+    post: operations['postApiAdminProductsByProductKeyRename']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/admin/products/{productKey}/audit/{auditId}/revert': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** @description Append a compensating revert for the LATEST rename of this product (admin-only): restores the previous canonical name, writes a revert audit row (old/new swapped, revertsAuditId set), and bumps the canonical index version once. An older rename or a second compensation is 409 stale_revert. */
+    post: operations['postApiAdminProductsByProductKeyAuditByAuditIdRevert']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/prices': {
     parameters: {
       query?: never
@@ -2586,6 +2637,307 @@ export interface operations {
           [name: string]: unknown
         }
         content?: never
+      }
+    }
+  }
+  getApiAdminProductsByProductKey: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        productKey: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            product?: {
+              id?: string
+              productKey?: string
+              name?: string
+              brand?: string | null
+              unit?: string | null
+              /** @enum {string} */
+              status?: 'canonical' | 'provisional' | 'needs_review'
+              metadataVersion?: number
+              firstSeenAt?: string | null
+              lastSeenAt?: string | null
+              updatedAt?: string | null
+            }
+            aliases?: {
+              name?: string
+              storeSlug?: string
+              /** @enum {string} */
+              status?: 'candidate' | 'approved'
+              /** @enum {string} */
+              source?: 'ocr' | 'catalog' | 'admin'
+              firstSeenAt?: string
+              lastSeenAt?: string
+            }[]
+            stats?: {
+              observations?: number
+              stores?: number
+            }
+            audit?: {
+              id?: string
+              /** @enum {string} */
+              action?: 'rename' | 'revert'
+              oldName?: string
+              newName?: string
+              reason?: string | null
+              actorUserId?: string
+              metadataVersionBefore?: number
+              metadataVersionAfter?: number
+              revertsAuditId?: string | null
+              createdAt?: string
+            }[]
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unknown product */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  postApiAdminProductsByProductKeyRename: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        productKey: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          canonicalName: string
+          expectedMetadataVersion: number
+          reason?: string
+          acknowledgeWarnings?: boolean
+        }
+      }
+    }
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            product?: {
+              id?: string
+              productKey?: string
+              name?: string
+              brand?: string | null
+              unit?: string | null
+              /** @enum {string} */
+              status?: 'canonical' | 'provisional' | 'needs_review'
+              metadataVersion?: number
+              firstSeenAt?: string | null
+              lastSeenAt?: string | null
+              updatedAt?: string | null
+            }
+            warnings?: {
+              productKey?: string
+              name?: string
+              similarity?: number
+            }[]
+            audit?: {
+              id?: string
+              /** @enum {string} */
+              action?: 'rename' | 'revert'
+              oldName?: string
+              newName?: string
+              reason?: string | null
+              actorUserId?: string
+              metadataVersionBefore?: number
+              metadataVersionAfter?: number
+              revertsAuditId?: string | null
+              createdAt?: string
+            }[]
+            indexVersion?: number
+          }
+        }
+      }
+      /** @description Validation error: invalid body, or a blank/oversize/control-character name or reason */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unknown product */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description duplicate_name (conflicts[]), similar_name (warnings[]), or stale_product (current{name, metadataVersion}) */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            error?: string
+            conflicts?: {
+              productKey?: string
+              name?: string
+              /** @enum {string} */
+              source?: 'product' | 'alias'
+            }[]
+            warnings?: {
+              productKey?: string
+              name?: string
+              similarity?: number
+            }[]
+            current?: {
+              name?: string
+              metadataVersion?: number
+            }
+          }
+        }
+      }
+    }
+  }
+  postApiAdminProductsByProductKeyAuditByAuditIdRevert: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        productKey: string
+        auditId: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          reason?: string
+        }
+      }
+    }
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            product?: {
+              id?: string
+              productKey?: string
+              name?: string
+              brand?: string | null
+              unit?: string | null
+              /** @enum {string} */
+              status?: 'canonical' | 'provisional' | 'needs_review'
+              metadataVersion?: number
+              firstSeenAt?: string | null
+              lastSeenAt?: string | null
+              updatedAt?: string | null
+            }
+            warnings?: {
+              productKey?: string
+              name?: string
+              similarity?: number
+            }[]
+            audit?: {
+              id?: string
+              /** @enum {string} */
+              action?: 'rename' | 'revert'
+              oldName?: string
+              newName?: string
+              reason?: string | null
+              actorUserId?: string
+              metadataVersionBefore?: number
+              metadataVersionAfter?: number
+              revertsAuditId?: string | null
+              createdAt?: string
+            }[]
+            indexVersion?: number
+          }
+        }
+      }
+      /** @description Validation error (invalid body or reason) */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unknown product or audit entry */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description stale_revert: the audit row is not the latest rename, or it was already compensated */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': Record<string, never>
+        }
       }
     }
   }
