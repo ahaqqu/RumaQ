@@ -16,8 +16,13 @@ set -euo pipefail
 #      loop variable, never a hard-coded secret name.
 #   3. the deploy workflow's Deploy production step passes the four gateway
 #      secrets and not the ingest secret.
-#   4. no workflow that invokes scripts/deploy.sh may pass the ingest secret
-#      into a step env.
+#   4. no workflow that invokes scripts/deploy.sh may hand the ingest secret to
+#      that step — in any YAML spelling (an `env:` key, a quoted key, or an
+#      inline `VAR=…` prefix on a `run:` line). A workflow that does not deploy
+#      may still read it (the smoke freshness check does), but must never run a
+#      `workers secrets update`.
+#   5. only scripts/deploy.sh writes Worker secrets — no scripts/github helper
+#      may open a second write path.
 #
 # Offline only: reads repository files, no network, no cf, no credentials.
 
@@ -57,8 +62,12 @@ if ((${#array_lines[@]} != 1)); then
 else
   # Read the assignment across lines up to the closing paren, so a reformatted
   # multi-line array still yields its exact contents instead of slipping past.
+  # Comment lines are skipped: the natural place to document "HAQITA_INGEST_SECRET
+  # is deliberately absent" is inside this array, and its words must not leak
+  # into the parsed set.
   array_list="$(awk '
     /^[[:space:]]*local secrets=\(/ { in_array = 1 }
+    in_array && /^[[:space:]]*#/ { next }
     in_array { printf "%s ", $0 }
     in_array && /\)/ { exit }
   ' "$DEPLOY_SH")"
@@ -73,13 +82,11 @@ else
     if [[ "$actual" == "$EXPECTED" ]]; then
       pass "managed-secret array is exactly the four gateway secrets: $actual"
     else
+      # $SECRET is absent from EXPECTED, so re-adding it fails right here;
+      # reporting it a second time would claim a `workers secrets update` bug
+      # that the array alone cannot prove.
       fail "managed-secret array must be exactly [${EXPECTED}], got [${actual}]"
     fi
-    for name in "${managed[@]}"; do
-      if [[ "$name" == "$SECRET" ]]; then
-        fail "scripts/deploy.sh still passes $SECRET to workers secrets update"
-      fi
-    done
   fi
 fi
 
@@ -155,21 +162,53 @@ else
 fi
 
 # ------------------------------------------------------------------
-# 4. Every workflow: no deploy workflow may pass the secret
+# 4. Every workflow: deploys never receive it, readers never write it
 # ------------------------------------------------------------------
-echo "==> .github/workflows (deploy workflows)"
+echo "==> .github/workflows (deploy + secret-writing workflows)"
 
-for wf in "$WORKFLOW_DIR"/*.yml; do
+# A line that mentions the secret only in a YAML comment is documentation, not a
+# value handed to a step (deploy.yml explains the omission in one).
+workflow_code() { grep -vE '^[[:space:]]*#' "$1" || true; }
+
+shopt -s nullglob
+for wf in "$WORKFLOW_DIR"/*.yml "$WORKFLOW_DIR"/*.yaml; do
   wf_name="$(basename "$wf")"
-  if ! grep -qE "^[[:space:]]*${SECRET}:" "$wf"; then
+  code="$(workflow_code "$wf")"
+  grep -qF "$SECRET" <<< "$code" || continue
+
+  # Every spelling that hands the secret to a step — `KEY: ${{ secrets.X }}`,
+  # `"KEY": …`, or an inline `KEY=… ` prefix on a run: line — leaves the bare
+  # name on a non-comment line, so YAML formatting cannot dodge this check.
+  if grep -qE 'scripts/deploy\.sh' <<< "$code"; then
+    fail "$wf_name hands $SECRET to a step that runs scripts/deploy.sh"
     continue
   fi
-  if grep -qE 'scripts/deploy\.sh' "$wf"; then
-    fail "$wf_name passes $SECRET into a step env while invoking scripts/deploy.sh"
+
+  # Not a deploy workflow: the secret may be read (authenticated GETs) but never
+  # written. Checking only for scripts/deploy.sh let a direct
+  # `cf workers secrets update` read as a "read-only" pass.
+  if grep -qE 'workers secrets (update|bulk)|workers secret put|secrets-bulk' <<< "$code"; then
+    fail "$wf_name runs a Worker secrets write while referencing $SECRET"
   else
-    pass "$wf_name references $SECRET only outside a deploy (read-only check)"
+    pass "$wf_name reads $SECRET (no deploy, no secrets-write command)"
   fi
 done
+shopt -u nullglob
+
+# ------------------------------------------------------------------
+# 5. scripts/github/*: scripts/deploy.sh stays the only write path
+# ------------------------------------------------------------------
+echo "==> scripts/github (CI helper scripts)"
+secret_writers=0
+for helper in "$ROOT_DIR"/scripts/github/*.sh; do
+  if grep -vE '^[[:space:]]*#' "$helper" | grep -qE 'workers secrets (update|bulk)|workers secret put'; then
+    fail "$(basename "$helper") writes Worker secrets — scripts/deploy.sh is the single deploy entrypoint"
+    secret_writers=$((secret_writers + 1))
+  fi
+done
+if ((secret_writers == 0)); then
+  pass "no scripts/github helper writes Worker secrets"
+fi
 
 # ------------------------------------------------------------------
 # Result
