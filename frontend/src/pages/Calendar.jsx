@@ -24,7 +24,7 @@ import {
   IconKey,
 } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
-import { isoOf, parseISO, todayISO } from '../lib/household-date.js'
+import { isoOf, nextBirthday, parseISO, todayISO } from '../lib/household-date.js'
 
 // Household calendar (ahaqqu/RumaQ#430): one shared family month view over the
 // union endpoint — stored events (kind: 'event', CRUD on /api/calendar/events)
@@ -72,21 +72,6 @@ function monthCells(year, month) {
 function monthWindow(year, month) {
   const last = new Date(Date.UTC(year, month + 1, 0))
   return { from: isoOf(new Date(Date.UTC(year, month, 1))), to: isoOf(last) }
-}
-
-/** Next occurrence of the member's birth month/day on or after `today` (the
- * birthday preset). Feb 29 clamps to Feb 28 in non-leap years — the same
- * clamping idea as the tasks domain's monthly roll-forward. */
-function nextBirthday(birthDate, today) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return null
-  const [, month, day] = birthDate.split('-').map(Number)
-  const baseYear = Number(today.slice(0, 4))
-  for (let year = baseYear; year <= baseYear + 1; year++) {
-    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
-    const iso = `${year}-${String(month).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`
-    if (iso >= today) return iso
-  }
-  return null
 }
 
 const PRESETS = ['birthday', 'school', 'mudik', 'tax']

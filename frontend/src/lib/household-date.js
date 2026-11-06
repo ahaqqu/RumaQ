@@ -23,3 +23,22 @@ export function parseISO(iso) {
 export function isoOf(date) {
   return date.toISOString().slice(0, 10)
 }
+
+/** Next occurrence of the member's birth month/day on or after `today` (the
+ * calendar's birthday preset). Feb 29 clamps to Feb 28 in non-leap years —
+ * the same clamping idea as the tasks domain's monthly roll-forward. Pinned
+ * with fixed-input unit tests in household-date.test.js (ahaqqu/RumaQ#468
+ * review C1-A1): the prefill lands in every month, so the page test computes
+ * its expectation from THIS function instead of skipping 11 months of the
+ * year. */
+export function nextBirthday(birthDate, today) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return null
+  const [, month, day] = birthDate.split('-').map(Number)
+  const baseYear = Number(today.slice(0, 4))
+  for (let year = baseYear; year <= baseYear + 1; year++) {
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+    const iso = `${year}-${String(month).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`
+    if (iso >= today) return iso
+  }
+  return null
+}

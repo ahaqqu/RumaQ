@@ -3,6 +3,7 @@ import { render, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { Calendar } from './Calendar.jsx'
+import { nextBirthday } from '../lib/household-date.js'
 
 vi.mock('../lib/queries/me.js', () => ({
   useMe: vi.fn(),
@@ -308,12 +309,13 @@ describe('Calendar page', () => {
       (input) => input.getAttribute('aria-label') === 'calendar.titleLabel'
     )
     expect(titleInput.value).toBe('calendar.birthdayTitle')
-    // Adik's stored birth_date (2022-06-15) prefills the NEXT June 15 only in
-    // a June view; in other months the date stays whatever the user had.
+    // Adik's stored birth_date (2022-06-15) prefills the NEXT occurrence on
+    // or after today — in every month, not just June. The expected value
+    // comes from the same lib math the component calls (the clamp/rollover
+    // cases are pinned with fixed inputs in household-date.test.js), so this
+    // assertion never needs a month-conditional skip.
     const dateInput = container.querySelector('input[type="date"]')
-    if (month.month === 5) {
-      expect(dateInput.value).toBe(`${month.year}-06-15`)
-    }
+    expect(dateInput.value).toBe(nextBirthday(MEMBERS.members[2].birth_date, month.today))
   })
 
   it('edits an event through the inline form', async () => {
