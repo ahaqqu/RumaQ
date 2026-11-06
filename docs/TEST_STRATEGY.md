@@ -11,6 +11,19 @@
 ./scripts/test.sh unit
 ```
 
+## Deploy guard test (offline)
+
+`scripts/test/deploy-secrets.sh` asserts the deploy surface's secret policy
+(ahaqqu/RumaQ#456): `scripts/deploy.sh` and the Deploy production workflow
+manage **exactly** the four gateway secrets and never the operator-owned
+`HAQITA_INGEST_SECRET`, which is set and rotated out-of-band. It reads the
+files only — no network, no Cloudflare credentials — so it runs in every CI
+pass via `scripts/github/ci.sh`.
+
+```
+./scripts/test.sh deploy
+```
+
 ## Local automation test
 
 All services behind `nginx` proxy at `localhost:3000`. Worker exposes `TEST_MODE`-guarded admin endpoints. Gherkin features + `jest-cucumber` for API, `playwright-bdd` for E2E. Run by Vitest + Playwright inside Docker.
@@ -98,6 +111,7 @@ heavy deps over raising the budget.
 - [x] API docs match current routes — `./scripts/docs.sh` + `git diff --exit-code docs/API.md`
 - [x] All unit tests pass — `./scripts/test.sh unit`
 - [x] Code style and lint pass — `./scripts/style.sh --check`
+- [x] Deploy never writes the operator-owned ingest secret — `./scripts/test.sh deploy`
 - [x] Main user flows covered by page-level E2E — `automation/tests/local/e2e/features/`
 - [x] No critical/serious axe-core violations on main pages — `accessibility.feature`
 - [x] Bundle-size budget enforced in CI — `scripts/ci/bundle-budget.mjs`

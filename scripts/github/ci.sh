@@ -3,6 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 
+echo "=== CI: deploy secret guard (#456) ==="
+# Offline: asserts the CI deploy never writes the operator-owned
+# HAQITA_INGEST_SECRET and still manages exactly the four gateway secrets.
+# A re-asserted stale copy silently clobbers the rotated Worker value and 401s
+# every internal endpoint (ahaqqu/RumaQ#456).
+"$ROOT_DIR/scripts/test.sh" deploy
+
 echo "=== CI: style check ==="
 bash "$ROOT_DIR/scripts/style.sh" --check
 

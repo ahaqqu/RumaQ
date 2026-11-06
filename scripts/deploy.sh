@@ -55,6 +55,13 @@ fi
 DB_NAME="${D1_DATABASE_NAME:-rumaq}"
 R2_BUCKET_NAME="${R2_BUCKET_NAME:-rumaq-receipts}"
 
+# The Worker secrets this deploy manages. HAQITA_INGEST_SECRET is deliberately
+# absent: it is operator-owned and set/rotated out-of-band, so CI writing the
+# repo's stale copy once silently clobbered the rotated Worker value and 401'd
+# every internal endpoint (ahaqqu/RumaQ#456). Every read/write of the managed
+# set below iterates this array — never a second literal copy of it.
+MANAGED_SECRETS=(GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY)
+
 # Local placeholder that keys the local D1 state (mirrors cloudflare.config.ts).
 LOCAL_DATABASE_ID="00000000-0000-4000-8000-000000000000"
 # The Vite plugin persists local worker state (D1/R2) here; cf CLI local
@@ -264,8 +271,9 @@ put_worker_secrets() {
     return
   fi
 
-  local secrets=(GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY HAQITA_INGEST_SECRET)
-  for name in "${secrets[@]}"; do
+  # Only the gateway secrets in MANAGED_SECRETS are deploy-managed; the
+  # operator-owned ingest secret is never written here (see the array comment).
+  for name in "${MANAGED_SECRETS[@]}"; do
     local val="${!name:-}"
     if [[ -z $val ]]; then
       echo "  -  ${name} (skipped — not set)"
@@ -303,7 +311,7 @@ deploy_worker() {
   if ! $DRY_RUN; then
     local missing=""
     local secret_name
-    for secret_name in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY; do
+    for secret_name in "${MANAGED_SECRETS[@]}"; do
       if [[ -z ${!secret_name:-} ]]; then
         missing+=" ${secret_name}"
       fi
@@ -315,7 +323,7 @@ deploy_worker() {
     fi
     secrets_file="$(mktemp)"
     chmod 600 "$secrets_file"
-    for secret_name in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY; do
+    for secret_name in "${MANAGED_SECRETS[@]}"; do
       printf '%s=%s\n' "$secret_name" "${!secret_name}" >> "$secrets_file"
     done
     dry_run_flag+=" --secrets-file ${secrets_file}"

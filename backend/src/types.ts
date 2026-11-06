@@ -29,8 +29,9 @@ export type Env = {
     WORKER_ENCRYPTION_KEY: string
     HAQITA_INGEST_SECRET?: string
     /** Rotation successor accepted alongside the primary during a secret
-     *  rotation window (ahaqqu/RumaQ#376); cleared on the deploy that
-     *  promotes it into HAQITA_INGEST_SECRET. */
+     *  rotation window (ahaqqu/RumaQ#376). Nothing promotes it automatically:
+     *  the deploy writes neither secret (ahaqqu/RumaQ#456), so the operator
+     *  writes it as HAQITA_INGEST_SECRET and deletes this one. */
     HAQITA_INGEST_SECRET_NEXT?: string
     PAGES_ORIGIN?: string
     EMAIL_AUTH_ENABLED: string

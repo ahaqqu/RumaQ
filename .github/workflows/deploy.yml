@@ -93,4 +93,7 @@ jobs:
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           WORKER_JWT_SECRET: ${{ secrets.WORKER_JWT_SECRET }}
           WORKER_ENCRYPTION_KEY: ${{ secrets.WORKER_ENCRYPTION_KEY }}
-          HAQITA_INGEST_SECRET: ${{ secrets.HAQITA_INGEST_SECRET }}
+          # HAQITA_INGEST_SECRET is deliberately NOT passed here: it is set and
+          # rotated out-of-band on the Worker (operator-owned), and CI
+          # re-asserting a stale copy 401'd every internal endpoint
+          # (ahaqqu/RumaQ#456).

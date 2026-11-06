@@ -314,6 +314,8 @@ Production deploys to `main` are **commit-based**: `.github/workflows/deploy.yml
 
 Rapid merges queue on the `deploy-main` concurrency group and deploy sequentially. When the changes since the **last successful deploy** only touch deploy-irrelevant files (Markdown, `docs/`, `.github/`, license/attribute files), `scripts/github/needs-deploy.sh` skips the deploy — a deliberate, visible skip; anything else deploys. Basing the skip decision on the last deployed commit (queried via the GitHub API) rather than the previous push means docs-only pushes and dropped queued runs can never hide a pending code change: the next deploy's diff still contains them. Production deploys always use the `rumaq` D1 database configured by `CLOUDFLARE_DATABASE_ID`.
 
+The Deploy production step's env carries only the Cloudflare credentials and the four gateway secrets. `HAQITA_INGEST_SECRET` is deliberately **not** passed and never written by CI (#456): it is set and rotated out-of-band by the operator, so a deploy can never clobber the rotated Worker value. `scripts/test/deploy-secrets.sh` (run by `scripts/github/ci.sh`) fails on drift.
+
 ### Branch deployments
 
 When not on `main`, `./scripts/deploy.sh cloudflare` deploys to a **branch-specific Worker** (`rumaq-api-{sanitized-branch}`) that serves both the SPA (static assets) and the API. This gives a branch its own real preview environment at a single URL, backed by a real Worker, rather than pointing the preview frontend at the production Worker. Previews are deployed **on demand** via `workflow_dispatch` — not every PR gets one automatically.
@@ -382,7 +384,7 @@ The legacy Pages project was deleted after the cutover; `rumaq.pages.dev` no lon
    ./scripts/deploy.sh cloudflare
    ```
 
-   The deploy script uploads secrets before deploying the Worker so a startup secrets check never fails.
+   The deploy script uploads the four gateway secrets before deploying the Worker so a startup secrets check never fails. `HAQITA_INGEST_SECRET` is **not** among them: it is set and rotated out-of-band by the operator (ahaqqu/RumaQ#456), because a CI-written copy silently clobbered the rotated Worker value once and 401'd every internal endpoint.
 
 ### Environment variables
 
@@ -392,7 +394,7 @@ The legacy Pages project was deleted after the cutover; `rumaq.pages.dev` no lon
 | `GOOGLE_CLIENT_SECRET`        | Worker secret  | Google OAuth client secret                                                                                                                                                                              |
 | `WORKER_JWT_SECRET`           | Worker secret  | HMAC key for session JWT                                                                                                                                                                                |
 | `WORKER_ENCRYPTION_KEY`       | Worker secret  | AES-GCM key for AI keys                                                                                                                                                                                 |
-| `HAQITA_INGEST_SECRET`        | Worker secret  | Bearer secret for the internal price ingest endpoint (`POST /api/internal/ingest/prices`, pushed daily by the rumaq-scraper VPS job). Optional: when unset the endpoint returns 503                     |
+| `HAQITA_INGEST_SECRET`        | Worker secret  | Bearer secret for the internal price-ingest endpoint (`POST /api/internal/ingest/prices`). **Set/rotated out-of-band; the CI deploy never writes it (#456).** Optional: unset → 503                     |
 | `CLOUDFLARE_ACCOUNT_ID`       | Build/deploy   | Cloudflare account ID; used by Wrangler and the deploy script                                                                                                                                           |
 | `CLOUDFLARE_DATABASE_ID`      | Build/deploy   | D1 database UUID; read by `cloudflare.config.ts` at deploy time instead of being committed                                                                                                              |
 | `CLOUDFLARE_API_TOKEN`        | Build/deploy   | Optional API token for CI/automated deploys. If absent, `cf login` is used interactively                                                                                                                |
@@ -429,6 +431,29 @@ export WORKER_ENCRYPTION_KEY=...
 ./scripts/deploy.sh cloudflare
 ```
 
+`HAQITA_INGEST_SECRET` is never part of that path — set and rotate it out-of-band only. Three copies must move in the same window, and CI updates none of them:
+
+1. **the Worker secret** (the authority) — `cf workers secrets update`, below;
+2. **the pipeline box's env** (`RUMAQ_INGEST_SECRET` in the private pipeline repo);
+3. **the GitHub repo secret of the same name** — read-only, used only by the 6-hourly Production Smoke freshness check (`scripts/github/check-price-freshness.sh`). Leave it stale and that step fails 401 on every run and opens a `Smoke test failure` issue a day; update it with the rotation, or delete it to disarm the staleness alert.
+
+An ordinary deploy preserves the Worker secret: the deploy uploads only the gateway secrets, and Cloudflare merges them into the existing set (`PATCH …/workers/scripts/<worker>/secrets-bulk` with `application/merge-patch+json`), so an unlisted secret is never deleted. A Worker _recreated_ from scratch — deleted, or renamed — does come back without it, and CI will never restore it; re-run the command below, and until then the ingest surface answers 503 `Ingest endpoint not configured` rather than 401.
+
+```bash
+cf workers secrets update HAQITA_INGEST_SECRET --worker api --text <value> --type secret_text
+```
+
+For a rotation that does not 401 the nightly at all, use the successor secret the ingest middleware already accepts — in this order:
+
+```bash
+cf workers secrets update HAQITA_INGEST_SECRET_NEXT --worker api --text <new> --type secret_text   # 1. Worker accepts both
+# 2. point the box at <new> and let one nightly run succeed
+cf workers secrets update HAQITA_INGEST_SECRET      --worker api --text <new> --type secret_text   # 3. promote
+cf workers secrets delete HAQITA_INGEST_SECRET_NEXT --worker api                                   # 4. close the window
+```
+
+`requireIngestSecret` (`backend/src/apps/api.ts`) accepts every non-empty candidate while both exist, so no step has a mismatched window. Nothing promotes `_NEXT` automatically: the deploy writes neither secret, so every step is the operator's.
+
 **Important:** Rotating `WORKER_ENCRYPTION_KEY` invalidates every stored AI API key because they are encrypted with the old key. After rotation, all users must re-enter their AI key in Settings. Rotating `WORKER_JWT_SECRET` only invalidates active sessions; users simply log in again.
 
 | Secret                  | Local | Test | Production | Rotation impact                                  |
@@ -438,6 +463,8 @@ export WORKER_ENCRYPTION_KEY=...
 | `WORKER_JWT_SECRET`     | yes   | yes  | yes        | Active sessions invalidated                      |
 | `WORKER_ENCRYPTION_KEY` | yes   | yes  | yes        | Stored AI keys must be re-entered                |
 | `HAQITA_INGEST_SECRET`  | yes   | yes  | yes        | Scraper pushes rejected until its env is rotated |
+
+`HAQITA_INGEST_SECRET` is the exception to deploy-managed rotation: it is set and rotated out-of-band (`cf workers secrets update`, above) and the CI deploy deliberately never writes it (#456). It is also absent from `backend/cloudflare.config.ts`'s declared bindings for the same reason.
 
 ### Database backups & restore
 
