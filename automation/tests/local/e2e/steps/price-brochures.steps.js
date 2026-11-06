@@ -31,7 +31,7 @@ const e2eScrapedDate = () => e2eBrochureKey().split('/')[1]
 
 function e2eSnapshot(brochureKey, scrapedDate) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     scrapedAt: `${scrapedDate.slice(0, 4)}-${scrapedDate.slice(4, 6)}-${scrapedDate.slice(6, 8)}T23:00:05Z`,
     stores: [
       { slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' },
@@ -40,9 +40,9 @@ function e2eSnapshot(brochureKey, scrapedDate) {
     items: [
       {
         productKey: SUGAR_KEY,
-        name: 'Gula Pasir Gulaku 1 kg',
-        brand: 'Gulaku',
-        unit: '1 kg',
+        rawName: 'Gula Pasir Gulaku 1 kg',
+        rawBrand: 'Gulaku',
+        rawUnit: '1 kg',
         storeSlug: 'lotte-mart',
         price: 40000,
         effectiveUnitPrice: 38000,
@@ -54,9 +54,9 @@ function e2eSnapshot(brochureKey, scrapedDate) {
       },
       {
         productKey: 'kopi--kapal-api--165-g',
-        name: 'Kopi Kapal Api 165 g',
-        brand: 'Kapal Api',
-        unit: '165 g',
+        rawName: 'Kopi Kapal Api 165 g',
+        rawBrand: 'Kapal Api',
+        rawUnit: '165 g',
         storeSlug: 'superindo',
         price: 30000,
         matchMethod: 'exact',

@@ -23,7 +23,7 @@ export const BROCHURE_PALINGMURAH_INDOMARET =
 
 export function priceSnapshot() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     scrapedAt: '2026-10-24T23:00:05Z',
     stores: [
       { slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' },
@@ -32,9 +32,9 @@ export function priceSnapshot() {
     items: [
       {
         productKey: OIL_KEY,
-        name: 'Minyak Goreng Bimoli',
-        brand: 'Bimoli',
-        unit: '1 L',
+        rawName: 'Minyak Goreng Bimoli',
+        rawBrand: 'Bimoli',
+        rawUnit: '1 L',
         storeSlug: 'lotte-mart',
         price: 21500,
         // Promo evidence for the promos catalog (issue #292): oil sits on
@@ -50,9 +50,9 @@ export function priceSnapshot() {
       },
       {
         productKey: OIL_KEY,
-        name: 'Minyak Goreng Bimoli',
-        brand: 'Bimoli',
-        unit: '1 L',
+        rawName: 'Minyak Goreng Bimoli',
+        rawBrand: 'Bimoli',
+        rawUnit: '1 L',
         storeSlug: 'superindo',
         price: 23000,
         promoType: 'discount_pct',
@@ -63,9 +63,9 @@ export function priceSnapshot() {
       },
       {
         productKey: RICE_KEY,
-        name: 'Beras Pandan Wangi 5 kg',
-        brand: 'Pandan Wangi',
-        unit: '5 kg',
+        rawName: 'Beras Pandan Wangi 5 kg',
+        rawBrand: 'Pandan Wangi',
+        rawUnit: '5 kg',
         storeSlug: 'superindo',
         price: 72000,
         promoType: 'get_free',
@@ -79,9 +79,9 @@ export function priceSnapshot() {
         // High price + no validity + "T" name so the sort scenarios append
         // it after the existing products instead of reshuffling them.
         productKey: FLOUR_KEY,
-        name: 'Tepung Segitiga Biru 1 kg',
-        brand: 'Segitiga Biru',
-        unit: '1 kg',
+        rawName: 'Tepung Segitiga Biru 1 kg',
+        rawBrand: 'Segitiga Biru',
+        rawUnit: '1 kg',
         storeSlug: 'lotte-mart',
         price: 80000,
         promoLabel: 'Beli 2 gratis 1',
@@ -99,7 +99,7 @@ export function priceSnapshot() {
 // — the exact case the sort and grounding fix must get right.
 export function promoSnapshot() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     scrapedAt: '2026-10-25T23:00:05Z',
     stores: [
       { slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' },
@@ -108,9 +108,9 @@ export function promoSnapshot() {
     items: [
       {
         productKey: SUGAR_KEY,
-        name: 'Gula Pasir Gulaku 1 kg',
-        brand: 'Gulaku',
-        unit: '1 kg',
+        rawName: 'Gula Pasir Gulaku 1 kg',
+        rawBrand: 'Gulaku',
+        rawUnit: '1 kg',
         storeSlug: 'lotte-mart',
         price: 40000,
         effectiveUnitPrice: 38000,
@@ -123,9 +123,9 @@ export function promoSnapshot() {
       },
       {
         productKey: SUGAR_KEY,
-        name: 'Gula Pasir Gulaku 1 kg',
-        brand: 'Gulaku',
-        unit: '1 kg',
+        rawName: 'Gula Pasir Gulaku 1 kg',
+        rawBrand: 'Gulaku',
+        rawUnit: '1 kg',
         storeSlug: 'superindo',
         price: 41000,
         effectiveUnitPrice: 36000,
@@ -138,9 +138,9 @@ export function promoSnapshot() {
       },
       {
         productKey: COFFEE_KEY,
-        name: 'Kopi Kapal Api 165 g',
-        brand: 'Kapal Api',
-        unit: '165 g',
+        rawName: 'Kopi Kapal Api 165 g',
+        rawBrand: 'Kapal Api',
+        rawUnit: '165 g',
         storeSlug: 'lotte-mart',
         price: 30000,
         validUntil: '2026-10-29',
@@ -153,14 +153,14 @@ export function promoSnapshot() {
 
 export function bulkCatalogueSnapshot(count) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     scrapedAt: '2026-10-26T23:00:05Z',
     stores: [{ slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' }],
     items: Array.from({ length: count }, (_, i) => ({
       productKey: `bulk-item-${i}--acme--1-pcs`,
-      name: `Bulk Item ${i}`,
-      brand: 'Acme',
-      unit: '1 pcs',
+      rawName: `Bulk Item ${i}`,
+      rawBrand: 'Acme',
+      rawUnit: '1 pcs',
       storeSlug: 'lotte-mart',
       price: 1000 + i * 7,
       matchMethod: 'exact',
@@ -180,15 +180,15 @@ export const ALFAMART_PROMO_PAGE =
 // promo and a tier promo that stays label-only (the astro convention).
 export function catalogSnapshot() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     scrapedAt: '2026-10-26T23:00:05Z',
     stores: [{ slug: 'alfamart', name: 'Alfamart', region: 'jakarta' }],
     items: [
       {
         productKey: 'minyak-goreng--filma--2-l',
-        name: 'Minyak Goreng Filma Pouch 2 L',
-        brand: 'Filma',
-        unit: '2 L',
+        rawName: 'Minyak Goreng Filma Pouch 2 L',
+        rawBrand: 'Filma',
+        rawUnit: '2 L',
         storeSlug: 'alfamart',
         price: 43700,
         promoType: 'discount_pct',
@@ -199,9 +199,9 @@ export function catalogSnapshot() {
       },
       {
         productKey: 'detergen-cair--gentle-gen--700-g',
-        name: 'Detergen Cair Gentle Gen 700 g',
-        brand: 'Gentle Gen',
-        unit: '700 g',
+        rawName: 'Detergen Cair Gentle Gen 700 g',
+        rawBrand: 'Gentle Gen',
+        rawUnit: '700 g',
         storeSlug: 'alfamart',
         price: 25000,
         promoLabel: 'Beli 2 Disc.4%',
@@ -220,7 +220,7 @@ export function catalogSnapshot() {
 // from a plain image download must group exactly like the OCR stores.
 export function brochureSnapshot() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     scrapedAt: '2026-10-26T23:00:05Z',
     stores: [
       { slug: 'indomaret', name: 'Indomaret', region: 'jakarta' },
@@ -230,9 +230,9 @@ export function brochureSnapshot() {
     items: [
       {
         productKey: 'susu-uht--ultra--1-l',
-        name: 'Susu UHT Ultra 1 L',
-        brand: 'Ultra',
-        unit: '1 L',
+        rawName: 'Susu UHT Ultra 1 L',
+        rawBrand: 'Ultra',
+        rawUnit: '1 L',
         storeSlug: 'lotte-mart',
         price: 19000,
         matchMethod: 'exact',
@@ -241,9 +241,9 @@ export function brochureSnapshot() {
       },
       {
         productKey: 'roti-tawar--sari-roti--1-bungkus',
-        name: 'Roti Tawar Sari Roti',
-        brand: 'Sari Roti',
-        unit: '1 bungkus',
+        rawName: 'Roti Tawar Sari Roti',
+        rawBrand: 'Sari Roti',
+        rawUnit: '1 bungkus',
         storeSlug: 'lotte-mart',
         price: 14000,
         matchMethod: 'exact',
@@ -253,9 +253,9 @@ export function brochureSnapshot() {
       },
       {
         productKey: 'sabun-mandi--lifebuoy--1-bks',
-        name: 'Sabun Mandi Lifebuoy',
-        brand: 'Lifebuoy',
-        unit: '1 bks',
+        rawName: 'Sabun Mandi Lifebuoy',
+        rawBrand: 'Lifebuoy',
+        rawUnit: '1 bks',
         storeSlug: 'superindo',
         price: 5000,
         matchMethod: 'exact',
@@ -264,9 +264,9 @@ export function brochureSnapshot() {
       },
       {
         productKey: 'gula-pasir--gulaku--1-kg',
-        name: 'Gula Pasir Gulaku 1 kg',
-        brand: 'Gulaku',
-        unit: '1 kg',
+        rawName: 'Gula Pasir Gulaku 1 kg',
+        rawBrand: 'Gulaku',
+        rawUnit: '1 kg',
         storeSlug: 'indomaret',
         price: 15500,
         matchMethod: 'exact',
