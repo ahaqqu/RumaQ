@@ -86,10 +86,18 @@ function runInBatch(sqlite: SqliteDb, statement: TestStatement) {
   return { results: [], success: true, meta: { changes: Number(info?.changes ?? 0) } }
 }
 
-function sqliteD1(sqlite: SqliteDb): D1Database {
+// `beforeBatch` runs once, immediately before the first batch — the seam a
+// concurrent writer commits through: the lib's pre-check has already read the
+// old row, so the guarded UPDATE in the batch must be the one that notices.
+function sqliteD1(sqlite: SqliteDb, options: { beforeBatch?: () => void } = {}): D1Database {
+  let fired = false
   return {
     prepare: (sql: string) => new TestStatement(sqlite, sql),
     batch: async (statements: TestStatement[]) => {
+      if (!fired) {
+        fired = true
+        options.beforeBatch?.()
+      }
       sqlite.exec('BEGIN')
       try {
         const results = statements.map((statement) => runInBatch(sqlite, statement))
@@ -426,6 +434,55 @@ describe('renameProduct — real-SQLite semantics', () => {
 
     expect(productById(sqlite)!.name).toBe('Beras Ramos 5 kg')
     expect(productById(sqlite)!.metadata_version).toBe(1)
+    expect(sqlite.prepare('SELECT status FROM price_product_aliases').get()).toEqual({
+      status: 'candidate',
+    })
+    expect(auditRows(sqlite)).toHaveLength(0)
+    expect(indexVersion(sqlite)).toBe(0)
+  })
+
+  it('writes nothing when a concurrent write moves the version between the pre-check and the batch', async () => {
+    const sqlite = freshDb()
+    insertProduct(sqlite)
+    insertAlias(sqlite, {
+      id: 'alias-1',
+      productId: 'prod-1',
+      storeSlug: 'superindo',
+      name: 'Beras Ramos 5 kg',
+    })
+
+    // Another admin's rename commits after readProductByKey saw version 1: the
+    // guarded UPDATE must match zero rows, and every statement chained on the
+    // post-update state (alias approval, receipt, index bump) must stay inert.
+    // Without that chain a stale request answers 409 while still approving
+    // aliases, writing a receipt, or moving the canonical index version.
+    const db = sqliteD1(sqlite, {
+      beforeBatch: () =>
+        sqlite
+          .prepare(
+            `UPDATE price_products
+             SET name = 'Beras Ramos Super Khusus', metadata_version = 2
+             WHERE id = 'prod-1'`
+          )
+          .run(),
+    })
+
+    await expect(
+      renameProduct(db, {
+        productKey: 'beras--ramos--5-kg',
+        canonicalName: 'Beras Ramos Premium',
+        expectedMetadataVersion: 1,
+        actorUserId: 'admin-1',
+      })
+    ).rejects.toMatchObject({
+      name: 'StaleProductError',
+      current: { name: 'Beras Ramos Super Khusus', metadataVersion: 2 },
+    })
+
+    expect(productById(sqlite)).toMatchObject({
+      name: 'Beras Ramos Super Khusus',
+      metadata_version: 2,
+    })
     expect(sqlite.prepare('SELECT status FROM price_product_aliases').get()).toEqual({
       status: 'candidate',
     })
