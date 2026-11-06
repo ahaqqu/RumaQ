@@ -55,6 +55,23 @@ vi.mock('../lib/queries/index.js', () => ({
   useHouseholds: vi.fn(),
 }))
 
+// The global test-setup pins useMatches to '/', but the page-title lookup
+// must be exercised on a plugin route (a deep link into a disabled plugin
+// shows the real page name, not the "Home" fallback). This file-local mock
+// overrides the setup's for this file, with a redirectable route id.
+const routerState = vi.hoisted(() => ({ routeId: '/' }))
+vi.mock('@tanstack/react-router', async () => {
+  const actual = await vi.importActual('@tanstack/react-router')
+  return {
+    ...actual,
+    useMatches: () => [{ routeId: routerState.routeId, pathname: routerState.routeId }],
+    useNavigate: () => vi.fn(),
+    Link: ({ children, to, className, ...props }) =>
+      React.createElement('a', { ...props, className, href: to, 'data-testid': 'link' }, children),
+    Outlet: () => null,
+  }
+})
+
 function renderWithProviders(ui) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -76,6 +93,7 @@ function renderWithProviders(ui) {
 
 describe('AppShell', () => {
   beforeEach(() => {
+    routerState.routeId = '/'
     vi.mocked(useMe).mockReturnValue({
       data: { user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: null } },
       isLoading: false,
@@ -242,6 +260,26 @@ describe('AppShell', () => {
     expect(drawer.querySelector('a[href="/documents"]')).toBeNull()
     // Core household-admin entries are unaffected.
     expect(drawer.querySelector('a[href="/household"]')).toBeTruthy()
+  })
+
+  it('titles a deep link into a disabled plugin with the real page name', () => {
+    // The gate blocks the page itself, but the header must still read
+    // "Documents": the title lookup composes the UNfiltered catalog while
+    // the nav renders the filtered one — the filtered lookup fell back to
+    // "Home" here.
+    routerState.routeId = '/documents'
+    vi.mocked(useMe).mockReturnValue({
+      data: {
+        user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: null },
+        enabledPlugins: [],
+      },
+      isLoading: false,
+    })
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    expect(container.textContent).toContain('Your household / Documents')
+    expect(container.textContent).not.toContain('Your household / Home')
+    // The nav link itself stays filtered out of the sidebar.
+    expect(container.querySelector('a[href="/documents"]')).toBeNull()
   })
 
   it('renders the account block without a logout button (logout lives in Settings)', () => {

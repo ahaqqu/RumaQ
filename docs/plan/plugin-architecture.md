@@ -196,7 +196,7 @@ For a household with the documents plugin **disabled**, every one of these is tr
 
 | Surface                   | Disabled experience                                                                                                                                                                                                                                                           |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Nav                       | No Documents entry in the household group (`AppShell.jsx` renders the filtered catalog at three sites: title lookup, sidebar, mobile drawer)                                                                                                                                  |
+| Nav                       | No Documents entry in the household group (`AppShell.jsx` renders the filtered catalog at both render sites: sidebar, mobile drawer; the page-title lookup reads the UNfiltered catalog so a deep link still shows the real page name)                                        |
 | Direct URL (`/documents`) | A calm empty state: "This feature is off for your household" + an enable affordance (owners) or nothing (members). Not a 404, not an error                                                                                                                                    |
 | API                       | Plugin routes answer `404` with the standard error envelope — fail closed and consistent with the foreign-household posture. Not a secrecy claim: the settings catalog advertises every plugin anyway                                                                         |
 | Settings                  | A "Plugins" catalog screen listing available features with state and a one-tap enable/disable (owner-only)                                                                                                                                                                    |
@@ -317,7 +317,7 @@ No phase changes any URL, table shape, or contract field already shipped by #399
 | Phase                    | Ships                                                                                                                                                                                                                                                                                                                                                                                                | User-visible change                                                                       |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | **A. Registry core**     | Plugin manifest type + validation; plugin **factory** contract; port injection; `household_plugins` migration and resolver (`defaultEnabled`, so no grandfathering backfill); bootstrap `enabledPlugins` additive field; gateway dispatch via registry; enablement middleware; `deployment_flags`; import-boundary rules (allow-list empty until the vault move, ticket 4); `ARCHITECTURE.md` update | None. Bit-for-bit same behavior                                                           |
-| **B. Gating**            | Frontend plugin context (refetch on household switch, absent field = all enabled); nav filter at all three render sites; route gates with the disabled empty state; owner-only enable/disable                                                                                                                                                                                                        | Only if a household _chooses_ to disable: nav entry disappears; everything else unchanged |
+| **B. Gating**            | Frontend plugin context (refetch on household switch, absent field = all enabled); nav filter at every render site; route gates with the disabled empty state; owner-only enable/disable                                                                                                                                                                                                             | Only if a household _chooses_ to disable: nav entry disappears; everything else unchanged |
 | **C. Data lifecycle**    | Plugins catalog in settings; purge job (state machine, chunked, audited) with household-dissolution ordering; core lifecycle audit table                                                                                                                                                                                                                                                             | New settings screen; no change to existing screens                                        |
 | **D. Adapter evolution** | Ports directory formalization; DokumenQ adapter behind `StorageAdapter` (#391 M3 Mode A); optional Mode B signed-URL follow-up                                                                                                                                                                                                                                                                       | None (or faster downloads, if Mode B lands)                                               |
 
@@ -543,9 +543,12 @@ isolate + convention everywhere else.
   manifest cannot carry React. Core composes them; plugins never edit `AppShell.jsx`.
   Concretely: the hard-coded `HOUSEHOLD_NAV` documents entry becomes
   `catalog.filter(enabled)` — same visual result, declared source.
-- **The filter has three call sites, not one.** `AppShell.jsx:197` builds `navItems` for the
-  page title lookup, `:287` renders the sidebar, `:423` renders the mobile drawer. Filter
-  once in the provider and feed all three, or mobile keeps showing a disabled surface.
+- **The filter has two render call sites, not one.** `AppShell.jsx` renders the sidebar
+  and the mobile drawer from the provider's filtered groups; its `navItems` page-title
+  lookup deliberately reads the UNfiltered catalog — a deep link into a disabled plugin
+  must still show the real page name, not the "Home" fallback. Filter once in the
+  provider (plus the unfiltered companion) and feed every site, or mobile keeps showing
+  a disabled surface.
 - **Frontend plugin context:** one provider fed by `/api/me`'s additive `enabledPlugins`
   (keyed to the ACTIVE household, refetched on switch — §3.3). **A response without the
   field means "all catalog plugins enabled"** — a stale PWA bundle, a rolled-back API
@@ -674,7 +677,7 @@ polices, or the move is reviewed by eye.
    registered first), enablement middleware, import-boundary rules with an empty allow-list,
    `ARCHITECTURE.md` update. No frontend change.
 2. **Frontend plugin gating** — catalog context provider (refetch on household switch,
-   absent field = all enabled), nav filter at all three render sites, route gate + disabled
+   absent field = all enabled), nav filter at every render site, route gate + disabled
    empty state, en+id lifecycle strings.
 3. **Plugins settings catalog** — owner-only enable/disable with audit events, per-plugin
    copy, capabilities surface (§4.5).
@@ -740,8 +743,8 @@ polices, or the move is reviewed by eye.
   `backend/src/apps/households.ts`
 - Commercial gating: `backend/src/lib/entitlements.ts` (`resolvePlan`, `requireEntitlement`),
   `backend/migrations/0018_user_plans.sql`
-- Frontend surfaces: `frontend/src/components/AppShell.jsx` (`navItems:197`, sidebar `:287`,
-  drawer `:423`), `frontend/src/routes/`, `frontend/src/i18n/locales/{en,id}.json`,
+- Frontend surfaces: `frontend/src/components/AppShell.jsx` (`navItems:210`, sidebar `:318`,
+  drawer `:435`), `frontend/src/routes/`, `frontend/src/i18n/locales/{en,id}.json`,
   contract codegen (`vite.config.ts:68` →
   `scripts/api/generate-openapi-spec.ts` → `frontend/openapi.json` →
   `frontend/src/lib/api-schema.d.ts`)

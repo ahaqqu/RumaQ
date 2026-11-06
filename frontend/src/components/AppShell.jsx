@@ -177,11 +177,14 @@ export function AppShell({ children }) {
   }, [drawerOpen])
 
   const user = me?.user
-  // Plugin catalog entries, already filtered to the active household's
-  // enabled set (plugins/context.jsx — filter once in the provider, feed
-  // every render site: the navItems title lookup below, the sidebar, and the
-  // mobile drawer; plan §4.5).
-  const { nav: pluginNav } = usePluginCatalog()
+  // Plugin catalog entries (plugins/context.jsx — filter once in the
+  // provider, feed every render site). nav is filtered to the active
+  // household's enabled set and feeds the sidebar and the mobile drawer;
+  // navAll is the unfiltered catalog and feeds only the page-title lookup
+  // below — a disabled plugin's route stays reachable by deep link, and the
+  // header must read the real page name over the gate's turned-off empty
+  // state instead of falling back to "Home".
+  const { nav: pluginNav, navAll: pluginNavAll } = usePluginCatalog()
   const householdName = settings?.active_household_name
   // The identity card mirrors the Figma household card ("Keluarga Putri · 4
   // people"): the count rides the households list, keyed off the active id.
@@ -197,20 +200,23 @@ export function AppShell({ children }) {
   }
 
   const currentRouteId = matches[matches.length - 1]?.routeId || '/'
-  // The scraping monitor and the manual scrape trigger are operator surfaces —
-  // their nav entries only exist for admins (me.user.isAdmin from the
-  // backend, backed by the users.is_admin grant). Household members is
-  // everyone's; both share the HOUSEHOLD ADMIN group.
+  // The page-title lookup composes the UNfiltered plugin groups (see the
+  // navAll comment above); core lists are never filtered, so the plugin
+  // groups are the only difference from the render-site composition. The
+  // scraping monitor and the manual scrape trigger remain operator surfaces —
+  // their entries only exist for admins (me.user.isAdmin from the backend,
+  // backed by the users.is_admin grant). Household members is everyone's;
+  // both share the HOUSEHOLD ADMIN group.
   const navItems = user?.isAdmin
     ? [
         ...NAV,
-        ...pluginNav.main,
+        ...pluginNavAll.main,
         ...HOUSEHOLD_NAV,
-        ...pluginNav.household,
+        ...pluginNavAll.household,
         ...ADMIN_NAV,
-        ...pluginNav.admin,
+        ...pluginNavAll.admin,
       ]
-    : [...NAV, ...pluginNav.main, ...HOUSEHOLD_NAV, ...pluginNav.household]
+    : [...NAV, ...pluginNavAll.main, ...HOUSEHOLD_NAV, ...pluginNavAll.household]
   const currentNav = navItems.find((n) => n.to === currentRouteId)
   const title = currentNav ? t(currentNav.key) : t('nav.home')
   const isActive = (to) => matches.some((m) => m.routeId === to)
@@ -227,6 +233,24 @@ export function AppShell({ children }) {
       <Icon size={21} className="shrink-0" /> {t(key)}
     </NavItem>
   )
+
+  // The drawer's NavItems close the drawer on click — the one prop that
+  // differs from the sidebar's renderNavItem above.
+  const renderDrawerItem = ({ id, key, Icon, to }) => (
+    <NavItem key={id} to={to} active={isActive(to)} onClick={() => setDrawerOpen(false)}>
+      <Icon size={21} className="shrink-0" /> {t(key)}
+    </NavItem>
+  )
+
+  // Core + plugin entries merged once so each render site below is a single
+  // map: a future nav group costs one concat here instead of another
+  // copy-pasted block per render site.
+  const sidebarMain = [...NAV, ...pluginNav.main]
+  const drawerMain = [...DRAWER_NAV, ...pluginNav.main]
+  const householdNav = [...HOUSEHOLD_NAV, ...pluginNav.household]
+  // Operator surfaces render for admins only; an empty array renders
+  // nothing, so the map sites need no second guard.
+  const adminNav = user?.isAdmin ? [...ADMIN_NAV, ...pluginNav.admin] : []
 
   // Shared by the desktop sidebar and the mobile drawer so both stay in sync.
   // Logout lives in the Settings page, not here. The whole card links into
@@ -291,8 +315,7 @@ export function AppShell({ children }) {
         {householdCard}
 
         <nav className="flex flex-col gap-1.5" aria-label={t('nav.mainNav')}>
-          {NAV.map(renderNavItem)}
-          {pluginNav.main.map(renderNavItem)}
+          {sidebarMain.map(renderNavItem)}
         </nav>
 
         <div className="flex flex-col gap-4">
@@ -300,10 +323,8 @@ export function AppShell({ children }) {
             {t('nav.adminGroup')}
           </div>
           <nav className="flex flex-col gap-1.5" aria-label={t('nav.adminGroup')}>
-            {HOUSEHOLD_NAV.map(renderNavItem)}
-            {pluginNav.household.map(renderNavItem)}
-            {user?.isAdmin && ADMIN_NAV.map(renderNavItem)}
-            {user?.isAdmin && pluginNav.admin.map(renderNavItem)}
+            {householdNav.map(renderNavItem)}
+            {adminNav.map(renderNavItem)}
           </nav>
         </div>
 
@@ -411,26 +432,7 @@ export function AppShell({ children }) {
             {householdCard}
 
             <nav className="flex flex-col gap-1" aria-label={t('nav.mainNav')}>
-              {DRAWER_NAV.map((item) => (
-                <NavItem
-                  key={item.id}
-                  to={item.to}
-                  active={isActive(item.to)}
-                  onClick={() => setDrawerOpen(false)}
-                >
-                  <item.Icon size={21} className="shrink-0" /> {t(item.key)}
-                </NavItem>
-              ))}
-              {pluginNav.main.map((item) => (
-                <NavItem
-                  key={item.id}
-                  to={item.to}
-                  active={isActive(item.to)}
-                  onClick={() => setDrawerOpen(false)}
-                >
-                  <item.Icon size={21} className="shrink-0" /> {t(item.key)}
-                </NavItem>
-              ))}
+              {drawerMain.map(renderDrawerItem)}
             </nav>
 
             <nav className="flex flex-col gap-1" aria-label={t('nav.settings')}>
@@ -448,48 +450,8 @@ export function AppShell({ children }) {
                 {t('nav.adminGroup')}
               </div>
               <nav className="flex flex-col gap-1" aria-label={t('nav.adminGroup')}>
-                {HOUSEHOLD_NAV.map((item) => (
-                  <NavItem
-                    key={item.id}
-                    to={item.to}
-                    active={isActive(item.to)}
-                    onClick={() => setDrawerOpen(false)}
-                  >
-                    <item.Icon size={21} className="shrink-0" /> {t(item.key)}
-                  </NavItem>
-                ))}
-                {pluginNav.household.map((item) => (
-                  <NavItem
-                    key={item.id}
-                    to={item.to}
-                    active={isActive(item.to)}
-                    onClick={() => setDrawerOpen(false)}
-                  >
-                    <item.Icon size={21} className="shrink-0" /> {t(item.key)}
-                  </NavItem>
-                ))}
-                {user?.isAdmin &&
-                  ADMIN_NAV.map((item) => (
-                    <NavItem
-                      key={item.id}
-                      to={item.to}
-                      active={isActive(item.to)}
-                      onClick={() => setDrawerOpen(false)}
-                    >
-                      <item.Icon size={21} className="shrink-0" /> {t(item.key)}
-                    </NavItem>
-                  ))}
-                {user?.isAdmin &&
-                  pluginNav.admin.map((item) => (
-                    <NavItem
-                      key={item.id}
-                      to={item.to}
-                      active={isActive(item.to)}
-                      onClick={() => setDrawerOpen(false)}
-                    >
-                      <item.Icon size={21} className="shrink-0" /> {t(item.key)}
-                    </NavItem>
-                  ))}
+                {householdNav.map(renderDrawerItem)}
+                {adminNav.map(renderDrawerItem)}
               </nav>
             </div>
 

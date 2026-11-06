@@ -17,29 +17,44 @@ function buildCatalogState(me) {
   // A legacy payload, a stale PWA bundle, a rolled-back API deploy or a
   // failed enablement read (the resolver omits the field) must never hide a
   // surface: enforcement lives in the backend plugin gate (404 fail-closed),
-  // so failing open here can never grant access the server would deny.
-  const enabled = Array.isArray(me?.enabledPlugins) ? new Set(me.enabledPlugins) : null
+  // so failing open here can never grant access the server would deny. The
+  // same contract covers malformed array ELEMENTS ([123], [null]) — they are
+  // dropped before the Set, because a Set built from them would miss every
+  // string id and fail closed instead. An empty array stays an empty Set:
+  // disable-everything is a real enablement state.
+  const ids = Array.isArray(me?.enabledPlugins)
+    ? me.enabledPlugins.filter((id) => typeof id === 'string')
+    : null
+  const enabled = ids === null ? null : new Set(ids)
 
-  // Filter ONCE here and feed every render site (AppShell builds navItems for
-  // the page-title lookup, then renders the sidebar and the mobile drawer) —
-  // filtering per site instead would let mobile keep showing a disabled
-  // surface (plan §4.5).
+  // Filter ONCE here and feed every render site — the sidebar and the mobile
+  // drawer render the filtered nav (filtering per site instead would let
+  // mobile keep showing a disabled surface, plan §4.5), while AppShell's
+  // page-title lookup reads the unfiltered navAll: a disabled plugin's route
+  // stays reachable by deep link, and the header must show the real page
+  // name over the gate's turned-off empty state, not the "Home" fallback.
   const nav = {}
-  for (const group of PLUGIN_NAV_GROUPS) nav[group] = []
+  const navAll = {}
+  for (const group of PLUGIN_NAV_GROUPS) {
+    nav[group] = []
+    navAll[group] = []
+  }
   for (const entry of PLUGIN_CATALOG) {
-    if (enabled && !enabled.has(entry.id)) continue
-    const group = nav[entry.navGroup]
+    const group = navAll[entry.navGroup]
     // Unreachable while registry.test.js pins every entry's navGroup to
     // PLUGIN_NAV_GROUPS; skipped rather than thrown so one bad entry cannot
     // blank the whole shell.
     if (!group) continue
     // Same shape AppShell's own nav lists use ({ id, key, Icon, to }) so the
     // shell renders core and plugin entries with one renderer.
-    group.push({ id: entry.id, key: entry.labelKey, Icon: entry.icon, to: entry.routePath })
+    const item = { id: entry.id, key: entry.labelKey, Icon: entry.icon, to: entry.routePath }
+    group.push(item)
+    if (!enabled || enabled.has(entry.id)) nav[entry.navGroup].push(item)
   }
 
   return {
     nav,
+    navAll,
     isEnabled: (pluginId) => !enabled || enabled.has(pluginId),
   }
 }
