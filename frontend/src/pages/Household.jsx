@@ -30,6 +30,7 @@ import {
   IconCheck,
 } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
+import { PluginFeatures } from '../plugins/PluginFeatures.jsx'
 
 // Error vocabulary mirrors the backend's households app: the (endpoint,
 // status) pair picks the copy, never the raw server string. A 400 only means
@@ -509,6 +510,11 @@ export function Household() {
           </div>
         )}
       </Panel>
+
+      {/* Plugin settings catalog (issue #437, plan §4.5): every registered
+          plugin with its capabilities and honest three-layer posture. The
+          enable/disable toggle is owner-only, like the affordances above. */}
+      <PluginFeatures isOwner={isOwner} />
 
       {/* Add person (owners) — two modes (#388): invite an existing user
           (the current share-code flow) or add a profile-only member with no

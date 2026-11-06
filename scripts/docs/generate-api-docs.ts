@@ -5,6 +5,7 @@ import { householdsApp } from '../../backend/src/apps/households.js'
 import { documentsApp } from '../../backend/src/apps/documents.js'
 import { tasksApp } from '../../backend/src/apps/tasks.js'
 import { calendarApp } from '../../backend/src/apps/calendar.js'
+import { pluginsApp } from '../../backend/src/apps/plugins.js'
 import { authApp } from '../../backend/src/apps/auth.js'
 
 const DOCS_OPTIONS = {
@@ -133,13 +134,14 @@ Errors use \`{ "error": "..." }\`.
 }
 
 async function main() {
-  const [apiSpec, householdsSpec, documentsSpec, tasksSpec, calendarSpec, authSpec] =
+  const [apiSpec, householdsSpec, documentsSpec, tasksSpec, calendarSpec, pluginsSpec, authSpec] =
     await Promise.all([
       generateSpecs(apiApp, DOCS_OPTIONS),
       generateSpecs(householdsApp, DOCS_OPTIONS),
       generateSpecs(documentsApp, DOCS_OPTIONS),
       generateSpecs(tasksApp, DOCS_OPTIONS),
       generateSpecs(calendarApp, DOCS_OPTIONS),
+      generateSpecs(pluginsApp, DOCS_OPTIONS),
       generateSpecs(authApp, DOCS_OPTIONS),
     ])
 
@@ -149,6 +151,7 @@ async function main() {
     ...documentsSpec.paths,
     ...tasksSpec.paths,
     ...calendarSpec.paths,
+    ...pluginsSpec.paths,
   }
   for (const [authPath, methods] of Object.entries(authSpec.paths)) {
     allPaths[authPath] = methods

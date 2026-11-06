@@ -5205,6 +5205,211 @@
         ]
       }
     },
+    "/api/plugins": {
+      "get": {
+        "operationId": "getApiPlugins",
+        "description": "Returns the plugin settings catalog for the ACTIVE household (plugin architecture #437): every registered plugin with its capabilities and its three-layer effective-access posture (§3.3) — deployment availability (ops, 404), plan entitlement (403), household enablement (the owner toggle; routes 404 while off). Readable by every household member; only the enablement write is owner-only.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["plugins"],
+                  "properties": {
+                    "plugins": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "name",
+                          "capabilities",
+                          "default_enabled",
+                          "enabled",
+                          "source",
+                          "deployment_available",
+                          "plan_entitled",
+                          "available"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "Stable plugin slug — the manifest id"
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Human label (EN); customer copy stays in i18n"
+                          },
+                          "capabilities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Declared capability ids (snake_case) for the catalog surface"
+                          },
+                          "default_enabled": {
+                            "type": "boolean",
+                            "description": "The manifest default for households that never expressed a choice"
+                          },
+                          "enabled": {
+                            "type": "boolean",
+                            "description": "The household layer, resolved: the household_plugins row wins over the manifest default (§4.3 truth table)"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": ["default", "household"],
+                            "description": "Whether the resolved state is the manifest default or an explicit household choice"
+                          },
+                          "deployment_available": {
+                            "type": "boolean",
+                            "description": "The ops kill-switch layer: false means this deployment paused the plugin (routes answer 404)"
+                          },
+                          "plan_entitled": {
+                            "type": "boolean",
+                            "description": "The plan layer: false would deny plugin routes with 403 (the only actionable denial). No plugin declares entitlements yet, so this is true tonight"
+                          },
+                          "available": {
+                            "type": "boolean",
+                            "description": "Effective access (§3.3): deployment_available AND plan_entitled AND enabled — what the plugin gate enforces"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/plugins/{pluginId}/enablement": {
+      "put": {
+        "operationId": "putApiPluginsByPluginIdEnablement",
+        "description": "Sets one plugin's household enablement (owner-only; non-owners get 403). Writes the household_plugins row and a plugin_enabled / plugin_disabled lifecycle audit event in one batch. Setting the state the plugin already resolves to is an idempotent no-op (no row rewrite, no audit event). Returns the plugin's fresh posture.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["status"],
+                "additionalProperties": false,
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": ["enabled", "disabled"],
+                    "description": "The household enablement state to set"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK — the new (or unchanged) posture",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "capabilities",
+                    "default_enabled",
+                    "enabled",
+                    "source",
+                    "deployment_available",
+                    "plan_entitled",
+                    "available"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Stable plugin slug — the manifest id"
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Human label (EN); customer copy stays in i18n"
+                    },
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Declared capability ids (snake_case) for the catalog surface"
+                    },
+                    "default_enabled": {
+                      "type": "boolean",
+                      "description": "The manifest default for households that never expressed a choice"
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "The household layer, resolved: the household_plugins row wins over the manifest default (§4.3 truth table)"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": ["default", "household"],
+                      "description": "Whether the resolved state is the manifest default or an explicit household choice"
+                    },
+                    "deployment_available": {
+                      "type": "boolean",
+                      "description": "The ops kill-switch layer: false means this deployment paused the plugin (routes answer 404)"
+                    },
+                    "plan_entitled": {
+                      "type": "boolean",
+                      "description": "The plan layer: false would deny plugin routes with 403 (the only actionable denial). No plugin declares entitlements yet, so this is true tonight"
+                    },
+                    "available": {
+                      "type": "boolean",
+                      "description": "Effective access (§3.3): deployment_available AND plan_entitled AND enabled — what the plugin gate enforces"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid status"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only household owners can do that"
+          },
+          "404": {
+            "description": "Household or plugin not found"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "pluginId",
+            "required": true
+          }
+        ]
+      }
+    },
     "/api/auth/login": {
       "get": {
         "operationId": "getLogin",

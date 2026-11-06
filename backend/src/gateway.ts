@@ -4,6 +4,7 @@ import { apiApp } from './apps/api.js'
 import { householdsApp } from './apps/households.js'
 import { tasksApp } from './apps/tasks.js'
 import { calendarApp } from './apps/calendar.js'
+import { pluginsApp } from './apps/plugins.js'
 import { matchPlugin } from './plugins/registry.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
 import { logDueDocumentReminders } from './lib/document-expiry.js'
@@ -82,6 +83,15 @@ export const gateway = {
       // /api/calendar/events the stored-event CRUD.
       if (path === '/api/calendar' || path.startsWith('/api/calendar/')) {
         return calendarApp.fetch(request, env, ctx)
+      }
+
+      // Plugin settings catalog (ahaqqu/RumaQ#437, plugin architecture §4.5):
+      // the CORE-owned enablement surface — household_plugins CRUD + the
+      // lifecycle audit. Deliberately NOT a plugin and dispatched AHEAD of the
+      // registry's prefix matching: it must answer even when every plugin is
+      // disabled, because it is the thing that re-enables them.
+      if (path === '/api/plugins' || path.startsWith('/api/plugins/')) {
+        return pluginsApp.fetch(request, env, ctx)
       }
 
       // Plugin dispatch (ahaqqu/RumaQ#435, plugin architecture §4.3): the

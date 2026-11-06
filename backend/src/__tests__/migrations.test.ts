@@ -1596,8 +1596,8 @@ describe('migration 0028: household_plugins (#435)', () => {
     ).toThrow()
 
     // Deleting the household cascades its enablement rows — they are
-    // household-scoped facts (unlike the lifecycle audit table, which is
-    // deliberately FK-less, plan §3.4; it arrives in ticket 5).
+    // household-scoped facts (unlike the lifecycle audit table, 0032, which
+    // is deliberately FK-less, plan §3.4).
     db.prepare('DELETE FROM households WHERE id = ?').run('h1')
     expect(db.prepare('SELECT COUNT(*) AS cnt FROM household_plugins').all()).toEqual([{ cnt: 0 }])
   })
@@ -2004,5 +2004,78 @@ describe('migration 0031: household calendar (#430)', () => {
     expect(
       householdAuditPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
     ).toContain('idx_household_calendar_event_audit_household')
+  })
+})
+
+// Plugin lifecycle audit (ahaqqu/RumaQ#437, ticket 3): the core-owned
+// receipt table for plugin_enabled / plugin_disabled (ticket 5 adds
+// plugin_purged — the CHECK already admits it, because widening a CHECK
+// would need a table rebuild and the event vocabulary is fixed by plan
+// §3.4). The household handle is deliberately FK-less: an audit row is a
+// receipt, not a child — deleting the household must not erase the record
+// that a plugin was toggled (the exact opposite of household_plugins, whose
+// rows cascade away).
+describe('migration 0032: household_plugin_audit (#437)', () => {
+  it('accepts the plan lifecycle vocabulary and rejects anything else', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    const insert = db.prepare(
+      `INSERT INTO household_plugin_audit (id, household_id, plugin_id, actor_user_id, action)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    insert.run('a1', 'h1', 'documents', 'u1', 'plugin_enabled')
+    insert.run('a2', 'h1', 'documents', 'u1', 'plugin_disabled')
+    // Ticket 5's completion receipt is representable from day one.
+    insert.run('a3', 'h1', 'documents', null, 'plugin_purged')
+    // The closed action domain: a bare status word or junk is not an event.
+    expect(() => insert.run('a4', 'h1', 'documents', 'u1', 'enabled')).toThrow()
+
+    // The system-actor row (a purge job, ticket 5) is representable —
+    // actor_user_id is a plain nullable handle, no FK.
+    const row = db.prepare(`SELECT * FROM household_plugin_audit WHERE id = 'a3'`).get()
+    expect(row).toMatchObject({ household_id: 'h1', plugin_id: 'documents', actor_user_id: null })
+  })
+
+  it('keeps the receipt when the household is deleted (plain handles, no FK)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_plugin_audit (id, household_id, plugin_id, actor_user_id, action)
+       VALUES ('a1', 'h1', 'documents', 'u1', 'plugin_disabled')`
+    ).run()
+
+    // household_plugins cascades (0028); the receipt does NOT — the audit is
+    // not a child of the household (plan §3.4).
+    db.prepare('DELETE FROM households WHERE id = ?').run('h1')
+    expect(db.prepare(`SELECT COUNT(*) AS cnt FROM household_plugin_audit`).all()).toEqual([
+      { cnt: 1 },
+    ])
+  })
+
+  it('keeps the lifecycle feed on an indexed seek (no scan)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT plugin_id, action, created_at
+           FROM household_plugin_audit
+          WHERE household_id = ?
+          ORDER BY created_at`
+      )
+      .all('h1')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(detail).toContain('idx_household_plugin_audit_household')
+    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
   })
 })

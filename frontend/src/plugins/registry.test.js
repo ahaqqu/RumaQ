@@ -45,6 +45,20 @@ describe('frontend plugin catalog parity (plan §4.3)', () => {
     }
   })
 
+  it('resolves every catalog description and capability copy in BOTH locales (T3, #437)', () => {
+    for (const entry of PLUGIN_CATALOG) {
+      // The settings catalog row: the plugin's own one-line description.
+      expect(typeof resolveKey(entry.descriptionKey, en)).toBe('string')
+      expect(typeof resolveKey(entry.descriptionKey, id)).toBe('string')
+      // And one copy key per declared capability — a capability the locales
+      // cannot name would render as a raw key on the owner's screen.
+      for (const capability of entry.capabilities) {
+        expect(typeof resolveKey(`plugins.capabilities.${capability}`, en)).toBe('string')
+        expect(typeof resolveKey(`plugins.capabilities.${capability}`, id)).toBe('string')
+      }
+    }
+  })
+
   it('renders every entry into a nav group the shell actually wires', () => {
     for (const entry of PLUGIN_CATALOG) {
       expect(PLUGIN_NAV_GROUPS).toContain(entry.navGroup)
