@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vite-plus/test'
 import { PLUGIN_ENABLEMENT_SQL, HOUSEHOLD_ENABLEMENT_ROWS_SQL } from '../plugins/enablement.js'
 import { deploymentFlagKey } from '../plugins/flags.js'
+import { EVENT_SELECT, VISIBLE_PREDICATE } from '../lib/calendar.js'
 // The backend tsconfig pins `types` to @cloudflare/workers-types, so Node
 // builtin imports carry no declarations. These suppressions are contained to
 // this file: the migration chain is real SQL exercised against a real SQLite
@@ -1929,19 +1930,15 @@ describe('migration 0031: household calendar (#430)', () => {
     applyMigrations(db, migrationFiles())
 
     // The EXACT shipped statement (lib/calendar.ts listCalendarEntries, the
-    // windowed variant): household + visibility + date range. Pinned verbatim
-    // — an earlier draft of this pin tested an ORDER BY the lib never runs
-    // (ahaqqu/RumaQ#445 thermos B1, the #434-B4 precedent).
-    const LIST_PROJECTION = `SELECT e.id, e.household_id, e.title, e.event_date,
-       e.event_time, e.visibility, e.created_by_member_id, e.created_at,
-       e.updated_at
-  FROM household_calendar_events e`
-    const VISIBLE =
-      "(e.visibility = 'all' OR e.created_by_member_id = ? OR EXISTS (\n      SELECT 1 FROM household_calendar_event_members vm\n       WHERE vm.event_id = e.id AND vm.member_id = ?) OR EXISTS (\n      SELECT 1 FROM household_members om\n       WHERE om.id = ? AND om.household_id = e.household_id AND om.role = 'owner'))"
+    // windowed variant): household + visibility + date range. The projection
+    // and the visibility predicate are IMPORTED from the lib — verbatim by
+    // construction, so a predicate edit re-proves the plan instead of leaving
+    // this pin EXPLAINing a stale copy (ahaqqu/RumaQ#445 thermos B1, the
+    // #434-B4 precedent).
     const plan = db
       .prepare(
-        `EXPLAIN QUERY PLAN ${LIST_PROJECTION}
-        WHERE e.household_id = ? AND ${VISIBLE}
+        `EXPLAIN QUERY PLAN ${EVENT_SELECT}
+        WHERE e.household_id = ? AND ${VISIBLE_PREDICATE}
           AND e.event_date >= ? AND e.event_date <= ?
         ORDER BY e.event_date, e.event_time, e.created_at, e.id`
       )
@@ -1962,8 +1959,8 @@ describe('migration 0031: household calendar (#430)', () => {
     // The unbounded variant (no window) seeks the same index.
     const openPlan = db
       .prepare(
-        `EXPLAIN QUERY PLAN ${LIST_PROJECTION}
-        WHERE e.household_id = ? AND ${VISIBLE}
+        `EXPLAIN QUERY PLAN ${EVENT_SELECT}
+        WHERE e.household_id = ? AND ${VISIBLE_PREDICATE}
         ORDER BY e.event_date, e.event_time, e.created_at, e.id`
       )
       .all('h1', 'm1', 'm1', 'm1')

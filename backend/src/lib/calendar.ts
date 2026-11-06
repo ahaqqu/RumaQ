@@ -231,7 +231,10 @@ export function compareEntries(a: CalendarEntry, b: CalendarEntry): number {
 // Lookups
 // ---------------------------------------------------------------------------
 
-const EVENT_SELECT = `SELECT e.id, e.household_id, e.title, e.event_date,
+// Exported for the migrations test's EXPLAIN pin, so the plan proof always
+// EXPLAINs the exact shipped statement — verbatim by construction, never a
+// copied literal that can drift (the #445 thermos B1 lesson).
+export const EVENT_SELECT = `SELECT e.id, e.household_id, e.title, e.event_date,
        e.event_time, e.visibility, e.created_by_member_id, e.created_at,
        e.updated_at
   FROM household_calendar_events e`
@@ -247,7 +250,7 @@ const EVENT_SELECT = `SELECT e.id, e.household_id, e.title, e.event_date,
 // somebody — all three collapse to "nobody can touch this event" without it.
 // Member-scoped visibility therefore hides from NON-owner members; the tasks
 // domain's no-read-hiding philosophy is the same trade.
-const VISIBLE_PREDICATE = `(e.visibility = 'all' OR e.created_by_member_id = ? OR EXISTS (
+export const VISIBLE_PREDICATE = `(e.visibility = 'all' OR e.created_by_member_id = ? OR EXISTS (
       SELECT 1 FROM household_calendar_event_members vm
        WHERE vm.event_id = e.id AND vm.member_id = ?) OR EXISTS (
       SELECT 1 FROM household_members om
