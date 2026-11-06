@@ -31,7 +31,7 @@ import {
   listDueDocumentReminders,
   DEFAULT_REMIND_DAYS_BEFORE,
 } from '../lib/document-expiry.js'
-import { createR2StorageAdapter } from '../lib/storage.js'
+import { createR2StorageAdapter } from '../ports/storage/r2.js'
 import { createDocumentsStub } from './support/env.js'
 
 type Db = {

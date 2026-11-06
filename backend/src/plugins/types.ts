@@ -6,7 +6,7 @@
 // enabledPlugins), never objects, never React.
 import type { Hono } from 'hono'
 import type { Env } from '../types.js'
-import type { StorageAdapter } from '../lib/storage.js'
+import type { StorageAdapter } from '../ports/storage/index.js'
 
 /**
  * Port ids the registry knows how to wire (§4.2 — ports are few and earn
@@ -68,7 +68,7 @@ export type PluginManifest = {
  * ticket 4 fills.
  */
 export type PluginPorts = {
-  /** Document/object bytes — adapter #1 (lib/storage.ts, private R2). */
+  /** Document/object bytes — adapter #1 (ports/storage, private R2). */
   storage?: StorageAdapter
 }
 

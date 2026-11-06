@@ -46,7 +46,7 @@ import {
   DocumentTooManyFilesError,
   DOCUMENT_MAX_FILES,
 } from '../lib/documents.js'
-import { createR2StorageAdapter } from '../lib/storage.js'
+import { createR2StorageAdapter } from '../ports/storage/r2.js'
 import { createDocumentsStub } from './support/env.js'
 
 type Db = {

@@ -22,7 +22,7 @@ export const documentsManifest = {
   // surface in the settings catalog (ticket 3). Nothing consumes these in
   // phase A; they are declared because the manifest is the catalog's source.
   capabilities: ['purge', 'export'],
-  // StorageAdapter (lib/storage.ts) is the vault's adapter seam — port #1.
+  // StorageAdapter (ports/storage) is the vault's adapter seam — port #1.
   // Declared here even though the app still constructs its R2 adapter inline
   // (three createR2StorageAdapter sites, ticket 4 removes them via
   // PluginPorts injection).

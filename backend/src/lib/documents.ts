@@ -11,7 +11,8 @@
 // delete is owner, document-uploader, or file-uploader.
 
 import { sha256HexBytes } from './crypto.js'
-import { buildDocumentFileKey, isDocumentKey, type StorageAdapter } from './storage.js'
+import type { StorageAdapter } from '../ports/storage/index.js'
+import { buildDocumentFileKey, isDocumentKey } from './storage.js'
 import { getMembership } from './households.js'
 import { daysUntil, householdIsoDate } from './document-expiry.js'
 

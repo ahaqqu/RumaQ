@@ -33,7 +33,7 @@ import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { ipRateLimitMiddleware, isRateLimited } from '../lib/rate-limit.js'
 import { pluginGate } from '../plugins/gate.js'
-import { createR2StorageAdapter } from '../lib/storage.js'
+import { createR2StorageAdapter } from '../ports/storage/r2.js'
 import {
   REMIND_DAYS_MAX,
   REMIND_DAYS_MIN,
