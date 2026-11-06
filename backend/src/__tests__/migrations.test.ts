@@ -1380,3 +1380,159 @@ describe('migration 0026: document expiry metadata (#426)', () => {
     expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
   })
 })
+
+// Household tasks (ahaqqu/RumaQ#429): per-member task assignments. The
+// interesting questions mirror the vault's: which row removals cascade vs
+// SET NULL (a member removal keeps the household's tasks, unattributed), the
+// audit trail's FK-less design (deletion records — and recurring completions —
+// outlive the row), and the board listing's index plan.
+describe('migration 0027: household tasks (#429)', () => {
+  it('keeps the full chain green on a fresh database and applies defaults', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const tables = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('household_tasks', 'household_task_audit') ORDER BY name"
+      )
+      .all()
+    expect(tables.map((r: Record<string, unknown>) => r.name)).toEqual([
+      'household_task_audit',
+      'household_tasks',
+    ])
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role)
+       VALUES ('m1', 'h1', 'u1', 'owner')`
+    ).run()
+
+    // The INSERT the lib writes omits status/needs_approval/created_at/
+    // updated_at — the DEFAULTs must fill them.
+    db.prepare(
+      `INSERT INTO household_tasks
+         (id, household_id, title, assignee_member_id, created_by_member_id, due_date, recurrence)
+       VALUES ('t1', 'h1', 'Sapu halaman', NULL, 'm1', '2026-11-10', 'daily')`
+    ).run()
+    const row = db.prepare('SELECT * FROM household_tasks WHERE id = ?').get('t1')
+    expect(row).toMatchObject({
+      status: 'open',
+      needs_approval: 0,
+      due_date: '2026-11-10',
+      recurrence: 'daily',
+    })
+    expect(String(row?.created_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+    expect(String(row?.updated_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+  })
+
+  it('cascades the household delete, SET NULLs member references, and lets the audit outlive the task', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role, display_name)
+       VALUES ('m1', 'h1', 'u1', 'owner', 'Ibu')`
+    ).run()
+    // Mode B: the profile-only kid the chores get assigned to.
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role, display_name)
+       VALUES ('m2', 'h1', NULL, 'member', 'Adik')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_tasks
+         (id, household_id, title, assignee_member_id, created_by_member_id, needs_approval)
+       VALUES ('t1', 'h1', 'Sapu halaman', 'm2', 'm1', 1)`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_task_audit (id, task_id, household_id, actor_user_id, action)
+       VALUES ('a1', 't1', 'h1', 'u1', 'create')`
+    ).run()
+
+    // Removing the assignee keeps the task and clears the link. The STORED
+    // needs_approval column keeps its last lib-maintained value (it is the
+    // write-side flag, 0027) — reads derive the honest answer from the live
+    // member join instead (lib/tasks.ts toTaskRow), so nothing here can lie.
+    db.prepare('DELETE FROM household_members WHERE id = ?').run('m2')
+    let row = db.prepare('SELECT * FROM household_tasks WHERE id = ?').get('t1')
+    expect(row).toMatchObject({ assignee_member_id: null, needs_approval: 1 })
+
+    // Removing the creator keeps the task; provenance falls to NULL and
+    // authorization falls to the owners (lib/tasks.ts).
+    db.prepare('DELETE FROM household_members WHERE id = ?').run('m1')
+    row = db.prepare('SELECT * FROM household_tasks WHERE id = ?').get('t1')
+    expect(row).toMatchObject({ created_by_member_id: null })
+
+    // The task delete cascades NOTHING from the audit: task_id is a plain
+    // TEXT handle — the deletion record (and every completion history) must
+    // outlive the row it names.
+    db.prepare('DELETE FROM household_tasks WHERE id = ?').run('t1')
+    const audit = db.prepare('SELECT action FROM household_task_audit WHERE task_id = ?').all('t1')
+    expect(audit.map((r: Record<string, unknown>) => r.action)).toEqual(['create'])
+  })
+
+  it('keeps the board listing on the shipped SQL: index seek, no scan, sort as an explicit temp B-tree', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    // The EXACT shipped statement (lib/tasks.ts listTasks, status-filtered
+    // variant): household+status filter with the (due_date IS NULL)
+    // undated-last ordering and the created_at/id tiebreakers. Pinned
+    // verbatim — the earlier pin tested an ORDER BY the lib never runs
+    // (ahaqqu/RumaQ#445 thermos B1, the #434-B4 precedent).
+    //
+    // What is true and load-bearing: the 0027 index serves the FILTER (no
+    // table SCAN). The expression term in ORDER BY defeats index-order
+    // satisfaction, so the sort is a TEMP B-TREE — asserted EXPLICITLY
+    // rather than denied: at household scale (tens to low hundreds of rows)
+    // the sort is harmless, and an honest pin makes any future plan change
+    // (e.g. restructuring undated tasks out) a conscious diff.
+    const BOARD_PROJECTION = `SELECT t.id, t.household_id, t.title, t.assignee_member_id,
+            am.user_id AS assignee_user_id, t.created_by_member_id, t.due_date,
+            t.recurrence, t.status, t.needs_approval, t.approved_by_member_id,
+            t.created_at, t.updated_at
+       FROM household_tasks t
+       LEFT JOIN household_members am ON am.id = t.assignee_member_id`
+    const boardPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN ${BOARD_PROJECTION}
+       WHERE t.household_id = ? AND t.status = 'open'
+       ORDER BY (t.due_date IS NULL), t.due_date, t.created_at, t.id`
+      )
+      .all('h1')
+    const board = boardPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(board).toContain('idx_household_tasks_household')
+    expect(board).not.toMatch(/\bSCAN\b/)
+    expect(board).toContain('TEMP B-TREE FOR ORDER BY')
+
+    // The household-prefix variant (status=all) — same seek, same honest sort.
+    const allPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN ${BOARD_PROJECTION}
+       WHERE t.household_id = ?
+       ORDER BY (t.due_date IS NULL), t.due_date, t.created_at, t.id`
+      )
+      .all('h1')
+    const all = allPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(all).toContain('idx_household_tasks_household')
+    expect(all).not.toMatch(/\bSCAN\b/)
+    expect(all).toContain('TEMP B-TREE FOR ORDER BY')
+
+    // The audit lookups (per task, per household) seek too — the 0022 pair.
+    const auditPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT action FROM household_task_audit
+          WHERE task_id = ? ORDER BY created_at`
+      )
+      .all('t1')
+    const audit = auditPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(audit).toContain('idx_household_task_audit_task')
+    expect(audit).not.toMatch(/\bSCAN\b|TEMP B-TREE/i)
+  })
+})

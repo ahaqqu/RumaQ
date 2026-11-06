@@ -3,6 +3,7 @@ import { authApp } from './apps/auth.js'
 import { apiApp } from './apps/api.js'
 import { householdsApp } from './apps/households.js'
 import { documentsApp } from './apps/documents.js'
+import { tasksApp } from './apps/tasks.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
 import { logDueDocumentReminders } from './lib/document-expiry.js'
 
@@ -70,6 +71,11 @@ export const gateway = {
       // Document vault (ahaqqu/RumaQ#388 MVP) — same domain-app pattern.
       if (path === '/api/documents' || path.startsWith('/api/documents/')) {
         return documentsApp.fetch(request, env, ctx)
+      }
+
+      // Household tasks (ahaqqu/RumaQ#429) — same domain-app pattern.
+      if (path === '/api/tasks' || path.startsWith('/api/tasks/')) {
+        return tasksApp.fetch(request, env, ctx)
       }
 
       try {

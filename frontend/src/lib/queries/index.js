@@ -31,6 +31,14 @@ export {
   useDeleteDocumentFile,
   useUpdateDocumentExpiry,
 } from './documents.js'
+export {
+  TASKS_BASE_KEY,
+  tasksQueryKey,
+  useTasks,
+  useCreateTask,
+  useUpdateTask,
+  useDeleteTask,
+} from './tasks.js'
 export { useHistory, usePurchasePatterns, useSendChatMessage } from './history.js'
 export {
   usePrices,

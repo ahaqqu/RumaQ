@@ -41,6 +41,7 @@ import {
   Copy as _IconCopy,
   FolderLock as _IconFolderLock,
   Eye as _IconEye,
+  ListTodo as _IconListTodo,
 } from 'lucide-react'
 
 function light(Icon) {
@@ -89,6 +90,7 @@ export const IconSprout = light(_IconSprout)
 export const IconCopy = light(_IconCopy)
 export const IconFolderLock = light(_IconFolderLock)
 export const IconEye = light(_IconEye)
+export const IconTask = light(_IconListTodo)
 
 export function BrandMark({ size = 32 }) {
   return (
