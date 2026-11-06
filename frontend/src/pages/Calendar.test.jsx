@@ -422,6 +422,44 @@ describe('Calendar page', () => {
     expect(payload.visibility).toBeUndefined()
   })
 
+  it('an untouched save after a mid-edit refetch swap leaves a concurrent audience grant stored', async () => {
+    const update = mutation()
+    vi.mocked(useUpdateCalendarEvent).mockReturnValue(update)
+    // The refetch simulation: the mock reads this mutable binding, so flipping
+    // it and rerendering stands in for the query data swapping under the open
+    // form (refetchOnWindowFocus, the settle invalidations).
+    let entries = [{ ...MEMBERS_EVENT, date: month.iso(12) }]
+    useCalendar.mockImplementation(() => ({ data: { entries }, isLoading: false }))
+    const client = createQueryClient()
+    const ui = () =>
+      React.createElement(QueryClientProvider, { client }, React.createElement(Calendar, null))
+    const { container, rerender } = render(ui())
+    fireEvent.click(container.querySelector(`[data-testid="day-${month.iso(12)}"]`))
+    fireEvent.click(findButton(container, 'calendar.edit'))
+
+    // Concurrent grant mid-edit: another member added ayah while the form sat
+    // open, and the refetch delivered the fresh row. The open draft still
+    // carries the seed audience (m-anak only).
+    entries = [{ ...MEMBERS_EVENT, member_ids: ['m-anak', 'm-ayah'], date: month.iso(12) }]
+    rerender(ui())
+    // The swap landed — the row now renders the widened audience.
+    expect(container.querySelector('[title="Adik, Ayah"]')).toBeTruthy()
+
+    // Untouched save: nothing was edited. The stale seed list must NOT ride —
+    // absent member_ids/visibility means "leave as stored", so the backend
+    // keeps ['m-anak', 'm-ayah'] and the concurrent grant survives (C1R2-1).
+    const editFields = container.querySelector('[data-testid="event-edit-fields"]')
+    fireEvent.click(
+      [...editFields.querySelectorAll('button')].find((b) =>
+        b.textContent.includes('calendar.saveEdit')
+      )
+    )
+    await waitFor(() => expect(update.mutate).toHaveBeenCalled())
+    const [{ payload }] = update.mutate.mock.calls[0]
+    expect(payload).not.toHaveProperty('member_ids')
+    expect(payload).not.toHaveProperty('visibility')
+  })
+
   it('deletes an event after confirmation', () => {
     const del = mutation()
     vi.mocked(useDeleteCalendarEvent).mockReturnValue(del)

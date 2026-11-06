@@ -57,6 +57,20 @@ function sameMembers(a, b) {
   return a.length === b.length && a.every((id) => b.includes(id))
 }
 
+// The edit seed: the visibility/audience a freshly opened edit starts from —
+// the draft's initial value AND the baseline saveEdit diffs against. The
+// baseline must be a snapshot, not the live row: a refetch can swap the entry
+// under the open form (refetchOnWindowFocus, the settle invalidations), and
+// diffing against the fresh row would turn an untouched save into a stale
+// seed-audience resend that clobbers a concurrent grant (C1R2-1, ahaqqu/
+// RumaQ#469 review).
+function seedOf(entry) {
+  return {
+    visibility: entry.visibility,
+    member_ids: entry.member_ids ? [...entry.member_ids] : [],
+  }
+}
+
 /** The visible month's cell grid: Monday-start weeks (the household calendar
  * convention), minimal rows, ISO keys. The 5th/6th week spills into the
  * adjacent months — those cells stay inert (no entries fetched for them). */
@@ -364,6 +378,7 @@ export function Calendar() {
   const [presetHint, setPresetHint] = useState(null)
   const [editingEventId, setEditingEventId] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
+  const [editSeed, setEditSeed] = useState(null)
   const [actionError, setActionError] = useState(null)
 
   const canManage = (entry) =>
@@ -473,13 +488,9 @@ export function Calendar() {
 
   const openEdit = (entry) => {
     setEditingEventId(entry.id)
-    setEditDraft({
-      title: entry.title,
-      date: entry.date,
-      time: entry.time,
-      visibility: entry.visibility,
-      member_ids: entry.member_ids ? [...entry.member_ids] : [],
-    })
+    const seed = seedOf(entry)
+    setEditSeed(seed)
+    setEditDraft({ title: entry.title, date: entry.date, time: entry.time, ...seed })
   }
 
   // The PATCH carries visibility and member_ids only when the edit actually
@@ -488,15 +499,15 @@ export function Calendar() {
   // cascaded away from member removal) then still takes a title/date/time
   // edit: re-affirming it as-is — visibility 'members' with an empty
   // audience — is exactly what the backend refuses (ahaqqu/RumaQ#468 review
-  // C1-A2).
-  const saveEdit = (entry) => {
-    if (!editDraft) return
+  // C1-A2). "Touched" is measured against the openEdit seed, not this
+  // render's entry — the seed rationale lives on seedOf above (C1R2-1).
+  const saveEdit = () => {
+    if (!editDraft || !editSeed) return
     const title = editDraft.title.trim()
     if (!title || !editDraft.date) return
-    const visibilityChanged = editDraft.visibility !== entry.visibility
+    const visibilityChanged = editDraft.visibility !== editSeed.visibility
     const audienceChanged =
-      editDraft.visibility === 'members' &&
-      !sameMembers(editDraft.member_ids, entry.member_ids ?? [])
+      editDraft.visibility === 'members' && !sameMembers(editDraft.member_ids, editSeed.member_ids)
     updateEvent.mutate(
       {
         id: editingEventId,
@@ -512,6 +523,7 @@ export function Calendar() {
         onSuccess: () => {
           setEditingEventId(null)
           setEditDraft(null)
+          setEditSeed(null)
           setActionError(null)
         },
         onError: (err) => setActionError(t(calendarErrorKey(err))),
@@ -566,13 +578,17 @@ export function Calendar() {
                 members={members}
                 canManage={canManage}
                 editOpen={editingEventId === entry.id}
-                onToggleEdit={() =>
-                  editingEventId === entry.id
-                    ? (setEditingEventId(null), setEditDraft(null))
-                    : openEdit(entry)
-                }
+                onToggleEdit={() => {
+                  if (editingEventId === entry.id) {
+                    setEditingEventId(null)
+                    setEditDraft(null)
+                    setEditSeed(null)
+                  } else {
+                    openEdit(entry)
+                  }
+                }}
                 onDelete={() => remove(entry)}
-                onSaveEdit={() => saveEdit(entry)}
+                onSaveEdit={() => saveEdit()}
                 editDraft={editDraft}
                 setEditDraft={setEditDraft}
                 editPending={updateEvent.isPending}
