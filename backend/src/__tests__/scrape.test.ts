@@ -464,6 +464,51 @@ describe('internal scrape routes (bearer channel)', () => {
     expect(res.status).toBe(401)
   })
 
+  it('logs one structured rejection line on 401 without the secret', async () => {
+    const fake = createScrapeDb()
+    const logs: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(' '))
+    })
+    const res = await apiApp.request(
+      '/api/internal/scrape/next',
+      { headers: { Authorization: 'Bearer wrong-value' } },
+      fake.env()
+    )
+    expect(res.status).toBe(401)
+    spy.mockRestore()
+    expect(logs).toHaveLength(1)
+    const entry = JSON.parse(logs[0]!) as Record<string, unknown>
+    expect(entry.evt).toBe('ingest_401')
+    expect(entry.route).toBe('/api/internal/scrape/next')
+    expect(entry.tokenLength).toBe('wrong-value'.length)
+    expect(entry.candidates).toBe(1)
+    expect(entry.matched).toBe(false)
+    // Neither the configured secret nor the presented token may leak —
+    // length only (#451).
+    expect(logs.join('\n')).not.toContain('ingest-secret')
+    expect(logs.join('\n')).not.toContain('wrong-value')
+  })
+
+  it('logs the not-configured rejection when no candidate secret exists', async () => {
+    const fake = createScrapeDb()
+    const env = fake.env()
+    delete (env as Record<string, unknown>).HAQITA_INGEST_SECRET
+    delete (env as Record<string, unknown>).HAQITA_INGEST_SECRET_NEXT
+    const logs: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(' '))
+    })
+    const res = await apiApp.request('/api/internal/scrape/next', {}, env)
+    expect(res.status).toBe(503)
+    spy.mockRestore()
+    expect(logs).toHaveLength(1)
+    const entry = JSON.parse(logs[0]!) as Record<string, unknown>
+    expect(entry.evt).toBe('ingest_503')
+    expect(entry.candidates).toBe(0)
+    expect(entry.tokenLength).toBe(0)
+  })
+
   it('claims the oldest pending command once, then reports no work', async () => {
     const fake = createScrapeDb()
     const env = fake.env()
