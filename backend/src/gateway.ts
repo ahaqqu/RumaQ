@@ -2,8 +2,8 @@ import type { Env } from './types.js'
 import { authApp } from './apps/auth.js'
 import { apiApp } from './apps/api.js'
 import { householdsApp } from './apps/households.js'
-import { documentsApp } from './apps/documents.js'
 import { tasksApp } from './apps/tasks.js'
+import { matchPlugin } from './plugins/registry.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
 import { logDueDocumentReminders } from './lib/document-expiry.js'
 
@@ -63,19 +63,26 @@ export const gateway = {
 
       // Household member management (ahaqqu/RumaQ#331) is its own domain app
       // (backend conventions: one app per domain) — dispatched before the
-      // general apiApp fallthrough.
+      // general apiApp fallthrough. Core domain, not a plugin: enablement is
+      // not a household choice here.
       if (path === '/api/households' || path.startsWith('/api/households/')) {
         return householdsApp.fetch(request, env, ctx)
-      }
-
-      // Document vault (ahaqqu/RumaQ#388 MVP) — same domain-app pattern.
-      if (path === '/api/documents' || path.startsWith('/api/documents/')) {
-        return documentsApp.fetch(request, env, ctx)
       }
 
       // Household tasks (ahaqqu/RumaQ#429) — same domain-app pattern.
       if (path === '/api/tasks' || path.startsWith('/api/tasks/')) {
         return tasksApp.fetch(request, env, ctx)
+      }
+
+      // Plugin dispatch (ahaqqu/RumaQ#435, plugin architecture §4.3): the
+      // registry owns plugin prefixes (documents registered first). Dispatch
+      // stays path-only and boundary-aware (`path === p ||
+      // path.startsWith(p + '/')`) — the household-aware enablement gate
+      // installs after auth INSIDE each plugin app, where the household is
+      // actually known.
+      const plugin = matchPlugin(path)
+      if (plugin) {
+        return plugin.app.fetch(request, env, ctx)
       }
 
       try {

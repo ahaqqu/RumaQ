@@ -21,6 +21,12 @@ export type WithFiles = Row & { files: Row[] }
 
 export type FakeDb = {
   prepare: (sql: string) => {
+    // The REAL D1 interface: a prepared statement answers directly (no
+    // parameters) AND through bind(). The plugin gate's flags read uses the
+    // unbound form — both levels route through the same SQL-fragment routes.
+    first: <T>() => Promise<T | null>
+    all: <T>() => Promise<{ results: T[] }>
+    run: () => Promise<unknown>
     bind: (...params: unknown[]) => {
       first: <T>() => Promise<T | null>
       all: <T>() => Promise<{ results: T[] }>
@@ -31,35 +37,51 @@ export type FakeDb = {
   log: Array<{ sql: string; params: unknown[] }>
 }
 
+// Plugin gate defaults (ahaqqu/RumaQ#435): every documents request now reads
+// the caller's enablement row (first()) and the deployment flag list (all())
+// before the route handler. The defaults model the ABSENT-row state — the
+// manifest default (documents → enabled) and an empty flag table — which is
+// exactly phase-A behavior, so the pre-gate tests stay green untouched.
+// Appended AFTER the test-declared routes, so a test overrides either
+// statement by declaring its own route (plugin-gate.test.ts does).
+const GATE_DEFAULT_FIRST_ROUTES: [RegExp, (params: unknown[]) => Row | null][] = [
+  [/FROM household_plugins/, () => null],
+]
+const GATE_DEFAULT_ALL_ROUTES: [RegExp, (params: unknown[]) => Row[]][] = [
+  [/SELECT key, value FROM deployment_flags/, () => []],
+]
+
 export function createFakeDb(
   firstRoutes: [RegExp, (params: unknown[]) => Row | null][] = [],
   allRoutes: [RegExp, (params: unknown[]) => Row[]][] = []
 ): FakeDb {
   const log: Array<{ sql: string; params: unknown[] }> = []
+  const firstWithGateDefaults = [...firstRoutes, ...GATE_DEFAULT_FIRST_ROUTES]
+  const allWithGateDefaults = [...allRoutes, ...GATE_DEFAULT_ALL_ROUTES]
   return {
     log,
     prepare: (sql: string) => {
       const flat = sql.replace(/\s+/g, ' ')
-      return {
-        bind: (...params: unknown[]) => ({
-          first: async <T>() => {
-            const hit = firstRoutes.find(([re]) => re.test(flat))
-            if (!hit) throw new Error(`fake DB: no first() route for: ${sql}`)
-            return ((await hit[1](params)) as T) ?? null
-          },
-          all: async <T>() => {
-            const hit = allRoutes.find(([re]) => re.test(flat))
-            if (!hit) throw new Error(`fake DB: no all() route for: ${sql}`)
-            return { results: (await hit[1](params)) as T[] }
-          },
-          run: async () => {
-            log.push({ sql: flat, params })
-            // D1 reports per-statement meta.changes — the lib reads it off
-            // the guarded insert to map a refused cap to 409.
-            return { meta: { changes: 1 } }
-          },
-        }),
-      }
+      const exec = (params: unknown[]) => ({
+        first: async <T>() => {
+          const hit = firstWithGateDefaults.find(([re]) => re.test(flat))
+          if (!hit) throw new Error(`fake DB: no first() route for: ${sql}`)
+          return ((await hit[1](params)) as T) ?? null
+        },
+        all: async <T>() => {
+          const hit = allWithGateDefaults.find(([re]) => re.test(flat))
+          if (!hit) throw new Error(`fake DB: no all() route for: ${sql}`)
+          return { results: (await hit[1](params)) as T[] }
+        },
+        run: async () => {
+          log.push({ sql: flat, params })
+          // D1 reports per-statement meta.changes — the lib reads it off
+          // the guarded insert to map a refused cap to 409.
+          return { meta: { changes: 1 } }
+        },
+      })
+      // Both D1 shapes: prepare().all() and prepare().bind(...).all().
+      return { ...exec([]), bind: (...params: unknown[]) => exec(params) }
     },
     batch: async (stmts: unknown[]) => {
       const results = []
