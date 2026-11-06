@@ -58,7 +58,10 @@ Notes for writing new E2E scenarios:
   vault's expiry-date read #433) — no
   real AI key is needed; set one via `PATCH /api/settings` when a flow
   requires `has_ai_key`, and drop the persisted query cache afterwards (the
-  app caches settings for 5 minutes in IndexedDB).
+  app caches settings for 5 minutes in IndexedDB). The match-review evaluator
+  (#484) is the deliberate exception: under `TEST_MODE` it is NOT stubbed —
+  with no provider configured it returns the documented 200
+  `{ evaluated: 0, aiConfigured: false }` degrade, never a fabricated verdict.
 - Assert item names in the receipt review via input values (`getByRole
   'textbox'`), not text — review rows are editable inputs.
 - Scope history item assertions to `getByRole('table')` — the Patterns
