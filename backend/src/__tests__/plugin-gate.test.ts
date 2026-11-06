@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vite-plus/test'
-import { documentsApp } from '../apps/documents.js'
+
 import { gateway } from '../gateway.js'
 import { pluginGate } from '../plugins/gate.js'
 import { resetRateLimit } from '../lib/rate-limit.js'
@@ -64,8 +64,8 @@ describe('plugin gate — documents routes (#435)', () => {
   it('phase-A default (absent rows, flag absent) behaves bit-for-bit: 200', async () => {
     // The harness defaults ARE the phase-A state: no household_plugins rows
     // (manifest defaultEnabled: true), empty deployment_flags.
-    const { env } = h.setup()
-    const res = await documentsApp.request('/api/documents', {}, env)
+    const { env, app } = h.setup()
+    const res = await app.request('/api/documents', {}, env)
     expect(res.status).toBe(200)
     const body = (await res.json()) as { documents: unknown[] }
     expect(body.documents).toEqual([])
@@ -73,11 +73,11 @@ describe('plugin gate — documents routes (#435)', () => {
 
   it('explicitly disabled household → 404 fail-closed, handler never runs', async () => {
     const calls: string[] = []
-    const { env } = h.setup(
+    const { env, app } = h.setup(
       [HOUSEHOLD_PLUGIN_ROW({ plugin_id: 'documents', status: 'disabled' })],
       [SPY_JOIN_ROUTE(calls)]
     )
-    const res = await documentsApp.request('/api/documents', {}, env)
+    const res = await app.request('/api/documents', {}, env)
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ error: 'Not found' })
     expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
@@ -86,22 +86,22 @@ describe('plugin gate — documents routes (#435)', () => {
 
   it('explicitly enabled household → 200 (explicit rows always win)', async () => {
     const calls: string[] = []
-    const { env } = h.setup(
+    const { env, app } = h.setup(
       [HOUSEHOLD_PLUGIN_ROW({ plugin_id: 'documents', status: 'enabled' })],
       [SPY_JOIN_ROUTE(calls)]
     )
-    const res = await documentsApp.request('/api/documents', {}, env)
+    const res = await app.request('/api/documents', {}, env)
     expect(res.status).toBe(200)
     expect(calls).toHaveLength(1)
   })
 
   it('deployment flag off → 404 for everyone (the ops kill-switch)', async () => {
     const calls: string[] = []
-    const { env } = h.setup(
+    const { env, app } = h.setup(
       [HOUSEHOLD_PLUGIN_ROW({ status: 'enabled' })],
       [SPY_JOIN_ROUTE(calls), DEPLOYMENT_FLAG_ROWS(FLAG_OFF)]
     )
-    const res = await documentsApp.request('/api/documents', {}, env)
+    const res = await app.request('/api/documents', {}, env)
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ error: 'Not found' })
     expect(calls).toEqual([])
@@ -109,22 +109,22 @@ describe('plugin gate — documents routes (#435)', () => {
 
   it('deployment flag read error → FAIL-OPEN: the vault stays up', async () => {
     const calls: string[] = []
-    const { env } = h.setup(
+    const { env, app } = h.setup(
       [HOUSEHOLD_PLUGIN_ROW({ status: 'enabled' })],
       [SPY_JOIN_ROUTE(calls), DEPLOYMENT_FLAG_ROWS({ error: new Error('D1 unavailable') })]
     )
-    const res = await documentsApp.request('/api/documents', {}, env)
+    const res = await app.request('/api/documents', {}, env)
     expect(res.status).toBe(200)
     expect(calls).toHaveLength(1)
   })
 
   it('household enablement read error → FAIL-CLOSED: 404, handler never runs', async () => {
     const calls: string[] = []
-    const { env } = h.setup(
+    const { env, app } = h.setup(
       [HOUSEHOLD_PLUGIN_ROW({ error: new Error('D1 unavailable') })],
       [SPY_JOIN_ROUTE(calls), DEPLOYMENT_FLAG_ROWS(FLAG_ON)]
     )
-    const res = await documentsApp.request('/api/documents', {}, env)
+    const res = await app.request('/api/documents', {}, env)
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ error: 'Not found' })
     expect(calls).toEqual([])
@@ -132,20 +132,22 @@ describe('plugin gate — documents routes (#435)', () => {
 
   it('the gate sits AFTER auth: no session still answers 401, not 404', async () => {
     const calls: string[] = []
-    const { db } = h.setup([HOUSEHOLD_PLUGIN_ROW({ status: 'disabled' })], [SPY_JOIN_ROUTE(calls)])
-    const unauth = await documentsApp.request(
-      '/api/documents',
-      {},
-      createEnv(db, { props: undefined })
+    const { db, app } = h.setup(
+      [HOUSEHOLD_PLUGIN_ROW({ status: 'disabled' })],
+      [SPY_JOIN_ROUTE(calls)]
     )
+    const unauth = await app.request('/api/documents', {}, createEnv(db, { props: undefined }))
     expect(unauth.status).toBe(401)
     expect(calls).toEqual([])
   })
 
   it('gates the :id depth too — disabled 404s before the handler, enabled reaches it', async () => {
     const calls: string[] = []
-    const { env } = h.setup([HOUSEHOLD_PLUGIN_ROW({ status: 'disabled' })], [SPY_JOIN_ROUTE(calls)])
-    const disabled = await documentsApp.request('/api/documents/doc-1', {}, env)
+    const { env, app } = h.setup(
+      [HOUSEHOLD_PLUGIN_ROW({ status: 'disabled' })],
+      [SPY_JOIN_ROUTE(calls)]
+    )
+    const disabled = await app.request('/api/documents/doc-1', {}, env)
     expect(disabled.status).toBe(404)
     expect(await disabled.json()).toEqual({ error: 'Not found' })
     expect(calls).toEqual([])
@@ -153,8 +155,8 @@ describe('plugin gate — documents routes (#435)', () => {
     // Same route with the gate satisfied: the HANDLER answers — its 404 is
     // the vault's own "Document not found", not the gate's envelope.
     const callsEnabled: string[] = []
-    const { env: enabledEnv } = h.setup([], [SPY_JOIN_ROUTE(callsEnabled)])
-    const enabled = await documentsApp.request('/api/documents/doc-1', {}, enabledEnv)
+    const { env: enabledEnv, app: enabledApp } = h.setup([], [SPY_JOIN_ROUTE(callsEnabled)])
+    const enabled = await enabledApp.request('/api/documents/doc-1', {}, enabledEnv)
     expect(enabled.status).toBe(404)
     expect(await enabled.json()).toEqual({ error: 'Document not found' })
     expect(callsEnabled).toHaveLength(1)

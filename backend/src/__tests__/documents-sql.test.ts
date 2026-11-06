@@ -45,7 +45,7 @@ import {
   DocumentNotFoundError,
   DocumentTooManyFilesError,
   DOCUMENT_MAX_FILES,
-} from '../lib/documents.js'
+} from '../plugins/documents/lib.js'
 import { createR2StorageAdapter } from '../ports/storage/r2.js'
 import { createDocumentsStub } from './support/env.js'
 

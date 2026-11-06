@@ -23,7 +23,7 @@ import {
   listDocuments,
   updateDocumentExpiry,
   DocumentNotFoundError,
-} from '../lib/documents.js'
+} from '../plugins/documents/lib.js'
 import {
   daysUntil,
   householdIsoDate,

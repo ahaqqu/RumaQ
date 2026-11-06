@@ -104,7 +104,7 @@ export const gateway = {
       // path.startsWith(p + '/')`) — the household-aware enablement gate
       // installs after auth INSIDE each plugin app, where the household is
       // actually known.
-      const plugin = matchPlugin(path)
+      const plugin = matchPlugin(path, env)
       if (plugin) {
         return plugin.app.fetch(request, env, ctx)
       }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vite-plus/test'
-import { documentsApp } from '../apps/documents.js'
+
 import { resetRateLimit } from '../lib/rate-limit.js'
 import { daysUntil, householdIsoDate } from '../lib/document-expiry.js'
 import {
@@ -77,8 +77,8 @@ describe('documents routes — expiry metadata (#426)', () => {
   })
 
   it('401s without a session', async () => {
-    const { db } = h.setup()
-    const unauth = await documentsApp.request(
+    const { db, app } = h.setup()
+    const unauth = await app.request(
       '/api/documents/doc-1',
       patchBody({ expires_on: '2027-05-20' }),
       createEnv(db, { props: undefined })
@@ -87,8 +87,8 @@ describe('documents routes — expiry metadata (#426)', () => {
   })
 
   it('answers 404 for a foreign household document before the body is read', async () => {
-    const { db, env } = h.setup([[DOC_ROW_ROUTE, () => null]])
-    const res = await documentsApp.request('/api/documents/doc-foreign', patchBody({}), env)
+    const { db, env, app } = h.setup([[DOC_ROW_ROUTE, () => null]])
+    const res = await app.request('/api/documents/doc-foreign', patchBody({}), env)
     expect(res.status).toBe(404)
     // No existence leak, and nothing else ran.
     expect(db.log).toHaveLength(0)
@@ -96,13 +96,13 @@ describe('documents routes — expiry metadata (#426)', () => {
 
   it('sets expiry + explicit window, writes the update audit record in the same batch, and returns the computed days', async () => {
     const readBack = joinRouteReadingUpdateLog(DOC_ROW({ name: 'Paspor' }))
-    const { db, env } = h.setup(
+    const { db, env, app } = h.setup(
       [[DOC_ROW_ROUTE, () => DOC_ROW({ name: 'Paspor' })]],
       [readBack.route]
     )
     readBack.attach(db)
 
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents/doc-1',
       patchBody({ expires_on: '2027-05-20', remind_days_before: 90 }),
       env
@@ -135,10 +135,10 @@ describe('documents routes — expiry metadata (#426)', () => {
 
   it('applies the 30-day app default when an expiry is set without a window (no stored column default)', async () => {
     const readBack = joinRouteReadingUpdateLog(DOC_ROW())
-    const { db, env } = h.setup([[DOC_ROW_ROUTE, () => DOC_ROW()]], [readBack.route])
+    const { db, env, app } = h.setup([[DOC_ROW_ROUTE, () => DOC_ROW()]], [readBack.route])
     readBack.attach(db)
 
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents/doc-1',
       patchBody({ expires_on: '2027-01-31' }),
       env
@@ -154,13 +154,13 @@ describe('documents routes — expiry metadata (#426)', () => {
 
   it('keeps an existing window when only the date changes (a correction must not clobber a chosen window)', async () => {
     const readBack = joinRouteReadingUpdateLog(DOC_ROW({ remind_days_before: 60 }))
-    const { db, env } = h.setup(
+    const { db, env, app } = h.setup(
       [[DOC_ROW_ROUTE, () => DOC_ROW({ expires_on: '2027-05-20', remind_days_before: 60 })]],
       [readBack.route]
     )
     readBack.attach(db)
 
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents/doc-1',
       patchBody({ expires_on: '2028-01-10' }),
       env
@@ -172,17 +172,13 @@ describe('documents routes — expiry metadata (#426)', () => {
 
   it('clears expiry (and the window with it) on expires_on: null', async () => {
     const readBack = joinRouteReadingUpdateLog(DOC_ROW({ expires_on: '2027-05-20' }))
-    const { db, env } = h.setup(
+    const { db, env, app } = h.setup(
       [[DOC_ROW_ROUTE, () => DOC_ROW({ expires_on: '2027-05-20', remind_days_before: 30 })]],
       [readBack.route]
     )
     readBack.attach(db)
 
-    const res = await documentsApp.request(
-      '/api/documents/doc-1',
-      patchBody({ expires_on: null }),
-      env
-    )
+    const res = await app.request('/api/documents/doc-1', patchBody({ expires_on: null }), env)
     expect(res.status).toBe(200)
     const update = db.log.find((e) => /UPDATE documents/.test(e.sql))
     expect(update?.params).toEqual([null, null, 'doc-1', 'h1'])
@@ -196,13 +192,13 @@ describe('documents routes — expiry metadata (#426)', () => {
 
   it('updates the window alone when the document already carries an expiry', async () => {
     const readBack = joinRouteReadingUpdateLog(DOC_ROW({ expires_on: '2027-05-20' }))
-    const { db, env } = h.setup(
+    const { db, env, app } = h.setup(
       [[DOC_ROW_ROUTE, () => DOC_ROW({ expires_on: '2027-05-20', remind_days_before: 30 })]],
       [readBack.route]
     )
     readBack.attach(db)
 
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents/doc-1',
       patchBody({ remind_days_before: 14 }),
       env
@@ -241,8 +237,8 @@ describe('documents routes — expiry metadata (#426)', () => {
     ]
 
     for (const [label, request, doc] of cases) {
-      const { db, env } = h.setup([[DOC_ROW_ROUTE, () => doc]])
-      const res = await documentsApp.request('/api/documents/doc-1', request, env)
+      const { db, env, app } = h.setup([[DOC_ROW_ROUTE, () => doc]])
+      const res = await app.request('/api/documents/doc-1', request, env)
       expect(res.status, label).toBe(400)
       expect(await res.json(), label).toMatchObject({ error: expect.any(String) })
       expect(db.log, label).toHaveLength(0)
@@ -251,7 +247,7 @@ describe('documents routes — expiry metadata (#426)', () => {
 
   it('lists with expiring_within: the horizon binds as a parameter after the household scope', async () => {
     let lastParams: unknown[] = []
-    const { env } = h.setup(
+    const { env, app } = h.setup(
       [],
       [
         [
@@ -266,7 +262,7 @@ describe('documents routes — expiry metadata (#426)', () => {
       ]
     )
 
-    const res = await documentsApp.request('/api/documents?expiring_within=30', {}, env)
+    const res = await app.request('/api/documents?expiring_within=30', {}, env)
     expect(res.status).toBe(200)
     const body = (await res.json()) as { documents: Array<WithFiles> }
     // Household scope first, then the horizon (days are added to `now` in the
@@ -279,9 +275,9 @@ describe('documents routes — expiry metadata (#426)', () => {
   })
 
   it('rejects invalid expiring_within values with 400', async () => {
-    const { env } = h.setup()
+    const { env, app } = h.setup()
     for (const value of ['0', '366', 'abc', '12.5', '', '-5']) {
-      const res = await documentsApp.request(
+      const res = await app.request(
         `/api/documents?expiring_within=${encodeURIComponent(value)}`,
         {},
         env
@@ -291,8 +287,8 @@ describe('documents routes — expiry metadata (#426)', () => {
   })
 
   it('reports no expiry for undated documents (days_until_expiry null), in the default listing too', async () => {
-    const { env } = h.setup([], [[JOIN_ROUTE, () => joinDocRows(DOC_ROW())]])
-    const res = await documentsApp.request('/api/documents', {}, env)
+    const { env, app } = h.setup([], [[JOIN_ROUTE, () => joinDocRows(DOC_ROW())]])
+    const res = await app.request('/api/documents', {}, env)
     expect(res.status).toBe(200)
     const body = (await res.json()) as { documents: Array<WithFiles> }
     expect(body.documents[0]).toMatchObject({
@@ -307,10 +303,10 @@ describe('documents routes — expiry metadata (#426)', () => {
     // whatever the shared helper says against today's UTC date — pinned here
     // so the route and the helper cannot drift.
     const readBack = joinRouteReadingUpdateLog(DOC_ROW())
-    const { db, env } = h.setup([[DOC_ROW_ROUTE, () => DOC_ROW()]], [readBack.route])
+    const { db, env, app } = h.setup([[DOC_ROW_ROUTE, () => DOC_ROW()]], [readBack.route])
     readBack.attach(db)
 
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents/doc-1',
       patchBody({ expires_on: '2030-01-01' }),
       env

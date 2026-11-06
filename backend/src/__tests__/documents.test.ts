@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vite-plus/test'
-import { documentsApp, UPLOAD_TRANSPORT_SLACK } from '../apps/documents.js'
-import { DOCUMENT_MAX_FILES } from '../lib/documents.js'
+import { UPLOAD_TRANSPORT_SLACK } from '../plugins/documents/app.js'
+import { DOCUMENT_MAX_FILES } from '../plugins/documents/lib.js'
 import { resetRateLimit } from '../lib/rate-limit.js'
 import {
   createDocumentsHarness,
@@ -40,22 +40,18 @@ describe('documents routes — create, list, bounds', () => {
   })
 
   it('401s without a session', async () => {
-    const { db } = h.setup()
-    const unauth = await documentsApp.request(
-      '/api/documents',
-      {},
-      createEnv(db, { props: undefined })
-    )
+    const { db, app } = h.setup()
+    const unauth = await app.request('/api/documents', {}, createEnv(db, { props: undefined }))
     expect(unauth.status).toBe(401)
   })
 
   it('creates a document with a free-text name + first file: bytes under documents/<household>/<doc>/<file>, three rows in one batch (#422)', async () => {
-    const { db, env, bucket } = h.setup(
+    const { db, env, bucket, app } = h.setup(
       [MEMBER_ROUTE],
       [[JOIN_ROUTE, (params) => h.readBackFromLog(params, DOC_ROW())]]
     )
 
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents',
       postDocument(
         uploadForm(
@@ -108,12 +104,12 @@ describe('documents routes — create, list, bounds', () => {
   })
 
   it('carries the optional per-file label through create (owner decision #422-1)', async () => {
-    const { env } = h.setup(
+    const { env, app } = h.setup(
       [MEMBER_ROUTE],
       [[JOIN_ROUTE, (params) => h.readBackFromLog(params, DOC_ROW())]]
     )
 
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents',
       postDocument(
         uploadForm(
@@ -129,15 +125,15 @@ describe('documents routes — create, list, bounds', () => {
   })
 
   it('rejects a missing or whitespace name with 400 — free text does not mean anonymous', async () => {
-    const { env, bucket } = h.setup()
-    const noName = await documentsApp.request(
+    const { env, bucket, app } = h.setup()
+    const noName = await app.request(
       '/api/documents',
       postDocument(uploadForm({ bytes: JPEG_BYTES, name: 'ktp.jpg', type: 'image/jpeg' })),
       env
     )
     expect(noName.status).toBe(400)
 
-    const blankName = await documentsApp.request(
+    const blankName = await app.request(
       '/api/documents',
       postDocument(
         uploadForm({ bytes: JPEG_BYTES, name: 'ktp.jpg', type: 'image/jpeg' }, { name: '   ' })
@@ -150,7 +146,7 @@ describe('documents routes — create, list, bounds', () => {
 
   it('relates a document to a profile-only member (no account) via memberId', async () => {
     let memberParams: unknown[] = []
-    const { env } = h.setup(
+    const { env, app } = h.setup(
       [
         [
           /SELECT id FROM household_members WHERE id = \? AND household_id = \?/,
@@ -163,7 +159,7 @@ describe('documents routes — create, list, bounds', () => {
       [[JOIN_ROUTE, (params) => h.readBackFromLog(params, DOC_ROW())]]
     )
 
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents',
       postDocument(
         uploadForm(
@@ -181,10 +177,10 @@ describe('documents routes — create, list, bounds', () => {
   })
 
   it('rejects a memberId from another household with a validation error (no probe)', async () => {
-    const { env, bucket } = h.setup([
+    const { env, bucket, app } = h.setup([
       [/SELECT id FROM household_members WHERE id = \? AND household_id = \?/, () => null],
     ])
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents',
       postDocument(
         uploadForm(
@@ -200,12 +196,12 @@ describe('documents routes — create, list, bounds', () => {
   })
 
   it('rejects a body larger than the cap (413) and never stores it', async () => {
-    const { db, env, bucket } = h.setup()
+    const { db, env, bucket, app } = h.setup()
     const big = new Uint8Array(10 * 1024 * 1024 + 1).fill(0xff)
     big[0] = 0xff
     big[1] = 0xd8
     big[2] = 0xff
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents',
       postDocument(
         uploadForm({ bytes: big, name: 'huge.jpg', type: 'image/jpeg' }, { name: 'KTP' })
@@ -218,7 +214,7 @@ describe('documents routes — create, list, bounds', () => {
   })
 
   it('accepts an exactly-10 MB file — the pre-check slack absorbs multipart overhead, the exact cap governs the bytes (review A1)', async () => {
-    const { env, bucket } = h.setup(
+    const { env, bucket, app } = h.setup(
       [MEMBER_ROUTE],
       [[JOIN_ROUTE, (params) => h.readBackFromLog(params, DOC_ROW())]]
     )
@@ -226,7 +222,7 @@ describe('documents routes — create, list, bounds', () => {
     exact[0] = 0xff
     exact[1] = 0xd8
     exact[2] = 0xff
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents',
       postDocument(
         uploadForm({ bytes: exact, name: 'scan-big.jpg', type: 'image/jpeg' }, { name: 'KTP' })
@@ -291,7 +287,7 @@ describe('documents routes — create, list, bounds', () => {
   }
 
   it('parses a chunked (no Content-Length) exactly-10 MB upload through the bounded path (review A2)', async () => {
-    const { env, bucket } = h.setup(
+    const { env, bucket, app } = h.setup(
       [MEMBER_ROUTE],
       [[JOIN_ROUTE, (params) => h.readBackFromLog(params, DOC_ROW())]]
     )
@@ -299,11 +295,7 @@ describe('documents routes — create, list, bounds', () => {
     exact[0] = 0xff
     exact[1] = 0xd8
     exact[2] = 0xff
-    const res = await documentsApp.request(
-      '/api/documents',
-      chunkedUpload(exact, 'scan-chunked.jpg'),
-      env
-    )
+    const res = await app.request('/api/documents', chunkedUpload(exact, 'scan-chunked.jpg'), env)
     expect(res.status).toBe(201)
     const body = (await res.json()) as { document: WithFiles }
     expect(body.document.files[0]).toMatchObject({ size_bytes: 10 * 1024 * 1024 })
@@ -311,7 +303,7 @@ describe('documents routes — create, list, bounds', () => {
   })
 
   it('aborts a chunked upload past the cap during the stream read, before any parse or store (review A2)', async () => {
-    const { db, env, bucket } = h.setup()
+    const { db, env, bucket, app } = h.setup()
     // 10 MB + 65 KB of payload: over the pre-parse bound (cap + slack) no
     // matter how the multipart overhead lands — the stream read must stop
     // early instead of buffering the whole body.
@@ -319,11 +311,7 @@ describe('documents routes — create, list, bounds', () => {
     over[0] = 0xff
     over[1] = 0xd8
     over[2] = 0xff
-    const res = await documentsApp.request(
-      '/api/documents',
-      chunkedUpload(over, 'huge-chunked.jpg'),
-      env
-    )
+    const res = await app.request('/api/documents', chunkedUpload(over, 'huge-chunked.jpg'), env)
     expect(res.status).toBe(413)
     expect(bucket.objects.size).toBe(0)
     expect(db.log).toHaveLength(0)
@@ -336,9 +324,9 @@ describe('documents routes — create, list, bounds', () => {
   })
 
   it('rejects magic bytes that do not match the declared type (415) — sniff policy is reject, never override', async () => {
-    const { env, bucket } = h.setup()
+    const { env, bucket, app } = h.setup()
     // Declared JPEG, actually text.
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents',
       postDocument(
         uploadForm({ bytes: TEXT_BYTES, name: 'fake.jpg', type: 'image/jpeg' }, { name: 'KTP' })
@@ -347,7 +335,7 @@ describe('documents routes — create, list, bounds', () => {
     )
     expect(res.status).toBe(415)
     // Declared PNG, actually PDF.
-    const res2 = await documentsApp.request(
+    const res2 = await app.request(
       '/api/documents',
       postDocument(
         uploadForm({ bytes: PDF_BYTES, name: 'image.pdf', type: 'image/png' }, { name: 'KTP' })
@@ -361,18 +349,18 @@ describe('documents routes — create, list, bounds', () => {
   it('rejects missing files and non-multipart bodies with 400', async () => {
     // The add-file path resolves the document BEFORE parsing, so it needs a
     // document to find.
-    const { env, bucket } = h.setup([[DOC_ROW_ROUTE, () => DOC_ROW()]])
-    const notMultipart = await documentsApp.request('/api/documents', { method: 'POST' }, env)
+    const { env, bucket, app } = h.setup([[DOC_ROW_ROUTE, () => DOC_ROW()]])
+    const notMultipart = await app.request('/api/documents', { method: 'POST' }, env)
     expect(notMultipart.status).toBe(400)
 
     const noFileForm = new FormData()
     noFileForm.append('name', 'KTP')
-    const noFile = await documentsApp.request('/api/documents', postDocument(noFileForm), env)
+    const noFile = await app.request('/api/documents', postDocument(noFileForm), env)
     expect(noFile.status).toBe(400)
 
     const addFileNoFile = new FormData()
     addFileNoFile.append('label', 'depan')
-    const addFile = await documentsApp.request(
+    const addFile = await app.request(
       '/api/documents/doc-1/files',
       postDocument(addFileNoFile),
       env
@@ -383,7 +371,7 @@ describe('documents routes — create, list, bounds', () => {
 
   it('lists documents newest first with q (name search) and memberId filters composing', async () => {
     let lastParams: unknown[] = []
-    const { env } = h.setup(
+    const { env, app } = h.setup(
       [],
       [
         [
@@ -412,7 +400,7 @@ describe('documents routes — create, list, bounds', () => {
       ]
     )
 
-    const all = await documentsApp.request('/api/documents', {}, env)
+    const all = await app.request('/api/documents', {}, env)
     expect(all.status).toBe(200)
     const allBody = (await all.json()) as { documents: Array<WithFiles> }
     expect(allBody.documents.map((d) => d.id)).toEqual(['doc-new', 'doc-old'])
@@ -421,16 +409,16 @@ describe('documents routes — create, list, bounds', () => {
     expect(allBody.documents[0]?.files[0]).toMatchObject({ sort_order: 1, label: null })
 
     // q + memberId compose (both bound after the household scope).
-    const filtered = await documentsApp.request('/api/documents?q=ktp&memberId=m-toddler', {}, env)
+    const filtered = await app.request('/api/documents?q=ktp&memberId=m-toddler', {}, env)
     expect(filtered.status).toBe(200)
     expect(lastParams).toEqual(['h1', 'm-toddler', '%ktp%'])
 
-    const badFilter = await documentsApp.request('/api/documents?q=' + 'x'.repeat(121), {}, env)
+    const badFilter = await app.request('/api/documents?q=' + 'x'.repeat(121), {}, env)
     expect(badFilter.status).toBe(400)
   })
 
   it('answers 404 for a foreign household document before any authz decision', async () => {
-    const { env } = h.setup([
+    const { env, app } = h.setup([
       [
         DOC_ROW_ROUTE,
         // The scoped query misses for ids belonging to other households —
@@ -439,15 +427,15 @@ describe('documents routes — create, list, bounds', () => {
       ],
     ])
 
-    const meta = await documentsApp.request('/api/documents/doc-foreign', {}, env)
+    const meta = await app.request('/api/documents/doc-foreign', {}, env)
     expect(meta.status).toBe(404)
-    const content = await documentsApp.request(
+    const content = await app.request(
       '/api/documents/doc-foreign/files/file-1/content?disposition=inline',
       {},
       env
     )
     expect(content.status).toBe(404)
-    const addFile = await documentsApp.request(
+    const addFile = await app.request(
       '/api/documents/doc-foreign/files',
       postDocument(
         uploadForm({ bytes: JPEG_BYTES, name: 'x.jpg', type: 'image/jpeg' }, { name: 'x' })
@@ -455,31 +443,31 @@ describe('documents routes — create, list, bounds', () => {
       env
     )
     expect(addFile.status).toBe(404)
-    const del = await documentsApp.request('/api/documents/doc-foreign', { method: 'DELETE' }, env)
+    const del = await app.request('/api/documents/doc-foreign', { method: 'DELETE' }, env)
     expect(del.status).toBe(404)
     // No existence leak: the response body is the generic not-found error.
     expect(await meta.json()).toMatchObject({ error: 'Document not found' })
   })
 
   it('answers 404 for a file of another document even within the household (file lookup joins the document)', async () => {
-    const { env } = h.setup([
+    const { env, app } = h.setup([
       [DOC_ROW_ROUTE, () => DOC_ROW()],
       // The file lookup binds fileId + documentId + householdId — a file id
       // from a DIFFERENT document must miss.
       [FILE_ROW_ROUTE, (params) => (params[1] === 'doc-1' ? FILE_ROW() : null)],
     ])
-    const res = await documentsApp.request('/api/documents/doc-other/files/file-1/content', {}, env)
+    const res = await app.request('/api/documents/doc-other/files/file-1/content', {}, env)
     expect(res.status).toBe(404)
   })
 
   it('adds a file to an existing document: sort_order = max + 1, bytes stored, file_add audit carries the file id (#422)', async () => {
-    const { db, env, bucket } = h.setup(
+    const { db, env, bucket, app } = h.setup(
       [[DOC_ROW_ROUTE, () => DOC_ROW()], COUNT_ROUTE(1)],
       [[JOIN_ROUTE, (params) => h.readBackFromLog(params, DOC_ROW())]],
       { fileSortSeeds: { 'doc-1': 1 } }
     )
 
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents/doc-1/files',
       postDocument(
         uploadForm(
@@ -514,11 +502,11 @@ describe('documents routes — create, list, bounds', () => {
   })
 
   it('refuses a 21st file with 409 BEFORE any byte is stored (#422 owner decision 3)', async () => {
-    const { db, env, bucket } = h.setup([
+    const { db, env, bucket, app } = h.setup([
       [DOC_ROW_ROUTE, () => DOC_ROW()],
       COUNT_ROUTE(DOCUMENT_MAX_FILES),
     ])
-    const res = await documentsApp.request(
+    const res = await app.request(
       '/api/documents/doc-1/files',
       postDocument(
         uploadForm({ bytes: JPEG_BYTES, name: 'extra.jpg', type: 'image/jpeg' }, { name: 'x' })
@@ -531,7 +519,7 @@ describe('documents routes — create, list, bounds', () => {
   })
 
   it('rate-limits bursts of uploads per user (429 with Retry-After) across both upload endpoints', async () => {
-    const { env } = h.setup(
+    const { env, app } = h.setup(
       [[DOC_ROW_ROUTE, () => DOC_ROW()], COUNT_ROUTE(0), MEMBER_ROUTE],
       [[JOIN_ROUTE, (params) => h.readBackFromLog(params, DOC_ROW())]]
     )
@@ -539,7 +527,7 @@ describe('documents routes — create, list, bounds', () => {
     // The window holds a full maxed document (20) plus add-file calls — the
     // limit itself is 40; drive past it with creates.
     for (let i = 0; i < 41; i++) {
-      last = await documentsApp.request(
+      last = await app.request(
         '/api/documents',
         postDocument(
           uploadForm(

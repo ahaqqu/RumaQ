@@ -11,6 +11,8 @@
 // every route test: assertions cover what was actually stored and deleted,
 // not mock call counts. Synthetic bytes only — no real documents, no real
 // PII in fixtures.
+import { createDocumentsPlugin } from '../../plugins/documents/app.js'
+import { createR2StorageAdapter } from '../../ports/storage/r2.js'
 import { createDocumentsStub, type MockEnv } from './env.js'
 
 export type Row = Record<string, unknown>
@@ -123,7 +125,7 @@ export const WEBP_BYTES = new Uint8Array([
 ])
 export const TEXT_BYTES = new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]) // "hello"
 
-// The INSERT parameter orders (lib/documents.ts) — the fake read-back
+// The INSERT parameter orders (plugins/documents/lib.ts) — the fake read-back
 // reconstructs the rows from what was actually written. `uploaded_at` is NOT
 // in the list: the INSERT omits the column on purpose so the table DEFAULT
 // fills it (review A1 #422) — there is no bound param to echo.
@@ -265,11 +267,16 @@ export function FILE_ROW(overrides: Row = {}): Row {
 }
 
 // One harness per test file: `setup` rebinds the fake + stub + seeds per test
-// and hands the trio back, so no module state bleeds across files.
+// and hands the trio back, so no module state bleeds across files. `app` is
+// composed through the REAL plugin factory (createDocumentsPlugin) with the
+// per-test R2 stub injected as ports.storage — exactly the wiring the
+// registry performs against the real binding (ticket 4 #438), so route tests
+// exercise the factory output, adapter included.
 export function createDocumentsHarness() {
   let db: FakeDb
   let env: MockEnv
   let bucket: ReturnType<typeof createDocumentsStub>
+  let app: ReturnType<typeof createDocumentsPlugin>['app']
 
   // Files a fixture document ALREADY holds (contiguous 1..n) — the guarded
   // insert's in-statement sort_order derives from this plus the log's priors.
@@ -331,7 +338,14 @@ export function createDocumentsHarness() {
     db = createFakeDb(firstRoutes, allRoutes)
     bucket = createDocumentsStub()
     env = createEnv(db, { DOCUMENTS: bucket as unknown as MockEnv['DOCUMENTS'] })
-    return { db, env, bucket }
+    app = createDocumentsPlugin({
+      ports: {
+        // Same cast idiom as the env line above — the stub is R2Bucket-shaped
+        // for put/get/delete, the only methods the adapter calls.
+        storage: createR2StorageAdapter(env.DOCUMENTS as unknown as R2Bucket),
+      },
+    }).app
+    return { db, env, bucket, app }
   }
 
   return { setup, readBackFromLog }

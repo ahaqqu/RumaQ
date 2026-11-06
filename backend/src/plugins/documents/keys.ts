@@ -1,8 +1,8 @@
-// Document-vault KEY POLICY (ahaqqu/RumaQ#388 MVP). The StorageAdapter port
-// itself moved to backend/src/ports/storage/ (ticket 4, §4.2); these helpers
-// stay vault-owned — they are vault policy, not port policy (§4.2: key
-// building "moves with the plugin") — and re-home into plugins/documents/
-// with the vault in ticket 4.
+// Document-vault KEY POLICY (ahaqqu/RumaQ#388 MVP), owned by the documents
+// plugin (re-homed from lib/storage.ts by ticket 4, plugin architecture
+// §4.2: key-building helpers are vault policy, not port policy — they move
+// WITH the plugin, while the StorageAdapter port itself lives in
+// backend/src/ports/storage/). Receipts keep their own keys under lib/.
 
 // One private bucket, two key namespaces (the issue's "bucket or hard-prefix"
 // answer is hard-prefix): receipts/ (purchases) and documents/ (the vault).

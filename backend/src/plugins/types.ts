@@ -62,10 +62,9 @@ export type PluginManifest = {
 
 /**
  * The ports a plugin receives instead of constructing adapters inline (§4.1
- * forbidden-4). The vault still builds its R2 adapter internally until
- * ticket 4 converts it — phase A only defines the port shape and the seam,
- * so every port is optional; the factory contract is already the shape
- * ticket 4 fills.
+ * forbidden-4). Injected by the registry at factory time (registry.ts); the
+ * documents plugin guards its required port at construction (app.ts), so a
+ * missing wiring fails fast, never mid-request.
  */
 export type PluginPorts = {
   /** Document/object bytes — adapter #1 (ports/storage, private R2). */
@@ -81,20 +80,16 @@ export type PluginDeps = { ports: PluginPorts }
  */
 export type PluginRegistration = {
   manifest: PluginManifest
-  // Phase A registers the existing module-level app AS-IS (bit-for-bit
-  // behavior, files unmoved). Ticket 4 re-homes apps/documents.ts under
-  // plugins/documents/ as a factory and replaces this composition with
-  // createDocumentsPlugin({ ports }).
   app: Hono<Env>
 }
 
 /**
  * The plugin factory contract (§4.3): a plugin exports
- * createXPlugin(deps: PluginDeps) returning its registration. The registry
- * composes logger → CORS → limiter → auth → pluginGate → routes → onError
- * and hands the app in — "cannot register a route without auth" becomes a
- * structural property, and the factory is the one place an adapter is
- * injected (the three inline createR2StorageAdapter call sites in
- * apps/documents.ts are the motivating evidence; ticket 4 removes them).
+ * createXPlugin(deps: PluginDeps) returning its registration. The factory is
+ * the one place an adapter is injected, so "cannot register a route without
+ * auth" is structural and no plugin reads a binding except env.DB. The
+ * documents plugin is the first implementation (plugins/documents/app.ts —
+ * ticket 4 #438 removed its five inline createR2StorageAdapter call sites
+ * through this seam).
  */
 export type PluginFactory = (deps: PluginDeps) => PluginRegistration
