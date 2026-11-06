@@ -28,7 +28,8 @@ type FakeDb = {
 
 function createFakeDb(
   firstRoutes: [RegExp, (params: unknown[]) => Row | null][],
-  allRoutes: [RegExp, (params: unknown[]) => Row[]][]
+  allRoutes: [RegExp, (params: unknown[]) => Row[]][],
+  runChanges = 1
 ): FakeDb {
   const log: Array<{ sql: string; params: unknown[] }> = []
   const handlers = (
@@ -52,7 +53,10 @@ function createFakeDb(
     },
     run: async () => {
       log.push({ sql: flat, params })
-      return undefined
+      // D1-shaped meta — the purge cancel (P1-A3) reads meta.changes to
+      // distinguish a released drain (1) from nothing-in-flight (0); the
+      // not-active test overrides via runChanges.
+      return { meta: { changes: runChanges } }
     },
   })
   return {
@@ -106,11 +110,21 @@ const MEMBERSHIP_ROUTE: [RegExp, (params: unknown[]) => Row | null] = [
   (params) => CALLER_ROWS[String(params[0])] ?? null,
 ]
 
-const ENABLEMENT_ROWS_ROUTE = (rows: Array<{ plugin_id: string; status: string }>) =>
-  [/SELECT plugin_id, status FROM household_plugins WHERE household_id = \?/, () => rows] as [
-    RegExp,
-    (params: unknown[]) => Row[],
-  ]
+// The catalog read (ticket 5 #439): the enablement rows WITH the 0035 purge
+// columns — getPluginCatalog AND setPluginEnablement read through it.
+const CATALOG_ROWS_ROUTE = (
+  rows: Array<{
+    plugin_id: string
+    status: string
+    purge_state?: string | null
+    purge_requested_at?: string | null
+    purge_completed_at?: string | null
+  }>
+) =>
+  [
+    /SELECT plugin_id, status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = \?/,
+    () => rows,
+  ] as [RegExp, (params: unknown[]) => Row[]]
 
 const FLAGS_ROUTE = (rows: Array<{ key: string; value: string }>) =>
   [/SELECT key, value FROM deployment_flags/, () => rows] as [RegExp, (params: unknown[]) => Row[]]
@@ -147,7 +161,7 @@ describe('plugin catalog routes (issue #437)', () => {
       createFakeDb(
         [],
         [
-          ENABLEMENT_ROWS_ROUTE([]),
+          CATALOG_ROWS_ROUTE([]),
           FLAGS_ROUTE([{ key: deploymentFlagKey('documents'), value: 'off' }]),
         ]
       )
@@ -180,7 +194,18 @@ describe('plugin catalog routes (issue #437)', () => {
     const env = createEnv(
       createFakeDb(
         [],
-        [ENABLEMENT_ROWS_ROUTE([{ plugin_id: 'documents', status: 'disabled' }]), FLAGS_ROUTE([])]
+        [
+          CATALOG_ROWS_ROUTE([
+            {
+              plugin_id: 'documents',
+              status: 'disabled',
+              purge_state: 'running',
+              purge_requested_at: '2026-11-01 10:00:00',
+              purge_completed_at: null,
+            },
+          ]),
+          FLAGS_ROUTE([]),
+        ]
       )
     )
     const res = await pluginsApp.request('/api/plugins', { method: 'GET' } as RequestInit, env)
@@ -191,11 +216,14 @@ describe('plugin catalog routes (issue #437)', () => {
       deployment_available: true,
       plan_entitled: true,
       available: false,
+      // Ticket 5 (#439): the drain window is reported honestly — the
+      // write gate is refusing uploads server-side while this shows.
+      purge: { state: 'running', requested_at: '2026-11-01 10:00:00', completed_at: null },
     })
   })
 
   it('writes the enablement row AND the audit event in one batch, then answers the fresh posture', async () => {
-    const db = createFakeDb([MEMBERSHIP_ROUTE], [ENABLEMENT_ROWS_ROUTE([]), FLAGS_ROUTE([])])
+    const db = createFakeDb([MEMBERSHIP_ROUTE], [CATALOG_ROWS_ROUTE([]), FLAGS_ROUTE([])])
     const env = createEnv(db)
     const res = await pluginsApp.request(
       '/api/plugins/documents/enablement',
@@ -229,7 +257,7 @@ describe('plugin catalog routes (issue #437)', () => {
   })
 
   it('is idempotent: setting the resolved state writes nothing and audits nothing', async () => {
-    const db = createFakeDb([MEMBERSHIP_ROUTE], [ENABLEMENT_ROWS_ROUTE([]), FLAGS_ROUTE([])])
+    const db = createFakeDb([MEMBERSHIP_ROUTE], [CATALOG_ROWS_ROUTE([]), FLAGS_ROUTE([])])
     const env = createEnv(db)
     const res = await pluginsApp.request(
       '/api/plugins/documents/enablement',
@@ -245,7 +273,7 @@ describe('plugin catalog routes (issue #437)', () => {
   })
 
   it('answers 403 for a non-owner and 404 for an unknown plugin, writing nothing', async () => {
-    const memberDb = createFakeDb([MEMBERSHIP_ROUTE], [ENABLEMENT_ROWS_ROUTE([]), FLAGS_ROUTE([])])
+    const memberDb = createFakeDb([MEMBERSHIP_ROUTE], [CATALOG_ROWS_ROUTE([]), FLAGS_ROUTE([])])
     const memberEnv = createEnv(memberDb, 'u2')
     const forbidden = await pluginsApp.request(
       '/api/plugins/documents/enablement',
@@ -255,7 +283,7 @@ describe('plugin catalog routes (issue #437)', () => {
     expect(forbidden.status).toBe(403)
     expect(await forbidden.json()).toMatchObject({ error: 'Only household owners can do that' })
 
-    const unknownDb = createFakeDb([MEMBERSHIP_ROUTE], [ENABLEMENT_ROWS_ROUTE([]), FLAGS_ROUTE([])])
+    const unknownDb = createFakeDb([MEMBERSHIP_ROUTE], [CATALOG_ROWS_ROUTE([]), FLAGS_ROUTE([])])
     const unknownEnv = createEnv(unknownDb)
     const missing = await pluginsApp.request(
       '/api/plugins/not-a-plugin/enablement',
@@ -287,7 +315,7 @@ describe('plugin catalog routes (issue #437)', () => {
 
   it('rejects a malformed body with 400', async () => {
     const env = createEnv(
-      createFakeDb([MEMBERSHIP_ROUTE], [ENABLEMENT_ROWS_ROUTE([]), FLAGS_ROUTE([])])
+      createFakeDb([MEMBERSHIP_ROUTE], [CATALOG_ROWS_ROUTE([]), FLAGS_ROUTE([])])
     )
     const res = await pluginsApp.request(
       '/api/plugins/documents/enablement',
@@ -295,5 +323,181 @@ describe('plugin catalog routes (issue #437)', () => {
       env
     )
     expect(res.status).toBe(400)
+  })
+})
+
+// The purge initiation route (ticket 5, #439): owner-only, typed-
+// confirmation, job-MARKING (nothing is deleted by the request — the
+// nightly chunk driver owns the bytes). The real-SQL semantics of the
+// completion receipt live in plugin-purge.test.ts; this file pins the HTTP
+// surface and what got WRITTEN.
+describe('plugin purge initiation route (#439)', () => {
+  beforeEach(() => {
+    resetRateLimit()
+  })
+
+  // The read-back the answered posture carries (the marked row's truth).
+  const PURGE_ROW_ROUTE = (row: Row | null) =>
+    [
+      /SELECT status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = \? AND plugin_id = \?/,
+      () => row,
+    ] as [RegExp, (params: unknown[]) => Row | null]
+
+  it('marks the drain pending in one batch and answers the fresh posture', async () => {
+    const db = createFakeDb(
+      [
+        MEMBERSHIP_ROUTE,
+        PURGE_ROW_ROUTE({
+          status: 'enabled',
+          purge_state: 'pending',
+          purge_requested_at: '2026-11-07 03:00:00',
+          purge_completed_at: null,
+        }),
+      ],
+      [CATALOG_ROWS_ROUTE([]), FLAGS_ROUTE([])]
+    )
+    const env = createEnv(db)
+    const res = await pluginsApp.request(
+      '/api/plugins/documents/purge',
+      jsonRequest('POST', { confirm: 'Documents' }),
+      env
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body).toMatchObject({
+      id: 'documents',
+      enabled: true,
+      purge: { state: 'pending', requested_at: '2026-11-07 03:00:00', completed_at: null },
+    })
+
+    // The write rode ONE batch: the row materialization (an absent row is
+    // upserted at its RESOLVED status — no enablement transition, no
+    // lifecycle receipt) then the initiation UPDATE.
+    const written = db.log.filter((entry) => entry.sql.startsWith('INSERT INTO household_plugins'))
+    expect(written).toHaveLength(1)
+    expect(written[0].params).toEqual(['h1', 'documents', 'enabled'])
+    const initiated = db.log.filter((entry) => entry.sql.startsWith('UPDATE household_plugins'))
+    expect(initiated).toHaveLength(1)
+    expect(initiated[0].params).toEqual(['u1', 'h1', 'documents'])
+    // No plugin_purged receipt here — "written once, at completion" (§3.4).
+    expect(
+      db.log.filter((entry) => entry.sql.startsWith('INSERT INTO household_plugin_audit'))
+    ).toEqual([])
+  })
+
+  it('rejects a wrong typed confirmation with 400, writing nothing', async () => {
+    const db = createFakeDb([MEMBERSHIP_ROUTE], [CATALOG_ROWS_ROUTE([]), FLAGS_ROUTE([])])
+    const env = createEnv(db)
+    const res = await pluginsApp.request(
+      '/api/plugins/documents/purge',
+      jsonRequest('POST', { confirm: 'documents' }),
+      env
+    )
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({
+      error: 'Confirmation does not match the plugin name',
+    })
+    expect(db.log).toEqual([])
+  })
+
+  it('is owner-only: a member gets 403 before any write', async () => {
+    const db = createFakeDb([MEMBERSHIP_ROUTE], [CATALOG_ROWS_ROUTE([]), FLAGS_ROUTE([])])
+    const env = createEnv(db, 'u2')
+    const res = await pluginsApp.request(
+      '/api/plugins/documents/purge',
+      jsonRequest('POST', { confirm: 'Documents' }),
+      env
+    )
+    expect(res.status).toBe(403)
+    expect(db.log).toEqual([])
+  })
+
+  it('is idempotent while a drain is in flight: no second marking', async () => {
+    const db = createFakeDb(
+      [MEMBERSHIP_ROUTE],
+      [
+        CATALOG_ROWS_ROUTE([
+          {
+            plugin_id: 'documents',
+            status: 'enabled',
+            purge_state: 'running',
+            purge_requested_at: '2026-11-06 03:00:00',
+            purge_completed_at: null,
+          },
+        ]),
+        FLAGS_ROUTE([]),
+      ]
+    )
+    const env = createEnv(db)
+    const res = await pluginsApp.request(
+      '/api/plugins/documents/purge',
+      jsonRequest('POST', { confirm: 'Documents' }),
+      env
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body).toMatchObject({
+      purge: { state: 'running', requested_at: '2026-11-06 03:00:00' },
+    })
+    expect(db.log).toEqual([])
+  })
+})
+
+// The purge cancel route (P1-A3, PR #474 review): the owner's release lever
+// for a drain that can never complete. The lib's real-SQL semantics (state
+// back to NULL, gate released, part-way docs stay gone, no receipt) are
+// pinned in plugin-purge.test.ts; this file pins the HTTP surface.
+describe('plugin purge cancel route (#439 P1-A3)', () => {
+  beforeEach(() => {
+    resetRateLimit()
+  })
+
+  const PURGE_ROW_ROUTE = (row: Row | null) =>
+    [
+      /SELECT status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = \? AND plugin_id = \?/,
+      () => row,
+    ] as [RegExp, (params: unknown[]) => Row | null]
+
+  it('releases an in-flight drain and answers the resting posture', async () => {
+    const db = createFakeDb([MEMBERSHIP_ROUTE, PURGE_ROW_ROUTE(null)], [FLAGS_ROUTE([])])
+    const env = createEnv(db)
+    const res = await pluginsApp.request(
+      '/api/plugins/documents/purge',
+      { method: 'DELETE' } as RequestInit,
+      env
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body).toMatchObject({ id: 'documents', purge: null })
+    // One guarded UPDATE, no lifecycle receipt.
+    const cancelled = db.log.filter((entry) => entry.sql.startsWith('UPDATE household_plugins'))
+    expect(cancelled).toHaveLength(1)
+    expect(
+      db.log.filter((entry) => entry.sql.startsWith('INSERT INTO household_plugin_audit'))
+    ).toEqual([])
+  })
+
+  it('answers 409 when no purge is in flight', async () => {
+    const db = createFakeDb([MEMBERSHIP_ROUTE], [FLAGS_ROUTE([])], 0)
+    const env = createEnv(db)
+    const res = await pluginsApp.request(
+      '/api/plugins/documents/purge',
+      { method: 'DELETE' } as RequestInit,
+      env
+    )
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ error: 'No purge is in flight for this plugin' })
+  })
+
+  it('is owner-only: a member gets 403 before any write', async () => {
+    const db = createFakeDb([MEMBERSHIP_ROUTE], [FLAGS_ROUTE([])])
+    const env = createEnv(db, 'u2')
+    const res = await pluginsApp.request(
+      '/api/plugins/documents/purge',
+      { method: 'DELETE' } as RequestInit,
+      env
+    )
+    expect(res.status).toBe(403)
+    expect(db.log).toEqual([])
   })
 })

@@ -20,6 +20,27 @@ export const PLUGIN_ENABLEMENT_SQL =
 export const HOUSEHOLD_ENABLEMENT_ROWS_SQL =
   'SELECT plugin_id, status FROM household_plugins WHERE household_id = ?'
 
+/** The settings catalog's read (ticket 5, #439): the enablement rows WITH
+ * the purge columns (0035) — the catalog reports the purge state machine
+ * honestly (§4.5) without a second table read. A different statement from
+ * HOUSEHOLD_ENABLEMENT_ROWS_SQL on purpose: the advertisement stays exactly
+ * as pinned (its consumers read two columns), and each read's shape is
+ * pinned by its own test. */
+export const HOUSEHOLD_CATALOG_ROWS_SQL =
+  'SELECT plugin_id, status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = ?'
+
+/** The vault write-gate's read (ticket 5, #439): is a purge draining for
+ * this (household, plugin)? A PK-prefix seek like PLUGIN_ENABLEMENT_SQL;
+ * pinned in migrations.test.ts. */
+export const PLUGIN_PURGE_STATE_SQL =
+  'SELECT purge_state FROM household_plugins WHERE household_id = ? AND plugin_id = ?'
+
+/** The single-row read the purge initiation answers with (ticket 5): the
+ * enablement status AND the full purge slice for one (household, plugin) —
+ * the PK-prefix seek, pinned in migrations.test.ts. */
+export const PLUGIN_PURGE_ROW_SQL =
+  'SELECT status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = ? AND plugin_id = ?'
+
 /** The manifest slice the resolver needs — the gate passes the full manifest,
  * tests pass the same two fields. */
 export type EnablementSpec = Pick<PluginManifest, 'id' | 'defaultEnabled'>
@@ -56,6 +77,36 @@ export async function resolvePluginEnabled(
   } catch (err) {
     console.error(`[plugins] enablement read failed for ${spec.id}; failing closed`, err)
     return false
+  }
+}
+
+/**
+ * The vault write-gate (ticket 5, #439): true while a purge is pending or
+ * running for this plugin — the window in which new uploads are REFUSED
+ * (409). Why refuse rather than let the drain catch up: a document uploaded
+ * between the drain's final empty read and the 'done' transition would be
+ * erased with the household's purged data — exactly the class of silent
+ * loss this ticket exists to prevent. Fail-CLOSED on a read error: a
+ * refused upload is a retried request; an upload that lands inside an
+ * unverified drain window is data loss. (The enablement gate above fails
+ * closed to DENY ACCESS; this one fails closed to DENY WRITES — same
+ * posture, opposite direction, and neither may be unified with the
+ * fail-open advertisement.)
+ */
+export async function resolvePluginPurgeActive(
+  db: D1Database,
+  householdId: string,
+  pluginId: string
+): Promise<boolean> {
+  try {
+    const row = await db
+      .prepare(PLUGIN_PURGE_STATE_SQL)
+      .bind(householdId, pluginId)
+      .first<{ purge_state: string | null }>()
+    return row?.purge_state === 'pending' || row?.purge_state === 'running'
+  } catch (err) {
+    console.error(`[plugins] purge-state read failed for ${pluginId}; blocking writes`, err)
+    return true
   }
 }
 

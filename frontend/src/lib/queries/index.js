@@ -1,6 +1,11 @@
 export { useMe, useMeQueryOptions, useLogout } from './me.js'
 export { useEmailAuthStatus } from './emailAuthStatus.js'
-export { usePluginCatalog, useSetPluginEnablement } from './plugins.js'
+export {
+  usePluginCatalog,
+  useSetPluginEnablement,
+  useRequestPluginPurge,
+  useCancelPluginPurge,
+} from './plugins.js'
 export { useStock, useUpdateStock } from './stock.js'
 export { useHome } from './home.js'
 export { useSettings, useUpdateSettings } from './settings.js'

@@ -708,6 +708,21 @@
     "capabilities": {
       "purge": "Purge",
       "export": "Export"
+    },
+    "purge": {
+      "action": "Delete all data",
+      "dialogTitle": "Delete all {{feature}} data",
+      "dialogWarning": "This permanently deletes every document and file this feature stores for this household — the stored bytes first, then the records. This cannot be undone.",
+      "dialogDrainNote": "Deletion runs in the background and can take a few nights for larger vaults. Uploads are paused until it finishes.",
+      "dialogTypePrompt": "Type “{{name}}” to confirm",
+      "dialogConfirm": "Delete everything",
+      "dialogCancel": "Cancel",
+      "statePending": "Deletion requested — it runs overnight; uploads are paused until it finishes.",
+      "stateRunning": "Deletion in progress; uploads are paused until it finishes.",
+      "stateDone": "All data was deleted on {{date}}.",
+      "stateDonePlain": "All data was deleted.",
+      "errorGeneric": "Couldn't start the deletion. Please try again.",
+      "cancel": "Cancel purge"
     }
   },
   "common": {

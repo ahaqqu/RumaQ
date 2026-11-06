@@ -176,6 +176,39 @@ describe('documents routes — create, list, bounds', () => {
     expect(memberParams).toEqual(['m-toddler', 'h1'])
   })
 
+  it('refuses uploads with 409 while a purge drain is in flight — the write gate runs before the body is read (#439)', async () => {
+    // The gate is what stops a document from landing inside the drain's
+    // final-read race window: a doc uploaded between the drain's empty read
+    // and the 'done' transition would be erased with the purged data.
+    // The route matching the ticket-5 purge-state statement FIRST (the
+    // harness appends its gate defaults after the test's routes) — a
+    // 'running' drain makes BOTH upload routes refuse before parsing.
+    const { env, bucket, app } = h.setup([
+      [/SELECT purge_state FROM household_plugins/, () => ({ purge_state: 'running' })],
+    ])
+
+    const create = await app.request(
+      '/api/documents',
+      postDocument(
+        uploadForm({ bytes: JPEG_BYTES, name: 'ktp.jpg', type: 'image/jpeg' }, { name: 'KTP' })
+      ),
+      env
+    )
+    expect(create.status).toBe(409)
+    expect(await create.json()).toMatchObject({
+      error: expect.stringContaining('purged'),
+    })
+
+    const addFile = await app.request(
+      '/api/documents/doc-1/files',
+      postDocument(uploadForm({ bytes: JPEG_BYTES, name: 'ktp2.jpg', type: 'image/jpeg' })),
+      env
+    )
+    expect(addFile.status).toBe(409)
+    // Nothing reached storage: the gate fires before the 10 MB body is read.
+    expect(bucket.objects.size).toBe(0)
+  })
+
   it('rejects a memberId from another household with a validation error (no probe)', async () => {
     const { env, bucket, app } = h.setup([
       [/SELECT id FROM household_members WHERE id = \? AND household_id = \?/, () => null],

@@ -8,6 +8,7 @@ import { pluginsApp } from './apps/plugins.js'
 import { matchPlugin } from './plugins/registry.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
 import { logDueDocumentReminders } from './lib/document-expiry.js'
+import { PURGE_TICK_OBJECT_BUDGET, runPluginPurgeTick } from './lib/plugin-purge.js'
 
 const AUTH_ROUTES = new Set([
   '/api/auth/login',
@@ -133,7 +134,13 @@ export const gateway = {
   // Daily cron (triggers.scheduled in cloudflare.config.ts): usage records
   // are deleted after one year (issue #353), and the document expiry sweep
   // (#426) computes + logs the per-household due set — v1 renders in-app only
-  // (no new notification channel); v2 dispatch rides this same sweep.
+  // (no new notification channel); v2 dispatch rides this same sweep. The
+  // plugin purge chunk driver (#439, ticket 5) rides the same tick: one
+  // budgeted chunk per in-flight drain per night (PURGE_TICK_OBJECT_BUDGET
+  // carries the subrequest math — a scheduled invocation shares the fetch
+  // path's 50-subrequest cap). T7 (#441) will generalize plugin-declared
+  // scheduled tasks on top of the PluginPurgeJob seam; the general cron
+  // machinery is deliberately NOT built here.
   async scheduled(
     _controller: ScheduledController,
     env: Env['Bindings'],
@@ -141,5 +148,16 @@ export const gateway = {
   ): Promise<void> {
     ctx.waitUntil(deleteExpiredAiUsageEvents(env))
     ctx.waitUntil(logDueDocumentReminders(env.DB))
+    ctx.waitUntil(
+      runPluginPurgeTick(env, PURGE_TICK_OBJECT_BUDGET).then((summary) => {
+        // The log line is the tick's artifact (the #353/#426 cron
+        // precedent): one line per night with an active drain.
+        if (summary.chunks > 0) {
+          console.log(
+            `[plugin-purge] tick: ${summary.chunks} chunk(s), ${summary.objects} object(s) deleted`
+          )
+        }
+      })
+    )
   },
 }

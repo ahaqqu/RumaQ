@@ -1,5 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getPluginCatalog, setPluginEnablement } from '../api'
+import {
+  getPluginCatalog,
+  setPluginEnablement,
+  requestPluginPurge,
+  cancelPluginPurge,
+} from '../api'
 import { PLUGIN_CATALOG } from '../../plugins/registry.js'
 
 // The plugin settings catalog (ahaqqu/RumaQ#437 — plugin architecture ticket
@@ -91,6 +96,36 @@ export function useSetPluginEnablement() {
       // 404s for every member) — re-read both caches from the server.
       queryClient.invalidateQueries({ queryKey: PLUGINS_KEY })
       queryClient.invalidateQueries({ queryKey: ['me'] })
+    },
+  })
+}
+
+// The purge initiation (ticket 5, #439): owner-only, typed-confirmation.
+// Deliberately NOT optimistic — this marks a destructive job (bytes start
+// disappearing over the coming nights), so the UI must never show a purge
+// state the server has not confirmed. The settle invalidation re-reads the
+// catalog, which carries the purge slice (state + timestamps).
+export function useRequestPluginPurge() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ pluginId, confirm }) => requestPluginPurge(pluginId, confirm),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: PLUGINS_KEY })
+    },
+  })
+}
+
+// The purge cancel (P1-A3 fix round, PR #474 review): the owner's release
+// lever for a drain that can never complete. NOT optimistic — like the
+// initiation, the UI must never show a purge state the server has not
+// confirmed; the settle invalidation re-reads the catalog (the drain
+// disappears and uploads resume).
+export function useCancelPluginPurge() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ pluginId }) => cancelPluginPurge(pluginId),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: PLUGINS_KEY })
     },
   })
 }

@@ -21,6 +21,7 @@ import type { StorageAdapter } from '../../ports/storage/index.js'
 import { buildDocumentFileKey, isDocumentKey } from './keys.js'
 import { getMembership } from '../../lib/households.js'
 import { daysUntil, householdIsoDate } from '../../lib/document-expiry.js'
+import { resolvePluginPurgeActive } from '../enablement.js'
 
 export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
 
@@ -168,6 +169,22 @@ export class DocumentForbiddenError extends Error {
   constructor(message = 'Only the uploader or a household owner can do that') {
     super(message)
     this.name = 'DocumentForbiddenError'
+  }
+}
+
+/**
+ * The purge write-gate's 409 (ticket 5, #439): a purge drain (pending or
+ * running) is in flight for this household's vault, so new uploads are
+ * refused — a document landing between the drain's final empty read and the
+ * 'done' transition would be erased with the purged data, the exact silent
+ * loss this ticket exists to prevent. Reads stay open (the household can
+ * still see what the drain has not reached yet); deletions stay open (they
+ * only ever shrink the drain's work).
+ */
+export class DocumentPurgeActiveError extends Error {
+  constructor(message = 'This vault is being purged — uploads are paused until it completes') {
+    super(message)
+    this.name = 'DocumentPurgeActiveError'
   }
 }
 
@@ -510,7 +527,15 @@ export async function isHouseholdMember(
 
 // Create names the five base columns only — expiry metadata (#426) is not a
 // create-time field: it arrives via PATCH after the document exists, so the
-// new columns stay NULL exactly like every pre-#426 row.
+// new columns stay NULL exactly like every pre-#426 row. The INSERT carries
+// the PURGE WRITE GUARD in-statement (P1-A1, PR #474 review): the route's
+// pre-gate reads the state before the 10 MB body is read, but a body that
+// was already in flight when a drain started would otherwise commit
+// mid-drain — a document the drain's completion guard then has to catch.
+// With the guard inside the INSERT (the AUDIT_INSERT_SQL pattern), such a
+// commit inserts NOTHING; the route reads meta.changes and answers the same
+// 409. The no-drain predicate is re-checked INSIDE the batch, so a drain
+// that starts between the route's pre-gate and this batch is covered too.
 function insertDocumentStatement(
   db: D1Database,
   row: Omit<DocumentRow, 'expires_on' | 'remind_days_before'>
@@ -518,16 +543,33 @@ function insertDocumentStatement(
   return db
     .prepare(
       `INSERT INTO documents (id, household_id, member_id, name, uploaded_by)
-       VALUES (?, ?, ?, ?, ?)`
+       SELECT ?, ?, ?, ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM household_plugins
+          WHERE household_id = ? AND plugin_id = ?
+            AND purge_state IN ('pending', 'running')
+       )`
     )
-    .bind(row.id, row.household_id, row.member_id, row.name, row.uploaded_by)
+    .bind(
+      row.id,
+      row.household_id,
+      row.member_id,
+      row.name,
+      row.uploaded_by,
+      row.household_id,
+      'documents'
+    )
 }
 
 // The create-time file insert (always sort_order 1 into an empty document —
 // no cap or ordering race exists there). `uploaded_at` is deliberately OMITTED
 // from the column list so the table DEFAULT (`datetime('now')`) fills it — a
 // bound value, even '', would override the DEFAULT (review A1 of #422), the
-// same shape insertDocumentStatement uses for created_at.
+// same shape insertDocumentStatement uses for created_at. The EXISTS guard
+// keys the file to the document inserted EARLIER IN THE SAME BATCH — when
+// the purge write guard defeated the document insert, this (and the audit
+// below it) no-op with it: a half-committed create cannot exist (the
+// insertFileAddAuditStatement in-batch-visibility precedent, #422 A2).
 function insertFileStatement(
   db: D1Database,
   row: Omit<DocumentFileRow, 'uploaded_at'>
@@ -537,7 +579,8 @@ function insertFileStatement(
       `INSERT INTO document_files
          (id, document_id, r2_key, file_name, size_bytes, content_type, label,
           sort_order, sha256, uploaded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM documents WHERE id = ?)`
     )
     .bind(
       row.id,
@@ -549,7 +592,8 @@ function insertFileStatement(
       row.label,
       row.sort_order,
       row.sha256,
-      row.uploaded_by
+      row.uploaded_by,
+      row.document_id
     )
 }
 
@@ -558,12 +602,15 @@ function insertFileStatement(
 //     so two concurrent adds can never read the same max and tie,
 //   - the WHERE clause re-checks the 20-files cap INSIDE the batch's
 //     transaction, so a count read that went stale between the route's
-//     pre-check and the commit cannot exceed the cap.
-// The WHERE refusing (count already at the cap) inserts zero rows: the caller
-// reads meta.changes off the batch result and answers 409.
+//     pre-check and the commit cannot exceed the cap,
+//   - the same clause carries the PURGE WRITE GUARD (P1-A1, PR #474 review):
+//     a body already in flight when a drain started must not land mid-drain.
+// The WHERE refusing (cap reached, or a drain in flight) inserts zero rows:
+// the caller reads meta.changes off the batch result and disambiguates the
+// 409 by re-reading the purge state (one PK-prefix seek on the rare path).
 function addFileStatement(
   db: D1Database,
-  row: Omit<DocumentFileRow, 'uploaded_at' | 'sort_order'>
+  row: Omit<DocumentFileRow, 'uploaded_at' | 'sort_order'> & { household_id: string }
 ): D1PreparedStatement {
   return db
     .prepare(
@@ -573,7 +620,12 @@ function addFileStatement(
        SELECT ?, ?, ?, ?, ?, ?, ?,
          (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM document_files WHERE document_id = ?),
          ?, ?
-       WHERE (SELECT COUNT(*) FROM document_files WHERE document_id = ?) < ?`
+       WHERE (SELECT COUNT(*) FROM document_files WHERE document_id = ?) < ?
+         AND NOT EXISTS (
+           SELECT 1 FROM household_plugins
+            WHERE household_id = ? AND plugin_id = ?
+              AND purge_state IN ('pending', 'running')
+         )`
     )
     .bind(
       row.id,
@@ -587,7 +639,9 @@ function addFileStatement(
       row.sha256,
       row.uploaded_by,
       row.document_id,
-      DOCUMENT_MAX_FILES
+      DOCUMENT_MAX_FILES,
+      row.household_id,
+      'documents'
     )
 }
 
@@ -619,29 +673,35 @@ function insertAuditStatement(
 // The add-file audit rides the SAME guard as the file insert (review A2 of
 // #422): when the cap's WHERE clause refused the insert, this statement must
 // not write a file_add record for a file that never landed. The EXISTS clause
-// sees the file row inserted earlier in the same batch's transaction.
-function insertFileAddAuditStatement(
+// sees the file row inserted earlier in the same batch's transaction. The
+// create path reuses the shape (P1-A1) with 'upload' and a document-keyed
+// guard: when the purge write guard defeated the document insert, the audit
+// no-ops with it.
+function guardedAuditStatement(
   db: D1Database,
   args: {
     documentId: string
     householdId: string
     actorUserId: string
-    fileId: string
+    action: DocumentAction
+    fileId: string | null
+    guardSql: string
+    guardBind: string[]
   }
 ): D1PreparedStatement {
   return db
     .prepare(
       `INSERT INTO document_audit (id, document_id, household_id, actor_user_id, action, document_file_id)
-       SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM document_files WHERE id = ?)`
+       SELECT ?, ?, ?, ?, ?, ? WHERE ${args.guardSql}`
     )
     .bind(
       crypto.randomUUID(),
       args.documentId,
       args.householdId,
       args.actorUserId,
-      'file_add',
+      args.action,
       args.fileId,
-      args.fileId
+      ...args.guardBind
     )
 }
 
@@ -664,9 +724,17 @@ async function readBackSummary(
  * Create: the free-text name + the FIRST file (#422). Bytes already validated
  * and sniffed by the route. The adapter write comes FIRST (spec order); the
  * document row, the file row (sort_order 1) and the 'upload' audit record
- * commit in one D1 batch. A batch failure after the put leaves an
- * unreferenced object — unreachable by every route (rows are the only key
- * source), the same accept-and-move-on trade the receipt scan route makes.
+ * commit in one D1 batch — every statement carrying the PURGE WRITE GUARD
+ * (P1-A1, PR #474 review): the document INSERT refuses while a drain is
+ * pending/running (re-checked INSIDE the batch), and the file + audit are
+ * keyed to the document's in-batch existence, so a body that was in flight
+ * when a drain started inserts NOTHING (no half-committed create, no
+ * orphaned bytes from a defeated batch — the put orphan is the same
+ * documented trade as ever). The route answers the batch's meta.changes with
+ * the same 409 its pre-gate would have given. A batch failure after the put
+ * leaves an unreferenced object — unreachable by every route (rows are the
+ * only key source), the same accept-and-move-on trade the receipt scan
+ * route makes.
  */
 export async function createDocument(
   db: D1Database,
@@ -686,7 +754,7 @@ export async function createDocument(
 
   await storage.put(storageKey, args.file.bytes, args.file.mime)
 
-  await db.batch([
+  const results = await db.batch([
     insertDocumentStatement(db, {
       id: documentId,
       household_id: args.householdId,
@@ -709,13 +777,24 @@ export async function createDocument(
       // No uploaded_at here: the column is omitted from the INSERT so the
       // table DEFAULT fills it (a bound '' would store '' — review A1 #422).
     }),
-    insertAuditStatement(db, {
+    guardedAuditStatement(db, {
       documentId,
       householdId: args.householdId,
       actorUserId: args.uploadedBy,
       action: 'upload',
+      fileId: null,
+      guardSql: 'EXISTS (SELECT 1 FROM documents WHERE id = ?)',
+      guardBind: [documentId],
     }),
   ])
+  // The purge write guard defeated the document insert (a drain started
+  // between the route's pre-gate and this batch, or an in-flight body from
+  // before it): the same 409 the gate answers, never a phantom 500 from the
+  // read-back finding nothing.
+  const changes = (results[0] as { meta?: { changes?: number } } | undefined)?.meta?.changes
+  if ((changes ?? 0) === 0) {
+    throw new DocumentPurgeActiveError()
+  }
 
   return readBackSummary(db, args.householdId, documentId)
 }
@@ -758,6 +837,7 @@ export async function addDocumentFile(
     addFileStatement(db, {
       id: fileId,
       document_id: args.documentId,
+      household_id: args.householdId,
       r2_key: storageKey,
       file_name: args.file.fileName,
       size_bytes: args.file.bytes.byteLength,
@@ -767,18 +847,26 @@ export async function addDocumentFile(
       uploaded_by: args.uploadedBy,
       // No uploaded_at: the column is omitted so the DEFAULT fills it (A1).
     }),
-    insertFileAddAuditStatement(db, {
+    guardedAuditStatement(db, {
       documentId: args.documentId,
       householdId: args.householdId,
       actorUserId: args.uploadedBy,
+      action: 'file_add',
       fileId,
+      guardSql: 'EXISTS (SELECT 1 FROM document_files WHERE id = ?)',
+      guardBind: [fileId],
     }),
   ])
   // The guard's WHERE refused: a concurrent add took the last slot between
-  // the pre-check and this batch. 409 — the put orphan (documented, same
-  // trade as every put-first failure) is unreachable by any route.
+  // the pre-check and this batch, OR a drain started in the same window
+  // (the in-statement purge write guard, P1-A1). One PK-prefix seek
+  // disambiguates the 409 — the put orphan (documented, same trade as every
+  // put-first failure) is unreachable by any route in both cases.
   const changes = (results[0] as { meta?: { changes?: number } } | undefined)?.meta?.changes
   if ((changes ?? 0) === 0) {
+    if (await resolvePluginPurgeActive(db, args.householdId, 'documents')) {
+      throw new DocumentPurgeActiveError()
+    }
     throw new DocumentTooManyFilesError()
   }
 

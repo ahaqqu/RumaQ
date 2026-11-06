@@ -708,6 +708,21 @@
     "capabilities": {
       "purge": "Hapus permanen",
       "export": "Ekspor"
+    },
+    "purge": {
+      "action": "Hapus semua data",
+      "dialogTitle": "Hapus semua data {{feature}}",
+      "dialogWarning": "Ini menghapus permanen setiap dokumen dan berkas yang fitur ini simpan untuk rumah tangga ini — byte yang tersimpan dulu, lalu catatannya. Tidak bisa dibatalkan.",
+      "dialogDrainNote": "Penghapusan berjalan di latar belakang dan bisa memakan beberapa malam untuk brankas yang lebih besar. Unggahan dijeda sampai selesai.",
+      "dialogTypePrompt": "Ketik “{{name}}” untuk konfirmasi",
+      "dialogConfirm": "Hapus semuanya",
+      "dialogCancel": "Batal",
+      "statePending": "Penghapusan diminta — berjalan semalam; unggahan dijeda sampai selesai.",
+      "stateRunning": "Penghapusan sedang berlangsung; unggahan dijeda sampai selesai.",
+      "stateDone": "Semua data telah dihapus pada {{date}}.",
+      "stateDonePlain": "Semua data telah dihapus.",
+      "errorGeneric": "Tidak bisa memulai penghapusan. Coba lagi.",
+      "cancel": "Batalkan penghapusan"
     }
   },
   "common": {

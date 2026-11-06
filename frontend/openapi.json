@@ -3687,6 +3687,9 @@
           "404": {
             "description": "Document not found"
           },
+          "409": {
+            "description": "A purge drain is in flight for this vault — uploads are paused"
+          },
           "413": {
             "description": "File exceeds the 10 MB cap"
           },
@@ -4162,7 +4165,7 @@
             "description": "Document not found"
           },
           "409": {
-            "description": "The document already holds the maximum of 20 files"
+            "description": "The document already holds the maximum of 20 files, or a purge drain is in flight for this vault (uploads paused)"
           },
           "413": {
             "description": "File exceeds the 10 MB cap"
@@ -5278,6 +5281,26 @@
                           "available": {
                             "type": "boolean",
                             "description": "Effective access (§3.3): deployment_available AND plan_entitled AND enabled — what the plugin gate enforces"
+                          },
+                          "purge": {
+                            "type": ["object", "null"],
+                            "description": "The purge state machine (ticket 5 #439, §3.4): pending → running → done, null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint",
+                            "required": ["state", "requested_at", "completed_at"],
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "enum": ["pending", "running", "done"],
+                                "description": "pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed"
+                              },
+                              "requested_at": {
+                                "type": ["string", "null"],
+                                "description": "When the owner typed the confirmation (null if never requested)"
+                              },
+                              "completed_at": {
+                                "type": ["string", "null"],
+                                "description": "When the last purge finished (null until done)"
+                              }
+                            }
                           }
                         }
                       }
@@ -5379,6 +5402,26 @@
                     "available": {
                       "type": "boolean",
                       "description": "Effective access (§3.3): deployment_available AND plan_entitled AND enabled — what the plugin gate enforces"
+                    },
+                    "purge": {
+                      "type": ["object", "null"],
+                      "description": "The purge state machine (ticket 5 #439, §3.4): pending → running → done, null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint",
+                      "required": ["state", "requested_at", "completed_at"],
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": ["pending", "running", "done"],
+                          "description": "pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed"
+                        },
+                        "requested_at": {
+                          "type": ["string", "null"],
+                          "description": "When the owner typed the confirmation (null if never requested)"
+                        },
+                        "completed_at": {
+                          "type": ["string", "null"],
+                          "description": "When the last purge finished (null until done)"
+                        }
+                      }
                     }
                   }
                 }
@@ -5396,6 +5439,261 @@
           },
           "404": {
             "description": "Household or plugin not found"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "pluginId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/api/plugins/{pluginId}/purge": {
+      "post": {
+        "operationId": "postApiPluginsByPluginIdPurge",
+        "description": "Requests a FULL purge of one plugin's data for the ACTIVE household (owner-only; non-owners get 403). REQUIRES the typed confirmation: body confirm must equal the plugin's name exactly — a checkbox is a misclick away, a typed string is the deliberate act (§3.4). Nothing is deleted by this request: it marks the drain 'pending' and records who confirmed; the nightly cron's chunk driver then deletes bytes-before-rows one chunk per invocation (a 200-document vault takes ~5 nightly ticks on the free plan — 50-subrequest cap, 40-object budget), refusing new uploads while the drain is in flight. Completion writes ONE plugin_purged lifecycle receipt in the core audit table (no household FK — the receipt outlives the household, plan §3.4). Idempotent while a drain is already pending/running.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["confirm"],
+                "additionalProperties": false,
+                "properties": {
+                  "confirm": {
+                    "type": "string",
+                    "description": "The typed confirmation — must equal the plugin's name exactly"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK — the drain is marked pending (or was already in flight); the plugin's fresh posture comes back",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "capabilities",
+                    "default_enabled",
+                    "enabled",
+                    "source",
+                    "deployment_available",
+                    "plan_entitled",
+                    "available"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Stable plugin slug — the manifest id"
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Human label (EN); customer copy stays in i18n"
+                    },
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Declared capability ids (snake_case) for the catalog surface"
+                    },
+                    "default_enabled": {
+                      "type": "boolean",
+                      "description": "The manifest default for households that never expressed a choice"
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "The household layer, resolved: the household_plugins row wins over the manifest default (§4.3 truth table)"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": ["default", "household"],
+                      "description": "Whether the resolved state is the manifest default or an explicit household choice"
+                    },
+                    "deployment_available": {
+                      "type": "boolean",
+                      "description": "The ops kill-switch layer: false means this deployment paused the plugin (routes answer 404)"
+                    },
+                    "plan_entitled": {
+                      "type": "boolean",
+                      "description": "The plan layer: false would deny plugin routes with 403 (the only actionable denial). No plugin declares entitlements yet, so this is true tonight"
+                    },
+                    "available": {
+                      "type": "boolean",
+                      "description": "Effective access (§3.3): deployment_available AND plan_entitled AND enabled — what the plugin gate enforces"
+                    },
+                    "purge": {
+                      "type": ["object", "null"],
+                      "description": "The purge state machine (ticket 5 #439, §3.4): pending → running → done, null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint",
+                      "required": ["state", "requested_at", "completed_at"],
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": ["pending", "running", "done"],
+                          "description": "pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed"
+                        },
+                        "requested_at": {
+                          "type": ["string", "null"],
+                          "description": "When the owner typed the confirmation (null if never requested)"
+                        },
+                        "completed_at": {
+                          "type": ["string", "null"],
+                          "description": "When the last purge finished (null until done)"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body or confirmation does not match the plugin name"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only household owners can do that"
+          },
+          "404": {
+            "description": "Household or plugin not found"
+          },
+          "409": {
+            "description": "The plugin does not declare the purge capability"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "pluginId",
+            "required": true
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteApiPluginsByPluginIdPurge",
+        "description": "Cancels one plugin's in-flight purge for the ACTIVE household (owner-only; non-owners get 403) — the release lever for a drain that can never complete (a corrupted storage key makes every chunk fail forever, and the write gate would otherwise refuse uploads indefinitely). Returns the row to the never-requested resting state and clears every purge column; the write gate releases immediately. Nothing is deleted or restored by this call: documents the drain already finished are gone (their bytes went first), the rest are untouched. A 409 means no purge is in flight.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK — the drain was cancelled; the plugin's fresh posture comes back (purge null)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "capabilities",
+                    "default_enabled",
+                    "enabled",
+                    "source",
+                    "deployment_available",
+                    "plan_entitled",
+                    "available"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Stable plugin slug — the manifest id"
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Human label (EN); customer copy stays in i18n"
+                    },
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Declared capability ids (snake_case) for the catalog surface"
+                    },
+                    "default_enabled": {
+                      "type": "boolean",
+                      "description": "The manifest default for households that never expressed a choice"
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "The household layer, resolved: the household_plugins row wins over the manifest default (§4.3 truth table)"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": ["default", "household"],
+                      "description": "Whether the resolved state is the manifest default or an explicit household choice"
+                    },
+                    "deployment_available": {
+                      "type": "boolean",
+                      "description": "The ops kill-switch layer: false means this deployment paused the plugin (routes answer 404)"
+                    },
+                    "plan_entitled": {
+                      "type": "boolean",
+                      "description": "The plan layer: false would deny plugin routes with 403 (the only actionable denial). No plugin declares entitlements yet, so this is true tonight"
+                    },
+                    "available": {
+                      "type": "boolean",
+                      "description": "Effective access (§3.3): deployment_available AND plan_entitled AND enabled — what the plugin gate enforces"
+                    },
+                    "purge": {
+                      "type": ["object", "null"],
+                      "description": "The purge state machine (ticket 5 #439, §3.4): pending → running → done, null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint",
+                      "required": ["state", "requested_at", "completed_at"],
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": ["pending", "running", "done"],
+                          "description": "pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed"
+                        },
+                        "requested_at": {
+                          "type": ["string", "null"],
+                          "description": "When the owner typed the confirmation (null if never requested)"
+                        },
+                        "completed_at": {
+                          "type": ["string", "null"],
+                          "description": "When the last purge finished (null until done)"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only household owners can do that"
+          },
+          "404": {
+            "description": "Household or plugin not found"
+          },
+          "409": {
+            "description": "No purge is in flight (nothing to cancel)"
           }
         },
         "parameters": [

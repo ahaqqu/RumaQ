@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vite-plus/test'
-import { PLUGIN_ENABLEMENT_SQL, HOUSEHOLD_ENABLEMENT_ROWS_SQL } from '../plugins/enablement.js'
+import {
+  PLUGIN_ENABLEMENT_SQL,
+  HOUSEHOLD_ENABLEMENT_ROWS_SQL,
+  HOUSEHOLD_CATALOG_ROWS_SQL,
+  PLUGIN_PURGE_STATE_SQL,
+  PLUGIN_PURGE_ROW_SQL,
+} from '../plugins/enablement.js'
+import { PURGING_HOUSEHOLDS_SQL } from '../lib/plugin-purge.js'
 import { deploymentFlagKey } from '../plugins/flags.js'
 import { AUDIT_INSERT_SQL, ENABLEMENT_UPSERT_SQL } from '../lib/plugins.js'
 import { EVENT_SELECT, VISIBLE_PREDICATE } from '../lib/calendar.js'
@@ -1627,16 +1634,92 @@ describe('migration 0028: household_plugins (#435)', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
     applyMigrations(db, migrationFiles())
     const columns = db.prepare('PRAGMA table_info(household_plugins)').all()
+    // 0035 appended the purge state machine (ticket 5 #439) after updated_at
+    // — ALTER TABLE ADD COLUMN order, never a rebuild (the additive chain).
     expect(columns.map((c: Record<string, unknown>) => c.name)).toEqual([
       'household_id',
       'plugin_id',
       'status',
       'config_json',
       'updated_at',
+      'purge_state',
+      'purge_cursor',
+      'purge_requested_by',
+      'purge_requested_at',
+      'purge_completed_at',
     ])
     // Phase A ships ZERO rows — the manifest default covers every existing
     // household (no grandfathering backfill, plan §4.3).
     expect(db.prepare('SELECT COUNT(*) AS cnt FROM household_plugins').all()).toEqual([{ cnt: 0 }])
+  })
+})
+
+// Purge state machine columns (ahaqqu/RumaQ#439 — plugin architecture ticket
+// 5, plan §3.4): the CHECK domains are real constraints (a hand-edited row
+// must not invent a state), the cursor must be real JSON (a corrupted one
+// degrades to a re-read, never to a failed drain), and the nightly work-set
+// seek rides the partial index — a scan of the enablement table every night
+// would be the wrong shape for a work set that is ~always empty.
+describe('migration 0035: plugin purge state (#439)', () => {
+  it('enforces the purge state domain and the JSON cursor shape', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    // The 0028 resting shape: no purge state (NULL passes every CHECK).
+    db.prepare(
+      `INSERT INTO household_plugins (household_id, plugin_id, status) VALUES (?, ?, ?)`
+    ).run('h1', 'documents', 'enabled')
+
+    const setCursor = (value: string | null) =>
+      db
+        .prepare('UPDATE household_plugins SET purge_cursor = ? WHERE household_id = ?')
+        .run(value, 'h1')
+    // A real cursor (the job's JSON) is fine…
+    setCursor(JSON.stringify({ created_at: '2026-11-01 10:00:00', id: 'd1' }))
+    // …junk is not — the json_valid CHECK catches it.
+    expect(() => setCursor('d1-after-10:00')).toThrow()
+    setCursor(null)
+
+    const setState = (value: string) =>
+      db
+        .prepare('UPDATE household_plugins SET purge_state = ? WHERE household_id = ?')
+        .run(value, 'h1')
+    for (const legal of ['pending', 'running', 'done']) setState(legal)
+    expect(() => setState('paused')).toThrow()
+  })
+
+  it('keeps the nightly work-set seek on the partial purging index (no scan)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    // The EXACT statement the tick ships (imported, not transcribed — the
+    // C1-B2 verbatim-by-construction discipline from #469): a drift in the
+    // work-set query fails this pin instead of passing against a query
+    // nothing runs.
+    const plan = db.prepare(`EXPLAIN QUERY PLAN ${PURGING_HOUSEHOLDS_SQL}`).all('documents')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(detail).toContain('idx_household_plugins_purging')
+    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+
+  it('pins the ticket-5 statement vocabulary (the reads the catalog, gate and initiation run)', () => {
+    expect(HOUSEHOLD_CATALOG_ROWS_SQL).toBe(
+      'SELECT plugin_id, status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = ?'
+    )
+    expect(PLUGIN_PURGE_STATE_SQL).toBe(
+      'SELECT purge_state FROM household_plugins WHERE household_id = ? AND plugin_id = ?'
+    )
+    expect(PLUGIN_PURGE_ROW_SQL).toBe(
+      'SELECT status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = ? AND plugin_id = ?'
+    )
+    // The catalog/enablement advertisement statement is untouched — its own
+    // pin lives in plugin-enablement.test.ts; this asserts the ticket-5
+    // columns did NOT leak into it.
+    expect(HOUSEHOLD_ENABLEMENT_ROWS_SQL).toBe(
+      'SELECT plugin_id, status FROM household_plugins WHERE household_id = ?'
+    )
   })
 })
 

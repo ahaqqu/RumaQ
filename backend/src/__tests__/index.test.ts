@@ -158,7 +158,7 @@ describe('worker scheduled handler (1-year AI usage retention, #353)', () => {
       ctx
     )
 
-    expect(waitUntil).toHaveBeenCalledTimes(2)
+    expect(waitUntil).toHaveBeenCalledTimes(3)
     expect(env.DB.prepare).toHaveBeenCalledWith('DELETE FROM ai_usage_events WHERE ts < ?')
     expect(env.DB.bind).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/))
   })
@@ -195,7 +195,7 @@ describe('worker scheduled handler (1-year AI usage retention, #353)', () => {
       ctx
     )
 
-    expect(waitUntil).toHaveBeenCalledTimes(2)
+    expect(waitUntil).toHaveBeenCalledTimes(3)
     expect(env.DB.prepare).toHaveBeenCalledWith(
       expect.stringContaining('WHERE expires_on IS NOT NULL')
     )
