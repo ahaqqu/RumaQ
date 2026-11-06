@@ -30,6 +30,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 DEPLOY_SH="$ROOT_DIR/scripts/deploy.sh"
 DEPLOY_WF="$ROOT_DIR/.github/workflows/deploy.yml"
 WORKFLOW_DIR="$ROOT_DIR/.github/workflows"
+GUARD_SELF="$ROOT_DIR/scripts/test/deploy-secrets.sh"
 SECRET="HAQITA_INGEST_SECRET"
 GATEWAY_SECRETS=(GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET WORKER_JWT_SECRET WORKER_ENCRYPTION_KEY)
 EXPECTED="$(printf '%s\n' "${GATEWAY_SECRETS[@]}" | sort | tr '\n' ' ' | sed 's/ $//')"
@@ -198,18 +199,22 @@ done
 shopt -u nullglob
 
 # ------------------------------------------------------------------
-# 5. scripts/github/*: scripts/deploy.sh stays the only write path
+# 5. Only scripts/deploy.sh writes Worker secrets
 # ------------------------------------------------------------------
-echo "==> scripts/github (CI helper scripts)"
+echo "==> scripts (write paths)"
 secret_writers=0
-for helper in "$ROOT_DIR"/scripts/github/*.sh; do
+shopt -s globstar nullglob
+for helper in "$ROOT_DIR"/scripts/**/*.sh; do
+  # deploy.sh is the sanctioned writer; this file only greps for the pattern.
+  [[ "$helper" == "$DEPLOY_SH" || "$helper" == "$GUARD_SELF" ]] && continue
   if grep -vE '^[[:space:]]*#' "$helper" | grep -qE 'workers secrets (update|bulk)|workers secret put'; then
-    fail "$(basename "$helper") writes Worker secrets — scripts/deploy.sh is the single deploy entrypoint"
+    fail "${helper#"$ROOT_DIR"/} writes Worker secrets — scripts/deploy.sh is the single deploy entrypoint"
     secret_writers=$((secret_writers + 1))
   fi
 done
+shopt -u globstar nullglob
 if ((secret_writers == 0)); then
-  pass "no scripts/github helper writes Worker secrets"
+  pass "scripts/deploy.sh is the only script that writes Worker secrets"
 fi
 
 # ------------------------------------------------------------------
