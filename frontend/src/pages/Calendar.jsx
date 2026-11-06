@@ -51,6 +51,12 @@ function calendarErrorKey(error) {
   return 'calendar.errorGeneric'
 }
 
+// Set equality for audience id lists (both are unique — the draft is built
+// from chip toggles, the stored list from a PK'd table): did the chips move?
+function sameMembers(a, b) {
+  return a.length === b.length && a.every((id) => b.includes(id))
+}
+
 /** The visible month's cell grid: Monday-start weeks (the household calendar
  * convention), minimal rows, ISO keys. The 5th/6th week spills into the
  * adjacent months — those cells stay inert (no entries fetched for them). */
@@ -476,10 +482,21 @@ export function Calendar() {
     })
   }
 
-  const saveEdit = () => {
+  // The PATCH carries visibility and member_ids only when the edit actually
+  // TOUCHED them — absent fields mean "leave as stored" (the lib's
+  // re-affirmation branch). A depleted members event (every audience row
+  // cascaded away from member removal) then still takes a title/date/time
+  // edit: re-affirming it as-is — visibility 'members' with an empty
+  // audience — is exactly what the backend refuses (ahaqqu/RumaQ#468 review
+  // C1-A2).
+  const saveEdit = (entry) => {
     if (!editDraft) return
     const title = editDraft.title.trim()
     if (!title || !editDraft.date) return
+    const visibilityChanged = editDraft.visibility !== entry.visibility
+    const audienceChanged =
+      editDraft.visibility === 'members' &&
+      !sameMembers(editDraft.member_ids, entry.member_ids ?? [])
     updateEvent.mutate(
       {
         id: editingEventId,
@@ -487,8 +504,8 @@ export function Calendar() {
           title,
           date: editDraft.date,
           time: editDraft.time || null,
-          visibility: editDraft.visibility,
-          ...(editDraft.visibility === 'members' ? { member_ids: editDraft.member_ids } : {}),
+          ...(visibilityChanged ? { visibility: editDraft.visibility } : {}),
+          ...(audienceChanged ? { member_ids: editDraft.member_ids } : {}),
         },
       },
       {
@@ -555,7 +572,7 @@ export function Calendar() {
                     : openEdit(entry)
                 }
                 onDelete={() => remove(entry)}
-                onSaveEdit={saveEdit}
+                onSaveEdit={() => saveEdit(entry)}
                 editDraft={editDraft}
                 setEditDraft={setEditDraft}
                 editPending={updateEvent.isPending}
