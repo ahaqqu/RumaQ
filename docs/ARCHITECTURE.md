@@ -437,6 +437,8 @@ export WORKER_ENCRYPTION_KEY=...
 2. **the pipeline box's env** (`RUMAQ_INGEST_SECRET` in the private pipeline repo);
 3. **the GitHub repo secret of the same name** — read-only, used only by the 6-hourly Production Smoke freshness check (`scripts/github/check-price-freshness.sh`). Leave it stale and that step fails 401 on every run and opens a `Smoke test failure` issue a day; update it with the rotation, or delete it to disarm the staleness alert.
 
+An ordinary deploy preserves the Worker secret: the deploy uploads only the gateway secrets, and Cloudflare merges them into the existing set (`PATCH …/workers/scripts/<worker>/secrets-bulk` with `application/merge-patch+json`), so an unlisted secret is never deleted. A Worker _recreated_ from scratch — deleted, or renamed — does come back without it, and CI will never restore it; re-run the command below, and until then the ingest surface answers 503 `Ingest endpoint not configured` rather than 401.
+
 ```bash
 cf workers secrets update HAQITA_INGEST_SECRET --worker api --text <value> --type secret_text
 ```
