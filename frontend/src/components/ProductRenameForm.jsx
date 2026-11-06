@@ -202,6 +202,7 @@ function RenameNotice({ notice, busy, onAcknowledge }) {
 export function ProductRenameForm({ productKey, onClose }) {
   const { t } = useTranslation()
   const nameId = useId()
+  const previewId = useId()
   const reasonId = useId()
   // null means "follow the loaded name": the input starts pre-filled with the
   // current name but is not pinned, so a stale re-read moves the untouched
@@ -275,7 +276,7 @@ export function ProductRenameForm({ productKey, onClose }) {
           // Someone else wrote this product: re-read the identity so the
           // optimistic version the next submit needs is the current one. The
           // typed name stays, nothing resubmits on its own.
-          if (mapped.kind === 'stale') identityQuery.refetch?.()
+          if (mapped.kind === 'stale') identityQuery.refetch()
           setNotice({ ...mapped, name: attemptedName })
         },
       }
@@ -321,7 +322,7 @@ export function ProductRenameForm({ productKey, onClose }) {
           const status = error instanceof ApiError ? error.status : undefined
           const body = error instanceof ApiError ? error.body : undefined
           if (status === 409 && body?.error === 'stale_revert') {
-            identityQuery.refetch?.()
+            identityQuery.refetch()
             setNotice({ kind: 'revertStale' })
             return
           }
@@ -351,7 +352,7 @@ export function ProductRenameForm({ productKey, onClose }) {
             {t('rename.loadError')}
           </p>
           <div className="mt-2 flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => identityQuery.refetch?.()}>
+            <Button variant="ghost" size="sm" onClick={() => identityQuery.refetch()}>
               {t('rename.retry')}
             </Button>
             <Button variant="ghost" size="sm" onClick={handleCancel}>
@@ -401,11 +402,12 @@ export function ProductRenameForm({ productKey, onClose }) {
               id={nameId}
               value={newName}
               maxLength={NAME_MAX}
+              aria-describedby={previewId}
               onChange={(event) => setDraftName(event.target.value)}
               placeholder={t('rename.newNamePlaceholder')}
               className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
             />
-            <p className="text-xs text-text-muted" aria-live="polite" data-testid="rename-preview">
+            <p id={previewId} className="text-xs text-text-muted" data-testid="rename-preview">
               {!trimmedName
                 ? t('rename.previewEmpty')
                 : trimmedName === currentName
