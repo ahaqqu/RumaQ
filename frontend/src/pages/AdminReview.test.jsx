@@ -548,6 +548,9 @@ describe('AdminReview', () => {
     })
 
     it('shows no rename action to a non-admin', () => {
+      // The page's admin gate returns the forbidden state before any row can
+      // render, so this pins the surface's check (rows carry no gate of their
+      // own — see the #423 review, B1).
       vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
       const { container } = renderAdmin()
       expect(container.textContent).not.toContain('rename.action')

@@ -191,7 +191,6 @@ function ReviewRow({
   sourceNames,
   itemSideLabelId,
   entrySideLabelId,
-  isAdmin,
   busy,
   onDecide,
   onUndo,
@@ -238,8 +237,9 @@ function ReviewRow({
             observedAt={item.entryObservedAt ?? null}
             action={
               // #423: the canonical entry side owns the rename action — the
-              // pair's frozen labels are what the admin is looking at.
-              isAdmin && item.entryProductKey ? (
+              // pair's frozen labels are what the admin is looking at. The
+              // page's admin gate above already returned for everyone else.
+              item.entryProductKey ? (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -318,7 +318,7 @@ function ReviewRow({
           </>
         )}
       </div>
-      {renameOpen && isAdmin && item.entryProductKey && (
+      {renameOpen && item.entryProductKey && (
         <div className="mt-3">
           {/* The pair keeps the frozen catalog label it was flagged with; only
               the canonical product name moves (the rename is identity-neutral,
@@ -494,7 +494,6 @@ export function AdminReview() {
                   sourceNames={sourceNames}
                   itemSideLabelId={itemSideLabelId}
                   entrySideLabelId={entrySideLabelId}
-                  isAdmin={isAdmin}
                   busy={busy}
                   onDecide={(id, decision) => decide.mutate({ id, decision })}
                   onUndo={(id) => undo.mutate({ id })}
