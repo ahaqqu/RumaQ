@@ -1,11 +1,6 @@
 import { writeFileSync } from 'node:fs'
 import { generateSpecs } from 'hono-openapi'
-import { apiApp } from '../../backend/src/apps/api.js'
-import { householdsApp } from '../../backend/src/apps/households.js'
-import { documentsApp } from '../../backend/src/apps/documents.js'
-import { tasksApp } from '../../backend/src/apps/tasks.js'
-import { calendarApp } from '../../backend/src/apps/calendar.js'
-import { authApp } from '../../backend/src/apps/auth.js'
+import { API_APPS } from '../api/app-registry.js'
 
 const DOCS_OPTIONS = {
   documentation: {
@@ -133,25 +128,18 @@ Errors use \`{ "error": "..." }\`.
 }
 
 async function main() {
-  const [apiSpec, householdsSpec, documentsSpec, tasksSpec, calendarSpec, authSpec] =
-    await Promise.all([
-      generateSpecs(apiApp, DOCS_OPTIONS),
-      generateSpecs(householdsApp, DOCS_OPTIONS),
-      generateSpecs(documentsApp, DOCS_OPTIONS),
-      generateSpecs(tasksApp, DOCS_OPTIONS),
-      generateSpecs(calendarApp, DOCS_OPTIONS),
-      generateSpecs(authApp, DOCS_OPTIONS),
-    ])
+  // The app list lives in scripts/api/app-registry.ts (shared with the
+  // openapi generator) — registering a new domain app is one edit there.
+  const specs = await Promise.all(
+    API_APPS.map(async ({ name, app }) => ({ name, spec: await generateSpecs(app, DOCS_OPTIONS) }))
+  )
+  const specByName = Object.fromEntries(specs.map(({ name, spec }) => [name, spec]))
 
-  const allPaths: Record<string, any> = {
-    ...apiSpec.paths,
-    ...householdsSpec.paths,
-    ...documentsSpec.paths,
-    ...tasksSpec.paths,
-    ...calendarSpec.paths,
-  }
-  for (const [authPath, methods] of Object.entries(authSpec.paths)) {
-    allPaths[authPath] = methods
+  // Paths merge in registry order, auth LAST and raw — extractEntries applies
+  // the /api/auth remap per row (the gateway adds the prefix at mount time).
+  const allPaths: Record<string, any> = {}
+  for (const { name } of API_APPS) {
+    Object.assign(allPaths, specByName[name].paths)
   }
 
   allPaths['/logout'] = {
