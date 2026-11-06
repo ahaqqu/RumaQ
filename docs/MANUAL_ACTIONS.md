@@ -85,14 +85,37 @@ rules + name-hash-cache classifier (no prompt text).
   changes, mark the line and I'll run it through the store fixtures + shadow
   audit before merging.
 
+## L. Agent 401 storm evidence (drift recurrence — ahaqqu/RumaQ#448)
+
+The nightly itself was clean (20:00–20:38 WIB Nov 5, `Result=success` exit 0 —
+publish accepted), but the box agent logged **1,962 consecutive
+`scrape/next → HTTP 401` poll failures, 19:40 WIB Nov 5 → 03:51 WIB Nov 6**,
+self-healing at 03:55 WIB with **no restart, no deploy, no env change** —
+deploy-wise nothing sits between #420 (Nov 4 22:41 UTC) and #427 (Nov 5
+21:55 UTC); the storm runs strictly between them. Publish uses the SAME
+`requireIngestSecret` middleware + secrets (api.ts:232) and stayed green
+inside the window. Full analysis: ahaqqu/RumaQ#448.
+
+- **L1 [LAPTOP]** Cloudflare dashboard → Workers & Pages → `rumaq-api` →
+  **Version history**: confirm there was no deploy between 2026-11-04 22:41
+  UTC and 2026-11-05 21:55 UTC. Then Workers Logs (if retained): any
+  exceptions during 2026-11-05 12:40–20:55 UTC.
+- **L2 [VPS]** `ssh rumaq-vps` → `systemctl cat rumaq-scraper-agent.service | grep -i env`
+  — which env file feeds the agent vs the nightly's `/etc/rumaq/scraper.env`
+  (a second, stale secret file is theory #1, though it cannot explain the
+  self-heal).
+- **L3 [VPS]** `ssh rumaq-vps` → `journalctl -u systemd-timesyncd --since "2026-11-05 19:00" --until "2026-11-06 04:00"`
+  and `timedatectl` — clock-stepping events near either storm boundary
+  (skew theory).
+
 ---
 
-_Last updated 2026-11-06 ~09:4x WIB by the manager. Completed: **E3** (strategy
+_Last updated 2026-11-06 ~07:4x WIB by the manager. Completed: **E3** (strategy
 report merged by owner — lives at `docs/reports/competitor-analysis-2026-11.html`),
 **E4** (Nov 5), **H6/H7** (rotation finalized Nov 5), **J** (YOGYA_PROXY_URL
 Nov 5), **G** (LOTTE_PROXY_URL set Nov 6 — site still down; temporary source
 swap tracked in ahaqqu/RumaQ-pipeline#25), **K** (nightly 401 incident —
 verified green; #425 closed), **B** (declined by owner — Apify research #411
 is the replacement path). Remaining: **C**
-(~Nov 15), **I** (prompt review). E5 (#432 hooks) merged by owner 2026-11-06 —
+(~Nov 15), **I** (prompt review), **L** (agent 401 storm evidence — #448). E5 (#432 hooks) merged by owner 2026-11-06 —
 pre-commit `vp check --fix` is live on every clone after `bun install`._
