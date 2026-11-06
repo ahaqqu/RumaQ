@@ -18,6 +18,7 @@ import {
   missingBindingAdapter,
   PluginBindingMissingError,
 } from '../plugins/registry.js'
+import { cronTaskBindingViolations } from '../lib/plugin-cron.js'
 import { createDocumentsPlugin } from '../plugins/documents/app.js'
 import type { PluginManifest, PortId } from '../plugins/types.js'
 import { createMockEnv } from './support/env.js'
@@ -127,11 +128,67 @@ describe('plugin manifest validation (#435)', () => {
     expect(violationsOf(baseManifest({ ownedTables: ['t', 't'] }))).toEqual([])
   })
 
-  it('cron tasks carry a scope (the field exists now so ticket 7 needs no breaking change)', () => {
-    expect(violationsOf(baseManifest({ cronTasks: [{ scope: 'household' }] }))).toEqual([])
+  it('cron tasks carry a snake_case name and a scope (ticket 7 #441: scope exists now so it is never a breaking change)', () => {
     expect(
-      violationsOf(baseManifest({ cronTasks: [{ scope: 'whenever' as never }] }))
+      violationsOf(baseManifest({ cronTasks: [{ name: 'nightly_sweep', scope: 'household' }] }))
+    ).toEqual([])
+    expect(
+      violationsOf(
+        baseManifest({ cronTasks: [{ name: 'nightly_sweep', scope: 'whenever' as never }] })
+      )
     ).toHaveLength(1)
+    // The name binds the declaration to its handler and names the failure
+    // log lines — it must be a greppable slug.
+    expect(
+      violationsOf(baseManifest({ cronTasks: [{ name: 'Nightly Sweep', scope: 'global' }] }))
+    ).toHaveLength(1)
+    expect(
+      violationsOf(
+        baseManifest({
+          cronTasks: [
+            { name: 'nightly_sweep', scope: 'global' },
+            { name: 'nightly_sweep', scope: 'household' },
+          ],
+        })
+      )
+    ).toContain('manifest tester: duplicate cron task name "nightly_sweep"')
+  })
+})
+
+// Ticket 7 (#441): the manifest declares (name, scope); the REGISTRATION
+// binds each declared name to its handler (manifests must stay pure data —
+// the frontend parity test imports manifests.ts). The two surfaces can
+// drift; cronTaskBindingViolations is the build-time net.
+describe('plugin cron handoff — registration bindings (ticket 7 #441)', () => {
+  it('every declared task is bound and every bound handler is declared (both drift directions)', () => {
+    const manifest = baseManifest({
+      cronTasks: [
+        { name: 'declared_no_handler', scope: 'global' },
+        { name: 'bound', scope: 'global' },
+      ],
+    })
+    const drifted = {
+      manifest,
+      cronTaskHandlers: { bound: async () => {}, handler_no_declaration: async () => {} },
+    }
+    const violations = cronTaskBindingViolations([drifted])
+    expect(violations).toHaveLength(2)
+    expect(violations[0]).toContain(
+      'manifest tester: cron task "declared_no_handler" is declared with no bound handler'
+    )
+    expect(violations[1]).toContain(
+      'manifest tester: cron task handler "handler_no_declaration" has no manifest declaration'
+    )
+    // A registration without handlers against a manifest without tasks is
+    // the clean shipped shape today.
+    expect(
+      cronTaskBindingViolations([{ manifest: baseManifest(), cronTaskHandlers: undefined }])
+    ).toEqual([])
+  })
+
+  it('the shipped registry binds every task it declares (and declares none yet, §4.3)', () => {
+    const env = createMockEnv() as unknown as Parameters<typeof pluginRegistrations>[0]
+    expect(cronTaskBindingViolations(pluginRegistrations(env))).toEqual([])
   })
 })
 

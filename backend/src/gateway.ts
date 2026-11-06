@@ -9,6 +9,8 @@ import { matchPlugin } from './plugins/registry.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
 import { logDueDocumentReminders } from './lib/document-expiry.js'
 import { PURGE_TICK_OBJECT_BUDGET, runPluginPurgeTick } from './lib/plugin-purge.js'
+import { runPluginCronTasks } from './lib/plugin-cron.js'
+import { PLUGIN_TASKS_CRON_SCHEDULE } from './cron-schedules.js'
 
 const AUTH_ROUTES = new Set([
   '/api/auth/login',
@@ -131,21 +133,46 @@ export const gateway = {
     })
   },
 
-  // Daily cron (triggers.scheduled in cloudflare.config.ts): usage records
-  // are deleted after one year (issue #353), and the document expiry sweep
-  // (#426) computes + logs the per-household due set — v1 renders in-app only
-  // (no new notification channel); v2 dispatch rides this same sweep. The
-  // plugin purge chunk driver (#439, ticket 5) rides the same tick: one
-  // budgeted chunk per in-flight drain per night (PURGE_TICK_OBJECT_BUDGET
-  // carries the subrequest math — a scheduled invocation shares the fetch
-  // path's 50-subrequest cap). T7 (#441) will generalize plugin-declared
-  // scheduled tasks on top of the PluginPurgeJob seam; the general cron
-  // machinery is deliberately NOT built here.
+  // Cron dispatch (triggers.scheduled in cloudflare.config.ts — TWO
+  // schedules since ticket 7, cron-schedules.ts carries the strings and the
+  // budget rationale). Each trigger is its own invocation with its own
+  // per-invocation subrequest cap, and the handler tells them apart via
+  // ScheduledController.cron:
+  //
+  //   CORE_CRON_SCHEDULE ('17 3 * * *') — usage records are deleted after one
+  //   year (issue #353), the document expiry sweep (#426) computes + logs the
+  //   per-household due set — v1 renders in-app only (no new notification
+  //   channel); v2 dispatch rides this same sweep — and the plugin purge
+  //   chunk driver (#439, ticket 5) rides the same tick: one budgeted chunk
+  //   per in-flight drain per night (PURGE_TICK_OBJECT_BUDGET carries the
+  //   subrequest math). Worst case 48/50 with one purge-capable plugin —
+  //   which is exactly why plugin-declared tasks do NOT join this invocation.
+  //
+  //   PLUGIN_TASKS_CRON_SCHEDULE ('43 3 * * *') — the generalized handoff
+  //   (ticket 7, #441): every plugin-declared cron task, per-task and
+  //   per-household error-isolated (lib/plugin-cron.ts). No shipped plugin
+  //   declares a task yet, so this invocation is a no-op until the first
+  //   declaration lands.
+  //
+  // Anything else (undefined in tests / local tooling) falls through to the
+  // core tick — the safe default, never the plugin fan-out.
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: Env['Bindings'],
     ctx: ExecutionContext
   ): Promise<void> {
+    if (controller.cron === PLUGIN_TASKS_CRON_SCHEDULE) {
+      ctx.waitUntil(
+        runPluginCronTasks(env).then((summary) => {
+          // The log line is the tick's artifact (the #353/#426/#439
+          // precedent); silent on a night with nothing declared.
+          if (summary.ran + summary.failed > 0) {
+            console.log(`[plugin-cron] tick: ${summary.ran} ran, ${summary.failed} failed`)
+          }
+        })
+      )
+      return
+    }
     ctx.waitUntil(deleteExpiredAiUsageEvents(env))
     ctx.waitUntil(logDueDocumentReminders(env.DB))
     ctx.waitUntil(
