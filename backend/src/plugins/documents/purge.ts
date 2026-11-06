@@ -29,6 +29,28 @@ type PurgeStateRow = {
 }
 
 /**
+ * The chunk's typed refusal (P1R2-A5, PR #474 review): the chunk was called
+ * for a household whose enablement row exists but carries NO purge state —
+ * the owner's cancel lever (PURGE_CANCEL_SQL) fired mid-drain. The drain
+ * must STOP, not proceed: the nightly work-set query filters on
+ * pending/running, so a cancelled household leaves the work set (the
+ * healthy tick never reaches this) — this error covers the work-set-read →
+ * chunk-call race window and the dissolution drain's in-loop chunks, where
+ * proceeding would delete every remaining document past the cancel (the
+ * lever NULLs the cursor too, so the re-read starts from the oldest), then
+ * complete with NO receipt and spin forever (objects: 0, drained: false —
+ * the completion guard needs an active state to land 'done').
+ */
+export class PluginPurgeCancelledError extends Error {
+  constructor(householdId: string) {
+    super(
+      `purge drain for documents/${householdId} was cancelled mid-drain (the enablement row has no active purge state) — the chunk refuses; remaining documents keep their rows and bytes, and no receipt exists`
+    )
+    this.name = 'PluginPurgeCancelledError'
+  }
+}
+
+/**
  * The chunk's document ceiling (independent of the object budget): the file
  * lookup is one `document_id IN (...)` query and D1 caps a statement at 100
  * bound parameters, so a chunk never reads more than 40 documents' keys in
@@ -220,6 +242,13 @@ export function createDocumentsPurgeJob(storage: StorageAdapter): PluginPurgeJob
       // No enablement row (dissolution cascade already ran, say): nothing to
       // drain, nothing to receipt. The drain caller treats this as done.
       return { objects: 0, drained: true }
+    }
+    // Row exists, no active state: the cancel lever fired mid-drain — the
+    // one state this job refuses (PluginPurgeCancelledError above). 'done'
+    // is deliberately NOT refused: the nightly replay reads it as drained,
+    // and the dissolution flow re-enters 'pending' for new data.
+    if (stateRow.purge_state === null) {
+      throw new PluginPurgeCancelledError(householdId)
     }
 
     const cursor = parseCursor(stateRow.purge_cursor)

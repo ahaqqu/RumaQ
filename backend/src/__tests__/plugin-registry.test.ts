@@ -12,7 +12,12 @@ import {
   type ManifestViolation,
 } from '../plugins/manifests.js'
 import { CORE_GATEWAY_PREFIXES } from '../plugins/core-prefixes.js'
-import { pluginRegistrations, matchPlugin } from '../plugins/registry.js'
+import {
+  pluginRegistrations,
+  matchPlugin,
+  missingBindingAdapter,
+  PluginBindingMissingError,
+} from '../plugins/registry.js'
 import { createDocumentsPlugin } from '../plugins/documents/app.js'
 import type { PluginManifest, PortId } from '../plugins/types.js'
 import { createMockEnv } from './support/env.js'
@@ -165,6 +170,33 @@ describe('plugin registry (#435)', () => {
     // wiring mistake — thrown when the plugin is constructed, not 500s on
     // some later upload.
     expect(() => createDocumentsPlugin({ ports: {} })).toThrow('ports.storage')
+  })
+
+  it('a missing DOCUMENTS binding composes WITHOUT throwing and still dispatches (V1-A1, PR #473)', () => {
+    // Compose time is the WRONG place to throw: matchPlugin runs before the
+    // apiApp fallthrough on every request, so a compose-time throw would
+    // take down every route in the Worker — core domains included — the
+    // moment one binding is mis-wired. The mis-wired deployment instead
+    // composes normally and gets the call-time-throwing adapter below.
+    const unwired = createMockEnv() as unknown as Record<string, unknown>
+    delete unwired.DOCUMENTS
+    const unwiredEnv = unwired as unknown as Parameters<typeof matchPlugin>[1]
+    const unwiredRegistrations = pluginRegistrations(unwiredEnv)
+    expect(unwiredRegistrations).toHaveLength(registrations.length)
+    expect(unwiredRegistrations[0].manifest.id).toBe('documents')
+    expect(matchPlugin('/api/documents', unwiredEnv)?.manifest.id).toBe('documents')
+  })
+
+  it('the missing-binding adapter refuses from EVERY method with the typed error naming the binding (V1-A1)', async () => {
+    const adapter = missingBindingAdapter('DOCUMENTS')
+    for (const attempt of [
+      () => adapter.put('k', new Uint8Array([0x25]), 'application/pdf'),
+      () => adapter.get('k'),
+      () => adapter.delete('k'),
+    ]) {
+      await expect(attempt()).rejects.toThrow(PluginBindingMissingError)
+      await expect(attempt()).rejects.toThrow(/'DOCUMENTS'/)
+    }
   })
 
   it('dispatch matches boundary-aware: /api/documents-x never reaches the vault', () => {

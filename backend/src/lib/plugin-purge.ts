@@ -19,7 +19,7 @@
 
 import { pluginRegistrations } from '../plugins/registry.js'
 import { ENABLEMENT_UPSERT_SQL, PURGE_INITIATE_SQL } from './plugins.js'
-import { HOUSEHOLD_ENABLEMENT_ROWS_SQL } from '../plugins/enablement.js'
+import { HOUSEHOLD_ENABLEMENT_ROWS_SQL, type EnablementSpec } from '../plugins/enablement.js'
 import type { Env } from '../types.js'
 
 /**
@@ -75,24 +75,41 @@ export const PURGING_HOUSEHOLDS_SQL = `SELECT household_id
  * lifecycle receipt); a 'done' row re-enters 'pending' for the new data.
  * The drain's actor rides purge_requested_by when the drain is the first
  * requester (a dissolution is an owner-authorized act); an owner-initiated
- * request keeps its owner.
+ * request keeps its owner. A mid-drain CANCEL surfaces as the plugin job's
+ * typed PluginPurgeCancelledError (plugins/documents/purge.ts) — it
+ * propagates to the caller, because a household that cancelled does not
+ * want its remaining documents erased; re-invoking the drain re-requests
+ * the purge (an explicit caller decision), it never resumes silently.
+ * Exported so tests pin the enablement resolution by the exact function
+ * (the ENABLEMENT_UPSERT_SQL precedent).
  */
-async function ensurePurgePending(
+export async function ensurePurgePending(
   db: D1Database,
   householdId: string,
-  pluginId: string,
+  spec: EnablementSpec,
   actorUserId: string | null
 ): Promise<void> {
   const { results } = await db
     .prepare(HOUSEHOLD_ENABLEMENT_ROWS_SQL)
     .bind(householdId)
     .all<{ plugin_id: string; status: string }>()
-  const existing = results.find((row) => row.plugin_id === pluginId)
+  const existing = results.find((row) => row.plugin_id === spec.id)
   await db.batch([
+    // An ABSENT row is materialized at the manifest's RESOLVED default
+    // (P1R2-B2, PR #474 review — this used to hardcode 'enabled') — the
+    // initiation endpoint's own shape (requestPluginPurge in lib/plugins.ts)
+    // — so a future default-off purge-capable plugin cannot gain enablement
+    // as a side effect of a drain. An unknown manifest cannot resolve a
+    // default and fails closed (the enablement resolver's posture);
+    // unreachable through the drain, whose caller iterates registrations.
     db
       .prepare(ENABLEMENT_UPSERT_SQL)
-      .bind(householdId, pluginId, existing === undefined ? 'enabled' : existing.status),
-    db.prepare(PURGE_INITIATE_SQL).bind(actorUserId, householdId, pluginId),
+      .bind(
+        householdId,
+        spec.id,
+        existing === undefined ? (spec.defaultEnabled ? 'enabled' : 'disabled') : existing.status
+      ),
+    db.prepare(PURGE_INITIATE_SQL).bind(actorUserId, householdId, spec.id),
   ])
 }
 
@@ -184,12 +201,7 @@ export async function drainPluginPurgesForHousehold(
     const { purge, purgeBudgetFloor } = registration
     if (!purge) continue
     const floor = purgeBudgetFloor ?? 1
-    await ensurePurgePending(
-      env.DB,
-      householdId,
-      registration.manifest.id,
-      opts.actorUserId ?? null
-    )
+    await ensurePurgePending(env.DB, householdId, registration.manifest, opts.actorUserId ?? null)
     for (;;) {
       if (remaining < floor) return { complete: false, objects }
       const chunk = await purge({ db: env.DB, householdId, maxObjects: remaining })
