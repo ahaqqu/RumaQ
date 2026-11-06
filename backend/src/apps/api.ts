@@ -33,7 +33,11 @@ import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { encryptAiKey, decryptAiKey, timingSafeEqualStrings } from '../lib/crypto.js'
 import { runReportSchema, getPricesStatus } from '../lib/ingest.js'
-import { getCanonicalIndex, ingestPricesV2 } from '../lib/ingest-v2.js'
+import {
+  CanonicalIndexIntegrityError,
+  getCanonicalIndex,
+  ingestPricesV2,
+} from '../lib/ingest-v2.js'
 import {
   LATEST_OBSERVATION_SUBQUERY,
   LATEST_OBSERVATION_PREDICATE,
@@ -288,9 +292,20 @@ apiApp.post('/api/internal/ingest/prices', requireIngestSecret, async (c) => {
 
 // Read-only canonical snapshot for the scraper's match pass. The pipeline
 // caches it locally; this endpoint never reads observations or prices.
+// A stored row that cannot satisfy the contract is a typed failure: the log
+// carries the offending product, the client gets a stable data-free body
+// (contract §7 — never the valibot/internal message, the generic onError
+// path would echo err.message).
 apiApp.get('/api/internal/canonical-index', requireIngestSecret, async (c) => {
-  const index = await getCanonicalIndex(c.env.DB)
-  return c.json(index, 200, { 'Cache-Control': 'no-store' })
+  try {
+    const index = await getCanonicalIndex(c.env.DB)
+    return c.json(index, 200, { 'Cache-Control': 'no-store' })
+  } catch (error) {
+    if (!(error instanceof CanonicalIndexIntegrityError)) throw error
+    return c.json({ error: 'Canonical index does not match the contract' }, 500, {
+      'Cache-Control': 'no-store',
+    })
+  }
 })
 
 // Brochure image upload from the rumaq-scraper (issue #293): the scraper

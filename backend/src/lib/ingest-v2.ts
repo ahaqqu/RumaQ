@@ -1,8 +1,9 @@
-import { parse } from 'valibot'
+import { parse, safeParse } from 'valibot'
 
 import {
   PIPELINE_CONTRACT_VERSION,
   canonicalIndexSchema,
+  ingestReceiptSchema,
   type CanonicalIndex,
   type CanonicalProduct,
   type IngestPayloadV2,
@@ -51,6 +52,24 @@ type AliasRow = {
   first_seen_at: string
   last_seen_at: string
   source: string
+}
+
+/**
+ * The canonical index exists for one consumer and one contract: the pipeline
+ * validates it with `canonicalIndexSchema` and fails the run when it does not
+ * match (§6.3). A stored row that cannot satisfy the schema is therefore an
+ * integrity fault, not a transient one — the route answers with a stable,
+ * data-free body and the offending product goes to the log. Carrying the ids
+ * makes that log actionable instead of a stack trace.
+ */
+export class CanonicalIndexIntegrityError extends Error {
+  constructor(
+    readonly productId: string,
+    readonly issues: string[]
+  ) {
+    super(`Canonical index row '${productId}' does not match the contract`)
+    this.name = 'CanonicalIndexIntegrityError'
+  }
 }
 
 // The schema enforces a non-empty rawName but not a non-blank one ("   " is
@@ -307,7 +326,10 @@ export async function ingestPricesV2(
     .first<{ version: number }>()
   const indexVersion = state?.version ?? 0
 
-  return {
+  // Parsed like the index: the pipeline validates the receipt and fails the
+  // run on a mismatch (§5), so the backend must not be the one shipping a
+  // shape it never checked — `skipped: literal(0)` included.
+  return parse(ingestReceiptSchema, {
     schemaVersion: PIPELINE_CONTRACT_VERSION,
     scrapedAt: payload.scrapedAt,
     indexVersion,
@@ -320,12 +342,22 @@ export async function ingestPricesV2(
       productId: productIdByKey.get(key)!,
       status: existingKeys.has(key) ? 'existing' : 'created',
     })),
-  }
+  })
 }
 
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/
+
+// first_seen_at/last_seen_at/updated_at are nullable TEXT with no format
+// constraint, so the index normalizes what it reads instead of trusting a
+// writer: a bare date is midnight UTC, SQLite's `datetime('now')` form
+// ('YYYY-MM-DD HH:MM:SS') takes the T/Z, an ISO value passes through, and an
+// unparseable value falls back rather than failing the whole snapshot.
 function asIsoTimestamp(value: string | null, fallback: string): string {
   if (!value) return fallback
-  return value.includes('T') ? value : `${value.replace(' ', 'T')}Z`
+  if (DATE_ONLY_RE.test(value)) return `${value}T00:00:00Z`
+  if (value.includes('T')) return value
+  const withT = `${value.replace(' ', 'T')}Z`
+  return Number.isNaN(Date.parse(withT)) ? fallback : withT
 }
 
 function sizeFromRow(row: ProductRow): ProductSize | null {
@@ -342,30 +374,35 @@ function sizeFromRow(row: ProductRow): ProductSize | null {
 }
 
 export async function getCanonicalIndex(db: D1Database): Promise<CanonicalIndex> {
-  const state = await db
-    .prepare('SELECT version FROM canonical_index_state WHERE id = 1')
-    .first<{ version: number }>()
-  const products = await db
-    .prepare(
+  // One batch, one transaction: the version and the rows it stamps are read
+  // from the same snapshot. Read separately, a concurrent ingest committing
+  // between the two statements ships newer rows under an older version, and
+  // the pipeline (§6.3) treats an equal version as "my cached copy is still
+  // valid" — so it would keep the stale content forever.
+  const [stateResult, productResult, aliasResult] = (await db.batch([
+    db.prepare('SELECT version FROM canonical_index_state WHERE id = 1'),
+    db.prepare(
       `SELECT id, product_key, name, brand, product_type, variant, size_quantity,
               size_unit, pack_count, total_quantity, packaging, quantity_min,
               quantity_max, description, category, category_version, status,
               metadata_version, first_seen_at, last_seen_at, updated_at
        FROM price_products
        ORDER BY product_key`
-    )
-    .all<ProductRow>()
-  const aliases = await db
-    .prepare(
+    ),
+    db.prepare(
       `SELECT product_id, name, store_slug, first_seen_at, last_seen_at, source
        FROM price_product_aliases
        WHERE status = 'approved'
        ORDER BY product_id, name`
-    )
-    .all<AliasRow>()
+    ),
+  ])) as { results?: unknown[] }[]
+
+  const state = (stateResult?.results?.[0] ?? null) as { version: number } | null
+  const products = (productResult?.results ?? []) as ProductRow[]
+  const aliases = (aliasResult?.results ?? []) as AliasRow[]
 
   const aliasesByProduct = new Map<string, CanonicalProduct['aliases']>()
-  for (const alias of aliases.results ?? []) {
+  for (const alias of aliases) {
     const list = aliasesByProduct.get(alias.product_id) ?? []
     list.push({
       name: alias.name,
@@ -382,7 +419,7 @@ export async function getCanonicalIndex(db: D1Database): Promise<CanonicalIndex>
     schemaVersion: PIPELINE_CONTRACT_VERSION,
     indexVersion: state?.version ?? 0,
     generatedAt: now,
-    products: (products.results ?? []).map((row) => ({
+    products: products.map((row) => ({
       id: row.id,
       productKey: row.product_key,
       canonicalName: row.name,
@@ -402,5 +439,26 @@ export async function getCanonicalIndex(db: D1Database): Promise<CanonicalIndex>
     })),
   }
 
-  return parse(canonicalIndexSchema, index)
+  const parsed = safeParse(canonicalIndexSchema, index)
+  if (!parsed.success) {
+    const issues = parsed.issues.map((issue) => ({
+      path: (issue.path ?? []).map((item) => item.key),
+      message: issue.message,
+    }))
+    const badIndex = issues.find(
+      (issue) => issue.path[0] === 'products' && typeof issue.path[1] === 'number'
+    )?.path[1]
+    const productId = typeof badIndex === 'number' ? (products[badIndex]?.id ?? 'unknown') : 'index'
+    // Server-side only: the rows are the pipeline's input, and the message a
+    // valibot error would put in the response describes internal data.
+    console.error(
+      '[canonical-index] the canonical index does not match the contract',
+      JSON.stringify({ productId, issues: issues.slice(0, 10) })
+    )
+    throw new CanonicalIndexIntegrityError(
+      productId,
+      issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+    )
+  }
+  return parsed.output
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vite-plus/test'
+import { describe, expect, it, vi } from 'vite-plus/test'
 import { parse } from 'valibot'
 
 import { apiApp } from '../apps/api.js'
@@ -6,6 +6,10 @@ import { getCanonicalIndex, ingestPricesV2 } from '../lib/ingest-v2.js'
 import { ingestPayloadV2Schema } from '@rumaq/contract'
 import type { Env } from '../types.js'
 import fixture from '../../../contract/fixtures/valid/ingest-v2.json'
+import v1Fixture from '../../../contract/fixtures/invalid/ingest-v1.json'
+import unknownFieldFixture from '../../../contract/fixtures/invalid/ingest-unknown-field.json'
+import missingRawNameFixture from '../../../contract/fixtures/invalid/ingest-missing-raw-name.json'
+import undeclaredStoreFixture from '../../../contract/fixtures/invalid/ingest-undeclared-store.json'
 
 // Same contained node:sqlite suppressions as migrations.test.ts / taxonomy.test.ts:
 // the v2 write path is real SQL (D1 is SQLite), not a string-matching fake.
@@ -37,7 +41,9 @@ function applyMigrations(db: SqliteDb): void {
   }
 }
 
-function sqliteD1(db: SqliteDb): D1Database {
+type ShimTrace = { statements: string[]; batchSizes: number[] }
+
+function sqliteD1(db: SqliteDb, trace?: ShimTrace): D1Database {
   const prepare = (sql: string) => ({
     sql,
     params: [] as unknown[],
@@ -46,24 +52,42 @@ function sqliteD1(db: SqliteDb): D1Database {
       return this
     },
     async all() {
+      trace?.statements.push(sql)
       return { results: db.prepare(sql).all(...this.params) }
     },
     async first() {
+      trace?.statements.push(sql)
       const rows = db.prepare(sql).all(...this.params)
       return rows.length > 0 ? rows[0] : null
     },
     async run() {
+      trace?.statements.push(sql)
       const info = db.prepare(sql).run(...this.params)
       return { success: true, meta: { changes: Number(info.changes ?? 0) } }
     },
   })
   return {
     prepare: (sql: string) => prepare(sql),
+    // D1's batch() is one transaction that returns each statement's rows,
+    // including SELECTs (getCanonicalIndex reads its snapshot through it). The
+    // shim matches both properties so a partial write and a chunked read are
+    // testable instead of silently passing.
     async batch(statements: Array<ReturnType<typeof prepare>>) {
-      return statements.map((stmt) => {
-        const info = db.prepare(stmt.sql).run(...stmt.params)
-        return { success: true, meta: { changes: Number(info.changes ?? 0) } }
-      })
+      trace?.batchSizes.push(statements.length)
+      for (const stmt of statements) trace?.statements.push(stmt.sql)
+      db.exec('BEGIN')
+      try {
+        const results = statements.map((stmt) => ({
+          success: true,
+          results: db.prepare(stmt.sql).all(...stmt.params),
+          meta: { changes: 0 },
+        }))
+        db.exec('COMMIT')
+        return results
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
     },
   } as unknown as D1Database
 }
@@ -82,6 +106,10 @@ function payload() {
   return parse(ingestPayloadV2Schema, fixture)
 }
 
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
 function request(db: D1Database, body: unknown, secret = 'secret-123') {
   return apiApp.request(
     '/api/internal/ingest/prices',
@@ -90,6 +118,14 @@ function request(db: D1Database, body: unknown, secret = 'secret-123') {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
       body: JSON.stringify(body),
     },
+    env(db, secret)
+  )
+}
+
+function indexRequest(db: D1Database, secret = 'secret-123') {
+  return apiApp.request(
+    '/api/internal/canonical-index',
+    { headers: { Authorization: `Bearer ${secret}` } },
     env(db, secret)
   )
 }
@@ -167,6 +203,90 @@ describe('ingestPricesV2', () => {
     )
   })
 
+  it('never stamps a taxonomy version on a category this pipeline did not classify', async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, payload())
+    // An admin set the category but no version: the next ingest's proposal must
+    // not borrow the admin's category for its own taxoVersion (§6.2).
+    sqlite
+      .prepare('UPDATE price_products SET category = ?, category_version = NULL')
+      .run('admin-pick')
+    await ingestPricesV2(db, payload())
+    expect(sqlite.prepare('SELECT category, category_version FROM price_products').get()).toEqual({
+      category: 'admin-pick',
+      category_version: null,
+    })
+  })
+
+  it('derives the provisional name from the key when the raw name is blank', async () => {
+    const { sqlite, db } = setup()
+    const input = payload()
+    input.items[0]!.rawName = '   '
+    await ingestPricesV2(db, input)
+    expect(sqlite.prepare('SELECT name FROM price_products').get()?.name).toBe(
+      input.items[0]!.productKey
+    )
+    const index = await getCanonicalIndex(db)
+    expect(index.products[0]?.canonicalName).toBe(input.items[0]!.productKey)
+  })
+
+  it('defaults observedDate to the UTC date of scrapedAt, not the producer local date', async () => {
+    const { sqlite, db } = setup()
+    const input = payload()
+    input.scrapedAt = '2026-11-06T01:00:05+07:00'
+    delete input.items[0]!.observedDate
+    await ingestPricesV2(db, input)
+    expect(
+      sqlite.prepare('SELECT observed_date FROM price_observations').get()?.observed_date
+    ).toBe('2026-11-05')
+  })
+
+  it('dedupes a repeated productKey and reports rows, not statements', async () => {
+    const { sqlite, db } = setup()
+    const input = payload()
+    const secondStore = clone(input.items[0]!)
+    secondStore.storeSlug = 'lotte-mart'
+    secondStore.rawName = 'FILMA MINYAK GORENG 2 LITER'
+    input.stores.push({
+      slug: 'lotte-mart',
+      name: 'Lotte Mart',
+      region: null,
+      website: null,
+    })
+    input.items.push(secondStore)
+
+    const receipt = await ingestPricesV2(db, input)
+
+    expect(receipt.accepted).toBe(2)
+    expect(receipt.products).toHaveLength(1)
+    expect(receipt.observationsUpserted).toBe(2)
+    // One canonical product, named from its FIRST item — array order is not
+    // allowed to decide the provisional name.
+    expect(sqlite.prepare('SELECT name FROM price_products').get()?.name).toBe(
+      'FILMA MINYAK GORENG PCH 2L'
+    )
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM price_product_aliases').get()?.count).toBe(
+      2
+    )
+
+    // The exact same (product, store, date) twice is one row, and the receipt
+    // says so instead of counting the statement twice.
+    input.items.push(clone(input.items[0]!))
+    const again = await ingestPricesV2(db, input)
+    expect(again.observationsUpserted).toBe(2)
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM price_observations').get()?.count).toBe(2)
+  })
+
+  it('never downgrades an approved alias', async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, payload())
+    sqlite.prepare("UPDATE price_product_aliases SET status = 'approved'").run()
+    await ingestPricesV2(db, payload())
+    expect(sqlite.prepare('SELECT status FROM price_product_aliases').get()?.status).toBe(
+      'approved'
+    )
+  })
+
   it('returns only approved aliases and parses the canonical index', async () => {
     const { sqlite, db } = setup()
     await ingestPricesV2(db, payload())
@@ -184,34 +304,114 @@ describe('ingestPricesV2', () => {
       source: 'ocr',
     })
   })
+
+  it('reads the index version and the rows it stamps in one transaction', async () => {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyMigrations(sqlite)
+    const trace: ShimTrace = { statements: [], batchSizes: [] }
+    const db = sqliteD1(sqlite, trace)
+    await ingestPricesV2(db, payload())
+    trace.batchSizes.length = 0
+    await getCanonicalIndex(db)
+    // version + products + approved aliases, one batch: a concurrent ingest
+    // cannot slip between the counter and the content (§6.2/§6.3).
+    expect(trace.batchSizes).toEqual([3])
+  })
+
+  it('normalizes legacy timestamps instead of failing the index', async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, payload())
+    sqlite
+      .prepare(
+        `UPDATE price_products
+         SET first_seen_at = '2026-10-24', last_seen_at = '2026-10-25 10:00:00',
+             updated_at = '2026-10-24'`
+      )
+      .run()
+    const index = await getCanonicalIndex(db)
+    expect(index.products[0]?.firstSeenAt).toBe('2026-10-24T00:00:00Z')
+    expect(index.products[0]?.lastSeenAt).toBe('2026-10-25T10:00:00Z')
+    expect(index.products[0]?.updatedAt).toBe('2026-10-24T00:00:00Z')
+  })
+
+  it('fails the index with a typed, data-free error when a row cannot satisfy the contract', async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, payload())
+    // A legacy row that cannot satisfy the contract (non-UUID id) — what a
+    // pre-reset or hand-written row looks like, and what the strict parse
+    // must not answer with a valibot message.
+    sqlite
+      .prepare(
+        `INSERT INTO price_products (id, product_key, name, status, metadata_version)
+         VALUES ('legacy-1', 'legacy--row--1', 'Legacy row', 'provisional', 1)`
+      )
+      .run()
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const res = await indexRequest(db)
+      expect(res.status).toBe(500)
+      const body = (await res.json()) as { error: string }
+      expect(body.error).toBe('Canonical index does not match the contract')
+      // No valibot text, no row value: the details are in the server log.
+      expect(JSON.stringify(body)).not.toContain('UUID')
+      expect(JSON.stringify(body)).not.toContain('legacy-1')
+      expect(logged.mock.calls.map((call) => call.join(' ')).join('\n')).toContain('legacy-1')
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  it('chunks the write path under the D1 limits at catalog scale', async () => {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyMigrations(sqlite)
+    const trace: ShimTrace = { statements: [], batchSizes: [] }
+    const db = sqliteD1(sqlite, trace)
+
+    const count = 100
+    const items = Array.from({ length: count }, (_, index) => ({
+      productKey: `bulk-item-${index}--acme--1-pcs`,
+      rawName: `Bulk Item ${index}`,
+      rawBrand: 'Acme',
+      storeSlug: 'lotte-mart',
+      price: 1000 + index,
+      matchConfidence: 1,
+    }))
+    const input = parse(ingestPayloadV2Schema, {
+      schemaVersion: 2,
+      scrapedAt: '2026-11-05T23:00:05Z',
+      stores: [{ slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' }],
+      items,
+    })
+
+    const receipt = await ingestPricesV2(db, input)
+
+    expect(receipt.productsCreated).toBe(count)
+    expect(receipt.products).toHaveLength(count)
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM price_products').get()?.count).toBe(count)
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM price_observations').get()?.count).toBe(
+      count
+    )
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM price_product_aliases').get()?.count).toBe(
+      count
+    )
+    // More than one batch (so the loop is exercised) and never more than the
+    // 50-statement chunk D1's per-invocation budget is sized for.
+    expect(trace.batchSizes.length).toBeGreaterThan(1)
+    expect(Math.max(...trace.batchSizes)).toBeLessThanOrEqual(50)
+    // 100 keys exceed SELECT_IN_CHUNK: every statement stays under D1's
+    // 100-bound-parameter ceiling for a query.
+    for (const statement of trace.statements) {
+      expect((statement.match(/\?/g) ?? []).length).toBeLessThanOrEqual(100)
+    }
+  })
 })
 
 describe('POST /api/internal/ingest/prices v2 boundary', () => {
-  it('rejects a v1 payload with 400 and writes nothing', async () => {
+  it('accepts the shared valid fixture and sets no-store', async () => {
     const { sqlite, db } = setup()
-    const res = await request(db, {
-      schemaVersion: 1,
-      scrapedAt: '2026-11-05T23:00:05Z',
-      stores: [],
-      items: [],
-    })
-    expect(res.status).toBe(400)
-    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM price_products').get()?.count).toBe(0)
-  })
-
-  it('rejects an undeclared store with 400 and writes nothing', async () => {
-    const { sqlite, db } = setup()
-    const input = payload()
-    input.items[0]!.storeSlug = 'unknown-store'
-    const res = await request(db, input)
-    expect(res.status).toBe(400)
-    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM price_products').get()?.count).toBe(0)
-  })
-
-  it('accepts a valid v2 payload and returns the receipt', async () => {
-    const { db } = setup()
     const res = await request(db, fixture)
     expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
     expect(await res.json()).toMatchObject({
       schemaVersion: 2,
       accepted: 1,
@@ -220,19 +420,54 @@ describe('POST /api/internal/ingest/prices v2 boundary', () => {
       observationsUpserted: 1,
       indexVersion: 1,
     })
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM price_products').get()?.count).toBe(1)
+  })
+
+  // §8.3 consumer test: the backend route rejects every shared invalid
+  // fixture with 400 and writes nothing — the fixtures are the contract, so a
+  // drift between fixture and route fails here instead of in the pipeline.
+  it.each([
+    ['v1 payload', v1Fixture],
+    ['unknown field', unknownFieldFixture],
+    ['missing raw name', missingRawNameFixture],
+    ['undeclared store', undeclaredStoreFixture],
+  ])('rejects the shared %s fixture with 400 and writes nothing', async (_label, body) => {
+    const { sqlite, db } = setup()
+    const res = await request(db, body)
+    expect(res.status).toBe(400)
+    const parsed = (await res.json()) as { error: string; issues: unknown[] }
+    expect(parsed.error).toBe('Validation failed')
+    expect(parsed.issues.length).toBeGreaterThan(0)
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM price_products').get()?.count).toBe(0)
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM price_sources').get()?.count).toBe(0)
+  })
+
+  it('returns 400 with a single stable shape for invalid JSON', async () => {
+    const { db } = setup()
+    const res = await apiApp.request(
+      '/api/internal/ingest/prices',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer secret-123' },
+        body: '{not json',
+      },
+      env(db)
+    )
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'Invalid JSON' })
   })
 
   it('serves the canonical index behind the same bearer secret', async () => {
     const { db } = setup()
     await request(db, fixture)
-    const res = await apiApp.request(
-      '/api/internal/canonical-index',
-      { headers: { Authorization: 'Bearer secret-123' } },
-      env(db)
-    )
+    const res = await indexRequest(db)
     expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
     const index = (await res.json()) as { schemaVersion: number; products: unknown[] }
     expect(index.schemaVersion).toBe(2)
     expect(index.products).toHaveLength(1)
+
+    const unauthorized = await apiApp.request('/api/internal/canonical-index', {}, env(db))
+    expect(unauthorized.status).toBe(401)
   })
 })
