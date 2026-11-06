@@ -10,10 +10,8 @@ import {
   type ProductSize,
 } from '@rumaq/contract'
 
-const BATCH_CHUNK = 50
-const SELECT_IN_CHUNK = 90
-
-type Statement = ReturnType<D1Database['prepare']>
+import type { Statement } from './d1.js'
+import { runBatch, selectIn } from './d1.js'
 
 type ExistingProduct = {
   id: string
@@ -53,26 +51,6 @@ type AliasRow = {
   first_seen_at: string
   last_seen_at: string
   source: string
-}
-
-async function runBatch(db: D1Database, statements: Statement[]): Promise<void> {
-  for (let i = 0; i < statements.length; i += BATCH_CHUNK) {
-    await db.batch(statements.slice(i, i + BATCH_CHUNK))
-  }
-}
-
-async function selectIn<Row>(db: D1Database, sql: string, values: string[]): Promise<Row[]> {
-  const rows: Row[] = []
-  for (let i = 0; i < values.length; i += SELECT_IN_CHUNK) {
-    const chunk = values.slice(i, i + SELECT_IN_CHUNK)
-    const placeholders = chunk.map(() => '?').join(',')
-    const { results } = await db
-      .prepare(`${sql} (${placeholders})`)
-      .bind(...chunk)
-      .all<Row>()
-    rows.push(...(results ?? []))
-  }
-  return rows
 }
 
 function provisionalName(rawName: string): string {
