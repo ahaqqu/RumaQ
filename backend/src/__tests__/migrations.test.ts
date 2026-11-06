@@ -1768,3 +1768,241 @@ describe('migration 0030: canonical products (#454)', () => {
     })
   })
 })
+
+describe('migration 0031: household calendar (#430)', () => {
+  it('keeps the full chain green on a fresh database and applies defaults', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const tables = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table'
+          AND name IN ('household_calendar_events', 'household_calendar_event_members',
+                       'household_calendar_event_audit') ORDER BY name`
+      )
+      .all()
+    expect(tables.map((r: Record<string, unknown>) => r.name)).toEqual([
+      'household_calendar_event_audit',
+      'household_calendar_event_members',
+      'household_calendar_events',
+    ])
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role)
+       VALUES ('m1', 'h1', 'u1', 'owner')`
+    ).run()
+
+    // The INSERT the lib writes omits event_time/visibility/created_at/
+    // updated_at — the DEFAULTs must fill them (visibility defaults to 'all',
+    // time to NULL = all-day).
+    db.prepare(
+      `INSERT INTO household_calendar_events
+         (id, household_id, title, event_date, created_by_member_id)
+       VALUES ('e1', 'h1', 'Kontrol dokter', '2026-11-15', 'm1')`
+    ).run()
+    const row = db.prepare('SELECT * FROM household_calendar_events WHERE id = ?').get('e1')
+    expect(row).toMatchObject({
+      event_date: '2026-11-15',
+      event_time: null,
+      visibility: 'all',
+      created_by_member_id: 'm1',
+    })
+    expect(String(row?.created_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+    expect(String(row?.updated_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+  })
+
+  it('enforces the CHECK constraints (visibility, audit action) as the backstop', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role)
+       VALUES ('m1', 'h1', 'u1', 'owner')`
+    ).run()
+
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO household_calendar_events
+             (id, household_id, title, event_date, visibility)
+           VALUES ('e1', 'h1', 'Bogus', '2026-11-15', 'family')`
+        )
+        .run()
+    ).toThrow()
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO household_calendar_event_audit
+             (id, event_id, household_id, actor_user_id, action)
+           VALUES ('a1', 'e1', 'h1', 'u1', 'rsvp')`
+        )
+        .run()
+    ).toThrow()
+    // The audience table's composite PK refuses duplicate grants.
+    db.prepare(
+      `INSERT INTO household_calendar_events
+         (id, household_id, title, event_date, visibility)
+       VALUES ('e1', 'h1', 'Ok', '2026-11-15', 'members')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_calendar_event_members (event_id, member_id) VALUES ('e1', 'm1')`
+    ).run()
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO household_calendar_event_members (event_id, member_id) VALUES ('e1', 'm1')`
+        )
+        .run()
+    ).toThrow()
+  })
+
+  it('cascades the household delete, drops audience rows with their event, SET NULLs the creator, and lets the audit outlive the event', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO households (id, name, created_by) VALUES ('h1', 'Keluarga Putri', 'u1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role, display_name)
+       VALUES ('m1', 'h1', 'u1', 'owner', 'Ibu')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role, display_name)
+       VALUES ('m2', 'h1', NULL, 'member', 'Adik')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_calendar_events
+         (id, household_id, title, event_date, visibility, created_by_member_id)
+       VALUES ('e1', 'h1', 'Imunisasi', '2026-11-15', 'members', 'm1')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_calendar_event_members (event_id, member_id) VALUES ('e1', 'm2')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_calendar_event_audit (id, event_id, household_id, actor_user_id, action)
+       VALUES ('a1', 'e1', 'h1', 'u1', 'create')`
+    ).run()
+
+    // Removing a listed member drops ONLY their visibility grant — the event
+    // stays (it degrades to creator-only in the read model).
+    db.prepare('DELETE FROM household_members WHERE id = ?').run('m2')
+    expect(
+      (
+        db.prepare('SELECT COUNT(*) AS cnt FROM household_calendar_event_members').get() as {
+          cnt: number
+        }
+      ).cnt
+    ).toBe(0)
+    expect(
+      db.prepare('SELECT * FROM household_calendar_events WHERE id = ?').get('e1')
+    ).not.toBeUndefined()
+
+    // Removing the creator keeps the event; provenance falls to NULL and
+    // authorization falls to the owners (lib/calendar.ts).
+    db.prepare('DELETE FROM household_members WHERE id = ?').run('m1')
+    expect(
+      db.prepare('SELECT * FROM household_calendar_events WHERE id = ?').get('e1')
+    ).toMatchObject({ created_by_member_id: null })
+
+    // The event delete cascades NOTHING from the audit: event_id is a plain
+    // TEXT handle — the deletion record must outlive the row it names. But the
+    // (already-cascaded) audience table would have followed the event.
+    db.prepare('DELETE FROM household_calendar_events WHERE id = ?').run('e1')
+    const audit = db
+      .prepare('SELECT action FROM household_calendar_event_audit WHERE event_id = ?')
+      .all('e1')
+    expect(audit.map((r: Record<string, unknown>) => r.action)).toEqual(['create'])
+  })
+
+  it('keeps the month listing on the shipped SQL: index seek, no scan, sort as an explicit temp B-tree', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    // The EXACT shipped statement (lib/calendar.ts listCalendarEntries, the
+    // windowed variant): household + visibility + date range. Pinned verbatim
+    // — an earlier draft of this pin tested an ORDER BY the lib never runs
+    // (ahaqqu/RumaQ#445 thermos B1, the #434-B4 precedent).
+    const LIST_PROJECTION = `SELECT e.id, e.household_id, e.title, e.event_date,
+       e.event_time, e.visibility, e.created_by_member_id, e.created_at,
+       e.updated_at
+  FROM household_calendar_events e`
+    const VISIBLE =
+      "(e.visibility = 'all' OR e.created_by_member_id = ? OR EXISTS (\n      SELECT 1 FROM household_calendar_event_members vm\n       WHERE vm.event_id = e.id AND vm.member_id = ?) OR EXISTS (\n      SELECT 1 FROM household_members om\n       WHERE om.id = ? AND om.household_id = e.household_id AND om.role = 'owner'))"
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN ${LIST_PROJECTION}
+        WHERE e.household_id = ? AND ${VISIBLE}
+          AND e.event_date >= ? AND e.event_date <= ?
+        ORDER BY e.event_date, e.event_time, e.created_at, e.id`
+      )
+      .all('h1', 'm1', 'm1', 'm1', '2026-11-01', '2026-11-30')
+    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(detail).toContain('idx_household_calendar_events_household')
+    expect(detail).not.toMatch(/\bSCAN\b/)
+    // The event_time/created_at/id tiebreakers go beyond the index's two
+    // columns, so the day-chronological sort is a TEMP B-TREE — asserted
+    // EXPLICITLY rather than denied (the 0027 discipline): at household scale
+    // (tens of entries per month) the sort is harmless, and an honest pin
+    // makes any future plan change a conscious diff.
+    // SQLite satisfies only the leading event_date term from the index; the
+    // remaining three ORDER BY terms sort via 'USE TEMP B-TREE FOR LAST 3
+    // TERMS OF ORDER BY'.
+    expect(detail).toContain('TEMP B-TREE FOR LAST 3 TERMS OF ORDER BY')
+
+    // The unbounded variant (no window) seeks the same index.
+    const openPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN ${LIST_PROJECTION}
+        WHERE e.household_id = ? AND ${VISIBLE}
+        ORDER BY e.event_date, e.event_time, e.created_at, e.id`
+      )
+      .all('h1', 'm1', 'm1', 'm1')
+    expect(openPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')).toContain(
+      'idx_household_calendar_events_household'
+    )
+
+    // The deadline derivation rides the 0026 expiry index (household +
+    // expires_on) — the derive-on-read view costs one seek per read.
+    const docsPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT id, name, member_id, expires_on, remind_days_before
+           FROM documents
+          WHERE household_id = ? AND expires_on IS NOT NULL
+            AND expires_on >= ? AND expires_on <= ?
+          ORDER BY expires_on, id`
+      )
+      .all('h1', '2026-11-01', '2026-11-30')
+    const docsDetail = docsPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    expect(docsDetail).toContain('idx_documents_household_expiry')
+    expect(docsDetail).not.toMatch(/\bSCAN\b/)
+
+    // The audit lookups (per event, per household) seek too — the 0022/0027
+    // index pair.
+    const auditPlan = db
+      .prepare(
+        'EXPLAIN QUERY PLAN SELECT * FROM household_calendar_event_audit WHERE event_id = ? ORDER BY created_at'
+      )
+      .all('e1')
+    expect(auditPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')).toContain(
+      'idx_household_calendar_event_audit_event'
+    )
+    const householdAuditPlan = db
+      .prepare(
+        'EXPLAIN QUERY PLAN SELECT * FROM household_calendar_event_audit WHERE household_id = ? ORDER BY created_at'
+      )
+      .all('h1')
+    expect(
+      householdAuditPlan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
+    ).toContain('idx_household_calendar_event_audit_household')
+  })
+})

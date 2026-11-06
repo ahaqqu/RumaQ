@@ -4,6 +4,7 @@ import { apiApp } from '../../backend/src/apps/api.js'
 import { householdsApp } from '../../backend/src/apps/households.js'
 import { documentsApp } from '../../backend/src/apps/documents.js'
 import { tasksApp } from '../../backend/src/apps/tasks.js'
+import { calendarApp } from '../../backend/src/apps/calendar.js'
 import { authApp } from '../../backend/src/apps/auth.js'
 
 // Generates the OpenAPI contract consumed by the typed API client
@@ -16,13 +17,15 @@ const DOCS_OPTIONS = {
   },
 }
 
-const [apiSpec, householdsSpec, documentsSpec, tasksSpec, authSpec] = await Promise.all([
-  generateSpecs(apiApp, DOCS_OPTIONS),
-  generateSpecs(householdsApp, DOCS_OPTIONS),
-  generateSpecs(documentsApp, DOCS_OPTIONS),
-  generateSpecs(tasksApp, DOCS_OPTIONS),
-  generateSpecs(authApp, DOCS_OPTIONS),
-])
+const [apiSpec, householdsSpec, documentsSpec, tasksSpec, calendarSpec, authSpec] =
+  await Promise.all([
+    generateSpecs(apiApp, DOCS_OPTIONS),
+    generateSpecs(householdsApp, DOCS_OPTIONS),
+    generateSpecs(documentsApp, DOCS_OPTIONS),
+    generateSpecs(tasksApp, DOCS_OPTIONS),
+    generateSpecs(calendarApp, DOCS_OPTIONS),
+    generateSpecs(authApp, DOCS_OPTIONS),
+  ])
 
 // The auth app mounts routes without the /api/auth prefix (the gateway adds
 // it); remap so the client schema matches the URLs the browser actually calls.
@@ -51,6 +54,7 @@ const spec = {
       ...householdsSpec.paths,
       ...documentsSpec.paths,
       ...tasksSpec.paths,
+      ...calendarSpec.paths,
       ...authPaths,
     }).filter(([path]) => !path.startsWith('/api/internal/'))
   ),

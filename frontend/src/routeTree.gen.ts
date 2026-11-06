@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AddRouteImport } from './routes/add'
+import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as DocumentsRouteImport } from './routes/documents'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as HouseholdRouteImport } from './routes/household'
@@ -32,6 +33,11 @@ const IndexRoute = IndexRouteImport.update({
 const AddRoute = AddRouteImport.update({
   id: '/add',
   path: '/add',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CalendarRoute = CalendarRouteImport.update({
+  id: '/calendar',
+  path: '/calendar',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DocumentsRoute = DocumentsRouteImport.update({
@@ -98,6 +104,7 @@ const AdminScrapeRoute = AdminScrapeRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/add': typeof AddRoute
+  '/calendar': typeof CalendarRoute
   '/documents': typeof DocumentsRoute
   '/history': typeof HistoryRoute
   '/household': typeof HouseholdRoute
@@ -114,6 +121,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/add': typeof AddRoute
+  '/calendar': typeof CalendarRoute
   '/documents': typeof DocumentsRoute
   '/history': typeof HistoryRoute
   '/household': typeof HouseholdRoute
@@ -131,6 +139,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/add': typeof AddRoute
+  '/calendar': typeof CalendarRoute
   '/documents': typeof DocumentsRoute
   '/history': typeof HistoryRoute
   '/household': typeof HouseholdRoute
@@ -149,6 +158,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/add'
+    | '/calendar'
     | '/documents'
     | '/history'
     | '/household'
@@ -165,6 +175,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/add'
+    | '/calendar'
     | '/documents'
     | '/history'
     | '/household'
@@ -181,6 +192,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/add'
+    | '/calendar'
     | '/documents'
     | '/history'
     | '/household'
@@ -198,6 +210,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AddRoute: typeof AddRoute
+  CalendarRoute: typeof CalendarRoute
   DocumentsRoute: typeof DocumentsRoute
   HistoryRoute: typeof HistoryRoute
   HouseholdRoute: typeof HouseholdRoute
@@ -226,6 +239,13 @@ declare module '@tanstack/react-router' {
       path: '/add'
       fullPath: '/add'
       preLoaderRoute: typeof AddRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/calendar': {
+      id: '/calendar'
+      path: '/calendar'
+      fullPath: '/calendar'
+      preLoaderRoute: typeof CalendarRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/documents': {
@@ -318,6 +338,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AddRoute: AddRoute,
+  CalendarRoute: CalendarRoute,
   DocumentsRoute: DocumentsRoute,
   HistoryRoute: HistoryRoute,
   HouseholdRoute: HouseholdRoute,

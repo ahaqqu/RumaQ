@@ -20,6 +20,7 @@
     "closeMenu": "Tutup menu",
     "household": "Anggota keluarga",
     "tasks": "Tugas",
+    "calendar": "Kalender",
     "documents": "Dokumen"
   },
   "shell": {
@@ -132,6 +133,69 @@
     "onlyCreatorOwner": "Hanya pembuat tugas atau pemilik rumah yang bisa melakukannya.",
     "conflict": "Tugas itu sudah berubah — muat ulang lalu coba lagi.",
     "errorGeneric": "Terjadi kesalahan. Silakan coba lagi."
+  },
+  "calendar": {
+    "createTitle": "Tambah acara",
+    "titleLabel": "Acara",
+    "titlePlaceholder": "cth. Kontrol dokter keluarga",
+    "dateLabel": "Tanggal",
+    "timeLabel": "Waktu (opsional)",
+    "allDay": "Sepanjang hari",
+    "visibilityLabel": "Siapa yang bisa melihat",
+    "visibilityAll": "Seluruh keluarga",
+    "visibilityMembers": "Anggota tertentu",
+    "membersLabel": "Terlihat oleh",
+    "membersHint": "Pembuat acara selalu dapat melihatnya juga.",
+    "noAudience": "belum ada",
+    "visibleTo": "Terlihat oleh {{names}}",
+    "birthdayForLabel": "Ulang tahun siapa?",
+    "birthdayPick": "Pilih anggota",
+    "birthdayTitle": "Ulang tahun {{name}}",
+    "create": "Tambah acara",
+    "saveEdit": "Simpan",
+    "cancel": "Batal",
+    "edit": "Ubah",
+    "delete": "Hapus",
+    "deleteConfirm": "Hapus \"{{title}}\"?",
+    "entryCount_one": "{{count}} agenda",
+    "entryCount_other": "{{count}} agenda",
+    "emptyDayTitle": "Tidak ada agenda di hari ini",
+    "emptyDayDesc": "Pilih hari lain, atau tambah acara di bawah.",
+    "deadlineChip": "Perpanjangan",
+    "expiresIn_one": "kedaluwarsa dalam {{count}} hari",
+    "expiresIn_other": "kedaluwarsa dalam {{count}} hari",
+    "expired": "Kedaluwarsa",
+    "dueSoon": "Segera jatuh tempo",
+    "presetTitle": "Tambah cepat",
+    "preset": {
+      "birthday": "Ulang tahun",
+      "school": "Awal masuk sekolah",
+      "mudik": "Persiapan mudik",
+      "tax": "Pajak tahunan"
+    },
+    "presetContent": {
+      "school": {
+        "title": "Awal masuk sekolah — dokumen pendaftaran",
+        "hint": "Pendaftaran dibuka Juni–Juli. Saatnya cek salinan akta/kartu keluarga dan anggaran seragam."
+      },
+      "mudik": {
+        "title": "Persiapan mudik — cek masa berlaku SIM/STNK",
+        "hint": "Sebelum mudik Lebaran: masa berlaku SIM dan STNK, servis mobil, dan uang perjalanan."
+      },
+      "tax": {
+        "title": "Lapor pajak tahunan",
+        "hint": "SPT Tahunan PPh pribadi jatuh tempo 31 Maret."
+      },
+      "birthday": {
+        "hint": "Ulang tahun adalah acara biasa — satu per tahun (pengingat tahunan menyusul). Pilih tanggalnya di bawah; tanggal lahir yang tersimpan akan mengisinya otomatis."
+      }
+    },
+    "today": "Hari ini",
+    "gridLabel": "Kisi bulan",
+    "prevMonth": "Bulan sebelumnya",
+    "nextMonth": "Bulan berikutnya",
+    "onlyCreatorOwner": "Hanya pembuat acara atau pemilik keluarga yang bisa melakukan itu",
+    "errorGeneric": "Terjadi kesalahan. Coba lagi."
   },
   "documents": {
     "title": "Lemari dokumen",

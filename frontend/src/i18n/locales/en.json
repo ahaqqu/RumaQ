@@ -20,6 +20,7 @@
     "closeMenu": "Close menu",
     "household": "Household members",
     "tasks": "Tasks",
+    "calendar": "Calendar",
     "documents": "Documents"
   },
   "shell": {
@@ -132,6 +133,69 @@
     "onlyCreatorOwner": "Only the task creator or a household owner can do that.",
     "conflict": "That task was already updated — refresh and try again.",
     "errorGeneric": "Something went wrong. Please try again."
+  },
+  "calendar": {
+    "createTitle": "Add an event",
+    "titleLabel": "Event",
+    "titlePlaceholder": "e.g. Family doctor visit",
+    "dateLabel": "Date",
+    "timeLabel": "Time (optional)",
+    "allDay": "All day",
+    "visibilityLabel": "Who can see it",
+    "visibilityAll": "Whole household",
+    "visibilityMembers": "Specific members",
+    "membersLabel": "Visible to",
+    "membersHint": "The creator always sees the event too.",
+    "noAudience": "nobody yet",
+    "visibleTo": "Visible to {{names}}",
+    "birthdayForLabel": "Whose birthday?",
+    "birthdayPick": "Pick a member",
+    "birthdayTitle": "Ulang tahun {{name}}",
+    "create": "Add event",
+    "saveEdit": "Save",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "delete": "Delete",
+    "deleteConfirm": "Delete \"{{title}}\"?",
+    "entryCount_one": "{{count}} entry",
+    "entryCount_other": "{{count}} entries",
+    "emptyDayTitle": "Nothing on this day",
+    "emptyDayDesc": "Pick another day, or add an event below.",
+    "deadlineChip": "Renewal",
+    "expiresIn_one": "expires in {{count}} day",
+    "expiresIn_other": "expires in {{count}} days",
+    "expired": "Expired",
+    "dueSoon": "Due soon",
+    "presetTitle": "Quick add",
+    "preset": {
+      "birthday": "Birthday",
+      "school": "School enrollment",
+      "mudik": "Mudik prep",
+      "tax": "Annual tax"
+    },
+    "presetContent": {
+      "school": {
+        "title": "Awal masuk sekolah — enrollment documents",
+        "hint": "Enrollment opens June–July. Time to check akta/kartu keluarga copies and the uniform budget."
+      },
+      "mudik": {
+        "title": "Mudik preparation — check SIM/STNK validity",
+        "hint": "Before the Lebaran trip: SIM and STNK validity, the car's service, and travel money."
+      },
+      "tax": {
+        "title": "Annual tax filing (pajak tahunan)",
+        "hint": "Individual income tax (SPT Tahunan) is due March 31."
+      },
+      "birthday": {
+        "hint": "Birthdays are regular events — one per year (recurring reminders come later). Pick the date below; a stored birth date prefills it."
+      }
+    },
+    "today": "Today",
+    "gridLabel": "Month grid",
+    "prevMonth": "Previous month",
+    "nextMonth": "Next month",
+    "onlyCreatorOwner": "Only the creator or a household owner can do that",
+    "errorGeneric": "Something went wrong. Try again."
   },
   "documents": {
     "title": "Document vault",

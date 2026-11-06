@@ -4735,6 +4735,476 @@
         ]
       }
     },
+    "/api/calendar": {
+      "get": {
+        "operationId": "getApiCalendar",
+        "description": "The shared household calendar — ONE union of two entry kinds. kind=event: stored events (0031) inside the optional from/to window that the caller may READ — visibility=all is household-wide, visibility=members only to the listed members plus the creator. kind=deadline: DERIVED on read from the household’s documents (expires_on set, #426) — KTP/STNK/SIM/paspor renewals surface automatically; never stored, so an expires_on edit reflects on the next read. The window filters both kinds; remind_days_before (#426) drives each deadline’s due_soon flag, not the window itself (far-future renewals stay plannable on their month). Entries come back day-chronological (date, all-day first, time, title).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Window start (YYYY-MM-DD, inclusive); absent = unbounded"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Window end (YYYY-MM-DD, inclusive); absent = unbounded"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["entries"],
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "id",
+                              "household_id",
+                              "title",
+                              "date",
+                              "time",
+                              "visibility",
+                              "member_ids",
+                              "created_by_member_id",
+                              "created_at",
+                              "updated_at"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": ["event"]
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "household_id": {
+                                "type": "string"
+                              },
+                              "title": {
+                                "type": "string"
+                              },
+                              "date": {
+                                "type": "string",
+                                "description": "YYYY-MM-DD"
+                              },
+                              "time": {
+                                "type": ["string", "null"],
+                                "description": "HH:MM (24h), or null"
+                              },
+                              "visibility": {
+                                "type": "string",
+                                "enum": ["all", "members"]
+                              },
+                              "member_ids": {
+                                "type": ["array", "null"],
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "The audience when visibility=members; null when visibility=all"
+                              },
+                              "created_by_member_id": {
+                                "type": ["string", "null"]
+                              },
+                              "created_at": {
+                                "type": "string"
+                              },
+                              "updated_at": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "id",
+                              "document_id",
+                              "title",
+                              "date",
+                              "member_id",
+                              "days_until_expiry",
+                              "due_soon"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": ["deadline"]
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "document_id": {
+                                "type": "string"
+                              },
+                              "title": {
+                                "type": "string",
+                                "description": "The document’s free-text name (#422)"
+                              },
+                              "date": {
+                                "type": "string",
+                                "description": "The document’s expires_on (YYYY-MM-DD)"
+                              },
+                              "member_id": {
+                                "type": ["string", "null"]
+                              },
+                              "days_until_expiry": {
+                                "type": "integer",
+                                "description": "Whole days; negative = expired"
+                              },
+                              "due_soon": {
+                                "type": "boolean",
+                                "description": "Within the document’s own remind window (#426)"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/calendar/events": {
+      "post": {
+        "operationId": "postApiCalendarEvents",
+        "description": "Creates a calendar event: free-text title (trimmed, 1-120 chars — no preset categories, the #422 philosophy), a real calendar date (2026-02-31 is a 400), optional 24h HH:MM time (null/absent = all-day), and visibility: all (default) or members with a non-empty member_ids audience (any household member — linked or profile-only, 0021; ids are validated against this household, duplicates deduped). The creator is implicitly a reader and manager of the event. The create audit record commits in the same batch.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["title", "date"],
+                "additionalProperties": false,
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "date": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD"
+                  },
+                  "time": {
+                    "type": ["string", "null"],
+                    "description": "HH:MM (24h); omit or null for all-day"
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": ["all", "members"]
+                  },
+                  "member_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    "description": "Required non-empty when visibility=members; forbidden otherwise"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["event"],
+                  "properties": {
+                    "event": {
+                      "type": "object",
+                      "required": [
+                        "kind",
+                        "id",
+                        "household_id",
+                        "title",
+                        "date",
+                        "time",
+                        "visibility",
+                        "member_ids",
+                        "created_by_member_id",
+                        "created_at",
+                        "updated_at"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": ["event"]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "household_id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "date": {
+                          "type": "string",
+                          "description": "YYYY-MM-DD"
+                        },
+                        "time": {
+                          "type": ["string", "null"],
+                          "description": "HH:MM (24h), or null"
+                        },
+                        "visibility": {
+                          "type": "string",
+                          "enum": ["all", "members"]
+                        },
+                        "member_ids": {
+                          "type": ["array", "null"],
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The audience when visibility=members; null when visibility=all"
+                        },
+                        "created_by_member_id": {
+                          "type": ["string", "null"]
+                        },
+                        "created_at": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Event not found (unknown id, another household’s, or not visible to you)"
+          }
+        }
+      }
+    },
+    "/api/calendar/events/{id}": {
+      "patch": {
+        "operationId": "patchApiCalendarEventsById",
+        "description": "Edits an event: title, date, time (null clears it — all-day), visibility, and member_ids (the audience, replaced atomically). Creator or household owner; a caller who cannot SEE the event (restricted visibility, foreign household) answers the same 404 as a missing one — the scoped lookup runs before any body read. Cross-field rules: member_ids requires the resulting visibility to be members (sending it while the event resolves to all is a 400), and a members event must keep a non-empty audience — the creator is implicitly included, but at least one listed member is required. Every edit writes its audit row in the same batch.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "date": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD"
+                  },
+                  "time": {
+                    "type": ["string", "null"],
+                    "description": "HH:MM (24h); null clears (all-day)"
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": ["all", "members"]
+                  },
+                  "member_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    "description": "The replacement audience; requires resulting visibility=members"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK — the updated event comes back",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["event"],
+                  "properties": {
+                    "event": {
+                      "type": "object",
+                      "required": [
+                        "kind",
+                        "id",
+                        "household_id",
+                        "title",
+                        "date",
+                        "time",
+                        "visibility",
+                        "member_ids",
+                        "created_by_member_id",
+                        "created_at",
+                        "updated_at"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": ["event"]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "household_id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "date": {
+                          "type": "string",
+                          "description": "YYYY-MM-DD"
+                        },
+                        "time": {
+                          "type": ["string", "null"],
+                          "description": "HH:MM (24h), or null"
+                        },
+                        "visibility": {
+                          "type": "string",
+                          "enum": ["all", "members"]
+                        },
+                        "member_ids": {
+                          "type": ["array", "null"],
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The audience when visibility=members; null when visibility=all"
+                        },
+                        "created_by_member_id": {
+                          "type": ["string", "null"]
+                        },
+                        "created_at": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only the creator or a household owner can do that"
+          },
+          "404": {
+            "description": "Event not found (unknown id, another household’s, or not visible to you)"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteApiCalendarEventsById",
+        "description": "Hard-deletes an event: creator or household owner; a caller who cannot see it answers 404 (the scoped lookup runs first). The deletion audit record commits in the SAME batch as the delete and survives it (household_calendar_event_audit.event_id is a plain TEXT handle — no FK), so the household’s event history outlives the row. The audience rows cascade with the event (0031).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only the creator or a household owner can do that"
+          },
+          "404": {
+            "description": "Event not found (unknown id, another household’s, or not visible to you)"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ]
+      }
+    },
     "/api/auth/login": {
       "get": {
         "operationId": "getLogin",
