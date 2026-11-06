@@ -70,6 +70,13 @@ export class PluginPurgeConfirmationError extends Error {
   }
 }
 
+/** Nothing to cancel: no purge drain is pending or running. */
+export class PluginPurgeNotActiveError extends Error {
+  constructor() {
+    super('No purge is in flight for this plugin')
+  }
+}
+
 /** The household layer for one manifest, given the household's rows. */
 function resolveEnablement(
   manifest: { id: string; defaultEnabled: boolean },
@@ -186,12 +193,29 @@ WHERE COALESCE(
  * any previous run's cursor/timestamps. NO bytes, NO rows, NO receipt move
  * here — the nightly chunk driver does the deleting (§3.4: "purge is a job,
  * not a request"; plugin_purged "written once, at completion — never at the
- * start").
+ * start"). The state guard (P1-A1 fix round, PR #474) keeps the marking
+ * safe for EVERY caller: an already pending/running drain is never
+ * clobbered (its cursor, actor and progress survive) — the endpoint
+ * early-returns on that case, and the dissolution drain's
+ * ensurePurgePending re-invocations must not reset an in-flight cursor.
  */
 export const PURGE_INITIATE_SQL = `UPDATE household_plugins
 SET purge_state = 'pending', purge_cursor = NULL, purge_requested_by = ?,
     purge_requested_at = datetime('now'), purge_completed_at = NULL
-WHERE household_id = ? AND plugin_id = ?`
+WHERE household_id = ? AND plugin_id = ?
+  AND (purge_state IS NULL OR purge_state = 'done')`
+
+/**
+ * The purge cancel (P1-A3, PR #474 review): back to the NULL resting state,
+ * every purge column cleared — the write gate releases the moment this
+ * commits. Guarded on an ACTIVE drain only: changes = 0 means nothing was
+ * in flight (the caller answers the typed 409).
+ */
+export const PURGE_CANCEL_SQL = `UPDATE household_plugins
+SET purge_state = NULL, purge_cursor = NULL, purge_requested_by = NULL,
+    purge_requested_at = NULL, purge_completed_at = NULL
+WHERE household_id = ? AND plugin_id = ?
+  AND purge_state IN ('pending', 'running')`
 
 /**
  * The owner-only enable/disable (§4.3: "a row per (household, plugin),
@@ -377,6 +401,67 @@ export async function requestPluginPurge(
       source: existing === undefined ? 'default' : 'household',
     },
     marked ? purgeInfoOf(marked) : { state: 'pending', requested_at: null, completed_at: null }
+  )
+}
+
+/**
+ * The purge CANCEL (P1-A3, PR #474 review): the owner's release lever for a
+ * drain that can never complete — one poisoned `r2_key` makes every chunk
+ * that reaches its document throw forever (the same guard throws in the
+ * user-facing delete paths, so the owner cannot even remove the poison
+ * document to unblock the drain), and the write gate would refuse that
+ * household's uploads indefinitely. Owner-only, like the initiation. One
+ * GUARDED update returns the row to the NULL resting state and clears every
+ * purge column: changes = 0 means nothing was in flight (state NULL or
+ * 'done') — a typed 409, not a silent success. NOT audited as a lifecycle
+ * receipt (the 0032 vocabulary is the closed enablement/purge domain and a
+ * cancel moved no bytes — the legal story "no erasure occurred" needs no
+ * receipt); the catalog's state line is the visible trace.
+ *
+ * Mid-chunk semantics: a tick's in-flight chunk finishes its current batch
+ * (bytes-before-rows held per document — deleted docs are fully gone), its
+ * cursor/cursor-clear updates no-op on the state guard, and the completion
+ * batch's receipt guard reads the NULL state and no-ops: a cancelled drain
+ * stops with some documents purged, the rest intact with their bytes, and
+ * no receipt — consistent from every angle.
+ */
+export async function cancelPluginPurge(
+  env: Pick<Env['Bindings'], 'DB'>,
+  args: { householdId: string; userId: string; pluginId: string }
+): Promise<PluginCatalogEntry> {
+  const manifest = pluginManifestById(args.pluginId)
+  if (!manifest) throw new PluginNotFoundError()
+  if (!manifest.capabilities.includes('purge')) throw new PluginPurgeUnsupportedError()
+
+  await requireOwner(env.DB, args.householdId, args.userId)
+
+  const result = await env.DB.prepare(PURGE_CANCEL_SQL).bind(args.householdId, manifest.id).run()
+  const changes = (result as { meta?: { changes?: number } })?.meta?.changes
+  if ((changes ?? 0) === 0) {
+    throw new PluginPurgeNotActiveError()
+  }
+
+  // Read the released row back for the honest posture (same shape as the
+  // initiation's read-back).
+  const released = await env.DB.prepare(PLUGIN_PURGE_ROW_SQL)
+    .bind(args.householdId, manifest.id)
+    .first<{
+      status: string
+      purge_state: string | null
+      purge_requested_at: string | null
+      purge_completed_at: string | null
+    }>()
+  return buildEntry(
+    env,
+    manifest,
+    {
+      enabled:
+        !released || released.status === undefined
+          ? manifest.defaultEnabled
+          : released.status === 'enabled',
+      source: !released || released.status === undefined ? 'default' : 'household',
+    },
+    released ? purgeInfoOf(released) : null
   )
 }
 

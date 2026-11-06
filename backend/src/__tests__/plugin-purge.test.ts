@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vite-plus/test'
+import { describe, it, expect, vi } from 'vite-plus/test'
 // Real-SQL coverage for the plugin purge lifecycle (ahaqqu/RumaQ#439 —
 // plugin architecture ticket 5, plan §3.4), following the
 // documents-sql.test.ts pattern: the route tests route a fake D1 on SQL
@@ -40,6 +40,7 @@ import {
   drainPluginPurgesForHousehold,
   runPluginPurgeTick,
 } from '../lib/plugin-purge.js'
+import { cancelPluginPurge } from '../lib/plugins.js'
 import { createR2StorageAdapter } from '../ports/storage/r2.js'
 import { pluginRegistrations } from '../plugins/registry.js'
 import { createDocumentsStub, type MockEnv } from './support/env.js'
@@ -162,6 +163,8 @@ function seedDocument(
     fileId: string
     createdAt: string
     fileCount?: number
+    /** Override the first file's key (the poison-key fixture). */
+    firstKey?: string
   }
 ): string {
   sqlite
@@ -176,24 +179,37 @@ function seedDocument(
       `u-${args.householdId}`,
       args.createdAt
     )
-  const key = `documents/${args.householdId}/${args.documentId}/${args.fileId}`
-  sqlite
-    .prepare(
-      `INSERT INTO document_files
-         (id, document_id, r2_key, file_name, size_bytes, content_type, sort_order, sha256, uploaded_by)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`
-    )
-    .run(
-      args.fileId,
-      args.documentId,
-      key,
-      'f.pdf',
-      8,
-      'application/pdf',
-      'a'.repeat(64),
-      `u-${args.householdId}`
-    )
-  return key
+  const count = args.fileCount ?? 1
+  let firstKey = ''
+  for (let i = 0; i < count; i++) {
+    // Single-file rows keep the pre-fixtures key shape (documents/<h>/<d>/<f>)
+    // — the existing assertions pin it; multi-file rows get per-index keys.
+    const key =
+      i === 0 && args.firstKey
+        ? args.firstKey
+        : count === 1
+          ? `documents/${args.householdId}/${args.documentId}/${args.fileId}`
+          : `documents/${args.householdId}/${args.documentId}/${args.fileId}-${i}`
+    if (i === 0) firstKey = key
+    sqlite
+      .prepare(
+        `INSERT INTO document_files
+           (id, document_id, r2_key, file_name, size_bytes, content_type, sort_order, sha256, uploaded_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        `${args.fileId}-${i}`,
+        args.documentId,
+        key,
+        'f.pdf',
+        8,
+        'application/pdf',
+        i + 1,
+        'a'.repeat(64),
+        `u-${args.householdId}`
+      )
+  }
+  return firstKey
 }
 
 // Marks a household's documents plugin purge 'pending' through the EXACT
@@ -228,7 +244,8 @@ const docCount = (sqlite: Db, householdId: string) =>
 const purgeRow = (sqlite: Db, householdId: string) =>
   sqlite
     .prepare(
-      `SELECT purge_state, purge_cursor, purge_requested_by, purge_completed_at
+      `SELECT purge_state, purge_cursor, purge_requested_by, purge_requested_at,
+         purge_completed_at
          FROM household_plugins WHERE household_id = ? AND plugin_id = 'documents'`
     )
     .get(householdId)
@@ -524,6 +541,9 @@ describe('plugin purge — household dissolution ordering (the §3.4 contract, #
 })
 
 describe('plugin purge — index plans pinned (no scan, no temp B-tree)', () => {
+  // The nightly work-set EXPLAIN pin lives in migrations.test.ts (the exact
+  // PURGING_HOUSEHOLDS_SQL constant, one pin — P1-B1); this file pins the
+  // chunk keyset's plan.
   it('the chunk keyset rides idx_documents_household (reverse seek, no sort)', () => {
     const { sqlite } = createDb()
     seedHousehold(sqlite, 'h1', 'Keluarga Putri')
@@ -532,19 +552,6 @@ describe('plugin purge — index plans pinned (no scan, no temp B-tree)', () => 
       .all('h1', null, null, null, null, 40)
     const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
     expect(detail).toContain('idx_documents_household')
-    expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
-  })
-
-  it('the nightly work-set seek rides the partial purging index', () => {
-    const { sqlite } = createDb()
-    const plan = sqlite
-      .prepare(
-        `EXPLAIN QUERY PLAN SELECT household_id FROM household_plugins
-          WHERE plugin_id = ? AND purge_state IN ('pending', 'running')`
-      )
-      .all('documents')
-    const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
-    expect(detail).toContain('idx_household_plugins_purging')
     expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
   })
 })
@@ -586,7 +593,7 @@ describe('plugin purge — the nightly tick driver (runPluginPurgeTick, #439)', 
 
     // Night 1: both drains carry a chunk (3 objects each), neither done.
     const night1 = await runPluginPurgeTick(env, PURGE_TICK_OBJECT_BUDGET)
-    expect(night1).toEqual({ objects: 6, chunks: 2 })
+    expect(night1).toEqual({ objects: 6, chunks: 2, failed: 0 })
     expect(docCount(sqlite, 'h1')).toBe(0)
     expect(docCount(sqlite, 'h2')).toBe(0)
     // The rows are gone; the completion receipts only land on the NEXT
@@ -595,12 +602,12 @@ describe('plugin purge — the nightly tick driver (runPluginPurgeTick, #439)', 
 
     // Night 2: the two empty completion chunks write the receipts.
     const night2 = await runPluginPurgeTick(env, PURGE_TICK_OBJECT_BUDGET)
-    expect(night2).toEqual({ objects: 0, chunks: 2 })
+    expect(night2).toEqual({ objects: 0, chunks: 2, failed: 0 })
     expect(receiptRows(sqlite)).toHaveLength(2)
 
     // Night 3: nothing pending — the work-set query answers zero rows.
     const night3 = await runPluginPurgeTick(env, PURGE_TICK_OBJECT_BUDGET)
-    expect(night3).toEqual({ objects: 0, chunks: 0 })
+    expect(night3).toEqual({ objects: 0, chunks: 0, failed: 0 })
   })
 })
 
@@ -613,5 +620,447 @@ describe('plugin purge — registry seam', () => {
     expect(registration?.purge).toBeTypeOf('function')
     // The manifest declares the capability the catalog surfaces (§4.5).
     expect(registration?.manifest.capabilities).toContain('purge')
+  })
+})
+
+// P1-A1 (PR #474 review): the completion guard is the data-safety crux — the
+// empty doc page is a keyset read (post-cursor rows only) while the batch's
+// zeroDocsLeft counts the WHOLE household. When they disagree, the job must
+// refuse the drain and re-seek, never report drained with documents alive.
+describe('documents purge job — the completion guard decides drained (P1-A1)', () => {
+  it('a document the cursor skipped past defeats the completion: drained=false, cursor re-seek, drain still finishes', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+    const { storage, deleted } = createDetectorStorage(sqlite)
+    const job = createDocumentsPurgeJob(storage)
+
+    // The late commit that lands with the SAME wall-clock second as the
+    // already-processed document but a SMALLER random-UUID id: the keyset
+    // (created_at, id) > (T, d-zzz) can never match it — the exact
+    // permanent-skip shape the reviewer called out.
+    seedDocument(sqlite, {
+      householdId: 'h1',
+      documentId: 'd-zzz',
+      fileId: 'f-zzz',
+      createdAt: '2026-11-01 10:00:00',
+    })
+    requestPurge(sqlite, 'h1', 'u-h1')
+
+    // Chunk 1 processes the only document it can see; the cursor lands on
+    // (T, d-zzz). The "in-flight" document commits AFTER that chunk.
+    const chunk1 = await job({ db: d1, householdId: 'h1', maxObjects: 20 })
+    expect(chunk1).toEqual({ objects: 1, drained: false })
+    seedDocument(sqlite, {
+      householdId: 'h1',
+      documentId: 'd-aaa',
+      fileId: 'f-aaa',
+      createdAt: '2026-11-01 10:00:00', // same second, smaller id
+    })
+
+    // Chunk 2: the keyset reads ZERO rows — but d-aaa exists. The batch's
+    // whole-household guard defeats every statement, and the job MUST NOT
+    // report drained (the old code did — that was the blocking finding).
+    const chunk2 = await job({ db: d1, householdId: 'h1', maxObjects: 20 })
+    expect(chunk2).toEqual({ objects: 0, drained: false })
+    expect(purgeRow(sqlite, 'h1')?.purge_cursor).toBeNull() // re-seek cleared
+    expect(receiptRows(sqlite)).toEqual([]) // no receipt with bytes alive
+    expect(docCount(sqlite, 'h1')).toBe(1)
+
+    // The re-seek finds the escaped document; the drain then completes with
+    // its ONE receipt, every byte gone before any row.
+    const chunk3 = await job({ db: d1, householdId: 'h1', maxObjects: 20 })
+    expect(chunk3).toEqual({ objects: 1, drained: false })
+    const chunk4 = await job({ db: d1, householdId: 'h1', maxObjects: 20 })
+    expect(chunk4).toEqual({ objects: 0, drained: true })
+    expect(deleted).toHaveLength(2)
+    expect(docCount(sqlite, 'h1')).toBe(0)
+    expect(receiptRows(sqlite)).toHaveLength(1)
+    expect(purgeRow(sqlite, 'h1')).toMatchObject({ purge_state: 'done' })
+  })
+
+  it('the write gate is enforced IN the INSERT statements: an in-flight body lands nothing mid-drain', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+    const { bucket, storage } = createDetectorStorage(sqlite)
+    const { DocumentPurgeActiveError } = await import('../plugins/documents/lib.js')
+    seedDocument(sqlite, {
+      householdId: 'h1',
+      documentId: 'd-live',
+      fileId: 'f-live',
+      createdAt: '2026-11-01 10:00:00',
+    })
+    requestPurge(sqlite, 'h1', 'u-h1')
+
+    // Simulate the exact race: the upload's pre-gate read the state as NULL
+    // (row absent — the row is materialized here, mid-body) and the body
+    // commits while the drain is pending. The in-statement guard refuses
+    // the whole batch.
+    await expect(
+      createDocument(d1, storage, {
+        householdId: 'h1',
+        memberId: null,
+        name: 'Telat',
+        file: {
+          fileName: 'x.pdf',
+          bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+          mime: 'application/pdf',
+          label: null,
+        },
+        uploadedBy: 'u-h1',
+      })
+    ).rejects.toBeInstanceOf(DocumentPurgeActiveError)
+    expect(docCount(sqlite, 'h1')).toBe(1) // only the pre-existing doc
+    expect(
+      (
+        sqlite
+          .prepare('SELECT COUNT(*) AS cnt FROM document_files WHERE document_id = ?')
+          .all('d-live') as unknown[]
+      ).length
+    ).toBe(1)
+    // The put orphan (bytes without rows) is the documented put-first trade;
+    // the ROWS — the key records — never landed.
+    expect(
+      (sqlite.prepare('SELECT COUNT(*) AS cnt FROM document_audit').get() as { cnt: number }).cnt
+    ).toBe(0)
+
+    void bucket
+  })
+
+  it('addFile refuses mid-drain with the purge 409 (not the cap 409), via the in-statement guard', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+    const { storage } = createDetectorStorage(sqlite)
+    const { DocumentPurgeActiveError, DocumentTooManyFilesError } =
+      await import('../plugins/documents/lib.js')
+    const doc = await createDocument(d1, storage, {
+      householdId: 'h1',
+      memberId: null,
+      name: 'Sebelum drain',
+      file: {
+        fileName: 'a.pdf',
+        bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+        mime: 'application/pdf',
+        label: null,
+      },
+      uploadedBy: 'u-h1',
+    })
+    requestPurge(sqlite, 'h1', 'u-h1')
+
+    await expect(
+      addDocumentFile(d1, storage, {
+        householdId: 'h1',
+        documentId: doc.id,
+        file: {
+          fileName: 'b.pdf',
+          bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+          mime: 'application/pdf',
+          label: null,
+        },
+        uploadedBy: 'u-h1',
+      })
+    ).rejects.toBeInstanceOf(DocumentPurgeActiveError)
+    // The cap's own 409 still fires when NO drain is active (unchanged
+    // path): a document already AT the 20-file cap.
+    const h2 = createDb()
+    seedHousehold(h2.sqlite, 'h2', 'Rumah Lain')
+    const { storage: storage2 } = createDetectorStorage(h2.sqlite)
+    const doc2 = await createDocument(h2.d1, storage2, {
+      householdId: 'h2',
+      memberId: null,
+      name: 'Penuh',
+      file: {
+        fileName: 'a.pdf',
+        bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+        mime: 'application/pdf',
+        label: null,
+      },
+      uploadedBy: 'u-h2',
+    })
+    for (let i = 1; i < 20; i++) {
+      await addDocumentFile(h2.d1, storage2, {
+        householdId: 'h2',
+        documentId: doc2.id,
+        file: {
+          fileName: `f${i}.pdf`,
+          bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+          mime: 'application/pdf',
+          label: null,
+        },
+        uploadedBy: 'u-h2',
+      })
+    }
+    await expect(
+      addDocumentFile(h2.d1, storage2, {
+        householdId: 'h2',
+        documentId: doc2.id,
+        file: {
+          fileName: 'b.pdf',
+          bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+          mime: 'application/pdf',
+          label: null,
+        },
+        uploadedBy: 'u-h2',
+      })
+    ).rejects.toBeInstanceOf(DocumentTooManyFilesError)
+  })
+})
+
+// P1-A2 (PR #474 review): the driver stops on `remaining < purgeBudgetFloor`
+// instead of handing out a sub-floor chunk the job refuses — a multi-file
+// vault must never abort the tick or starve the households behind it.
+describe('plugin purge — budget floor across the remainder boundary (P1-A2)', () => {
+  it('the tick absorbs a 15-file remainder: no throw, later households still drain', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+    seedHousehold(sqlite, 'h2', 'Rumah Lain')
+    const { bucket } = createDetectorStorage(sqlite)
+    const env = {
+      DB: d1,
+      DOCUMENTS: bucket,
+      BROCHURES: {},
+      RECEIPTS: {},
+      GOOGLE_CLIENT_ID: 'x',
+      GOOGLE_CLIENT_SECRET: 'x',
+      WORKER_JWT_SECRET: 'x',
+      WORKER_ENCRYPTION_KEY: 'x',
+      PAGES_ORIGIN: 'http://localhost:5173',
+      EMAIL_AUTH_ENABLED: 'false',
+      props: { userId: 'u-h1', householdId: 'h1' },
+      TEST_MODE: 'true',
+    } as unknown as Parameters<typeof runPluginPurgeTick>[0]
+
+    // h1: three 15-file documents — the exact shape that used to leave a
+    // 1–19 remainder (2 docs = 30, the third would hit 45 > 40). h2 waits
+    // behind it with one 1-file document.
+    for (let i = 0; i < 3; i++) {
+      seedDocument(sqlite, {
+        householdId: 'h1',
+        documentId: `d${i}`,
+        fileId: `f${i}`,
+        createdAt: `2026-11-01 10:0${i}:00`,
+        fileCount: 15,
+      })
+    }
+    seedDocument(sqlite, {
+      householdId: 'h2',
+      documentId: 'd-h2',
+      fileId: 'f-h2',
+      createdAt: '2026-11-02 10:00:00',
+    })
+    requestPurge(sqlite, 'h1', 'u-h1')
+    requestPurge(sqlite, 'h2', 'u-h2')
+
+    // Night 1: h1 carries 2 docs (30 objects); remaining 10 < floor 20 →
+    // the tick STOPS cleanly — h2 is not handed a chunk it cannot run…
+    const night1 = await runPluginPurgeTick(env)
+    expect(night1).toEqual({ objects: 30, chunks: 1, failed: 0 })
+    expect(docCount(sqlite, 'h2')).toBe(1)
+
+    // …and h2 is not STARVED either: night 2 finishes h1's third document
+    // and drains h2 behind it.
+    const night2 = await runPluginPurgeTick(env)
+    expect(night2).toEqual({ objects: 16, chunks: 2, failed: 0 })
+    expect(docCount(sqlite, 'h1')).toBe(0)
+    expect(docCount(sqlite, 'h2')).toBe(0)
+
+    // Night 3: both completion chunks write their receipts; night 4 is idle.
+    const night3 = await runPluginPurgeTick(env)
+    expect(night3).toEqual({ objects: 0, chunks: 2, failed: 0 })
+    expect(receiptRows(sqlite)).toHaveLength(2)
+    const night4 = await runPluginPurgeTick(env)
+    expect(night4).toEqual({ objects: 0, chunks: 0, failed: 0 })
+  })
+
+  it('the dissolution drain resumes across sub-floor exhaustion without resetting the cursor', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+    const { bucket } = createDetectorStorage(sqlite)
+    const env = {
+      DB: d1,
+      DOCUMENTS: bucket,
+      BROCHURES: {},
+      RECEIPTS: {},
+      GOOGLE_CLIENT_ID: 'x',
+      GOOGLE_CLIENT_SECRET: 'x',
+      WORKER_JWT_SECRET: 'x',
+      WORKER_ENCRYPTION_KEY: 'x',
+      PAGES_ORIGIN: 'http://localhost:5173',
+      EMAIL_AUTH_ENABLED: 'false',
+      props: { userId: 'u-h1', householdId: 'h1' },
+      TEST_MODE: 'true',
+    } as unknown as Parameters<typeof drainPluginPurgesForHousehold>[0]
+
+    for (let i = 0; i < 3; i++) {
+      seedDocument(sqlite, {
+        householdId: 'h1',
+        documentId: `d${i}`,
+        fileId: `f${i}`,
+        createdAt: `2026-11-01 10:0${i}:00`,
+        fileCount: 15,
+      })
+    }
+
+    // Attempt 1: the drain REQUESTS the purge itself (no owner initiation —
+    // `complete` must never mean "nothing was pending"), carries 2 docs,
+    // then hits the floor: complete=false, resumable.
+    const attempt1 = await drainPluginPurgesForHousehold(env, 'h1', {
+      actorUserId: 'u-h1',
+      budget: 40,
+    })
+    expect(attempt1).toEqual({ complete: false, objects: 30 })
+    const midCursor = purgeRow(sqlite, 'h1')?.purge_cursor
+    expect(midCursor).not.toBeNull()
+
+    // Attempt 2 (the caller re-calls): the request is NOT re-initiated from
+    // scratch — the cursor survived, the third document drains, completion
+    // confirms with one receipt.
+    const attempt2 = await drainPluginPurgesForHousehold(env, 'h1', {
+      actorUserId: 'u-h1',
+      budget: 40,
+    })
+    expect(attempt2).toEqual({ complete: true, objects: 15 })
+    expect(docCount(sqlite, 'h1')).toBe(0)
+    expect(receiptRows(sqlite)).toEqual([
+      {
+        household_id: 'h1',
+        plugin_id: 'documents',
+        actor_user_id: 'u-h1',
+        action: 'plugin_purged',
+      },
+    ])
+    void midCursor
+  })
+})
+
+// P1-A3 (PR #474 review): the owner's cancel lever — the only way out of a
+// drain that can never complete (one poisoned r2_key throws on every chunk
+// that reaches its document, and the same guard throws in the user-facing
+// delete paths, so the owner cannot remove the poison document either).
+describe('plugin purge — the owner cancel lever (P1-A3)', () => {
+  function cancelEnv(sqlite: Db, bucket: unknown) {
+    return {
+      DB: createD1Adapter(sqlite),
+      DOCUMENTS: bucket,
+      BROCHURES: {},
+      RECEIPTS: {},
+      GOOGLE_CLIENT_ID: 'x',
+      GOOGLE_CLIENT_SECRET: 'x',
+      WORKER_JWT_SECRET: 'x',
+      WORKER_ENCRYPTION_KEY: 'x',
+      PAGES_ORIGIN: 'http://localhost:5173',
+      EMAIL_AUTH_ENABLED: 'false',
+      props: { userId: 'u-h1', householdId: 'h1' },
+      TEST_MODE: 'true',
+    } as unknown as Parameters<typeof cancelPluginPurge>[0]
+  }
+
+  it('cancels an in-flight drain back to the resting state and releases the write gate', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+    const { bucket, storage } = createDetectorStorage(sqlite)
+    const { resolvePluginPurgeActive } = await import('../plugins/enablement.js')
+    // Three 15-file documents: one 20-budget chunk carries only the FIRST
+    // (a second would hit 30 > 20 — the P1-A2 floor), so the drain is
+    // genuinely PART-WAY when cancelled.
+    for (let i = 0; i < 3; i++) {
+      seedDocument(sqlite, {
+        householdId: 'h1',
+        documentId: `d${i}`,
+        fileId: `f${i}`,
+        createdAt: `2026-11-01 10:0${i}:00`,
+        fileCount: 15,
+      })
+    }
+    requestPurge(sqlite, 'h1', 'u-h1')
+    await createDocumentsPurgeJob(storage)({ db: d1, householdId: 'h1', maxObjects: 20 })
+    expect(await resolvePluginPurgeActive(d1, 'h1', 'documents')).toBe(true)
+    expect(docCount(sqlite, 'h1')).toBe(2) // one chunk drained one document
+
+    const entry = await cancelPluginPurge(cancelEnv(sqlite, bucket), {
+      householdId: 'h1',
+      userId: 'u-h1',
+      pluginId: 'documents',
+    })
+    expect(entry.purge).toBeNull()
+    expect(purgeRow(sqlite, 'h1')).toMatchObject({
+      purge_state: null,
+      purge_cursor: null,
+      purge_requested_by: null,
+      purge_requested_at: null,
+      purge_completed_at: null,
+    })
+    expect(await resolvePluginPurgeActive(d1, 'h1', 'documents')).toBe(false)
+    // The already-processed document stays gone (bytes-before-rows held for
+    // it); the rest is untouched — cancel deletes and restores NOTHING; NO
+    // receipt — nothing completed.
+    expect(docCount(sqlite, 'h1')).toBe(2)
+    expect(receiptRows(sqlite)).toEqual([])
+  })
+
+  it('answers the typed 409 when nothing is in flight (state NULL or done)', async () => {
+    const { sqlite } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+    const { bucket } = createDetectorStorage(sqlite)
+    const { PluginPurgeNotActiveError } = await import('../lib/plugins.js')
+    // Never requested: nothing to cancel.
+    await expect(
+      cancelPluginPurge(cancelEnv(sqlite, bucket), {
+        householdId: 'h1',
+        userId: 'u-h1',
+        pluginId: 'documents',
+      })
+    ).rejects.toBeInstanceOf(PluginPurgeNotActiveError)
+  })
+
+  it('a poisoned r2_key fails its household in ISOLATION — the tick logs it and the healthy household still drains', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+    seedHousehold(sqlite, 'h2', 'Rumah Lain')
+    const { bucket } = createDetectorStorage(sqlite)
+    const env = {
+      DB: d1,
+      DOCUMENTS: bucket,
+      BROCHURES: {},
+      RECEIPTS: {},
+      GOOGLE_CLIENT_ID: 'x',
+      GOOGLE_CLIENT_SECRET: 'x',
+      WORKER_JWT_SECRET: 'x',
+      WORKER_ENCRYPTION_KEY: 'x',
+      PAGES_ORIGIN: 'http://localhost:5173',
+      EMAIL_AUTH_ENABLED: 'false',
+      props: { userId: 'u-h1', householdId: 'h1' },
+      TEST_MODE: 'true',
+    } as unknown as Parameters<typeof runPluginPurgeTick>[0]
+
+    // h1's first file key escaped the documents/ namespace — ensureVaultKey
+    // throws on every chunk that reaches its document, forever.
+    seedDocument(sqlite, {
+      householdId: 'h1',
+      documentId: 'd-poison',
+      fileId: 'f-poison',
+      createdAt: '2026-11-01 10:00:00',
+      firstKey: 'receipts/h1/not-ours',
+    })
+    seedDocument(sqlite, {
+      householdId: 'h2',
+      documentId: 'd-ok',
+      fileId: 'f-ok',
+      createdAt: '2026-11-01 10:00:00',
+    })
+    requestPurge(sqlite, 'h1', 'u-h1')
+    requestPurge(sqlite, 'h2', 'u-h2')
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const night1 = await runPluginPurgeTick(env)
+    // No throw out of the tick: h1 failed (logged, retried next night —
+    // the cancel lever is the owner's way out), h2 drained cleanly.
+    expect(night1).toEqual({ objects: 1, chunks: 1, failed: 1 })
+    expect(docCount(sqlite, 'h2')).toBe(0)
+    expect(docCount(sqlite, 'h1')).toBe(1) // the poison document survives
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('chunk failed'),
+      expect.anything()
+    )
+    errorSpy.mockRestore()
   })
 })

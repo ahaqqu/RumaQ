@@ -2,8 +2,18 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
-import { usePluginCatalog, useRequestPluginPurge, useSetPluginEnablement } from './plugins.js'
-import { getPluginCatalog, requestPluginPurge, setPluginEnablement } from '../api'
+import {
+  usePluginCatalog,
+  useRequestPluginPurge,
+  useCancelPluginPurge,
+  useSetPluginEnablement,
+} from './plugins.js'
+import {
+  cancelPluginPurge,
+  getPluginCatalog,
+  requestPluginPurge,
+  setPluginEnablement,
+} from '../api'
 
 // The toggle is a household fact: it must land in BOTH caches the UI reads —
 // the catalog rows and the /api/me payload the nav gating derives from
@@ -14,6 +24,7 @@ vi.mock('../api', () => ({
   getPluginCatalog: vi.fn(),
   setPluginEnablement: vi.fn(),
   requestPluginPurge: vi.fn(),
+  cancelPluginPurge: vi.fn(),
 }))
 
 const PLUGINS_KEY = ['plugin-catalog']
@@ -172,5 +183,24 @@ describe('useRequestPluginPurge', () => {
     result.current.mutate({ pluginId: 'documents', confirm: 'Documents' })
     await waitFor(() => expect(result.current.isError).toBe(true))
     expect(result.current.error.message).toBe('forbidden')
+  })
+})
+
+// The purge cancel (P1-A3 fix round): NOT optimistic, settle invalidation
+// only — same discipline as the initiation.
+describe('useCancelPluginPurge', () => {
+  it('calls the endpoint and invalidates the catalog on settle', async () => {
+    cancelPluginPurge.mockResolvedValue({ ...CATALOG.plugins[0], purge: null })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = createWrapper(queryClient)
+    const catalog = renderHook(() => usePluginCatalog(), { wrapper })
+    await waitFor(() => expect(catalog.result.current.isSuccess).toBe(true))
+    const readsBefore = getPluginCatalog.mock.calls.length
+
+    const { result } = renderHook(() => useCancelPluginPurge(), { wrapper })
+    result.current.mutate({ pluginId: 'documents' })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(cancelPluginPurge).toHaveBeenCalledWith('documents')
+    await waitFor(() => expect(getPluginCatalog.mock.calls.length).toBeGreaterThan(readsBefore))
   })
 })

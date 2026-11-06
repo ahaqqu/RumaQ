@@ -1017,7 +1017,8 @@ export interface paths {
     put?: never
     /** @description Requests a FULL purge of one plugin's data for the ACTIVE household (owner-only; non-owners get 403). REQUIRES the typed confirmation: body confirm must equal the plugin's name exactly — a checkbox is a misclick away, a typed string is the deliberate act (§3.4). Nothing is deleted by this request: it marks the drain 'pending' and records who confirmed; the nightly cron's chunk driver then deletes bytes-before-rows one chunk per invocation (a 200-document vault takes ~5 nightly ticks on the free plan — 50-subrequest cap, 40-object budget), refusing new uploads while the drain is in flight. Completion writes ONE plugin_purged lifecycle receipt in the core audit table (no household FK — the receipt outlives the household, plan §3.4). Idempotent while a drain is already pending/running. */
     post: operations['postApiPluginsByPluginIdPurge']
-    delete?: never
+    /** @description Cancels one plugin's in-flight purge for the ACTIVE household (owner-only; non-owners get 403) — the release lever for a drain that can never complete (a corrupted storage key makes every chunk fail forever, and the write gate would otherwise refuse uploads indefinitely). Returns the row to the never-requested resting state and clears every purge column; the write gate releases immediately. Nothing is deleted or restored by this call: documents the drain already finished are gone (their bytes went first), the rest are untouched. A 409 means no purge is in flight. */
+    delete: operations['deleteApiPluginsByPluginIdPurge']
     options?: never
     head?: never
     patch?: never
@@ -4889,6 +4890,90 @@ export interface operations {
         content?: never
       }
       /** @description The plugin does not declare the purge capability */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  deleteApiPluginsByPluginIdPurge: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        pluginId: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK — the drain was cancelled; the plugin's fresh posture comes back (purge null) */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            /** @description Stable plugin slug — the manifest id */
+            id: string
+            /** @description Human label (EN); customer copy stays in i18n */
+            name: string
+            /** @description Declared capability ids (snake_case) for the catalog surface */
+            capabilities: string[]
+            /** @description The manifest default for households that never expressed a choice */
+            default_enabled: boolean
+            /** @description The household layer, resolved: the household_plugins row wins over the manifest default (§4.3 truth table) */
+            enabled: boolean
+            /**
+             * @description Whether the resolved state is the manifest default or an explicit household choice
+             * @enum {string}
+             */
+            source: 'default' | 'household'
+            /** @description The ops kill-switch layer: false means this deployment paused the plugin (routes answer 404) */
+            deployment_available: boolean
+            /** @description The plan layer: false would deny plugin routes with 403 (the only actionable denial). No plugin declares entitlements yet, so this is true tonight */
+            plan_entitled: boolean
+            /** @description Effective access (§3.3): deployment_available AND plan_entitled AND enabled — what the plugin gate enforces */
+            available: boolean
+            /** @description The purge state machine (ticket 5 #439, §3.4): pending → running → done, null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint */
+            purge?: {
+              /**
+               * @description pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed
+               * @enum {string}
+               */
+              state: 'pending' | 'running' | 'done'
+              /** @description When the owner typed the confirmation (null if never requested) */
+              requested_at: string | null
+              /** @description When the last purge finished (null until done) */
+              completed_at: string | null
+            } | null
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only household owners can do that */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Household or plugin not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description No purge is in flight (nothing to cancel) */
       409: {
         headers: {
           [name: string]: unknown

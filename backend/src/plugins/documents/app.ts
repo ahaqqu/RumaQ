@@ -51,6 +51,7 @@ import {
 } from '../../lib/document-expiry.js'
 import {
   DOCUMENT_MAX_BYTES,
+  DOCUMENT_MAX_FILES,
   DocumentForbiddenError,
   DocumentNotFoundError,
   DocumentPurgeActiveError,
@@ -951,6 +952,11 @@ export function createDocumentsPlugin(deps: PluginDeps): PluginRegistration {
     // the SAME injected port the routes use — the core cron tick and the
     // household-dissolution drain call it through PluginPurgeJob, never
     // through plugin internals. Bytes go through the port, never inline R2.
+    // The budget floor is the job's per-chunk minimum (a chunk deletes
+    // whole documents; one may hold DOCUMENT_MAX_FILES files) — the driver
+    // stops on `remaining < floor` instead of manufacturing a chunk the
+    // job must refuse (P1-A2, PR #474 review).
     purge: createDocumentsPurgeJob(storage),
+    purgeBudgetFloor: DOCUMENT_MAX_FILES,
   }
 }

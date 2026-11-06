@@ -721,7 +721,8 @@
       "stateRunning": "Deletion in progress; uploads are paused until it finishes.",
       "stateDone": "All data was deleted on {{date}}.",
       "stateDonePlain": "All data was deleted.",
-      "errorGeneric": "Couldn't start the deletion. Please try again."
+      "errorGeneric": "Couldn't start the deletion. Please try again.",
+      "cancel": "Cancel purge"
     }
   },
   "common": {

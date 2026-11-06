@@ -1,5 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getPluginCatalog, setPluginEnablement, requestPluginPurge } from '../api'
+import {
+  getPluginCatalog,
+  setPluginEnablement,
+  requestPluginPurge,
+  cancelPluginPurge,
+} from '../api'
 import { PLUGIN_CATALOG } from '../../plugins/registry.js'
 
 // The plugin settings catalog (ahaqqu/RumaQ#437 — plugin architecture ticket
@@ -104,6 +109,21 @@ export function useRequestPluginPurge() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ pluginId, confirm }) => requestPluginPurge(pluginId, confirm),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: PLUGINS_KEY })
+    },
+  })
+}
+
+// The purge cancel (P1-A3 fix round, PR #474 review): the owner's release
+// lever for a drain that can never complete. NOT optimistic — like the
+// initiation, the UI must never show a purge state the server has not
+// confirmed; the settle invalidation re-reads the catalog (the drain
+// disappears and uploads resume).
+export function useCancelPluginPurge() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ pluginId }) => cancelPluginPurge(pluginId),
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: PLUGINS_KEY })
     },

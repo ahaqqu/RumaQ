@@ -110,12 +110,19 @@ export type PluginPurgeJob = (args: {
  * cron tick and the household-dissolution drain call it through this seam,
  * never through plugin internals (T7 will generalize plugin-declared
  * scheduled tasks on top of the same seam — this is deliberately the only
- * job-shaped hook until then).
+ * job-shaped hook until then). `purgeBudgetFloor` is the job's per-chunk
+ * minimum (the documents plugin: DOCUMENT_MAX_FILES — a chunk deletes whole
+ * documents only, and one document may hold that many files): the driver
+ * treats a remaining budget below the floor as EXHAUSTED instead of handing
+ * out a sub-floor chunk the job would have to refuse (P1-A2, PR #474
+ * review — a 15-file vault left a 1–19 remainder that threw and starved
+ * every household behind it). Required alongside `purge`.
  */
 export type PluginRegistration = {
   manifest: PluginManifest
   app: Hono<Env>
   purge?: PluginPurgeJob
+  purgeBudgetFloor?: number
 }
 
 /**

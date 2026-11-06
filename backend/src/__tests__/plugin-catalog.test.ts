@@ -28,7 +28,8 @@ type FakeDb = {
 
 function createFakeDb(
   firstRoutes: [RegExp, (params: unknown[]) => Row | null][],
-  allRoutes: [RegExp, (params: unknown[]) => Row[]][]
+  allRoutes: [RegExp, (params: unknown[]) => Row[]][],
+  runChanges = 1
 ): FakeDb {
   const log: Array<{ sql: string; params: unknown[] }> = []
   const handlers = (
@@ -52,7 +53,10 @@ function createFakeDb(
     },
     run: async () => {
       log.push({ sql: flat, params })
-      return undefined
+      // D1-shaped meta — the purge cancel (P1-A3) reads meta.changes to
+      // distinguish a released drain (1) from nothing-in-flight (0); the
+      // not-active test overrides via runChanges.
+      return { meta: { changes: runChanges } }
     },
   })
   return {
@@ -435,6 +439,65 @@ describe('plugin purge initiation route (#439)', () => {
     expect(body).toMatchObject({
       purge: { state: 'running', requested_at: '2026-11-06 03:00:00' },
     })
+    expect(db.log).toEqual([])
+  })
+})
+
+// The purge cancel route (P1-A3, PR #474 review): the owner's release lever
+// for a drain that can never complete. The lib's real-SQL semantics (state
+// back to NULL, gate released, part-way docs stay gone, no receipt) are
+// pinned in plugin-purge.test.ts; this file pins the HTTP surface.
+describe('plugin purge cancel route (#439 P1-A3)', () => {
+  beforeEach(() => {
+    resetRateLimit()
+  })
+
+  const PURGE_ROW_ROUTE = (row: Row | null) =>
+    [
+      /SELECT status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = \? AND plugin_id = \?/,
+      () => row,
+    ] as [RegExp, (params: unknown[]) => Row | null]
+
+  it('releases an in-flight drain and answers the resting posture', async () => {
+    const db = createFakeDb([MEMBERSHIP_ROUTE, PURGE_ROW_ROUTE(null)], [FLAGS_ROUTE([])])
+    const env = createEnv(db)
+    const res = await pluginsApp.request(
+      '/api/plugins/documents/purge',
+      { method: 'DELETE' } as RequestInit,
+      env
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body).toMatchObject({ id: 'documents', purge: null })
+    // One guarded UPDATE, no lifecycle receipt.
+    const cancelled = db.log.filter((entry) => entry.sql.startsWith('UPDATE household_plugins'))
+    expect(cancelled).toHaveLength(1)
+    expect(
+      db.log.filter((entry) => entry.sql.startsWith('INSERT INTO household_plugin_audit'))
+    ).toEqual([])
+  })
+
+  it('answers 409 when no purge is in flight', async () => {
+    const db = createFakeDb([MEMBERSHIP_ROUTE], [FLAGS_ROUTE([])], 0)
+    const env = createEnv(db)
+    const res = await pluginsApp.request(
+      '/api/plugins/documents/purge',
+      { method: 'DELETE' } as RequestInit,
+      env
+    )
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ error: 'No purge is in flight for this plugin' })
+  })
+
+  it('is owner-only: a member gets 403 before any write', async () => {
+    const db = createFakeDb([MEMBERSHIP_ROUTE], [FLAGS_ROUTE([])])
+    const env = createEnv(db, 'u2')
+    const res = await pluginsApp.request(
+      '/api/plugins/documents/purge',
+      { method: 'DELETE' } as RequestInit,
+      env
+    )
+    expect(res.status).toBe(403)
     expect(db.log).toEqual([])
   })
 })

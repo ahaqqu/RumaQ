@@ -24,7 +24,9 @@ import { ipRateLimitMiddleware } from '../lib/rate-limit.js'
 import {
   PluginNotFoundError,
   PluginPurgeConfirmationError,
+  PluginPurgeNotActiveError,
   PluginPurgeUnsupportedError,
+  cancelPluginPurge,
   getPluginCatalog,
   requestPluginPurge,
   setPluginEnablement,
@@ -155,6 +157,9 @@ pluginsApp.onError((err, c) => {
   if (err instanceof HouseholdForbiddenError) return c.json({ error: err.message }, 403, NO_CACHE)
   if (err instanceof PluginNotFoundError) return c.json({ error: err.message }, 404, NO_CACHE)
   if (err instanceof PluginPurgeUnsupportedError) {
+    return c.json({ error: err.message }, 409, NO_CACHE)
+  }
+  if (err instanceof PluginPurgeNotActiveError) {
     return c.json({ error: err.message }, 409, NO_CACHE)
   }
   if (err instanceof PluginPurgeConfirmationError) {
@@ -298,6 +303,42 @@ pluginsApp.post(
       userId: c.get('userId'),
       pluginId,
       confirm,
+    })
+    const res = c.json(plugin satisfies PluginCatalogEntry)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+pluginsApp.delete(
+  '/api/plugins/:pluginId/purge',
+  describeRoute({
+    description:
+      "Cancels one plugin's in-flight purge for the ACTIVE household (owner-only; non-owners get 403) — the release lever for a drain that can never complete (a corrupted storage key makes every chunk fail forever, and the write gate would otherwise refuse uploads indefinitely). Returns the row to the never-requested resting state and clears every purge column; the write gate releases immediately. Nothing is deleted or restored by this call: documents the drain already finished are gone (their bytes went first), the rest are untouched. A 409 means no purge is in flight.",
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description:
+          "OK — the drain was cancelled; the plugin's fresh posture comes back (purge null)",
+        content: {
+          'application/json': {
+            schema: pluginCatalogEntrySchema,
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Only household owners can do that' },
+      404: { description: 'Household or plugin not found' },
+      409: { description: 'No purge is in flight (nothing to cancel)' },
+    },
+  }),
+  sValidator('param', pluginParamsSchema),
+  async (c) => {
+    const { pluginId } = c.req.valid('param')
+    const plugin = await cancelPluginPurge(c.env, {
+      householdId: c.get('householdId'),
+      userId: c.get('userId'),
+      pluginId,
     })
     const res = c.json(plugin satisfies PluginCatalogEntry)
     res.headers.set('Cache-Control', 'private, no-cache')

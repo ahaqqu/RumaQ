@@ -107,11 +107,29 @@ export function documentPageSql(): string {
  * pattern from the enablement writer — D1 serializes the batch, not the
  * surrounding read, so the guard inside the batch is the only thing standing
  * between one purge and a doubled receipt), then the guarded 'done'
- * transition, then the plugin-owned audit trail's own cleanup. All three
- * statements share one predicate — pre-state pending/running AND zero
- * documents left — so they commit or no-op as one: a document that somehow
- * re-appears between the driver's empty read and this batch defeats the
- * receipt, the transition AND the audit cleanup together.
+ * transition, the cursor re-seek clearance, and the plugin-owned audit
+ * trail's own cleanup. The receipt / transition / cleanup share one
+ * predicate — pre-state pending/running AND zero documents left — so they
+ * commit or no-op as one; the cursor clearance is guarded on the state
+ * alone so the defeat path (below) re-seeks from the oldest.
+ *
+ * THE `drained` DECISION (P1-A1, PR #474 review) is the data-safety crux:
+ * the empty doc page is a keyset read (rows AFTER the cursor only) while
+ * `zeroDocsLeft` counts the WHOLE household — they can disagree (an upload
+ * whose body was in flight when the drain started commits mid-drain — the
+ * in-statement write guard refuses it; two same-second commits plus
+ * random-UUID ordering can also skip a smaller-id document past the cursor
+ * permanently). On disagreement every guarded statement no-ops, and
+ * reporting `drained: true` anyway would let the dissolution drain return
+ * complete and let the cascade erase the surviving document's rows — its
+ * r2_key with it — while the bytes live. So `drained` is DERIVED from the
+ * batch's actual effect: the done-UPDATE's meta.changes = 1 → the
+ * transition committed → drained; = 0 → read the row back — 'done' is the
+ * legitimate nightly replay (drained), pending/running means the guard was
+ * defeated → `drained: false` AND the cursor is cleared (the 3rd
+ * statement) so the before-cursor escape is re-scanned from the oldest on
+ * the very next chunk. The forbidden direction — a `drained` report with
+ * documents still alive — is unreachable by construction.
  *
  * The receipt's actor is the household_plugins row's purge_requested_by —
  * the owner who typed the confirmation — copied onto the one record that
@@ -142,6 +160,7 @@ function completionStatements(db: D1Database, householdId: string, pluginId: str
         pluginId,
         householdId
       ),
+    // The transition — meta.changes on THIS statement is the `drained` truth.
     db
       .prepare(
         `UPDATE household_plugins
@@ -151,6 +170,16 @@ function completionStatements(db: D1Database, householdId: string, pluginId: str
             AND ${zeroDocsLeft}`
       )
       .bind(householdId, pluginId, householdId),
+    // The re-seek clearance: fires ONLY on the defeat path (pending/running
+    // with documents still present) — on a committed transition the cursor
+    // is already NULL above, and a 'done' replay no-ops on the state guard.
+    db
+      .prepare(
+        `UPDATE household_plugins SET purge_cursor = NULL
+          WHERE household_id = ? AND plugin_id = ?
+            AND purge_state IN ('pending', 'running')`
+      )
+      .bind(householdId, pluginId),
     db
       .prepare(`DELETE FROM document_audit WHERE household_id = ? AND ${zeroDocsLeft}`)
       .bind(householdId, householdId),
@@ -209,11 +238,37 @@ export function createDocumentsPurgeJob(storage: StorageAdapter): PluginPurgeJob
     const docs = docPage.results
 
     if (docs.length === 0) {
-      // Nothing after the cursor: the drain is complete. The receipt (once —
-      // the pre-state guard), the 'done' transition and the audit cleanup
-      // commit as one batch; a second completion call no-ops entirely.
-      await db.batch(completionStatements(db, householdId, 'documents'))
-      return { objects: 0, drained: true }
+      // Nothing after the cursor — CANDIDATE for completion, but the batch's
+      // own whole-household guard decides (P1-A1): the keyset read sees only
+      // post-cursor rows, so a document the cursor can never reach (an
+      // in-flight upload that committed mid-drain past the write gate's
+      // read, or a same-second commit the random-UUID ordering skipped)
+      // defeats every guarded statement here. Derive `drained` from the
+      // done-UPDATE's meta.changes, never from the read.
+      const results = (await db.batch(
+        completionStatements(db, householdId, 'documents')
+      )) as Array<{ meta?: { changes?: number } }>
+      const transitioned = (results[1]?.meta?.changes ?? 0) > 0
+      if (transitioned) {
+        return { objects: 0, drained: true }
+      }
+      // changes = 0: either the legitimate replay (state already 'done') or
+      // the defeat path (documents exist). One PK-prefix seek disambiguates.
+      const after = await db
+        .prepare(
+          `SELECT purge_state FROM household_plugins
+            WHERE household_id = ? AND plugin_id = ?`
+        )
+        .bind(householdId, 'documents')
+        .first<{ purge_state: string | null }>()
+      if (after?.purge_state === 'done') {
+        return { objects: 0, drained: true }
+      }
+      // Guard defeated: the cursor clearance in the batch already reset the
+      // re-seek — refuse the drain so the caller retries (the nightly tick's
+      // next night, the dissolution drain's next loop) and the escaped
+      // document is found from the oldest. NEVER report drained here.
+      return { objects: 0, drained: false }
     }
 
     // The keys, per document (invariant's first half, continued): one IN

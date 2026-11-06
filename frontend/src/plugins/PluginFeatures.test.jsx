@@ -3,7 +3,12 @@ import { render, fireEvent, waitFor } from '@testing-library/react'
 import React from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PluginFeatures } from './PluginFeatures.jsx'
-import { getPluginCatalog, requestPluginPurge, setPluginEnablement } from '../lib/api'
+import {
+  cancelPluginPurge,
+  getPluginCatalog,
+  requestPluginPurge,
+  setPluginEnablement,
+} from '../lib/api'
 
 // The section rides the REAL query hooks — only the network layer is mocked
 // (the context.test.jsx idiom). That matters for the failed-toggle alert: a
@@ -17,6 +22,7 @@ vi.mock('../lib/api', async (importOriginal) => ({
   getPluginCatalog: vi.fn(),
   setPluginEnablement: vi.fn(),
   requestPluginPurge: vi.fn(),
+  cancelPluginPurge: vi.fn(),
 }))
 
 // The server row the catalog endpoint answers for the documents plugin —
@@ -56,6 +62,7 @@ beforeEach(() => {
   vi.mocked(getPluginCatalog).mockReset()
   vi.mocked(setPluginEnablement).mockReset()
   vi.mocked(requestPluginPurge).mockReset()
+  vi.mocked(cancelPluginPurge).mockReset()
 })
 
 describe('PluginFeatures (settings catalog, issue #437)', () => {
@@ -271,6 +278,39 @@ describe('PluginFeatures — purge lifecycle (ticket 5, #439)', () => {
     expect(
       [...container.querySelectorAll('button')].some((b) =>
         b.textContent.includes('plugins.purge.action')
+      )
+    ).toBe(false)
+  })
+
+  it('gives the owner the cancel lever during a drain (P1-A3) — and members none', async () => {
+    const drainingRow = () =>
+      documentsRow({
+        purge: { state: 'running', requested_at: '2026-11-06 03:00:00', completed_at: null },
+      })
+    // Owner: the cancel button rides the state line and calls the endpoint.
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [drainingRow()] })
+    vi.mocked(cancelPluginPurge).mockResolvedValue(documentsRow({ purge: null }))
+    const owner = renderSection(true)
+    const cancel = await waitFor(() => {
+      const btn = [...owner.container.querySelectorAll('button')].find((b) =>
+        b.textContent.includes('plugins.purge.cancel')
+      )
+      expect(btn).toBeTruthy()
+      return btn
+    })
+    fireEvent.click(cancel)
+    await waitFor(() => expect(cancelPluginPurge).toHaveBeenCalledWith('documents'))
+    owner.unmount()
+
+    // Member: the state line renders, no cancel lever.
+    vi.mocked(getPluginCatalog).mockResolvedValue({ plugins: [drainingRow()] })
+    const member = renderSection(false)
+    await waitFor(() =>
+      expect(member.container.textContent).toContain('plugins.purge.stateRunning')
+    )
+    expect(
+      [...member.container.querySelectorAll('button')].some((b) =>
+        b.textContent.includes('plugins.purge.cancel')
       )
     ).toBe(false)
   })

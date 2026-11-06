@@ -518,6 +518,17 @@ export function requestPluginPurge(pluginId: string, confirm: string): Promise<u
   )
 }
 
+// The purge cancel (P1-A3 fix round, PR #474 review): the owner's release
+// lever for a drain that can never complete. Nothing is deleted or restored
+// by this call — the drain stops where it is and the write gate releases.
+export function cancelPluginPurge(pluginId: string): Promise<unknown> {
+  return unwrap(
+    client.DELETE('/api/plugins/{pluginId}/purge', {
+      params: { path: { pluginId } },
+    })
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Document vault (ahaqqu/RumaQ#422 rework of the #388 MVP) — private
 // per-household documents with free-text names and N files each. Metadata

@@ -5,6 +5,7 @@ import { Chip } from '../components/Chip.jsx'
 import { Button } from '../components/Button.jsx'
 import { SkeletonRows } from '../components/ui.jsx'
 import {
+  useCancelPluginPurge,
   usePluginCatalog,
   useRequestPluginPurge,
   useSetPluginEnablement,
@@ -78,9 +79,13 @@ function Posture({ plugin }) {
 // The purge state line (ticket 5, #439): pending/running get the
 // uploads-paused warning (the write gate is live server-side); done gets the
 // quiet completion line. Renders for every member — the STATE is not a
-// secret (§3.2); only the action is owner-only.
-function PurgeState({ purge }) {
+// secret (§3.2); only the action is owner-only. The owner also gets the
+// CANCEL lever here (P1-A3 fix round): the release for a drain that can
+// never complete (a corrupted key makes every chunk fail forever), without
+// which uploads would 409 indefinitely.
+function PurgeState({ purge, isOwner, pluginId }) {
   const { t } = useTranslation()
+  const cancel = useCancelPluginPurge()
   if (!purge) return null
   if (purge.state === 'pending' || purge.state === 'running') {
     return (
@@ -88,6 +93,18 @@ function PurgeState({ purge }) {
         {purge.state === 'pending'
           ? t('plugins.purge.statePending')
           : t('plugins.purge.stateRunning')}
+        {isOwner && (
+          <div className="mt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={cancel.isPending}
+              onClick={() => cancel.mutate({ pluginId })}
+            >
+              {t('plugins.purge.cancel')}
+            </Button>
+          </div>
+        )}
       </div>
     )
   }
@@ -208,7 +225,7 @@ function PluginRow({ entry, plugin, isOwner, mutation, onPurge }) {
             ))}
           </div>
           <Posture plugin={plugin} />
-          <PurgeState purge={plugin.purge} />
+          <PurgeState purge={plugin.purge} isOwner={isOwner} pluginId={entry.id} />
           {canPurge && !purgeDraining(plugin) && (
             <div className="mt-2.5">
               <Button variant="danger" size="sm" onClick={() => onPurge(plugin)}>

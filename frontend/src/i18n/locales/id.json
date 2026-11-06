@@ -721,7 +721,8 @@
       "stateRunning": "Penghapusan sedang berlangsung; unggahan dijeda sampai selesai.",
       "stateDone": "Semua data telah dihapus pada {{date}}.",
       "stateDonePlain": "Semua data telah dihapus.",
-      "errorGeneric": "Tidak bisa memulai penghapusan. Coba lagi."
+      "errorGeneric": "Tidak bisa memulai penghapusan. Coba lagi.",
+      "cancel": "Batalkan penghapusan"
     }
   },
   "common": {

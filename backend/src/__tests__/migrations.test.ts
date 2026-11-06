@@ -6,6 +6,7 @@ import {
   PLUGIN_PURGE_STATE_SQL,
   PLUGIN_PURGE_ROW_SQL,
 } from '../plugins/enablement.js'
+import { PURGING_HOUSEHOLDS_SQL } from '../lib/plugin-purge.js'
 import { deploymentFlagKey } from '../plugins/flags.js'
 import { AUDIT_INSERT_SQL, ENABLEMENT_UPSERT_SQL } from '../lib/plugins.js'
 import { EVENT_SELECT, VISIBLE_PREDICATE } from '../lib/calendar.js'
@@ -1693,12 +1694,11 @@ describe('migration 0035: plugin purge state (#439)', () => {
   it('keeps the nightly work-set seek on the partial purging index (no scan)', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
     applyMigrations(db, migrationFiles())
-    const plan = db
-      .prepare(
-        `EXPLAIN QUERY PLAN SELECT household_id FROM household_plugins
-          WHERE plugin_id = ? AND purge_state IN ('pending', 'running')`
-      )
-      .all('documents')
+    // The EXACT statement the tick ships (imported, not transcribed — the
+    // C1-B2 verbatim-by-construction discipline from #469): a drift in the
+    // work-set query fails this pin instead of passing against a query
+    // nothing runs.
+    const plan = db.prepare(`EXPLAIN QUERY PLAN ${PURGING_HOUSEHOLDS_SQL}`).all('documents')
     const detail = plan.map((r: Record<string, unknown>) => String(r.detail)).join(' | ')
     expect(detail).toContain('idx_household_plugins_purging')
     expect(detail).not.toMatch(/SCAN|TEMP B-TREE/i)
