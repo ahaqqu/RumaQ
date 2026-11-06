@@ -56,9 +56,9 @@ print_list() {
 # ------------------------------------------------------------------
 echo "==> scripts/deploy.sh"
 
-mapfile -t array_lines < <(grep -nE '^[[:space:]]*local secrets=\(' "$DEPLOY_SH" || true)
+mapfile -t array_lines < <(grep -nE '^[[:space:]]*MANAGED_SECRETS=\(' "$DEPLOY_SH" || true)
 if ((${#array_lines[@]} != 1)); then
-  fail "expected exactly one managed-secret array in scripts/deploy.sh, found ${#array_lines[@]}"
+  fail "expected exactly one MANAGED_SECRETS array in scripts/deploy.sh, found ${#array_lines[@]}"
 else
   # Read the assignment across lines up to the closing paren, so a reformatted
   # multi-line array still yields its exact contents instead of slipping past.
@@ -66,7 +66,7 @@ else
   # is deliberately absent" is inside this array, and its words must not leak
   # into the parsed set.
   array_list="$(awk '
-    /^[[:space:]]*local secrets=\(/ { in_array = 1 }
+    /^[[:space:]]*MANAGED_SECRETS=\(/ { in_array = 1 }
     in_array && /^[[:space:]]*#/ { next }
     in_array { printf "%s ", $0 }
     in_array && /\)/ { exit }
@@ -76,44 +76,46 @@ else
   array_list="${array_list//$'\n'/ }"
   read -r -a managed <<< "$array_list"
   if ((${#managed[@]} == 0)); then
-    fail "the managed-secret array in scripts/deploy.sh is empty"
+    fail "MANAGED_SECRETS in scripts/deploy.sh is empty"
   else
     actual="$(print_list "${managed[@]}")"
     if [[ "$actual" == "$EXPECTED" ]]; then
-      pass "managed-secret array is exactly the four gateway secrets: $actual"
+      pass "MANAGED_SECRETS is exactly the four gateway secrets: $actual"
     else
       # $SECRET is absent from EXPECTED, so re-adding it fails right here;
       # reporting it a second time would claim a `workers secrets update` bug
       # that the array alone cannot prove.
-      fail "managed-secret array must be exactly [${EXPECTED}], got [${actual}]"
+      fail "MANAGED_SECRETS must be exactly [${EXPECTED}], got [${actual}]"
     fi
   fi
 fi
 
+# The update must run inside the MANAGED_SECRETS loop, so a later edit cannot
+# pin it to a literal or to one element and silently stop managing the rest.
+# The variable name is read from the loop itself — renaming it is not a defect.
+loop_var="$(grep -oE 'for [a-zA-Z_]+ in .*MANAGED_SECRETS\[@\]' "$DEPLOY_SH" | head -1 | awk '{print $2}')"
 mapfile -t update_lines < <(grep -nE 'workers secrets update' "$DEPLOY_SH" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
 if ((${#update_lines[@]} == 0)); then
   fail "no 'workers secrets update' invocation found in scripts/deploy.sh (parser out of date)"
+elif [[ -z $loop_var ]]; then
+  fail 'no loop over "${MANAGED_SECRETS[@]}" found in scripts/deploy.sh (parser out of date)'
 else
+  loop_ref="\"\$$loop_var\""
   for line in "${update_lines[@]}"; do
-    if [[ "$line" != *'"$name"'* ]]; then
-      fail "workers secrets update must be driven by the loop variable: ${line#*:}"
+    if [[ "$line" != *"$loop_ref"* ]]; then
+      fail "workers secrets update must use the loop variable $loop_ref: ${line#*:}"
     fi
   done
 fi
 
-# Any secret-name loop must still cover exactly the deploy-managed set.
-mapfile -t loop_lists < <(grep -oE 'for secret_name in [A-Z_]+( [A-Z_]+)*' "$DEPLOY_SH" || true)
-if ((${#loop_lists[@]} == 0)); then
-  fail "no 'for secret_name in ...' loop found in scripts/deploy.sh (parser out of date)"
+# Every secret-name loop must iterate MANAGED_SECRETS. A literal list here would
+# be a second copy of the managed set that the assertion above cannot see.
+mapfile -t literal_lists < <(grep -nE 'for [a-zA-Z_]+ in [A-Z_]+( [A-Z_]+)+' "$DEPLOY_SH" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+if ((${#literal_lists[@]} == 0)); then
+  pass 'no secret loop spells the managed set out literally'
 else
-  for list in "${loop_lists[@]}"; do
-    read -r -a names <<< "${list#for secret_name in }"
-    actual="$(print_list "${names[@]}")"
-    if [[ "$actual" == "$EXPECTED" ]]; then
-      pass "secret loop covers the four gateway secrets"
-    else
-      fail "secret loop must cover exactly [${EXPECTED}], got [${actual}]"
-    fi
+  for line in "${literal_lists[@]}"; do
+    fail "secret loop must iterate \"\${MANAGED_SECRETS[@]}\", not a literal list: ${line#*:}"
   done
 fi
 
