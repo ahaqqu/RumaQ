@@ -104,6 +104,7 @@ This project uses agent skills to keep complex workflows consistent. Invoke them
 | `guided-implementation` | Implementing a difficult or unclear plan from a markdown file | Invoke `guided-implementation` with the plan file path | Confirms the high-level approach before coding and protects architecture decisions                                                                      |
 | `code-review`           | Reviewing a PR after it is created                            | Mention or invoke `code-review`                        | Sets review depth, checks philosophy and guardrails, posts itemized PR comments                                                                         |
 | `manager`               | Orchestrating workstreams via subagents ("run as manager")    | Mention or invoke `manager`                            | Runs the issue → research → design → plan → implement → review → verify loop over a GitHub-issue backlog and kanban board, without touching code itself |
+| `security-audit`        | Security review, vulnerability hunt, or full codebase audit   | Mention or invoke `security-audit`                     | Runs a coverage-led audit — recon, hunt, candidate validation, verified report — with schema-validated findings                                         |
 
 ### `/pr-creation`
 
@@ -120,6 +121,10 @@ Use whenever a PR needs review. It sets the review depth — normal for docs/ski
 ### `/manager`
 
 Use when managing workstreams or implementations via subagents, when asked to "run as manager", or when orchestrating the issue → research → design → plan → implement → review → verify loop. It drives GitHub-issue-driven backlogs through a GitHub Projects kanban board, coordinates research/design/implementation/review/verification subagents in the background, maintains a durable state file, and raises workflow problems as `[workflow]` GitHub issues — never editing product code itself. See [`.agents/skills/manager/SKILL.md`](.agents/skills/manager/SKILL.md).
+
+### `/security-audit`
+
+Use for security questions, focused reviews, vulnerability research, or a full codebase audit. It runs a coverage-led audit in six phases — reconnaissance and coverage ledger, coverage-led hunting by isolated hunters, candidate validation, schema-validated findings, independent record verification, and a target-neutral report. Vendored verbatim from [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill) (MIT, upstream commit `c1c8a8c`) and excluded from `vp check`; do not edit the files under `.agents/skills/security-audit/` — re-sync from upstream instead. See [`.agents/skills/security-audit/SKILL.md`](.agents/skills/security-audit/SKILL.md).
 
 ---
 

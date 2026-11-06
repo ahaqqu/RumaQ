@@ -13,6 +13,9 @@ export default defineConfig({
     lint: true,
   },
   fmt: {
+    // Vendored verbatim from cloudflare/security-audit-skill — keep upstream
+    // formatting so re-syncing the skill stays a clean copy.
+    ignorePatterns: ['.agents/skills/security-audit/**'],
     semi: false,
     singleQuote: true,
     trailingComma: 'es5',
@@ -24,6 +27,8 @@ export default defineConfig({
     ],
   },
   lint: {
+    // Vendored verbatim from cloudflare/security-audit-skill (see fmt above).
+    ignorePatterns: ['.agents/skills/security-audit/**'],
     options: {
       // typeAware + typeCheck make `vp check` the single static-check pass:
       // format + lint + full type-check (tsgolint / TypeScript Go).
