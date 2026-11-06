@@ -59,6 +59,9 @@ export default defineConfig({
     // Daily AI-usage retention sweep (issue #353): scheduled handler in
     // gateway.ts deletes ai_usage_events older than one year. Off-peak UTC.
     triggers: [triggers.scheduled({ schedule: '17 3 * * *' })],
+    // Workers Logs persistence (#451): keeps structured ingest-rejection lines
+    // queryable in the dashboard instead of dying with the invocation logs.
+    observability: { enabled: true },
     env: {
       DB: bindings.d1({ name: databaseName, id: databaseId }),
       RECEIPTS: bindings.r2({ name: bucketName }),

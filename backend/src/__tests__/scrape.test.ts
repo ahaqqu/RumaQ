@@ -470,13 +470,18 @@ describe('internal scrape routes (bearer channel)', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
       logs.push(args.map(String).join(' '))
     })
-    const res = await apiApp.request(
-      '/api/internal/scrape/next',
-      { headers: { Authorization: 'Bearer wrong-value' } },
-      fake.env()
-    )
-    expect(res.status).toBe(401)
-    spy.mockRestore()
+    try {
+      const res = await apiApp.request(
+        '/api/internal/scrape/next',
+        { headers: { Authorization: 'Bearer wrong-value' } },
+        fake.env()
+      )
+      expect(res.status).toBe(401)
+    } finally {
+      // Restore even when the status assertion fails — a leaking spy would
+      // silence console.log for every later test in the file.
+      spy.mockRestore()
+    }
     expect(logs).toHaveLength(1)
     const entry = JSON.parse(logs[0]!) as Record<string, unknown>
     expect(entry.evt).toBe('ingest_401')
@@ -499,9 +504,12 @@ describe('internal scrape routes (bearer channel)', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
       logs.push(args.map(String).join(' '))
     })
-    const res = await apiApp.request('/api/internal/scrape/next', {}, env)
-    expect(res.status).toBe(503)
-    spy.mockRestore()
+    try {
+      const res = await apiApp.request('/api/internal/scrape/next', {}, env)
+      expect(res.status).toBe(503)
+    } finally {
+      spy.mockRestore()
+    }
     expect(logs).toHaveLength(1)
     const entry = JSON.parse(logs[0]!) as Record<string, unknown>
     expect(entry.evt).toBe('ingest_503')
