@@ -127,7 +127,7 @@ describe('ProductRenameForm', () => {
     expect(getByTestId('rename-current-name').textContent).toBe('Beras Ramos 5kg')
     expect(nameInput(container).value).toBe('Beras Ramos 5kg')
     expect(getByTestId('rename-preview').textContent).toBe('rename.previewSame')
-    expect(container.textContent).toContain('rename.stats')
+    expect(container.textContent).toContain('rename.observations')
     // Alias evidence: name, store, status and source all visible.
     const aliases = getByTestId('rename-aliases')
     expect(aliases.textContent).toContain('Beras Ramos 5 kg')

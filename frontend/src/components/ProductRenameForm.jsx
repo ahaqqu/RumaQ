@@ -404,10 +404,8 @@ export function ProductRenameForm({ productKey, onClose }) {
           </Chip>
           {identity.stats && (
             <span className="text-xs text-text-muted">
-              {t('rename.stats', {
-                observations: identity.stats.observations ?? 0,
-                stores: identity.stats.stores ?? 0,
-              })}
+              {t('rename.observations', { count: identity.stats.observations ?? 0 })} ·{' '}
+              {t('rename.stores', { count: identity.stats.stores ?? 0 })}
             </span>
           )}
         </div>

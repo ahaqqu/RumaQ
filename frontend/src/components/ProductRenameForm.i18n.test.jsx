@@ -121,6 +121,20 @@ describe('ProductRenameForm real copy (#423)', () => {
     )
   })
 
+  it('pluralizes the observation and store counts', () => {
+    vi.mocked(useProductIdentity).mockReturnValue({
+      data: { ...identity, stats: { observations: 1, stores: 1 } },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
+    const { container } = renderForm()
+    // A provisional product that needs renaming is often a single sighting
+    // (i18next pluralizes on `count`, so the two nouns are separate keys).
+    expect(container.textContent).toContain('1 observation · 1 store')
+    expect(container.textContent).not.toContain('1 observations')
+  })
+
   it('lists a 409 duplicate_name conflict with its source in plain English', () => {
     const { container, getByTestId } = renderForm()
     typeName(container, 'Beras Ramos')
