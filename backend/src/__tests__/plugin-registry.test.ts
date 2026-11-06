@@ -13,6 +13,7 @@ import {
 } from '../plugins/manifests.js'
 import { CORE_GATEWAY_PREFIXES } from '../plugins/core-prefixes.js'
 import { pluginRegistrations, matchPlugin } from '../plugins/registry.js'
+import { createDocumentsPlugin } from '../plugins/documents/app.js'
 import type { PluginManifest, PortId } from '../plugins/types.js'
 import { createMockEnv } from './support/env.js'
 
@@ -156,6 +157,14 @@ describe('plugin registry (#435)', () => {
     expect(
       pluginRegistrations(createMockEnv() as unknown as Parameters<typeof matchPlugin>[1])
     ).not.toBe(registrations)
+  })
+
+  it('a factory without its required port fails at construction, never mid-request (T4 #438)', () => {
+    // The port-injection contract's fail-fast side: ports are wired by the
+    // registry (composeRegistrations), so a missing storage adapter is a
+    // wiring mistake — thrown when the plugin is constructed, not 500s on
+    // some later upload.
+    expect(() => createDocumentsPlugin({ ports: {} })).toThrow('ports.storage')
   })
 
   it('dispatch matches boundary-aware: /api/documents-x never reaches the vault', () => {
