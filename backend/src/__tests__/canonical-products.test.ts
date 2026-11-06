@@ -559,6 +559,41 @@ describe('renameProduct — real-SQLite semantics', () => {
     expect(indexVersion(sqlite)).toBe(1)
   })
 
+  it("allows a case-only rename and promoting the product's own approved alias wording", async () => {
+    const sqlite = freshDb()
+    insertProduct(sqlite)
+    // The product's own approved alias carries the wording an admin promotes
+    // back to canonical after the rename that approved it.
+    insertAlias(sqlite, {
+      id: 'alias-own',
+      productId: 'prod-1',
+      storeSlug: 'superindo',
+      name: 'Beras Ramos 5 KG',
+      status: 'approved',
+    })
+
+    const db = sqliteD1(sqlite)
+    // Case-only: the duplicate guard must exclude the product's own row.
+    const cased = await renameProduct(db, {
+      productKey: 'beras--ramos--5-kg',
+      canonicalName: 'BERAS RAMOS 5 KG',
+      expectedMetadataVersion: 1,
+      actorUserId: 'admin-1',
+    })
+    expect(cased.product.name).toBe('BERAS RAMOS 5 KG')
+
+    // ...and its own approved alias must not block that promotion either.
+    const promoted = await renameProduct(db, {
+      productKey: 'beras--ramos--5-kg',
+      canonicalName: 'Beras Ramos 5 KG',
+      expectedMetadataVersion: 2,
+      actorUserId: 'admin-1',
+    })
+    expect(promoted.product.name).toBe('Beras Ramos 5 KG')
+    expect(promoted.audit).toHaveLength(2)
+    expect(indexVersion(sqlite)).toBe(2)
+  })
+
   it('warns on a similar name (Jaccard >= 0.8) and proceeds when acknowledged', async () => {
     const sqlite = freshDb()
     insertProduct(sqlite)
