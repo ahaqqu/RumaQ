@@ -407,7 +407,8 @@ type Statement = ReturnType<D1Database['prepare']>
 /**
  * One attempt's usage row, as a STATEMENT so a sweep writes every attempt of
  * the tick in ONE db.batch — one subrequest instead of one per attempt (the
- * free plan's 50-subrequest invocation cap counts each statement; thermos A2).
+ * free plan's 50-subrequest cap counts a statement you run on its own, while
+ * a batch is one subrequest; thermos A2).
  *
  * Null when there is nobody to attribute: ai_usage_events.user_id is a NOT NULL
  * FK to users, and an unattributed server-fallback evaluation (no stored admin)
@@ -582,12 +583,7 @@ function groupByVerdict(
   }))
 }
 
-/**
- * Evaluate up to `limit` pending items without a verdict, caching each answer
- * and — in auto mode — applying it when it clears REVIEW_AUTO_MIN_CONFIDENCE.
- * The mode is the caller's: 'assist' never decides, 'auto' decides at/above
- * the floor, 'manual' never calls this function at all (zero AI calls).
- */
+/** One item's contribution to an evaluation run; the run batches the writes. */
 type ItemOutcome = {
   /** The attempt's usage row, when there is an admin to attribute it to. */
   usage: Statement | null
@@ -599,6 +595,12 @@ type ItemOutcome = {
   failed: boolean
 }
 
+/**
+ * Evaluate up to `limit` pending items without a verdict, caching each answer
+ * and — in auto mode — applying it when it clears REVIEW_AUTO_MIN_CONFIDENCE.
+ * The mode is the caller's: 'assist' never decides, 'auto' decides at/above
+ * the floor, 'manual' never calls this function at all (zero AI calls).
+ */
 export async function evaluatePendingReviews(
   env: Env['Bindings'],
   options: {
