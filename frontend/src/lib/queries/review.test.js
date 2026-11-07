@@ -2,13 +2,32 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
-import { useReviewItems, useDecideReview, useUndoReview, selectReviewPageData } from './review.js'
-import { getReviewItems, decideReviewItem, undoReviewDecision } from '../api'
+import {
+  useReviewItems,
+  useDecideReview,
+  useUndoReview,
+  selectReviewPageData,
+  useReviewMode,
+  useSetReviewMode,
+  useEvaluateReview,
+  REVIEW_MODE_KEY,
+} from './review.js'
+import {
+  getReviewItems,
+  decideReviewItem,
+  undoReviewDecision,
+  getReviewMode,
+  setReviewMode,
+  evaluateReviewItems,
+} from '../api'
 
 vi.mock('../api', () => ({
   getReviewItems: vi.fn(),
   decideReviewItem: vi.fn(),
   undoReviewDecision: vi.fn(),
+  getReviewMode: vi.fn(),
+  setReviewMode: vi.fn(),
+  evaluateReviewItems: vi.fn(),
 }))
 
 function reviewItem(id, status = 'pending') {
@@ -156,5 +175,125 @@ describe('useDecideReview / useUndoReview', () => {
     const row = undone.pages[0].items.find((item) => item.id === 'rev-1')
     expect(row.status).toBe('pending')
     expect(row.decidedAt).toBeNull()
+  })
+
+  it('forwards the agreement and marks the optimistic row ai_assist', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    queryClient.setQueryData(
+      ['review', 'all'],
+      infiniteData([page([reviewItem('rev-1')], { pending: 1, approved: 0, rejected: 0 }, 1)])
+    )
+    let resolveRequest
+    vi.mocked(decideReviewItem).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve
+      })
+    )
+    const { result } = renderHook(() => useDecideReview(), {
+      wrapper: createWrapper(queryClient),
+    })
+    result.current.mutate({ id: 'rev-1', decision: 'approved', agreement: 'agreed' })
+
+    await waitFor(() => {
+      const row = queryClient.getQueryData(['review', 'all']).pages[0].items[0]
+      expect(row.status).toBe('approved')
+      expect(row.decidedSource).toBe('ai_assist')
+    })
+    expect(decideReviewItem).toHaveBeenCalledWith('rev-1', 'approved', 'agreed')
+
+    resolveRequest({ item: reviewItem('rev-1', 'approved') })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+  })
+
+  it('marks a plain decision human and sends no agreement', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    queryClient.setQueryData(
+      ['review', 'all'],
+      infiniteData([page([reviewItem('rev-1')], { pending: 1, approved: 0, rejected: 0 }, 1)])
+    )
+    vi.mocked(decideReviewItem).mockResolvedValue({ item: reviewItem('rev-1', 'rejected') })
+    const { result } = renderHook(() => useDecideReview(), {
+      wrapper: createWrapper(queryClient),
+    })
+    result.current.mutate({ id: 'rev-1', decision: 'rejected' })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(decideReviewItem).toHaveBeenCalledWith('rev-1', 'rejected', undefined)
+    const row = queryClient.getQueryData(['review', 'all']).pages[0].items[0]
+    expect(row.status).toBe('rejected')
+    expect(row.decidedSource).toBe('human')
+  })
+})
+
+describe('AI review mode and evaluation (issue #484)', () => {
+  beforeEach(() => {
+    vi.mocked(getReviewMode).mockReset()
+    vi.mocked(setReviewMode).mockReset()
+    vi.mocked(evaluateReviewItems).mockReset()
+  })
+
+  it('loads the persisted mode and the provider-configured flag', async () => {
+    vi.mocked(getReviewMode).mockResolvedValue({ mode: 'auto', aiConfigured: true })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { result } = renderHook(() => useReviewMode(), {
+      wrapper: createWrapper(queryClient),
+    })
+    await waitFor(() => expect(result.current.data).toEqual({ mode: 'auto', aiConfigured: true }))
+    expect(getReviewMode).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not fetch the mode when the surface is disabled', () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    renderHook(() => useReviewMode({ enabled: false }), {
+      wrapper: createWrapper(queryClient),
+    })
+    expect(getReviewMode).not.toHaveBeenCalled()
+  })
+
+  it('persists a mode switch, seeds the cache, and invalidates the queue', async () => {
+    vi.mocked(setReviewMode).mockResolvedValue({ mode: 'auto', aiConfigured: true })
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+    const { result } = renderHook(() => useSetReviewMode(), {
+      wrapper: createWrapper(queryClient),
+    })
+    result.current.mutate('auto')
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(setReviewMode).toHaveBeenCalledWith('auto')
+    expect(queryClient.getQueryData(REVIEW_MODE_KEY)).toEqual({
+      mode: 'auto',
+      aiConfigured: true,
+    })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['review'] })
+  })
+
+  it('evaluates the requested window and invalidates the queue on settle', async () => {
+    vi.mocked(evaluateReviewItems).mockResolvedValue({
+      evaluated: 5,
+      applied: 0,
+      mode: 'assist',
+      aiConfigured: true,
+    })
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+    const { result } = renderHook(() => useEvaluateReview(), {
+      wrapper: createWrapper(queryClient),
+    })
+    result.current.mutate(10)
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(evaluateReviewItems).toHaveBeenCalledWith(10)
+    // The settle invalidation is what refetches the queue with the new
+    // verdicts (and, in auto mode, the decisions the sweep applied).
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['review'] })
   })
 })

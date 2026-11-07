@@ -16,6 +16,9 @@ vi.mock('../lib/queries/review.js', () => ({
   useReviewItems: vi.fn(),
   useDecideReview: vi.fn(),
   useUndoReview: vi.fn(),
+  useReviewMode: vi.fn(),
+  useSetReviewMode: vi.fn(),
+  useEvaluateReview: vi.fn(),
 }))
 
 vi.mock('../lib/api', async (importOriginal) => ({
@@ -31,13 +34,22 @@ vi.mock('../lib/queries/products.js', () => ({
 
 import { useMe } from '../lib/queries/me.js'
 import { usePriceSources } from '../lib/queries/index.js'
-import { useReviewItems, useDecideReview, useUndoReview } from '../lib/queries/review.js'
+import {
+  useReviewItems,
+  useDecideReview,
+  useUndoReview,
+  useReviewMode,
+  useSetReviewMode,
+  useEvaluateReview,
+} from '../lib/queries/review.js'
 import { useProductIdentity, useRenameProduct, useRevertRename } from '../lib/queries/products.js'
 import { fetchReviewExport } from '../lib/api'
 
 const decideMutate = vi.fn()
 const undoMutate = vi.fn()
 const fetchNextPage = vi.fn()
+const setModeMutate = vi.fn()
+const evaluateMutate = vi.fn()
 
 const reviewItem = {
   id: '31b35444-4c2b-4b8e-9a4f-0d2c6e7f8a90',
@@ -114,6 +126,22 @@ describe('AdminReview', () => {
     vi.mocked(useReviewItems).mockReturnValue(mockReviewData())
     vi.mocked(useDecideReview).mockReturnValue({ mutate: decideMutate, isPending: false })
     vi.mocked(useUndoReview).mockReturnValue({ mutate: undoMutate, isPending: false })
+    // Issue #484 defaults: AI is on, mode is the backend default (assist).
+    vi.mocked(useReviewMode).mockReturnValue({
+      data: { mode: 'assist', aiConfigured: true },
+      isLoading: false,
+      isError: false,
+    })
+    vi.mocked(useSetReviewMode).mockReturnValue({
+      mutate: setModeMutate,
+      isPending: false,
+      isError: false,
+    })
+    vi.mocked(useEvaluateReview).mockReturnValue({
+      mutate: evaluateMutate,
+      isPending: false,
+      isError: false,
+    })
     vi.mocked(useProductIdentity).mockReturnValue({
       data: {
         product: {
@@ -556,6 +584,349 @@ describe('AdminReview', () => {
       expect(container.textContent).not.toContain('rename.action')
       expect(container.textContent).not.toContain('rename.frozenPairNote')
       expect(useProductIdentity).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('issue #484 — AI review UI', () => {
+    const VERDICT = {
+      verdict: 'same',
+      confidence: 0.87,
+      reason: 'Both are the same brand and 5 kg pack.',
+      model: 'gemini-2.5-flash',
+      humanAgreement: null,
+    }
+
+    function modeData(data) {
+      return { data, isLoading: false, isError: false }
+    }
+
+    function radios(container) {
+      return [...container.querySelectorAll('input[name="review-ai-mode"]')]
+    }
+
+    it('renders the three modes, defaults to approve-with-AI, and persists a switch', () => {
+      const { container } = renderAdmin()
+      const inputs = radios(container)
+      expect(inputs.map((input) => input.value)).toEqual(['manual', 'assist', 'auto'])
+      // Every option carries its one-line explanation.
+      expect(container.textContent).toContain('review.aiModeManual')
+      expect(container.textContent).toContain('review.aiModeManualDesc')
+      expect(container.textContent).toContain('review.aiModeAssist')
+      expect(container.textContent).toContain('review.aiModeAssistDesc')
+      expect(container.textContent).toContain('review.aiModeAuto')
+      expect(container.textContent).toContain('review.aiModeAutoDesc')
+      expect(inputs.filter((input) => input.checked).map((input) => input.value)).toEqual([
+        'assist',
+      ])
+
+      fireEvent.click(inputs[2])
+      expect(setModeMutate).toHaveBeenCalledWith('auto')
+    })
+
+    it('does not re-PUT the mode that is already selected', () => {
+      const { container } = renderAdmin()
+      fireEvent.click(radios(container)[1])
+      expect(setModeMutate).not.toHaveBeenCalled()
+    })
+
+    it('disables the selector while the mode is saving', () => {
+      vi.mocked(useSetReviewMode).mockReturnValue({
+        mutate: setModeMutate,
+        isPending: true,
+        isError: false,
+      })
+      const { container } = renderAdmin()
+      for (const input of radios(container)) expect(input.disabled).toBe(true)
+      expect(container.textContent).toContain('review.aiModeSaving')
+    })
+
+    it('shows the unconfigured banner and makes no evaluate call', () => {
+      vi.mocked(useReviewMode).mockReturnValue(modeData({ mode: 'assist', aiConfigured: false }))
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('review.aiNotConfigured')
+      expect(evaluateMutate).not.toHaveBeenCalled()
+      expect(container.textContent).not.toContain('review.aiEvaluateMore')
+      // The selector stays usable — a missing key must not trap the admin.
+      for (const input of radios(container)) expect(input.disabled).toBe(false)
+    })
+
+    it('surfaces a failed mode load with a retry instead of vanishing', () => {
+      const refetch = vi.fn()
+      vi.mocked(useReviewMode).mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        refetch,
+      })
+      const { container, getByText } = renderAdmin()
+      // Not silence: gating the whole block on `modeQuery.data` used to make a
+      // failed GET /review/mode indistinguishable from a page with no AI
+      // surface at all (thermos B1).
+      expect(container.textContent).toContain('review.aiModeUnavailable')
+      expect(container.textContent).not.toContain('review.aiModeLegend')
+      // The retry the failure deserves, on the same inline surface the export
+      // and rename failures use.
+      fireEvent.click(getByText('review.aiModeRetry'))
+      expect(refetch).toHaveBeenCalledTimes(1)
+      // A mode failure never touches the queue itself.
+      expect(container.textContent).toContain('review.approve')
+      expect(container.textContent).toContain('review.reject')
+    })
+
+    it('renders the verdict chip, exposes the reason, and maps Agree to the verdict', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({ items: [{ ...reviewItem, aiVerdict: VERDICT }] })
+      )
+      const { container, getByText } = renderAdmin()
+      expect(container.textContent).toContain('review.aiVerdict')
+      expect(container.textContent).toContain('review.aiModel')
+      // The reason is collapsed until asked for.
+      expect(container.textContent).not.toContain(VERDICT.reason)
+      fireEvent.click(getByText('review.aiReasonShow'))
+      expect(container.textContent).toContain(VERDICT.reason)
+      fireEvent.click(getByText('review.aiReasonHide'))
+      expect(container.textContent).not.toContain(VERDICT.reason)
+
+      fireEvent.click(getByText('review.aiAgree'))
+      expect(decideMutate).toHaveBeenCalledWith({
+        id: reviewItem.id,
+        decision: 'approved',
+        agreement: 'agreed',
+      })
+    })
+
+    it('maps Disagree to the opposite decision with the disagreed agreement', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({ items: [{ ...reviewItem, aiVerdict: VERDICT }] })
+      )
+      const { getByText } = renderAdmin()
+      fireEvent.click(getByText('review.aiDisagree'))
+      expect(decideMutate).toHaveBeenCalledWith({
+        id: reviewItem.id,
+        decision: 'rejected',
+        agreement: 'disagreed',
+      })
+    })
+
+    it('maps a "different" verdict the other way round', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            {
+              ...reviewItem,
+              aiVerdict: { ...VERDICT, verdict: 'different', confidence: 0.62 },
+            },
+          ],
+        })
+      )
+      const { getByText } = renderAdmin()
+      fireEvent.click(getByText('review.aiAgree'))
+      expect(decideMutate).toHaveBeenCalledWith({
+        id: reviewItem.id,
+        decision: 'rejected',
+        agreement: 'agreed',
+      })
+      fireEvent.click(getByText('review.aiDisagree'))
+      expect(decideMutate).toHaveBeenCalledWith({
+        id: reviewItem.id,
+        decision: 'approved',
+        agreement: 'disagreed',
+      })
+    })
+
+    it('disables Agree/Disagree and shows progress while the decision saves', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({ items: [{ ...reviewItem, aiVerdict: VERDICT }] })
+      )
+      vi.mocked(useDecideReview).mockReturnValue({
+        mutate: decideMutate,
+        isPending: true,
+        variables: { id: reviewItem.id, decision: 'approved', agreement: 'agreed' },
+      })
+      const { container, getByText } = renderAdmin()
+      expect(getByText('review.aiAgree').disabled).toBe(true)
+      expect(getByText('review.aiDisagree').disabled).toBe(true)
+      expect(container.textContent).toContain('review.aiRecording')
+    })
+
+    it('auto mode hides Agree/Disagree and shows AI provenance for decided rows', () => {
+      vi.mocked(useReviewMode).mockReturnValue(modeData({ mode: 'auto', aiConfigured: true }))
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            { ...reviewItem, aiVerdict: VERDICT },
+            {
+              ...reviewItem,
+              id: 'aaaa1111-2222-4333-8444-555566667777',
+              status: 'approved',
+              decidedSource: 'ai_auto',
+            },
+            {
+              ...reviewItem,
+              id: 'bbbb1111-2222-4333-8444-555566667777',
+              status: 'rejected',
+              decidedSource: 'ai_assist',
+            },
+            {
+              ...reviewItem,
+              id: 'cccc1111-2222-4333-8444-555566667777',
+              status: 'approved',
+              decidedSource: 'human',
+            },
+          ],
+        })
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).not.toContain('review.aiAgree')
+      expect(container.textContent).not.toContain('review.aiDisagree')
+      expect(container.textContent).toContain('review.aiVerdict')
+      expect(container.textContent).toContain('review.aiProvenanceAuto')
+      expect(container.textContent).toContain('review.aiProvenanceAssist')
+      expect(container.textContent).toContain('review.aiProvenanceHuman')
+      // Auto mode says when the cron evaluates.
+      expect(container.textContent).toContain('review.aiAutoCronNote')
+    })
+
+    it('keeps the verdict block off a decided row that still carries its verdict', () => {
+      // The list LEFT JOINs the cached verdict with no status filter
+      // (backend/src/lib/match-review.ts), so the row that comes back after an
+      // assisted decision is BOTH approved and carrying aiVerdict. The
+      // provenance chip is the whole story then — re-rendering the verdict
+      // block would offer Agree/Disagree on an already-decided row and a second
+      // click would rewrite the decision and its human_agreement (thermos A2).
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            {
+              ...reviewItem,
+              status: 'approved',
+              decidedSource: 'ai_assist',
+              aiVerdict: VERDICT,
+            },
+          ],
+        })
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('review.aiProvenanceAssist')
+      expect(container.textContent).not.toContain('review.aiVerdict')
+      expect(container.textContent).not.toContain('review.aiAgree')
+      expect(container.textContent).not.toContain('review.aiDisagree')
+      // The reason disclosure is part of the verdict block, not the chip row.
+      expect(container.textContent).not.toContain('review.aiReasonShow')
+    })
+
+    it('runs one bounded evaluation on first load when pending rows lack verdicts', async () => {
+      const view = renderAdmin()
+      await waitFor(() => expect(evaluateMutate).toHaveBeenCalledWith(5))
+      expect(evaluateMutate).toHaveBeenCalledTimes(1)
+      // A plain re-render must not fire a second probe.
+      view.rerender(
+        React.createElement(
+          QueryClientProvider,
+          { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+          React.createElement(AdminReview, null)
+        )
+      )
+      expect(evaluateMutate).toHaveBeenCalledTimes(1)
+      // Nor may the refetch the settle-invalidation triggers. That refetch
+      // lands a NEW list payload whose rows are still waiting (the verdicts
+      // have not arrived yet) — the exact shape that would re-fire the effect,
+      // and re-bill, if the mount-scoped ref were ever dropped. A re-render
+      // over the same mocked object proves nothing here (thermos A1).
+      vi.mocked(useReviewItems).mockReturnValue(mockReviewData())
+      view.rerender(
+        React.createElement(
+          QueryClientProvider,
+          { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+          React.createElement(AdminReview, null)
+        )
+      )
+      expect(evaluateMutate).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not evaluate when every pending row already has a verdict', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({ items: [{ ...reviewItem, aiVerdict: VERDICT }] })
+      )
+      renderAdmin()
+      expect(evaluateMutate).not.toHaveBeenCalled()
+      expect(document.body.textContent).not.toContain('review.aiWaiting')
+    })
+
+    it('does not count taxonomy self-pairs as waiting for AI', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({ items: [{ ...reviewItem, reason: 'taxonomy' }] })
+      )
+      const { container } = renderAdmin()
+      expect(evaluateMutate).not.toHaveBeenCalled()
+      expect(container.textContent).not.toContain('review.aiWaiting')
+    })
+
+    it('shows the waiting hint and evaluates 10 more on demand', async () => {
+      const { container, getByText } = renderAdmin()
+      expect(container.textContent).toContain('review.aiWaiting')
+      await waitFor(() => expect(evaluateMutate).toHaveBeenCalledWith(5))
+      evaluateMutate.mockClear()
+      fireEvent.click(getByText('review.aiEvaluateMore'))
+      expect(evaluateMutate).toHaveBeenCalledWith(10)
+    })
+
+    it('shows an evaluating status and disables the button while running', () => {
+      vi.mocked(useEvaluateReview).mockReturnValue({
+        mutate: evaluateMutate,
+        isPending: true,
+        isError: false,
+      })
+      const { container, getByText } = renderAdmin()
+      expect(getByText('review.aiEvaluateMore').disabled).toBe(true)
+      expect(container.textContent).toContain('review.aiEvaluating')
+    })
+
+    it('surfaces evaluation and mode-save failures inline', () => {
+      vi.mocked(useEvaluateReview).mockReturnValue({
+        mutate: evaluateMutate,
+        isPending: false,
+        isError: true,
+      })
+      vi.mocked(useSetReviewMode).mockReturnValue({
+        mutate: setModeMutate,
+        isPending: false,
+        isError: true,
+      })
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('review.aiEvaluateFailed')
+      expect(container.textContent).toContain('review.aiModeFailed')
+    })
+
+    it('manual mode renders no AI verdict/evaluate UI and makes no AI call', () => {
+      vi.mocked(useReviewMode).mockReturnValue(modeData({ mode: 'manual', aiConfigured: true }))
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({ items: [{ ...reviewItem, aiVerdict: VERDICT }] })
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).not.toContain('review.aiVerdict')
+      expect(container.textContent).not.toContain('review.aiAgree')
+      expect(container.textContent).not.toContain('review.aiEvaluateMore')
+      expect(container.textContent).not.toContain('review.aiWaiting')
+      expect(evaluateMutate).not.toHaveBeenCalled()
+      // The ordinary human decision path stays available.
+      expect(container.textContent).toContain('review.approve')
+      expect(container.textContent).toContain('review.reject')
+    })
+
+    it('shows nothing AI-related to a non-admin and gates the mode query', () => {
+      vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
+      const { container } = renderAdmin()
+      expect(useReviewMode).toHaveBeenCalledWith({ enabled: false })
+      for (const key of [
+        'review.aiModeLegend',
+        'review.aiVerdict',
+        'review.aiEvaluateMore',
+        'review.aiProvenanceAuto',
+      ]) {
+        expect(container.textContent).not.toContain(key)
+      }
+      expect(evaluateMutate).not.toHaveBeenCalled()
     })
   })
 })

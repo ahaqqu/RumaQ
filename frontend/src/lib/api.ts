@@ -394,6 +394,10 @@ export function getScrapeEvents(
 
 export type ReviewStatusFilter = 'pending' | 'approved' | 'rejected' | 'all'
 export type ReviewDecision = 'approved' | 'rejected'
+// Issue #484: how the AI assists the queue, and how a human's decision
+// relates to the cached AI verdict (the agreement history).
+export type ReviewMode = 'manual' | 'assist' | 'auto'
+export type ReviewAgreement = 'agreed' | 'disagreed'
 
 export function getReviewItems(
   { status, limit, offset }: { status?: ReviewStatusFilter; limit?: number; offset?: number } = {},
@@ -404,10 +408,36 @@ export function getReviewItems(
   )
 }
 
-export function decideReviewItem(id: string, decision: ReviewDecision): Promise<unknown> {
+export function decideReviewItem(
+  id: string,
+  decision: ReviewDecision,
+  agreement?: ReviewAgreement
+): Promise<unknown> {
   return unwrap(
-    client.POST('/api/admin/review/{id}/decision', { params: { path: { id } }, body: { decision } })
+    client.POST('/api/admin/review/{id}/decision', {
+      params: { path: { id } },
+      // The field is optional on the wire: a plain decision carries no
+      // agreement, and an absent key is what the backend treats as plain
+      // human provenance (never an empty-string agreement).
+      body: agreement ? { decision, agreement } : { decision },
+    })
   )
+}
+
+// AI review (issue #484, backend PR 1): the global mode switch and the
+// bounded on-demand evaluation. Neither is ever called on the list path —
+// the queue renders cached verdicts only. Manual mode is the zero-call gate
+// (the evaluate route also refuses it server-side).
+export function getReviewMode(signal?: AbortSignal): Promise<unknown> {
+  return unwrap(client.GET('/api/admin/review/mode', { signal }))
+}
+
+export function setReviewMode(mode: ReviewMode): Promise<unknown> {
+  return unwrap(client.PUT('/api/admin/review/mode', { body: { mode } }))
+}
+
+export function evaluateReviewItems(limit: number): Promise<unknown> {
+  return unwrap(client.POST('/api/admin/review/evaluate', { body: { limit } }))
 }
 
 export function undoReviewDecision(id: string): Promise<unknown> {

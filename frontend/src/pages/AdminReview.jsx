@@ -1,9 +1,16 @@
-import { useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from '@tanstack/react-router'
 import { useMe } from '../lib/queries/me.js'
 import { usePriceSources } from '../lib/queries/index.js'
-import { useReviewItems, useDecideReview, useUndoReview } from '../lib/queries/review.js'
+import {
+  useReviewItems,
+  useDecideReview,
+  useUndoReview,
+  useReviewMode,
+  useSetReviewMode,
+  useEvaluateReview,
+} from '../lib/queries/review.js'
 import { fetchReviewExport } from '../lib/api'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
@@ -12,14 +19,57 @@ import { Button } from '../components/Button.jsx'
 import { ProductRenameForm } from '../components/ProductRenameForm.jsx'
 import { formatPrice } from '../lib/pricesHelpers.js'
 import { cn } from '../lib/cn.js'
-import { IconWarning, IconReview, IconDownload } from '../components/icons.jsx'
+import { IconWarning, IconReview, IconDownload, IconBolt } from '../components/icons.jsx'
 
 // Match review queue (issue #294): a triage work queue for pairs the matcher
 // flagged — see the actual candidates side by side, record a verdict, keep
 // the record. v1 decisions change nothing downstream; the muted note on the
 // page says so (docs/294-design-pm.md §4).
+//
+// Issue #484 (frontend, PR 2 of 2) adds the AI layer on top: the global
+// manual/assist/auto mode switch, the cached verdict chips, assist-mode
+// agree/disagree, and provenance on decided rows. Manual mode is a hard
+// zero-call gate — the page renders no verdict/evaluate UI there, and the
+// backend refuses evaluation in that mode too.
 
 const FILTERS = ['pending', 'approved', 'rejected', 'all']
+
+// The three modes, in the owner's order (issue #484). `assist` is the
+// backend default; the UI mirrors it while the mode query is in flight.
+const REVIEW_MODES = ['manual', 'assist', 'auto']
+const MODE_COPY_SUFFIX = { manual: 'Manual', assist: 'Assist', auto: 'Auto' }
+const DEFAULT_MODE = 'assist'
+
+// Bounded evaluation sizes (backend caps: REVIEW_EVALUATE_MAX = 10). The
+// first-load probe is small so an open review page never bills ten calls
+// before the admin has asked for anything.
+const EVALUATE_ON_LOAD_LIMIT = 5
+const EVALUATE_MORE_LIMIT = 10
+
+// Mirrors lib/review-ai.ts's REVIEW_TAXONOMY_REASON. A taxonomy flag is a
+// SELF-pair (the classifier's question, not a product-identity one) and the
+// reviewer skips it intentionally: it never gets a verdict, so counting it
+// as "waiting for AI" (or letting it trigger an evaluation) would be a lie.
+const TAXONOMY_REASON = 'taxonomy'
+
+function isWaitingForAi(item) {
+  return item.status === 'pending' && !item.aiVerdict && item.reason !== TAXONOMY_REASON
+}
+
+// The assist contract (issue #484): Agree records the verdict's OWN decision;
+// Disagree records the opposite. The agreement flag is what the backend
+// stores as human_agreement and turns into decided_source='ai_assist'.
+function assistedDecision(verdict, agreement) {
+  const same = verdict.verdict === 'same'
+  const asVerdict = agreement === 'agreed' ? same : !same
+  return asVerdict ? 'approved' : 'rejected'
+}
+
+const PROVENANCE_KEYS = {
+  human: 'review.aiProvenanceHuman',
+  ai_assist: 'review.aiProvenanceAssist',
+  ai_auto: 'review.aiProvenanceAuto',
+}
 
 // The two column labels (#480) share one treatment; their ids are the
 // aria-labelledby targets every row's sides point at.
@@ -186,12 +236,144 @@ function SideCard({
   )
 }
 
+// The 3-way mode switch (issue #484). Native radios in labels: keyboard
+// reachable, arrow-key group navigation for free, and the selected mode is
+// announced. `saving` is the mutation in flight — the fieldset disables the
+// whole group so a double-click can never race two PUTs.
+function ReviewModeSelector({ mode, saving, onChange }) {
+  const { t } = useTranslation()
+  return (
+    <fieldset disabled={saving} className="min-w-0">
+      <legend className="text-xs font-semibold text-text-muted uppercase tracking-wide">
+        {t('review.aiModeLegend')}
+      </legend>
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        {REVIEW_MODES.map((option) => {
+          const suffix = MODE_COPY_SUFFIX[option]
+          const selected = option === mode
+          return (
+            <label
+              key={option}
+              className={cn(
+                'flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 transition-colors',
+                selected
+                  ? 'border-accent-soft-border bg-accent-soft'
+                  : 'border-border bg-surface-raised hover:bg-surface-sunken',
+                saving && 'cursor-not-allowed opacity-60'
+              )}
+            >
+              <input
+                type="radio"
+                name="review-ai-mode"
+                value={option}
+                checked={selected}
+                disabled={saving}
+                onChange={() => onChange(option)}
+                className="mt-1 h-4 w-4 shrink-0 accent-accent"
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium leading-snug">
+                  {t(`review.aiMode${suffix}`)}
+                </span>
+                <span className="block text-xs text-text-muted leading-snug mt-0.5">
+                  {t(`review.aiMode${suffix}Desc`)}
+                </span>
+              </span>
+            </label>
+          )
+        })}
+      </div>
+      {saving && (
+        <p className="mt-2 text-xs text-text-muted" role="status">
+          {t('review.aiModeSaving')}
+        </p>
+      )}
+    </fieldset>
+  )
+}
+
+// The cached AI verdict for one pending row (issue #484). The chip carries
+// verdict + confidence; the model and the reason are one interaction away
+// (the reason is display text, not evidence — it stays collapsed by
+// default). In assist mode the human accepts or rejects the AI's call here;
+// auto mode has already applied it, so it gets no action buttons.
+function AiVerdictBlock({ verdict, mode, busy, saving, onAgree, onDisagree }) {
+  const { t } = useTranslation()
+  const [reasonOpen, setReasonOpen] = useState(false)
+  const confidence = Math.round((verdict.confidence ?? 0) * 100)
+  const label = t(verdict.verdict === 'same' ? 'review.aiSame' : 'review.aiDifferent')
+  const help = [
+    label,
+    verdict.reason,
+    verdict.model ? t('review.aiModel', { model: verdict.model }) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-surface-sunken/40 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Chip variant="accent" title={help || undefined}>
+          {t('review.aiVerdict', { verdict: label, confidence })}
+        </Chip>
+        {verdict.model && (
+          <span className="text-xs text-text-muted">
+            {t('review.aiModel', { model: verdict.model })}
+          </span>
+        )}
+        {verdict.reason && (
+          <button
+            type="button"
+            className="text-xs text-accent hover:underline"
+            aria-expanded={reasonOpen}
+            onClick={() => setReasonOpen((open) => !open)}
+          >
+            {t(reasonOpen ? 'review.aiReasonHide' : 'review.aiReasonShow')}
+          </button>
+        )}
+      </div>
+      {reasonOpen && verdict.reason && (
+        <p className="mt-1.5 text-xs text-text-muted leading-snug">{verdict.reason}</p>
+      )}
+      {mode === 'assist' && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={busy}
+            title={t('review.aiAgreeHint')}
+            onClick={onAgree}
+          >
+            {t('review.aiAgree')}
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            disabled={busy}
+            title={t('review.aiDisagreeHint')}
+            onClick={onDisagree}
+          >
+            {t('review.aiDisagree')}
+          </Button>
+          {saving && (
+            <span role="status" className="text-xs text-text-muted">
+              {t('review.aiRecording')}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ReviewRow({
   item,
   sourceNames,
   itemSideLabelId,
   entrySideLabelId,
+  mode,
+  aiEnabled,
   busy,
+  saving,
   onDecide,
   onUndo,
 }) {
@@ -281,7 +463,22 @@ function ReviewRow({
           {t('review.runDetail')}
         </Link>
       </div>
-      <div className="mt-3 flex items-center gap-2">
+      {/* Issue #484: the cached verdict is shown for PENDING rows only — a
+          decided row's provenance chip below says who decided it. Manual mode
+          (aiEnabled=false) renders no verdict UI at all. */}
+      {!decided && aiEnabled && item.aiVerdict && (
+        <AiVerdictBlock
+          verdict={item.aiVerdict}
+          mode={mode}
+          busy={busy}
+          saving={saving}
+          onAgree={() => onDecide(item.id, assistedDecision(item.aiVerdict, 'agreed'), 'agreed')}
+          onDisagree={() =>
+            onDecide(item.id, assistedDecision(item.aiVerdict, 'disagreed'), 'disagreed')
+          }
+        />
+      )}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         {decided ? (
           <>
             <span
@@ -293,6 +490,12 @@ function ReviewRow({
               {item.status === 'approved' ? '✓' : '✗'}{' '}
               {t(item.status === 'approved' ? 'review.approved' : 'review.rejected')}
             </span>
+            {/* Issue #484 provenance: who produced this decision. The chip is
+                the record, shown in every mode — hiding a past AI decision
+                because the mode changed now would misrepresent the row. */}
+            {PROVENANCE_KEYS[item.decidedSource] && (
+              <Chip variant="loc">{t(PROVENANCE_KEYS[item.decidedSource])}</Chip>
+            )}
             <Button variant="ghost" size="sm" disabled={busy} onClick={() => onUndo(item.id)}>
               {t('review.undo')}
             </Button>
@@ -347,6 +550,12 @@ export function AdminReview() {
     useReviewItems(status)
   const decide = useDecideReview()
   const undo = useUndoReview()
+  // Issue #484: the mode query is admin-gated up front (enabled:false keeps a
+  // non-admin from ever issuing the request; the page itself returns the
+  // forbidden state below).
+  const modeQuery = useReviewMode({ enabled: isAdmin })
+  const setMode = useSetReviewMode()
+  const evaluate = useEvaluateReview()
   const { data: sources } = usePriceSources()
   const sourceNames = useMemo(
     () => Object.fromEntries((sources ?? []).map((s) => [s.slug, s.name])),
@@ -355,6 +564,30 @@ export function AdminReview() {
   const [exporting, setExporting] = useState(false)
   const [exportFailed, setExportFailed] = useState(false)
   const busy = decide.isPending || undo.isPending
+  const savingItemId = decide.isPending ? decide.variables?.id : null
+  const items = data?.items ?? []
+  // `assist` mirrors the backend default while the mode query is in flight;
+  // AI UI waits for real data (aiConfigured is a server answer, never assumed).
+  const mode = modeQuery.data?.mode ?? DEFAULT_MODE
+  const aiConfigured = modeQuery.data?.aiConfigured === true
+  const aiEnabled = mode !== 'manual' && aiConfigured
+  const waitingForAi = useMemo(() => items.filter(isWaitingForAi), [items])
+
+  // First-load probe (issue #484): when AI is on and the queue has items the
+  // reviewer has not seen, run ONE bounded evaluation (limit 5) in the
+  // background and let the mutation's invalidation refetch the verdicts.
+  // Non-blocking; a ref makes it once-per-mount even though the mutation
+  // result object changes identity across renders. Manual mode returns
+  // before the ref is set, so switching manual → assist later still probes.
+  const autoEvaluateStarted = useRef(false)
+  const evaluateMutate = evaluate.mutate
+  useEffect(() => {
+    if (autoEvaluateStarted.current) return
+    if (!isAdmin || !modeQuery.data || !aiEnabled) return
+    if (waitingForAi.length === 0) return
+    autoEvaluateStarted.current = true
+    evaluateMutate(EVALUATE_ON_LOAD_LIMIT)
+  }, [isAdmin, modeQuery.data, aiEnabled, waitingForAi, evaluateMutate])
 
   if (!isAdmin) {
     return (
@@ -368,10 +601,14 @@ export function AdminReview() {
     )
   }
 
-  const items = data?.items ?? []
   const counts = data?.counts ?? { pending: 0, approved: 0, rejected: 0 }
   const filteredTotal = data?.filteredTotal ?? 0
   const total = counts.pending + counts.approved + counts.rejected
+
+  function handleModeChange(next) {
+    if (next === mode || setMode.isPending) return
+    setMode.mutate(next)
+  }
 
   async function handleExport() {
     setExporting(true)
@@ -416,6 +653,75 @@ export function AdminReview() {
           )}
         </div>
       </div>
+
+      {/* Issue #484: the AI mode block sits in the review header, above the
+          counts. The selector is always usable (a misconfigured provider is a
+          warning, never a lock); the evaluate controls exist only when AI can
+          actually run, and never in manual mode. */}
+      {modeQuery.data ? (
+        <Panel className="mb-4">
+          <PanelBody className="flex flex-col gap-3">
+            <ReviewModeSelector
+              mode={mode}
+              saving={setMode.isPending}
+              onChange={handleModeChange}
+            />
+            {!aiConfigured && (
+              <p className="text-xs text-text-muted" role="status">
+                {t('review.aiNotConfigured')}
+              </p>
+            )}
+            {setMode.isError && (
+              <p className="text-xs text-danger" role="alert">
+                {t('review.aiModeFailed')}
+              </p>
+            )}
+            {aiEnabled && (
+              <div className="flex flex-wrap items-center gap-3 text-xs text-text-muted">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={evaluate.isPending}
+                  onClick={() => evaluate.mutate(EVALUATE_MORE_LIMIT)}
+                >
+                  <IconBolt size={16} className={cn(evaluate.isPending && 'animate-spin')} />
+                  {t('review.aiEvaluateMore')}
+                </Button>
+                {evaluate.isPending ? (
+                  <span role="status">{t('review.aiEvaluating')}</span>
+                ) : waitingForAi.length > 0 ? (
+                  <span>{t('review.aiWaiting', { count: waitingForAi.length })}</span>
+                ) : null}
+                {mode === 'auto' && <span>{t('review.aiAutoCronNote')}</span>}
+                {evaluate.isError && (
+                  <span className="text-danger" role="alert">
+                    {t('review.aiEvaluateFailed')}
+                  </span>
+                )}
+              </div>
+            )}
+          </PanelBody>
+        </Panel>
+      ) : modeQuery.isError ? (
+        // Thermos B1: the mode read is the only request on this page whose
+        // failure used to be invisible — gating the whole block on
+        // `modeQuery.data` made a 500 look like a build without any AI
+        // surface, so the admin could neither see the switch nor retry it.
+        // Same inline surface the rename form uses for its load failure
+        // (#423): an alert plus a retry, never a bare absence.
+        <Panel className="mb-4">
+          <PanelBody>
+            <p role="alert" className="text-xs text-danger">
+              {t('review.aiModeUnavailable')}
+            </p>
+            <div className="mt-2">
+              <Button variant="ghost" size="sm" onClick={() => modeQuery.refetch()}>
+                {t('review.aiModeRetry')}
+              </Button>
+            </div>
+          </PanelBody>
+        </Panel>
+      ) : null}
 
       {/* Exact server-computed counts — unaffected by paging or the filter. */}
       <div className="mb-4 flex flex-wrap gap-2">
@@ -494,8 +800,13 @@ export function AdminReview() {
                   sourceNames={sourceNames}
                   itemSideLabelId={itemSideLabelId}
                   entrySideLabelId={entrySideLabelId}
+                  mode={mode}
+                  aiEnabled={aiEnabled}
                   busy={busy}
-                  onDecide={(id, decision) => decide.mutate({ id, decision })}
+                  saving={savingItemId === item.id}
+                  onDecide={(id, decision, agreement) =>
+                    decide.mutate(agreement ? { id, decision, agreement } : { id, decision })
+                  }
                   onUndo={(id) => undo.mutate({ id })}
                 />
               ))}
