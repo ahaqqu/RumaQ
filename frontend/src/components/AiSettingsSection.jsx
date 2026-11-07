@@ -348,8 +348,11 @@ export function AiSettingsSection({ isOnline }) {
                     highlight={result.ok ? 'ok' : 'warn'}
                     desc={
                       result.ok
-                        ? t('settings.ai.testOk')
-                        : t('settings.ai.testFailed', { code: result.code ?? 'provider_error' })
+                        ? t('settings.ai.testOk', { label: provider.label })
+                        : t('settings.ai.testFailed', {
+                            label: provider.label,
+                            code: result.code ?? 'provider_error',
+                          })
                     }
                   />
                 )

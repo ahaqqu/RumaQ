@@ -1809,18 +1809,23 @@ apiApp.post(
   }),
   async (c) => {
     const householdId = c.get('householdId')
-    const { limited, retryAfter } = isRateLimited(
-      `ai-provider-test:${c.get('userId')}`,
-      PROVIDER_TEST_RATE_WINDOW_MS,
-      PROVIDER_TEST_RATE_MAX
-    )
-    if (limited) {
-      return c.json({ error: 'Too many provider tests. Please slow down.' }, 429, {
-        'Retry-After': String(retryAfter),
-      })
-    }
     try {
+      // The role gate comes FIRST on every write (plan §4.2): a member must see
+      // the same 403 on their 31st request as on their first, never a 429 that
+      // implies the write would otherwise be allowed.
       await requireOwner(c.env.DB, householdId, c.get('userId'))
+      // The probe spends the household's credential budget, so it is limited per
+      // user AFTER authorization.
+      const { limited, retryAfter } = isRateLimited(
+        `ai-provider-test:${c.get('userId')}`,
+        PROVIDER_TEST_RATE_WINDOW_MS,
+        PROVIDER_TEST_RATE_MAX
+      )
+      if (limited) {
+        return c.json({ error: 'Too many provider tests. Please slow down.' }, 429, {
+          'Retry-After': String(retryAfter),
+        })
+      }
       const result = await testProvider(c.env, householdId, c.req.param('id'))
       const res = c.json(result)
       res.headers.set('Cache-Control', 'private, no-cache')

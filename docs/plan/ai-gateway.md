@@ -1487,11 +1487,18 @@ and the legacy removal all landed together, as designed. Deviations, all recorde
   `resolveAiAccess(env, householdId)` takes the `householdId` `propsAuthMiddleware` already resolved;
   `USER_AI_SETTINGS_COLUMNS` and `loadUserAiSettings` are gone with the columns they projected. A
   cross-household provider id is a 404, not a 403 — its existence is not disclosed.
-- **A key or endpoint cannot be cleared while a capability is assigned to it** (409): clearing one
-  first would leave an assignment that resolves to `not_configured` with no signal in the write that
-  caused it. The owner clears or reassigns the capability, then edits. Deleting a provider still
-  cascades and the delete response reports the cleared capabilities, which is what the UI's
-  confirmation names.
+- **An edit cannot silently leave an assigned capability unusable.** A call needs three inputs — key,
+  endpoint and model — so the write refuses to remove the last of any of them:
+  - clearing the **key** of an assigned provider is a **409**;
+  - clearing the **default model** while an assignment inherits it (its own `model` is blank) is a
+    **409** naming the capabilities;
+  - clearing the **base URL** is a **400** (`needs a base URL`) only when the row would have no
+    endpoint left — its own URL, a preset's canonical endpoint or the kind's own endpoint. A clear
+    that falls back to a preset endpoint is allowed, because the assignment does not go dark.
+
+  The owner clears or reassigns the capability, then edits. Deleting a provider still cascades and
+  the delete response reports the cleared capabilities, which is what the UI's confirmation names.
+
 - **`PATCH /api/ai/capabilities/:capability` is `PUT`, and a clear is a DELETE.** The assignment is a
   singleton per (household, capability), so PUT is the honest verb; "choose the empty option and
   save" in the UI is a DELETE.

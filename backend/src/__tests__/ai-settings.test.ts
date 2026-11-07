@@ -869,6 +869,16 @@ describe('POST /api/ai/providers/:id/test (plan §4.6)', () => {
 
     // A different user has their own window.
     expect((await call('POST', '/api/ai/providers/p-1/test', OWNER)).status).toBe(200)
+
+    // The role gate runs BEFORE the limiter: 40 member attempts all answer 403,
+    // never the 429 a member would see if the window were checked first (review
+    // C1). 30 would pass under either order.
+    for (let i = 0; i < 40; i += 1) {
+      expect(
+        (await call('POST', '/api/ai/providers/p-1/test', MEMBER)).status,
+        `attempt ${i}`
+      ).toBe(403)
+    }
   })
 })
 
