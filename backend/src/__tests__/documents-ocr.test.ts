@@ -504,6 +504,10 @@ describe('documents routes — expiry OCR (#433)', () => {
     expect(db.log.some((entry) => /INSERT INTO document_audit/.test(entry.sql))).toBe(false)
   })
 
+  // 31 real route requests, each decrypting the stored key: ~5 s alone, but the
+  // full suite's 72 parallel workers stretch it past the default 15 s budget, so
+  // the burst gets its own. (It timed out exactly there under `--coverage` —
+  // a scheduling flake, not a limiter defect.)
   it('rate-limits bursts of read-date calls per user', async () => {
     const encrypted = await encryptAiKey('sk-household', ENV_KEY)
     const { env, app } = h.setup(householdAiRoutes(encrypted))
@@ -514,5 +518,5 @@ describe('documents routes — expiry OCR (#433)', () => {
       last = await app.request(OCR_PATH, { method: 'POST' }, env)
     }
     expect(last?.status).toBe(429)
-  })
+  }, 30_000)
 })
