@@ -12,10 +12,11 @@
 //
 // The wire shape is OpenRouter's, and the direct-typesafe shape is RETIRED
 // (§9), not dual-supported: `state` is an ARRAY of strings, and `criteria` is
-// a RECORD keyed by the allowed choice — the old string state and rubric
-// string were never accepted here (a live probe returned 400 for both). The
-// ask's rubric is shared rather than per-choice, so it is sent verbatim under
-// every allowed choice; the question and the choice list ride `instructions`.
+// a RECORD keyed by the allowed choice — a live probe returned 400 for the old
+// rubric string, proving the endpoint validates the envelope rather than
+// coercing it (§9.3). The ask's rubric is shared rather than per-choice, so it
+// is sent verbatim under every allowed choice; the question and the choice
+// list ride `instructions`.
 //
 // The response is a SUPERSET — `type`, `probabilities`, `usage.{input_tokens,
 // output_tokens, cost, …}`, `model`, `provider`, `id`. Extra keys are ignored

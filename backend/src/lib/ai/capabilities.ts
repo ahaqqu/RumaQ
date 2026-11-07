@@ -88,15 +88,17 @@ export function resolvedEndpoint(
 
 /**
  * Can this row serve a call at all? A missing key is handled by the caller; a
- * missing endpoint is only fatal for kinds that have no canonical one
- * ('openai-compatible' without a preset, 'questions' always custom).
+ * missing endpoint is only fatal for kinds that have no canonical one. The
+ * endpoint comes from the row, its preset's catalog row, or a wire that owns
+ * one — `resolvedEndpoint` is the resolver's own rule, so a `questions` row
+ * with a preset endpoint (openrouter-decisions, §9) is as usable as an
+ * `openai-compatible` one.
  */
 export function endpointResolvable(row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>): boolean {
-  if (row.kind === 'questions') return row.base_url != null
-  if (row.kind === 'openai-compatible') return resolvedEndpoint(row) != null
   // anthropic / gemini adapters own their canonical endpoint; anything else is
   // not a wire this gateway speaks (the CHECK makes that unreachable in D1).
-  return row.kind === 'anthropic' || row.kind === 'gemini'
+  if (row.kind === 'anthropic' || row.kind === 'gemini') return true
+  return resolvedEndpoint(row) != null
 }
 
 /**

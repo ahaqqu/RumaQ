@@ -329,8 +329,8 @@ OpenRouter and any custom base URL), `anthropic`, `gemini`, and `questions` (Ope
 `POST /api/alpha/decisions` → `answers.<name>.{choice, confidence}`). A vendor is data
 (`ai_providers.preset` + `kind`), never a fifth kind and never a class. Adapters own request/response shaping, auth (401/403), 429, 5xx, empty
 content, aborts and the provider's token fields; they know nothing about households, funding or
-prompts. The typed wire reports no tokens, so those calls record zeroes and are distinguished by
-`provider = 'questions'`.
+prompts. The typed wire's reported usage is deliberately not metered yet, so those calls record
+zeroes and are distinguished by `provider = 'questions'` (plan §9.2).
 
 **The boundary rule is a security control.** Outside `backend/src/lib/ai/**`, a module may build
 prompts, validate the model's answer, write usage rows through the door's statement builder, and map

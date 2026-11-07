@@ -878,8 +878,9 @@ database through Settings, like anyone else:
 
 - **decision** → one provider of kind `questions`, preset `openrouter-decisions` (base URL
   `https://openrouter.ai/api/alpha/decisions`) and the owner's key; the model is owner-typed on the
-  row (the pipeline pins `~typesafe/jev-latest` for its own calls). The key is entered once in
-  Settings (a `docs/MANUAL_ACTIONS.md` item) — never committed, never an env var.
+  row (the pipeline's own default is `perplexity/pplx-decider-v1.2`, §9.1; `DECISION_MODEL`
+  switches it). The key is entered once in Settings (a `docs/MANUAL_ACTIONS.md` item) — never
+  committed, never an env var.
 - **reasoning** and **vision** → a chat-capable provider the account already uses (kind
   `openai-compatible`, `gemini`, or `anthropic`, with its own model), because a `questions` provider
   answers only choice questions (§2.4).

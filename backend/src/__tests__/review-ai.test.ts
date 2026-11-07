@@ -833,8 +833,8 @@ describe('runReviewAiSweep (the cron tick)', () => {
   it('caches a NULL reason for a typed (questions) decision provider and zero tokens', async () => {
     insertItem('r1')
     await seedTypedDecisionProvider()
-    // The typed wire answers choice + confidence only (D3): the request is the
-    // SystemOne shape, not a chat completion.
+    // The typed wire answers choice + confidence only (D3): the request is
+    // OpenRouter's decisions shape, not a chat completion.
     const fetchMock = vi.fn(async () => ({
       ok: true,
       status: 200,

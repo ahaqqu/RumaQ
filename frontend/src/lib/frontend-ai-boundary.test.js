@@ -142,6 +142,16 @@ describe('the frontend AI boundary (#523 P5)', () => {
     ])
   })
 
+  it('would catch an OpenRouter client that came back', () => {
+    // The §9 vendor hosts are each in the rule: a source that names ONLY one of
+    // them must still fire, so deleting an alternation fails here (the backend
+    // boundary suite proves the same with its per-host fixture).
+    expect(violationsOf("fetch('https://openrouter.ai/api/v1/chat/completions')")).toEqual([
+      'a provider hostname',
+      'fetch() to an absolute URL',
+    ])
+  })
+
   it('keeps the deleted browser provider defaults deleted', () => {
     // aiProviders.js was the "keep in sync" duplication of the backend's vendor
     // defaults (#523 P5). The UI learns labels and endpoints from

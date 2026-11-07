@@ -164,6 +164,32 @@ describe('the questions adapter speaks the OpenRouter decisions wire', () => {
     })
   })
 
+  it('falls back to each choice label when the ask has no rubric', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      fakeResponse({
+        answers: { verdict: { type: 'choice', choice: 'same', confidence: 0.8 } },
+      })
+    )
+    globalThis.fetch = fetchMock
+
+    // The rubric is optional (plan §9.2): with none, the record value is the
+    // choice itself, so the vocabulary stays complete and no empty criterion is
+    // sent. A whitespace-only rubric takes the same path.
+    for (const criteria of [undefined, '   ']) {
+      await adapterFor('questions').decide({ ...decideRequest(), ask: { ...ASK, criteria } })
+    }
+
+    for (const call of fetchMock.mock.calls) {
+      const [, init] = call as [string, RequestInit]
+      const body = JSON.parse(String(init.body))
+      expect(body.questions[TYPED_QUESTION_NAME].criteria).toEqual({
+        same: 'same',
+        different: 'different',
+      })
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('fails typed (invalid_response) when answers is missing — never a silent default', async () => {
     globalThis.fetch = vi
       .fn()
