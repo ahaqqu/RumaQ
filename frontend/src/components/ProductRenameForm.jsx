@@ -34,6 +34,11 @@ const REASON_MAX = 200
 // Mirrors the backend's PRODUCT_NAME_MAX: a longer name is a 400, so the input
 // stops at the same ceiling instead of inviting one.
 const NAME_MAX = 500
+// How long the armed reject prompt waits for its second click (#496). Long
+// enough to read the row it names, short enough that walking away closes it —
+// a "Confirm reject?" found minutes later is a decision armed against a list
+// nobody has looked at since.
+const REJECT_ARM_TIMEOUT_MS = 10_000
 
 const STATUS_KEY = {
   canonical: 'rename.statusCanonical',
@@ -313,6 +318,19 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   // `aliasNotice` is the list's own result slot.
   const [decidingAliases, setDecidingAliases] = useState({})
   const [aliasNotice, setAliasNotice] = useState(null)
+  // Reject is the one decision that asks twice (#496): a rejected alias is
+  // terminal (candidate-only CAS, no reset route, ingest never rewrites the
+  // status), so one stray click permanently removes a spelling from matching,
+  // silently. Approve stays one click — a wrong approve is visible in the list
+  // and correctable by a later manual fix. Only an alias id can be armed, never
+  // a set: one row is armed at a time by construction, so the prompt can never
+  // follow the cursor to another row.
+  const [armedAliasId, setArmedAliasId] = useState(null)
+  // The armed row's own Reject button, so cancelling can hand focus back to it,
+  // and the node Cancel captured for that hand-back (the ref detaches with the
+  // prompt, so the node is read while the prompt is still open).
+  const rejectTriggerRef = useRef(null)
+  const returnFocusRef = useRef(null)
   // Focus follows the answer: a keyboard user must land on the explanation (a
   // duplicate/similar/stale 409 or the success block), and the submit button
   // disables itself after a success, which would otherwise drop focus to
@@ -331,6 +349,26 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   const newName = draftName ?? currentName
   const trimmedName = newName.trim()
   const busy = rename.isPending || revert.isPending
+  // A re-read replaces the list the arming was about: someone else may have
+  // decided the row, or the product may have moved on. Keeping the prompt open
+  // would confirm a decision against evidence nobody has looked at, so the
+  // refetch (and a remount/leave, which drops the state with the component)
+  // disarms. `dataUpdatedAt` catches a re-read whose payload is unchanged
+  // (React Query's structural sharing keeps the same `data` reference then);
+  // `identity` catches a payload that did move.
+  useEffect(() => {
+    setArmedAliasId(null)
+  }, [identity, identityQuery.dataUpdatedAt])
+
+  // The prompt expires on its own. Every disarm rule (Cancel, another row, a
+  // decision, the form's own Cancel, a re-read) only sets `armedAliasId` back to
+  // null, and this effect's cleanup drops the pending expiry with it — so a
+  // timer never outlives its prompt, and unmounting the form drops it too.
+  useEffect(() => {
+    if (armedAliasId === null) return undefined
+    const expiry = setTimeout(() => setArmedAliasId(null), REJECT_ARM_TIMEOUT_MS)
+    return () => clearTimeout(expiry)
+  }, [armedAliasId])
 
   // Revert is a linear history: only the rename that produced the current
   // version can be compensated (the backend's own rule), so an older or
@@ -412,6 +450,9 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
     setDraftName(null)
     setReason('')
     setNotice(null)
+    // The form's own cancel leaves the surface (or resets it), so an armed
+    // reject must not outlive it.
+    setArmedAliasId(null)
     onClose?.()
   }
 
@@ -457,6 +498,10 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   // disabled buttons make a double submit of the same row impossible.
   function decideAlias(alias, action) {
     if (!alias?.id || !isAdmin || decidingAliases[alias.id]) return
+    // Every decision ends any armed prompt, whichever row owned it: the
+    // rejected row is now being written, and a second row's prompt must not
+    // survive an action that changes the list.
+    setArmedAliasId(null)
     setAliasNotice(null)
     setDecidingAliases((previous) => ({ ...previous, [alias.id]: action }))
     aliasDecision.mutate(
@@ -493,6 +538,44 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
     )
   }
 
+  // Reject's first click only arms the row (#496). Nothing is sent, the alias
+  // stays a candidate, and the row swaps its Reject label for the confirm
+  // prompt plus a cancel. Arming another row replaces the armed id, which is
+  // the "choosing another row disarms" rule; a busy row cannot be armed again.
+  // Unlike `decideAlias` this does not clear `aliasNotice`: arming writes
+  // nothing, so it must not discard the receipt of a decision already made.
+  function armReject(alias) {
+    if (!alias?.id || !isAdmin || decidingAliases[alias.id]) return
+    setArmedAliasId(alias.id)
+  }
+
+  function disarmReject() {
+    // Cancel removes itself, so the browser would drop focus to <body> and a
+    // keyboard user would restart their walk through the page. The row's own
+    // Reject button — the node that opened the prompt — takes it back instead.
+    returnFocusRef.current = rejectTriggerRef.current
+    setArmedAliasId(null)
+  }
+
+  // Hands focus back once the prompt is gone. Only a Cancel sets the node, so a
+  // disarm from a re-read or a decision elsewhere never steals focus.
+  useEffect(() => {
+    if (armedAliasId !== null || !returnFocusRef.current) return
+    returnFocusRef.current.focus()
+    returnFocusRef.current = null
+  }, [armedAliasId])
+
+  // The second click. Only the armed row can confirm, so a keyboard user cannot
+  // fire a reject by tabbing onto a button that was never armed — and only a
+  // gesture of its own can confirm: the second click of a double-click reports
+  // `detail` 2 because it is the same gesture as the click that armed the row,
+  // and confirming it would put the terminal decision back one stray
+  // double-click (or one chattering mouse) away. Keyboard activations report 0.
+  function confirmReject(alias, clickCount) {
+    if (!alias?.id || armedAliasId !== alias.id || clickCount > 1) return
+    decideAlias(alias, 'reject')
+  }
+
   if (identityQuery.isLoading) {
     return (
       <Panel data-testid="product-rename-form">
@@ -526,6 +609,13 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   }
 
   const aliases = identity.aliases ?? []
+  // The one row whose Reject was clicked once (#496). Looked up by id rather
+  // than kept as an object so a re-read that drops the row leaves nothing to
+  // confirm — and so the prompt always shows the alias name currently on
+  // screen, never the one that was armed a refetch ago.
+  const armedAlias = armedAliasId
+    ? (aliases.find((alias) => alias.id === armedAliasId) ?? null)
+    : null
   // The decision actions exist only for an admin, only on a row that still has
   // a decision to make, and only when the payload carries the id the routes
   // address (a candidate without an id cannot be acted on; hiding beats a
@@ -625,6 +715,13 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
             {showAliasActions && (
               <p className="mt-1 text-xs text-text-muted">{t('rename.aliasDecisionHint')}</p>
             )}
+            {/* The armed prompt is a spoken change too: the buttons swap under
+                the cursor and a screen reader gets no other cue. The inline
+                notices announce themselves with role="status"; this keeps the
+                same channel while the prompt is open, and empty otherwise. */}
+            <div className="sr-only" role="status" data-testid="alias-reject-announcement">
+              {armedAlias ? t('rename.aliasRejectArmed', { name: armedAlias.name }) : ''}
+            </div>
             {aliases.length === 0 ? (
               <p className="text-xs text-text-muted mt-1">{t('rename.aliasesEmpty')}</p>
             ) : (
@@ -633,11 +730,13 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
                   const pendingAction = decidingAliases[alias.id]
                   const rowBusy = Boolean(pendingAction)
                   const decidable = isAdmin && alias.status === 'candidate' && Boolean(alias.id)
+                  const armed = armedAliasId === alias.id
                   return (
                     <li
                       key={alias.id ?? `${alias.storeSlug}-${alias.name}-${index}`}
                       className="flex flex-wrap items-center gap-2 text-sm"
                       aria-busy={rowBusy || undefined}
+                      data-armed={armed || undefined}
                     >
                       <span className="font-medium">{alias.name}</span>
                       <span className="text-xs text-text-muted">{alias.storeSlug}</span>
@@ -660,17 +759,42 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
                               ? t('rename.aliasApproving')
                               : t('rename.aliasApprove')}
                           </Button>
+                          {/* Reject is the terminal decision, so it asks twice:
+                              the first click only arms this row and the second
+                              (the same button, now the confirm prompt) sends it.
+                              Approve above stays one click. */}
                           <Button
                             variant="danger"
                             size="sm"
                             disabled={rowBusy}
-                            aria-label={t('rename.aliasRejectLabel', { name: alias.name })}
-                            onClick={() => decideAlias(alias, 'reject')}
+                            // The armed row's button is what cancel returns
+                            // focus to, so only that row's node is tracked.
+                            ref={armed ? rejectTriggerRef : undefined}
+                            aria-label={t(
+                              armed ? 'rename.aliasRejectConfirmLabel' : 'rename.aliasRejectLabel',
+                              { name: alias.name }
+                            )}
+                            onClick={(event) =>
+                              armed ? confirmReject(alias, event.detail) : armReject(alias)
+                            }
                           >
                             {pendingAction === 'reject'
                               ? t('rename.aliasRejecting')
-                              : t('rename.aliasReject')}
+                              : armed
+                                ? t('rename.aliasRejectConfirm')
+                                : t('rename.aliasReject')}
                           </Button>
+                          {armed && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={rowBusy}
+                              aria-label={t('rename.aliasRejectCancelLabel', { name: alias.name })}
+                              onClick={disarmReject}
+                            >
+                              {t('rename.cancel')}
+                            </Button>
+                          )}
                         </span>
                       )}
                     </li>

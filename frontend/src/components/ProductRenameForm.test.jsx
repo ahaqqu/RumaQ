@@ -92,9 +92,12 @@ const revertMutate = vi.fn()
 const aliasMutate = vi.fn()
 const refetch = vi.fn()
 
-function mockIdentity(value = identity()) {
+// `dataUpdatedAt` is the query's fetch clock: the armed reject closes on a
+// re-read even when structural sharing keeps the same `data` reference.
+function mockIdentity(value = identity(), dataUpdatedAt = 0) {
   vi.mocked(useProductIdentity).mockReturnValue({
     data: value,
+    dataUpdatedAt,
     isLoading: false,
     isError: false,
     refetch,
@@ -119,6 +122,28 @@ function clickRowButton(row, text) {
   )
   if (!button) throw new Error(`No row button with text ${text}`)
   fireEvent.click(button)
+}
+
+// #496: rejecting is two clicks — the first arms the row, the second sends it.
+function armRowReject(row) {
+  clickRowButton(row, 'rename.aliasReject')
+}
+
+function confirmRowReject(row) {
+  armRowReject(row)
+  clickRowButton(row, 'rename.aliasRejectConfirm')
+}
+
+// Two undecided rows on one product: the per-row state tests need a second row
+// that stays untouched while the first is armed, busy or decided.
+function twoCandidates() {
+  const [candidate] = identity().aliases
+  return identity({
+    aliases: [
+      candidate,
+      { ...candidate, id: 'alias-candidate-2', name: 'Beras Ramos 5 KG', storeSlug: 'alfamart' },
+    ],
+  })
 }
 
 function lastAliasVariables() {
@@ -209,14 +234,353 @@ describe('ProductRenameForm', () => {
     })
   })
 
-  it('sends a reject for the row it was clicked on', () => {
+  it('arms a row on the first reject click and sends nothing', () => {
     const { getByTestId } = renderForm()
-    clickRowButton(aliasRows(getByTestId)[0], 'rename.aliasReject')
+    const row = aliasRows(getByTestId)[0]
+    armRowReject(row)
+
+    // Nothing is written: the row only swaps its Reject label for the confirm
+    // prompt, so the terminal decision now takes a second, deliberate click.
+    expect(aliasMutate).not.toHaveBeenCalled()
+    expect(row.getAttribute('data-armed')).toBe('true')
+    expect(rowButtonTexts(row)).toEqual([
+      'rename.aliasApprove',
+      'rename.aliasRejectConfirm',
+      'rename.cancel',
+    ])
+    const buttons = [...row.querySelectorAll('button')]
+    // Each prompt button names the row it belongs to: three rows can carry a
+    // "Cancel" or a confirm question, only one of them is armed.
+    expect(buttons[1].getAttribute('aria-label')).toBe('rename.aliasRejectConfirmLabel')
+    expect(buttons[2].getAttribute('aria-label')).toBe('rename.aliasRejectCancelLabel')
+    // The prompt is announced (the inline notices' role="status" channel).
+    const announcement = getByTestId('alias-reject-announcement')
+    expect(announcement.getAttribute('role')).toBe('status')
+    expect(announcement.textContent).toBe('rename.aliasRejectArmed')
+  })
+
+  it('cancels an armed reject without writing anything', () => {
+    const { getByTestId } = renderForm()
+    const row = aliasRows(getByTestId)[0]
+    armRowReject(row)
+    clickRowButton(row, 'rename.cancel')
+
+    expect(aliasMutate).not.toHaveBeenCalled()
+    expect(row.getAttribute('data-armed')).toBeNull()
+    expect(rowButtonTexts(row)).toEqual(['rename.aliasApprove', 'rename.aliasReject'])
+    expect(getByTestId('alias-reject-announcement').textContent).toBe('')
+  })
+
+  it('gives the focus back to the row Reject button when the prompt is cancelled', () => {
+    const { getByTestId } = renderForm()
+    const row = aliasRows(getByTestId)[0]
+    armRowReject(row)
+    const [approve, reject, cancel] = [...row.querySelectorAll('button')]
+    // The keyboard lands on the prompt's Cancel (the row's own button, so the
+    // browser's own focus is on it when it is activated).
+    cancel.focus()
+    fireEvent.click(cancel)
+
+    // Cancel removes itself: without the hand-back the browser drops focus to
+    // <body> and the user restarts their walk through the page from the top.
+    expect(document.activeElement).toBe(reject)
+    expect(document.activeElement).not.toBe(document.body)
+    expect(reject.textContent).toBe('rename.aliasReject')
+    expect(approve.textContent).toBe('rename.aliasApprove')
+  })
+
+  it('never confirms from the second click of a double-click', () => {
+    const { getByTestId } = renderForm()
+    const row = aliasRows(getByTestId)[0]
+    const reject = [...row.querySelectorAll('button')].find(
+      (button) => button.textContent === 'rename.aliasReject'
+    )
+
+    // A double-click is one gesture: the browser reports the second click as
+    // click count 2. That click must not confirm the prompt the first one
+    // opened, or the terminal decision is still one stray double-click away.
+    fireEvent.click(reject, { detail: 1 })
+    fireEvent.click(reject, { detail: 2 })
+    expect(aliasMutate).not.toHaveBeenCalled()
+    expect(row.getAttribute('data-armed')).toBe('true')
+
+    // A click of its own does confirm: the guard ignores the gesture, not the
+    // prompt.
+    fireEvent.click(reject, { detail: 1 })
+    expect(aliasMutate).toHaveBeenCalledTimes(1)
     expect(lastAliasVariables()).toEqual({
       productKey: PRODUCT_KEY,
       aliasId: 'alias-candidate',
       action: 'reject',
     })
+  })
+
+  it('disarms an armed reject when the form itself is cancelled', () => {
+    const { container, getByTestId } = renderForm()
+    const row = aliasRows(getByTestId)[0]
+    armRowReject(row)
+    expect(row.getAttribute('data-armed')).toBe('true')
+
+    // The form's cancel leaves (or resets) the surface, so an armed prompt must
+    // not outlive it. The row's Cancel shares the word, so the form's own
+    // button is the last one on the surface.
+    const formCancel = [...container.querySelectorAll('button')]
+      .filter((button) => button.textContent === 'rename.cancel')
+      .at(-1)
+    fireEvent.click(formCancel)
+
+    expect(aliasMutate).not.toHaveBeenCalled()
+    expect(rowButtonTexts(aliasRows(getByTestId)[0])).toEqual([
+      'rename.aliasApprove',
+      'rename.aliasReject',
+    ])
+  })
+
+  // #496: the prompt is time-boxed. Fake timers make the expiry deterministic:
+  // nothing here waits on the real clock.
+  it('disarms the prompt on its own after the timeout', () => {
+    vi.useFakeTimers()
+    try {
+      const { getByTestId } = renderForm()
+      armRowReject(aliasRows(getByTestId)[0])
+      expect(aliasRows(getByTestId)[0].getAttribute('data-armed')).toBe('true')
+
+      // Nine seconds in the prompt is still open: nothing expires early.
+      act(() => {
+        vi.advanceTimersByTime(9_000)
+      })
+      expect(aliasRows(getByTestId)[0].getAttribute('data-armed')).toBe('true')
+
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      const row = aliasRows(getByTestId)[0]
+      expect(row.getAttribute('data-armed')).toBeNull()
+      expect(rowButtonTexts(row)).toEqual(['rename.aliasApprove', 'rename.aliasReject'])
+      expect(getByTestId('alias-reject-announcement').textContent).toBe('')
+      // An expired prompt never decided anything: the next click only arms.
+      armRowReject(row)
+      expect(aliasMutate).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still confirms inside the timeout window', () => {
+    vi.useFakeTimers()
+    try {
+      const { getByTestId } = renderForm()
+      const row = aliasRows(getByTestId)[0]
+      armRowReject(row)
+      act(() => {
+        vi.advanceTimersByTime(9_000)
+      })
+      clickRowButton(row, 'rename.aliasRejectConfirm')
+      expect(aliasMutate).toHaveBeenCalledTimes(1)
+      expect(lastAliasVariables()).toEqual({
+        productKey: PRODUCT_KEY,
+        aliasId: 'alias-candidate',
+        action: 'reject',
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drops the expiry timer with every disarm path and on unmount', () => {
+    vi.useFakeTimers()
+    try {
+      mockIdentity(twoCandidates())
+      const baseline = vi.getTimerCount()
+      const { getByTestId, rerender, unmount } = renderForm()
+      const rows = () => aliasRows(getByTestId)
+
+      armRowReject(rows()[0])
+      expect(vi.getTimerCount()).toBe(baseline + 1)
+      // Arming another row replaces the pending expiry instead of stacking one.
+      armRowReject(rows()[1])
+      expect(vi.getTimerCount()).toBe(baseline + 1)
+      clickRowButton(rows()[1], 'rename.cancel')
+      expect(vi.getTimerCount()).toBe(baseline)
+
+      armRowReject(rows()[0])
+      clickRowButton(rows()[1], 'rename.aliasApprove')
+      expect(vi.getTimerCount()).toBe(baseline)
+
+      armRowReject(rows()[0])
+      expect(vi.getTimerCount()).toBe(baseline + 1)
+      mockIdentity(twoCandidates())
+      rerender(<ProductRenameForm productKey={PRODUCT_KEY} isAdmin />)
+      expect(vi.getTimerCount()).toBe(baseline)
+
+      // Leaving the surface takes the pending expiry with it.
+      armRowReject(rows()[0])
+      expect(vi.getTimerCount()).toBe(baseline + 1)
+      unmount()
+      expect(vi.getTimerCount()).toBe(baseline)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('sends the reject only on the confirm click, once, for the armed row', () => {
+    const { getByTestId } = renderForm()
+    const row = aliasRows(getByTestId)[0]
+    armRowReject(row)
+    const confirm = [...row.querySelectorAll('button')].find(
+      (button) => button.textContent === 'rename.aliasRejectConfirm'
+    )
+    // Two clicks in the same tick: the first arms the write, the second lands
+    // on a button that is already disabled, so exactly one POST leaves.
+    fireEvent.click(confirm)
+    fireEvent.click(confirm)
+
+    expect(aliasMutate).toHaveBeenCalledTimes(1)
+    expect(lastAliasVariables()).toEqual({
+      productKey: PRODUCT_KEY,
+      aliasId: 'alias-candidate',
+      action: 'reject',
+    })
+    // The prompt closed and the row shows its busy label — no confirm button is
+    // left to click a second time.
+    expect(row.getAttribute('data-armed')).toBeNull()
+    expect(rowButtonTexts(row)).toEqual(['rename.aliasApprove', 'rename.aliasRejecting'])
+    expect([...row.querySelectorAll('button')].every((button) => button.disabled)).toBe(true)
+  })
+
+  it('moves the armed prompt when another row is chosen', () => {
+    mockIdentity(twoCandidates())
+    const { getByTestId } = renderForm()
+    const rows = aliasRows(getByTestId)
+    armRowReject(rows[0])
+    expect(rows[0].getAttribute('data-armed')).toBe('true')
+
+    // Arming the second row replaces the first: one row is armed at a time, so
+    // the prompt can never follow the cursor to a different alias.
+    armRowReject(rows[1])
+    expect(rows[0].getAttribute('data-armed')).toBeNull()
+    expect(rowButtonTexts(rows[0])).toEqual(['rename.aliasApprove', 'rename.aliasReject'])
+    expect(rows[1].getAttribute('data-armed')).toBe('true')
+    expect(aliasMutate).not.toHaveBeenCalled()
+
+    clickRowButton(rows[1], 'rename.aliasRejectConfirm')
+    expect(aliasMutate).toHaveBeenCalledTimes(1)
+    expect(lastAliasVariables()).toEqual({
+      productKey: PRODUCT_KEY,
+      aliasId: 'alias-candidate-2',
+      action: 'reject',
+    })
+  })
+
+  it('clears the armed prompt when a decision is made on another row', () => {
+    mockIdentity(twoCandidates())
+    const { getByTestId } = renderForm()
+    const rows = aliasRows(getByTestId)
+    armRowReject(rows[0])
+    // Approve is one click and still one click while a reject prompt is open;
+    // the stray prompt must not survive an action that changes the list.
+    clickRowButton(rows[1], 'rename.aliasApprove')
+
+    expect(rows[0].getAttribute('data-armed')).toBeNull()
+    expect(rows[1].getAttribute('data-armed')).toBeNull()
+    expect(lastAliasVariables()).toEqual({
+      productKey: PRODUCT_KEY,
+      aliasId: 'alias-candidate-2',
+      action: 'approve',
+    })
+  })
+
+  it('keeps the previous decision receipt while another reject is armed', () => {
+    mockIdentity(twoCandidates())
+    const { getByTestId } = renderForm()
+    const rows = aliasRows(getByTestId)
+    clickRowButton(rows[1], 'rename.aliasApprove')
+    act(() => {
+      lastAliasOptions().onSuccess({
+        alias: { ...identity().aliases[0], status: 'approved' },
+        indexVersion: 17,
+      })
+    })
+    expect(getByTestId('alias-decision-notice').textContent).toBe('rename.aliasApproveSuccess')
+
+    // Arming writes nothing, so it must not discard the receipt of a decision
+    // that already landed; only the next decision replaces the slot.
+    armRowReject(rows[0])
+    expect(getByTestId('alias-decision-notice').textContent).toBe('rename.aliasApproveSuccess')
+    clickRowButton(rows[0], 'rename.cancel')
+    expect(getByTestId('alias-decision-notice').textContent).toBe('rename.aliasApproveSuccess')
+    expect(aliasMutate).toHaveBeenCalledTimes(1)
+  })
+
+  it('disarms when the identity is re-read', () => {
+    const { getByTestId, rerender } = renderForm()
+    const row = aliasRows(getByTestId)[0]
+    armRowReject(row)
+    expect(row.getAttribute('data-armed')).toBe('true')
+
+    // A refetch lands (someone else may have decided the row, or the list moved
+    // on): the prompt was opened against the old evidence, so it closes and a
+    // reject needs a fresh two-click decision.
+    mockIdentity(identity())
+    rerender(<ProductRenameForm productKey={PRODUCT_KEY} isAdmin />)
+    expect(aliasRows(getByTestId)[0].getAttribute('data-armed')).toBeNull()
+    expect(rowButtonTexts(aliasRows(getByTestId)[0])).toEqual([
+      'rename.aliasApprove',
+      'rename.aliasReject',
+    ])
+    expect(aliasMutate).not.toHaveBeenCalled()
+
+    // Same payload, new fetch: React Query's structural sharing hands back the
+    // same `data` object, and the prompt still closes — a re-read is a re-read.
+    const unchanged = identity()
+    mockIdentity(unchanged, 1)
+    rerender(<ProductRenameForm productKey={PRODUCT_KEY} isAdmin />)
+    armRowReject(aliasRows(getByTestId)[0])
+    expect(aliasRows(getByTestId)[0].getAttribute('data-armed')).toBe('true')
+    mockIdentity(unchanged, 2)
+    rerender(<ProductRenameForm productKey={PRODUCT_KEY} isAdmin />)
+    expect(aliasRows(getByTestId)[0].getAttribute('data-armed')).toBeNull()
+  })
+
+  it('keeps only the rejecting row busy and disables both of its actions', () => {
+    mockIdentity(twoCandidates())
+    const { container, getByTestId } = renderForm()
+    const rows = aliasRows(getByTestId)
+    confirmRowReject(rows[0])
+
+    expect(rowButtonTexts(rows[0])).toEqual(['rename.aliasApprove', 'rename.aliasRejecting'])
+    expect([...rows[0].querySelectorAll('button')].every((button) => button.disabled)).toBe(true)
+    // The untouched candidate stays decidable while this row is in flight.
+    expect(rowButtonTexts(rows[1])).toEqual(['rename.aliasApprove', 'rename.aliasReject'])
+    expect([...rows[1].querySelectorAll('button')].some((button) => button.disabled)).toBe(false)
+    // The rename fields stay usable (a decision never owns the form's busy).
+    typeName(container, 'Beras Ramos Premium 5 kg')
+    expect(submitButton(container).disabled).toBe(false)
+  })
+
+  it('reads the decided row as rejected after a successful reject', () => {
+    const { getByTestId, rerender } = renderForm()
+    confirmRowReject(aliasRows(getByTestId)[0])
+    act(() => {
+      lastAliasOptions().onSuccess({
+        alias: { ...identity().aliases[0], status: 'rejected' },
+        indexVersion: 12,
+      })
+    })
+    expect(getByTestId('alias-decision-notice').textContent).toBe('rename.aliasRejectSuccess')
+
+    // The invalidated refetch lands: the row that was decided now carries the
+    // rejected status and offers no further action (a rejected alias is a
+    // candidate no more, so the prompt cannot come back).
+    const [candidate, approvedAlias, rejectedAlias] = identity().aliases
+    mockIdentity(
+      identity({ aliases: [{ ...candidate, status: 'rejected' }, approvedAlias, rejectedAlias] })
+    )
+    rerender(<ProductRenameForm productKey={PRODUCT_KEY} isAdmin />)
+    const rows = aliasRows(getByTestId)
+    expect(rows[0].textContent).toContain('rename.aliasStatusRejected')
+    expect(rows[0].textContent).not.toContain('rename.aliasStatusCandidate')
+    expect(rows[0].querySelectorAll('button')).toHaveLength(0)
   })
 
   it('keeps only the decided row busy and leaves the rename form usable', () => {
@@ -285,7 +649,7 @@ describe('ProductRenameForm', () => {
 
   it('confirms a rejection without claiming an index bump', () => {
     const { getByTestId } = renderForm()
-    clickRowButton(aliasRows(getByTestId)[0], 'rename.aliasReject')
+    confirmRowReject(aliasRows(getByTestId)[0])
     act(() => {
       lastAliasOptions().onSuccess({
         alias: { ...identity().aliases[0], status: 'rejected' },
@@ -345,7 +709,7 @@ describe('ProductRenameForm', () => {
     for (const { error, key, refreshes } of cases) {
       refetch.mockClear()
       const { container, getByTestId, unmount } = renderForm()
-      clickRowButton(aliasRows(getByTestId)[0], 'rename.aliasReject')
+      confirmRowReject(aliasRows(getByTestId)[0])
       act(() => {
         lastAliasOptions().onError(error)
       })
