@@ -2344,7 +2344,7 @@
     "/api/admin/products/aliases/bulk-approve": {
       "post": {
         "operationId": "postApiAdminProductsAliasesBulkApprove",
-        "description": "Approve every candidate alias whose name equals its own product’s canonical name case-insensitively (admin-only). No request body (an empty JSON object is accepted and ignored). Each approval takes the candidate -> approved CAS plus one audit receipt for the acting admin; the canonical index version advances exactly once per run with at least one approval. Idempotent: a second run approves nothing and does not bump. Variant spellings are never approved — they stay for manual review. A failed chunk answers 500 bulk_approve_failed with the count already committed.",
+        "description": "Approve every candidate alias whose name equals its own product’s canonical name case-insensitively (admin-only). No request body (an empty JSON object is accepted and ignored). Each approval takes the candidate -> approved CAS plus one audit receipt for the acting admin; the canonical index version advances exactly once per run with at least one approval. One run is bounded by the Worker invocation’s D1 query budget (1,125 exact matches today) and the response’s counts say what is left, so a larger catalogue is drained by running again. Idempotent: a second run approves nothing and does not bump. Variant spellings are never approved — they stay for manual review. A failed chunk answers 500 bulk_approve_failed with the count already committed.",
         "security": [
           {
             "cookieAuth": []
