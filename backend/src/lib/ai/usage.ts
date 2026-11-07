@@ -11,8 +11,23 @@
 // door, never here.
 
 import type { Env } from '../../types.js'
-import type { TokenUsage } from '../ai.js'
-import type { AiCall } from './types.js'
+import type { AiCall, TokenUsage } from './types.js'
+
+/**
+ * Accumulate provider-reported usage into a caller-owned total across calls.
+ * Unreported cache figures leave the running total as-is, so a series with no
+ * cache data at all stays null. Moved here from the deprecated shim in P2: it
+ * is usage arithmetic, not provider transport.
+ */
+export function usageCollector(target: TokenUsage): (usage: TokenUsage) => void {
+  return (usage) => {
+    target.input_tokens += usage.input_tokens
+    target.output_tokens += usage.output_tokens
+    if (usage.cached_tokens !== null) {
+      target.cached_tokens = (target.cached_tokens ?? 0) + usage.cached_tokens
+    }
+  }
+}
 
 export type AiUsageEvent = {
   /** The ACTING member: attribution, not ownership. */

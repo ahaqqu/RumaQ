@@ -51,6 +51,10 @@ High-level objectives and defaults for backend work. Prefer these over one-off c
 - Parameterize all SQL queries.
 - Add rate limiting on auth and sensitive endpoints.
 - Add security headers middleware for production responses.
+- AI calls go through the one door, `backend/src/lib/ai/index.ts` (`resolveAccess` once, then
+  `completeText`/`vision`/`decide`). Do not import `lib/ai/adapters/**`, `lib/ai/credentials.ts` or
+  `lib/ai/key-material.ts`, hold a provider key, or fetch a model endpoint from a route or feature:
+  `ai-boundary.test.ts` fails the build on it.
 
 ## API documentation
 

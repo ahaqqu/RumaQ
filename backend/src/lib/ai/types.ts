@@ -1,8 +1,8 @@
 // The AI gateway's shared vocabulary (ahaqqu/RumaQ#523, plan §2.1–§2.2).
 // These are the nouns every layer of the door agrees on — a capability, the
-// wire protocol of a provider, the thinking knob, and the call dimensions a
-// usage row is stamped with. Nothing here knows about a vendor, an endpoint,
-// or a key.
+// wire protocol of a provider, the thinking knob, the messages a caller hands
+// the door, and the call dimensions a usage row is stamped with. Nothing here
+// knows about a vendor, an endpoint, or a key.
 
 import type { Env } from '../../types.js'
 
@@ -57,22 +57,67 @@ export type AiCall = {
  */
 export type AiCtx = { env: Env['Bindings']; userId: string; householdId: string }
 
+export type AiContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; bytes: ArrayBuffer; mimeType: string }
+
+export type AiMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string | AiContentPart[] }
+  | { role: 'assistant'; content: string }
+
 /**
- * A pre-resolved capability access: resolve ONCE per request/run, reuse it.
+ * Real provider token counts (what the caller's own provider subscription
+ * bills). `cached_tokens` is null when unreported — unknown, not zero.
+ */
+export type TokenUsage = {
+  input_tokens: number
+  output_tokens: number
+  cached_tokens: number | null
+}
+
+export const EMPTY_USAGE: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
+
+/**
+ * A pre-resolved capability access. Resolve ONCE per request/run and reuse it
+ * for N calls: the door holds the decrypted key, the endpoint and the thinking
+ * level in module-private state (a WeakMap in capabilities.ts), so the handle
+ * itself exposes no key and no accessor for one (plan §2.2).
  *
- * P1 NOTE — the plaintext key, preset, endpoint and thinking level ride on the
- * handle because the legacy dispatcher (lib/ai.ts) still takes them as
- * arguments; `resolveAccess` is the only reader of `credentials.ts`. P2 moves
- * all of it behind the door and narrows this type to `{ capability, call }`.
+ * There is deliberately no way to FORGE a usable access: a handle the door did
+ * not issue carries no material, and every call fails closed (not_configured)
+ * before a provider is contacted.
  */
 export type AiAccessHandle = {
   readonly capability: Capability
   readonly call: AiCall
-  /** Decrypted provider key. NEVER serialized, logged, or returned. */
-  readonly apiKey: string
-  /** The endpoint the row resolves to (row base_url, else the preset's). */
-  readonly baseUrl: string | null
-  /** The row's preset id, for the P1 bridge's kind→legacy-dispatcher mapping. */
-  readonly preset: string | null
-  readonly thinkingLevel: ThinkingLevel | null
+}
+
+export type AiResult = {
+  text: string
+  call: AiCall
+  /** Provider-reported; zeroes when it reported none. */
+  usage: TokenUsage
+}
+
+/** One typed decision: a stated question, a closed choice list, a confidence. */
+export type DecisionAsk = {
+  /** The subject being classified/decided. */
+  state: string
+  /** One imperative sentence. */
+  question: string
+  /** Labelled rubric, newline-separated. */
+  criteria?: string
+  /** Closed vocabulary; the answer must be one of these. */
+  choices: readonly string[]
+}
+
+export type DecisionResult = {
+  choice: string
+  /** null when the provider reports none. */
+  confidence: number | null
+  /** null on providers that answer choice+confidence only (typed wire, D3). */
+  reason: string | null
+  call: AiCall
+  usage: TokenUsage
 }

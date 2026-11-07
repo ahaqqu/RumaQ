@@ -16,8 +16,10 @@
 // `loadUserAiSettings`, `AiAccess`, `resolveAiAccess`) is kept ON PURPOSE so no
 // provider call site is edited in P1. The legacy dispatcher takes ONE provider
 // for everything, so the bridge resolves a primary access (reasoning →
-// decision → vision) plus the vision assignment's model. P4 replaces these call
-// sites with per-capability resolution; P2 dissolves the file.
+// decision → vision) plus the vision assignment's model. P2 moves that
+// resolution INSIDE the door (`lib/ai/legacy.ts`) because it reads decrypted key
+// material, leaving this file a thin deprecated shape; P4 deletes it and the
+// routes resolve per capability.
 //
 // `keySource` survives as `'user'` (the only value now possible) because
 // `GET /api/ai/usage` still reports it; P3 removes the field with the rest of
@@ -25,10 +27,8 @@
 // carry `capability` / `household_id` / `funding` (lib/ai/usage.ts).
 
 import type { Env } from '../types.js'
-import type { ThinkingLevel } from './ai.js'
-import { LEGACY_CHAT_PRESETS, presetEndpoint } from './ai/presets.js'
-import { resolveAccess } from './ai/capabilities.js'
-import type { AiAccessHandle, AiCall, Capability } from './ai/types.js'
+import { resolveLegacyAccess } from './ai/legacy.js'
+import type { AiCall, ThinkingLevel } from './ai/types.js'
 
 export type UserAiSettings = {
   ai_provider: string | null
@@ -117,44 +117,17 @@ export type AiAccess = {
   call: AiCall
 }
 
-// The primary capability the legacy dispatcher serves. Chat, plans and the
-// scan path are the majority; a household configured only for decision/vision
-// still gets an access rather than a 402 until P4 routes each call site.
-const PRIMARY_CAPABILITIES: readonly Capability[] = ['reasoning', 'decision', 'vision']
-
-/**
- * Map a resolved gateway access onto the legacy dispatcher's provider id.
- * Null means "this row cannot be dispatched by lib/ai.ts in P1" — a typed
- * ('questions') provider has no chat wire until P2, and a base-URL override is
- * dispatched as 'custom' (the only branch that honours it; the resolver has
- * already guaranteed a model, so no custom call can be model-less).
- */
-function legacyProviderFor(access: AiAccessHandle): string | null {
-  switch (access.call.providerKind) {
-    case 'anthropic':
-      return 'anthropic'
-    case 'gemini':
-      return 'gemini'
-    case 'questions':
-      return null
-    case 'openai-compatible':
-      break
-  }
-  if (
-    access.preset &&
-    LEGACY_CHAT_PRESETS.has(access.preset) &&
-    access.baseUrl === presetEndpoint(access.preset, 'openai-compatible')
-  ) {
-    return access.preset
-  }
-  return access.baseUrl ? 'custom' : null
-}
-
 /**
  * Resolve the provider credentials that serve this request. The household's
  * rows are the only source (D8); the caller's legacy `user_settings.ai_*` are
  * ignored. Returns null when the household has no usable assignment, and the
  * routes map that to 402.
+ *
+ * P2: the resolution itself (primary-capability ladder, kind→legacy-provider
+ * mapping, vision precedence) moved INSIDE the door (`lib/ai/legacy.ts`),
+ * because it reads decrypted key material. This function is now only the
+ * legacy shape the call sites still consume; P4 deletes it together with the
+ * `lib/ai.ts` shim, and the routes call `resolveAccess` per capability.
  */
 export async function resolveAiAccess(
   env: Env['Bindings'],
@@ -163,36 +136,17 @@ export async function resolveAiAccess(
   const householdId = settings?.household_id
   if (!householdId) return null
 
-  const ctx = { env, userId: '', householdId }
-  let primary: AiAccessHandle | null = null
-  for (const capability of PRIMARY_CAPABILITIES) {
-    primary = await resolveAccess(ctx, capability)
-    if (primary) break
-  }
-  if (!primary) return null
-
-  const provider = legacyProviderFor(primary)
-  if (!provider) return null
-
-  // Vision precedence: the vision assignment's (effective) model when it points
-  // at the SAME provider row, else the primary model (today's
-  // `ai_vision_model ?? ai_model` behaviour). Both sides already resolved
-  // `capability.model ?? provider.default_model`. A vision assignment on another
-  // provider cannot be expressed through one legacy access — P4 routes it.
-  const vision = primary.capability === 'vision' ? primary : await resolveAccess(ctx, 'vision')
-  const visionModel =
-    vision && vision.call.providerId === primary.call.providerId
-      ? (vision.call.model ?? primary.call.model)
-      : primary.call.model
+  const access = await resolveLegacyAccess(env, householdId)
+  if (!access) return null
 
   return {
-    provider,
-    apiKey: primary.apiKey,
-    baseUrl: primary.baseUrl,
-    model: primary.call.model,
-    visionModel,
-    thinkingLevel: primary.thinkingLevel,
+    provider: access.provider,
+    apiKey: access.apiKey,
+    baseUrl: access.baseUrl,
+    model: access.model,
+    visionModel: access.visionModel,
+    thinkingLevel: access.thinkingLevel,
     keySource: 'user',
-    call: primary.call,
+    call: access.call,
   }
 }

@@ -206,6 +206,7 @@ backend/src/lib/ai/
   errors.ts           ← AiError + code→HTTP mapping
   capabilities.ts     ← resolveAccess(ctx, capability): household-scoped, the whole precedence ladder
   credentials.ts      ← household provider rows → decrypt (AAD-bound, D10, lazy re-encrypt); NO other module may import this
+  key-material.ts     ← the decrypted key/endpoint/thinking level beside an opaque handle (WeakMap); NO other module may import this
   presets.ts          ← the vendor catalog as DATA (label, kind, canonical base URL)
   usage.ts            ← buildAiUsageEventStatement / recordAiUsageEvent / retention (moved)
   decision.ts         ← the {choice, confidence} parse shared by chat-shaped decision calls
@@ -216,12 +217,21 @@ backend/src/lib/ai/
     gemini.ts         ← generateContent wire
     questions.ts      ← typed question/answer wire (one decision question in, one choice out)
     registry.ts       ← kind → adapter; the ONLY switch on kind
+    wire.ts           ← shared transport helpers: failure mapping, Retry-After, media encoding
+    chat-decide.ts    ← prompt + strict JSON for a chat-shaped decide()
 ```
+
+Two more modules landed beside the sketch in P2: `parse.ts` (the fence-tolerant JSON reader every
+structured answer goes through) and `signal.ts` (`AbortSignal.timeout` + `AbortSignal.any`
+composition for the per-call deadline). A P2-only `legacy.ts` holds the deprecated bridge's
+resolution and the six legacy vendor ids; it dies with the shims in P4 (see below).
 
 `backend/src/lib/ai.ts` becomes a **deprecated shim** in P2 (same exports, delegating to the door) so
 the adapters land without touching a single feature, and it is **deleted** in P4 when the call sites
 move (imports become `lib/ai/index.js`, explicit `index.js` per the `ports/storage/index.js`
-precedent). The old `ai-access.ts` dissolves in P2–P4: resolution → `capabilities.ts`, usage →
+precedent). The old `ai-access.ts` dissolves in P2–P4: `P2` moves its resolution into `lib/ai/legacy.ts`
+(inside the door, because that resolution reads key material) and leaves the file a thin deprecated
+shape; `P3`/`P4` delete it with the shim. Resolution → `capabilities.ts`, usage →
 `usage.ts`, the projection constant stays with the settings read model until P3 drops it with the column.
 
 ### 2.2 The public API
@@ -378,6 +388,12 @@ export function recordUsage(
 export { AiError, isAiError } from './errors.js'
 ```
 
+> **P2 implementation notes.** The usage exports keep their shipped names in code
+> (`buildAiUsageEventStatement` / `recordAiUsageEvent`, re-exported by `index.ts`) so no P1 call site
+> changes in P2. `AiError.call` is `AiCall | null` — null exactly for `not_configured`, where no
+> provider row was resolved, so there is no call to name and no bill; every other code carries the
+> attempted call and whatever usage the provider reported before failing.
+
 **Failure carries the bill.** `AiError` exposes `{ code, httpStatus, call, usage, retryable }`, so
 `document-ocr.ts`'s "record the failed attempt's tokens" rule survives without the call site holding
 a key: catch, read `err.usage` and `err.call`, write the row, rethrow.
@@ -395,7 +411,19 @@ a key: catch, read `err.usage` and `err.call`, write the row, rethrow.
 Enforced by a test, following `backend/src/__tests__/plugin-boundary.test.ts`:
 
 - `ai-boundary.test.ts` walks `backend/src/**` (excluding `lib/ai/**`) and fails on
-  `from '.*ai/adapters`, `api.anthropic.com|generativelanguage.googleapis.com|api.openai.com|ollama.com|api.opencode.ai|api.typesafe.ai`, and on `\.apiKey\b`.
+  `from '.*ai/adapters`, `api.anthropic.com|generativelanguage.googleapis.com|api.openai.com|ollama.com|api.opencode.ai|api.typesafe.ai`, on `\.apiKey\b`, and on any import of the two key-material
+  modules (`credentials.ts`, `key-material.ts`). Relative specifiers are resolved in every form the
+  bundler accepts (`.js`, extensionless, directory index), the door may not re-export key material,
+  and the facade's VALUE export surface is pinned to an exact list — so neither an extensionless
+  `import` nor `export { accessMaterial } from './key-material.js'` can walk out. It also pins the
+  deprecated `lib/ai/legacy.ts` importers (`lib/ai.ts` + `lib/ai-access.ts`) and asserts that exact
+  set, so a new consumer of the dying bridge fails here first.
+- **P2's two pinned exemptions**, asserted by the test so they can only shrink: the hostname rule
+  exempts `apps/api.ts` — the legacy `POST /api/ai-key/test` probe, deleted in P3 — and the `.apiKey`
+  rule exempts `lib/ai-access.ts` plus the three modules that forward its key to the shim
+  (`apps/api.ts`, `lib/document-ocr.ts`, `lib/review-ai.ts`), deleted in P4. Without them the test
+  cannot be green while P2 is forbidden to touch a feature file; P3 and P4 must empty them — the test
+  asserts each listed file is still a real violation, so a stale exemption cannot outlive its code.
 - `frontend-ai-boundary.test.js` walks `frontend/src/**` and fails on the same hostnames (after P5
   there are zero legitimate hits; today it would fail at `persona.js:189-330`).
 
@@ -412,8 +440,6 @@ export interface AiAdapter {
   readonly kind: ProviderKind
   /** Static capability matrix (§2.4) — validated at save time, not call time. */
   supports(capability: Capability): boolean
-  /** The model used when the assignment leaves model NULL (today's hardcoded defaults). */
-  defaultModel(capability: Capability): string | null
   /** Chat-shaped call: one request, one text answer, one usage report. */
   complete(req: AdapterRequest): Promise<AdapterResult>
   /** Closed-choice decision. Chat adapters do prompt + strict JSON parse. */
@@ -424,7 +450,8 @@ export interface AiAdapter {
 
 export type AdapterRequest = {
   capability: Capability
-  model: string | null
+  /** Always resolved by the door: `capability.model ?? provider.default_model`. */
+  model: string
   messages: AiMessage[]
   json: boolean
   thinkingLevel: ThinkingLevel | null
@@ -434,6 +461,13 @@ export type AdapterRequest = {
   signal: AbortSignal
 }
 ```
+
+**No `defaultModel()` on the interface.** The sketch this section carried one ("today's hardcoded
+defaults"); P2 removes it, because `ai_capabilities.model ?? ai_providers.default_model` is
+owner-typed data and the resolver already refuses a row where both are blank (§5.1, P1 review
+A2/B1). A model is always supplied to an adapter, so no vendor alias ages in code. The six legacy
+vendor ids and their old cap sizes survive only in the P2-only `lib/ai/legacy.ts`, which P4 deletes
+with the shim.
 
 Capability support must be **data, checked twice** — at save time (`supports(capability)`, plus the
 shape check where a capability has two) and at call time (`AiError('unsupported')` as a belt):
@@ -916,6 +950,8 @@ Cost and failure handling:
 
 - The rewrite is **one extra subrequest, once per legacy row** — not per call. The sweep resolves once
   per run, so the worst case is one extra write per run until every row has been read.
+- The settings read model (`loadHouseholdAiConfig`) decrypts with `{ reseal: false }`: a
+  `GET /api/settings` must not write, so a legacy row is migrated by its next real provider call.
 - A failed rewrite must **not** fail the call: the decrypted key is already in memory; the UPDATE is
   best-effort, logged, retried on the next read.
 - No user-visible change, no forced re-entry, no downtime window: P1 copies `v1:` verbatim and P2
@@ -1378,6 +1414,19 @@ longer exists to write anything.
   writer (one line); a full revert means those owners re-enter their keys, with Settings showing
   "needs setup" and the assignments intact. Because the rewrite is lazy, that set is only "rows read
   since P2 was deployed", not the whole table.
+
+**What P2 shipped, and where it deviated from this sketch.** The door (`resolveAccess` /
+`completeText` / `vision` / `decide` / `structured`, the opaque handle with module-private key
+material, the `AiError` vocabulary and the per-capability deadlines), the four wire adapters behind
+`AiAdapter`, the shim + bridge delegation, and D10 in `crypto.ts` + `credentials.ts`. Deviations, all
+recorded inline above: no `defaultModel()` on the adapter interface (owner-typed models only, §2.1/
+§2.4); `AiError.call` is null for `not_configured` (§2.2); the boundary test ships with the two
+pinned legacy exemptions P3/P4 empty (§2.3); the settings read model decrypts with `reseal: false`
+(§3.6); `lib/ai/legacy.ts` is a P2-only bridge inside the door, deleted with the shims in P4 (§2.1).
+The legacy vendor default models (`gpt-4o-mini`, `opencode-vision`, `claude-3-haiku-20240307`,
+`gemini-3.6-flash`, `glm-5.3-flash`) are DELETED in P2 rather than P4: production always passes the
+resolved assignment's model, so this is the owner decision of §4.5 finally enforced in code, and
+the shim fails closed (`not_configured`) instead of inventing a model.
 
 ### P3 — Settings API + UI, and the legacy columns go (first user-visible PR)
 

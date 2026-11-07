@@ -311,6 +311,51 @@ AI lanes (MVP):
 4. **Document expiry OCR (vault).** An explicit per-file action sends a document IMAGE to the household's own provider with the resolved vision model (the `vision` capability's model; migrated history keeps the `ai_vision_model` → `ai_model` precedence). The answer is a SUGGESTION that prefills the expiry editor — only the user-confirmed PATCH writes metadata. See `backend/src/lib/document-ocr.ts` and the `extract-expiry` route in the vault plugin (`backend/src/plugins/documents/ocr.ts`, issue #433).
 5. **Match-review verdicts.** Pending flagged pairs are judged by the SAME layer: a product-identity prompt (the pair's display fields + flag reason, with an explicit ignore-embedded-instructions boundary) returning strict JSON — `verdict` `same`/`different`, `confidence` 0..1, `reason`. `manual` never calls a provider; `assist` (default) caches a verdict the human agrees/disagrees with; `auto` applies a verdict at/above the 0.8 confidence floor. The provider/model come from the acting admin's household AI assignment (the stored admin's, for the cron); an unconfigured household evaluates nothing. See `backend/src/lib/review-ai.ts` and migration 0038.
 
+### The one door (ahaqqu/RumaQ#523)
+
+Every provider request is dispatched by `backend/src/lib/ai/index.ts` — the door. Its public surface is
+`resolveAccess(ctx, capability)` → `completeText` / `vision` / `decide` / `structured`, plus the usage
+statement builders and `AiError`. A capability assignment (decision / reasoning / vision) is resolved
+ONCE per request or sweep into an opaque `AiAccessHandle`; the decrypted key, the endpoint and the
+thinking level are held in module-private state inside the door, so the handle exposes no key and no
+accessor for one. Resolve-once matters: the review sweep's 50-subrequest budget cannot afford a
+capability read per item.
+
+Provider transport lives behind one `AiAdapter` interface in `backend/src/lib/ai/adapters/`, one
+implementation per **wire protocol** — `openai-compatible` (OpenAI, OpenCode, Ollama Cloud and any
+custom base URL), `anthropic`, `gemini`, and `questions` (Jev's typed `POST /v1/systemone` →
+`answers.<name>.{choice, confidence}`). A vendor is data (`ai_providers.preset` + `kind`), never a
+fifth kind and never a class. Adapters own request/response shaping, auth (401/403), 429, 5xx, empty
+content, aborts and the provider's token fields; they know nothing about households, funding or
+prompts. The typed wire reports no tokens, so those calls record zeroes and are distinguished by
+`provider = 'questions'`.
+
+**The boundary rule is a security control.** Outside `backend/src/lib/ai/**`, a module may build
+prompts, validate the model's answer, write usage rows through the door's statement builder, and map
+`AiError` to HTTP. It may **not** import an adapter, import `credentials.ts` or `key-material.ts` (the
+module that returns the decrypted key for a handle), hold an API key, contain
+a provider hostname, or `fetch` a model endpoint — a single fetch outside the door silently ignores
+the household's capability assignment, and a second writer would break "what did this household
+spend". `backend/src/__tests__/ai-boundary.test.ts` enforces the rule over the tree and fails on any
+new violation (it follows the plugin-boundary test's design, including the pinned legacy exemptions
+that P3/P4 delete). The frontend keeps the same boundary: it may call `/api/ai/*` and nothing else
+(the browser-side provider calls are removed in P5).
+
+**Keys are bound to their row (D10).** `ai_providers.encrypted_key` is AES-GCM sealed with the
+`ai_provider:<row id>` additional authenticated data (`v2:` envelope), so a ciphertext copied onto
+another provider row fails the authentication tag instead of decrypting — the one way a
+database-level attacker could redirect a household's key to their own endpoint. Rows written before
+P2 (`v1:`, no AAD) still decrypt and are re-sealed to `v2:` lazily on their first read with a
+compare-and-set UPDATE; a failed re-seal is logged, never fails the call, and is retried on the next
+read. `credentials.ts` is the only reader/writer of that column, and an undecryptable key is "not
+configured" (402), never a 500. The ciphertext change is forward-only: reverted code decodes only
+`v1:`, so a full rollback would require re-entering keys for rows already rewritten.
+
+Until P4, `backend/src/lib/ai.ts` (the legacy AI surface) and `backend/src/lib/ai-access.ts` (the P1
+resolution bridge) remain as **deprecated thin shims** so no feature file changes while the adapters
+land; both are deleted in P4, when every call site resolves per capability and imports only
+`lib/ai/index.js`.
+
 Every completed AI call is recorded as one row in `ai_usage_events` (per-call granularity — what the 24h/7d/30d admin analytics and per-user cache hit rates need). Usage never caps a call: BYOK is the norm, and no rate limit is ever applied (issue #353; the owner reaffirmed this for the AI gateway, #523). Retention: a daily cron (`gateway.scheduled`, `cloudflare.config.ts`) deletes events older than 365 days. The effective model is the household's capability assignment — `ai_capabilities.model ?? ai_providers.default_model`, both owner-typed (#523); a capability with neither is not configured (402). The per-user `ai_model` / `ai_vision_model` / `ai_thinking_level` columns the old screen writes are inert from P1 until P3 drops them with that screen, and the backfill carries their values into the capability rows once (`ai_vision_model ?? ai_model` for vision).
 
 ## 8. Deployment

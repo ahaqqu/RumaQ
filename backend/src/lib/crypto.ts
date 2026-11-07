@@ -82,30 +82,73 @@ async function deriveAesKey(
   )
 }
 
-export async function encryptAiKey(plainText: string, key: string): Promise<string> {
+// Two envelopes (ahaqqu/RumaQ#523 D10, plan §3.6):
+//
+//   v1:  AES-GCM, no additional data — everything written before #523 P2,
+//        including the invite codes below (they are not AI keys and keep the
+//        v1 wire; nothing binds them to a row).
+//   v2:  AES-GCM with `additionalData` — the AI provider key is bound to its
+//        `ai_providers.id` (`ai_provider:<id>`), so a ciphertext copied onto
+//        another row fails the authentication tag instead of decrypting.
+//
+// The envelope is chosen by CALLER INTENT, not by inspecting the argument:
+// no AAD means v1 (legacy/invite), an AAD — even the empty string — means v2.
+// decryptAiKey dispatches on the prefix, so a v1 ciphertext ignores an AAD
+// that could not have been authenticated at seal time.
+
+const ENVELOPE_V1 = 'v1:'
+const ENVELOPE_V2 = 'v2:'
+
+export async function encryptAiKey(
+  plainText: string,
+  key: string,
+  additionalData?: string
+): Promise<string> {
   const encoder = new TextEncoder()
   const aesKey = await deriveAesKey(key, ['encrypt'])
   const iv = crypto.getRandomValues(new Uint8Array(12))
+  const aad = additionalData === undefined ? null : encoder.encode(additionalData)
   const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, tagLength: 128 },
+    // `additionalData: undefined` is not accepted by every WebCrypto
+    // implementation; the key is omitted entirely for v1.
+    aad === null
+      ? { name: 'AES-GCM', iv, tagLength: 128 }
+      : { name: 'AES-GCM', iv, tagLength: 128, additionalData: aad },
     aesKey,
     encoder.encode(plainText)
   )
   const combined = new Uint8Array(iv.length + ciphertext.byteLength)
   combined.set(iv, 0)
   combined.set(new Uint8Array(ciphertext), iv.length)
-  return `v1:${base64UrlEncode(combined)}`
+  return `${aad === null ? ENVELOPE_V1 : ENVELOPE_V2}${base64UrlEncode(combined)}`
 }
 
-export async function decryptAiKey(cipherText: string, key: string): Promise<string> {
-  if (!cipherText.startsWith('v1:')) {
+export async function decryptAiKey(
+  cipherText: string,
+  key: string,
+  additionalData?: string
+): Promise<string> {
+  const isV2 = cipherText.startsWith(ENVELOPE_V2)
+  if (!isV2 && !cipherText.startsWith(ENVELOPE_V1)) {
     throw new Error('Unsupported encryption version')
   }
-  const raw = cipherText.slice(3)
+  if (isV2 && additionalData === undefined) {
+    // A v2 ciphertext was sealed with AAD; opening it without the context can
+    // only produce a tag failure, so say why instead of a bare OperationError.
+    throw new Error('v2: envelope requires additional data')
+  }
+  const raw = cipherText.slice(isV2 ? ENVELOPE_V2.length : ENVELOPE_V1.length)
   const combined = new Uint8Array(base64UrlDecode(raw))
   const iv = combined.slice(0, 12)
   const data = combined.slice(12)
   const aesKey = await deriveAesKey(key, ['decrypt'])
-  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, tagLength: 128 }, aesKey, data)
+  const aad = isV2 ? new TextEncoder().encode(additionalData ?? '') : null
+  const plain = await crypto.subtle.decrypt(
+    aad === null
+      ? { name: 'AES-GCM', iv, tagLength: 128 }
+      : { name: 'AES-GCM', iv, tagLength: 128, additionalData: aad },
+    aesKey,
+    data
+  )
   return new TextDecoder().decode(plain)
 }

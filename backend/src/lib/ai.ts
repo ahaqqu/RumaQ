@@ -1,3 +1,25 @@
+// DEPRECATED — the legacy AI surface (ahaqqu/RumaQ#523 P2). DELETED IN P4.
+//
+// This file is a THIN SHIM: it keeps the pre-P2 exports (same signatures, same
+// error messages) so not a single feature file changes while the door lands,
+// and every call now goes through `lib/ai/adapters/*` inside the door. It owns
+// no transport, no provider hostname and no key handling beyond forwarding the
+// caller's own arguments:
+//
+//   - provider/message shaping, the wire dispatch and the error vocabulary live
+//     in lib/ai/legacy.ts + lib/ai/adapters/*;
+//   - prompts stay OUTSIDE the door on purpose (plan §2.5): they are product
+//     policy, owner-reviewed, and the door takes messages, not prompts.
+//
+// The export list is FROZEN for P2 — P4 replaces each call site with
+// `resolveAccess` + `completeText`/`vision`/`decide` from `./ai/index.js` and
+// deletes this file. Do not add features here.
+
+import { legacyCompleteText, type LegacyCompleteArgs } from './ai/legacy.js'
+import { AiError, usageCollector, type ThinkingLevel, type TokenUsage } from './ai/index.js'
+import { parseJsonResponse } from './ai/parse.js'
+import type { AiMessage } from './ai/types.js'
+
 export type ParsedItem = {
   name: string
   qty: number
@@ -75,452 +97,66 @@ Rules:
 - Do NOT include any text outside the JSON.`
 }
 
-type ChatMessage = {
-  role: 'user' | 'assistant' | 'system'
-  content: string | ChatContentPart[]
-}
-
-type ChatContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string } }
-
-type OpenAIResponse = {
-  choices?: Array<{
-    message?: {
-      content?: string
-    }
-  }>
-  usage?: {
-    prompt_tokens?: number
-    completion_tokens?: number
-    prompt_tokens_details?: {
-      cached_tokens?: number
-    }
-  }
-}
-
-type GeminiResponse = {
-  candidates?: Array<{
-    content?: {
-      parts?: Array<{
-        text?: string
-      }>
-    }
-  }>
-  usageMetadata?: {
-    promptTokenCount?: number
-    candidatesTokenCount?: number
-    thoughtsTokenCount?: number
-    cachedContentTokenCount?: number
-  }
-}
-
-type AnthropicResponse = {
-  content?: Array<{
-    text?: string
-  }>
-  usage?: {
-    input_tokens?: number
-    output_tokens?: number
-  }
-}
-
-export type ThinkingLevel = 'low' | 'medium' | 'high'
-
-// Real provider token counts (what the caller's own provider subscription
-// bills). Reported through AiCallOpts.onUsage when the provider includes
-// usage in its response.
-export type TokenUsage = {
-  input_tokens: number
-  output_tokens: number
-  // Cached input tokens when the provider reports them (Gemini
-  // cachedContentTokenCount, OpenAI-compatible prompt_tokens_details);
-  // null means unreported — unknown, not zero.
-  cached_tokens: number | null
-}
-
-// Accumulate provider-reported usage into a caller-owned total across calls.
-// Unreported cache figures leave the running total as-is, so a series with
-// no cache data at all stays null.
-export function usageCollector(target: TokenUsage): (usage: TokenUsage) => void {
-  return (usage) => {
-    target.input_tokens += usage.input_tokens
-    target.output_tokens += usage.output_tokens
-    if (usage.cached_tokens !== null) {
-      target.cached_tokens = (target.cached_tokens ?? 0) + usage.cached_tokens
-    }
-  }
-}
-
 export type AiCallOpts = {
   baseUrl?: string | null
   model?: string | null
   thinkingLevel?: ThinkingLevel | null
   onUsage?: (usage: TokenUsage) => void
-  // Optional call deadline. The providers' fetches take it as their
+  // Optional call deadline. The provider fetches take it as their
   // AbortSignal, so a caller with a bounded budget (the review evaluator's
   // synchronous fan-out) cancels a hung provider instead of awaiting it
-  // forever. Undefined = today's behavior (no deadline).
+  // forever. Undefined = the legacy behavior (no deadline).
   signal?: AbortSignal
 }
 
-const OLLAMA_BASE_URL = 'https://ollama.com/v1'
-// Vision-capable default for receipt OCR. qwen3-vl:235b-instruct was retired
-// by Ollama Cloud on 2026-06-16 (requests now 410).
-const OLLAMA_DEFAULT_MODEL = 'glm-5.3-flash'
+export { usageCollector, parseJsonResponse }
+export type { AiMessage, ThinkingLevel, TokenUsage }
 
-// Gemini exposes thinking as a token budget on thinking-capable models.
-const GEMINI_THINKING_BUDGET: Record<ThinkingLevel, number> = {
-  low: 1024,
-  medium: 8192,
-  high: 24576,
-}
-
-// Anthropic requires budget_tokens >= 1024 and max_tokens > budget_tokens.
-const ANTHROPIC_THINKING_BUDGET: Record<ThinkingLevel, number> = {
-  low: 2048,
-  medium: 8192,
-  high: 16384,
-}
-
-type OpenAICompatibleOpts = {
-  thinkingLevel?: ThinkingLevel | null
-  onUsage?: (usage: TokenUsage) => void
-  signal?: AbortSignal
-  maxTokensField?: 'max_tokens' | 'max_completion_tokens'
-  // Omit to send no cap and let the provider/model defaults apply (Ollama
-  // reasoning models otherwise spend the cap on thinking alone).
-  maxTokens?: number
-}
-
-async function callOpenAICompatible(
-  providerLabel: string,
-  baseUrl: string,
-  model: string,
-  apiKey: string,
-  messages: ChatMessage[],
-  opts?: OpenAICompatibleOpts
-): Promise<string> {
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-  }
-  if (opts?.maxTokens !== undefined) {
-    body[opts.maxTokensField ?? 'max_tokens'] = opts.maxTokens
-  }
-  // Only accepted by reasoning-capable models; incompatible models surface a
-  // provider 400 to the user via the usual 502 error path.
-  if (opts?.thinkingLevel) {
-    body.reasoning_effort = opts.thinkingLevel
-  }
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-    signal: opts?.signal,
-  })
-
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`${providerLabel} request failed: ${res.status} ${body}`)
-  }
-
-  const data = (await res.json()) as OpenAIResponse
-  if (opts?.onUsage && data.usage) {
-    opts.onUsage({
-      input_tokens: data.usage.prompt_tokens ?? 0,
-      output_tokens: data.usage.completion_tokens ?? 0,
-      cached_tokens: data.usage.prompt_tokens_details?.cached_tokens ?? null,
-    })
-  }
-  const content = data.choices?.[0]?.message?.content
-  if (!content) throw new Error(`${providerLabel} returned empty response`)
-
-  return content
-}
-
-async function callOpenAI(
-  apiKey: string,
-  messages: ChatMessage[],
-  opts?: AiCallOpts
-): Promise<string> {
-  return callOpenAICompatible(
-    'OpenAI',
-    'https://api.openai.com/v1',
-    opts?.model?.trim() || 'gpt-4o-mini',
-    apiKey,
-    messages,
-    {
-      thinkingLevel: opts?.thinkingLevel,
-      onUsage: opts?.onUsage,
-      signal: opts?.signal,
-      // Reasoning models reject max_tokens; max_completion_tokens is accepted
-      // across OpenAI's chat models.
-      maxTokensField: 'max_completion_tokens',
-      maxTokens: 2000,
-    }
-  )
-}
-
-async function callGemini(
-  apiKey: string,
-  messages: ChatMessage[],
-  opts?: AiCallOpts
-): Promise<string> {
-  const systemMsg = messages.find((m) => m.role === 'system')
-  const userMsg = messages.find((m) => m.role === 'user')
-
-  const parts: Array<{ text: string } | { inline_data: { mime_type: string; data: string } }> = []
-
-  if (systemMsg) {
-    parts.push({
-      text: typeof systemMsg.content === 'string' ? systemMsg.content : '',
-    })
-  }
-  if (userMsg) {
-    if (typeof userMsg.content === 'string') {
-      parts.push({ text: userMsg.content })
-    } else if (Array.isArray(userMsg.content)) {
-      for (const part of userMsg.content) {
-        if (part.type === 'text') {
-          parts.push({ text: part.text })
-        } else if (part.type === 'image_url') {
-          const url = part.image_url.url
-          parts.push({
-            inline_data: {
-              mime_type: url.startsWith('data:')
-                ? url.split(';')[0].replace('data:', '')
-                : 'image/jpeg',
-              data: url.startsWith('data:') ? url.split(',')[1] : url,
-            },
-          })
-        }
-      }
-    }
-  }
-
-  const body: Record<string, unknown> = { contents: [{ parts }] }
-  if (opts?.thinkingLevel) {
-    body.generationConfig = {
-      thinkingConfig: { thinkingBudget: GEMINI_THINKING_BUDGET[opts.thinkingLevel] },
-    }
-  }
-
-  // Model is interpolated into the URL path; save-time validation already
-  // restricts its charset, and encoding here keeps that true even for values
-  // written by older clients.
-  const model = encodeURIComponent(opts?.model?.trim() || 'gemini-3.6-flash')
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: opts?.signal,
-    }
-  )
-
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`Gemini request failed: ${res.status} ${body}`)
-  }
-
-  const data = (await res.json()) as GeminiResponse
-  if (opts?.onUsage && data.usageMetadata) {
-    const meta = data.usageMetadata
-    opts.onUsage({
-      input_tokens: meta.promptTokenCount ?? 0,
-      output_tokens: (meta.candidatesTokenCount ?? 0) + (meta.thoughtsTokenCount ?? 0),
-      cached_tokens: meta.cachedContentTokenCount ?? null,
-    })
-  }
-  const content = data.candidates?.[0]?.content?.parts?.[0]?.text
-  if (!content) throw new Error('Gemini returned empty response')
-
-  return content
-}
-
-async function callAnthropic(
-  apiKey: string,
-  messages: ChatMessage[],
-  opts?: AiCallOpts
-): Promise<string> {
-  const systemMsg = messages.find((m) => m.role === 'system')
-  const chatMessages = messages.filter((m) => m.role !== 'system')
-
-  const thinkingLevel = opts?.thinkingLevel
-  const thinkingBudget = thinkingLevel ? ANTHROPIC_THINKING_BUDGET[thinkingLevel] : null
-
-  const body: Record<string, unknown> = {
-    model: opts?.model?.trim() || 'claude-3-haiku-20240307',
-    // Extended thinking requires max_tokens > budget_tokens and temperature 1
-    // (the default when unset, which it is here).
-    max_tokens: thinkingBudget ? Math.max(2000, thinkingBudget + 2000) : 2000,
-    messages: chatMessages.map((m) => ({
-      role: m.role,
-      content:
-        typeof m.content === 'string'
-          ? m.content
-          : m.content.map((part) => {
-              if (part.type === 'text') return { type: 'text', text: part.text }
-              const url = part.image_url.url
-              return {
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: url.startsWith('data:')
-                    ? url.split(';')[0].replace('data:', '')
-                    : 'image/jpeg',
-                  data: url.startsWith('data:') ? url.split(',')[1] : url,
-                },
-              }
-            }),
-    })),
-  }
-
-  if (systemMsg) {
-    body.system = typeof systemMsg.content === 'string' ? systemMsg.content : ''
-  }
-  if (thinkingBudget) {
-    body.thinking = { type: 'enabled', budget_tokens: thinkingBudget }
-  }
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(body),
-    signal: opts?.signal,
-  })
-
-  if (!res.ok) {
-    const bodyText = await res.text()
-    throw new Error(`Anthropic request failed: ${res.status} ${bodyText}`)
-  }
-
-  const result = (await res.json()) as AnthropicResponse
-  if (opts?.onUsage && result.usage) {
-    // cached_tokens stays null: Anthropic's cache_read_input_tokens are NOT
-    // part of input_tokens, so folding them into a cached/input ratio would
-    // exceed 1 and misstate the cache hit rate.
-    opts.onUsage({
-      input_tokens: result.usage.input_tokens ?? 0,
-      output_tokens: result.usage.output_tokens ?? 0,
-      cached_tokens: null,
-    })
-  }
-  const content = result.content?.[0]?.text
-  if (!content) throw new Error('Anthropic returned empty response')
-
-  return content
-}
-
-async function callOpenCode(
-  apiKey: string,
-  messages: ChatMessage[],
-  opts?: AiCallOpts
-): Promise<string> {
-  return callOpenAICompatible(
-    'OpenCode',
-    'https://api.opencode.ai/v1',
-    opts?.model?.trim() || 'opencode-vision',
-    apiKey,
-    messages,
-    {
-      thinkingLevel: opts?.thinkingLevel,
-      onUsage: opts?.onUsage,
-      signal: opts?.signal,
-      maxTokens: 2000,
-    }
-  )
-}
-
-// Exported for the review reviewer (lib/review-ai.ts): one JSON-extraction
-// policy across every structured AI answer (fenced/prose-wrapped blocks are
-// tolerated here, then each caller applies its OWN strict field validation).
-export function parseJsonResponse<T>(content: string): T {
-  const jsonMatch = content.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) {
-    throw new Error('AI response did not contain valid JSON')
-  }
-
-  try {
-    return JSON.parse(jsonMatch[0]) as T
-  } catch {
-    throw new Error('Failed to parse AI response JSON')
-  }
-}
-
-function toDataUri(imageData: ArrayBuffer, type: string): string {
-  const base64 = arrayBufferToBase64(imageData)
-  return `data:${type};base64,${base64}`
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
-
-async function callProvider(
+function legacyArgs(
   provider: string,
   apiKey: string,
-  messages: ChatMessage[],
-  opts?: AiCallOpts
-): Promise<string> {
-  switch (provider) {
-    case 'openai':
-      return callOpenAI(apiKey, messages, opts)
-    case 'gemini':
-      return callGemini(apiKey, messages, opts)
-    case 'anthropic':
-      return callAnthropic(apiKey, messages, opts)
-    case 'opencode':
-      return callOpenCode(apiKey, messages, opts)
-    case 'ollama':
-      // No max_tokens cap: reasoning models (e.g. deepseek-v4.1-flash) spend
-      // thousands of tokens thinking before the JSON content, and the key
-      // owner pays per actual token anyway. The model's own context window is
-      // the only limit.
-      return callOpenAICompatible(
-        'Ollama Cloud',
-        OLLAMA_BASE_URL,
-        opts?.model?.trim() || OLLAMA_DEFAULT_MODEL,
-        apiKey,
-        messages,
-        {
-          thinkingLevel: opts?.thinkingLevel,
-          onUsage: opts?.onUsage,
-          signal: opts?.signal,
-        }
-      )
-    case 'custom': {
-      const baseUrl = opts?.baseUrl?.trim()
-      const model = opts?.model?.trim()
-      if (!baseUrl || !model) {
-        throw new Error('Custom provider requires a base URL and model in Settings')
-      }
-      return callOpenAICompatible('Custom provider', baseUrl, model, apiKey, messages, {
-        thinkingLevel: opts?.thinkingLevel,
-        onUsage: opts?.onUsage,
-        signal: opts?.signal,
-        maxTokens: 2000,
-      })
-    }
-    default:
-      throw new Error(`Unsupported AI provider: ${provider}`)
+  messages: AiMessage[],
+  opts: AiCallOpts | undefined
+): LegacyCompleteArgs {
+  return {
+    provider,
+    apiKey,
+    messages,
+    baseUrl: opts?.baseUrl,
+    model: opts?.model,
+    thinkingLevel: opts?.thinkingLevel,
+    signal: opts?.signal,
   }
 }
 
+/** Did the provider report token counts (not merely "zero tokens")? */
+function reportedUsage(usage: TokenUsage | undefined): TokenUsage | null {
+  if (!usage) return null
+  const any = usage.input_tokens !== 0 || usage.output_tokens !== 0 || usage.cached_tokens !== null
+  return any ? usage : null
+}
+
+async function legacyCall(args: LegacyCompleteArgs, opts: AiCallOpts | undefined): Promise<string> {
+  try {
+    const result = await legacyCompleteText(args)
+    // The pre-P2 callback contract: report usage only when the provider did.
+    if (result.usage && opts?.onUsage) opts.onUsage(result.usage)
+    return result.text
+  } catch (err) {
+    // FAILURE CARRIES THE BILL (plan §2.2): a provider that answered but whose
+    // answer was unusable (empty content, off-schema JSON) already billed those
+    // inputs. The pre-P2 dispatcher reported usage before rejecting the answer,
+    // so forward it here before the rethrow and the caller's accumulator keeps
+    // its failed-attempt tokens.
+    if (err instanceof AiError && opts?.onUsage) {
+      const usage = reportedUsage(err.usage)
+      if (usage) opts.onUsage(usage)
+    }
+    throw err
+  }
+}
+
+/** Legacy completion: system prompt + user prompt in, the model's text out. */
 export async function completeText(
   provider: string,
   apiKey: string,
@@ -528,11 +164,31 @@ export async function completeText(
   userPrompt: string,
   opts?: AiCallOpts
 ): Promise<string> {
-  const messages: ChatMessage[] = [
+  const messages: AiMessage[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt },
   ]
-  return callProvider(provider, apiKey, messages, opts)
+  return legacyCall(legacyArgs(provider, apiKey, messages, opts), opts)
+}
+
+async function completeVision(
+  imageBuffer: ArrayBuffer,
+  imageType: string,
+  prompt: string,
+  provider: string,
+  apiKey: string,
+  opts?: AiCallOpts
+): Promise<string> {
+  const messages: AiMessage[] = [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image', bytes: imageBuffer, mimeType: imageType },
+      ],
+    },
+  ]
+  return legacyCall(legacyArgs(provider, apiKey, messages, opts), opts)
 }
 
 export async function extractReceiptItems(
@@ -542,19 +198,14 @@ export async function extractReceiptItems(
   apiKey: string,
   opts?: AiCallOpts
 ): Promise<ScanResult> {
-  const imageData = toDataUri(imageBuffer, imageType)
-
-  const messages: ChatMessage[] = [
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text: buildScanPrompt() },
-        { type: 'image_url', image_url: { url: imageData } },
-      ],
-    },
-  ]
-
-  const content = await callProvider(provider, apiKey, messages, opts)
+  const content = await completeVision(
+    imageBuffer,
+    imageType,
+    buildScanPrompt(),
+    provider,
+    apiKey,
+    opts
+  )
   const result = parseJsonResponse<ScanResult>(content)
 
   const items: ParsedItem[] = ((result.items || []) as Record<string, unknown>[]).map((it) => ({
@@ -587,18 +238,13 @@ export async function extractExpiryDate(
   apiKey: string,
   opts?: AiCallOpts
 ): Promise<RawExpiryExtraction> {
-  const imageData = toDataUri(imageBuffer, imageType)
-
-  const messages: ChatMessage[] = [
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text: buildExpiryExtractionPrompt() },
-        { type: 'image_url', image_url: { url: imageData } },
-      ],
-    },
-  ]
-
-  const content = await callProvider(provider, apiKey, messages, opts)
+  const content = await completeVision(
+    imageBuffer,
+    imageType,
+    buildExpiryExtractionPrompt(),
+    provider,
+    apiKey,
+    opts
+  )
   return parseJsonResponse<RawExpiryExtraction>(content)
 }
