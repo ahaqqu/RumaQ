@@ -114,9 +114,11 @@ export default defineConfig({
       // Startup secrets check only makes sense against a real account; local
       // dev runs on placeholder secrets from .dev.vars.
       RUN_SECRETS_CHECK: bindings.text(accountId === 'LOCAL' ? 'false' : 'true'),
-      // Required by gateway.ts's startup check. Optional secrets
-      // (HAQITA_INGEST_SECRET, RUMAQ_SERVER_AI_*) stay undeclared so local
-      // dev without them does not warn.
+      // Required by gateway.ts's startup check. The optional secret
+      // (HAQITA_INGEST_SECRET) stays undeclared so local dev without it does
+      // not warn. The retired RUMAQ_SERVER_AI_* variables are not declared and
+      // not read anywhere (#523 P1, D8) — the QA Worker's copies are removed by
+      // the owner (docs/MANUAL_ACTIONS.md).
       GOOGLE_CLIENT_ID: bindings.secret(),
       GOOGLE_CLIENT_SECRET: bindings.secret(),
       WORKER_JWT_SECRET: bindings.secret(),

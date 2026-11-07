@@ -55,7 +55,7 @@ export function registerExpiryOcrRoutes(documentsApp: Hono<Env>, storage: Storag
     '/api/documents/:id/files/:fileId/extract-expiry',
     describeRoute({
       description:
-        'Reads one file’s expiry date with the caller’s own AI provider (vision model: ai_vision_model, falling back to ai_model; server key/model when no user key is set). Image files only (JPEG, PNG, WebP — PDFs are refused). Returns a SUGGESTED expires_on (null when the model found no date) and the model asked; nothing is written — the user confirms through PATCH /api/documents/{id}. Every attempt records an ai_usage_events row (failures included) and an outcome log line, and the byte read is audited as a document_audit ‘ocr’ record naming the file; document content is never logged.',
+        'Reads one file’s expiry date with the household’s own AI provider (the vision capability’s model). Image files only (JPEG, PNG, WebP — PDFs are refused). Returns a SUGGESTED expires_on (null when the model found no date) and the model asked; nothing is written — the user confirms through PATCH /api/documents/{id}. Every attempt records an ai_usage_events row (failures included) and an outcome log line, and the byte read is audited as a document_audit ‘ocr’ record naming the file; document content is never logged.',
       security: [{ cookieAuth: [] }],
       responses: {
         200: {

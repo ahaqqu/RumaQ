@@ -33,15 +33,8 @@ import type { MockEnv } from './support/env.js'
 const OCR_PATH = '/api/documents/doc-1/files/file-1/extract-expiry'
 
 const SETTINGS_ROUTE = /FROM user_settings WHERE user_id/
-
-function serverAiEnv(overrides: Record<string, unknown> = {}) {
-  return {
-    RUMAQ_SERVER_AI_PROVIDER: 'gemini',
-    RUMAQ_SERVER_AI_KEY: 'sk-server',
-    RUMAQ_SERVER_AI_MODEL: 'server-model',
-    ...overrides,
-  }
-}
+// The #523 P1 resolver: one join per capability, keyed by the HOUSEHOLD.
+const CAPABILITY_ROUTE = /FROM ai_capabilities c/
 
 // A provider answer shaped like the OpenAI-compatible chat response.
 function openAiAnswer(content: string) {
@@ -56,26 +49,41 @@ function openAiAnswer(content: string) {
   }
 }
 
-function userSettingsRow(encryptedKey: string, overrides: Row = {}): Row {
+// One assigned provider row, shaped exactly like the resolver's join (the
+// route function receives the bound params: [household_id, capability]).
+function capabilityRow(encryptedKey: string | null, overrides: Row = {}): Row {
   return {
-    ai_provider: 'openai',
-    ai_base_url: null,
-    ai_model: null,
-    ai_vision_model: null,
-    ai_thinking_level: null,
-    encrypted_ai_key: encryptedKey,
+    capability: 'vision',
+    model: null,
+    thinking_level: null,
+    provider_id: 'p-1',
+    kind: 'openai-compatible',
+    preset: 'openai',
+    base_url: null,
+    // The vision assignment inherits this when the capability has no model of
+    // its own (#523's capability.model ?? provider.default_model rule).
+    default_model: 'vision-model',
+    encrypted_key: encryptedKey,
     ...overrides,
   }
 }
 
-// The scoped lookups + the settings SELECT every OCR request runs. `settings`
-// returning an empty row means "no AI configured" (402) unless the env adds
-// the server fallback.
-function userKeyRoutes(settings: Row): [RegExp, (params: unknown[]) => Row | null][] {
+// The scoped lookups + the settings household read + the capability join every
+// OCR request runs. The VISION assignment is the only one seeded: the OCR path
+// resolves the household's vision capability (P1's single access still serves
+// it), so a null row means "no AI configured" (402).
+function householdAiRoutes(
+  encryptedKey: string | null,
+  overrides: Row = {}
+): [RegExp, (params: unknown[]) => Row | null][] {
   return [
     [DOC_ROW_ROUTE, () => DOC_ROW()],
     [FILE_ROW_ROUTE, () => FILE_ROW()],
-    [SETTINGS_ROUTE, () => settings],
+    [SETTINGS_ROUTE, () => ({ household_id: 'h1' })],
+    [
+      CAPABILITY_ROUTE,
+      (params) => (params[1] === 'vision' ? capabilityRow(encryptedKey, overrides) : null),
+    ],
   ]
 }
 
@@ -129,6 +137,14 @@ describe('document-ocr lib (issue #433)', () => {
       visionModel: 'vision-model',
       thinkingLevel: null,
       keySource: 'user' as const,
+      call: {
+        capability: 'vision' as const,
+        householdId: 'h1',
+        providerKind: 'openai-compatible' as const,
+        providerId: 'p-1',
+        model: 'vision-model',
+        funding: 'household' as const,
+      },
     }
     const args = {
       access,
@@ -164,10 +180,12 @@ describe('document-ocr lib (issue #433)', () => {
       expect(outcome).toBe('suggested')
       expect(runs).toHaveLength(1)
       expect(runs[0].sql).toContain('INSERT INTO ai_usage_events')
-      // provider, model, key_source bind at positions 4, 5, 9.
-      expect(runs[0].params[4]).toBe('openai')
+      // provider(kind), model, capability, household_id, funding bind at 4..8.
+      expect(runs[0].params[4]).toBe('openai-compatible')
       expect(runs[0].params[5]).toBe('vision-model')
-      expect(runs[0].params[9]).toBe('user')
+      expect(runs[0].params[6]).toBe('vision')
+      expect(runs[0].params[7]).toBe('h1')
+      expect(runs[0].params[8]).toBe('household')
     })
 
     it('still pairs the audit exactly once when the provider fails, then rethrows', async () => {
@@ -265,42 +283,45 @@ describe('documents routes — expiry OCR (#433)', () => {
     expect(body.error).toMatch(/image file/i)
   })
 
-  it('answers 402 when neither the user nor the server has AI configured', async () => {
-    const { env, app } = h.setup(userKeyRoutes({}))
+  it('answers 402 when the household has no AI configured (no server fallback any more)', async () => {
+    const { env, app } = h.setup(householdAiRoutes(null))
     const res = await app.request(OCR_PATH, { method: 'POST' }, env)
     expect(res.status).toBe(402)
     const body = (await res.json()) as { error: string }
     expect(body.error).toMatch(/not configured/i)
   })
 
-  it('suggests a date via the server fallback in TEST_MODE and records the attempt with the server model', async () => {
-    const { db, env, bucket, app } = h.setup(userKeyRoutes({}))
-    Object.assign(env, serverAiEnv())
+  it('suggests a date through the household provider in TEST_MODE and records the attempt', async () => {
+    const encrypted = await encryptAiKey('sk-household', ENV_KEY)
+    const { db, env, bucket, app } = h.setup(
+      householdAiRoutes(encrypted, { model: 'vision-model' })
+    )
     seedBucket(bucket, JPEG_BYTES, 'image/jpeg')
 
     const res = await app.request(OCR_PATH, { method: 'POST' }, env)
     expect(res.status).toBe(200)
     const body = (await res.json()) as { expires_on: string | null; model: string | null }
     expect(body.expires_on).toBe('2027-06-05')
-    // The SERVER's model answered — the server's model name is only ever
-    // mixed into a SERVER-keyed call, which this is (no user settings).
-    expect(body.model).toBe('server-model')
+    expect(body.model).toBe('vision-model')
 
     const event = db.log.find((entry) => /INSERT INTO ai_usage_events/.test(entry.sql))
     expect(event).toBeTruthy()
-    // The INSERT binds id, user_id, ts, date, provider, model, tokens…,
-    // key_source — provider/model/key_source are positions 4, 5, 9.
-    expect(event?.params[4]).toBe('gemini')
-    expect(event?.params[5]).toBe('server-model')
-    expect(event?.params[9]).toBe('server')
+    // id, user_id, ts, date, provider(kind), model, capability, household, funding, tokens…
+    expect(event?.params[4]).toBe('openai-compatible')
+    expect(event?.params[5]).toBe('vision-model')
+    expect(event?.params[6]).toBe('vision')
+    expect(event?.params[7]).toBe('h1')
+    expect(event?.params[8]).toBe('household')
   })
 
   it('calls the USER provider with the user vision model and never logs the key', async () => {
     const encrypted = await encryptAiKey('sk-user-secret', ENV_KEY)
     const { db, env, bucket, app } = h.setup(
-      userKeyRoutes(userSettingsRow(encrypted, { ai_vision_model: 'vision-model' })),
+      householdAiRoutes(encrypted, { model: 'vision-model' }),
       [],
-      { envOverrides: { TEST_MODE: 'false', WORKER_ENCRYPTION_KEY: ENV_KEY } as Partial<MockEnv> }
+      {
+        envOverrides: { TEST_MODE: 'false', WORKER_ENCRYPTION_KEY: ENV_KEY } as Partial<MockEnv>,
+      }
     )
     seedBucket(bucket, JPEG_BYTES, 'image/jpeg')
 
@@ -339,7 +360,7 @@ describe('documents routes — expiry OCR (#433)', () => {
 
   it('returns 502 and still records usage when the provider fails (outcome=failed)', async () => {
     const encrypted = await encryptAiKey('sk-user-secret', ENV_KEY)
-    const { db, env, bucket, app } = h.setup(userKeyRoutes(userSettingsRow(encrypted)), [], {
+    const { db, env, bucket, app } = h.setup(householdAiRoutes(encrypted), [], {
       envOverrides: { TEST_MODE: 'false', WORKER_ENCRYPTION_KEY: ENV_KEY } as Partial<MockEnv>,
     })
     seedBucket(bucket, JPEG_BYTES, 'image/jpeg')
@@ -378,7 +399,7 @@ describe('documents routes — expiry OCR (#433)', () => {
 
   it('rejects a well-formed non-calendar model answer with 502 (outcome=rejected)', async () => {
     const encrypted = await encryptAiKey('sk-user-secret', ENV_KEY)
-    const { env, bucket, app } = h.setup(userKeyRoutes(userSettingsRow(encrypted)), [], {
+    const { env, bucket, app } = h.setup(householdAiRoutes(encrypted), [], {
       envOverrides: { TEST_MODE: 'false', WORKER_ENCRYPTION_KEY: ENV_KEY } as Partial<MockEnv>,
     })
     seedBucket(bucket, PNG_BYTES, 'image/png')
@@ -396,7 +417,7 @@ describe('documents routes — expiry OCR (#433)', () => {
 
   it('accepts a null model answer as "no date found" (200, outcome=no_date)', async () => {
     const encrypted = await encryptAiKey('sk-user-secret', ENV_KEY)
-    const { db, env, bucket, app } = h.setup(userKeyRoutes(userSettingsRow(encrypted)), [], {
+    const { db, env, bucket, app } = h.setup(householdAiRoutes(encrypted), [], {
       envOverrides: { TEST_MODE: 'false', WORKER_ENCRYPTION_KEY: ENV_KEY } as Partial<MockEnv>,
     })
     seedBucket(bucket, JPEG_BYTES, 'image/jpeg')
@@ -419,7 +440,7 @@ describe('documents routes — expiry OCR (#433)', () => {
     // legitimate "no expiry" 200; the module contract says wrong shape =
     // rejection.
     const encrypted = await encryptAiKey('sk-user-secret', ENV_KEY)
-    const { env, bucket, app } = h.setup(userKeyRoutes(userSettingsRow(encrypted)), [], {
+    const { env, bucket, app } = h.setup(householdAiRoutes(encrypted), [], {
       envOverrides: { TEST_MODE: 'false', WORKER_ENCRYPTION_KEY: ENV_KEY } as Partial<MockEnv>,
     })
     seedBucket(bucket, JPEG_BYTES, 'image/jpeg')
@@ -436,8 +457,8 @@ describe('documents routes — expiry OCR (#433)', () => {
   })
 
   it('audits the byte read as a durable document_audit ocr row on the success path (T4-A1)', async () => {
-    const { db, env, bucket, app } = h.setup(userKeyRoutes({}))
-    Object.assign(env, serverAiEnv())
+    const encrypted = await encryptAiKey('sk-household', ENV_KEY)
+    const { db, env, bucket, app } = h.setup(householdAiRoutes(encrypted))
     seedBucket(bucket, JPEG_BYTES, 'image/jpeg')
 
     const res = await app.request(OCR_PATH, { method: 'POST' }, env)
@@ -456,15 +477,15 @@ describe('documents routes — expiry OCR (#433)', () => {
   it('leaves no document_audit row on the pre-read rejections (404/415/402/429 audit nothing)', async () => {
     // The T4-A5 boundary: pre-provider rejections (no read, no billing) keep
     // the empty-audit posture of every other vault route.
-    const { db, env, app } = h.setup(userKeyRoutes({}))
+    const { db, env, app } = h.setup(householdAiRoutes(null))
     const res = await app.request(OCR_PATH, { method: 'POST' }, env)
     expect(res.status).toBe(402)
     expect(db.log.some((entry) => /INSERT INTO document_audit/.test(entry.sql))).toBe(false)
   })
 
   it('rate-limits bursts of read-date calls per user', async () => {
-    const { env, app } = h.setup(userKeyRoutes({}))
-    Object.assign(env, serverAiEnv())
+    const encrypted = await encryptAiKey('sk-household', ENV_KEY)
+    const { env, app } = h.setup(householdAiRoutes(encrypted))
 
     // OCR_RATE_MAX is 30/min; the 31st call in the window is refused.
     let last: Response | undefined

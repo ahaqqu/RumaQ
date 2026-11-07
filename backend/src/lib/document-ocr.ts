@@ -15,7 +15,8 @@
 
 import type { Env } from '../types.js'
 import { extractExpiryDate, usageCollector, type TokenUsage } from './ai.js'
-import { recordAiUsageEvent, type AiAccess } from './ai-access.js'
+import type { AiAccess } from './ai-access.js'
+import { recordAiUsageEvent } from './ai/usage.js'
 import { isValidExpiryDate } from './document-expiry.js'
 
 // Vision models read pixels, not PDFs: only the vault's image types can ride
@@ -102,15 +103,10 @@ export async function runExpiryOcr(
     fileId: string
   }
 ): Promise<{ suggestion: string | null; outcome: ExpiryOcrOutcome }> {
-  // The model asked for IS the usage event's model — the receipt/chat paths
-  // record access.model, vision work records access.visionModel (null = the
-  // provider default applied).
-  const usageEvent = {
-    userId: args.userId,
-    provider: args.access.provider,
-    model: args.access.visionModel,
-    keySource: args.access.keySource,
-  }
+  // The model asked for IS the usage event's model — vision work records
+  // access.visionModel (null = the provider default applied). The access's
+  // call supplies capability/household/funding (#523 P1).
+  const usageCall = { ...args.access.call, model: args.access.visionModel }
   const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
 
   // The audit pairing exists ONCE (T4-B2): every path that reaches the
@@ -119,10 +115,9 @@ export async function runExpiryOcr(
   // when the answer was unusable).
   const finish = async (outcome: ExpiryOcrOutcome): Promise<void> => {
     await recordAiUsageEvent(env, {
-      ...usageEvent,
-      inputTokens: tokenUsage.input_tokens,
-      outputTokens: tokenUsage.output_tokens,
-      cachedTokens: tokenUsage.cached_tokens,
+      userId: args.userId,
+      call: usageCall,
+      usage: tokenUsage,
     })
     logExpiryOcrOutcome({
       householdId: args.householdId,

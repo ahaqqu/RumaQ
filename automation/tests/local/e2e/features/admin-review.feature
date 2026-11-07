@@ -25,6 +25,11 @@ Feature: Admin review queue
     When I reload the review page as-is
     Then the full-auto review mode is selected
 
+  # #523 P1: the queue's aiConfigured comes from the household's real
+  # ai_capabilities now, and the legacy PATCH ai_key seed is a dead write until
+  # P3 (design §3.4, §4.3). Pending, NOT deleted: P3 seeds a provider through
+  # the public endpoints and reactivates the assist-provenance check.
+  @skip
   Scenario: Agreeing with a cached AI verdict records AI-assisted provenance
     Given I am logged in as the seeded test user
     And the queue holds one flagged pair with a cached AI verdict

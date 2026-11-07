@@ -1047,7 +1047,7 @@ export interface paths {
     }
     get?: never
     put?: never
-    /** @description Reads one file’s expiry date with the caller’s own AI provider (vision model: ai_vision_model, falling back to ai_model; server key/model when no user key is set). Image files only (JPEG, PNG, WebP — PDFs are refused). Returns a SUGGESTED expires_on (null when the model found no date) and the model asked; nothing is written — the user confirms through PATCH /api/documents/{id}. Every attempt records an ai_usage_events row (failures included) and an outcome log line, and the byte read is audited as a document_audit ‘ocr’ record naming the file; document content is never logged. */
+    /** @description Reads one file’s expiry date with the household’s own AI provider (the vision capability’s model). Image files only (JPEG, PNG, WebP — PDFs are refused). Returns a SUGGESTED expires_on (null when the model found no date) and the model asked; nothing is written — the user confirms through PATCH /api/documents/{id}. Every attempt records an ai_usage_events row (failures included) and an outcome log line, and the byte read is audited as a document_audit ‘ocr’ record naming the file; document content is never logged. */
     post: operations['postApiDocumentsByIdFilesByFileIdExtractExpiry']
     delete?: never
     options?: never
@@ -1495,7 +1495,74 @@ export interface operations {
         headers: {
           [name: string]: unknown
         }
-        content?: never
+        content: {
+          'application/json': {
+            motion_preference: string
+            language: string | null
+            ai_provider: string | null
+            ai_base_url: string | null
+            ai_model: string | null
+            ai_vision_model: string | null
+            ai_thinking_level: string | null
+            persona_user_role: string | null
+            persona_ai_role: string | null
+            persona_enabled: boolean
+            theme_hue: number | null
+            active_household_id: string
+            active_household_name: string | null
+            has_ai_key: boolean
+            /** @description Retired by D8 (#523 P1): always false; removed in P3 with the UI option that reads it. */
+            server_ai_available: boolean
+            /** @description The household's provider rows (#523 P1). Never includes key material — has_key is the only signal. */
+            ai_providers: {
+              id: string
+              label: string
+              /** @enum {string} */
+              kind: 'openai-compatible' | 'anthropic' | 'gemini' | 'questions'
+              base_url: string | null
+              /** @description Provider-level default model; a capability with no model inherits it (#523). */
+              default_model: string | null
+              has_key: boolean
+              created_at: string
+              updated_at: string
+            }[]
+            /** @description One assignment per capability (null fields = not configured); source=household means the row exists. */
+            ai_capabilities: {
+              decision: {
+                provider_id: string | null
+                provider_label: string | null
+                model: string | null
+                thinking_level: string | null
+                /** @enum {string} */
+                source: 'household' | 'none'
+              }
+              reasoning: {
+                provider_id: string | null
+                provider_label: string | null
+                model: string | null
+                thinking_level: string | null
+                /** @enum {string} */
+                source: 'household' | 'none'
+              }
+              vision: {
+                provider_id: string | null
+                provider_label: string | null
+                model: string | null
+                thinking_level: string | null
+                /** @enum {string} */
+                source: 'household' | 'none'
+              }
+            }
+            ai_status: {
+              /** @enum {string} */
+              decision: 'household' | 'none'
+              /** @enum {string} */
+              reasoning: 'household' | 'none'
+              /** @enum {string} */
+              vision: 'household' | 'none'
+            }
+          }
+        }
       }
       /** @description Unauthorized */
       401: {

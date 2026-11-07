@@ -2,8 +2,9 @@
 // PR 1): the reviewer is a PROMPT + a strict JSON parse through the existing
 // provider-agnostic AI layer — lib/ai.ts's completeText (the same dispatcher
 // the receipt scan, chat, plan, and vault-OCR paths use) with the access
-// resolved by lib/ai-access.ts (the user's own key, else the server-key
-// fallback). There is deliberately no vendor client and no new secret:
+// resolved by lib/ai-access.ts from the household's own providers (#523 P1;
+// the retired server-key fallback is gone — an unconfigured household is
+// unconfigured). There is deliberately no vendor client and no new secret:
 // changing ai_provider / ai_model in Settings changes the reviewer with no
 // code change, and the provider/model that produced each verdict are recorded
 // per row for comparability.
@@ -26,12 +27,8 @@
 import type { ReviewItemPair } from '@rumaq/contract'
 import type { Env } from '../types.js'
 import { completeText, parseJsonResponse, usageCollector, type TokenUsage } from './ai.js'
-import {
-  buildAiUsageEventStatement,
-  loadUserAiSettings,
-  resolveAiAccess,
-  type AiAccess,
-} from './ai-access.js'
+import { loadUserAiSettings, resolveAiAccess, type AiAccess } from './ai-access.js'
+import { buildAiUsageEventStatement } from './ai/usage.js'
 import { parseReviewPair, verdictDecision, type ReviewVerdictName } from './match-review.js'
 
 // ---------------------------------------------------------------------------
@@ -307,38 +304,29 @@ export async function setReviewMode(
   }
 }
 
-/** The admin whose AI access the auto sweep uses (null = server fallback). */
+/** The admin whose household AI assignment the auto sweep uses (null = none stored). */
 export async function getReviewAiUserId(db: D1Database): Promise<string | null> {
   return getAppSetting(db, REVIEW_AI_USER_ID_KEY)
 }
 
 /**
- * Resolve the AI access a review evaluation runs on: the given user's stored
- * provider/model/key, else the server-key fallback (lib/ai-access.ts). A
- * broken stored key degrades to "not configured" (assist/auto degrade to
- * manual, per the issue) rather than 500ing the queue; the error text carries
- * no key material.
+ * Resolve the AI access a review evaluation runs on: the given user's
+ * household assignment through lib/ai-access.ts. There is no fallback ladder
+ * left — no acting user or no usable assignment means "not configured", and
+ * assist/auto degrade to manual per the issue rather than 500ing the queue.
+ * The error text carries no key material.
  */
 export async function resolveReviewAiAccess(
   env: Env['Bindings'],
   userId: string | null
 ): Promise<AiAccess | null> {
-  if (userId) {
-    try {
-      const settings = await loadUserAiSettings(env.DB, userId)
-      const access = await resolveAiAccess(env, settings)
-      if (access) return access
-    } catch (err) {
-      console.warn(
-        `[review-ai] stored AI settings unusable for user=${userId}: ${err instanceof Error ? err.message : 'unknown error'}`
-      )
-    }
-  }
+  if (!userId) return null
   try {
-    return await resolveAiAccess(env, null)
+    const settings = await loadUserAiSettings(env.DB, userId)
+    return await resolveAiAccess(env, settings)
   } catch (err) {
     console.warn(
-      `[review-ai] server AI fallback unusable: ${err instanceof Error ? err.message : 'unknown error'}`
+      `[review-ai] stored AI settings unusable for user=${userId}: ${err instanceof Error ? err.message : 'unknown error'}`
     )
     return null
   }
@@ -411,9 +399,8 @@ type Statement = ReturnType<D1Database['prepare']>
  * a batch is one subrequest; thermos A2).
  *
  * Null when there is nobody to attribute: ai_usage_events.user_id is a NOT NULL
- * FK to users, and an unattributed server-fallback evaluation (no stored admin)
- * has no row to point at. That edge is a SKIPPED row — the cost stays visible
- * only in the provider's billing, and the sweep logs that it ran unattributed.
+ * FK to users. The sweep only evaluates with a stored/acting admin, so this is
+ * a defensive guard for direct callers, not a fallback ladder.
  */
 function usageStatement(
   env: Env['Bindings'],
@@ -422,14 +409,10 @@ function usageStatement(
   if (!args.userId) return null
   return buildAiUsageEventStatement(env, {
     userId: args.userId,
-    provider: args.access.provider,
-    // The model asked for IS the recorded model (the ai-access contract);
-    // null = the provider default applied.
-    model: args.access.model,
-    keySource: args.access.keySource,
-    inputTokens: args.tokens.input_tokens,
-    outputTokens: args.tokens.output_tokens,
-    cachedTokens: args.tokens.cached_tokens,
+    // The provider/model that were actually used ride the access (#523 P1);
+    // the row also gains capability + household_id + funding.
+    call: args.access.call,
+    usage: args.tokens,
   })
 }
 
@@ -716,9 +699,10 @@ export type ReviewSweepOutcome = ReviewEvaluation & { mode: ReviewMode }
  *
  * `actingUserId` overrides the stored review_ai_user_id (the admin who just
  * switched the mode to auto, whose access is already resolved for the
- * response). Otherwise the stored admin's access serves the sweep, with
- * lib/ai-access.ts's server fallback behind it. `mode: 'assist'` is returned
- * for a non-auto sweep only so the caller can log/observe that it was gated.
+ * response). Otherwise the stored admin's household assignment serves the
+ * sweep — there is no fallback behind it (#523 P1, D8). `mode: 'assist'` is
+ * returned for a non-auto sweep only so the caller can log/observe that it was
+ * gated.
  */
 export async function runReviewAiSweep(
   env: Env['Bindings'],
@@ -730,11 +714,13 @@ export async function runReviewAiSweep(
     return { mode, evaluated: 0, applied: 0, failed: 0 }
   }
   const userId = options.actingUserId ?? (await getReviewAiUserId(env.DB))
-  const access = await resolveReviewAiAccess(env, userId)
+  // No acting admin = no household to resolve against (D8 removed the server
+  // fallback), so only the cached-verdict pass can run.
+  const access = userId ? await resolveReviewAiAccess(env, userId) : null
   // Cached verdicts need no provider: apply those whether or not the admin's
   // key is still configured.
   let applied = await applyCachedAutoVerdicts(env.DB, limit, options.now)
-  if (!access) {
+  if (!access || !userId) {
     logSweep({ evaluated: 0, applied, failed: 0 })
     return { mode, evaluated: 0, applied, failed: 0 }
   }
@@ -746,16 +732,6 @@ export async function runReviewAiSweep(
     now: options.now,
   })
   applied += outcome.applied
-  if (!userId && outcome.evaluated > 0) {
-    // Unattributed: ai_usage_events.user_id is a NOT NULL FK, so these attempts
-    // have no row to write and the provider cost is only visible in the
-    // provider's own billing. Log the fact (with the model) so the gap is
-    // never silent — thermos B2.
-    console.warn(
-      `[review-ai] sweep ran unattributed (no stored admin): evaluated=${outcome.evaluated} ` +
-        `model=${access.model ?? '(provider default)'}`
-    )
-  }
   logSweep({ ...outcome, applied })
   return { mode, ...outcome, applied }
 }

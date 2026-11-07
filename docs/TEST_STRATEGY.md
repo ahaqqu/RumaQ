@@ -74,6 +74,15 @@ Notes for writing new E2E scenarios:
   set the admin's BYOK key through the real `PATCH /api/settings` route so the
   queue reports `aiConfigured: true` — the scenario then exercises the assist
   decision (Agree → `ai_assist`), never a model call.
+
+  **#523 P1 → P3:** the resolver reads the household's `ai_providers` /
+  `ai_capabilities` and the legacy `PATCH /api/settings` `ai_key` write is dead
+  until P3 ships the provider/capability endpoints (design §3.4, §4.3). The
+  scenarios that need a resolved provider (API: chat reply, plan generate,
+  receipt scan, both `ai_usage` ones; E2E: the three plan flows and the cached
+  verdict assist) are marked pending with a `#523` reference — not deleted.
+  P3 reactivates them against the public endpoints.
+
 - Assert item names in the receipt review via input values (`getByRole
   'textbox'`), not text — review rows are editable inputs.
 - Scope history item assertions to `getByRole('table')` — the Patterns

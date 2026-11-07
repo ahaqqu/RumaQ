@@ -85,7 +85,7 @@ so you waste less food, shop in fewer trips, and spend less.
 
 - Chat with an AI assistant about your household shopping.
 - One-tap prompts: plan this week, recommend the cheapest store, recipes for expiring items.
-- See AI usage status (calls today + token counts; usage is recorded but never capped, own key or shared server key alike).
+- See AI usage status (calls today + token counts; usage is recorded but never capped — there is no platform key and no rate limit, #523).
 - Turn an assistant answer into a shopping plan in one tap.
 - The assistant answers use your household's real data (stock, history, prices).
 

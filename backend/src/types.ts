@@ -45,9 +45,9 @@ export type Env = {
      *  lib/rate-limit.ts; invalid values fall back to those defaults. */
     LOGIN_RATE_MAX?: string
     LOGIN_RATE_WINDOW_SEC?: string
-    RUMAQ_SERVER_AI_PROVIDER?: string
-    RUMAQ_SERVER_AI_KEY?: string
-    RUMAQ_SERVER_AI_MODEL?: string
+    // The retired shared AI key (RUMAQ_SERVER_AI_{PROVIDER,KEY,MODEL}) is
+    // deliberately NOT declared any more: D8 removed the server fallback in
+    // #523 P1, and an env var no code reads must not look like configuration.
     props?: AuthProps
   }
   Variables: {

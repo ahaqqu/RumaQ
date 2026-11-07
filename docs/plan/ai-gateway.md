@@ -570,6 +570,13 @@ CREATE TABLE IF NOT EXISTS ai_providers (
   -- Optional: NULL = the preset's canonical endpoint. Required when there is
   -- neither a preset endpoint nor this value ('custom', 'questions').
   base_url TEXT,
+  -- The provider-level default model ("one alias per key", owner decision
+  -- 2026-11-07). A capability that leaves ai_capabilities.model NULL inherits
+  -- THIS value; if this is NULL too, the capability is not configured (402).
+  -- The value is always owner-typed, so floating vendor aliases
+  -- ('chatgpt-4o-latest', 'claude-3-5-sonnet-latest', ':latest' tags) live in
+  -- data and nothing in the repo ages.
+  default_model TEXT,
   -- AES-GCM ciphertext (lib/crypto.ts). NULL means the row cannot serve a call:
   -- it may be edited and re-keyed, but it cannot be ASSIGNED to a capability
   -- until it has a key. NEVER returned by an API, for any role.
@@ -596,7 +603,8 @@ CREATE TABLE IF NOT EXISTS ai_capabilities (
   -- the capability then becomes not configured (402). The API reports the
   -- cleared capabilities so the UI can warn BEFORE the delete.
   provider_id TEXT NOT NULL REFERENCES ai_providers(id) ON DELETE CASCADE,
-  -- NULL = the adapter's default model for this capability (today's behaviour).
+  -- NULL = inherit the provider's default_model. If the provider has none
+  -- either, the capability is NOT configured (402) — never an adapter default.
   model TEXT,
   -- Per-capability thinking level: NULL = the provider default.
   thinking_level TEXT CHECK (thinking_level IN ('low', 'medium', 'high')),
@@ -628,7 +636,8 @@ CREATE INDEX IF NOT EXISTS idx_ai_usage_events_household_date
 
 Deliberately **not** modelled: a `default_provider` flag (the capability assignments say what is
 used), an `is_active` flag (delete is the off switch), a member-level permission table (the household
-role says who manages, §3.1), and any secret material outside `encrypted_key` (the existing `crypto.ts`
+role says who manages, §3.1), a vendor default-model catalog (`default_model` is owner-typed data on a
+row, not a preset table), and any secret material outside `encrypted_key` (the existing `crypto.ts`
 helpers handle it, and the v1: envelope keeps rotation possible).
 
 Both SQL blocks in this section and §3.3 were executed against `node:sqlite` (the engine class
@@ -769,6 +778,9 @@ Notes the implementation must honour:
 - **A user in two households gets their provider in exactly one** — the active/oldest one, never
   duplicated. Switching households at runtime switches the provider set with it, which is the point of
   the household scope.
+- **The backfill leaves `default_model` NULL.** Legacy rows already carry per-capability models
+  (`ai_model` / `ai_vision_model`), so the new provider-level default starts empty; the owner may set
+  one alias per key afterwards and blank capability models inherit it (§5.1).
 - **Multi-member households keep every key but only one assignment set.** Member B's old key becomes a
   provider row (`… · Bob #2`) they can be assigned later; until then B's calls use the household's
   assignment and are billed to the owner's key. That is the intended consequence of D1, not an
@@ -932,9 +944,9 @@ new path 401s without a session.
 | Method        | Path                               | Purpose                                                                                                                                                                                                                                                     |
 | ------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET`         | `/api/ai/presets`                  | The catalog of presets a user MAY add: id, label, kind, canonical base URL, default models per capability. Seeds nothing, preselects nothing, and defines no default. **The one place the UI learns vendors from.**                                         |
-| `GET`         | `/api/ai/providers`                | `{ can_manage, providers: [{ id, label, kind, base_url, has_key, created_at, updated_at }] }` — never the key; `can_manage` is the household role, so the UI never guesses                                                                                  |
-| `POST`        | `/api/ai/providers`                | Owner only. Create `{ label, kind, base_url?, api_key, preset? }` → 201 with the row                                                                                                                                                                        |
-| `PATCH`       | `/api/ai/providers/:id`            | Owner only. Update `{ label?, kind?, base_url?, api_key? }`; `api_key: ''` clears it, omitted leaves it                                                                                                                                                     |
+| `GET`         | `/api/ai/providers`                | `{ can_manage, providers: [{ id, label, kind, base_url, default_model, has_key, created_at, updated_at }] }` — never the key; `can_manage` is the household role, so the UI never guesses                                                                   |
+| `POST`        | `/api/ai/providers`                | Owner only. Create `{ label, kind, base_url?, default_model?, api_key, preset? }` → 201 with the row                                                                                                                                                        |
+| `PATCH`       | `/api/ai/providers/:id`            | Owner only. Update `{ label?, kind?, base_url?, default_model?, api_key? }`; `api_key: ''` clears it, omitted leaves it; `default_model: ''` clears the default                                                                                             |
 | `DELETE`      | `/api/ai/providers/:id`            | Owner only. Delete + cascade; returns `{ cleared: Capability[] }`                                                                                                                                                                                           |
 | `POST`        | `/api/ai/providers/:id/test`       | Owner only. Test connection (see §4.6). Body `{}`                                                                                                                                                                                                           |
 | `GET`         | `/api/ai/capabilities`             | `{ capabilities: { decision: { provider_id, model, thinking_level, source: 'household'\|'none', provider_label } , … } }`                                                                                                                                   |
@@ -964,7 +976,8 @@ Valibot schemas in `backend/src/schemas.ts` beside the existing `settingsPatchSc
   resolvable endpoint (its own `base_url` or its preset's). Clearing a key on an assigned provider is
   a 409, not a silent downgrade ("this provider is used by reasoning — reassign first").
 - `model` — the existing `AI_MODEL_REGEX` (`schemas.ts:24`) and 200-char cap. It is load-bearing:
-  Gemini interpolates the model into the URL path (`ai.ts:312-315`).
+  Gemini interpolates the model into the URL path (`ai.ts:312-315`). `default_model?` on provider
+  create/update uses the same regex and cap; it is optional, and an empty string clears it.
 - `thinking_level` — `low|medium|high|''`; rejected (400) for `vision` and for `kind = 'questions'`.
 - **Cross-field checks** (server-side, not just UI): provider kind must `supports(capability)`; a
   capability assignment must reference a provider of the **caller's household**
@@ -1061,10 +1074,14 @@ UI reads `ai_model` after that.
   provider, no preselected preset, and no copy that implies one. A typed-decision endpoint is
   configured through the advanced form — kind `questions` + base URL + model — and this document
   mentions "Jev" only as the owner's concrete example of such an endpoint, never as a preset id.
-- The **only** default the UI offers is per chosen provider: leaving the model input empty means
-  "this provider's default model", resolved by the adapter's `defaultModel(capability)`
-  (`gpt-4o-mini`, `gemini-3.6-flash`, `claude-3-haiku-20240307`, `glm-5.3-flash` today). That is a
-  model default inside a provider the user picked, not a provider default.
+- The **only** default the UI offers is per chosen provider: the provider form has an optional
+  "default model" field (`ai_providers.default_model`), and every capability that leaves its own
+  model blank inherits it — `capability.model ?? provider.default_model ?? not configured` (owner
+  decision 2026-11-07). Leaving BOTH blank is a normal not-configured state (402), not the adapter's
+  `defaultModel(capability)`: the hardcoded `gpt-4o-mini` / `gemini-3.6-flash` / `claude-3-haiku-20240307`
+  / `glm-5.3-flash` fallbacks are deleted with P1's resolver swap, so no vendor alias ages in code.
+  The field is free text (floating aliases like `chatgpt-4o-latest` or an Ollama `:latest` tag are the
+  point), validated by the existing model regex/cap only.
 - i18n: new keys under `settings.ai.*` in `frontend/src/i18n/locales/{en,id}.json`, both languages in
   the same PR (the `visionModelDesc` precedent at `en.json:587`).
 
@@ -1097,16 +1114,21 @@ never the provider body verbatim (it can echo key material in error messages).
 ```
 resolveAccess(ctx, capability):
   row = SELECT c.model, c.thinking_level,
-               p.id, p.kind, p.preset, p.base_url, p.encrypted_key
+               p.id, p.kind, p.preset, p.base_url, p.default_model, p.encrypted_key
           FROM ai_capabilities c JOIN ai_providers p ON p.id = c.provider_id
          WHERE c.household_id = ? AND c.capability = ?       -- 1 subrequest, 1 join
+
+  model = row.model ?? row.default_model                     -- owner rule, #523
+  if not model:                                              -- neither set: NOT configured
+    log '[ai] capability assignment has no model household=…'
+    return null                                              -- routes answer 402
 
   if row and row.encrypted_key:                              -- no key: row is unusable
     baseUrl = row.base_url ?? presetEndpoint(row.preset)     -- presets.ts, null for 'custom'
     if baseUrl or row.kind != 'questions':                   -- questions has no canonical endpoint
       try:   key = decryptProviderKey(row)       -- v2: AAD · v1: legacy + lazy rewrite (§3.6)
       catch: log '[ai] stored provider unusable household=…' -- never 500
-      else:  return handle(funding='household')              -- model NULL = adapter default
+      else:  return handle(model=model, funding='household')
   else:
     log '[ai] capability assignment has no usable provider household=…'   -- Settings flags it
 
@@ -1124,8 +1146,9 @@ the whole ladder.
 Rules that make this honest:
 
 - **The household's own rows are the only source.** There is no env key, no shared provider, and no
-  "platform default" to fall back to (D8). The only default in the system is the adapter's model
-  default _within_ a provider the household chose.
+  "platform default" to fall back to (D8). The only default in the system is the provider's
+  `default_model` — owner-typed data on a row the household chose — never a model name compiled into
+  the adapters (`capability.model ?? provider.default_model`, else not configured).
 - **A broken stored key is not a 500.** An undecryptable ciphertext or an unusable row (missing key,
   no resolvable endpoint) is logged, treated as not configured, and shown as "needs setup" in
   Settings — the same 402 a household would get with nothing configured, instead of today's
@@ -1269,13 +1292,15 @@ when routes change — `./scripts/docs.sh` and `bunx vp run api:codegen` (CI dif
 
 **The first PR, exactly:**
 
-1. `backend/migrations/0039_ai_gateway.sql` — the two tables, indexes, CHECKs, backfill, and the
+1. `backend/migrations/0039_ai_gateway.sql` — the two tables (including the optional
+   `ai_providers.default_model`; the backfill leaves it NULL), indexes, CHECKs, backfill, and the
    `ai_usage_events` dimensions (§3.2–§3.3). The `encrypted_key` CHECK accepts **both** envelope
    prefixes (`v1:` legacy, `v2:` AAD-bound) from day one: SQLite cannot alter a CHECK without
    rebuilding the table, and D10's `v2:` writer arrives a release later.
 2. `backend/src/lib/ai/{types,presets,credentials,capabilities,usage}.ts` — `resolveAccess(ctx,
    capability)` on the **new** tables, keyed by **`ctx.householdId`** and with the **two-outcome ladder**
-   (assignment → null); `buildAiUsageEventStatement`/`recordAiUsageEvent`/
+   (assignment → null), resolving the model as `capability.model ?? provider.default_model` and
+   treating "neither" as not configured; `buildAiUsageEventStatement`/`recordAiUsageEvent`/
    `deleteExpiredAiUsageEvents` moved here, writing `capability` + `household_id` + `funding`.
 3. **The server fallback is deleted here, not later** (D8): `ai-access.ts:114-130`, the
    `SERVER_PROVIDER_PRESETS` allowlist (`:70-76`), the `RUMAQ_SERVER_AI_*` bindings
