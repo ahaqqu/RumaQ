@@ -2,6 +2,12 @@ import { describe, test as it, beforeEach, expect } from 'vite-plus/test'
 import { setJestCucumberConfiguration, loadFeature, defineFeature } from 'jest-cucumber'
 import { ApiContext } from './helpers.js'
 import { signTestCookie } from '../../../support/auth.js'
+// The scrape store registry is owned by the shared contract workspace (#375
+// added tip-top/hari-hari/yogya); the Worker serves SCRAPE_STORE_SLUGS
+// verbatim. The automation workspace has no @rumaq/contract dependency of its
+// own (bun's isolated linker keeps it under backend/node_modules), so import
+// the contract source directly: one definition, never a duplicated list.
+import { SCRAPE_STORE_SLUGS } from '../../../../../contract/src/index.ts'
 
 setJestCucumberConfiguration({ runner: { describe, test: it } })
 
@@ -169,14 +175,11 @@ defineFeature(feature, (test) => {
     and('the stores endpoint should list every contract store', async () => {
       await ctx.sendRequest('GET', '/api/admin/scrape/stores')
       ctx.expectStatus(200)
-      expect(ctx.responseBody.stores).toEqual([
-        'superindo',
-        'lotte-mart',
-        'astro',
-        'hypermart',
-        'indomaret',
-        'alfamart',
-      ])
+      // Assert against the runtime registry's own source (the contract's
+      // SCRAPE_STORE_SLUGS) instead of a snapshot: a store added to the
+      // registry keeps this green, while the endpoint drifting from it
+      // (dropped, filtered, or reordered slugs) still fails.
+      expect(ctx.responseBody.stores).toEqual([...SCRAPE_STORE_SLUGS])
       ctx.expectAuthenticatedCacheHeaders()
     })
 
