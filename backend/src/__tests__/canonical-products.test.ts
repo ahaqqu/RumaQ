@@ -20,6 +20,7 @@ import {
   revertProductRename,
 } from '../lib/canonical-products.js'
 import { getCanonicalIndex } from '../lib/ingest-v2.js'
+import { D1_QUERY_BUDGET } from '../lib/d1.js'
 // The backend tsconfig pins `types` to @cloudflare/workers-types, so Node
 // builtins carry no declarations — same contained suppressions as
 // migrations.test.ts / match-review.test.ts. These semantics run on real SQLite
@@ -1756,6 +1757,48 @@ describe('countAliasCandidates / bulkApproveExactNameAliases — real-SQLite sem
     expect(indexVersion(sqlite)).toBe(4)
   })
 
+  it('caps one run at the invocation query budget and drains the rest on the next run', async () => {
+    const sqlite = freshDb()
+    // A run may spend (budget - 5) chunk batches: auth, the admin read, the
+    // candidate read, the tail batch, and one spare for the failure path's
+    // retry-finalize are the rest of the 50. One alias past the cap proves the
+    // bound — an unbounded run would try to approve it and lose its own bump.
+    const cap = (D1_QUERY_BUDGET - 5) * 25
+    seedExactAliases(sqlite, cap + 1)
+
+    const db = sqliteD1(sqlite)
+    const batch = vi.fn(db.batch)
+    db.batch = batch as unknown as typeof db.batch
+
+    const first = await bulkApproveExactNameAliases(db, 'admin-1')
+
+    expect(first).toEqual({
+      exactCandidates: cap,
+      approved: cap,
+      remainingCandidates: 1,
+      indexVersion: 1,
+    })
+    // The whole run fits one invocation: one batch per chunk, then the tail.
+    expect(batch).toHaveBeenCalledTimes(cap / 25 + 1)
+    expect(
+      sqlite
+        .prepare("SELECT COUNT(*) AS count FROM price_product_aliases WHERE status = 'approved'")
+        .get()?.count
+    ).toBe(cap)
+    expect(aliasAuditRows(sqlite)).toHaveLength(cap)
+
+    // The one past the cap is the second run's unit: it commits and bumps.
+    const second = await bulkApproveExactNameAliases(db, 'admin-1')
+    expect(second).toEqual({
+      exactCandidates: 1,
+      approved: 1,
+      remainingCandidates: 0,
+      indexVersion: 2,
+    })
+    expect(aliasAuditRows(sqlite)).toHaveLength(cap + 1)
+    expect(indexVersion(sqlite)).toBe(2)
+  })
+
   it('stops at a failed chunk, keeps the committed approvals, and reports the count reached', async () => {
     const sqlite = freshDb()
     // 26 exact aliases: the first chunk (25) commits, the second fails.
@@ -1807,5 +1850,98 @@ describe('countAliasCandidates / bulkApproveExactNameAliases — real-SQLite sem
       sqlite.prepare("SELECT status FROM price_product_aliases WHERE id = 'alias-bulk-0'").get()
         ?.status
     ).toBe('candidate')
+  })
+
+  // The race guards. The per-alias decision has the same two tests (#489); the
+  // bulk path leans on them harder, because it approves hundreds of rows in one
+  // run: a receipt for a write this run did not make, or a now-variant spelling
+  // admitted because a rename landed between the read and the chunk, would be
+  // catalog-wide. `beforeBatch` is the seam a concurrent writer commits through.
+  it('writes no receipt for a candidate another admin approved between the read and the batch', async () => {
+    const sqlite = freshDb()
+    insertProduct(sqlite)
+    insertAlias(sqlite, {
+      id: 'alias-race',
+      productId: 'prod-1',
+      storeSlug: 'superindo',
+      name: 'Beras Ramos 5 kg',
+    })
+
+    // The run's pre-read already saw 'candidate'; the competing admin commits
+    // their approval (and their own receipt) before the chunk. Our CAS must
+    // match nothing, and the receipt gate must stay inert even though the row
+    // now reads 'approved'.
+    const db = sqliteD1(sqlite, {
+      beforeBatch: () => {
+        sqlite
+          .prepare("UPDATE price_product_aliases SET status = 'approved' WHERE id = 'alias-race'")
+          .run()
+        sqlite
+          .prepare(
+            `INSERT INTO price_product_alias_audit
+               (id, alias_id, product_id, product_key, store_slug, alias_name, action,
+                actor_user_id, created_at)
+             VALUES ('receipt-other', 'alias-race', 'prod-1', 'beras--ramos--5-kg', 'superindo',
+                     'Beras Ramos 5 kg', 'approve', 'admin-2', ?)`
+          )
+          .run(NOW)
+      },
+    })
+
+    const result = await bulkApproveExactNameAliases(db, 'admin-1')
+
+    expect(result).toEqual({
+      exactCandidates: 1,
+      approved: 0,
+      remainingCandidates: 0,
+      indexVersion: 0,
+    })
+    // Exactly the other admin's receipt — never a second one for the same row.
+    const receipts = aliasAuditRows(sqlite)
+    expect(receipts).toHaveLength(1)
+    expect(receipts[0]).toMatchObject({ id: 'receipt-other', actor_user_id: 'admin-2' })
+    // The other admin's approval is what changes the index (their endpoint's
+    // bump), so this run must not move it.
+    expect(indexVersion(sqlite)).toBe(0)
+  })
+
+  it('approves nothing when a rename turns the exact match into a variant before the batch', async () => {
+    const sqlite = freshDb()
+    insertProduct(sqlite)
+    insertAlias(sqlite, {
+      id: 'alias-renamed',
+      productId: 'prod-1',
+      storeSlug: 'superindo',
+      name: 'Beras Ramos 5 kg',
+    })
+
+    // A rename lands after the pre-read selected this alias. The CAS re-checks
+    // the equality against the CURRENT product name, so the now-variant
+    // spelling must stay a candidate (and earn no receipt and no bump).
+    const db = sqliteD1(sqlite, {
+      beforeBatch: () =>
+        sqlite
+          .prepare(
+            `UPDATE price_products
+             SET name = 'Beras Ramos 10 kg', metadata_version = 2, updated_at = ?
+             WHERE id = 'prod-1'`
+          )
+          .run(NOW),
+    })
+
+    const result = await bulkApproveExactNameAliases(db, 'admin-1')
+
+    expect(result).toEqual({
+      exactCandidates: 1,
+      approved: 0,
+      remainingCandidates: 1,
+      indexVersion: 0,
+    })
+    expect(
+      sqlite.prepare("SELECT status FROM price_product_aliases WHERE id = 'alias-renamed'").get()
+        ?.status
+    ).toBe('candidate')
+    expect(aliasAuditRows(sqlite)).toEqual([])
+    expect(indexVersion(sqlite)).toBe(0)
   })
 })
