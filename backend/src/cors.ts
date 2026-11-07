@@ -2,26 +2,32 @@ import { cors } from 'hono/cors'
 import type { Env } from './types.js'
 
 /**
- * The one origin allow-list (ahaqqu/RumaQ#528): CORS uses it to decide which
- * origins may read responses, and the CSRF guard (`lib/csrf.ts`) uses it to
- * decide which origins may drive credentialed writes. Keep them one list — an
- * origin the app legitimately runs on (production, local dev's separate SPA
- * port, a branch preview) is exactly an origin allowed to make same-app
- * requests. `origin` is expected in serialized form (`https://host[:port]`,
- * no trailing slash) — callers normalize through `new URL().origin`.
+ * Local development: the SPA runs on its own port and calls the API
+ * cross-origin (VITE_API_BASE / the Vite proxy), so these are origins the app
+ * legitimately runs on — but only *locally*. They may read responses from
+ * anywhere (CORS, below); the CSRF guard only lets them drive writes when the
+ * request itself is loopback (#528 review A2).
  */
-export function isAllowedOrigin(origin: string, env: Env['Bindings']): boolean {
+const DEV_ORIGINS = ['http://localhost:5173', 'http://localhost:8788'] as const
+
+/** True for the local dev SPA ports (`bun dev`, `vite preview`). */
+export function isDevOrigin(origin: string): boolean {
+  return (DEV_ORIGINS as readonly string[]).includes(origin)
+}
+
+/**
+ * True for an origin this deployment is actually served from: the configured
+ * origin (`PAGES_ORIGIN`, default the canonical one) and branch previews under
+ * a `*.pages.dev` project. Excludes the dev origins — callers that grant
+ * authority (writes) rather than visibility use this, not `isAllowedOrigin`.
+ * `origin` is expected in serialized form (`https://host[:port]`, no trailing
+ * slash) — callers normalize through `new URL().origin`.
+ */
+export function isConfiguredOrigin(origin: string, env: Env['Bindings']): boolean {
   const allowed = env.PAGES_ORIGIN || 'https://rumaq.ahaqqu.com'
 
   // Exact production / configured origin
   if (origin === allowed) {
-    return true
-  }
-
-  // Local development: the SPA runs on its own port and calls the API
-  // cross-origin (VITE_API_BASE / the Vite proxy), so these are legitimate
-  // same-app origins, not foreign ones.
-  if (origin === 'http://localhost:5173' || origin === 'http://localhost:8788') {
     return true
   }
 
@@ -38,6 +44,17 @@ export function isAllowedOrigin(origin: string, env: Env['Bindings']): boolean {
   }
 
   return false
+}
+
+/**
+ * The CORS read allow-list (ahaqqu/RumaQ#528): which origins may read
+ * responses. Wider than `isConfiguredOrigin` on purpose — local dev's separate
+ * SPA port has to read too. Reads are the question this list answers; who may
+ * *write* is decided in `lib/csrf.ts`, which additionally requires the request
+ * to be loopback before trusting a dev origin.
+ */
+export function isAllowedOrigin(origin: string, env: Env['Bindings']): boolean {
+  return isConfiguredOrigin(origin, env) || isDevOrigin(origin)
 }
 
 export function createCors() {

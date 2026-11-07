@@ -106,8 +106,29 @@ describe('csrfOriginGuard policy', () => {
     expect(csrfOriginGuard(request('https://rumaq.ahaqqu.com:443'), policyEnv)).toBeNull()
   })
 
-  it('allows an origin on the shared CORS allow-list (local dev SPA)', () => {
-    expect(csrfOriginGuard(request('http://localhost:5173'), policyEnv)).toBeNull()
+  it("allows local dev's SPA port only when the request itself is loopback", () => {
+    // `bun dev`: SPA :5173 → API :8787, cross-origin but same-site, and the
+    // request origin is loopback too — allowed.
+    const dev = new Request('http://localhost:8787/api/locations', {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:5173' },
+    })
+    expect(csrfOriginGuard(dev, policyEnv)).toBeNull()
+
+    // Production must not delegate write authority to a page served from the
+    // user's own localhost (#528 review A2).
+    expect(csrfOriginGuard(request('http://localhost:5173'), policyEnv)!.status).toBe(403)
+    expect(csrfOriginGuard(request('http://localhost:8788'), policyEnv)!.status).toBe(403)
+  })
+
+  it('treats every loopback spelling as local dev', () => {
+    for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+      const dev = new Request(`http://${host}:8787/api/locations`, {
+        method: 'POST',
+        headers: { Origin: 'http://localhost:5173' },
+      })
+      expect(csrfOriginGuard(dev, policyEnv), host).toBeNull()
+    }
   })
 
   it('allows a request with no Origin at all (curl / scripted admin)', () => {

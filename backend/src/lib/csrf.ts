@@ -1,5 +1,5 @@
 import type { Env } from '../types.js'
-import { isAllowedOrigin } from '../cors.js'
+import { isConfiguredOrigin, isDevOrigin } from '../cors.js'
 import { getRequestOrigin } from './request.js'
 
 /**
@@ -20,8 +20,11 @@ import { getRequestOrigin } from './request.js'
  *    scripted admin flows send neither. (Same-origin GET navigations and old
  *    clients may also omit them.)
  *  - A supplied origin must equal the request's own origin (`getRequestOrigin`,
- *    which honours the proxy's X-Forwarded-* in the local stack) or be on the
- *    shared allow-list in `cors.ts` (local dev's SPA port, configured origin).
+ *    which honours the proxy's X-Forwarded-* in the local stack) or be an origin
+ *    this deployment is configured on (`isConfiguredOrigin`: `PAGES_ORIGIN`,
+ *    branch previews). Local dev's separate SPA port is accepted only when the
+ *    request is itself loopback — a page on the user's localhost is not this
+ *    app and must not authorize a production write (#528 review A2).
  *    `Origin: null` — a sandboxed iframe or opaque origin — is rejected.
  *  - Machine-to-machine callers are exempt: the internal scraper channel
  *    (`/api/internal/*`) authenticates with a bearer secret and never carries
@@ -63,6 +66,17 @@ function hasBearerCredentials(request: Request): boolean {
   return !!authorization && authorization.trim().toLowerCase().startsWith('bearer ')
 }
 
+/** `localhost`, `127.0.0.1`, `[::1]` — where `bun dev` and the Docker harness run. */
+function isLoopbackOrigin(origin: string | null): boolean {
+  if (!origin) return false
+  try {
+    const { hostname } = new URL(origin)
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+  } catch {
+    return false
+  }
+}
+
 function rejection(): Response {
   return new Response(JSON.stringify({ error: CSRF_ORIGIN_MISMATCH }), {
     status: 403,
@@ -101,7 +115,14 @@ export function csrfOriginGuard(request: Request, env: Env['Bindings']): Respons
     })
   )
   if (suppliedOrigin === ownOrigin) return null
-  if (isAllowedOrigin(suppliedOrigin, env)) return null
+  if (isConfiguredOrigin(suppliedOrigin, env)) return null
+  // Local dev's SPA port (:5173/:8788) is cross-origin but same-site, so it is
+  // on the CORS *read* list. It may drive writes only when this request is
+  // itself loopback: in production a page served from the user's own localhost
+  // is not this app, and letting it authorize writes would reopen — for the
+  // pre-fix `SameSite=None` sessions this guard exists to cover — exactly what
+  // SameSite=Lax just closed (#528 review A2).
+  if (isDevOrigin(suppliedOrigin) && isLoopbackOrigin(ownOrigin)) return null
 
   return rejection()
 }
