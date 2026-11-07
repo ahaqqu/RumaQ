@@ -821,6 +821,8 @@
     "aiModeAutoDesc": "The AI decides on its own when it is at least 80% confident; the rest waits for you.",
     "aiModeSaving": "Saving mode…",
     "aiModeFailed": "Could not save the review mode — try again.",
+    "aiModeUnavailable": "Could not load the AI review mode.",
+    "aiModeRetry": "Try again",
     "aiNotConfigured": "AI is not configured — set a provider key in AI settings; manual review still works",
     "aiVerdict": "AI: {{verdict}} · {{confidence}}%",
     "aiSame": "same",

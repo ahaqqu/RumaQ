@@ -821,6 +821,8 @@
     "aiModeAutoDesc": "AI memutuskan sendiri jika keyakinannya minimal 80%; sisanya menunggu kamu.",
     "aiModeSaving": "Menyimpan mode…",
     "aiModeFailed": "Gagal menyimpan mode tinjauan — coba lagi.",
+    "aiModeUnavailable": "Mode tinjauan AI gagal dimuat.",
+    "aiModeRetry": "Coba lagi",
     "aiNotConfigured": "AI belum dikonfigurasi — atur kunci provider di pengaturan AI; tinjauan manual tetap berjalan",
     "aiVerdict": "AI: {{verdict}} · {{confidence}}%",
     "aiSame": "sama",

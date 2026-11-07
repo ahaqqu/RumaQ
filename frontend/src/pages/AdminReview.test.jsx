@@ -650,6 +650,29 @@ describe('AdminReview', () => {
       for (const input of radios(container)) expect(input.disabled).toBe(false)
     })
 
+    it('surfaces a failed mode load with a retry instead of vanishing', () => {
+      const refetch = vi.fn()
+      vi.mocked(useReviewMode).mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        refetch,
+      })
+      const { container, getByText } = renderAdmin()
+      // Not silence: gating the whole block on `modeQuery.data` used to make a
+      // failed GET /review/mode indistinguishable from a page with no AI
+      // surface at all (thermos B1).
+      expect(container.textContent).toContain('review.aiModeUnavailable')
+      expect(container.textContent).not.toContain('review.aiModeLegend')
+      // The retry the failure deserves, on the same inline surface the export
+      // and rename failures use.
+      fireEvent.click(getByText('review.aiModeRetry'))
+      expect(refetch).toHaveBeenCalledTimes(1)
+      // A mode failure never touches the queue itself.
+      expect(container.textContent).toContain('review.approve')
+      expect(container.textContent).toContain('review.reject')
+    })
+
     it('renders the verdict chip, exposes the reason, and maps Agree to the verdict', () => {
       vi.mocked(useReviewItems).mockReturnValue(
         mockReviewData({ items: [{ ...reviewItem, aiVerdict: VERDICT }] })

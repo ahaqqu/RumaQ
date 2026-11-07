@@ -658,7 +658,7 @@ export function AdminReview() {
           counts. The selector is always usable (a misconfigured provider is a
           warning, never a lock); the evaluate controls exist only when AI can
           actually run, and never in manual mode. */}
-      {modeQuery.data && (
+      {modeQuery.data ? (
         <Panel className="mb-4">
           <PanelBody className="flex flex-col gap-3">
             <ReviewModeSelector
@@ -702,7 +702,26 @@ export function AdminReview() {
             )}
           </PanelBody>
         </Panel>
-      )}
+      ) : modeQuery.isError ? (
+        // Thermos B1: the mode read is the only request on this page whose
+        // failure used to be invisible — gating the whole block on
+        // `modeQuery.data` made a 500 look like a build without any AI
+        // surface, so the admin could neither see the switch nor retry it.
+        // Same inline surface the rename form uses for its load failure
+        // (#423): an alert plus a retry, never a bare absence.
+        <Panel className="mb-4">
+          <PanelBody>
+            <p role="alert" className="text-xs text-danger">
+              {t('review.aiModeUnavailable')}
+            </p>
+            <div className="mt-2">
+              <Button variant="ghost" size="sm" onClick={() => modeQuery.refetch()}>
+                {t('review.aiModeRetry')}
+              </Button>
+            </div>
+          </PanelBody>
+        </Panel>
+      ) : null}
 
       {/* Exact server-computed counts — unaffected by paging or the filter. */}
       <div className="mb-4 flex flex-wrap gap-2">
