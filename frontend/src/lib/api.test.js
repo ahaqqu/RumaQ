@@ -33,6 +33,7 @@ import {
   savePlan,
   updatePlanItem,
   getAdminProduct,
+  getDuplicateProductNames,
   renameProduct,
   revertProductRename,
   approveProductAlias,
@@ -490,6 +491,27 @@ describe('api', () => {
       await expect(getAdminProduct('minyak--bimoli--1-l')).resolves.toEqual(identity)
       expect(clientMock.GET).toHaveBeenCalledWith('/api/admin/products/{productKey}', {
         params: { path: { productKey: 'minyak--bimoli--1-l' } },
+        signal: undefined,
+      })
+    })
+
+    it('getDuplicateProductNames reads the case-insensitive duplicate report', async () => {
+      const report = {
+        limit: 200,
+        truncated: false,
+        groups: [
+          {
+            normalizedName: 'beras ramos 5 kg',
+            displayName: 'Beras Ramos 5 kg',
+            productCount: 2,
+            products: [],
+          },
+        ],
+      }
+      clientMock.GET.mockResolvedValueOnce(ok(report))
+      await expect(getDuplicateProductNames()).resolves.toEqual(report)
+      // The report is a static path, not the identity route's {productKey}.
+      expect(clientMock.GET).toHaveBeenCalledWith('/api/admin/products/duplicates', {
         signal: undefined,
       })
     })

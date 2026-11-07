@@ -575,6 +575,39 @@ export function revertProductRename(
   )
 }
 
+// Read-only duplicate-name report (ahaqqu/RumaQ#485). The admin surfaces the
+// canonical products that share a name case-insensitively — the collisions a
+// rename racing an ingest, or a rename inside the pipeline's cached-index
+// window, can leave behind. Nothing here is enforced or merged; the route is
+// a pure read (no index bump). Shapes mirror DUPLICATE_NAME_REPORT_SCHEMA in
+// backend/src/apps/api.ts — the generated schema keeps every field optional,
+// so the required fields are narrowed once here.
+export type DuplicateNameProduct = {
+  productKey: string
+  name: string
+  status: ProductStatus
+  updatedAt: string | null
+  stores: string[]
+  primaryStore: string | null
+}
+
+export type DuplicateNameGroup = {
+  normalizedName: string
+  displayName: string
+  productCount: number
+  products: DuplicateNameProduct[]
+}
+
+export type DuplicateNameReport = {
+  limit: number
+  truncated: boolean
+  groups: DuplicateNameGroup[]
+}
+
+export function getDuplicateProductNames(signal?: AbortSignal): Promise<DuplicateNameReport> {
+  return unwrap(client.GET('/api/admin/products/duplicates', { signal }))
+}
+
 // Candidate-alias decisions (#489). The alias id the identity payload carries
 // is the whole request — no body, the verb is the decision. Approve admits the
 // store spelling to the canonical index and returns the bumped version; reject

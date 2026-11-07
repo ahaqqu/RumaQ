@@ -1491,6 +1491,8 @@ describe('/api/admin/products', () => {
   }
 
   const PRODUCT_PATH = '/api/admin/products/beras--ramos--5-kg'
+  // The static report path (#485) — registered before the :productKey route.
+  const DUPLICATES_PATH = '/api/admin/products/duplicates'
   const RENAME_PATH = `${PRODUCT_PATH}/rename`
   const REVERT_PATH = `${PRODUCT_PATH}/audit/audit-1/revert`
   const APPROVE_PATH = `${PRODUCT_PATH}/aliases/alias-1/approve`
@@ -1500,6 +1502,7 @@ describe('/api/admin/products', () => {
     const env = productEnv({ props: undefined })
     const calls: Array<[string, string, RequestInit]> = [
       ['GET', PRODUCT_PATH, {}],
+      ['GET', DUPLICATES_PATH, {}],
       ['POST', RENAME_PATH, renameRequest({ canonicalName: 'X', expectedMetadataVersion: 1 })],
       ['POST', REVERT_PATH, revertRequest()],
       ['POST', APPROVE_PATH, {}],
@@ -1516,6 +1519,7 @@ describe('/api/admin/products', () => {
     env.DB.first = vi.fn().mockResolvedValue({ is_admin: 0 })
     const calls: Array<[string, string, RequestInit]> = [
       ['GET', PRODUCT_PATH, {}],
+      ['GET', DUPLICATES_PATH, {}],
       ['POST', RENAME_PATH, renameRequest({ canonicalName: 'X', expectedMetadataVersion: 1 })],
       ['POST', REVERT_PATH, revertRequest()],
       ['POST', APPROVE_PATH, {}],
@@ -1524,6 +1528,95 @@ describe('/api/admin/products', () => {
     for (const [method, path, init] of calls) {
       const res = await apiApp.request(path, { method, ...init }, env)
       expect(res.status).toBe(403)
+    }
+  })
+
+  it('serves the read-only duplicate-name report with private no-cache headers', async () => {
+    const env = productEnv()
+    env.DB.first = vi.fn().mockResolvedValue({ is_admin: 1 })
+    env.DB.all = vi
+      .fn()
+      .mockResolvedValueOnce({
+        // The lib's group row carries the SQL-derived key (lower(name)) — the
+        // same key the product rows below carry.
+        results: [{ normalizedName: 'beras ramos 5 kg', productCount: 2 }],
+      })
+      .mockResolvedValueOnce({
+        results: [
+          {
+            product_key: 'beras--ramos--5-kg--copy',
+            name: 'beras ramos 5 kg',
+            status: 'provisional',
+            updated_at: NOW,
+            groupKey: 'beras ramos 5 kg',
+          },
+          {
+            product_key: 'beras--ramos--5-kg',
+            name: 'Beras Ramos 5 kg',
+            status: 'provisional',
+            updated_at: NOW,
+            groupKey: 'beras ramos 5 kg',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        results: [
+          { productKey: 'beras--ramos--5-kg', storeSlug: 'superindo', lastSeenAt: NOW },
+          {
+            productKey: 'beras--ramos--5-kg',
+            storeSlug: 'lotte-mart',
+            lastSeenAt: '2026-11-08T00:00:00.000Z',
+          },
+        ],
+      })
+
+    const res = await apiApp.request(DUPLICATES_PATH, {}, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toMatch(/private, no-cache/)
+    // The static path wins over /api/admin/products/:productKey: the body is
+    // the report, not a product identity for a product named 'duplicates'.
+    expect(await res.json()).toEqual({
+      limit: 200,
+      truncated: false,
+      groups: [
+        {
+          normalizedName: 'beras ramos 5 kg',
+          displayName: 'beras ramos 5 kg',
+          productCount: 2,
+          products: [
+            {
+              productKey: 'beras--ramos--5-kg--copy',
+              name: 'beras ramos 5 kg',
+              status: 'provisional',
+              updatedAt: NOW,
+              stores: [],
+              primaryStore: null,
+            },
+            {
+              productKey: 'beras--ramos--5-kg',
+              name: 'Beras Ramos 5 kg',
+              status: 'provisional',
+              updatedAt: NOW,
+              stores: ['lotte-mart', 'superindo'],
+              primaryStore: 'lotte-mart',
+            },
+          ],
+        },
+      ],
+    })
+    // The identity route (the one this static path must shadow) reads through
+    // db.batch; a report that never batches is the report handler. The
+    // read-only guarantee itself is pinned on real SQLite.
+    expect(env.DB.batch).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-numeric or out-of-range duplicate-report limit with 400', async () => {
+    for (const limit of ['0', 'abc', '501']) {
+      const env = productEnv()
+      env.DB.first = vi.fn().mockResolvedValue({ is_admin: 1 })
+      const res = await apiApp.request(`${DUPLICATES_PATH}?limit=${limit}`, {}, env)
+      expect(res.status).toBe(400)
+      expect(env.DB.all).not.toHaveBeenCalled()
     }
   })
 

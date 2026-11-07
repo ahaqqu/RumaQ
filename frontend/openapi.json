@@ -2193,6 +2193,109 @@
         ]
       }
     },
+    "/api/admin/products/duplicates": {
+      "get": {
+        "operationId": "getApiAdminProductsDuplicates",
+        "description": "Read-only duplicate-name report: canonical products sharing a name case-insensitively, grouped by that name (admin-only). Bounded by `limit` groups (1-500, default 200); each group lists at most 25 products and the whole report at most 900, with `truncated` set when a bound bit. Never writes and never bumps the canonical index version.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 500
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "normalizedName": {
+                            "type": "string"
+                          },
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "productCount": {
+                            "type": "integer",
+                            "minimum": 2
+                          },
+                          "products": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "productKey": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": ["canonical", "provisional", "needs_review"]
+                                },
+                                "updatedAt": {
+                                  "type": ["string", "null"]
+                                },
+                                "stores": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "primaryStore": {
+                                  "type": ["string", "null"]
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid limit"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
+      }
+    },
     "/api/admin/products/{productKey}": {
       "get": {
         "operationId": "getApiAdminProductsByProductKey",

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   approveProductAlias,
   getAdminProduct,
+  getDuplicateProductNames,
   rejectProductAlias,
   renameProduct,
   revertProductRename,
@@ -13,6 +14,10 @@ import {
 // the public price list has no concept of the audit trail.
 
 export const PRODUCT_IDENTITY_BASE_KEY = ['product-identity']
+
+// Read-only duplicate-name report (#485): a catalog-wide admin read, not a
+// slice of one product's identity, so it gets its own key.
+export const DUPLICATE_PRODUCT_NAMES_QUERY_KEY = ['product-duplicates']
 
 export function productIdentityQueryKey(productKey) {
   return [...PRODUCT_IDENTITY_BASE_KEY, productKey ?? null]
@@ -41,6 +46,8 @@ function useCanonicalWriteInvalidator() {
     queryClient.invalidateQueries({ queryKey: ['prices'] })
     queryClient.invalidateQueries({ queryKey: productIdentityQueryKey(productKey) })
     queryClient.invalidateQueries({ queryKey: ['review'] })
+    // The duplicate report (#485) can gain/lose a group when a name moves.
+    queryClient.invalidateQueries({ queryKey: DUPLICATE_PRODUCT_NAMES_QUERY_KEY })
   }
 }
 
@@ -117,5 +124,18 @@ export function useDecideAlias() {
       seedDecidedAlias(queryClient, variables.productKey, result?.alias)
       invalidate(variables.productKey)
     },
+  })
+}
+
+// Read-only duplicate-name report (ahaqqu/RumaQ#485). A rename/revert (or an
+// alias approval) can move it, so the canonical writes invalidate it alongside
+// ['prices']. Lazy on purpose: the Products page mounts the panel behind the admin's
+// "show report" action, so neither a shopper nor an admin's first paint pays
+// for the report.
+export function useDuplicateProductNames({ enabled = true } = {}) {
+  return useQuery({
+    queryKey: DUPLICATE_PRODUCT_NAMES_QUERY_KEY,
+    queryFn: ({ signal }) => getDuplicateProductNames(signal),
+    enabled,
   })
 }

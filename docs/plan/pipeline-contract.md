@@ -290,6 +290,10 @@ The `200` response is a receipt, not just counts:
   higher, the new snapshot replaces it.
 - A missing or stale canonical index is a **failed run**, not a reason to fall back to
   the local catalog.
+- An admin rename (and a revert) bumps `indexVersion` and reaches the pipeline on its
+  next fetch; during a ≤48 h cached-index window the pipeline can still match to the
+  pre-rename name, so a rename can leave two products sharing one name — surfaced
+  read-only by `GET /api/admin/products/duplicates`, never enforced or merged.
 
 ### 6.4 Lookup key
 

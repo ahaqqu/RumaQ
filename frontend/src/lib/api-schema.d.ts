@@ -554,6 +554,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/admin/products/duplicates': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Read-only duplicate-name report: canonical products sharing a name case-insensitively, grouped by that name (admin-only). Bounded by `limit` groups (1-500, default 200); each group lists at most 25 products and the whole report at most 900, with `truncated` set when a bound bit. Never writes and never bumps the canonical index version. */
+    get: operations['getApiAdminProductsDuplicates']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/admin/products/{productKey}': {
     parameters: {
       query?: never
@@ -2880,6 +2897,66 @@ export interface operations {
       }
       /** @description Unknown review item */
       404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiAdminProductsDuplicates: {
+    parameters: {
+      query?: {
+        limit?: number
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            limit?: number
+            truncated?: boolean
+            groups?: {
+              normalizedName?: string
+              displayName?: string
+              productCount?: number
+              products?: {
+                productKey?: string
+                name?: string
+                /** @enum {string} */
+                status?: 'canonical' | 'provisional' | 'needs_review'
+                updatedAt?: string | null
+                stores?: string[]
+                primaryStore?: string | null
+              }[]
+            }[]
+          }
+        }
+      }
+      /** @description Invalid limit */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
         headers: {
           [name: string]: unknown
         }

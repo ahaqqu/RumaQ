@@ -181,6 +181,42 @@ describe('locale files', () => {
     })
   })
 
+  // Read-only duplicate-name report (ahaqqu/RumaQ#485). The parity tests below
+  // prove the shape; these pin that the panel's copy exists in both locales
+  // with real Indonesian and that it keeps saying "read-only".
+  describe('duplicates namespace (#485)', () => {
+    // Every string differs between the locales — including the plural forms and
+    // the date template — so there is nothing to exclude from the guard below.
+    const LANGUAGE_NEUTRAL = new Set()
+
+    it('exists in both locales with the same keys', () => {
+      expect(en.duplicates).toBeDefined()
+      expect(id.duplicates).toBeDefined()
+      expect(Object.keys(id.duplicates).sort()).toEqual(Object.keys(en.duplicates).sort())
+    })
+
+    it('has real Indonesian copy, not English copies', () => {
+      for (const [key, value] of Object.entries(en.duplicates)) {
+        if (LANGUAGE_NEUTRAL.has(key)) continue
+        expect(id.duplicates[key], `duplicates.${key} is untranslated`).not.toBe(value)
+      }
+    })
+
+    it('pins the read-only framing and the empty state', () => {
+      expect(en.duplicates.title).toBe('Duplicate names')
+      expect(id.duplicates.title).toBe('Nama duplikat')
+      expect(en.duplicates.desc).toContain('Read-only')
+      expect(id.duplicates.desc).toContain('Hanya baca')
+      expect(en.duplicates.empty).toBe('No duplicate names.')
+      expect(id.duplicates.empty).toBe('Tidak ada nama duplikat.')
+      // The notice is cause-neutral: `truncated` covers the group, per-group,
+      // and 900-row caps, so it must not claim the group list was cut.
+      expect(en.duplicates.truncated).toContain('not complete')
+      expect(id.duplicates.truncated).toContain('belum lengkap')
+      expect(en.duplicates.truncated).not.toContain('{{limit}}')
+    })
+  })
+
   it('en and id have the same top-level keys', () => {
     const enKeys = Object.keys(en).sort()
     const idKeys = Object.keys(id).sort()

@@ -10,6 +10,7 @@ import {
   StaleProductError,
   StaleRevertError,
   approveAlias,
+  getDuplicateNameReport,
   getProductIdentity,
   rejectAlias,
   renameProduct,
@@ -94,10 +95,19 @@ function runInBatch(sqlite: SqliteDb, statement: TestStatement) {
 // `beforeBatch` runs once, immediately before the first batch — the seam a
 // concurrent writer commits through: the lib's pre-check has already read the
 // old row, so the guarded UPDATE in the batch must be the one that notices.
-function sqliteD1(sqlite: SqliteDb, options: { beforeBatch?: () => void } = {}): D1Database {
+// `queryLog` collects every statement the code under test prepares: the
+// duplicate report's ≤12-query contract is a property of the chunked store
+// lookup, so only a counted run can pin it.
+function sqliteD1(
+  sqlite: SqliteDb,
+  options: { beforeBatch?: () => void; queryLog?: string[] } = {}
+): D1Database {
   let fired = false
   return {
-    prepare: (sql: string) => new TestStatement(sqlite, sql),
+    prepare: (sql: string) => {
+      options.queryLog?.push(sql)
+      return new TestStatement(sqlite, sql)
+    },
     batch: async (statements: TestStatement[]) => {
       if (!fired) {
         fired = true
@@ -130,6 +140,8 @@ type ProductSeed = {
   unit: string | null
   status: string
   metadataVersion: number
+  /** Defaults to NOW; the duplicate report orders groups' products by it. */
+  updatedAt?: string
 }
 
 function insertProduct(sqlite: SqliteDb, over: Partial<ProductSeed> = {}): ProductSeed {
@@ -141,6 +153,7 @@ function insertProduct(sqlite: SqliteDb, over: Partial<ProductSeed> = {}): Produ
     unit: '5 kg',
     status: 'provisional',
     metadataVersion: 1,
+    updatedAt: NOW,
     ...over,
   }
   sqlite
@@ -160,7 +173,7 @@ function insertProduct(sqlite: SqliteDb, over: Partial<ProductSeed> = {}): Produ
       row.metadataVersion,
       NOW,
       NOW,
-      NOW
+      row.updatedAt ?? NOW
     )
   return row
 }
@@ -174,6 +187,8 @@ function insertAlias(
     name: string
     status?: 'candidate' | 'approved' | 'rejected'
     source?: 'ocr' | 'catalog' | 'admin'
+    /** Defaults to NOW; the duplicate report's primary store is the newest. */
+    lastSeenAt?: string
   }
 ): void {
   sqlite
@@ -190,7 +205,7 @@ function insertAlias(
       input.status ?? 'candidate',
       input.source ?? 'ocr',
       NOW,
-      NOW
+      input.lastSeenAt ?? NOW
     )
 }
 
@@ -1248,5 +1263,274 @@ describe('approveAlias / rejectAlias — real-SQLite semantics', () => {
 
     expect(aliasAuditRows(sqlite)).toEqual([])
     expect(indexVersion(sqlite)).toBe(0)
+  })
+})
+
+// Read-only duplicate-name report (#485). Pinned on real SQLite because the
+// grouping is SQL (`GROUP BY name COLLATE NOCASE` — the same equality the
+// rename guard uses), and because "read-only" is a property of the whole
+// call: not one row may move, and the canonical index version must not bump
+// (a report must never invalidate the pipeline's cache).
+describe('getDuplicateNameReport — real-SQLite semantics', () => {
+  // node:sqlite counts every row change since the connection opened; the seed
+  // writes first, so the report's delta must be exactly zero.
+  function totalChanges(sqlite: SqliteDb): number {
+    return Number(sqlite.prepare('SELECT total_changes() AS n').get()?.n ?? 0)
+  }
+
+  it('groups products sharing a name case-insensitively with status, stores, and updated_at', async () => {
+    const sqlite = freshDb()
+    insertProduct(sqlite, {
+      id: 'prod-1',
+      productKey: 'beras--ramos--5-kg',
+      name: 'Beras Ramos 5 kg',
+      updatedAt: '2026-11-01T00:00:00.000Z',
+    })
+    insertProduct(sqlite, {
+      id: 'prod-2',
+      productKey: 'beras--ramos--5-kg--provisional',
+      name: 'beras ramos 5 kg',
+      status: 'needs_review',
+      updatedAt: '2026-11-05T00:00:00.000Z',
+    })
+    insertProduct(sqlite, {
+      id: 'prod-4',
+      productKey: 'beras--ramos--5-kg--copy',
+      name: 'BERAS RAMOS 5 KG',
+      updatedAt: '2026-10-01T00:00:00.000Z',
+    })
+    insertProduct(sqlite, {
+      id: 'prod-3',
+      productKey: 'gula--gulaku--1-kg',
+      name: 'Gula Pasir Gulaku 1 kg',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-1',
+      productId: 'prod-1',
+      storeSlug: 'superindo',
+      name: 'Beras Ramos',
+      lastSeenAt: '2026-11-01T00:00:00.000Z',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-2',
+      productId: 'prod-1',
+      storeSlug: 'lotte-mart',
+      name: 'Beras Ramos 5kg',
+      status: 'approved',
+      lastSeenAt: '2026-11-04T00:00:00.000Z',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-3',
+      productId: 'prod-2',
+      storeSlug: 'alfamart',
+      name: 'beras ramos 5 kg',
+      lastSeenAt: '2026-11-05T00:00:00.000Z',
+    })
+
+    const changesBefore = totalChanges(sqlite)
+    const versionBefore = indexVersion(sqlite)
+    expect(versionBefore).toBe(0)
+
+    const report = await getDuplicateNameReport(sqliteD1(sqlite))
+
+    expect(report).toEqual({
+      limit: 200,
+      truncated: false,
+      groups: [
+        {
+          // NOCASE-only equality: no whitespace folding (the rename guard
+          // compares the same way), so these three are one group.
+          normalizedName: 'beras ramos 5 kg',
+          // The newest product's wording names the group.
+          displayName: 'beras ramos 5 kg',
+          productCount: 3,
+          products: [
+            {
+              productKey: 'beras--ramos--5-kg--provisional',
+              name: 'beras ramos 5 kg',
+              status: 'needs_review',
+              updatedAt: '2026-11-05T00:00:00.000Z',
+              stores: ['alfamart'],
+              primaryStore: 'alfamart',
+            },
+            {
+              productKey: 'beras--ramos--5-kg',
+              name: 'Beras Ramos 5 kg',
+              status: 'provisional',
+              updatedAt: '2026-11-01T00:00:00.000Z',
+              // Most recently observed store first; the other is retained.
+              stores: ['lotte-mart', 'superindo'],
+              primaryStore: 'lotte-mart',
+            },
+            {
+              productKey: 'beras--ramos--5-kg--copy',
+              name: 'BERAS RAMOS 5 KG',
+              status: 'provisional',
+              updatedAt: '2026-10-01T00:00:00.000Z',
+              // No alias yet: the report still lists the product.
+              stores: [],
+              primaryStore: null,
+            },
+          ],
+        },
+      ],
+    })
+
+    // Read-only by contract: zero row changes anywhere (no audit row, no
+    // metadata_version bump) and the canonical index version stays put.
+    expect(totalChanges(sqlite)).toBe(changesBefore)
+    expect(indexVersion(sqlite)).toBe(versionBefore)
+    expect(auditRows(sqlite)).toEqual([])
+    expect(productById(sqlite)).toMatchObject({ metadata_version: 1, name: 'Beras Ramos 5 kg' })
+  })
+
+  it('omits unique names, including whitespace variants the rename guard also treats as distinct', async () => {
+    const sqlite = freshDb()
+    insertProduct(sqlite, {
+      id: 'prod-1',
+      productKey: 'beras--ramos--5-kg',
+      name: 'Beras Ramos 5 kg',
+    })
+    insertProduct(sqlite, {
+      id: 'prod-2',
+      productKey: 'beras--ramos--5-kg--spaced',
+      name: 'Beras Ramos 5 kg ',
+    })
+    insertProduct(sqlite, { id: 'prod-3', productKey: 'gula--gulaku--1-kg', name: 'Gula Pasir' })
+
+    expect(await getDuplicateNameReport(sqliteD1(sqlite))).toEqual({
+      limit: 200,
+      truncated: false,
+      groups: [],
+    })
+  })
+
+  it('bounds the group list and clamps the limit, flagging truncation', async () => {
+    const sqlite = freshDb()
+    for (const [suffix, name] of [
+      ['alpha', 'Alpha Widget'],
+      ['beta', 'Beta Widget'],
+      ['gamma', 'Gamma Widget'],
+    ]) {
+      insertProduct(sqlite, {
+        id: `prod-${suffix}-1`,
+        productKey: `dupe--${suffix}--1`,
+        name,
+      })
+      insertProduct(sqlite, {
+        id: `prod-${suffix}-2`,
+        productKey: `dupe--${suffix}--2`,
+        name: name.toLowerCase(),
+      })
+    }
+    const db = sqliteD1(sqlite)
+
+    const one = await getDuplicateNameReport(db, { limit: 1 })
+    expect(one.limit).toBe(1)
+    expect(one.truncated).toBe(true)
+    expect(one.groups.map((group) => group.normalizedName)).toEqual(['alpha widget'])
+
+    const two = await getDuplicateNameReport(db, { limit: 2 })
+    expect(two.truncated).toBe(true)
+    expect(two.groups.map((group) => group.normalizedName)).toEqual(['alpha widget', 'beta widget'])
+
+    const all = await getDuplicateNameReport(db)
+    expect(all.truncated).toBe(false)
+    expect(all.groups.map((group) => group.normalizedName)).toEqual([
+      'alpha widget',
+      'beta widget',
+      'gamma widget',
+    ])
+
+    // Clamping keeps a report bounded whatever a caller asks for.
+    expect((await getDuplicateNameReport(db, { limit: 0 })).limit).toBe(1)
+    expect((await getDuplicateNameReport(db, { limit: 9999 })).limit).toBe(500)
+  })
+
+  it('caps the products listed per group and reports the group total', async () => {
+    const sqlite = freshDb()
+    const COUNT = 30
+    for (let i = 0; i < COUNT; i += 1) {
+      insertProduct(sqlite, {
+        id: `prod-${i}`,
+        productKey: `duplikat--${String(i).padStart(2, '0')}`,
+        name: i % 2 === 0 ? 'Duplikat Produk' : 'duplikat produk',
+        // One distinct timestamp per row so the newest-first order is exact.
+        updatedAt: `2026-11-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`,
+      })
+    }
+
+    const report = await getDuplicateNameReport(sqliteD1(sqlite))
+    expect(report.groups).toHaveLength(1)
+    // The group reports the TRUE total, not just the rows it lists.
+    expect(report.groups[0].productCount).toBe(COUNT)
+    expect(report.groups[0].products).toHaveLength(25)
+    expect(report.groups[0].products[0].productKey).toBe('duplikat--29')
+    expect(report.truncated).toBe(true)
+  })
+
+  it('lists the group the limit selects even when BINARY and NOCASE order disagree', async () => {
+    const sqlite = freshDb()
+    // Equal group sizes, and the two group names sort in OPPOSITE orders under
+    // BINARY (`Z` 0x5A < `a` 0x61) and NOCASE (`a` < `z`). The group query and
+    // the product query must cut the same group; otherwise the report lists a
+    // group with no rows and silently drops the other group's duplicates.
+    insertProduct(sqlite, { id: 'zebra-1', productKey: 'zebra--1', name: 'Zebra widget' })
+    insertProduct(sqlite, { id: 'zebra-2', productKey: 'zebra--2', name: 'ZEBRA widget' })
+    insertProduct(sqlite, { id: 'apple-1', productKey: 'apple--1', name: 'apple widget' })
+    insertProduct(sqlite, { id: 'apple-2', productKey: 'apple--2', name: 'APPLE widget' })
+
+    const report = await getDuplicateNameReport(sqliteD1(sqlite), { limit: 1 })
+    expect(report.truncated).toBe(true)
+    expect(report.groups).toHaveLength(1)
+    expect(report.groups[0]).toMatchObject({ normalizedName: 'apple widget', productCount: 2 })
+    expect(report.groups[0].products.map((product) => product.productKey).sort()).toEqual([
+      'apple--1',
+      'apple--2',
+    ])
+  })
+
+  it('keeps non-ASCII names in the groups NOCASE actually forms', async () => {
+    const sqlite = freshDb()
+    // Two names whose only difference is the case of a NON-ASCII letter:
+    // NOCASE folds A-Z only, so these are two groups, not one. The report key
+    // must use the same fold (lower() in SQL), not a Unicode-aware JS one.
+    insertProduct(sqlite, { id: 'olk-1', productKey: 'olk--1', name: 'Ölk A' })
+    insertProduct(sqlite, { id: 'olk-2', productKey: 'olk--2', name: 'Ölk a' })
+    insertProduct(sqlite, { id: 'olk-3', productKey: 'olk--3', name: 'ölk A' })
+    insertProduct(sqlite, { id: 'olk-4', productKey: 'olk--4', name: 'ölk a' })
+
+    const report = await getDuplicateNameReport(sqliteD1(sqlite))
+    expect(report.truncated).toBe(false)
+    expect(report.groups.map((group) => group.normalizedName)).toEqual(['Ölk a', 'ölk a'])
+    expect(report.groups.map((group) => group.products.length)).toEqual([2, 2])
+    expect(
+      report.groups.flatMap((group) => group.products.map((product) => product.productKey)).sort()
+    ).toEqual(['olk--1', 'olk--2', 'olk--3', 'olk--4'])
+  })
+
+  it('bounds the whole report at 900 rows and stays inside the query budget', async () => {
+    const sqlite = freshDb()
+    // 40 groups × 25 products = 1000 rows: the ceiling keeps 900 rows (36 whole
+    // groups) and the four groups it cut entirely must not be listed empty.
+    for (let group = 0; group < 40; group += 1) {
+      for (let index = 0; index < 25; index += 1) {
+        insertProduct(sqlite, {
+          id: `prod-${group}-${index}`,
+          productKey: `duplikat--${String(group).padStart(2, '0')}--${String(index).padStart(2, '0')}`,
+          name: `Duplikat ${String(group).padStart(2, '0')}`,
+        })
+      }
+    }
+    const queryLog: string[] = []
+    const report = await getDuplicateNameReport(sqliteD1(sqlite, { queryLog }))
+
+    expect(report.truncated).toBe(true)
+    expect(report.groups).toHaveLength(36)
+    expect(report.groups.every((group) => group.products.length > 0)).toBe(true)
+    expect(report.groups.flatMap((group) => group.products)).toHaveLength(900)
+    // Two fixed statements plus one chunked store lookup per SELECT_IN_CHUNK
+    // (90) product keys: the ceiling is what keeps this at 12, not 13+.
+    expect(queryLog).toHaveLength(12)
   })
 })

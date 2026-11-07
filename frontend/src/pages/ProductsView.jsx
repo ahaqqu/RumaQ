@@ -9,6 +9,7 @@ import { Chip } from '../components/Chip.jsx'
 import { Badge } from '../components/Badge.jsx'
 import { Button } from '../components/Button.jsx'
 import { ProductRenameForm } from '../components/ProductRenameForm.jsx'
+import { DuplicateNamesPanel } from '../components/DuplicateNamesPanel.jsx'
 import { IconSearch, IconWarning, IconClock } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
 import {
@@ -316,6 +317,11 @@ export function ProductsView({ search, setSearch, source, setSource, category, s
   return (
     <>
       <FreshnessBar />
+
+      {/* #485: the read-only duplicate-name report lives on the products page
+      next to the rename action that can surface a collision. Admin-only, and
+      it fetches nothing until an admin opens it. */}
+      {isAdmin && <DuplicateNamesPanel />}
 
       <div className="relative mb-4">
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">

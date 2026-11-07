@@ -922,5 +922,20 @@
     "revertSuccessTitle": "Nama dikembalikan",
     "revertSuccessBody": "Nama kanonik kembali menjadi {{name}}. Versi indeks kanonik {{version}}.",
     "frozenPairNote": "Pasangan di atas tetap memakai label katalognya; hanya nama produk kanonik yang berubah."
+  },
+  "duplicates": {
+    "title": "Nama duplikat",
+    "desc": "Produk kanonik dengan nama yang sama (tanpa membedakan huruf besar-kecil). Hanya baca — tidak ada yang digabung atau diganti di sini.",
+    "show": "Tampilkan laporan",
+    "hide": "Sembunyikan laporan",
+    "loading": "Memuat nama duplikat…",
+    "error": "Laporan nama duplikat gagal dimuat.",
+    "retry": "Coba lagi",
+    "empty": "Tidak ada nama duplikat.",
+    "productCount_one": "{{count}} produk",
+    "productCount_other": "{{count}} produk",
+    "noStores": "Belum ada toko yang mengamati",
+    "updated": "diperbarui {{date}}",
+    "truncated": "Sebagian grup atau produk duplikat tidak ditampilkan — laporan belum lengkap."
   }
 }
