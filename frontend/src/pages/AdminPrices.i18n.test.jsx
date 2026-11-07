@@ -3,6 +3,8 @@ import { fireEvent, render } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { AdminPrices } from './AdminPrices.jsx'
+import en from '../i18n/locales/en.json'
+import id from '../i18n/locales/id.json'
 
 // Real-copy pass for the run monitor's v2 receipt line (issue #463):
 // AdminPrices.test.jsx runs on test-setup's raw-key t() (assertions read
@@ -130,5 +132,18 @@ describe('AdminPrices i18n (issue #463)', () => {
     expect(container.textContent).not.toContain('Index v')
     expect(container.textContent).not.toContain('new products')
     expect(container.textContent).not.toContain('provisional')
+  })
+
+  // Issue #463 (thermos C2): the EN sentences above are only half the story.
+  // The locale parity test (i18n.test.js) proves the ID keys EXIST, not that
+  // they are translated — an English copy-paste in id.json stayed green. Pin
+  // the Indonesian copy the operator actually sees.
+  it('carries the Indonesian receipt copy, not an English copy', () => {
+    expect(id.monitor.provisionalMatches).toBe('{{count}} sementara')
+    expect(id.monitor.indexVersion).toBe('Indeks v{{version}}')
+    expect(id.monitor.productsSummary).toBe('{{created}} produk baru, {{existing}} sudah ada')
+    for (const key of ['provisionalMatches', 'indexVersion', 'productsSummary']) {
+      expect(id.monitor[key], `monitor.${key} is untranslated`).not.toBe(en.monitor[key])
+    }
   })
 })
