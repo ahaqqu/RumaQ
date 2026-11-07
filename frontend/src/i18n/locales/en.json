@@ -936,6 +936,6 @@
     "productCount_other": "{{count}} products",
     "noStores": "No store observed yet",
     "updated": "updated {{date}}",
-    "truncated": "Showing the first {{limit}} groups — the report is not complete."
+    "truncated": "Some duplicate groups or products are not listed — the report is not complete."
   }
 }

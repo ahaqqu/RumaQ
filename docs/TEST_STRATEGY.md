@@ -51,6 +51,7 @@ endpoints (`shared.steps.js` `Before` hook), and scenarios run with
 | `price-promos.feature`    | Promos segment: fixed-order cards, expand, example jump into the explorer, empty state                                                                    |
 | `admin-review.feature`    | Match review queue: side-by-side pair, decide persists across reload, undo, versioned export download, monitor cross-link, forbidden state for non-admins |
 | `admin-rename.feature`    | Canonical rename (#423): versioned write, explorer row refetch + reload persistence, frozen review-pair labels, cold load (#488)                          |
+| `duplicate-names.feature` | Duplicate-name report (#485): admin-only panel, collapsed until opened, one lazy fetch, group rows with product keys and observing stores                 |
 | `accessibility.feature`   | axe-core scan (wcag2a/2aa/21a/21aa) of every main page; fails on critical/serious                                                                         |
 
 Notes for writing new E2E scenarios:

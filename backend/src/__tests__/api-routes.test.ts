@@ -1537,7 +1537,9 @@ describe('/api/admin/products', () => {
     env.DB.all = vi
       .fn()
       .mockResolvedValueOnce({
-        results: [{ groupName: 'Beras Ramos 5 kg', productCount: 2 }],
+        // The lib's group row carries the SQL-derived key (lower(name)) — the
+        // same key the product rows below carry.
+        results: [{ normalizedName: 'beras ramos 5 kg', productCount: 2 }],
       })
       .mockResolvedValueOnce({
         results: [
@@ -1546,12 +1548,14 @@ describe('/api/admin/products', () => {
             name: 'beras ramos 5 kg',
             status: 'provisional',
             updated_at: NOW,
+            groupKey: 'beras ramos 5 kg',
           },
           {
             product_key: 'beras--ramos--5-kg',
             name: 'Beras Ramos 5 kg',
             status: 'provisional',
             updated_at: NOW,
+            groupKey: 'beras ramos 5 kg',
           },
         ],
       })

@@ -95,10 +95,19 @@ function runInBatch(sqlite: SqliteDb, statement: TestStatement) {
 // `beforeBatch` runs once, immediately before the first batch — the seam a
 // concurrent writer commits through: the lib's pre-check has already read the
 // old row, so the guarded UPDATE in the batch must be the one that notices.
-function sqliteD1(sqlite: SqliteDb, options: { beforeBatch?: () => void } = {}): D1Database {
+// `queryLog` collects every statement the code under test prepares: the
+// duplicate report's ≤12-query contract is a property of the chunked store
+// lookup, so only a counted run can pin it.
+function sqliteD1(
+  sqlite: SqliteDb,
+  options: { beforeBatch?: () => void; queryLog?: string[] } = {}
+): D1Database {
   let fired = false
   return {
-    prepare: (sql: string) => new TestStatement(sqlite, sql),
+    prepare: (sql: string) => {
+      options.queryLog?.push(sql)
+      return new TestStatement(sqlite, sql)
+    },
     batch: async (statements: TestStatement[]) => {
       if (!fired) {
         fired = true
@@ -1458,5 +1467,70 @@ describe('getDuplicateNameReport — real-SQLite semantics', () => {
     expect(report.groups[0].products).toHaveLength(25)
     expect(report.groups[0].products[0].productKey).toBe('duplikat--29')
     expect(report.truncated).toBe(true)
+  })
+
+  it('lists the group the limit selects even when BINARY and NOCASE order disagree', async () => {
+    const sqlite = freshDb()
+    // Equal group sizes, and the two group names sort in OPPOSITE orders under
+    // BINARY (`Z` 0x5A < `a` 0x61) and NOCASE (`a` < `z`). The group query and
+    // the product query must cut the same group; otherwise the report lists a
+    // group with no rows and silently drops the other group's duplicates.
+    insertProduct(sqlite, { id: 'zebra-1', productKey: 'zebra--1', name: 'Zebra widget' })
+    insertProduct(sqlite, { id: 'zebra-2', productKey: 'zebra--2', name: 'ZEBRA widget' })
+    insertProduct(sqlite, { id: 'apple-1', productKey: 'apple--1', name: 'apple widget' })
+    insertProduct(sqlite, { id: 'apple-2', productKey: 'apple--2', name: 'APPLE widget' })
+
+    const report = await getDuplicateNameReport(sqliteD1(sqlite), { limit: 1 })
+    expect(report.truncated).toBe(true)
+    expect(report.groups).toHaveLength(1)
+    expect(report.groups[0]).toMatchObject({ normalizedName: 'apple widget', productCount: 2 })
+    expect(report.groups[0].products.map((product) => product.productKey).sort()).toEqual([
+      'apple--1',
+      'apple--2',
+    ])
+  })
+
+  it('keeps non-ASCII names in the groups NOCASE actually forms', async () => {
+    const sqlite = freshDb()
+    // Two names whose only difference is the case of a NON-ASCII letter:
+    // NOCASE folds A-Z only, so these are two groups, not one. The report key
+    // must use the same fold (lower() in SQL), not a Unicode-aware JS one.
+    insertProduct(sqlite, { id: 'olk-1', productKey: 'olk--1', name: 'Ölk A' })
+    insertProduct(sqlite, { id: 'olk-2', productKey: 'olk--2', name: 'Ölk a' })
+    insertProduct(sqlite, { id: 'olk-3', productKey: 'olk--3', name: 'ölk A' })
+    insertProduct(sqlite, { id: 'olk-4', productKey: 'olk--4', name: 'ölk a' })
+
+    const report = await getDuplicateNameReport(sqliteD1(sqlite))
+    expect(report.truncated).toBe(false)
+    expect(report.groups.map((group) => group.normalizedName)).toEqual(['Ölk a', 'ölk a'])
+    expect(report.groups.map((group) => group.products.length)).toEqual([2, 2])
+    expect(
+      report.groups.flatMap((group) => group.products.map((product) => product.productKey)).sort()
+    ).toEqual(['olk--1', 'olk--2', 'olk--3', 'olk--4'])
+  })
+
+  it('bounds the whole report at 900 rows and stays inside the query budget', async () => {
+    const sqlite = freshDb()
+    // 40 groups × 25 products = 1000 rows: the ceiling keeps 900 rows (36 whole
+    // groups) and the four groups it cut entirely must not be listed empty.
+    for (let group = 0; group < 40; group += 1) {
+      for (let index = 0; index < 25; index += 1) {
+        insertProduct(sqlite, {
+          id: `prod-${group}-${index}`,
+          productKey: `duplikat--${String(group).padStart(2, '0')}--${String(index).padStart(2, '0')}`,
+          name: `Duplikat ${String(group).padStart(2, '0')}`,
+        })
+      }
+    }
+    const queryLog: string[] = []
+    const report = await getDuplicateNameReport(sqliteD1(sqlite, { queryLog }))
+
+    expect(report.truncated).toBe(true)
+    expect(report.groups).toHaveLength(36)
+    expect(report.groups.every((group) => group.products.length > 0)).toBe(true)
+    expect(report.groups.flatMap((group) => group.products)).toHaveLength(900)
+    // Two fixed statements plus one chunked store lookup per SELECT_IN_CHUNK
+    // (90) product keys: the ceiling is what keeps this at 12, not 13+.
+    expect(queryLog).toHaveLength(12)
   })
 })

@@ -770,42 +770,44 @@ export async function getDuplicateNameReport(
   // One extra row distinguishes "truncated at the limit" from "exactly the
   // limit". GROUP BY name COLLATE NOCASE is the same equality the rename guard
   // uses (`name = ? COLLATE NOCASE`) and rides idx_products_name_nocase.
+  //
+  // lower(name) IS the group key: SQLite's lower() folds exactly the ASCII
+  // letters NOCASE folds, so it is constant within a NOCASE group and distinct
+  // across groups. Deriving the key in SQL keeps JS out of the equality —
+  // lowercasing a spelling in JS would fold Unicode too and could merge two
+  // groups NOCASE keeps apart.
   const groupRows =
     (
       await db
         .prepare(
-          `SELECT name COLLATE NOCASE AS groupName, COUNT(*) AS productCount
+          `SELECT lower(name) AS normalizedName, COUNT(*) AS productCount
            FROM price_products
            GROUP BY name COLLATE NOCASE
            HAVING COUNT(*) > 1
-           ORDER BY COUNT(*) DESC, groupName ASC
+           ORDER BY COUNT(*) DESC, name COLLATE NOCASE ASC
            LIMIT ?`
         )
         .bind(limit + 1)
-        .all<{ groupName: string; productCount: number }>()
+        .all<{ normalizedName: string; productCount: number }>()
     ).results ?? []
   if (groupRows.length === 0) return { limit, truncated: false, groups: [] }
-
-  const groups: DuplicateNameGroup[] = groupRows.slice(0, limit).map((row) => ({
-    // NOCASE equality is ASCII-only, so lowercasing both members of a group
-    // yields the same key — the normalized name the report groups by.
-    normalizedName: row.groupName.toLowerCase(),
-    displayName: row.groupName,
-    productCount: Number(row.productCount),
-    products: [],
-  }))
-  const groupByKey = new Map(groups.map((group) => [group.normalizedName, group]))
 
   // Products per group (capped at DUPLICATE_PRODUCTS_PER_GROUP via ROW_NUMBER)
   // in one statement: the group list is a subquery, so no bind-count ceiling
   // applies. `LIMIT ceiling + 1` bounds the whole report and flags truncation.
+  //
+  // The inner subquery repeats the group query's ORDER BY with the same
+  // collation on purpose: the limit must cut the identical group set, or a
+  // listed group would arrive with no rows while a cut group's rows were
+  // silently dropped.
   const productRows =
     (
       await db
         .prepare(
-          `SELECT product_key, name, status, updated_at
+          `SELECT product_key, name, status, updated_at, groupKey
            FROM (
              SELECT p.product_key, p.name, p.status, p.updated_at,
+                    lower(p.name) AS groupKey,
                     ROW_NUMBER() OVER (
                       PARTITION BY p.name COLLATE NOCASE
                       ORDER BY p.updated_at DESC, p.product_key ASC
@@ -816,7 +818,7 @@ export async function getDuplicateNameReport(
                FROM price_products
                GROUP BY name COLLATE NOCASE
                HAVING COUNT(*) > 1
-               ORDER BY COUNT(*) DESC, dupName ASC
+               ORDER BY COUNT(*) DESC, dupName COLLATE NOCASE ASC
                LIMIT ?
              ) d ON d.dupName = p.name COLLATE NOCASE
            )
@@ -830,6 +832,7 @@ export async function getDuplicateNameReport(
           name: string
           status: ProductStatus
           updated_at: string | null
+          groupKey: string
         }>()
     ).results ?? []
 
@@ -863,16 +866,16 @@ export async function getDuplicateNameReport(
     }
   }
 
+  // Assemble in the group query's order, each row carrying its SQL group key —
+  // no name is ever re-normalized in JS. Rows arrive newest-first inside a
+  // group (the ROW_NUMBER order), which is the report's contract.
+  const productsByKey = new Map<string, DuplicateProductDto[]>()
   for (const row of products) {
-    const group = groupByKey.get(row.name.toLowerCase())
-    // A product whose group vanished between the two reads (a concurrent
-    // delete) is dropped rather than inventing a group; reads are not a
-    // transaction here and the report is advisory.
-    if (!group) continue
     const stores = (storesByKey.get(row.product_key) ?? []).sort(
       (a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt) || a.storeSlug.localeCompare(b.storeSlug)
     )
-    group.products.push({
+    const list = productsByKey.get(row.groupKey) ?? []
+    list.push({
       productKey: row.product_key,
       name: row.name,
       status: row.status,
@@ -880,9 +883,23 @@ export async function getDuplicateNameReport(
       stores: stores.map((store) => store.storeSlug),
       primaryStore: stores[0]?.storeSlug ?? null,
     })
-    // The newest product's wording is the group's display name — deterministic
-    // regardless of which row SQLite's GROUP BY happened to keep.
-    if (group.products.length === 1) group.displayName = row.name
+    productsByKey.set(row.groupKey, list)
+  }
+
+  const groups: DuplicateNameGroup[] = []
+  for (const row of groupRows.slice(0, limit)) {
+    const productsInGroup = productsByKey.get(row.normalizedName)
+    // The row ceiling can cut a group entirely, and a concurrent delete can
+    // remove one between the two reads: a group with no rows is not listed, so
+    // the report never shows a header with nothing under it.
+    if (!productsInGroup) continue
+    groups.push({
+      normalizedName: row.normalizedName,
+      // The newest product's wording names the group.
+      displayName: productsInGroup[0].name,
+      productCount: Number(row.productCount),
+      products: productsInGroup,
+    })
   }
 
   const truncated =

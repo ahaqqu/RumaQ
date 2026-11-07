@@ -105,8 +105,7 @@ export function DuplicateNamesPanel() {
               <>
                 {truncated && (
                   <p className="mb-2 text-xs text-warn" data-testid="duplicate-names-truncated">
-                    <IconWarning size={12} />{' '}
-                    {t('duplicates.truncated', { limit: report.data.limit })}
+                    <IconWarning size={12} /> {t('duplicates.truncated')}
                   </p>
                 )}
                 <ul className="flex flex-col gap-3" data-testid="duplicate-names-groups">

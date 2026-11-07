@@ -936,6 +936,6 @@
     "productCount_other": "{{count}} produk",
     "noStores": "Belum ada toko yang mengamati",
     "updated": "diperbarui {{date}}",
-    "truncated": "Menampilkan {{limit}} grup pertama — laporan belum lengkap."
+    "truncated": "Sebagian grup atau produk duplikat tidak ditampilkan — laporan belum lengkap."
   }
 }

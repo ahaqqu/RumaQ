@@ -185,8 +185,9 @@ describe('locale files', () => {
   // prove the shape; these pin that the panel's copy exists in both locales
   // with real Indonesian and that it keeps saying "read-only".
   describe('duplicates namespace (#485)', () => {
-    // Format-only strings: identical by design (plural template + date).
-    const LANGUAGE_NEUTRAL = new Set(['productCount_one', 'productCount_other', 'updated'])
+    // Every string differs between the locales — including the plural forms and
+    // the date template — so there is nothing to exclude from the guard below.
+    const LANGUAGE_NEUTRAL = new Set()
 
     it('exists in both locales with the same keys', () => {
       expect(en.duplicates).toBeDefined()
@@ -208,7 +209,11 @@ describe('locale files', () => {
       expect(id.duplicates.desc).toContain('Hanya baca')
       expect(en.duplicates.empty).toBe('No duplicate names.')
       expect(id.duplicates.empty).toBe('Tidak ada nama duplikat.')
-      expect(en.duplicates.truncated).toContain('{{limit}}')
+      // The notice is cause-neutral: `truncated` covers the group, per-group,
+      // and 900-row caps, so it must not claim the group list was cut.
+      expect(en.duplicates.truncated).toContain('not complete')
+      expect(id.duplicates.truncated).toContain('belum lengkap')
+      expect(en.duplicates.truncated).not.toContain('{{limit}}')
     })
   })
 
