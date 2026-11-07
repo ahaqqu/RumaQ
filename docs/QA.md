@@ -28,9 +28,16 @@ adversarial-but-safe, evidence-driven). Briefing template:
 Persona: QA engineer — meticulous, adversarial-but-safe, evidence-driven.
 Target: <live URL> — build <sha/features deployed>. REAL app, REAL family data.
 Tracking ticket: <issue URL> — read first; safety rules there are absolute.
-Auth: sanctioned live smoke account <account> (checked into
-automation/tests/live/e2e/login.spec.js). Fresh-account registration
-behavior is itself a test question.
+Auth: TWO sanctioned accounts, both checked into
+automation/tests/live/e2e/login.spec.js (§5 decides which is used):
+- test@rumaq.dev — ADMIN, sandbox-capable. QA's write account: the first
+  check of every run is test@'s household state (/api/me); QA may create/
+  modify/delete ONLY QA- prefixed entities inside that household, never in
+  the family household.
+- alice@rumaq.dev — the read-only smoke account (family household: strictly
+  read-only browsing + negative-only probes).
+Registration is closed ("Invalid email or password", no enumeration leak) —
+that is itself the expected registration probe; there is NO self-signup path.
 Tooling: repo Playwright (@playwright/test) + automation/playwright.live.config.js;
 scratch scripts ONLY under /tmp/qa-run-<N>/; never modify tracked files.
 Time-box: ~45–60 min active testing, ~75 min total; report honestly what
@@ -79,25 +86,29 @@ Negative (each probe needs an expected response named up front):
 
 ## 5. Auth strategy
 
-The sanctioned live smoke account (currently `alice@rumaq.dev`, checked into
-`automation/tests/live/e2e/login.spec.js`) is for **read-only browsing +
-negative-only probes**. The first empirical question of every run decides the
-mode:
+Two sanctioned accounts, both checked into `automation/tests/live/e2e/login.spec.js`
+(owner-established 2026-11-07 after QA runs repeatedly lacked a writable
+sandbox):
 
-1. **Sandbox probe**: attempt login with a fresh `qa-<epoch>@<domain>`
-   address + strong random password. If the form auto-registers → QA owns a
-   sandbox household → run full positive flows there first (baseline, member
-   add, document upload/view/download/filter/delete, inventory add-delete,
-   settings), then the negative suite.
-2. **Registration closed** (current state: "Invalid email or password", no
-   enumeration leak) → fall back to the smoke account strictly read-only +
-   negative-only. Positive flows are then limited to rendering/behavior of
-   existing state; anything that must persist is listed as Untestable.
-   Server-side validation that persists nothing on rejection (413/415 upload
-   policy, 404-before-leak) can still be exercised directly against the API
-   with the smoke session.
-3. Never create accounts or data outside the `QA-` prefix contract, and never
-   persist markers into the smoke household.
+- **`test@rumaq.dev` — admin, sandbox-capable.** QA's write account: the
+  first empirical check of every run is `test@`'s household state (`/api/me`).
+  QA creates/modifies/deletes ONLY `QA-` prefixed entities inside that
+  household (baseline, member add, document upload/view/download/filter/
+  delete, inventory add-delete, settings, plugin toggle, export, purge on
+  QA-created data), then runs the negative suite. Its admin role also
+  unlocks the admin-gate surfaces for positive testing — QA must still never
+  touch pre-existing data there.
+- **`alice@rumaq.dev` — the read-only smoke account** (family household:
+  strictly read-only browsing + negative-only probes; used for the
+  no-existence-leak and unauth suites from a NON-admin vantage).
+
+The registration probe stays in every run as a negative test
+(`qa-<epoch>@<domain>` + strong random password → "Invalid email or
+password", no enumeration leak) — registration is closed; there is NO
+self-signup path, so never treat a fresh signup as a sandbox.
+
+Never create accounts or data outside the `QA-` prefix contract, and never
+persist markers into the smoke or family household.
 
 ## 6. Evidence policy
 
