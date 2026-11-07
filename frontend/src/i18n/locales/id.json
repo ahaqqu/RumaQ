@@ -865,6 +865,7 @@
     "aliasesEmpty": "Belum ada varian nama untuk produk ini.",
     "aliasStatusCandidate": "kandidat",
     "aliasStatusApproved": "disetujui",
+    "aliasStatusRejected": "ditolak",
     "aliasSourceOcr": "OCR",
     "aliasSourceCatalog": "katalog",
     "aliasSourceAdmin": "admin",

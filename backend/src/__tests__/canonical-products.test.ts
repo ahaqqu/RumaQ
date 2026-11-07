@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vite-plus/test'
 import {
+  AliasNotFoundError,
+  AliasStateError,
   AuditNotFoundError,
   DuplicateNameError,
   InvalidNameError,
@@ -7,10 +9,13 @@ import {
   ProductNotFoundError,
   StaleProductError,
   StaleRevertError,
+  approveAlias,
   getProductIdentity,
+  rejectAlias,
   renameProduct,
   revertProductRename,
 } from '../lib/canonical-products.js'
+import { getCanonicalIndex } from '../lib/ingest-v2.js'
 // The backend tsconfig pins `types` to @cloudflare/workers-types, so Node
 // builtins carry no declarations — same contained suppressions as
 // migrations.test.ts / match-review.test.ts. These semantics run on real SQLite
@@ -167,7 +172,7 @@ function insertAlias(
     productId: string
     storeSlug: string
     name: string
-    status?: 'candidate' | 'approved'
+    status?: 'candidate' | 'approved' | 'rejected'
     source?: 'ocr' | 'catalog' | 'admin'
   }
 ): void {
@@ -258,6 +263,10 @@ function auditRows(sqlite: SqliteDb) {
     .all()
 }
 
+function aliasAuditRows(sqlite: SqliteDb) {
+  return sqlite.prepare('SELECT * FROM price_product_alias_audit ORDER BY created_at, id').all()
+}
+
 describe('getProductIdentity — real-SQLite semantics', () => {
   it('returns product, every alias, observation stats, and the audit tail newest first', async () => {
     const sqlite = freshDb()
@@ -323,8 +332,18 @@ describe('getProductIdentity — real-SQLite semantics', () => {
       metadataVersion: 1,
     })
     expect(identity!.aliases).toEqual([
-      expect.objectContaining({ storeSlug: 'lotte-mart', status: 'approved', source: 'admin' }),
-      expect.objectContaining({ storeSlug: 'superindo', status: 'candidate', source: 'ocr' }),
+      expect.objectContaining({
+        id: 'alias-2',
+        storeSlug: 'lotte-mart',
+        status: 'approved',
+        source: 'admin',
+      }),
+      expect.objectContaining({
+        id: 'alias-1',
+        storeSlug: 'superindo',
+        status: 'candidate',
+        source: 'ocr',
+      }),
     ])
     expect(identity!.stats).toEqual({ observations: 3, stores: 2 })
     expect(identity!.audit).toHaveLength(10)
@@ -978,5 +997,256 @@ describe('revertProductRename — real-SQLite semantics', () => {
         })
       ).rejects.toBeInstanceOf(AuditNotFoundError)
     }
+  })
+})
+
+// Candidate alias decisions (ahaqqu/RumaQ#489). The decision is a CAS on the
+// ALIAS's own status: no product metadata_version moves, approve appends a
+// receipt and bumps the canonical index exactly once, reject appends a receipt
+// and bumps nothing, and a decided alias can never be decided again. Pinned on
+// real SQLite (the migration chain is real), not on a fake batch.
+describe('approveAlias / rejectAlias — real-SQLite semantics', () => {
+  function seedAliasedProduct(sqlite: SqliteDb): void {
+    insertProduct(sqlite)
+    insertAlias(sqlite, {
+      id: 'alias-1',
+      productId: 'prod-1',
+      storeSlug: 'superindo',
+      name: 'Beras Ramos',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-2',
+      productId: 'prod-1',
+      storeSlug: 'lotte-mart',
+      name: 'Beras Ramos 5kg',
+    })
+    // A second product's alias proves every decision is product-scoped.
+    insertProduct(sqlite, {
+      id: 'prod-2',
+      productKey: 'gula--gulaku--1-kg',
+      name: 'Gula Pasir Gulaku 1 kg',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-other',
+      productId: 'prod-2',
+      storeSlug: 'superindo',
+      name: 'Gula Gulaku',
+    })
+  }
+
+  function aliasById(sqlite: SqliteDb, id = 'alias-1') {
+    return sqlite.prepare('SELECT * FROM price_product_aliases WHERE id = ?').get(id)
+  }
+
+  it('approves a candidate: status flips, one receipt, index +1, no metadata bump', async () => {
+    const sqlite = freshDb()
+    seedAliasedProduct(sqlite)
+    sqlite.prepare('UPDATE canonical_index_state SET version = 7 WHERE id = 1').run()
+
+    const result = await approveAlias(sqliteD1(sqlite), {
+      productKey: 'beras--ramos--5-kg',
+      aliasId: 'alias-1',
+      actorUserId: 'admin-1',
+    })
+
+    expect(result.alias).toEqual({
+      id: 'alias-1',
+      name: 'Beras Ramos',
+      storeSlug: 'superindo',
+      status: 'approved',
+      source: 'ocr',
+      firstSeenAt: NOW,
+      lastSeenAt: NOW,
+    })
+    expect(result.indexVersion).toBe(8)
+    expect(aliasById(sqlite)?.status).toBe('approved')
+
+    // The canonical row is untouched: this is not a metadata edit.
+    const product = productById(sqlite)!
+    expect(product.metadata_version).toBe(1)
+    expect(product.name).toBe('Beras Ramos 5 kg')
+
+    const receipts = aliasAuditRows(sqlite)
+    expect(receipts).toHaveLength(1)
+    expect(receipts[0]).toMatchObject({
+      alias_id: 'alias-1',
+      product_id: 'prod-1',
+      product_key: 'beras--ramos--5-kg',
+      store_slug: 'superindo',
+      alias_name: 'Beras Ramos',
+      action: 'approve',
+      actor_user_id: 'admin-1',
+    })
+    expect(String(receipts[0]?.created_at)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+
+    // The other candidate and the other product's alias are untouched.
+    expect(aliasById(sqlite, 'alias-2')?.status).toBe('candidate')
+    expect(aliasById(sqlite, 'alias-other')?.status).toBe('candidate')
+    expect(indexVersion(sqlite)).toBe(8)
+  })
+
+  it('rejects a candidate: status flips, one receipt, and the index version does not move', async () => {
+    const sqlite = freshDb()
+    seedAliasedProduct(sqlite)
+    sqlite.prepare('UPDATE canonical_index_state SET version = 7 WHERE id = 1').run()
+
+    const result = await rejectAlias(sqliteD1(sqlite), {
+      productKey: 'beras--ramos--5-kg',
+      aliasId: 'alias-1',
+      actorUserId: 'admin-1',
+    })
+
+    expect(result.alias).toMatchObject({ id: 'alias-1', status: 'rejected' })
+    expect(result.indexVersion).toBe(7)
+    expect(aliasById(sqlite)?.status).toBe('rejected')
+    expect(aliasAuditRows(sqlite)).toEqual([
+      expect.objectContaining({
+        alias_id: 'alias-1',
+        action: 'reject',
+        actor_user_id: 'admin-1',
+      }),
+    ])
+    expect(indexVersion(sqlite)).toBe(7)
+    expect(productById(sqlite)!.metadata_version).toBe(1)
+  })
+
+  it('keeps a rejected spelling out of the published index', async () => {
+    const sqlite = freshDb()
+    // The index validates against the v2 contract, whose product id is a UUID.
+    const productId = '11111111-1111-4111-8111-111111111111'
+    insertProduct(sqlite, { id: productId })
+    insertAlias(sqlite, {
+      id: 'alias-rejected',
+      productId,
+      storeSlug: 'superindo',
+      name: 'Beras Ramos',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-approved',
+      productId,
+      storeSlug: 'lotte-mart',
+      name: 'Beras Ramos 5kg',
+    })
+
+    await rejectAlias(sqliteD1(sqlite), {
+      productKey: 'beras--ramos--5-kg',
+      aliasId: 'alias-rejected',
+      actorUserId: 'admin-1',
+    })
+    await approveAlias(sqliteD1(sqlite), {
+      productKey: 'beras--ramos--5-kg',
+      aliasId: 'alias-approved',
+      actorUserId: 'admin-1',
+    })
+
+    const index = await getCanonicalIndex(sqliteD1(sqlite))
+    const product = index.products.find((row) => row.productKey === 'beras--ramos--5-kg')
+    expect(product?.aliases.map((alias) => alias.name)).toEqual(['Beras Ramos 5kg'])
+  })
+
+  it('refuses a second decision: 409 with the current status, and writes nothing', async () => {
+    const sqlite = freshDb()
+    seedAliasedProduct(sqlite)
+    const db = sqliteD1(sqlite)
+    await approveAlias(db, {
+      productKey: 'beras--ramos--5-kg',
+      aliasId: 'alias-1',
+      actorUserId: 'admin-1',
+    })
+    const receiptsAfterFirst = aliasAuditRows(sqlite)
+    const versionAfterFirst = indexVersion(sqlite)
+
+    for (const decide of [approveAlias, rejectAlias]) {
+      const error = await decide(db, {
+        productKey: 'beras--ramos--5-kg',
+        aliasId: 'alias-1',
+        actorUserId: 'admin-2',
+      }).catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(AliasStateError)
+      expect((error as AliasStateError).currentStatus).toBe('approved')
+    }
+
+    expect(aliasAuditRows(sqlite)).toEqual(receiptsAfterFirst)
+    expect(indexVersion(sqlite)).toBe(versionAfterFirst)
+    expect(aliasById(sqlite)?.status).toBe('approved')
+  })
+
+  it('refuses to approve a rejected alias (the decision is terminal)', async () => {
+    const sqlite = freshDb()
+    seedAliasedProduct(sqlite)
+    await rejectAlias(sqliteD1(sqlite), {
+      productKey: 'beras--ramos--5-kg',
+      aliasId: 'alias-1',
+      actorUserId: 'admin-1',
+    })
+
+    await expect(
+      approveAlias(sqliteD1(sqlite), {
+        productKey: 'beras--ramos--5-kg',
+        aliasId: 'alias-1',
+        actorUserId: 'admin-1',
+      })
+    ).rejects.toMatchObject({ name: 'AliasStateError', currentStatus: 'rejected' })
+    expect(aliasAuditRows(sqlite)).toHaveLength(1)
+    expect(aliasById(sqlite)?.status).toBe('rejected')
+  })
+
+  it('answers an unknown alias or an alias of another product with AliasNotFound', async () => {
+    const sqlite = freshDb()
+    seedAliasedProduct(sqlite)
+    const db = sqliteD1(sqlite)
+
+    for (const aliasId of ['missing', 'alias-other']) {
+      const error = await approveAlias(db, {
+        productKey: 'beras--ramos--5-kg',
+        aliasId,
+        actorUserId: 'admin-1',
+      }).catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(AliasNotFoundError)
+    }
+    expect(aliasAuditRows(sqlite)).toEqual([])
+    expect(indexVersion(sqlite)).toBe(0)
+  })
+
+  it('answers an unknown product with ProductNotFound', async () => {
+    const sqlite = freshDb()
+    seedAliasedProduct(sqlite)
+    await expect(
+      rejectAlias(sqliteD1(sqlite), {
+        productKey: 'nope--x--1-kg',
+        aliasId: 'alias-1',
+        actorUserId: 'admin-1',
+      })
+    ).rejects.toBeInstanceOf(ProductNotFoundError)
+    expect(aliasAuditRows(sqlite)).toEqual([])
+  })
+
+  it('does not double-audit or double-bump when a concurrent writer decides first', async () => {
+    const sqlite = freshDb()
+    seedAliasedProduct(sqlite)
+
+    // The pre-check has already read 'candidate' when this runs; the competing
+    // admin commits their approval between the read and this batch. The guarded
+    // UPDATE must then match nothing, the receipt gate (changes()) must insert
+    // nothing, and the bump must stay put — even though the status column now
+    // reads 'approved'.
+    const db = sqliteD1(sqlite, {
+      beforeBatch: () => {
+        sqlite
+          .prepare("UPDATE price_product_aliases SET status = 'approved' WHERE id = 'alias-1'")
+          .run()
+      },
+    })
+
+    await expect(
+      approveAlias(db, {
+        productKey: 'beras--ramos--5-kg',
+        aliasId: 'alias-1',
+        actorUserId: 'admin-2',
+      })
+    ).rejects.toMatchObject({ name: 'AliasStateError', currentStatus: 'approved' })
+
+    expect(aliasAuditRows(sqlite)).toEqual([])
+    expect(indexVersion(sqlite)).toBe(0)
   })
 })

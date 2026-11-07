@@ -2444,6 +2444,282 @@ describe('migration 0037: price_product_audit (#423)', () => {
   })
 })
 
+// Admin candidate-alias decisions (ahaqqu/RumaQ#489, PR 1 of 2): the appended
+// decision receipt — plain handles, no FK (the 0032/0037 pattern) — and the
+// status-vocabulary widening a rejection needs. The interesting behaviors are
+// that the rebuild keeps every alias row and every index, that 'rejected' is a
+// legal terminal status now, that the closed action vocabulary holds, and that
+// the receipt outlives the alias it names.
+describe('migration 0039: price_product_alias_audit + rejected alias status (#489)', () => {
+  // The migration is additive and D1 already holds aliases when it runs, so
+  // the case applies 0039 on TOP of the chain rather than on a fresh database.
+  function preAliasAuditDb(): Db {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    // D1 enforces foreign keys; node:sqlite must too for the cascade
+    // assertion below to mean anything.
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0039')
+    )
+    return db
+  }
+
+  function apply0039(db: Db): void {
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0039_price_alias_audit.sql'), 'utf8'))
+  }
+
+  function seedAliases(db: Db): void {
+    db.prepare(
+      `INSERT INTO price_products (id, product_key, name)
+       VALUES ('prod-1', 'beras--ramos--5-kg', 'Beras Ramos 5 kg')`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_product_aliases
+         (id, product_id, store_slug, name, status, source, first_seen_at, last_seen_at)
+       VALUES ('al-candidate', 'prod-1', 'superindo', 'Beras Ramos', 'candidate', 'ocr',
+               '2026-11-01T00:00:00Z', '2026-11-02T00:00:00Z')`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_product_aliases
+         (id, product_id, store_slug, name, status, source, first_seen_at, last_seen_at)
+       VALUES ('al-approved', 'prod-1', 'lotte-mart', 'Beras Ramos 5kg', 'approved', 'admin',
+               '2026-11-01T00:00:00Z', '2026-11-03T00:00:00Z')`
+    ).run()
+  }
+
+  it('rebuilds the alias table around the widened status CHECK, copying every row and index', () => {
+    const db = preAliasAuditDb()
+    seedAliases(db)
+
+    apply0039(db)
+
+    // Nothing of this file existed beforehand; the rebuild must not leave the
+    // old definition in place (a CHECK that still lacks 'rejected' would make
+    // the CAS below fail in production while every route test passes).
+    expect(
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master
+            WHERE name IN ('price_product_alias_audit', 'idx_price_product_alias_audit_product',
+                           'idx_aliases_product_status', 'idx_aliases_store_name',
+                           'idx_aliases_name_nocase')`
+        )
+        .all()
+        .map((row: Record<string, unknown>) => row.name)
+        .sort()
+    ).toEqual([
+      'idx_aliases_name_nocase',
+      'idx_aliases_product_status',
+      'idx_aliases_store_name',
+      'idx_price_product_alias_audit_product',
+      'price_product_alias_audit',
+    ])
+
+    // Every pre-existing row survives verbatim, including the UNIQUE key
+    // columns and the per-store provenance.
+    expect(
+      db
+        .prepare(
+          `SELECT id, product_id, store_slug, name, status, source, first_seen_at, last_seen_at
+           FROM price_product_aliases ORDER BY id`
+        )
+        .all()
+    ).toEqual([
+      {
+        id: 'al-approved',
+        product_id: 'prod-1',
+        store_slug: 'lotte-mart',
+        name: 'Beras Ramos 5kg',
+        status: 'approved',
+        source: 'admin',
+        first_seen_at: '2026-11-01T00:00:00Z',
+        last_seen_at: '2026-11-03T00:00:00Z',
+      },
+      {
+        id: 'al-candidate',
+        product_id: 'prod-1',
+        store_slug: 'superindo',
+        name: 'Beras Ramos',
+        status: 'candidate',
+        source: 'ocr',
+        first_seen_at: '2026-11-01T00:00:00Z',
+        last_seen_at: '2026-11-02T00:00:00Z',
+      },
+    ])
+
+    // 'rejected' is now legal; the old vocabulary is unchanged and anything
+    // else is still refused.
+    db.prepare(
+      `UPDATE price_product_aliases SET status = 'rejected' WHERE id = 'al-candidate'`
+    ).run()
+    expect(
+      db.prepare(`SELECT status FROM price_product_aliases WHERE id = 'al-candidate'`).get()
+    ).toEqual({ status: 'rejected' })
+    for (const bogus of ['deleted', 'APPROVED', 'approved ']) {
+      expect(() =>
+        db
+          .prepare(`UPDATE price_product_aliases SET status = ? WHERE id = 'al-approved'`)
+          .run(bogus)
+      ).toThrow()
+    }
+
+    // The UNIQUE(product_id, store_slug, name) constraint and the CASCADE FK
+    // survive the rebuild.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO price_product_aliases
+             (id, product_id, store_slug, name, status, source, first_seen_at, last_seen_at)
+           VALUES ('dup', 'prod-1', 'lotte-mart', 'Beras Ramos 5kg', 'candidate', 'ocr',
+                   '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')`
+        )
+        .run()
+    ).toThrow()
+    db.prepare(`DELETE FROM price_products WHERE id = 'prod-1'`).run()
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM price_product_aliases').get()).toEqual({
+      cnt: 0,
+    })
+  })
+
+  // The rebuilt table's read shapes, as plans rather than index NAMES: a
+  // CREATE INDEX recreated with the right name but the wrong columns passes a
+  // sqlite_master lookup and silently turns every read into a scan (the 0039
+  // review probe: the product-status index moved to (store_slug, status) and
+  // this suite stayed green), so each index is pinned by the query it serves.
+  function aliasPlan(db: Db, sql: string, ...params: unknown[]): string {
+    return db
+      .prepare(`EXPLAIN QUERY PLAN ${sql}`)
+      .all(...params)
+      .map((row: Record<string, unknown>) => String(row.detail))
+      .join(' | ')
+  }
+
+  it('recreates all three alias indexes so their reads seek, not scan', () => {
+    const db = preAliasAuditDb()
+    seedAliases(db)
+    apply0039(db)
+
+    // The rename guard's exact shape (0037's pin): the rebuilt table must keep
+    // answering a NOCASE seek, not fall back to a scan.
+    const nocase = aliasPlan(
+      db,
+      `SELECT id FROM price_product_aliases WHERE name = ? COLLATE NOCASE`,
+      'beras ramos'
+    )
+    expect(nocase).toContain('USING INDEX idx_aliases_name_nocase')
+    expect(nocase).not.toMatch(/SCAN price_product_aliases/i)
+    expect(
+      db
+        .prepare('SELECT id FROM price_product_aliases WHERE name = ? COLLATE NOCASE')
+        .all('BERAS ramos')
+    ).toEqual([{ id: 'al-candidate' }])
+
+    // The product detail read (aliases of one product) and the ingest/rename
+    // store+name lookup: both indexes must survive with the columns 0030 gave
+    // them, not merely with their names.
+    const byProductStatus = aliasPlan(
+      db,
+      `SELECT id FROM price_product_aliases WHERE product_id = ? AND status = ?`,
+      'prod-1',
+      'candidate'
+    )
+    expect(byProductStatus).toContain('USING INDEX idx_aliases_product_status')
+    expect(byProductStatus).not.toMatch(/SCAN price_product_aliases/i)
+    const byStoreName = aliasPlan(
+      db,
+      `SELECT id FROM price_product_aliases WHERE store_slug = ? AND name = ?`,
+      'superindo',
+      'Beras Ramos'
+    )
+    expect(byStoreName).toContain('USING INDEX idx_aliases_store_name')
+    expect(byStoreName).not.toMatch(/SCAN price_product_aliases/i)
+
+    // The rebuild DROPs the alias table, so any object that referenced it by
+    // name (a view, a trigger) would either break the migration or survive
+    // pointing at nothing; D1 has no way to recreate it from the file.
+    expect(
+      db
+        .prepare(
+          `SELECT type, name FROM sqlite_master
+            WHERE type IN ('view', 'trigger') AND sql LIKE '%price_product_aliases%'`
+        )
+        .all()
+    ).toEqual([])
+  })
+
+  it('fills the receipt defaults and rejects any action outside approve/reject', () => {
+    const db = preAliasAuditDb()
+    apply0039(db)
+
+    const insert = db.prepare(
+      `INSERT INTO price_product_alias_audit
+         (id, alias_id, product_id, product_key, store_slug, alias_name, action, actor_user_id)
+       VALUES (?, 'al-1', 'prod-1', 'beras--ramos--5-kg', 'superindo', 'Beras Ramos', ?, 'u1')`
+    )
+    insert.run('rec-approve', 'approve')
+    insert.run('rec-reject', 'reject')
+    for (const bogus of ['approve_alias', 'remove', 'APPROVE']) {
+      expect(() => insert.run(`rec-${bogus}`, bogus)).toThrow()
+    }
+
+    const rows = db.prepare('SELECT * FROM price_product_alias_audit ORDER BY id').all()
+    expect(rows.map((row: Record<string, unknown>) => row.action)).toEqual(['approve', 'reject'])
+    expect(String(rows[0]?.created_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+  })
+
+  it('seeks the per-product receipt feed on its index (no scan, no sort)', () => {
+    const db = preAliasAuditDb()
+    apply0039(db)
+
+    // The admin detail surface's exact read shape for a future alias history:
+    // one product's receipts newest-first, bounded.
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT * FROM price_product_alias_audit
+          WHERE product_id = ?
+          ORDER BY created_at DESC
+          LIMIT 10`
+      )
+      .all('prod-1')
+      .map((row: Record<string, unknown>) => String(row.detail))
+      .join(' | ')
+    expect(plan).toContain('USING INDEX idx_price_product_alias_audit_product')
+    expect(plan).not.toMatch(/SCAN|TEMP B-TREE/i)
+  })
+
+  it('keeps the receipt when the alias and its product are deleted (plain handles, no FK)', () => {
+    const db = preAliasAuditDb()
+    seedAliases(db)
+    apply0039(db)
+    db.prepare(
+      `INSERT INTO price_product_alias_audit
+         (id, alias_id, product_id, product_key, store_slug, alias_name, action, actor_user_id)
+       VALUES ('rec-1', 'al-candidate', 'prod-1', 'beras--ramos--5-kg', 'superindo',
+               'Beras Ramos', 'reject', 'u1')`
+    ).run()
+
+    // The aliases cascade with their product (0030); the decision receipt is a
+    // fact about the catalog and must not — the 0030/0032 distinction.
+    db.prepare(`DELETE FROM price_products WHERE id = 'prod-1'`).run()
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM price_product_aliases').get()).toEqual({
+      cnt: 0,
+    })
+    expect(db.prepare('SELECT * FROM price_product_alias_audit').all()).toEqual([
+      expect.objectContaining({
+        id: 'rec-1',
+        alias_id: 'al-candidate',
+        product_id: 'prod-1',
+        product_key: 'beras--ramos--5-kg',
+        store_slug: 'superindo',
+        alias_name: 'Beras Ramos',
+        action: 'reject',
+        actor_user_id: 'u1',
+      }),
+    ])
+  })
+})
+
 // The enablement writer's in-batch receipt guard (lib/plugins.ts
 // AUDIT_INSERT_SQL, S1-A2's sibling finding S1-A4 from the PR #470 review):
 // two concurrent identical toggles both pass the outside idempotency read —

@@ -18,14 +18,24 @@
 //   a rename must not paper over a wrong identity.
 // - Similar names (Jaccard >= 0.8 over a bounded candidate set) are a
 //   `similar_name` warning the admin may override with `acknowledgeWarnings`.
-// - Alias approval is OUT OF SCOPE here. The rename path approves candidate
-//   aliases that match the OLD canonical wording (a raw spelling already seen
-//   in the catalog), but it never synthesises an alias and no admin endpoint
-//   ships. When that endpoint lands, it MUST bump the canonical index version
-//   with the same gated `indexBumpStatement` helper used below — a rename or
-//   alias change that does not move the version is invisible to the pipeline.
-//   The helper is exported (decision 4) so that endpoint imports it instead of
-//   copying the SQL.
+// - Alias approval/rejection (#489) is a decision about the ALIAS, not a
+//   canonical-product metadata edit: the CAS is the alias's own
+//   `status = 'candidate'` -> `'approved' | 'rejected'`, and
+//   `price_products.metadata_version` deliberately does NOT move. Reusing the
+//   product version would make an alias decision race a rename for no reason,
+//   and would suggest the canonical row changed when only an internal matching
+//   key did.
+// - Approve bumps the canonical index version (gated on the decision receipt)
+//   because the index ships approved aliases only, so the pipeline must see the
+//   new spelling on its next fetch. Reject bumps NOTHING: it removes nothing
+//   from the index (a candidate was never in it) and must not invalidate the
+//   pipeline's cache. Both use the same exported `indexBumpStatement` helper as
+//   rename/revert instead of copying the SQL.
+// - A decision is terminal per alias: rejected aliases are excluded from the
+//   rename path (which approves only `candidate` rows) and from the index
+//   (`approved` only), and ingest's upsert refreshes `last_seen_at` without
+//   resetting status, so a rejected spelling cannot silently return as a
+//   candidate.
 //
 // Every mutation is ONE `db.batch` call (never chunked: a multi-chunk batch is
 // not atomic) and every statement after the guarded product UPDATE is gated on
@@ -40,6 +50,21 @@
 // A zero-row guarded UPDATE is `StaleProductError` (409 stale_product); the
 // duplicate/similar checks run before the batch, and the batch re-checks the
 // version so a race cannot double-write.
+//
+// The alias decision (#489) uses the same one-batch discipline, with the alias
+// row as the CAS:
+//   1. guarded `UPDATE price_product_aliases SET status = ? WHERE id = ? AND
+//      product_id = (SELECT id FROM price_products WHERE product_key = ?) AND
+//      status = 'candidate'` — zero rows covers a decided alias (409
+//      alias_state) and a wrong/unknown product (404)
+//   2. audit row INSERT ... SELECT gated on `changes() = 1` AND the new status.
+//      The status alone is NOT a safe gate: a second concurrent decision would
+//      match the status the first writer just produced and append a second
+//      receipt for a write it did not make. `changes()` proves statement 1
+//      matched exactly one row in this batch.
+//   3. approve only: exactly one index bump, gated on the receipt existing.
+// Reject ships no bump statement at all, so a rejected alias never invalidates
+// the pipeline's cached index.
 
 const PRODUCT_NAME_MAX = 500
 const REASON_MAX = 200
@@ -60,7 +85,9 @@ const SIMILAR_THRESHOLD = 0.8
 const CONTROL_CHARS = /\p{Cc}/u
 
 type ProductStatus = 'canonical' | 'provisional' | 'needs_review'
-type AliasStatus = 'candidate' | 'approved'
+// 'rejected' is the #489 addition: a terminal admin decision that keeps the
+// spelling out of the index (0039 widens the 0030 CHECK to allow it).
+type AliasStatus = 'candidate' | 'approved' | 'rejected'
 type AliasSource = 'ocr' | 'catalog' | 'admin'
 
 type CanonicalProductDto = {
@@ -77,6 +104,7 @@ type CanonicalProductDto = {
 }
 
 type ProductAliasDto = {
+  id: string
   name: string
   storeSlug: string
   status: AliasStatus
@@ -147,6 +175,20 @@ type RevertProductRenameInput = {
   reason?: string | null
 }
 
+type AliasDecisionInput = {
+  productKey: string
+  aliasId: string
+  actorUserId: string
+}
+
+/** The decided alias plus the index version the decision left behind. */
+type AliasDecisionResult = {
+  alias: ProductAliasDto
+  indexVersion: number
+}
+
+type AliasDecision = 'approve' | 'reject'
+
 export class ProductNotFoundError extends Error {
   constructor(readonly productKey: string) {
     super(`Product '${productKey}' not found`)
@@ -203,6 +245,30 @@ export class StaleRevertError extends Error {
   }
 }
 
+/**
+ * The alias does not exist, or it belongs to a different product than the
+ * `productKey` in the URL. Both are a 404 to the admin: the route must not
+ * confirm that an alias id exists under another product.
+ */
+export class AliasNotFoundError extends Error {
+  constructor(readonly aliasId: string) {
+    super(`Alias '${aliasId}' not found for this product`)
+    this.name = 'AliasNotFoundError'
+  }
+}
+
+/**
+ * The alias was already decided (approved or rejected). The decision is a CAS
+ * on the alias's own status, so a second request is 409 rather than a silent
+ * no-op — the admin needs to know the row moved underneath them.
+ */
+export class AliasStateError extends Error {
+  constructor(readonly currentStatus: AliasStatus) {
+    super(`Alias is already '${currentStatus}'`)
+    this.name = 'AliasStateError'
+  }
+}
+
 type ProductRow = {
   id: string
   product_key: string
@@ -217,6 +283,7 @@ type ProductRow = {
 }
 
 type AliasRow = {
+  id: string
   name: string
   store_slug: string
   status: AliasStatus
@@ -260,6 +327,8 @@ type BatchResult = { results?: unknown[]; meta?: { changes?: number } }
 const PRODUCT_COLUMNS = `id, product_key, name, brand, unit, status, metadata_version,
   first_seen_at, last_seen_at, updated_at`
 
+const ALIAS_COLUMNS = `id, name, store_slug, status, source, first_seen_at, last_seen_at`
+
 const AUDIT_COLUMNS = `id, product_id, product_key, actor_user_id, action, old_name, new_name,
   reason, metadata_version_before, metadata_version_after, reverts_audit_id, created_at`
 
@@ -282,6 +351,7 @@ function toProduct(row: ProductRow): CanonicalProductDto {
 
 function toAlias(row: AliasRow): ProductAliasDto {
   return {
+    id: row.id,
     name: row.name,
     storeSlug: row.store_slug,
     status: row.status,
@@ -324,6 +394,40 @@ async function readRevertTarget(db: D1Database, auditId: string): Promise<Revert
       )
       .bind(auditId)
       .first<RevertTargetRow>()) ?? null
+  )
+}
+
+/**
+ * The alias decision's pre-check: the alias must exist AND belong to the
+ * product named by the URL. Joined through `product_key` so an alias id from
+ * another product is indistinguishable from an unknown id (both 404), which is
+ * the point — the route must not confirm a cross-product alias exists.
+ */
+async function readAliasForProduct(
+  db: D1Database,
+  productKey: string,
+  aliasId: string
+): Promise<AliasRow | null> {
+  return (
+    (await db
+      .prepare(
+        `SELECT a.id, a.name, a.store_slug, a.status, a.source, a.first_seen_at, a.last_seen_at
+         FROM price_product_aliases a
+         JOIN price_products p ON p.id = a.product_id
+         WHERE a.id = ? AND p.product_key = ?`
+      )
+      .bind(aliasId, productKey)
+      .first<AliasRow>()) ?? null
+  )
+}
+
+/** The committed alias a decision reads back (one of this batch's own rows). */
+async function readAliasById(db: D1Database, aliasId: string): Promise<AliasRow | null> {
+  return (
+    (await db
+      .prepare(`SELECT ${ALIAS_COLUMNS} FROM price_product_aliases WHERE id = ?`)
+      .bind(aliasId)
+      .first<AliasRow>()) ?? null
   )
 }
 
@@ -488,21 +592,26 @@ async function findSimilarNames(
 
 /**
  * The one canonical-index version bump every canonical write must use. Gated on
- * the audit row that the same batch inserted: if the guarded product UPDATE
- * matched nothing, the audit row does not exist and the version does not move,
- * so a stale request writes nothing at all.
+ * the receipt the same batch inserted: if the guarded UPDATE matched nothing,
+ * neither receipt exists and the version does not move, so a stale request
+ * writes nothing at all.
  *
- * Exported per #423 decision 4: the future alias-approval endpoint imports this
- * helper instead of re-inlining the SQL, or an approved alias can land without
- * the pipeline ever noticing. Nothing else calls it yet (#423 ships no alias
- * endpoint), and both writers below already share it.
+ * `auditTable` is a closed union, never caller text — rename/revert gate on
+ * `price_product_audit`, an alias approval on `price_product_alias_audit`
+ * (#489). The alias endpoint imports this helper instead of inlining the SQL:
+ * an approved alias that lands without the pipeline seeing the bumped version
+ * is invisible until some later canonical write happens to bump it.
  */
-export function indexBumpStatement(db: D1Database, auditId: string): D1PreparedStatement {
+export function indexBumpStatement(
+  db: D1Database,
+  auditId: string,
+  auditTable: 'price_product_audit' | 'price_product_alias_audit'
+): D1PreparedStatement {
   return db
     .prepare(
       `UPDATE canonical_index_state
        SET version = version + 1
-       WHERE id = 1 AND EXISTS (SELECT 1 FROM price_product_audit WHERE id = ?)`
+       WHERE id = 1 AND EXISTS (SELECT 1 FROM ${auditTable} WHERE id = ?)`
     )
     .bind(auditId)
 }
@@ -536,7 +645,8 @@ async function readMutationResult(
 }
 
 /**
- * Admin product detail: canonical row, every alias (candidate AND approved),
+ * Admin product detail: canonical row, every alias with its id (candidate,
+ * approved, and rejected — the id is what the approve/reject routes take),
  * observation stats, and the last 10 audit rows newest first. One batch so the
  * four reads see the same snapshot; null when the productKey is unknown.
  */
@@ -550,7 +660,7 @@ export async function getProductIdentity(
       .bind(productKey),
     db
       .prepare(
-        `SELECT name, store_slug, status, source, first_seen_at, last_seen_at
+        `SELECT ${ALIAS_COLUMNS}
          FROM price_product_aliases
          WHERE product_id = (SELECT id FROM price_products WHERE product_key = ?)
          ORDER BY store_slug COLLATE NOCASE, name COLLATE NOCASE`
@@ -695,7 +805,7 @@ export async function renameProduct(
         now
       ),
     // 4. Exactly one canonical-index bump per committed audit row.
-    indexBumpStatement(db, auditId),
+    indexBumpStatement(db, auditId, 'price_product_audit'),
   ])) as unknown as BatchResult[]
 
   if ((results[0]?.meta?.changes ?? 0) !== 1) {
@@ -790,7 +900,7 @@ export async function revertProductRename(
           now
         ),
       // 3. One bump, gated on the revert receipt existing.
-      indexBumpStatement(db, revertAuditId),
+      indexBumpStatement(db, revertAuditId, 'price_product_audit'),
     ])) as unknown as BatchResult[]
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -803,4 +913,118 @@ export async function revertProductRename(
   if ((results[0]?.meta?.changes ?? 0) !== 1) throw new StaleRevertError()
 
   return readMutationResult(db, product.id, [])
+}
+
+/**
+ * Read back a committed alias decision (alias + index version) in ONE batch so
+ * the two reads see the same snapshot — the response must not pair a decided
+ * alias with a version a concurrent write produced afterwards.
+ */
+async function readAliasDecisionResult(
+  db: D1Database,
+  aliasId: string
+): Promise<AliasDecisionResult> {
+  const [aliasResult, stateResult] = (await db.batch([
+    db.prepare(`SELECT ${ALIAS_COLUMNS} FROM price_product_aliases WHERE id = ?`).bind(aliasId),
+    db.prepare('SELECT version FROM canonical_index_state WHERE id = 1'),
+  ])) as unknown as BatchResult[]
+
+  const alias = aliasResult?.results?.[0] as AliasRow | undefined
+  if (!alias) throw new AliasNotFoundError(aliasId)
+  const state = stateResult?.results?.[0] as { version?: number } | undefined
+  return { alias: toAlias(alias), indexVersion: Number(state?.version ?? 0) }
+}
+
+/**
+ * Shared body of approve/reject (#489): one CAS on the alias's OWN status, one
+ * gated receipt, and — for approve only — one index bump.
+ *
+ * Deliberately no `price_products.metadata_version` read or write: an alias
+ * decision changes no canonical field, so it must not contend with renames for
+ * the product version (the #489 design decision). The status CAS is the whole
+ * concurrency guard: two admins deciding the same candidate means one 200 and
+ * one 409 alias_state, never a second receipt or a second bump.
+ *
+ * A pre-check answers fast and keeps the happy path cheap, but the batch's
+ * guarded UPDATE is the authority — a decision that lands between the two is
+ * answered from the re-read row (404 when the alias is gone, 409 when it is
+ * already decided), exactly like rename's stale-version handling.
+ */
+async function decideAlias(
+  db: D1Database,
+  input: AliasDecisionInput,
+  action: AliasDecision
+): Promise<AliasDecisionResult> {
+  const product = await readProductByKey(db, input.productKey)
+  if (!product) throw new ProductNotFoundError(input.productKey)
+
+  const existing = await readAliasForProduct(db, input.productKey, input.aliasId)
+  if (!existing) throw new AliasNotFoundError(input.aliasId)
+  if (existing.status !== 'candidate') throw new AliasStateError(existing.status)
+
+  const status: AliasStatus = action === 'approve' ? 'approved' : 'rejected'
+  const auditId = crypto.randomUUID()
+  const now = new Date().toISOString()
+
+  const statements = [
+    // 1. The CAS: candidate-only and product-scoped. Zero rows means the alias
+    // was decided (or removed) between the pre-check and this batch.
+    db
+      .prepare(
+        `UPDATE price_product_aliases
+         SET status = ?
+         WHERE id = ?
+           AND product_id = (SELECT id FROM price_products WHERE product_key = ?)
+           AND status = 'candidate'`
+      )
+      .bind(status, input.aliasId, input.productKey),
+    // 2. The receipt, gated on THIS update. `changes()` is the second half of
+    // the gate because the status alone cannot tell this batch's write apart
+    // from a concurrent writer's: a second approve would find status
+    // 'approved' (just set by the winner) and append a receipt for a write it
+    // never made. changes() proves statement 1 matched exactly one row.
+    db
+      .prepare(
+        `INSERT INTO price_product_alias_audit
+           (id, alias_id, product_id, product_key, store_slug, alias_name, action,
+            actor_user_id, created_at)
+         SELECT ?, a.id, a.product_id, p.product_key, a.store_slug, a.name, ?, ?, ?
+         FROM price_product_aliases a
+         JOIN price_products p ON p.id = a.product_id
+         WHERE a.id = ? AND a.status = ? AND changes() = 1`
+      )
+      .bind(auditId, action, input.actorUserId, now, input.aliasId, status),
+  ]
+  // 3. Approve only: exactly one canonical-index bump per committed receipt.
+  // Reject ships no bump at all — a candidate was never in the index, so
+  // invalidating the pipeline's cache would be a lie.
+  if (action === 'approve') {
+    statements.push(indexBumpStatement(db, auditId, 'price_product_alias_audit'))
+  }
+
+  const results = (await db.batch(statements)) as unknown as BatchResult[]
+
+  if ((results[0]?.meta?.changes ?? 0) !== 1) {
+    const current = await readAliasById(db, input.aliasId)
+    if (!current) throw new AliasNotFoundError(input.aliasId)
+    throw new AliasStateError(current.status)
+  }
+
+  return readAliasDecisionResult(db, input.aliasId)
+}
+
+/** Approve a candidate alias: admit it to the canonical index (version + 1). */
+export async function approveAlias(
+  db: D1Database,
+  input: AliasDecisionInput
+): Promise<AliasDecisionResult> {
+  return decideAlias(db, input, 'approve')
+}
+
+/** Reject a candidate alias: keep it out of the index, bump nothing. */
+export async function rejectAlias(
+  db: D1Database,
+  input: AliasDecisionInput
+): Promise<AliasDecisionResult> {
+  return decideAlias(db, input, 'reject')
 }

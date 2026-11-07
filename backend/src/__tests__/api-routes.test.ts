@@ -1493,6 +1493,8 @@ describe('/api/admin/products', () => {
   const PRODUCT_PATH = '/api/admin/products/beras--ramos--5-kg'
   const RENAME_PATH = `${PRODUCT_PATH}/rename`
   const REVERT_PATH = `${PRODUCT_PATH}/audit/audit-1/revert`
+  const APPROVE_PATH = `${PRODUCT_PATH}/aliases/alias-1/approve`
+  const REJECT_PATH = `${PRODUCT_PATH}/aliases/alias-1/reject`
 
   it('returns 401 without a session on every product admin route', async () => {
     const env = productEnv({ props: undefined })
@@ -1500,6 +1502,8 @@ describe('/api/admin/products', () => {
       ['GET', PRODUCT_PATH, {}],
       ['POST', RENAME_PATH, renameRequest({ canonicalName: 'X', expectedMetadataVersion: 1 })],
       ['POST', REVERT_PATH, revertRequest()],
+      ['POST', APPROVE_PATH, {}],
+      ['POST', REJECT_PATH, {}],
     ]
     for (const [method, path, init] of calls) {
       const res = await apiApp.request(path, { method, ...init }, env)
@@ -1514,6 +1518,8 @@ describe('/api/admin/products', () => {
       ['GET', PRODUCT_PATH, {}],
       ['POST', RENAME_PATH, renameRequest({ canonicalName: 'X', expectedMetadataVersion: 1 })],
       ['POST', REVERT_PATH, revertRequest()],
+      ['POST', APPROVE_PATH, {}],
+      ['POST', REJECT_PATH, {}],
     ]
     for (const [method, path, init] of calls) {
       const res = await apiApp.request(path, { method, ...init }, env)
@@ -1562,6 +1568,7 @@ describe('/api/admin/products', () => {
       {
         results: [
           {
+            id: 'alias-1',
             name: 'Beras Ramos',
             store_slug: 'superindo',
             status: 'candidate',
@@ -1588,6 +1595,7 @@ describe('/api/admin/products', () => {
     })
     expect(body.aliases).toEqual([
       {
+        id: 'alias-1',
         name: 'Beras Ramos',
         storeSlug: 'superindo',
         status: 'candidate',
@@ -1857,5 +1865,160 @@ describe('/api/admin/products', () => {
     const res = await apiApp.request(REVERT_PATH, revertRequest(), env)
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ error: 'Product not found' })
+  })
+})
+
+// Candidate alias decisions (#489). The write semantics (CAS, receipt,
+// approve-only index bump, exactly-once under a race) are pinned on real
+// SQLite in canonical-products.test.ts; these tests pin the HTTP surface —
+// the admin chain, the bodyless contract, the typed-error → status/code
+// mapping, and the cache header.
+describe('/api/admin/products/:productKey/aliases/:aliasId/approve|reject', () => {
+  const PRODUCT_PATH = '/api/admin/products/beras--ramos--5-kg'
+  const APPROVE_PATH = `${PRODUCT_PATH}/aliases/alias-1/approve`
+  const REJECT_PATH = `${PRODUCT_PATH}/aliases/alias-1/reject`
+  const NOW = '2026-11-07T00:00:00.000Z'
+
+  function aliasEnv() {
+    return createMockEnv({
+      props: { userId: 'u1', householdId: 'h1' },
+      RATE_LIMIT_MAX_REQUESTS: '10000',
+    })
+  }
+
+  function productRow() {
+    return {
+      id: 'prod-1',
+      product_key: 'beras--ramos--5-kg',
+      name: 'Beras Ramos 5 kg',
+      brand: null,
+      unit: '5 kg',
+      status: 'provisional',
+      metadata_version: 1,
+      first_seen_at: NOW,
+      last_seen_at: NOW,
+      updated_at: NOW,
+    }
+  }
+
+  function aliasRow(over: Record<string, unknown> = {}) {
+    return {
+      id: 'alias-1',
+      name: 'Beras Ramos',
+      store_slug: 'superindo',
+      status: 'candidate',
+      source: 'ocr',
+      first_seen_at: NOW,
+      last_seen_at: NOW,
+      ...over,
+    }
+  }
+
+  // The pre-check reads (admin, product, alias) then the write batch
+  // (`writeStatements` statements), then the read-back batch (decided alias +
+  // index version).
+  function decisionEnv(decidedAlias: Record<string, unknown>, writeStatements: number) {
+    const env = aliasEnv()
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ is_admin: 1 })
+      .mockResolvedValueOnce(productRow())
+      .mockResolvedValueOnce(aliasRow())
+    env.DB.batch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Array.from({ length: writeStatements }, () => ({ meta: { changes: 1 } }))
+      )
+      .mockResolvedValueOnce([{ results: [decidedAlias] }, { results: [{ version: 4 }] }])
+    return env
+  }
+
+  it('approves an alias and returns {alias, indexVersion} with private no-cache headers', async () => {
+    const env = decisionEnv(aliasRow({ status: 'approved' }), 3)
+    const res = await apiApp.request(APPROVE_PATH, { method: 'POST' }, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toMatch(/private, no-cache/)
+    expect(await res.json()).toEqual({
+      alias: {
+        id: 'alias-1',
+        name: 'Beras Ramos',
+        storeSlug: 'superindo',
+        status: 'approved',
+        source: 'ocr',
+        firstSeenAt: NOW,
+        lastSeenAt: NOW,
+      },
+      indexVersion: 4,
+    })
+    // One write batch + one read-back batch; nothing else touches the DB.
+    expect(env.DB.batch).toHaveBeenCalledTimes(2)
+
+    // Approve is the three-statement batch: CAS, receipt, canonical-index bump.
+    const writeStatements = (env.DB.batch as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
+    expect(writeStatements).toHaveLength(3)
+  })
+
+  it('rejects an alias and returns the unchanged index version', async () => {
+    const env = decisionEnv(aliasRow({ status: 'rejected' }), 2)
+    const res = await apiApp.request(REJECT_PATH, { method: 'POST' }, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toMatch(/private, no-cache/)
+
+    const body = (await res.json()) as any
+    expect(body.alias).toMatchObject({
+      id: 'alias-1',
+      status: 'rejected',
+      storeSlug: 'superindo',
+    })
+    expect(body.indexVersion).toBe(4)
+
+    // The reject batch is two statements — the CAS and the receipt. There is
+    // no bump statement to gate, which is the "no index bump on reject" rule
+    // at the SQL boundary.
+    const writeStatements = (env.DB.batch as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
+    expect(writeStatements).toHaveLength(2)
+  })
+
+  it('returns 404 for an unknown product and for an alias of another product', async () => {
+    const unknownProduct = aliasEnv()
+    unknownProduct.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ is_admin: 1 })
+      .mockResolvedValueOnce(null)
+    const missingProduct = await apiApp.request(APPROVE_PATH, { method: 'POST' }, unknownProduct)
+    expect(missingProduct.status).toBe(404)
+    expect(await missingProduct.json()).toEqual({ error: 'Product not found' })
+
+    for (const path of [APPROVE_PATH, REJECT_PATH]) {
+      const foreignAlias = aliasEnv()
+      // The pre-check's join misses: the alias id exists, but under another
+      // product. Same 404 shape, so the route cannot confirm the id exists.
+      foreignAlias.DB.first = vi
+        .fn()
+        .mockResolvedValueOnce({ is_admin: 1 })
+        .mockResolvedValueOnce(productRow())
+        .mockResolvedValueOnce(null)
+      const res = await apiApp.request(path, { method: 'POST' }, foreignAlias)
+      expect(res.status).toBe(404)
+      expect(await res.json()).toEqual({ error: 'Alias not found' })
+      expect(foreignAlias.DB.batch).not.toHaveBeenCalled()
+    }
+  })
+
+  it('maps an already-decided alias to 409 alias_state with the current status', async () => {
+    for (const status of ['approved', 'rejected']) {
+      for (const path of [APPROVE_PATH, REJECT_PATH]) {
+        const env = aliasEnv()
+        env.DB.first = vi
+          .fn()
+          .mockResolvedValueOnce({ is_admin: 1 })
+          .mockResolvedValueOnce(productRow())
+          .mockResolvedValueOnce(aliasRow({ status }))
+        const res = await apiApp.request(path, { method: 'POST' }, env)
+        expect(res.status).toBe(409)
+        expect(await res.json()).toEqual({ error: 'alias_state', currentStatus: status })
+        expect(env.DB.batch).not.toHaveBeenCalled()
+      }
+    }
   })
 })
