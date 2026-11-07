@@ -77,6 +77,11 @@ describe('locale files', () => {
       'aliasRejectLabel',
       'aliasApproving',
       'aliasRejecting',
+      // Reject's inline two-step confirm (#496).
+      'aliasRejectConfirm',
+      'aliasRejectConfirmLabel',
+      'aliasRejectCancelLabel',
+      'aliasRejectArmed',
       'aliasApproveSuccess',
       'aliasRejectSuccess',
       'aliasAlreadyDecided',
@@ -104,6 +109,19 @@ describe('locale files', () => {
       expect(en.rename.aliasReject).toBe('Reject')
       expect(id.rename.aliasReject).toBe('Tolak')
       expect(en.rename.aliasApproving).toBe('Approving…')
+      // #496: rejecting asks twice, so its prompt, its per-row labels and the
+      // spoken warning exist in both languages and say the decision is final.
+      expect(en.rename.aliasRejectConfirm).toBe('Confirm reject?')
+      expect(id.rename.aliasRejectConfirm).toBe('Konfirmasi tolak?')
+      expect(en.rename.aliasRejectConfirmLabel).toBe('Confirm rejecting {{name}}')
+      expect(id.rename.aliasRejectConfirmLabel).toBe('Konfirmasi menolak {{name}}')
+      expect(en.rename.aliasRejectCancelLabel).toBe('Cancel rejecting {{name}}')
+      expect(id.rename.aliasRejectCancelLabel).toBe('Batalkan penolakan {{name}}')
+      expect(en.rename.aliasRejectArmed).toContain('A rejection is final.')
+      expect(en.rename.aliasRejectArmed).toContain('{{name}}')
+      expect(id.rename.aliasRejectArmed).toContain('Penolakan bersifat final.')
+      // Approve stays a single click: it has no confirm copy at all.
+      expect(en.rename.aliasApproveConfirm).toBeUndefined()
       // Approve is the only decision that moves the index: its receipt names
       // the new version, reject's says the version is unchanged.
       expect(en.rename.aliasApproveSuccess).toContain('version {{version}}')

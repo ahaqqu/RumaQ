@@ -115,6 +115,22 @@ function clickText(container, text) {
   fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === text))
 }
 
+function aliasRows(container) {
+  return container.querySelectorAll('[data-testid="rename-aliases"] li')
+}
+
+function rowButtonTexts(row) {
+  return [...row.querySelectorAll('button')].map((button) => button.textContent)
+}
+
+// Row-scoped click: the form's own Cancel and a row's armed Cancel share the
+// word "Cancel", so real-copy assertions always name the row they mean.
+function clickRowText(row, text) {
+  const button = [...row.querySelectorAll('button')].find((b) => b.textContent === text)
+  if (!button) throw new Error(`No row button with text ${text}`)
+  fireEvent.click(button)
+}
+
 function lastOptions() {
   return renameMutate.mock.calls[renameMutate.mock.calls.length - 1][1]
 }
@@ -279,9 +295,49 @@ describe('ProductRenameForm real copy (#423)', () => {
     )
   })
 
+  // #496: rejecting is the terminal decision, so it asks twice in plain
+  // English — a raw key or a missing confirm/cancel string would render as
+  // `rename.aliasRejectConfirm` and leave the operator with no second step.
+  it('asks for confirmation in plain English before rejecting', () => {
+    const { container } = renderForm()
+    const row = aliasRows(container)[0]
+    clickRowText(row, 'Reject')
+
+    // The first click only opens the prompt: no decision is sent yet.
+    expect(aliasMutate).not.toHaveBeenCalled()
+    expect(rowButtonTexts(row)).toEqual(['Approve', 'Confirm reject?', 'Cancel'])
+    const prompt = [...row.querySelectorAll('button')]
+    expect(prompt[1].getAttribute('aria-label')).toBe('Confirm rejecting Beras Ramos 5 kg')
+    expect(prompt[2].getAttribute('aria-label')).toBe('Cancel rejecting Beras Ramos 5 kg')
+    // The prompt is announced politely, with the warning that makes it matter.
+    const announcement = container.querySelector('[data-testid="alias-reject-announcement"]')
+    expect(announcement.getAttribute('role')).toBe('status')
+    expect(announcement.textContent).toBe(
+      'Confirm rejecting “Beras Ramos 5 kg”? A rejection is final.'
+    )
+
+    // Cancel closes it without a request and puts the plain Reject back.
+    clickRowText(row, 'Cancel')
+    expect(aliasMutate).not.toHaveBeenCalled()
+    expect(rowButtonTexts(row)).toEqual(['Approve', 'Reject'])
+    expect(announcement.textContent).toBe('')
+
+    // The second click on the same button is the one that decides.
+    clickRowText(row, 'Reject')
+    clickRowText(row, 'Confirm reject?')
+    expect(aliasMutate).toHaveBeenCalledTimes(1)
+    expect(aliasMutate.mock.calls[0][0]).toEqual({
+      productKey: PRODUCT_KEY,
+      aliasId: 'alias-candidate',
+      action: 'reject',
+    })
+  })
+
   it('confirms a rejection without claiming the index moved', () => {
     const { container, getByTestId } = renderForm()
-    clickText(container, 'Reject')
+    const row = aliasRows(container)[0]
+    clickRowText(row, 'Reject')
+    clickRowText(row, 'Confirm reject?')
     act(() => {
       lastAliasOptions().onSuccess({
         alias: { ...identity.aliases[0], status: 'rejected' },
