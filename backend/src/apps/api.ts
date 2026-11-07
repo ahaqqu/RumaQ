@@ -134,6 +134,7 @@ import {
 } from '../lib/ai/index.js'
 import {
   generatePersonaCopy,
+  PERSONA_COPY_KEYS,
   type PersonaCopyInput,
   type PersonaCopyLanguage,
 } from '../lib/persona.js'
@@ -2555,17 +2556,12 @@ apiApp.post(
                 type: 'object',
                 description:
                   'The interface strings to rewrite, keyed by the persona.* slots the UI renders. At least one entry; unknown keys are rejected.',
-                properties: {
-                  homeLead: { type: 'string' },
-                  inventoryLead: { type: 'string' },
-                  planLeadNoKey: { type: 'string' },
-                  planLead: { type: 'string' },
-                  historyLead: { type: 'string' },
-                  receiptLead: { type: 'string' },
-                  settingsLead: { type: 'string' },
-                  assistantGreeting: { type: 'string' },
-                  assistantQuestion: { type: 'string' },
-                },
+                // Derived from the canonical list: the browser's copy contract is
+                // pinned to this doc, so a hand-written second copy could accept a
+                // backend-only slot that the UI never sends (plan §6 P5).
+                properties: Object.fromEntries(
+                  PERSONA_COPY_KEYS.map((key) => [key, { type: 'string' }])
+                ),
                 additionalProperties: false,
               },
             },
