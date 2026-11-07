@@ -13,6 +13,13 @@ import type { ReviewItemPair } from '@rumaq/contract'
 export type ReviewStatus = 'pending' | 'approved' | 'rejected'
 export type ReviewDecision = 'approved' | 'rejected'
 
+// The flag reasons the queue serves — the contract's
+// `reviewItemPairSchema.reason` picklist, kept here so the API schema (which
+// the browser client is generated from) has ONE source to read. Issue #493:
+// the OpenAPI enum had drifted to two values, so a 'taxonomy' flag rendered
+// under the verifier label.
+export const REVIEW_REASONS = ['price_ratio', 'verifier_unresolved', 'taxonomy'] as const
+
 // AI-review vocabulary (issue #484, migration 0038). It lives here — with the
 // table whose rows it stores — so the queue read (which joins the verdict) and
 // lib/review-ai.ts (which writes it) cannot drift on the value domain.

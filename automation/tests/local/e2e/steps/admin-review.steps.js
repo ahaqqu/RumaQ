@@ -193,3 +193,117 @@ Then('the review page shows the forbidden state', async ({ page }) => {
     page.getByText('The scraping monitor is restricted to operator accounts.')
   ).toBeVisible()
 })
+
+// ---------------------------------------------------------------------------
+// AI review flow (issue #493).
+//
+// The Docker stack carries no AI provider, so a scenario has to supply the two
+// things a real deployment gets from outside the harness. Both use mechanisms
+// that already exist — no product-side test route:
+//
+//   * the admin's BYOK key, through the REAL PATCH /api/settings route (a user
+//     flow, not a bypass), so GET /api/admin/review/mode reports
+//     aiConfigured:true and the assist UI renders;
+//   * one cached verdict through the harness-only TEST_MODE /api/__test/direct-sql
+//     seed (the products-rename precedent). A verdict is normally written by
+//     the evaluator AFTER a provider call; the product deliberately has no
+//     route that writes one, so what this scenario exercises is the assist
+//     decision path, not the model call itself.
+//
+// The seeded verdict is what keeps the page's first-load probe dormant: with
+// every pending row carrying a verdict, the queue has nothing "waiting for AI"
+// and never calls the (fake-keyed) provider.
+//
+// Cleanup is the harness's job, not the scenario's: the shared Before hook
+// resets and reseeds the database before every scenario, and reset.sql deletes
+// review_ai_verdicts and app_settings explicitly and recreates the users'
+// settings with no AI key — so the seeded verdict, the key, and any mode
+// switch cannot leak into the next scenario.
+
+const CACHED_VERDICT = {
+  verdict: 'same',
+  confidence: 0.87,
+  reason: 'Same brand and 5 kg pack.',
+  provider: 'gemini',
+  model: 'gemini-2.5-flash',
+}
+
+async function setAdminAiKey(page) {
+  const res = await page.request.patch(`${BASE_URL}/api/settings`, {
+    data: { ai_provider: 'gemini', ai_key: 'test-e2e-key' },
+  })
+  expect(res.status()).toBe(200)
+}
+
+async function seedCachedVerdict(page) {
+  const list = await page.request.get(`${BASE_URL}/api/admin/review`)
+  expect(list.status()).toBe(200)
+  const body = await list.json()
+  const itemId = body.items?.[0]?.id
+  expect(itemId, 'the ingested pair must be in the queue before its verdict').toBeTruthy()
+  // The id comes from the API's own response (our data, not user input), and
+  // the rest are literals — the statement needs no interpolation escaping.
+  const sql =
+    'INSERT INTO review_ai_verdicts ' +
+    '(id, review_item_id, verdict, confidence, reason, provider, model, mode) VALUES ' +
+    `('e2e-review-verdict', '${itemId}', '${CACHED_VERDICT.verdict}', ` +
+    `${CACHED_VERDICT.confidence}, '${CACHED_VERDICT.reason}', ` +
+    `'${CACHED_VERDICT.provider}', '${CACHED_VERDICT.model}', 'assist');`
+  const res = await fetch(`${BASE_URL}/api/__test/direct-sql`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sql }),
+  })
+  expect(res.status).toBe(200)
+}
+
+Given('the queue holds one flagged pair with a cached AI verdict', async ({ page }) => {
+  // The scenario logs in first, so the seed can use the session's cookie jar
+  // for the admin-only settings and review routes.
+  await seedReviewPair()
+  await setAdminAiKey(page)
+  await seedCachedVerdict(page)
+})
+
+When('I switch the AI review mode to full auto', async ({ page }) => {
+  // Click, not check(): the radios are controlled inputs, so the checked
+  // state lands only after the PUT returns. The Then step retries for it.
+  await page.locator('input[name="review-ai-mode"][value="auto"]').click()
+})
+
+Then('the full-auto review mode is selected', async ({ page }) => {
+  // Server-authoritative: a fresh GET after the reload must still say auto.
+  await expect(page.locator('input[name="review-ai-mode"][value="auto"]')).toBeChecked()
+})
+
+When('I reload the review page as-is', async ({ page }) => {
+  await page.reload()
+})
+
+Then('the queue shows the cached AI verdict', async ({ page }) => {
+  await expect(page.getByText('AI: same · 87%')).toBeVisible()
+  // Assist mode, so the human accepts or rejects the cached call. exact:true
+  // is load-bearing — "Disagree with AI" CONTAINS "Agree with AI".
+  await expect(page.getByRole('button', { name: 'Agree with AI', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Disagree with AI', exact: true })).toBeVisible()
+})
+
+When('I agree with the AI verdict', async ({ page }) => {
+  await page.getByRole('button', { name: 'Agree with AI', exact: true }).click()
+})
+
+Then('the pair records AI-assisted provenance', async ({ page }) => {
+  // The verdict said 'same', so agreeing approves. The decided row leaves the
+  // pending filter; the chip below is the UI's record of WHO decided it.
+  await page.getByText('Approved', { exact: true }).click()
+  await expect(page.getByText('Decided by human · AI assisted')).toBeVisible()
+
+  // And the same record through the API: the decision is D1-backed, not a
+  // client-side decoration.
+  const res = await page.request.get(`${BASE_URL}/api/admin/review?status=approved`)
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.items).toHaveLength(1)
+  expect(body.items[0]).toMatchObject({ status: 'approved', decidedSource: 'ai_assist' })
+  expect(body.items[0].aiVerdict).toMatchObject({ verdict: 'same', humanAgreement: 'agreed' })
+})

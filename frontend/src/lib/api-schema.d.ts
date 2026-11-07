@@ -491,9 +491,9 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description AI review mode and whether the acting admin has a usable AI provider (admin-only). Modes: manual (no AI calls), assist (AI proposes, human decides — default), auto (AI decides at/above the confidence floor). */
+    /** @description AI review mode, whether the acting admin has a usable AI provider, and the auto-apply confidence floor (admin-only). Modes: manual (no AI calls), assist (AI proposes, human decides — default), auto (AI decides at/above autoMinConfidence). */
     get: operations['getApiAdminReviewMode']
-    /** @description Set the AI review mode (admin-only). Enabling auto records the acting admin as the AI-access owner for the cron and kicks a bounded background sweep (≤10 items). */
+    /** @description Set the AI review mode (admin-only). Enabling auto records the acting admin as the AI-access owner for the cron and kicks a bounded background sweep (≤10 items). Returns the stored mode, the AI access state, and the auto-apply confidence floor. */
     put: operations['putApiAdminReviewMode']
     post?: never
     delete?: never
@@ -2482,7 +2482,7 @@ export interface operations {
               matchMethod?: 'exact' | 'embedding' | 'ai'
               confidence?: number
               /** @enum {string} */
-              reason?: 'price_ratio' | 'verifier_unresolved'
+              reason?: 'price_ratio' | 'verifier_unresolved' | 'taxonomy'
               /** @enum {string} */
               status?: 'pending' | 'approved' | 'rejected'
               decidedAt?: string | null
@@ -2548,6 +2548,7 @@ export interface operations {
             /** @enum {string} */
             mode?: 'manual' | 'assist' | 'auto'
             aiConfigured?: boolean
+            autoMinConfidence?: number
           }
         }
       }
@@ -2593,6 +2594,7 @@ export interface operations {
             /** @enum {string} */
             mode?: 'manual' | 'assist' | 'auto'
             aiConfigured?: boolean
+            autoMinConfidence?: number
           }
         }
       }
@@ -2758,7 +2760,7 @@ export interface operations {
               matchMethod?: 'exact' | 'embedding' | 'ai'
               confidence?: number
               /** @enum {string} */
-              reason?: 'price_ratio' | 'verifier_unresolved'
+              reason?: 'price_ratio' | 'verifier_unresolved' | 'taxonomy'
               /** @enum {string} */
               status?: 'pending' | 'approved' | 'rejected'
               decidedAt?: string | null
@@ -2856,7 +2858,7 @@ export interface operations {
               matchMethod?: 'exact' | 'embedding' | 'ai'
               confidence?: number
               /** @enum {string} */
-              reason?: 'price_ratio' | 'verifier_unresolved'
+              reason?: 'price_ratio' | 'verifier_unresolved' | 'taxonomy'
               /** @enum {string} */
               status?: 'pending' | 'approved' | 'rejected'
               decidedAt?: string | null

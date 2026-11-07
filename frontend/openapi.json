@@ -1555,7 +1555,7 @@
                           },
                           "reason": {
                             "type": "string",
-                            "enum": ["price_ratio", "verifier_unresolved"]
+                            "enum": ["price_ratio", "verifier_unresolved", "taxonomy"]
                           },
                           "status": {
                             "type": "string",
@@ -1645,7 +1645,7 @@
     "/api/admin/review/mode": {
       "get": {
         "operationId": "getApiAdminReviewMode",
-        "description": "AI review mode and whether the acting admin has a usable AI provider (admin-only). Modes: manual (no AI calls), assist (AI proposes, human decides — default), auto (AI decides at/above the confidence floor).",
+        "description": "AI review mode, whether the acting admin has a usable AI provider, and the auto-apply confidence floor (admin-only). Modes: manual (no AI calls), assist (AI proposes, human decides — default), auto (AI decides at/above autoMinConfidence).",
         "security": [
           {
             "cookieAuth": []
@@ -1665,6 +1665,9 @@
                     },
                     "aiConfigured": {
                       "type": "boolean"
+                    },
+                    "autoMinConfidence": {
+                      "type": "number"
                     }
                   }
                 }
@@ -1681,7 +1684,7 @@
       },
       "put": {
         "operationId": "putApiAdminReviewMode",
-        "description": "Set the AI review mode (admin-only). Enabling auto records the acting admin as the AI-access owner for the cron and kicks a bounded background sweep (≤10 items).",
+        "description": "Set the AI review mode (admin-only). Enabling auto records the acting admin as the AI-access owner for the cron and kicks a bounded background sweep (≤10 items). Returns the stored mode, the AI access state, and the auto-apply confidence floor.",
         "security": [
           {
             "cookieAuth": []
@@ -1718,6 +1721,9 @@
                     },
                     "aiConfigured": {
                       "type": "boolean"
+                    },
+                    "autoMinConfidence": {
+                      "type": "number"
                     }
                   }
                 }
@@ -1939,7 +1945,7 @@
                         },
                         "reason": {
                           "type": "string",
-                          "enum": ["price_ratio", "verifier_unresolved"]
+                          "enum": ["price_ratio", "verifier_unresolved", "taxonomy"]
                         },
                         "status": {
                           "type": "string",
@@ -2111,7 +2117,7 @@
                         },
                         "reason": {
                           "type": "string",
-                          "enum": ["price_ratio", "verifier_unresolved"]
+                          "enum": ["price_ratio", "verifier_unresolved", "taxonomy"]
                         },
                         "status": {
                           "type": "string",

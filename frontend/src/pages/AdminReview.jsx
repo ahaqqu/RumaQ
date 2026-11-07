@@ -52,6 +52,12 @@ const EVALUATE_MORE_LIMIT = 10
 // as "waiting for AI" (or letting it trigger an evaluation) would be a lie.
 const TAXONOMY_REASON = 'taxonomy'
 
+// Issue #493: the auto-apply floor is the server's number
+// (REVIEW_AUTO_MIN_CONFIDENCE, returned on /api/admin/review/mode). This
+// fallback only covers an older Worker that does not return it yet — the copy
+// must never quietly disagree with the sweep.
+const AUTO_MIN_CONFIDENCE_FALLBACK = 0.8
+
 function isWaitingForAi(item) {
   return item.status === 'pending' && !item.aiVerdict && item.reason !== TAXONOMY_REASON
 }
@@ -93,7 +99,9 @@ function formatObservedDate(date, locale) {
 }
 
 function reasonKey(reason) {
-  return reason === 'price_ratio' ? 'review.reasonPriceRatio' : 'review.reasonVerifierUnresolved'
+  if (reason === 'price_ratio') return 'review.reasonPriceRatio'
+  if (reason === TAXONOMY_REASON) return 'review.reasonTaxonomy'
+  return 'review.reasonVerifierUnresolved'
 }
 
 function methodKey(method) {
@@ -239,8 +247,10 @@ function SideCard({
 // The 3-way mode switch (issue #484). Native radios in labels: keyboard
 // reachable, arrow-key group navigation for free, and the selected mode is
 // announced. `saving` is the mutation in flight — the fieldset disables the
-// whole group so a double-click can never race two PUTs.
-function ReviewModeSelector({ mode, saving, onChange }) {
+// whole group so a double-click can never race two PUTs. `autoMinPercent` is
+// the server's auto floor (issue #493) already rounded for display — the auto
+// option's copy interpolates it instead of restating a percentage.
+function ReviewModeSelector({ mode, saving, onChange, autoMinPercent }) {
   const { t } = useTranslation()
   return (
     <fieldset disabled={saving} className="min-w-0">
@@ -276,7 +286,7 @@ function ReviewModeSelector({ mode, saving, onChange }) {
                   {t(`review.aiMode${suffix}`)}
                 </span>
                 <span className="block text-xs text-text-muted leading-snug mt-0.5">
-                  {t(`review.aiMode${suffix}Desc`)}
+                  {t(`review.aiMode${suffix}Desc`, { percent: autoMinPercent })}
                 </span>
               </span>
             </label>
@@ -479,6 +489,13 @@ function ReviewRow({
           }
         />
       )}
+      {/* Issue #493: a taxonomy flag is a classification question the reviewer
+          deliberately skips (issue #484), so the row states why no verdict is
+          coming instead of leaving the absence unexplained — and the queue's
+          "waiting for AI" count already excludes it. */}
+      {!decided && item.reason === TAXONOMY_REASON && aiEnabled && (
+        <p className="mt-2 text-xs text-text-muted">{t('review.aiTaxonomyExcluded')}</p>
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {decided ? (
           <>
@@ -574,6 +591,13 @@ export function AdminReview() {
   const aiConfigured = modeQuery.data?.aiConfigured === true
   const aiEnabled = mode !== 'manual' && aiConfigured
   const waitingForAi = useMemo(() => items.filter(isWaitingForAi), [items])
+  // Issue #493: render the floor the server actually applies; the fallback is
+  // only for a Worker that predates the field (undefined), never for a
+  // response the server did send.
+  const autoMinConfidence = modeQuery.data?.autoMinConfidence
+  const autoMinPercent = Math.round(
+    (Number.isFinite(autoMinConfidence) ? autoMinConfidence : AUTO_MIN_CONFIDENCE_FALLBACK) * 100
+  )
 
   // First-load probe (issue #484): when AI is on and the queue has items the
   // reviewer has not seen, run ONE bounded evaluation (limit 5) in the
@@ -667,6 +691,7 @@ export function AdminReview() {
               mode={mode}
               saving={setMode.isPending}
               onChange={handleModeChange}
+              autoMinPercent={autoMinPercent}
             />
             {!aiConfigured && (
               <p className="text-xs text-text-muted" role="status">

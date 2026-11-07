@@ -67,6 +67,7 @@ import {
 } from '../lib/scrape.js'
 import { recordRunReport, listPriceRuns } from '../lib/price-runs.js'
 import {
+  REVIEW_REASONS,
   recordReviewItems,
   listReviewItems,
   decideReviewItem,
@@ -74,9 +75,11 @@ import {
   exportReviewDecisions,
 } from '../lib/match-review.js'
 import {
+  REVIEW_AUTO_MIN_CONFIDENCE,
   REVIEW_EVALUATE_MAX,
   REVIEW_MODES,
   REVIEW_SWITCH_SWEEP_LIMIT,
+  type ReviewMode,
   applyCachedAutoVerdicts,
   evaluatePendingReviews,
   getReviewMode,
@@ -3162,7 +3165,7 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
     entryObservedAt: { type: ['string', 'null'] },
     matchMethod: { type: 'string', enum: ['exact', 'embedding', 'ai'] },
     confidence: { type: 'number' },
-    reason: { type: 'string', enum: ['price_ratio', 'verifier_unresolved'] },
+    reason: { type: 'string', enum: [...REVIEW_REASONS] },
     status: { type: 'string', enum: ['pending', 'approved', 'rejected'] },
     decidedAt: { type: ['string', 'null'] },
     decidedBy: { type: ['string', 'null'] },
@@ -3267,24 +3270,37 @@ apiApp.get(
 // ZERO-call gate; an unconfigured provider degrades to 200 with
 // aiConfigured:false (not an error), because "assist/auto without a key" is
 // the documented degrade-to-manual posture.
+//
+// Issue #493: the mode payload also carries the auto-apply floor. The UI's
+// "at least N% confident" copy is then rendered from the number the sweep
+// actually compares against, so the two cannot drift. One schema describes
+// the payload for BOTH routes — the body and its documented shape travel
+// together instead of being pasted twice.
+const REVIEW_MODE_RESPONSE_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    mode: { type: 'string', enum: [...REVIEW_MODES] },
+    aiConfigured: { type: 'boolean' },
+    autoMinConfidence: { type: 'number' },
+  },
+}
+
+function reviewModePayload(mode: ReviewMode, aiConfigured: boolean) {
+  return { mode, aiConfigured, autoMinConfidence: REVIEW_AUTO_MIN_CONFIDENCE }
+}
+
 apiApp.get(
   '/api/admin/review/mode',
   describeRoute({
     description:
-      'AI review mode and whether the acting admin has a usable AI provider (admin-only). Modes: manual (no AI calls), assist (AI proposes, human decides — default), auto (AI decides at/above the confidence floor).',
+      'AI review mode, whether the acting admin has a usable AI provider, and the auto-apply confidence floor (admin-only). Modes: manual (no AI calls), assist (AI proposes, human decides — default), auto (AI decides at/above autoMinConfidence).',
     security: [{ cookieAuth: [] }],
     responses: {
       200: {
         description: 'OK',
         content: {
           'application/json': {
-            schema: {
-              type: 'object',
-              properties: {
-                mode: { type: 'string', enum: [...REVIEW_MODES] },
-                aiConfigured: { type: 'boolean' },
-              },
-            },
+            schema: REVIEW_MODE_RESPONSE_SCHEMA,
           },
         },
       },
@@ -3296,7 +3312,7 @@ apiApp.get(
   async (c) => {
     const mode = await getReviewMode(c.env.DB)
     const aiConfigured = (await resolveReviewAiAccess(c.env, c.get('userId'))) !== null
-    const res = c.json({ mode, aiConfigured })
+    const res = c.json(reviewModePayload(mode, aiConfigured))
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }
@@ -3306,7 +3322,7 @@ apiApp.put(
   '/api/admin/review/mode',
   describeRoute({
     description:
-      'Set the AI review mode (admin-only). Enabling auto records the acting admin as the AI-access owner for the cron and kicks a bounded background sweep (≤10 items).',
+      'Set the AI review mode (admin-only). Enabling auto records the acting admin as the AI-access owner for the cron and kicks a bounded background sweep (≤10 items). Returns the stored mode, the AI access state, and the auto-apply confidence floor.',
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -3325,13 +3341,7 @@ apiApp.put(
         description: 'OK',
         content: {
           'application/json': {
-            schema: {
-              type: 'object',
-              properties: {
-                mode: { type: 'string', enum: [...REVIEW_MODES] },
-                aiConfigured: { type: 'boolean' },
-              },
-            },
+            schema: REVIEW_MODE_RESPONSE_SCHEMA,
           },
         },
       },
@@ -3365,7 +3375,7 @@ apiApp.put(
         // No ExecutionContext outside the Worker runtime — already running.
       }
     }
-    const res = c.json({ mode, aiConfigured })
+    const res = c.json(reviewModePayload(mode, aiConfigured))
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }

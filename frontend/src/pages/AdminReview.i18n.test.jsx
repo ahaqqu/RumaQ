@@ -87,7 +87,8 @@ const EN_RUBRIC =
 
 const EN_WHY_REVIEW =
   "Review is triggered by a flag — an implausible price gap against the catalog's last price, " +
-  'or an unresolved AI verifier — not by the match confidence.'
+  'an unresolved AI verifier, or a low-confidence category classification — not by the match ' +
+  'confidence.'
 
 const EN_CONFIDENCE_HINT =
   'How sure the matcher is that both sides are the same product — 100% means an exact name and ' +
@@ -100,7 +101,8 @@ const ID_RUBRIC =
 
 const ID_WHY_REVIEW =
   'Tinjauan dipicu oleh penanda — selisih harga yang tidak wajar terhadap harga terakhir ' +
-  'katalog, atau verifier AI yang tidak tuntas — bukan oleh keyakinan cocok.'
+  'katalog, verifier AI yang tidak tuntas, atau klasifikasi kategori dengan keyakinan rendah — ' +
+  'bukan oleh keyakinan cocok.'
 
 const ID_CONFIDENCE_HINT =
   'Seberapa yakin matcher bahwa kedua sisi adalah produk yang sama — 100% berarti nama dan unit ' +
@@ -233,8 +235,35 @@ describe('AdminReview — initialized i18n copy (issue #480)', () => {
         'The AI proposes a verdict with confidence and reason; you agree or disagree.'
       )
       expect(container.textContent).toContain('Full automate review')
+      // The beforeEach mode payload carries no autoMinConfidence — the shape
+      // an older Worker returns — so this line is the documented fallback.
       expect(container.textContent).toContain(
         'The AI decides on its own when it is at least 80% confident; the rest waits for you.'
+      )
+    })
+
+    it('interpolates the auto floor the server returns (issue #493)', () => {
+      vi.mocked(useReviewMode).mockReturnValue({
+        data: { mode: 'assist', aiConfigured: true, autoMinConfidence: 0.9 },
+        isLoading: false,
+        isError: false,
+      })
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain(
+        'The AI decides on its own when it is at least 90% confident; the rest waits for you.'
+      )
+      expect(container.textContent).not.toContain('at least 80% confident')
+    })
+
+    it('labels a taxonomy flag in real copy and states the no-verdict rule (issue #493)', () => {
+      vi.mocked(useReviewItems).mockReturnValue(reviewData([{ ...reviewItem, reason: 'taxonomy' }]))
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('Review flag: Category needs a human look')
+      // The old fallback labelled every unknown reason as the verifier.
+      expect(container.textContent).not.toContain('Verifier unresolved')
+      expect(container.textContent).toContain(
+        'No AI verdict for a category flag — the AI only judges product identity. ' +
+          'This one is yours to decide.'
       )
     })
 
@@ -319,6 +348,16 @@ describe('AdminReview — initialized i18n copy (issue #480)', () => {
       expect(id.review.aiProvenanceAuto).toBe('Diterapkan oleh AI · otomatis')
       expect(id.review.aiProvenanceAssist).toBe('Diputuskan oleh manusia · dibantu AI')
       expect(id.review.aiProvenanceHuman).toBe('Diputuskan oleh manusia')
+      // Issue #493: the reason label is per-flag, and the auto copy takes the
+      // server's floor as a placeholder instead of restating 80%.
+      expect(id.review.reasonTaxonomy).toBe('Kategori perlu ditinjau manusia')
+      expect(id.review.aiModeAutoDesc).toBe(
+        'AI memutuskan sendiri jika keyakinannya minimal {{percent}}%; sisanya menunggu kamu.'
+      )
+      expect(id.review.aiTaxonomyExcluded).toBe(
+        'Tidak ada putusan AI untuk penanda kategori — AI hanya menilai identitas produk. ' +
+          'Yang ini kamu yang putuskan.'
+      )
     })
   })
 })
