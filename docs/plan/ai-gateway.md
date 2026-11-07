@@ -412,9 +412,12 @@ Enforced by a test, following `backend/src/__tests__/plugin-boundary.test.ts`:
 
 - `ai-boundary.test.ts` walks `backend/src/**` (excluding `lib/ai/**`) and fails on
   `from '.*ai/adapters`, `api.anthropic.com|generativelanguage.googleapis.com|api.openai.com|ollama.com|api.opencode.ai|api.typesafe.ai`, on `\.apiKey\b`, and on any import of the two key-material
-  modules (`credentials.ts`, `key-material.ts`). It also pins the deprecated
-  `lib/ai/legacy.ts` importers (`lib/ai.ts` + `lib/ai-access.ts`) and asserts that exact set, so a new
-  consumer of the dying bridge fails here first.
+  modules (`credentials.ts`, `key-material.ts`). Relative specifiers are resolved in every form the
+  bundler accepts (`.js`, extensionless, directory index), the door may not re-export key material,
+  and the facade's VALUE export surface is pinned to an exact list — so neither an extensionless
+  `import` nor `export { accessMaterial } from './key-material.js'` can walk out. It also pins the
+  deprecated `lib/ai/legacy.ts` importers (`lib/ai.ts` + `lib/ai-access.ts`) and asserts that exact
+  set, so a new consumer of the dying bridge fails here first.
 - **P2's two pinned exemptions**, asserted by the test so they can only shrink: the hostname rule
   exempts `apps/api.ts` — the legacy `POST /api/ai-key/test` probe, deleted in P3 — and the `.apiKey`
   rule exempts `lib/ai-access.ts` plus the three modules that forward its key to the shim

@@ -16,7 +16,7 @@
 // may not import an adapter, hold a key, or fetch a model endpoint.
 //
 // The decrypted key never appears in a signature or a return value. It lives
-// in module-private state inside capabilities.ts and is looked up by the
+// in module-private state inside `key-material.ts` and is looked up by the
 // opaque `AiAccessHandle` this file is handed (§2.2).
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -44,11 +44,6 @@ type AccessRow = {
   encrypted_key: string | null
 }
 
-/**
- * Everything a provider call needs that must never leave the door lives in
- * `key-material.ts` (a module the boundary test forbids any outside import).
- */
-
 // One subrequest, one join (plan §5.1). The PK (household_id, capability) makes
 // this a single-row seek; provider_id is indexed on the provider side. The join
 // carries the household too: the assignment's own scope is not enough, because
