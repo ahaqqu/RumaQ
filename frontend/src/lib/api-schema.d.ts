@@ -1968,7 +1968,7 @@ export interface operations {
         }
         content?: never
       }
-      /** @description Duplicate label, or clearing a key an assigned capability needs */
+      /** @description Duplicate label, or an edit that would strand an assigned capability: clearing its key, or clearing the default model that assignment inherits */
       409: {
         headers: {
           [name: string]: unknown
