@@ -75,7 +75,8 @@ personalisation, storage locations, recorded stores, and display preferences.
 
 ## Source
 
-- `frontend/src/pages/Settings.jsx` — full settings UI (incl. `AiSettingsSection`)
+- `frontend/src/pages/Settings.jsx` — the preference surfaces (persona, locations, stores, display, account)
+- `frontend/src/components/AiSettingsSection.jsx` — the AI providers + AI capabilities sections
 - `frontend/src/lib/queries/ai-settings.js` — provider/capability/preset hooks
 - `frontend/src/lib/aiStatus.js` — the one `ai_status` → "configured" predicate
 - `frontend/src/lib/queries/settings.js` — `useSettings`, `useUpdateSettings`

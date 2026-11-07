@@ -65,6 +65,37 @@ export function TimeSignal({ expiryDays, runOut, basis }) {
 
 export { EmptyState, SkeletonRows }
 
+/**
+ * One Settings row: title + description on the left, control on the right,
+ * stacked on small screens when the control is wide (`stack`). Shared by the
+ * Settings page and its AI section (ahaqqu/RumaQ#523 P3, review B1).
+ */
+export function Setting({ title, desc, children, className, highlight, stack = false }) {
+  return (
+    <div
+      className={cn(
+        'px-5 py-4 border-b border-border last:border-b-0',
+        // Rows with wide controls (selects, toggle pills, input+button) stack
+        // label-above-control on mobile and go side-by-side from sm. Compact
+        // rows (icon buttons, checkboxes) stay on one line at every width.
+        stack
+          ? 'flex flex-col items-start gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4'
+          : 'flex items-center justify-between gap-4',
+        highlight === 'ok' && 'bg-ok-soft/50',
+        highlight === 'warn' && 'bg-warn-soft/50',
+        highlight === 'danger' && 'bg-danger-soft/50 border-danger-border',
+        className
+      )}
+    >
+      <div className="min-w-0">
+        {title && <div className="font-medium">{title}</div>}
+        {desc && <div className="text-sm text-text-muted mt-0.5">{desc}</div>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
 export function UsageMeter({ usage }) {
   const { t } = useTranslation()
   const meter = usageMeterModel(usage)
