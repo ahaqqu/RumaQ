@@ -19,7 +19,6 @@ export type ReviewDecision = 'approved' | 'rejected'
 // the OpenAPI enum had drifted to two values, so a 'taxonomy' flag rendered
 // under the verifier label.
 export const REVIEW_REASONS = ['price_ratio', 'verifier_unresolved', 'taxonomy'] as const
-export type ReviewReason = (typeof REVIEW_REASONS)[number]
 
 // AI-review vocabulary (issue #484, migration 0038). It lives here — with the
 // table whose rows it stores — so the queue read (which joins the verdict) and
