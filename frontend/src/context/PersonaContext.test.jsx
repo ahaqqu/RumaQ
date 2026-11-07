@@ -24,6 +24,11 @@ const DRAFT = { enabled: true, userRole: 'raja', aiRole: 'prajurit' }
 
 function Probe() {
   const { persona, regenerateCopy } = usePersona()
+  // The rejection must REACH the caller: Settings decides that a 402 is the
+  // normal "keep the built-in copy" state and anything else is surfaced. If the
+  // context swallowed the error, this probe would show an empty `error` and the
+  // real 502 would settle on "Saved" with no message.
+  const [error, setError] = React.useState('')
   return React.createElement(
     'div',
     null,
@@ -32,9 +37,10 @@ function Probe() {
       { 'data-testid': 'copy' },
       persona.generatedCopy?.homeLead ?? 'none'
     ),
+    React.createElement('span', { 'data-testid': 'error' }, error),
     React.createElement(
       'button',
-      { onClick: () => regenerateCopy(DRAFT).catch(() => {}) },
+      { onClick: () => regenerateCopy(DRAFT).catch((err) => setError(err.message)) },
       'regenerate'
     )
   )
@@ -88,5 +94,10 @@ describe('PersonaContext.regenerateCopy (#523 P5)', () => {
     expect(getByTestId('copy').textContent).toBe('none')
     // No generatedCopy is persisted: the UI keeps its own strings.
     expect(savePersona).not.toHaveBeenCalled()
+    // The refusal reaches the caller instead of being swallowed here: Settings
+    // is the one place that may treat 402 as a normal state (plan §5.1).
+    await waitFor(() =>
+      expect(getByTestId('error').textContent).toBe('AI provider not configured.')
+    )
   })
 })
