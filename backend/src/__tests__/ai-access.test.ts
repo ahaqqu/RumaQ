@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vite-plus/test'
 import type { Env } from '../types.js'
 import { encryptAiKey } from '../lib/crypto.js'
 import { USER_AI_SETTINGS_COLUMNS, loadUserAiSettings, resolveAiAccess } from '../lib/ai-access.js'
+import { ACTIVE_HOUSEHOLD_SQL } from '../auth.js'
 import { loadHouseholdAiConfig, resolveAccess } from '../lib/ai/capabilities.js'
 import { deleteExpiredAiUsageEvents, recordAiUsageEvent } from '../lib/ai/usage.js'
 import type { AiCtx } from '../lib/ai/types.js'
@@ -519,6 +520,78 @@ describe('loadUserAiSettings (the owned projection)', () => {
   it('returns null for a user with no settings row', async () => {
     addUser('u1')
     expect(await loadUserAiSettings(d1, 'u1')).toBeNull()
+  })
+
+  it('agrees with the middleware ACTIVE_HOUSEHOLD_SQL on every shape (thermos B2)', async () => {
+    // The bridge re-derives the household inside this projection instead of
+    // taking c.get('householdId') (plan §6 P1 keeps resolveAiAccess's shape).
+    // That is a third copy of the rule, so pin the two forms together: a
+    // future precedence change must not let the AI routes act in a different
+    // household than the rest of the same request.
+    const shapes: Array<{
+      user: string
+      memberships: Array<[string, string, string]>
+      active: string | null
+    }> = [
+      // oldest membership when no pointer is set
+      {
+        user: 'u1',
+        memberships: [
+          ['1', 'h2', '2026-02-01'],
+          ['2', 'h1', '2026-01-01'],
+        ],
+        active: null,
+      },
+      // an active pointer that is still a membership wins
+      {
+        user: 'u2',
+        memberships: [
+          ['3', 'h1', '2026-01-01'],
+          ['4', 'h2', '2026-02-01'],
+        ],
+        active: 'h2',
+      },
+      // a stale pointer (removed member) is ignored, oldest wins
+      { user: 'u3', memberships: [['5', 'h1', '2026-01-01']], active: 'h2' },
+      // equal joined_at falls back to household_id, deterministically
+      {
+        user: 'u4',
+        memberships: [
+          ['6', 'h2', '2026-01-01'],
+          ['7', 'h1', '2026-01-01'],
+        ],
+        active: null,
+      },
+      // no membership at all: both forms say NULL
+      { user: 'u5', memberships: [], active: 'h1' },
+    ]
+    addUser('root')
+    for (const household of ['h1', 'h2']) addHousehold(household, 'root')
+    for (const shape of shapes) {
+      addUser(shape.user, shape.user.toUpperCase())
+      for (const [id, household, joined] of shape.memberships) {
+        sqlite
+          .prepare(
+            `INSERT INTO household_members (id, household_id, user_id, role, joined_at)
+             VALUES (?, ?, ?, 'member', ?)`
+          )
+          .run(id, household, shape.user, joined)
+      }
+      sqlite
+        .prepare(`INSERT INTO user_settings (id, user_id, active_household_id) VALUES (?, ?, ?)`)
+        .run(`s-${shape.user}`, shape.user, shape.active)
+    }
+
+    for (const shape of shapes) {
+      const middleware = sqlite
+        .prepare(ACTIVE_HOUSEHOLD_SQL)
+        .get(shape.user, shape.user, shape.user) as { household_id: string | null }
+      const bridge = (await loadUserAiSettings(d1, shape.user))?.household_id ?? null
+      expect({ user: shape.user, household: bridge }).toEqual({
+        user: shape.user,
+        household: middleware.household_id,
+      })
+    }
   })
 })
 
