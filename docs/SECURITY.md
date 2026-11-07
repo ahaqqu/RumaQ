@@ -49,7 +49,7 @@ Setup steps and the full variable table: [`docs/ARCHITECTURE.md` §8](ARCHITECTU
 ## Data isolation & privacy
 
 - Every D1 query touching household-scoped data filters by `household_id`/`user_id`; final mutations re-check ownership (defense in depth).
-- A client-supplied `item_id` is never trusted as a reference: `POST /api/purchases` and the plan check-off path (`PATCH /api/plans/:id/items/:itemId`) resolve it through `items.household_id` first, so a foreign or unknown id answers `404` and writes nothing (#517).
+- A client-supplied `item_id` is never trusted on the write path: `POST /api/purchases` and the plan check-off path (`PATCH /api/plans/:id/items/:itemId`) resolve it through `items.household_id` first, so a foreign or unknown id answers `404` and writes nothing (#517). This is a write-side guard: rows written before #517 (or restored from a backup) are still rendered through the historical `items` join and are not re-verified on read.
 - AI prompts are built from the current household only and pass store **labels**, not internal IDs — covered by `backend/src/__tests__/prompt-isolation.test.ts`.
 - Receipt images sit in a private R2 bucket and are only readable through the household-checked proxy `GET /api/purchases/:id/receipt`.
 - Document-vault files (ahaqqu/RumaQ#388; multi-file per document since #422) live under the `documents/` prefix of the same private bucket and stream only through the household-scoped, auth-required, per-file `GET /api/documents/{id}/files/{fileId}/content` (`Cache-Control: private, no-store`, view/download audited per request; the file must belong to the named document). No public or presigned URLs exist for them.
