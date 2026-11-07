@@ -19,6 +19,7 @@
 - Never commit and push directly to main branch, always use PR, except I asked it explicitly.
 - Before creating a PR, follow the `pr-creation` skill.
 - When implementing a complex or unclear plan from a file, follow the `guided-implementation` skill.
+- When data or behaviour has no live users (unshipped features, internal-only tables), prefer the simplest destructive change — no backward-compatibility migration, dual-write window, or compatibility shim; breaking changes are acceptable.
 - When asked to implement a phase or feature, read the matching `docs/plan/*.md` first and check open GitHub Issues and the Delivery Kanban board for current status.
 - Before merging a PR, ensure the GitHub Action succeeds.
 - When creating new shell scripts, add them to `.gitattributes` with `mode=755` — otherwise CI will fail with `Permission denied`.
