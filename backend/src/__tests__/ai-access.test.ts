@@ -278,6 +278,37 @@ describe('resolveAccess (household capability ladder)', () => {
     expect(asMember?.call.providerId).toBe('p-1')
   })
 
+  it('refuses an assignment that points at another household provider (thermos A1)', async () => {
+    addUser('u1')
+    addUser('u2')
+    addHousehold('h1')
+    addHousehold('h2', 'u2')
+    addMember('h1', 'u1')
+    addMember('h2', 'u2')
+    // h2 owns a keyed provider; h1's assignment is redirected at it (a hand
+    // edit, or a future write-path bug — the resolver is the boundary either
+    // way). SQLite has no composite FK, so the JOIN must carry the household.
+    const victim = await addProvider({
+      id: 'p-victim',
+      householdId: 'h2',
+      label: 'Victim',
+      key: 'sk-victim-household',
+    })
+    addCapability('reasoning', victim, { householdId: 'h1', model: 'gpt-4o-mini' })
+
+    expect(await resolveAccess(ctx('h1', 'u1'), 'reasoning')).toBeNull()
+    // h2 still resolves its own row — the join is scoped, not broken.
+    sqlite
+      .prepare(
+        `INSERT INTO ai_capabilities (household_id, capability, provider_id, model)
+         VALUES ('h2','reasoning','p-victim','gpt-4o-mini')`
+      )
+      .run()
+    expect((await resolveAccess(ctx('h2', 'u2'), 'reasoning'))?.call.providerId).toBe('p-victim')
+    // The settings read model agrees with the resolver about h1.
+    expect((await loadHouseholdAiConfig(env, 'h1')).status.reasoning).toBe('none')
+  })
+
   it('lets the capability model win over the provider default', async () => {
     addUser('u1')
     addHousehold('h1')

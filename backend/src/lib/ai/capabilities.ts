@@ -37,7 +37,11 @@ type AccessRow = {
 }
 
 // One subrequest, one join (plan §5.1). The PK (household_id, capability) makes
-// this a single-row seek; provider_id is indexed on the provider side.
+// this a single-row seek; provider_id is indexed on the provider side. The join
+// carries the household too: the assignment's own scope is not enough, because
+// a provider_id from another household must resolve nothing at all rather than
+// put that household's decrypted key behind this household's request (thermos
+// A1). SQLite has no composite FK to enforce it, so the query does.
 const ACCESS_SQL = `SELECT c.capability AS capability,
         c.model AS model,
         c.thinking_level AS thinking_level,
@@ -48,7 +52,7 @@ const ACCESS_SQL = `SELECT c.capability AS capability,
         p.default_model AS default_model,
         p.encrypted_key AS encrypted_key
    FROM ai_capabilities c
-   JOIN ai_providers p ON p.id = c.provider_id
+   JOIN ai_providers p ON p.id = c.provider_id AND p.household_id = c.household_id
   WHERE c.household_id = ? AND c.capability = ?`
 
 function normalizeModel(value: string | null | undefined): string | null {
