@@ -336,6 +336,93 @@ describe('ProductRenameForm', () => {
     ])
   })
 
+  // #496: the prompt is time-boxed. Fake timers make the expiry deterministic:
+  // nothing here waits on the real clock.
+  it('disarms the prompt on its own after the timeout', () => {
+    vi.useFakeTimers()
+    try {
+      const { getByTestId } = renderForm()
+      armRowReject(aliasRows(getByTestId)[0])
+      expect(aliasRows(getByTestId)[0].getAttribute('data-armed')).toBe('true')
+
+      // Nine seconds in the prompt is still open: nothing expires early.
+      act(() => {
+        vi.advanceTimersByTime(9_000)
+      })
+      expect(aliasRows(getByTestId)[0].getAttribute('data-armed')).toBe('true')
+
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      const row = aliasRows(getByTestId)[0]
+      expect(row.getAttribute('data-armed')).toBeNull()
+      expect(rowButtonTexts(row)).toEqual(['rename.aliasApprove', 'rename.aliasReject'])
+      expect(getByTestId('alias-reject-announcement').textContent).toBe('')
+      // An expired prompt never decided anything: the next click only arms.
+      armRowReject(row)
+      expect(aliasMutate).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still confirms inside the timeout window', () => {
+    vi.useFakeTimers()
+    try {
+      const { getByTestId } = renderForm()
+      const row = aliasRows(getByTestId)[0]
+      armRowReject(row)
+      act(() => {
+        vi.advanceTimersByTime(9_000)
+      })
+      clickRowButton(row, 'rename.aliasRejectConfirm')
+      expect(aliasMutate).toHaveBeenCalledTimes(1)
+      expect(lastAliasVariables()).toEqual({
+        productKey: PRODUCT_KEY,
+        aliasId: 'alias-candidate',
+        action: 'reject',
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drops the expiry timer with every disarm path and on unmount', () => {
+    vi.useFakeTimers()
+    try {
+      mockIdentity(twoCandidates())
+      const baseline = vi.getTimerCount()
+      const { getByTestId, rerender, unmount } = renderForm()
+      const rows = () => aliasRows(getByTestId)
+
+      armRowReject(rows()[0])
+      expect(vi.getTimerCount()).toBe(baseline + 1)
+      // Arming another row replaces the pending expiry instead of stacking one.
+      armRowReject(rows()[1])
+      expect(vi.getTimerCount()).toBe(baseline + 1)
+      clickRowButton(rows()[1], 'rename.cancel')
+      expect(vi.getTimerCount()).toBe(baseline)
+
+      armRowReject(rows()[0])
+      clickRowButton(rows()[1], 'rename.aliasApprove')
+      expect(vi.getTimerCount()).toBe(baseline)
+
+      armRowReject(rows()[0])
+      expect(vi.getTimerCount()).toBe(baseline + 1)
+      mockIdentity(twoCandidates())
+      rerender(<ProductRenameForm productKey={PRODUCT_KEY} isAdmin />)
+      expect(vi.getTimerCount()).toBe(baseline)
+
+      // Leaving the surface takes the pending expiry with it.
+      armRowReject(rows()[0])
+      expect(vi.getTimerCount()).toBe(baseline + 1)
+      unmount()
+      expect(vi.getTimerCount()).toBe(baseline)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('sends the reject only on the confirm click, once, for the armed row', () => {
     const { getByTestId } = renderForm()
     const row = aliasRows(getByTestId)[0]

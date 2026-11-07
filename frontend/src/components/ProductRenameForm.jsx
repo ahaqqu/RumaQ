@@ -34,6 +34,11 @@ const REASON_MAX = 200
 // Mirrors the backend's PRODUCT_NAME_MAX: a longer name is a 400, so the input
 // stops at the same ceiling instead of inviting one.
 const NAME_MAX = 500
+// How long the armed reject prompt waits for its second click (#496). Long
+// enough to read the row it names, short enough that walking away closes it —
+// a "Confirm reject?" found minutes later is a decision armed against a list
+// nobody has looked at since.
+const REJECT_ARM_TIMEOUT_MS = 10_000
 
 const STATUS_KEY = {
   canonical: 'rename.statusCanonical',
@@ -354,6 +359,16 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   useEffect(() => {
     setArmedAliasId(null)
   }, [identity, identityQuery.dataUpdatedAt])
+
+  // The prompt expires on its own. Every disarm rule (Cancel, another row, a
+  // decision, the form's own Cancel, a re-read) only sets `armedAliasId` back to
+  // null, and this effect's cleanup drops the pending expiry with it — so a
+  // timer never outlives its prompt, and unmounting the form drops it too.
+  useEffect(() => {
+    if (armedAliasId === null) return undefined
+    const expiry = setTimeout(() => setArmedAliasId(null), REJECT_ARM_TIMEOUT_MS)
+    return () => clearTimeout(expiry)
+  }, [armedAliasId])
 
   // Revert is a linear history: only the rename that produced the current
   // version can be compensated (the backend's own rule), so an older or
