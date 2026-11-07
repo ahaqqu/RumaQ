@@ -615,6 +615,78 @@ describe('runReviewAiSweep (the cron tick)', () => {
   })
 })
 
+// --- taxonomy self-pairs (issue #373) ---------------------------------------
+// A taxonomy flag is NOT a match question: both sides reference the same
+// catalog product and the confidence is the classifier's, so the identity
+// prompt would trivially answer "same" at ~1.0 and auto would "approve" a
+// decision about a question it never asked. The reviewer must skip these
+// entirely: no provider call, no cached verdict, no decision — and the list
+// then reports aiVerdict: null (the honest state).
+describe('taxonomy self-pairs are not identity-reviewed', () => {
+  it('makes no provider call, caches no verdict and decides nothing in auto', async () => {
+    insertItem('tax-1', { reason: 'taxonomy', confidence: 0.42 })
+    await setReviewMode(d1, 'auto', ADMIN)
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const fetchMock = providerMock(() =>
+      answer('{"verdict":"same","confidence":0.99,"reason":"Identical records."}')
+    )
+
+    expect(await runReviewAiSweep(env())).toEqual({
+      mode: 'auto',
+      evaluated: 0,
+      applied: 0,
+      failed: 0,
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(verdictRows()).toEqual([])
+    expect(itemRow('tax-1')).toMatchObject({ status: 'pending', decided_by: null })
+    expect(logSpy).not.toHaveBeenCalled()
+  })
+
+  it('still evaluates the match-question pairs in the same sweep', async () => {
+    // Newest flag first, so both are in the selected window.
+    insertItem('tax-1', {
+      reason: 'taxonomy',
+      confidence: 0.42,
+      lastFlaggedAt: '2026-10-30T02:00:00Z',
+    })
+    insertItem('match-1', { entryName: 'a real match question', lastFlaggedAt: '2026-10-30T01:00:00Z' })
+    await setReviewMode(d1, 'auto', ADMIN)
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    providerMock(() => answer('{"verdict":"same","confidence":0.95,"reason":"Same pack."}'))
+
+    expect(await runReviewAiSweep(env())).toEqual({
+      mode: 'auto',
+      evaluated: 1,
+      applied: 1,
+      failed: 0,
+    })
+    expect(verdictRows()).toHaveLength(1)
+    expect(verdictRows()[0]).toMatchObject({ review_item_id: 'match-1', verdict: 'same' })
+    expect(itemRow('match-1')).toMatchObject({ status: 'approved', decided_source: 'ai_auto' })
+    expect(itemRow('tax-1')).toMatchObject({ status: 'pending', decided_by: null })
+  })
+
+  it('never applies a cached taxonomy verdict (a verdict written before the rule)', async () => {
+    insertItem('tax-1', { reason: 'taxonomy', confidence: 0.42 })
+    sqlite
+      .prepare(
+        `INSERT INTO review_ai_verdicts (id, review_item_id, verdict, confidence, mode)
+         VALUES ('v1', 'tax-1', 'same', 0.99, 'assist')`
+      )
+      .run()
+    expect(await applyCachedAutoVerdicts(d1, 10)).toBe(0)
+    expect(itemRow('tax-1')).toMatchObject({ status: 'pending', decided_by: null })
+  })
+
+  it('exposes aiVerdict: null for a taxonomy row in the queue', async () => {
+    insertItem('tax-1', { reason: 'taxonomy', confidence: 0.42 })
+    const page = await listReviewItems(d1, { status: 'pending' })
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0]?.aiVerdict).toBeNull()
+  })
+})
+
 // --- decisions and provenance ----------------------------------------------
 
 describe('decision provenance (agree / disagree)', () => {

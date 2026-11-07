@@ -59,6 +59,27 @@ export const REVIEW_AI_CONCURRENCY = 4
 /** How long a model-written reason may be (it is display text, not evidence). */
 export const REVIEW_REASON_MAX_CHARS = 500
 
+/**
+ * The flag that is NOT a match question (#373, contract
+ * `reviewItemPairSchema.reason`). A taxonomy flag is a SELF-PAIR by
+ * construction — both sides reference the SAME catalog product and the
+ * confidence is the classifier's — so the identity prompt below would answer
+ * "same" trivially (two identical records) and `auto` would approve a decision
+ * that says nothing about the category. The reviewer therefore SKIPS these
+ * entirely: no provider call, no cached verdict, no auto-apply. They stay
+ * pending for the human, and their `aiVerdict` stays null — the honest state.
+ */
+export const REVIEW_TAXONOMY_REASON = 'taxonomy'
+
+/**
+ * The shared "the reviewer may look at this row" predicate. Both the
+ * evaluation selection and the cached-verdict apply carry it, so a verdict
+ * cached before this rule (or written by hand) can never decide a taxonomy
+ * pair. A constant, never request data — safe to inline into the prepared
+ * statements.
+ */
+const AI_REVIEWABLE_ROW_SQL = `r.reason <> '${REVIEW_TAXONOMY_REASON}'`
+
 /** The `decided_by` value an AI-applied auto decision records. */
 export const REVIEW_AI_DECIDED_BY = 'ai'
 
@@ -325,9 +346,10 @@ function parsePair(json: string): ReviewItemPair | null {
 }
 
 /**
- * Pending items with no cached verdict, in the queue's own order (newest flag
- * first, natural key tie-break). The LEFT JOIN is the cache guard: a cached
- * verdict — assist or auto — is never re-billed.
+ * Pending items the reviewer may answer, in the queue's own order (newest flag
+ * first, natural key tie-break). Two guards: the LEFT JOIN (a cached verdict —
+ * assist or auto — is never re-billed) and AI_REVIEWABLE_ROW_SQL (a taxonomy
+ * self-pair is not an identity question — no call, no verdict, no apply).
  */
 async function listPendingWithoutVerdict(db: D1Database, limit: number): Promise<PendingPairRow[]> {
   const { results } = await db
@@ -335,7 +357,7 @@ async function listPendingWithoutVerdict(db: D1Database, limit: number): Promise
       `SELECT r.id AS id, r.pair_data AS pair_data
        FROM match_review_items r
        LEFT JOIN review_ai_verdicts v ON v.review_item_id = r.id
-       WHERE r.status = 'pending' AND v.id IS NULL
+       WHERE r.status = 'pending' AND v.id IS NULL AND ${AI_REVIEWABLE_ROW_SQL}
        ORDER BY r.last_flagged_at DESC, r.item_product_key ASC, r.entry_product_key ASC
        LIMIT ?`
     )
@@ -566,7 +588,9 @@ export async function evaluatePendingReviews(
  * Apply already-cached verdicts that the current mode would have decided.
  * This is what makes switching assist → auto act on the verdicts the probe
  * already computed (no re-billing: the cache is forever) — and it is a no-op
- * outside auto mode, because only `auto` may decide without a human.
+ * outside auto mode, because only `auto` may decide without a human. The
+ * taxonomy predicate is repeated here on purpose: a verdict cached before the
+ * rule existed must not auto-approve a taxonomy pair either.
  */
 export async function applyCachedAutoVerdicts(
   db: D1Database,
@@ -578,7 +602,7 @@ export async function applyCachedAutoVerdicts(
       `SELECT v.review_item_id AS id, v.verdict AS verdict
        FROM review_ai_verdicts v
        JOIN match_review_items r ON r.id = v.review_item_id
-       WHERE r.status = 'pending' AND v.confidence >= ?
+       WHERE r.status = 'pending' AND v.confidence >= ? AND ${AI_REVIEWABLE_ROW_SQL}
        ORDER BY r.last_flagged_at DESC, r.item_product_key ASC, r.entry_product_key ASC
        LIMIT ?`
     )
