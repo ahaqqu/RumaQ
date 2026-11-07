@@ -18,12 +18,12 @@ D8, D9, D10) and are no longer open; the rest need sign-off with the document.
 | D3  | Decision wire        | **Owner-decided 2026-11-07.** The `questions` adapter speaks a typed question/answer contract: `POST {base}` with `{state, model, questions:{<name>:{type,instructions,criteria}}}` → `answers.<name>.{choice, confidence}`. Reason-as-NULL and zero reported tokens are accepted limitations.                                                                                                                                                                           |
 | D4  | The door             | `backend/src/lib/ai/` (barrel `index.ts`). Outside `lib/ai/**` no file may import an adapter, hold an API key, or contain a provider hostname — enforced by a test.                                                                                                                                                                                                                                                                                                      |
 | D5  | Capability enum      | `decision` \| `reasoning` \| `vision`. Additive; `embedding` is explicitly out of scope.                                                                                                                                                                                                                                                                                                                                                                                 |
-| D6  | Migration            | Backfill is **behaviour-preserving**: every configured user's one provider becomes provider #1 and is assigned to all three capabilities with today's model values. Never a forced rewrite of a working setup.                                                                                                                                                                                                                                                           |
+| D6  | Migration            | Backfill is **behaviour-preserving**: every configured user's one provider becomes provider #1 and is assigned to all three capabilities with today's model values. **No compatibility window** (owner-decided): the legacy `user_settings.ai_*` columns are left untouched by P1 and **dropped in P3**, in the same PR that replaces the Settings screen.                                                                                                               |
 | D7  | Empty start          | **No default provider.** A new household has zero `ai_providers`, zero `ai_capabilities`, no implicit model — and therefore today's exact "not configured" behaviour (402, review assist/auto → manual, no calls) until a household owner adds a provider and assigns capabilities. No preset is preselected.                                                                                                                                                            |
 | D8  | No server fallback   | **Owner-decided 2026-11-07.** `RUMAQ_SERVER_AI_*` is retired: no env key, no implicit provider, no platform-funded call. Resolution is the caller's assignment → 402. QA/testing accounts get ordinary rows through Settings; automation seeds the same rows in its setup step (§3.4).                                                                                                                                                                                   |
 | D9  | Funding & limits     | **Owner-decided 2026-11-07.** Resolved access and usage rows carry `funding: 'household' \| 'platform'`. v1 is always `'household'` — BYOK is the caller's own bill, so **no AI rate limits** and no per-user cap. A future RumaQ-provided (premium) mode reuses the same dimension; **all** metering and limits live in the facade, and no call site may implement a cap.                                                                                               |
 | D10 | Ciphertext binding   | **Owner-decided 2026-11-07.** Each provider key is AES-GCM encrypted with its **row id as additional authenticated data** (`v2:` envelope). P2 ships it with a **transparent re-encrypt-on-read** for legacy `v1:` ciphertext: decrypt without AAD, rewrite bound to the row, never ask the user for the key again. A copied ciphertext cannot be re-planted on another provider row.                                                                                    |
-| D11 | Rollout              | Six independently shippable PRs (P1-P6). P1 is schema + resolver swap. The destructive column drop is its own PR (P6).                                                                                                                                                                                                                                                                                                                                                   |
+| D11 | Rollout              | **Five** independently mergeable PRs (P1–P5): schema + resolver swap, the door + adapters + AAD, Settings API/UI **with the legacy column drop**, call sites by capability, persona/key test server-side. P6 is gone: with no compatibility window there is nothing left to clean up later.                                                                                                                                                                              |
 
 D2 is the one place this document refines the directive's literal wording. The directive listed five
 adapter names ("OpenAI-compatible, Anthropic, Gemini, Ollama, custom base URL"); the owner confirmed
@@ -38,7 +38,8 @@ an existing field, not a second resolution path — and it removes the temptatio
 calls, which are the user's own bill. **D10** closes the one place where "one door" was also a
 security boundary in name only: a sealed key can no longer be moved between provider rows.
 
-The other open questions are in §7; nothing in §1–§6 depends on them.
+Every question this document raised is now answered: the risks are in §7.1 and the owner's dispositions
+of the seven remaining questions are recorded in §7.2.
 
 ---
 
@@ -221,7 +222,7 @@ backend/src/lib/ai/
 the adapters land without touching a single feature, and it is **deleted** in P4 when the call sites
 move (imports become `lib/ai/index.js`, explicit `index.js` per the `ports/storage/index.js`
 precedent). The old `ai-access.ts` dissolves in P2–P4: resolution → `capabilities.ts`, usage →
-`usage.ts`, the projection constant stays with the settings read model until P6.
+`usage.ts`, the projection constant stays with the settings read model until P3 drops it with the column.
 
 ### 2.2 The public API
 
@@ -454,6 +455,10 @@ is what a typed decision endpoint is built for, while quick-add must return a JS
 a `questions` provider to the decision capability is allowed, and `structured()` then answers
 `unsupported` until the user points decision at a chat provider. That is a visible, typed failure, not
 a silent degradation, and it is why `structured()` is not used by any shipped feature yet.
+
+**Both kinds are assignable to `decision`** (owner-decided, §7.2): a chat provider answers the verdict
+through its JSON mode, a typed provider answers it natively. The matrix is about which _shape_ a kind
+can serve, not about which kind a household must choose.
 
 ### 2.5 What deliberately stays outside the door
 
@@ -826,13 +831,15 @@ database through Settings, like anyone else:
 
 **Automation seeds the same rows.** The harness setup step creates a provider and the three
 assignments through the public endpoints the UI uses (`POST /api/ai/providers`, then
-`PUT /api/ai/capabilities/{decision,reasoning,vision}`); the legacy `PATCH /api/settings`
-write-through (§4.3) keeps today's scenarios green until P6. `TEST_MODE` still stubs the transport,
-so seeded rows exercise the **resolver** without a real provider call — which is exactly why the rows
-must exist. The "no AI key returns 402" scenarios stay honest by seeding nothing.
+`PUT /api/ai/capabilities/{decision,reasoning,vision}`). Those endpoints only exist from **P3**, so P1
+marks the three AI automation scenarios pending (with a #523 reference) and P3 reactivates them against
+the new endpoints — there is no write-through to keep the old `PATCH /api/settings` step meaningful,
+because §4.3 removes the compatibility window on purpose. `TEST_MODE` still stubs the transport, so
+seeded rows exercise the **resolver** without a real provider call — which is exactly why the rows must
+exist. The "no AI key returns 402" scenarios stay honest by seeding nothing.
 
 **Key provenance.** New usage rows record `funding = 'household'` (D9) and no longer write
-`key_source`, whose column and historical values stay until P6. Nothing in the product can spend a
+`key_source`, whose column and historical values stay as history. Nothing in the product can spend a
 platform key any more, so the admin views no longer need to distinguish a platform-paid call — but the
 column is still there for the rows that were.
 
@@ -903,7 +910,7 @@ What it buys, and what it does not:
 - **Does not buy**: protection from someone holding both the ciphertext _and_
   `WORKER_ENCRYPTION_KEY`; rotation semantics are unchanged (rotating the key still invalidates every
   row — risk 2); and rows still on `v1:` stay transplantable until their first read. That residual
-  window is exactly why this lands in P2 and not in the P6 cleanup.
+  window is exactly why this lands in P2, in the same breath as the door, and not in some later tidy-up.
 - **A deleted provider row's ciphertext becomes useless immediately**: the id is gone, the app never
   re-creates a row with the same id (`legacy-…` ids come only from a migration that cannot re-run), and
   the AAD cannot be reconstructed from the ciphertext. A backup copy restores only if the row itself is
@@ -922,23 +929,23 @@ authenticated and registered in the existing `apiApp.use(..., propsAuthMiddlewar
 (`apps/api.ts:621-669`) — a missed entry is an unauthenticated route, so the phase test asserts each
 new path 401s without a session.
 
-| Method        | Path                               | Purpose                                                                                                                                                                                                             |
-| ------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`         | `/api/ai/presets`                  | The catalog of presets a user MAY add: id, label, kind, canonical base URL, default models per capability. Seeds nothing, preselects nothing, and defines no default. **The one place the UI learns vendors from.** |
-| `GET`         | `/api/ai/providers`                | `{ can_manage, providers: [{ id, label, kind, base_url, has_key, created_at, updated_at }] }` — never the key; `can_manage` is the household role, so the UI never guesses                                          |
-| `POST`        | `/api/ai/providers`                | Owner only. Create `{ label, kind, base_url?, api_key, preset? }` → 201 with the row                                                                                                                                |
-| `PATCH`       | `/api/ai/providers/:id`            | Owner only. Update `{ label?, kind?, base_url?, api_key? }`; `api_key: ''` clears it, omitted leaves it                                                                                                             |
-| `DELETE`      | `/api/ai/providers/:id`            | Owner only. Delete + cascade; returns `{ cleared: Capability[] }`                                                                                                                                                   |
-| `POST`        | `/api/ai/providers/:id/test`       | Owner only. Test connection (see §4.6). Body `{}`                                                                                                                                                                   |
-| `GET`         | `/api/ai/capabilities`             | `{ capabilities: { decision: { provider_id, model, thinking_level, source: 'household'\|'none', provider_label } , … } }`                                                                                           |
-| `PUT`         | `/api/ai/capabilities/:capability` | Owner only. Upsert `{ provider_id, model?, thinking_level? }`                                                                                                                                                       |
-| `DELETE`      | `/api/ai/capabilities/:capability` | Owner only. Clear the assignment (the capability becomes not configured)                                                                                                                                            |
-| `GET`         | `/api/ai/usage`                    | Existing (`api.ts:1439`) + per-capability breakdown for today. Scoped to the **acting user** — "your calls", not the household's                                                                                    |
-| `GET`         | `/api/admin/ai/usage`              | Existing (`api.ts:1523`) + per-capability and per-household totals (the funding view D9 will need)                                                                                                                  |
-| `GET`/`PATCH` | `/api/settings`                    | Unchanged shape + additive `ai_providers`, `ai_capabilities`, `ai_status { decision, reasoning, vision: 'household'\|'none' }`; `server_ai_available` is **removed** in P3 (D8)                                     |
+| Method        | Path                               | Purpose                                                                                                                                                                                                                                                     |
+| ------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`         | `/api/ai/presets`                  | The catalog of presets a user MAY add: id, label, kind, canonical base URL, default models per capability. Seeds nothing, preselects nothing, and defines no default. **The one place the UI learns vendors from.**                                         |
+| `GET`         | `/api/ai/providers`                | `{ can_manage, providers: [{ id, label, kind, base_url, has_key, created_at, updated_at }] }` — never the key; `can_manage` is the household role, so the UI never guesses                                                                                  |
+| `POST`        | `/api/ai/providers`                | Owner only. Create `{ label, kind, base_url?, api_key, preset? }` → 201 with the row                                                                                                                                                                        |
+| `PATCH`       | `/api/ai/providers/:id`            | Owner only. Update `{ label?, kind?, base_url?, api_key? }`; `api_key: ''` clears it, omitted leaves it                                                                                                                                                     |
+| `DELETE`      | `/api/ai/providers/:id`            | Owner only. Delete + cascade; returns `{ cleared: Capability[] }`                                                                                                                                                                                           |
+| `POST`        | `/api/ai/providers/:id/test`       | Owner only. Test connection (see §4.6). Body `{}`                                                                                                                                                                                                           |
+| `GET`         | `/api/ai/capabilities`             | `{ capabilities: { decision: { provider_id, model, thinking_level, source: 'household'\|'none', provider_label } , … } }`                                                                                                                                   |
+| `PUT`         | `/api/ai/capabilities/:capability` | Owner only. Upsert `{ provider_id, model?, thinking_level? }`                                                                                                                                                                                               |
+| `DELETE`      | `/api/ai/capabilities/:capability` | Owner only. Clear the assignment (the capability becomes not configured)                                                                                                                                                                                    |
+| `GET`         | `/api/ai/usage`                    | Existing (`api.ts:1439`) + per-capability breakdown for today. Scoped to the **acting user** — "your calls", not the household's                                                                                                                            |
+| `GET`         | `/api/admin/ai/usage`              | Existing (`api.ts:1523`) + per-capability and per-household totals (the funding view D9 will need)                                                                                                                                                          |
+| `GET`/`PATCH` | `/api/settings`                    | Unchanged shape + additive `ai_providers`, `ai_capabilities`, `ai_status { decision, reasoning, vision: 'household'\|'none' }`. In P3 the legacy `ai_*` fields, `has_ai_key` and `server_ai_available` are **removed** together with the columns (D8, §4.3) |
 
-Deprecated but kept until P6: `POST /api/ai-key/test` (`api.ts:1298`), superseded by
-`/api/ai/providers/:id/test`.
+`POST /api/ai-key/test` (`api.ts:1298`) is **removed in P3** together with the legacy settings fields,
+superseded by `/api/ai/providers/:id/test` (§4.6).
 
 ### 4.2 Validation
 
@@ -948,7 +955,7 @@ Valibot schemas in `backend/src/schemas.ts` beside the existing `settingsPatchSc
 - `label` — `pipe(string(), minLength(1), maxLength(60))`, trimmed; unique per household (409).
 - `base_url` — `maxLength(500)`, trimmed, trailing slashes stripped, **HTTPS only** (the existing
   rule, `api.ts:1198-1200`), required when `kind = 'questions'` or when no canonical endpoint
-  exists for the kind. HTTP / private-network endpoints are OQ3.
+  exists for the kind. HTTP / private-network endpoints are rejected (§7.2).
 - `api_key` — `minLength(1)` on create, trimmed, encrypted **before** the INSERT with the provider's own
   id as AAD (`encryptAiKey(key, WORKER_ENCRYPTION_KEY, 'ai_provider:' + id)`, `crypto.ts:85`), so the
   stored envelope is `v2:` (D10, §3.6) — the id is therefore generated first, never derived from the
@@ -970,26 +977,38 @@ Valibot schemas in `backend/src/schemas.ts` beside the existing `settingsPatchSc
   household has no provider with that id, and nothing creates a provider or an assignment on the
   household's behalf — not the migration, not the UI, not the first AI request.
 
-### 4.3 Legacy compatibility window
+### 4.3 No compatibility window — the columns die with the screen (owner-decided)
 
-`GET/PATCH /api/settings` keep their AI fields for one release, because the PWA and mobile wrappers
-update on their own schedule. **The write-through lands in P1, with the resolver swap** — that is
-what keeps the _existing_ Settings screen able to configure AI while the new UI is still being built,
-and it is how the QA accounts get their rows (§3.4). P3 adds the new endpoints; P6 removes the legacy
-fields.
+The owner's call is blunt: **no customer uses the legacy `user_settings.ai_*` fields, and temporary
+breakage is acceptable.** So there is no read-through, no write-through and no deprecation shim. The
+old columns are left untouched by P1, stop being read by anything the moment the resolver swaps
+(§5.1), and are **dropped in P3** — the same PR that ships the new Settings section.
 
-- **Read-through**: `ai_provider` / `ai_model` / `ai_vision_model` / `ai_thinking_level` are derived
-  from the new tables (reasoning assignment → provider kind/base URL/model; vision model; reasoning
-  thinking level). `has_ai_key` = any provider row has a key.
-- **Write-through**: a legacy `PATCH` updates the household's `legacy-<caller_id>` provider (created on
-  first use) and the three assignments, so an old client can never desynchronise the new model.
-  `ai_key` writes to that provider's `encrypted_key`.
-- **Owner-only, from P1**: the AI fields of `PATCH /api/settings` now change household property, so
-  they go through `requireOwner` like the new endpoints. A member gets 403
-  `Only household owners can change AI settings`. During the window the _old_ UI still renders the
-  form for members, so this is a visible transition wart rather than a silent no-op — release note and
-  risk 7.
-- P6 drops the columns, the shim, and this window (OQ4 is the timing decision).
+What that means concretely:
+
+- **P1 and P2 leave `user_settings.ai_*` exactly as they are.** No migration touches them, no route
+  writes them differently. The old Settings screen still renders and still `PATCH`es successfully
+  (200), but those writes are **dead**: the resolver reads `ai_providers` / `ai_capabilities`, so an
+  edit changes nothing about the next AI call. That is the accepted breakage, and it is why the
+  release note matters.
+- **P3 removes both halves at once**: the new endpoints and section arrive, the legacy AI fields leave
+  `GET/PATCH /api/settings`, `has_ai_key` and `server_ai_available` go with them
+  (`api.ts:1113-1114`), `USER_AI_SETTINGS_COLUMNS` / `loadUserAiSettings` are deleted, and
+  `0040_drop_legacy_ai_settings.sql` drops the six columns. Screen and schema can never disagree,
+  because there is no window in which both exist.
+- **`POST /api/ai-key/test` goes in P3** with the fields it validates (`aiKeyTestSchema`,
+  `schemas.ts:54`); its replacement lands in the same PR.
+- **Migration numbering**: `0039` (P1, additive) and `0040` (P3, destructive drop). P6 — previously the
+  home of the drop — is deleted: a phase whose only job is cleanup stops existing once the cleanup
+  rides with the change.
+- **Deployment order**: P3 is the first release that must go out with a **D1 backup taken immediately
+  before deploy**, because `DROP COLUMN` is not reversible in code. P1 and P2 revert with a plain
+  `git revert`; P3 reverts only by restoring that backup (or by re-adding empty columns, which would
+  leave every household unconfigured).
+- **The one real cost, stated plainly**: between P1 and P3 a household can **use** AI but cannot
+  **change** it — the old screen is a no-op and a broken key cannot be re-entered until P3 lands.
+  Mitigation is release discipline, not code: P1+P2+P3 ship to the QA deployment as one release, and
+  risk 5 tracks it.
 
 ### 4.4 Screen structure — Settings → AI
 
@@ -1051,17 +1070,23 @@ UI reads `ai_model` after that.
 
 ### 4.6 What "test connection" means per kind
 
-| kind                | Request                                                         | Cost                                                                                                                  |
-| ------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `openai-compatible` | `GET {base}/models` with the decrypted key                      | free                                                                                                                  |
-| `anthropic`         | `GET https://api.anthropic.com/v1/models` + `anthropic-version` | free                                                                                                                  |
-| `gemini`            | `GET /v1/models?key=…`                                          | free                                                                                                                  |
-| `questions`         | one minimal question over the assigned model                    | **billable** — labelled as such in the UI, rate-limited (the OCR limiter precedent, `plugins/documents/ocr.ts:46-54`) |
+| kind                | Request                                                         | Cost                                                                          |
+| ------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `openai-compatible` | `GET {base}/models` with the decrypted key                      | free                                                                          |
+| `anthropic`         | `GET https://api.anthropic.com/v1/models` + `anthropic-version` | free                                                                          |
+| `gemini`            | `GET /v1/models?key=…`                                          | free                                                                          |
+| `questions`         | `POST {base}` with an **empty `questions` object**              | **free** — a 400 proves the key authenticates without buying an answer (§7.2) |
 
-The test is owner-only (it spends the household's credential budget) and never uses a stored provider's
-key for a _different_ provider. The response is
-`{ ok: true }` / `{ ok: false, code }` — never the provider body verbatim (it can echo key material
-in error messages).
+**The typed probe is deliberately a malformed request.** `{"state": "", "model": <assigned>, "questions": {}}`
+is expected to come back `400` or `422` — an error that proves the key authenticated while buying no
+answer. This is **pending confirmation from Jev** and is recorded as a `docs/MANUAL_ACTIONS.md`
+verification item in P3; if the endpoint 500s or bills on an empty body, the fallback is the billed
+micro-question (one trivial question over the assigned model, labelled as billable in the UI and
+rate-limited like OCR — `plugins/documents/ocr.ts:46-54`).
+
+The test is owner-only (it may spend the household's credential budget) and never uses a stored
+provider's key for a _different_ provider. The response is `{ ok: true }` / `{ ok: false, code }` —
+never the provider body verbatim (it can echo key material in error messages).
 
 ---
 
@@ -1179,13 +1204,14 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 - `capability` = the dimension the directive asks for.
 - `funding` = `'household'` on every v1 row; the dimension D9 reserves for a metered platform mode.
 - `key_source` is **no longer written** (D9 replaced it with `funding`). Historical rows keep theirs and
-  the backfill maps them (`'server'` → `'platform'`, `'user'` → `'household'`); the column survives
-  until P6.
+  the backfill maps them (`'server'` → `'platform'`, `'user'` → `'household'`); the column stays as
+  history (it is not one of the six legacy `user_settings` columns P3 drops).
 - The sweep keeps its single batched write (`review-ai.ts:650-662`); `document-ocr.ts` keeps its
   "audit every attempt" pairing (`:121-136`), now reading `err.call`/`err.usage` from `AiError`.
-- **Known gap**: the typed-decision wire reports no token counts. Such calls record
-  `input_tokens = 0, output_tokens = 0, cached_tokens = NULL` and are distinguishable by
-  `provider = 'questions'`; per-call billing analytics for that kind are approximate (OQ2).
+- **Typed calls are not token-billed, and the admin view says so.** The typed-decision wire reports no
+  token counts, so such calls record `input_tokens = 0, output_tokens = 0, cached_tokens = NULL` and are
+  distinguishable by `provider = 'questions'`; the admin breakdown renders them as **"typed — not
+  token-billed"** instead of a misleading zero (owner-decided, §7.2). No counter is added in v1.
 
 ### 5.4 Adapter quirks (the per-provider knowledge, isolated)
 
@@ -1232,7 +1258,9 @@ the contract change is "reason is optional" (D3 accepts it).
 
 ## 6. Phased implementation plan
 
-Each phase is one PR, shippable alone, with its own rollback. Every phase runs
+Each phase is one PR with its own rollback note. They are independently _revertible_, not
+independently _usable_: P1 and P2 leave the settings UI unable to change AI until P3 ships the new
+screen (§4.3), so P1+P2+P3 go out as one release. Every phase runs
 `./scripts/test.sh unit backend` (plus `frontend` where touched), `./scripts/style.sh --check`, and —
 when routes change — `./scripts/docs.sh` and `bunx vp run api:codegen` (CI diffs both artifacts,
 `scripts/github/ci.sh:16-24`).
@@ -1259,11 +1287,10 @@ when routes change — `./scripts/docs.sh` and `bunx vp run api:codegen` (CI dif
    never listed the variables, so it needs no row removed. `docs/MANUAL_ACTIONS.md` gets one entry:
    delete `RUMAQ_SERVER_AI_{PROVIDER,KEY,MODEL}` from the QA Worker (they are inert after this PR but
    should not linger).
-5. `GET /api/settings` gains additive `ai_providers`, `ai_capabilities`, `ai_status`, and the legacy
-   `PATCH` gains the **write-through** (§4.3): it upserts the household's `legacy-<caller>` provider and
-   the three capability assignments from `ai_key` / `ai_provider` / `ai_model` / `ai_vision_model` /
-   `ai_thinking_level`, so the current Settings screen keeps working and can seed the QA accounts. The
-   AI fields of that PATCH become **owner-only** here (`requireOwner` → 403 for a member).
+5. `GET /api/settings` gains the additive `ai_providers`, `ai_capabilities`, `ai_status` fields.
+   **`PATCH` is not touched and gains no write-through** (§4.3): the legacy AI fields stay exactly as
+   they are, write successfully (200) and change nothing the resolver reads. The columns themselves
+   are also untouched here — P3 drops them with the screen.
 6. Tests: `migrations.test.ts` (apply the chain in real SQLite; assert backfill row counts, the
    vision precedence, the case-insensitive label index, the CASCADE, the vision/thinking/funding
    CHECKs, that a user with no legacy AI settings gets **zero** provider and capability rows, and the
@@ -1275,16 +1302,17 @@ when routes change — `./scripts/docs.sh` and `bunx vp run api:codegen` (CI dif
    null, missing/unusable provider → null, empty account → null, and "env vars present but ignored";
    the four suites that constructed the fallback (`documents-ocr`, `api-routes`, `review-ai`, plus
    `__tests__/support/env.ts`) seed provider + capability rows instead; `api-routes.test.ts` asserts
-   the settings payload with `ai_status` all `none` for a fresh household, that a legacy
-   `PATCH /api/settings` creates the provider + three assignments (idempotently, on repeat patches),
-   and that a **member's** AI PATCH is 403 while their reads stay 200.
+   the settings payload with `ai_status` all `none` for a fresh household, that a legacy `PATCH /api/settings` with `ai_key` still returns 200 while leaving
+   `ai_providers` and `ai_capabilities` **unchanged** — the documented dead write of §4.3. The three AI
+   automation scenarios are marked pending in this PR (they need the P3 endpoints) with a #523
+   reference.
 
-**Not in P1:** no new endpoints, no new UI, no call-site edits, no adapter extraction, no deletion.
-**Rollback:** revert the PR. The migration is additive (old code ignores the tables and the extra
-column), the write-through wrote the legacy columns too, and the env fallback returns with the
-reverted code — so QA keeps working either way. The QA rows themselves are configured once through
-the existing Settings screen during this PR's verification (a `docs/MANUAL_ACTIONS.md` step): the
-owner adds the `questions` provider for decision and the chat provider for reasoning/vision.
+**Not in P1:** no new endpoints, no new UI, no call-site edits, no adapter extraction, no column drop,
+and **no legacy write-through**.
+**Rollback:** revert the PR. The migration is additive, the legacy columns were never touched, and the
+env fallback returns with the reverted code — so the old screen is fully live again after a revert.
+**Release note:** from this PR until P3, Settings → AI accepts edits but they do nothing (§4.3), and a
+broken key cannot be re-entered. P1, P2 and P3 ship to the QA deployment as one release.
 
 ### P2 — The door: facade + protocol adapters
 
@@ -1297,7 +1325,8 @@ lands without touching features; delete the shim in P4.
 with no schema work (0039 already permits `v2:`): `encryptAiKey`/`decryptAiKey` gain an
 `additionalData` argument and a `v2:` envelope (§3.6); `credentials.ts` decrypts `v2:` with
 `ai_provider:<row id>` and `v1:` without it, then rewrites the row to `v2:` with a compare-and-set.
-The write paths (create, key change, legacy `PATCH` write-through) all write `v2:` from here on.
+The write paths (create and key change) write `v2:` from here on; after P3 the legacy `PATCH` no
+longer exists to write anything.
 
 - Tests: an adapter contract suite driven by a fake `fetch` (one table of cases × 4 kinds: happy path,
   auth error, 429, 5xx, empty content, timeout via an aborted signal, usage mapping); the
@@ -1313,26 +1342,46 @@ The write paths (create, key change, legacy `PATCH` write-through) all write `v2
   "needs setup" and the assignments intact. Because the rewrite is lazy, that set is only "rows read
   since P2 was deployed", not the whole table.
 
-### P3 — Settings API + UI (first user-visible PR)
+### P3 — Settings API + UI, and the legacy columns go (first user-visible PR)
 
-The `/api/ai/providers`, `/api/ai/capabilities`, `/api/ai/presets` endpoints, the provider test
-endpoint, and the Settings screen rebuild (§4.4) with en+id copy. The legacy write-through from P1
-stays in place and keeps being tested; P6 removes it with the columns. `server_ai_available` leaves
-the `/api/settings` payload here, together with the "use server default" option that read it
-(`api.ts:1114`, `Settings.jsx:487-500`), and the QA accounts' rows from P1 render as ordinary
-providers.
+Three halves of one change, deliberately in one PR because they are only safe together: the
+`/api/ai/providers`, `/api/ai/capabilities`, `/api/ai/presets` endpoints with the provider test, the
+Settings screen rebuild (§4.4) with en+id copy, and **the removal of the legacy surface** —
+`0040_drop_legacy_ai_settings.sql` drops `ai_provider`, `encrypted_ai_key`, `ai_base_url`, `ai_model`,
+`ai_vision_model`, `ai_thinking_level`; `GET/PATCH /api/settings` lose those fields plus `has_ai_key`
+and `server_ai_available` (`api.ts:1113-1114`); `USER_AI_SETTINGS_COLUMNS` and `loadUserAiSettings` are
+deleted; `POST /api/ai-key/test` (`api.ts:1298`, `aiKeyTestSchema`) and the "use server default" option
+(`Settings.jsx:487-500`) go with them. `docs/API.md` is regenerated in the same PR.
+
+`0040_drop_legacy_ai_settings.sql` is six statements:
+
+```sql
+-- 0040_drop_legacy_ai_settings.sql — D1 runs SQLite >= 3.35, so DROP COLUMN is native.
+-- If a future engine predates it, use the 12-step table rebuild from 0021 instead.
+ALTER TABLE user_settings DROP COLUMN ai_provider;
+ALTER TABLE user_settings DROP COLUMN encrypted_ai_key;
+ALTER TABLE user_settings DROP COLUMN ai_base_url;
+ALTER TABLE user_settings DROP COLUMN ai_model;
+ALTER TABLE user_settings DROP COLUMN ai_vision_model;
+ALTER TABLE user_settings DROP COLUMN ai_thinking_level;
+```
 
 - Tests: route tests for CRUD, 401 without a session, **403 for every write as a member and 200 for
   their reads**, 404 on a provider id from another household, 409 on a duplicate label, 400 on
   kind/capability mismatch, 400 on `vision` + thinking, 404 assigning a provider that does not exist,
   cascade reporting on delete; `Settings.test.jsx` for the member's read-only section (no
-  add/edit/delete/test, "Managed by …" line) and the **empty state** (no capability selectors until a provider exists, nothing preselected), the three
-  capability cards, add/delete provider, "becomes not configured" warning, and the absence of any
-  server-default affordance; the automation setup step moves to `POST /api/ai/providers` +
-  `PUT /api/ai/capabilities/*` (legacy `PATCH /api/settings` keeps its write-through, so both paths
-  stay tested).
-- Rollback: revert the PR; the API additions are unused by the old UI, and the legacy fields still
-  work because P1's resolver reads whatever the backfill wrote.
+  add/edit/delete/test, "Managed by …" line), the **empty state** (no capability selectors until a
+  provider exists, nothing preselected), the three capability cards, add/delete provider, "becomes not
+  configured" warning, and the absence of any server-default affordance; the automation setup step
+  moves to `POST /api/ai/providers` + `PUT /api/ai/capabilities/*` and the three pending scenarios are
+  reactivated; `migrations.test.ts` proves the six columns are **gone** and that a fresh database still
+  reaches a working Settings payload.
+
+- Rollback: **not a plain revert** — the columns are gone. The PR ships with a D1 backup taken
+  immediately before deploy (`scripts/` backup path); restoring it is the only complete rollback.
+  Re-adding empty columns would leave every household unconfigured, so it is not offered as a
+  substitute. This is the single phase in the plan with that property, which is why it is called out
+  here and in risk 5.
 
 ### P4 — Call sites route by capability
 
@@ -1361,45 +1410,33 @@ clients and `frontend/src/lib/aiProviders.js` (the "keep in sync" duplication,
   `frontend-ai-boundary.test.js` hostname ban now green.
 - Rollback: revert; the old browser path is self-contained and needs no server support.
 
-### P6 — Cleanup and the destructive drop
-
-`migrations/0040_drop_user_settings_ai.sql` (drop `ai_provider`, `encrypted_ai_key`, `ai_base_url`,
-`ai_model`, `ai_vision_model`, `ai_thinking_level`), remove the legacy `/api/settings` AI fields and
-`POST /api/ai-key/test`, delete the shim and `USER_AI_SETTINGS_COLUMNS`, update
-`docs/ARCHITECTURE.md` §7 and regenerate `docs/API.md`.
-
-- Tests: full suite green with the columns gone; settings GET/PATCH no longer mention AI.
-- Rollback: the code reverts, but the **columns are gone** — this PR needs an owner-approved D1
-  backup immediately before deploy (`scripts/` backup path) and must not ship in the same week as a
-  schema-sensitive deploy. It is deliberately last and deliberately alone.
-
 **Why this order:** enforcement before the move (P2's boundary test exists before P4 relocates five
-call sites), data before behaviour (P1 before P4), UI before call-site changes so a user can always
-see and fix what the runtime resolves (P3 before P4), and destruction last and isolated (P6).
+call sites), data before behaviour (P1 before P4), and **screen and schema together** in P3 so a user
+can always see and fix what the runtime resolves. The destructive drop no longer needs its own phase:
+it rides with the screen that made the columns dead. That is what turns six phases into five and
+removes the long tail this project used to carry.
 
 ---
 
-## 7. Risks and open questions for the owner
+## 7. Risks and resolved questions
 
-The questions this section carried at review time were **decided by the owner on 2026-11-07** and now
-live in §0 as **D1** (household ownership), **D2** (four wire adapters), **D3** (typed decision
-contract), **D8** (no server fallback), **D9** (funding dimension; no BYOK rate limits) and **D10**
-(row-bound AAD with lazy re-encrypt). What follows is the risk list and the **seven** questions that are
-still open.
+Nothing in this section is waiting for an answer. §7.1 records what can still go wrong; §7.2 records
+the owner's dispositions of the seven questions this document carried, each of which is now a line in
+the design rather than a TODO.
 
-### Risks
+### 7.1 Risks
 
 1. **Subrequest budget.** The Workers free plan allows 50 subrequests per invocation and the review
    sweep budgets ~47 for 20 items (`review-ai.ts:60-66`). A per-item capability read would add 20
    reads and blow it. Mitigation is in the design: `resolveAccess` once per run, `AiAccessHandle`
-   reused, no per-call DB reads. The household key is the same one join the user key was — this
-   change costs no subrequest. P4's test pins "one capability read per sweep".
+   reused, no per-call DB reads. The household key is the same one join the user key was, and P2's
+   lazy re-encrypt adds one write **once per legacy row**, not per call. P4's test pins "one
+   capability read per sweep".
 2. **Key blast radius.** Today one `encrypted_ai_key` per user; after this change, N per household, all
    under the same `WORKER_ENCRYPTION_KEY`. Rotating that key already invalidates every stored key
-   (`docs/ARCHITECTURE.md:478`); now it invalidates N per household. The **transplant** half of this
-   risk is closed by D10 (§3.6): a ciphertext can no longer be moved to another provider row, and the
-   rotation half is unchanged by design — a single `WORKER_ENCRYPTION_KEY` is still the blast radius
-   that key rotation exists for.
+   (`docs/ARCHITECTURE.md:478`); now it invalidates N per household. The **transplant** half is closed
+   by D10 (§3.6); the **rotation** half is unchanged by design — one key is still the blast radius that
+   rotation exists for.
 3. **Behaviour change disguised as a fix.** Receipt scan switching to the vision model (§5.5) can
    surprise a household whose text model was doing fine. Mitigation: release note, and the UI shows
    "Vision model" on the scan path; the vision assignment inherits the migrated `ai_vision_model`
@@ -1409,45 +1446,37 @@ still open.
    chat unavailable) with nobody to bill but themselves. That is the intended trade, but it puts real
    weight on the empty state, on the 402 copy being actionable ("Add a provider in Settings"), and on
    `ai_status` telling the truth per capability. P3 tests the copy, P4 tests the degradation.
-5. **Two sources of truth during P1–P5.** Legacy columns and new tables coexist; the write-through
-   writes both or the compatibility window produces drift. Mitigation: it is one function with its own
-   test, it is owner-only from P1, and P6 removes the ambiguity.
+5. **Configuration blackout between P1 and P3 — the price of D6.** With no compatibility window, the
+   old Settings screen writes **dead columns** from the moment the resolver swaps until P3 replaces it:
+   a household can **use** AI (the backfill moved its rows) but cannot add, edit or re-key a provider,
+   and a member cannot fix a broken key. The owner accepted the breakage; the mitigation is release
+   discipline rather than code — P1+P2+P3 ship to the QA deployment as **one release**, the release
+   note says so, and the three automation AI scenarios are pending until P3. If the phases ever slip
+   apart, the fix is to ship them together, never to re-introduce a write-through.
 6. **Typed-decision answers are thin — accepted by D3.** Choice + confidence only: no reason, no
    tokens. Consequences: `review_ai_verdicts.reason` is empty under a `questions` provider, and the
-   admin cost view shows zero tokens for those calls (OQ2). Both are visible, not hidden.
+   admin breakdown renders those calls as "typed — not token-billed" rather than a zero (§7.2). Both
+   are visible, not hidden.
 7. **Sharing changes who pays.** D1 moves ownership from the person to the household, and the backfill
    cannot guess intent: in a two-member household where both had keys, the **owner's** assignment wins
    and the other member's calls now run on the owner's key (their own key survives as an unassigned
-   provider row). This is the largest real-world discontinuity in the whole design, and it is
-   deliberate. Mitigations: every row says whose key served the call (`user_id` + `household_id`), the
-   Settings UI names the owner, the release note calls it out, and an owner can re-point the
-   assignment in two clicks. The member-side consequence is equally real: a member cannot fix a broken
-   key — only an owner can, so the UI must say so instead of offering a control that 403s.
+   provider row). This is the largest real-world discontinuity in the design, and it is deliberate.
+   Mitigations: every row says whose key served the call (`user_id` + `household_id`), the Settings UI
+   names the owner, the release note calls it out, and an owner can re-point the assignment in two
+   clicks. The member-side consequence is equally real: a member cannot fix a broken key — only an
+   owner can, so the UI must say so instead of offering a control that 403s.
 
-### Open questions
+### 7.2 Resolved questions (owner, 2026-11-07)
 
-1. **Embeddings now or later?** Recommendation: later. A fourth capability is an additive enum value
-   plus a new adapter method, but embeddings have a different shape (no messages, no completion,
-   different usage units) and no feature needs them yet. Modelling them now would make `decide()`'s
-   simplicity worse.
-2. **Token accounting for typed providers.** Accept zeros (recommended, with `provider='questions'`
-   as the marker) or add a per-call counter so the admin view stays meaningful?
-3. **Local/private endpoints.** The HTTPS-only rule (`api.ts:1198-1200`) blocks a self-hosted Ollama
-   on `http://192.168.x.x`. Allow private-network HTTP for household-owned base URLs (a real SSRF
-   surface on Workers, which cannot reach the LAN anyway) or keep HTTPS-only? Recommendation: keep
-   HTTPS-only.
-4. **Legacy column drop timing (P6).** One full release after P5? The PWA and any mobile wrapper must
-   be observed in the wild before the columns go.
-5. **Decision on chat providers.** Should a chat provider be assignable to `decision` (JSON prompt and
-   prompt-parsed choice) at all, or only a typed provider? Recommendation: allow both — the migration
-   itself assigns the legacy chat provider to `decision`, and a household with one key would otherwise
-   lose the review feature.
-6. **Should the provider test be free?** A typed-decision test is a billable question. Alternatives:
-   probe with an intentionally empty `questions` object and accept a 400 (proves auth, no billing) —
-   needs the provider's confirmation.
-7. **Premium metering, when it comes.** D9 reserves the shape but not the pricing: per-household
-   subscription, token packs, or a soft cap with a warning? Worth answering before any code is written
-   in `lib/ai/metering`, because the answer decides whether `funding` needs a `plan_id` beside it.
+| #   | Question                     | Decision                                                                                                                                                                                                                                                                | Where it lives |
+| --- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| 1   | Embeddings now or later?     | **Later.** No fourth capability in v1; `embedding` is an additive enum value when a feature needs it.                                                                                                                                                                   | D5, §2.4       |
+| 2   | Typed-provider token counts  | **Accept zeros**, marked `provider = 'questions'`. The admin breakdown shows "typed — not token-billed" instead of a misleading `0`. No counter in v1.                                                                                                                  | §5.3           |
+| 3   | Local/private endpoints      | **HTTPS-only stands.** No private-network HTTP, and no `TEST_MODE` exception to the rule.                                                                                                                                                                               | §4.2           |
+| 4   | Legacy column drop           | **No compatibility window.** P6 is deleted; the six `user_settings.ai_*` columns are dropped in **P3**, with the new Settings screen and the old `PATCH` handling. P1 leaves the columns untouched and adds no write-through.                                           | D6, §4.3, P3   |
+| 5   | Chat provider for `decision` | **Both allowed.** A JSON-mode chat provider may answer the verdict; the typed provider is the other option, not the only one.                                                                                                                                           | §2.4, §4.2     |
+| 6   | Provider test cost           | **Free probe**: an empty `questions` object, expecting a 400 that proves authentication with no billing — **pending Jev's confirmation**. If Jev 500s or bills on an empty body, the fallback is the billed micro-question. A `MANUAL_ACTIONS` verification item in P3. | §4.6, P3       |
+| 7   | Premium metering             | **Shape only**: `funding`, facade-only metering, reserved `quota_exceeded`. Quota numbers and plans are designed with the premium feature, not before it exists.                                                                                                        | D9, §2.6       |
 
 ---
 
