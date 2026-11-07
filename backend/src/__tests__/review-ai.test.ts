@@ -151,7 +151,7 @@ async function seedTypedDecisionProvider(): Promise<void> {
       'Typed decision',
       'questions',
       null,
-      'https://api.typesafe.ai/v1/systemone',
+      'https://openrouter.ai/api/alpha/decisions',
       'jev-latest',
       encrypted
     )
@@ -848,9 +848,11 @@ describe('runReviewAiSweep (the cron tick)', () => {
 
     const body = JSON.parse(
       String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body)
-    ) as { state: string; questions: Record<string, { type: string }> }
+    ) as { state: string[]; questions: Record<string, { type: string }> }
     expect(body.questions.verdict.type).toBe('choice')
-    expect(body.state).toContain('Beras Ramos')
+    // OpenRouter's wire: the pair rides a one-element `state` array.
+    expect(body.state).toHaveLength(1)
+    expect(body.state[0]).toContain('Beras Ramos')
 
     // A typed verdict is usable: same choice, its confidence, NO reason.
     expect(verdictRows()).toEqual([

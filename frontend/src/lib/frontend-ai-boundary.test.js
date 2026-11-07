@@ -27,7 +27,7 @@ const FRONTEND_SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 /** The vendor endpoints the door's presets own server-side. */
 const PROVIDER_HOSTNAME =
-  /api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.openai\.com|ollama\.com|api\.opencode\.ai|api\.typesafe\.ai/
+  /api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.openai\.com|ollama\.com|api\.opencode\.ai|openrouter\.ai/
 
 /** A key header in browser code: the Worker is the only place a key is read. */
 const KEY_HEADER = /\bAuthorization\s*:\s*[`'"]\s*Bearer|['"`]x-api-key['"`]/i

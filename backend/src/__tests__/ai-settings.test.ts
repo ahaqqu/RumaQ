@@ -268,6 +268,8 @@ describe('GET /api/ai/presets (plan §4.1/§4.5)', () => {
       'anthropic',
       'gemini',
       'ollama',
+      'openrouter-decisions',
+      'openrouter',
       'custom',
     ])
     for (const preset of body.presets) {
@@ -823,9 +825,10 @@ describe('POST /api/ai/providers/:id/test (plan §4.6)', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true })
 
-    // The body is the deliberately malformed probe: an EMPTY questions object.
+    // The body is the deliberately malformed probe: the documented envelope
+    // (array state) with an EMPTY questions object.
     const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
-    expect(body).toEqual({ state: '', model: 'jev-latest', questions: {} })
+    expect(body).toEqual({ state: [], model: 'jev-latest', questions: {} })
   })
 
   it('reports a failure as a CODE, never the provider body', async () => {

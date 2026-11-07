@@ -36,7 +36,7 @@ type SourceFile = string // backend-src-relative POSIX path, e.g. 'apps/api.ts'
 // The vendor endpoints the door's presets/adapters own. A literal one anywhere
 // else is provider transport that escaped.
 const PROVIDER_HOSTNAME =
-  /api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.openai\.com|ollama\.com|api\.opencode\.ai|api\.typesafe\.ai/
+  /api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.openai\.com|ollama\.com|api\.opencode\.ai|openrouter\.ai/
 
 // The property that only the door may read (the key material).
 const KEY_MATERIAL = /\.apiKey\b/
@@ -253,6 +253,7 @@ describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
       'lib/ai/index.ts': "export { accessMaterial } from './key-material.js'\n",
       'lib/ai/rogue-star.ts': "export * from './key-material.js'\n",
       'lib/rogue-endpoint.ts': "const url = 'https://api.openai.com/v1/chat/completions'\n",
+      'lib/rogue-openrouter.ts': "const url = 'https://openrouter.ai/api/v1/chat/completions'\n",
       'lib/rogue-key-read.ts': 'const key = access.apiKey\n',
       // Allowed shapes: the door itself and the door's public facade.
       'lib/ai/adapters/openai.ts': "const url = 'https://api.openai.com/v1'\n",
@@ -279,6 +280,9 @@ describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
     expect(violations.some((v) => v.startsWith('lib/ai/rogue-star.ts re-exports'))).toBe(true)
     expect(
       violations.some((v) => v.startsWith('lib/rogue-endpoint.ts contains a provider hostname'))
+    ).toBe(true)
+    expect(
+      violations.some((v) => v.startsWith('lib/rogue-openrouter.ts contains a provider hostname'))
     ).toBe(true)
     expect(violations.some((v) => v.startsWith('lib/rogue-key-read.ts reads .apiKey'))).toBe(true)
 

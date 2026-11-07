@@ -324,10 +324,10 @@ accessor for one. Resolve-once matters: the review sweep's 50-subrequest budget 
 capability read per item.
 
 Provider transport lives behind one `AiAdapter` interface in `backend/src/lib/ai/adapters/`, one
-implementation per **wire protocol** — `openai-compatible` (OpenAI, OpenCode, Ollama Cloud and any
-custom base URL), `anthropic`, `gemini`, and `questions` (Jev's typed `POST /v1/systemone` →
-`answers.<name>.{choice, confidence}`). A vendor is data (`ai_providers.preset` + `kind`), never a
-fifth kind and never a class. Adapters own request/response shaping, auth (401/403), 429, 5xx, empty
+implementation per **wire protocol** — `openai-compatible` (OpenAI, OpenCode, Ollama Cloud,
+OpenRouter and any custom base URL), `anthropic`, `gemini`, and `questions` (OpenRouter's typed
+`POST /api/alpha/decisions` → `answers.<name>.{choice, confidence}`). A vendor is data
+(`ai_providers.preset` + `kind`), never a fifth kind and never a class. Adapters own request/response shaping, auth (401/403), 429, 5xx, empty
 content, aborts and the provider's token fields; they know nothing about households, funding or
 prompts. The typed wire reports no tokens, so those calls record zeroes and are distinguished by
 `provider = 'questions'`.

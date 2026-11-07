@@ -51,6 +51,21 @@ export const PRESETS: readonly Preset[] = [
     endpoint: 'https://ollama.com/v1',
   },
   {
+    // OpenRouter's typed-decision wire (plan §9): one POST to the alpha
+    // `decisions` endpoint, no `/chat/completions` suffix. Models are
+    // owner-typed row data like every other preset — none is named here.
+    id: 'openrouter-decisions',
+    label: 'OpenRouter (decisions)',
+    kind: 'questions',
+    endpoint: 'https://openrouter.ai/api/alpha/decisions',
+  },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    kind: 'openai-compatible',
+    endpoint: 'https://openrouter.ai/api/v1',
+  },
+  {
     id: 'custom',
     label: 'Custom provider',
     kind: 'openai-compatible',
