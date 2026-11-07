@@ -27,12 +27,7 @@ defineFeature(feature, (test) => {
     })
   })
 
-  // #523 P1: the resolver now reads the household's ai_providers /
-  // ai_capabilities, and the legacy PATCH /api/settings ai_key write is DEAD
-  // until P3 ships the provider/capability endpoints (plan §3.4, §4.3). The
-  // scenario is pending, NOT deleted: P3 reactivates it against
-  // POST /api/ai/providers + PUT /api/ai/capabilities/*.
-  test.skip('Generate a plan returns draft items', ({ given, when, then, and }) => {
+  test('Generate a plan returns draft items', ({ given, when, then, and }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })
@@ -41,11 +36,10 @@ defineFeature(feature, (test) => {
       await ctx.authenticate()
     })
 
-    and('the user has an AI key configured', async () => {
-      await ctx.sendRequestWithBody('PATCH', '/api/settings', {
-        ai_key: 'sk-test-key-12345',
-        ai_provider: 'gemini',
-      })
+    and('the user has a provider configured', async () => {
+      // #523 P3: the provider/capability endpoints replace the retired settings
+      // ai_key write (plan §3.4, §4.3).
+      await ctx.configureAi(['reasoning'])
     })
 
     when(/I send a (POST) request to (\S+)/, async (method, path) => {

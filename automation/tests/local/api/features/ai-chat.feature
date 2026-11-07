@@ -12,9 +12,9 @@ Feature: AI Chat
     When I send a chat message "What should I buy?"
     Then the response status should be 402
 
-  Scenario: Chat returns a reply with valid AI key
+  Scenario: Chat returns a reply with a configured provider
     Given the database has seed data
-    And the test user has an AI key configured
+    And the test user has a provider configured
     And I am authenticated as a test user
     When I send a chat message "What should I buy?"
     Then the response status should be 200

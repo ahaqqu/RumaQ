@@ -23,18 +23,11 @@ import {
 // The empty string is allowed and means "use the provider default".
 const AI_MODEL_REGEX = /^(?:[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199})?$/
 
+// ahaqqu/RumaQ#523 P3 (plan §4.3): the six legacy `user_settings.ai_*` fields
+// are GONE here together with the columns migration 0042 drops. A payload that
+// still sends `ai_key` is now a 400 — the dead write of P1/P2 no longer exists,
+// and the AI surface is /api/ai/providers + /api/ai/capabilities.
 export const settingsPatchSchema = strictObject({
-  ai_provider: optional(
-    picklist(['opencode', 'openai', 'anthropic', 'gemini', 'ollama', 'custom'])
-  ),
-  ai_key: optional(pipe(string(), minLength(1))),
-  ai_base_url: optional(pipe(string(), maxLength(500))),
-  ai_model: optional(pipe(string(), maxLength(200), regex(AI_MODEL_REGEX))),
-  // Issue #433: the vision model for vault document OCR — resolved ahead of
-  // ai_model for vision work. Same charset as ai_model (ids go into request
-  // bodies and, for Gemini, the URL path).
-  ai_vision_model: optional(pipe(string(), maxLength(200), regex(AI_MODEL_REGEX))),
-  ai_thinking_level: optional(union([picklist(['low', 'medium', 'high']), literal('')])),
   persona_user_role: optional(string()),
   persona_ai_role: optional(string()),
   persona_enabled: optional(boolean()),
@@ -43,18 +36,49 @@ export const settingsPatchSchema = strictObject({
   theme_hue: optional(number()),
 })
 
+// --- AI gateway settings (#523 P3, plan §4.1–§4.2) ---------------------------
+//
+// The wire kinds and the capability enum are fixed vocabularies (D2/D5), so they
+// are picklists. A PRESET is data (lib/ai/presets.ts): the schema only bounds its
+// id, because adding a vendor must be a row, never a schema edit.
+const PROVIDER_LABEL = pipe(string(), minLength(1), maxLength(60))
+const AI_THINKING = union([picklist(['low', 'medium', 'high']), literal('')])
+
+export const aiProviderCreateSchema = strictObject({
+  label: PROVIDER_LABEL,
+  kind: picklist(['openai-compatible', 'anthropic', 'gemini', 'questions']),
+  preset: optional(pipe(string(), maxLength(40))),
+  // HTTPS-only and length-capped; the trimming/trailing-slash rule lives with
+  // the write in lib/ai/provider-settings.ts.
+  base_url: optional(pipe(string(), maxLength(500))),
+  default_model: optional(pipe(string(), maxLength(200), regex(AI_MODEL_REGEX))),
+  // Write-only: never returned by any GET for any role (has_key is the signal).
+  api_key: pipe(string(), minLength(1), maxLength(4096)),
+})
+
+export const aiProviderPatchSchema = strictObject({
+  label: optional(PROVIDER_LABEL),
+  kind: optional(picklist(['openai-compatible', 'anthropic', 'gemini', 'questions'])),
+  // '' clears the column (the old ai_base_url rule); omitted leaves it.
+  base_url: optional(pipe(string(), maxLength(500))),
+  default_model: optional(pipe(string(), maxLength(200), regex(AI_MODEL_REGEX))),
+  // '' clears the stored key, omitted keeps it, a value re-seals it (v2:).
+  api_key: optional(pipe(string(), maxLength(4096))),
+})
+
+export const aiCapabilityAssignSchema = strictObject({
+  provider_id: pipe(string(), minLength(1)),
+  // '' / omitted = inherit the provider's default_model (plan §4.5).
+  model: optional(pipe(string(), maxLength(200), regex(AI_MODEL_REGEX))),
+  thinking_level: optional(AI_THINKING),
+})
+
 export const locationSchema = object({
   label: pipe(string(), minLength(1), maxLength(100)),
 })
 
 export const storeSchema = object({
   label: pipe(string(), minLength(1), maxLength(100)),
-})
-
-export const aiKeyTestSchema = object({
-  provider: picklist(['opencode', 'openai', 'anthropic', 'gemini', 'ollama', 'custom']),
-  key: optional(pipe(string(), minLength(1))),
-  base_url: optional(pipe(string(), minLength(1), maxLength(500))),
 })
 
 export const stockPatchSchema = strictObject({

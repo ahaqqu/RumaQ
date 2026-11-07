@@ -1,8 +1,8 @@
-// Shared AI-usage display model. Usage is recorded but never capped — the
-// daily limit was removed unconditionally (issue #353): BYOK is the norm and
-// the shared server key is uncapped too. Every surface shows call counts and
-// the token totals the provider reports; no limit, percent, warn or danger is
-// ever fabricated.
+// Shared AI-usage display model. Usage is recorded but never capped — the daily
+// limit was removed unconditionally (issue #353) and #523 P3 retired the last
+// source distinction: every call is funded by the household's own provider key
+// (D9). Every surface shows call counts and the token totals the provider
+// reports; no limit, percent, warn or danger is ever fabricated.
 
 // Compact token counts: 950 → "950", 18230 → "18.2k", 234500 → "235k".
 export function formatTokens(n) {
@@ -20,7 +20,6 @@ export function usageMeterModel(usage) {
   const cachedTokens = usage.cached_tokens ?? null
   const inputTokens = usage.input_tokens ?? 0
   return {
-    ownKey: usage.key_source === 'user',
     used: usage.used ?? 0,
     inputTokens,
     outputTokens: usage.output_tokens ?? 0,

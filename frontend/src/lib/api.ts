@@ -173,12 +173,122 @@ export function getAdminAiUsage(range: AiUsageRange, signal?: AbortSignal): Prom
   return unwrap(client.GET('/api/admin/ai/usage', { params: { query: { range } }, signal }))
 }
 
-export function testAiKey(
-  provider: 'opencode' | 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'custom',
-  key?: string,
-  baseUrl?: string
-): Promise<unknown> {
-  return unwrap(client.POST('/api/ai-key/test', { body: { provider, key, base_url: baseUrl } }))
+// ─── AI gateway settings (ahaqqu/RumaQ#523 P3, plan §4) ─────────────────────
+//
+// The provider/capability surface replaces the retired `POST /api/ai-key/test`
+// and the legacy `ai_*` fields of PATCH /api/settings. Nothing here ever carries
+// key material: `has_key` is the only signal the API returns.
+
+export type AiProviderKind = 'openai-compatible' | 'anthropic' | 'gemini' | 'questions'
+export type AiCapability = 'decision' | 'reasoning' | 'vision'
+export type AiThinkingLevel = 'low' | 'medium' | 'high'
+
+export type AiProviderPreset = {
+  id: string
+  label: string
+  kind: AiProviderKind
+  base_url: string | null
+}
+
+export type AiProvider = {
+  id: string
+  label: string
+  kind: AiProviderKind
+  preset: string | null
+  base_url: string | null
+  default_model: string | null
+  has_key: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type AiProviderList = {
+  can_manage: boolean
+  managed_by: string | null
+  providers: AiProvider[]
+}
+
+export type AiCapabilityAssignment = {
+  provider_id: string | null
+  provider_label: string | null
+  /** The assignment's own model; null = inherit the provider default. */
+  model: string | null
+  /** What the resolver will call: `model ?? provider.default_model`. */
+  effective_model: string | null
+  thinking_level: string | null
+  source: 'household' | 'none'
+}
+
+export type AiCapabilityConfig = {
+  can_manage: boolean
+  capabilities: Record<AiCapability, AiCapabilityAssignment>
+  status: Record<AiCapability, 'household' | 'none'>
+}
+
+export type AiProviderTestResult = { ok: boolean; code?: string }
+
+export function getAiPresets(): Promise<{ presets: AiProviderPreset[] }> {
+  return unwrap(client.GET('/api/ai/presets'))
+}
+
+export function getAiProviders(): Promise<AiProviderList> {
+  return unwrap(client.GET('/api/ai/providers'))
+}
+
+export function createAiProvider(payload: {
+  label: string
+  kind: AiProviderKind
+  preset?: string
+  base_url?: string
+  default_model?: string
+  api_key: string
+}): Promise<{ provider: AiProvider }> {
+  return unwrap(client.POST('/api/ai/providers', { body: payload }))
+}
+
+export function updateAiProvider(
+  id: string,
+  payload: {
+    label?: string
+    kind?: AiProviderKind
+    base_url?: string
+    default_model?: string
+    api_key?: string
+  }
+): Promise<{ provider: AiProvider }> {
+  return unwrap(client.PATCH('/api/ai/providers/{id}', { params: { path: { id } }, body: payload }))
+}
+
+export function deleteAiProvider(id: string): Promise<{ cleared: AiCapability[] }> {
+  return unwrap(client.DELETE('/api/ai/providers/{id}', { params: { path: { id } } }))
+}
+
+export function testAiProvider(id: string): Promise<AiProviderTestResult> {
+  return unwrap(client.POST('/api/ai/providers/{id}/test', { params: { path: { id } } }))
+}
+
+export function getAiCapabilities(): Promise<AiCapabilityConfig> {
+  return unwrap(client.GET('/api/ai/capabilities'))
+}
+
+export function assignAiCapability(
+  capability: AiCapability,
+  payload: { provider_id: string; model?: string; thinking_level?: AiThinkingLevel | '' }
+): Promise<{ capability: AiCapabilityAssignment; status: 'household' | 'none' }> {
+  return unwrap(
+    client.PUT('/api/ai/capabilities/{capability}', {
+      params: { path: { capability } },
+      body: payload,
+    })
+  )
+}
+
+export function clearAiCapability(
+  capability: AiCapability
+): Promise<{ capability: AiCapabilityAssignment; status: 'household' | 'none' }> {
+  return unwrap(
+    client.DELETE('/api/ai/capabilities/{capability}', { params: { path: { capability } } })
+  )
 }
 
 export function patchStock(

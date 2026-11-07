@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { isAiConfigured } from '../lib/aiStatus.js'
 import { useTranslation } from 'react-i18next'
 import {
   IconSpark,
@@ -60,10 +61,12 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
   const { data: settings } = useSettings()
   const chat = useSendChatMessage()
 
-  const hasBackendKey = settings?.has_ai_key === true
-  // A server-provided key also counts as connected: the backend serves chat
-  // with RumaQ's shared key when the user has none of their own.
-  const isConnected = Boolean(aiKey) || hasBackendKey || settings?.server_ai_available === true
+  // #523 P3: connectivity is the household's capability status, not the retired
+  // `has_ai_key` / `server_ai_available` fields (the columns are gone and the
+  // platform key is retired — D8). A key held in the browser from before the
+  // provider split still counts until P5 removes that path.
+  const hasBackendKey = isAiConfigured(settings?.ai_status)
+  const isConnected = Boolean(aiKey) || hasBackendKey
 
   // Shared metering model; null while the usage query loads — the status dot
   // still shows (connected is known), just without a usage count. No limit

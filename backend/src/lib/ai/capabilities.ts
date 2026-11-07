@@ -74,8 +74,15 @@ function normalizeThinkingLevel(value: string | null): ThinkingLevel | null {
     : null
 }
 
-/** The endpoint a row resolves to: its own base URL wins over the preset's. */
-function resolvedEndpoint(row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>): string | null {
+/**
+ * The endpoint a row resolves to: its own base URL wins over the preset's.
+ * Exported for the settings writes (provider-settings.ts), which must answer
+ * "can this row serve a call" with THIS rule and not a second copy of it
+ * (#523 P3 review A4 — the P2 review B1 lesson, applied to the endpoint).
+ */
+export function resolvedEndpoint(
+  row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>
+): string | null {
   return row.base_url ?? presetEndpoint(row.preset, row.kind)
 }
 
@@ -84,7 +91,7 @@ function resolvedEndpoint(row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>):
  * missing endpoint is only fatal for kinds that have no canonical one
  * ('openai-compatible' without a preset, 'questions' always custom).
  */
-function endpointResolvable(row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>): boolean {
+export function endpointResolvable(row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>): boolean {
   if (row.kind === 'questions') return row.base_url != null
   if (row.kind === 'openai-compatible') return resolvedEndpoint(row) != null
   // anthropic / gemini adapters own their canonical endpoint; anything else is
@@ -212,7 +219,15 @@ export type HouseholdCapabilityAssignment = {
   /** Null when the capability is not assigned — there is no implicit assignment. */
   provider_id: string | null
   provider_label: string | null
+  /**
+   * The assignment's OWN model column, not the resolved one. Null means "inherit
+   * the provider's default_model" — the same value the Settings form must show in
+   * its model field, so a save that does not touch the model cannot clear a
+   * pinned one (#523 P3 review A2).
+   */
   model: string | null
+  /** What the resolver will actually call: `model ?? provider.default_model`. */
+  effective_model: string | null
   thinking_level: string | null
   /**
    * 'household' = an assignment row exists; 'none' = nothing configured.
@@ -270,6 +285,7 @@ function emptyCapability(): HouseholdCapabilityAssignment {
     provider_id: null,
     provider_label: null,
     model: null,
+    effective_model: null,
     thinking_level: null,
     source: 'none',
   }
@@ -318,7 +334,11 @@ export async function loadHouseholdAiConfig(
       capabilities[row.capability] = {
         provider_id: row.id,
         provider_label: row.label,
-        model: effectiveModel(row),
+        // The column and the resolved value are reported separately: the form
+        // edits the column (blank = inherit) and the status line shows what a
+        // call will use (#523 P3 review A2).
+        model: normalizeModel(row.model),
+        effective_model: effectiveModel(row),
         thinking_level: row.thinking_level,
         source: 'household',
       }

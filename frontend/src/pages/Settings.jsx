@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { i18n } from '../i18n/index.js'
-import { UsageMeter, SkeletonRows } from '../components/ui.jsx'
+import { UsageMeter, SkeletonRows, Setting } from '../components/ui.jsx'
+import { AiSettingsSection } from '../components/AiSettingsSection.jsx'
 import { usePersona } from '../context/PersonaContext.jsx'
-import { personaText, deriveHue } from '../lib/persona.js'
+import { personaText } from '../lib/persona.js'
 import {
   IconCheck,
   IconTrash,
@@ -25,9 +26,7 @@ import {
   useDeleteStore,
   useUsage,
 } from '../lib/queries/index.js'
-import { testAiKey } from '../lib/api'
 import { useMe, useLogout } from '../lib/queries/me.js'
-import { AI_PROVIDER_DEFAULTS } from '../lib/aiProviders.js'
 import { Button } from '../components/Button.jsx'
 import { Panel } from '../components/Panel.jsx'
 import { useOnlineStatus } from '../lib/useOnlineStatus.js'
@@ -42,32 +41,6 @@ const LANGUAGES = [
   { code: 'en', label: 'English' },
   { code: 'id', label: 'Bahasa Indonesia' },
 ]
-
-function Setting({ title, desc, children, className, highlight, stack = false }) {
-  return (
-    <div
-      className={cn(
-        'px-5 py-4 border-b border-border last:border-b-0',
-        // Rows with wide controls (selects, toggle pills, input+button) stack
-        // label-above-control on mobile and go side-by-side from sm. Compact
-        // rows (icon buttons, checkboxes) stay on one line at every width.
-        stack
-          ? 'flex flex-col items-start gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4'
-          : 'flex items-center justify-between gap-4',
-        highlight === 'ok' && 'bg-ok-soft/50',
-        highlight === 'warn' && 'bg-warn-soft/50',
-        highlight === 'danger' && 'bg-danger-soft/50 border-danger-border',
-        className
-      )}
-    >
-      <div className="min-w-0">
-        {title && <div className="font-medium">{title}</div>}
-        {desc && <div className="text-sm text-text-muted mt-0.5">{desc}</div>}
-      </div>
-      {children}
-    </div>
-  )
-}
 
 function ToggleGroup({ value, options, onChange, ariaLabel }) {
   return (
@@ -127,20 +100,11 @@ function InlineInput({
   )
 }
 
-export function Settings({ aiKey, setAiKey, motion, setMotion }) {
+export function Settings({ motion, setMotion }) {
   const { t } = useTranslation()
-  const [draft, setDraft] = useState(aiKey || '')
-  const [provider, setProvider] = useState('gemini')
-  const [customBaseUrl, setCustomBaseUrl] = useState('')
-  const [customModel, setCustomModel] = useState('')
-  const [customVisionModel, setCustomVisionModel] = useState('')
-  const [thinkingLevel, setThinkingLevel] = useState('')
-  const [saved, setSaved] = useState(false)
-  const [testing, setTesting] = useState(false)
-  const [testOk, setTestOk] = useState(null)
   const [newLoc, setNewLoc] = useState('')
   const [newStore, setNewStore] = useState('')
-  const { persona, setPersona, regenerateCopy } = usePersona()
+  const { persona, setPersona } = usePersona()
   const [personaDraft, setPersonaDraft] = useState({
     userRole: persona.userRole,
     aiRole: persona.aiRole,
@@ -176,22 +140,6 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
 
   useEffect(() => {
     if (!settingsData) return
-    if (settingsData.ai_provider) {
-      setProvider(settingsData.ai_provider)
-    }
-    if (settingsData.ai_base_url) {
-      setCustomBaseUrl(settingsData.ai_base_url)
-    }
-    if (settingsData.ai_model) {
-      setCustomModel(settingsData.ai_model)
-    }
-    if (settingsData.ai_vision_model) {
-      setCustomVisionModel(settingsData.ai_vision_model)
-    }
-    setThinkingLevel(settingsData.ai_thinking_level || '')
-    if (settingsData.has_ai_key) {
-      setDraft('')
-    }
     if (settingsData.motion_preference) {
       setMotion(settingsData.motion_preference)
     }
@@ -209,8 +157,6 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
     async (payload) => {
       try {
         await updateSettings.mutateAsync(payload)
-        setSaved(true)
-        setTimeout(() => setSaved(false), 2000)
       } catch (err) {
         console.error('Failed to save settings:', err)
       }
@@ -230,18 +176,11 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
         persona_enabled: personaDraft.enabled,
       })
 
-      if (personaDraft.enabled && personaDraft.userRole && personaDraft.aiRole && aiKey) {
-        await regenerateCopy(
-          aiKey,
-          provider,
-          {
-            ...personaDraft,
-            hue: deriveHue(personaDraft.userRole, personaDraft.aiRole),
-          },
-          { baseUrl: customBaseUrl, model: customModel }
-        )
-      }
-
+      // P3 removed the browser-visible provider config this call used to read
+      // (`ai_provider` / `ai_base_url` / `ai_model` are gone with the columns),
+      // so the persona is SAVED but the AI rewrite is not attempted from here:
+      // `regenerateCopy` moves behind the door in P5 (#523 P5). Keeping a call
+      // with no provider would send a stale browser key to a guessed vendor.
       setPersonaApplied(true)
       setTimeout(() => setPersonaApplied(false), 2000)
     } catch (err) {
@@ -250,39 +189,6 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
       )
     } finally {
       setPersonaLoading(false)
-    }
-  }
-
-  const save = async () => {
-    // Always persist both fields so switching away from Custom resets them —
-    // stale values would otherwise leak into later provider calls.
-    const payload = {
-      ai_key: draft.trim(),
-      ai_provider: provider,
-      ai_base_url: customBaseUrl.trim(),
-      ai_model: customModel.trim(),
-      ai_vision_model: customVisionModel.trim(),
-      ai_thinking_level: thinkingLevel,
-    }
-    setAiKey(draft.trim() || null)
-    setTestOk(null)
-    await saveSettings(payload)
-  }
-
-  const test = async () => {
-    setTesting(true)
-    setTestOk(null)
-    try {
-      await testAiKey(
-        provider,
-        draft || undefined,
-        provider === 'custom' ? customBaseUrl : undefined
-      )
-      setTestOk(true)
-    } catch {
-      setTestOk(false)
-    } finally {
-      setTesting(false)
     }
   }
 
@@ -339,179 +245,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
         </p>
       </div>
 
-      <section className="mt-8">
-        <div className="flex items-baseline justify-between gap-4 mb-4">
-          <h2 className="text-base">{t('settings.aiApiKey')}</h2>
-        </div>
-        <Panel>
-          {settingsLoading ? (
-            <SkeletonRows n={3} />
-          ) : (
-            <div className="flex flex-col">
-              <Setting title={t('settings.provider')} desc={t('settings.providerDesc')} stack>
-                <select
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
-                  className="w-full sm:w-auto"
-                  aria-label={t('settings.aria.provider')}
-                >
-                  <option value="opencode">OpenCode</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="gemini">Gemini</option>
-                  <option value="ollama">Ollama Cloud</option>
-                  <option value="custom">{t('settings.customProvider')}</option>
-                </select>
-              </Setting>
-
-              {provider === 'custom' && (
-                <Setting
-                  title={t('settings.customBaseUrl')}
-                  desc={t('settings.customBaseUrlDesc')}
-                  stack
-                >
-                  <InlineInput
-                    value={customBaseUrl}
-                    onChange={setCustomBaseUrl}
-                    onSubmit={save}
-                    placeholder="https://api.example.com/v1"
-                    ariaLabel={t('settings.customBaseUrl')}
-                    action={
-                      <>
-                        <IconCheck size={15} /> {t('settings.save')}
-                      </>
-                    }
-                  />
-                </Setting>
-              )}
-
-              <Setting
-                title={t('settings.model')}
-                desc={
-                  provider === 'custom' ? t('settings.customModelDesc') : t('settings.modelDesc')
-                }
-                stack
-              >
-                <InlineInput
-                  value={customModel}
-                  onChange={setCustomModel}
-                  onSubmit={save}
-                  placeholder={AI_PROVIDER_DEFAULTS[provider]}
-                  ariaLabel={t('settings.model')}
-                  action={
-                    <>
-                      <IconCheck size={15} /> {t('settings.save')}
-                    </>
-                  }
-                />
-              </Setting>
-
-              {/* Issue #433: the vision model the vault's document OCR uses —
-                  same validation/storage path as the text model above. */}
-              <Setting title={t('settings.visionModel')} desc={t('settings.visionModelDesc')} stack>
-                <InlineInput
-                  value={customVisionModel}
-                  onChange={setCustomVisionModel}
-                  onSubmit={save}
-                  placeholder={t('settings.visionModelPlaceholder')}
-                  ariaLabel={t('settings.visionModel')}
-                  action={
-                    <>
-                      <IconCheck size={15} /> {t('settings.save')}
-                    </>
-                  }
-                />
-              </Setting>
-
-              <Setting title={t('settings.thinking')} desc={t('settings.thinkingDesc')} stack>
-                <select
-                  value={thinkingLevel}
-                  onChange={(e) => setThinkingLevel(e.target.value)}
-                  className="w-full sm:w-auto"
-                  aria-label={t('settings.thinking')}
-                >
-                  <option value="">{t('settings.thinkingDefault')}</option>
-                  <option value="low">{t('settings.thinkingLow')}</option>
-                  <option value="medium">{t('settings.thinkingMedium')}</option>
-                  <option value="high">{t('settings.thinkingHigh')}</option>
-                </select>
-              </Setting>
-
-              <Setting title={t('settings.apiKey')} desc={t('settings.apiKeyDesc')} stack>
-                <InlineInput
-                  type="password"
-                  value={draft}
-                  onChange={setDraft}
-                  onSubmit={test}
-                  placeholder={
-                    settingsData?.has_ai_key
-                      ? t('settings.apiKeyChangePlaceholder')
-                      : t('settings.apiKeyPlaceholder')
-                  }
-                  ariaLabel={t('settings.apiKey')}
-                  disabled={!draft || testing}
-                  action={
-                    testing ? (
-                      <>
-                        <IconBolt size={15} className="animate-spin" /> {t('settings.test')}
-                      </>
-                    ) : (
-                      <>
-                        <IconCheck size={15} /> {t('settings.test')}
-                      </>
-                    )
-                  }
-                />
-              </Setting>
-
-              {testOk === true && (
-                <Setting
-                  title={<span className="text-ok">{t('settings.connectionSuccess')}</span>}
-                  desc={t('settings.connectionSuccessDesc')}
-                  highlight="ok"
-                />
-              )}
-              {testOk === false && (
-                <Setting
-                  title={
-                    <span className="text-warn">
-                      {t('settings.connectionFailed', 'Connection failed')}
-                    </span>
-                  }
-                  desc={t('settings.connectionFailedDesc', 'Check your API key and try again.')}
-                  highlight="warn"
-                />
-              )}
-
-              <Setting
-                title={t('settings.status')}
-                desc={
-                  settingsData?.has_ai_key
-                    ? t('settings.active')
-                    : settingsData?.server_ai_available
-                      ? t('settings.inactiveServer')
-                      : t('settings.inactive')
-                }
-              >
-                <Button
-                  size="sm"
-                  onClick={save}
-                  disabled={updateSettings.isPending}
-                  data-testid="save-key-btn"
-                >
-                  {saved ? (
-                    <>
-                      <IconCheck size={15} /> {t('settings.saved')}
-                    </>
-                  ) : (
-                    t('settings.saveKey')
-                  )}
-                </Button>
-              </Setting>
-            </div>
-          )}
-        </Panel>
-      </section>
+      <AiSettingsSection isOnline={isOnline} />
 
       <section className="mt-8">
         <div className="flex items-baseline justify-between gap-4 mb-4">
@@ -608,13 +342,7 @@ export function Settings({ aiKey, setAiKey, motion, setMotion }) {
                 </div>
               </Setting>
 
-              <Setting
-                desc={
-                  <span className="text-xs">
-                    {aiKey ? t('settings.personaInfoWithKey') : t('settings.personaInfoNoKey')}
-                  </span>
-                }
-              />
+              <Setting desc={<span className="text-xs">{t('settings.personaInfo')}</span>} />
 
               {personaError && (
                 <Setting

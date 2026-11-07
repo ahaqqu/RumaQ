@@ -262,19 +262,12 @@
                   "required": [
                     "motion_preference",
                     "language",
-                    "ai_provider",
-                    "ai_base_url",
-                    "ai_model",
-                    "ai_vision_model",
-                    "ai_thinking_level",
                     "persona_user_role",
                     "persona_ai_role",
                     "persona_enabled",
                     "theme_hue",
                     "active_household_id",
                     "active_household_name",
-                    "has_ai_key",
-                    "server_ai_available",
                     "ai_providers",
                     "ai_capabilities",
                     "ai_status"
@@ -284,21 +277,6 @@
                       "type": "string"
                     },
                     "language": {
-                      "type": ["string", "null"]
-                    },
-                    "ai_provider": {
-                      "type": ["string", "null"]
-                    },
-                    "ai_base_url": {
-                      "type": ["string", "null"]
-                    },
-                    "ai_model": {
-                      "type": ["string", "null"]
-                    },
-                    "ai_vision_model": {
-                      "type": ["string", "null"]
-                    },
-                    "ai_thinking_level": {
                       "type": ["string", "null"]
                     },
                     "persona_user_role": {
@@ -318,13 +296,6 @@
                     },
                     "active_household_name": {
                       "type": ["string", "null"]
-                    },
-                    "has_ai_key": {
-                      "type": "boolean"
-                    },
-                    "server_ai_available": {
-                      "type": "boolean",
-                      "description": "Retired by D8 (#523 P1): always false; removed in P3 with the UI option that reads it."
                     },
                     "ai_providers": {
                       "type": "array",
@@ -505,32 +476,8 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
+                "description": "Preference fields only. AI configuration lives at /api/ai/providers and /api/ai/capabilities; the legacy ai_* fields are gone with the columns migration 0042 dropped (#523 P3).",
                 "properties": {
-                  "ai_provider": {
-                    "type": "string",
-                    "enum": ["opencode", "openai", "anthropic", "gemini", "ollama", "custom"]
-                  },
-                  "ai_key": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "ai_base_url": {
-                    "type": "string",
-                    "maxLength": 500
-                  },
-                  "ai_model": {
-                    "type": "string",
-                    "maxLength": 200
-                  },
-                  "ai_vision_model": {
-                    "type": "string",
-                    "maxLength": 200,
-                    "description": "Vision model for vault document OCR (issue #433); empty/omitted falls back to ai_model"
-                  },
-                  "ai_thinking_level": {
-                    "type": "string",
-                    "enum": ["low", "medium", "high", ""]
-                  },
                   "persona_user_role": {
                     "type": "string"
                   },
@@ -569,10 +516,143 @@
         }
       }
     },
-    "/api/ai-key/test": {
+    "/api/ai/presets": {
+      "get": {
+        "operationId": "getApiAiPresets",
+        "description": "Lists the AI provider presets a household MAY add: id, label, wire kind and canonical base URL only. Seeds nothing, preselects nothing, defines no default, and carries no model ids — a model is owner-typed data on a provider row (#523 P3, plan §4.1/§4.5).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["presets"],
+                  "properties": {
+                    "presets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["id", "label", "kind", "base_url"],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": ["openai-compatible", "anthropic", "gemini", "questions"]
+                          },
+                          "base_url": {
+                            "type": ["string", "null"],
+                            "description": "Canonical endpoint; null when the household must supply one"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/ai/providers": {
+      "get": {
+        "operationId": "getApiAiProviders",
+        "description": "Lists the acting household's AI providers. Every member may read it; `can_manage` is the household role, so a member is never offered a control that would 403. No response path carries key material — `has_key` is the only signal (#523 P3).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["can_manage", "managed_by", "providers"],
+                  "properties": {
+                    "can_manage": {
+                      "type": "boolean"
+                    },
+                    "managed_by": {
+                      "type": ["string", "null"],
+                      "description": "The household owner's display name, for the member's read-only line"
+                    },
+                    "providers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "label",
+                          "kind",
+                          "preset",
+                          "base_url",
+                          "default_model",
+                          "has_key",
+                          "created_at",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": ["openai-compatible", "anthropic", "gemini", "questions"]
+                          },
+                          "preset": {
+                            "type": ["string", "null"]
+                          },
+                          "base_url": {
+                            "type": ["string", "null"]
+                          },
+                          "default_model": {
+                            "type": ["string", "null"]
+                          },
+                          "has_key": {
+                            "type": "boolean"
+                          },
+                          "created_at": {
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
       "post": {
-        "operationId": "postApiAiKeyTest",
-        "description": "Validates an AI provider API key.",
+        "operationId": "postApiAiProviders",
+        "description": "Adds an AI provider to the acting household. Owner-only (403 for a member). The key is write-only and sealed with the provider row's id as additional authenticated data — no endpoint ever returns it. 409 on a duplicate label (case-insensitive), 400 past the ten-provider cap or when the row would have no endpoint.",
         "security": [
           {
             "cookieAuth": []
@@ -584,19 +664,149 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["provider"],
+                "required": ["label", "kind", "api_key"],
+                "additionalProperties": false,
                 "properties": {
-                  "provider": {
+                  "label": {
                     "type": "string",
-                    "enum": ["opencode", "openai", "anthropic", "gemini", "ollama", "custom"]
+                    "minLength": 1,
+                    "maxLength": 60
                   },
-                  "key": {
+                  "kind": {
                     "type": "string",
-                    "minLength": 1
+                    "enum": ["openai-compatible", "anthropic", "gemini", "questions"]
+                  },
+                  "preset": {
+                    "type": "string",
+                    "maxLength": 40
                   },
                   "base_url": {
                     "type": "string",
                     "maxLength": 500
+                  },
+                  "default_model": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Optional provider-level default; a capability with a blank model inherits it"
+                  },
+                  "api_key": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["provider"],
+                  "properties": {
+                    "provider": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "label",
+                        "kind",
+                        "preset",
+                        "base_url",
+                        "default_model",
+                        "has_key",
+                        "created_at",
+                        "updated_at"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": ["openai-compatible", "anthropic", "gemini", "questions"]
+                        },
+                        "preset": {
+                          "type": ["string", "null"]
+                        },
+                        "base_url": {
+                          "type": ["string", "null"]
+                        },
+                        "default_model": {
+                          "type": ["string", "null"]
+                        },
+                        "has_key": {
+                          "type": "boolean"
+                        },
+                        "created_at": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error, provider cap, or no resolvable endpoint"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only household owners can change AI settings"
+          },
+          "409": {
+            "description": "Duplicate provider label"
+          }
+        }
+      }
+    },
+    "/api/ai/providers/{id}": {
+      "patch": {
+        "operationId": "patchApiAiProvidersById",
+        "description": "Updates one household AI provider. Owner-only. The key stays write-only: an omitted `api_key` leaves the stored one, `api_key: \"\"` clears it (409 while a capability uses the provider), and any value re-seals it. `base_url: \"\"` / `default_model: \"\"` clear those columns. 404 for a provider id from another household; 409 on a duplicate label.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": ["openai-compatible", "anthropic", "gemini", "questions"]
+                  },
+                  "base_url": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "default_model": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "api_key": {
+                    "type": "string"
                   }
                 }
               }
@@ -605,15 +815,547 @@
         },
         "responses": {
           "200": {
-            "description": "OK - key is valid"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["provider"],
+                  "properties": {
+                    "provider": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "label",
+                        "kind",
+                        "preset",
+                        "base_url",
+                        "default_model",
+                        "has_key",
+                        "created_at",
+                        "updated_at"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": ["openai-compatible", "anthropic", "gemini", "questions"]
+                        },
+                        "preset": {
+                          "type": ["string", "null"]
+                        },
+                        "base_url": {
+                          "type": ["string", "null"]
+                        },
+                        "default_model": {
+                          "type": ["string", "null"]
+                        },
+                        "has_key": {
+                          "type": "boolean"
+                        },
+                        "created_at": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
           "400": {
-            "description": "Validation error"
+            "description": "Validation error or a row that would have no endpoint"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only household owners can change AI settings"
+          },
+          "404": {
+            "description": "Provider not found in this household"
+          },
+          "409": {
+            "description": "Duplicate label, or an edit that would strand an assigned capability: clearing its key, or clearing the default model that assignment inherits"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteApiAiProvidersById",
+        "description": "Deletes one household AI provider. Owner-only. Returns the capabilities the provider was serving: those assignments are cleared in the same batch, so the UI can warn before the delete and the caller knows what became not configured.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["cleared"],
+                  "properties": {
+                    "cleared": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": ["decision", "reasoning", "vision"]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only household owners can change AI settings"
+          },
+          "404": {
+            "description": "Provider not found in this household"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/api/ai/providers/{id}/test": {
+      "post": {
+        "operationId": "postApiAiProvidersByIdTest",
+        "description": "Tests one household provider’s stored credentials with its own free probe: a `/models` listing for chat kinds, and an EMPTY-questions request for a typed (`questions`) endpoint, whose expected 400 proves authentication without buying an answer. Owner-only (it uses the household credential) and rate-limited per user. The answer is `{ ok: true }` or `{ ok: false, code }` — never the provider body.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Probe finished — `ok` says whether the key authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok"],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "Failure code (auth, rate_limited, timeout, provider_error, invalid_response, unsupported, unreadable_key) — present only when ok is false"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The provider has no key or no resolvable endpoint"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only household owners can change AI settings"
+          },
+          "404": {
+            "description": "Provider not found in this household"
+          },
+          "429": {
+            "description": "Too many connection tests"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/api/ai/capabilities": {
+      "get": {
+        "operationId": "getApiAiCapabilities",
+        "description": "Returns the acting household's three capability assignments: the provider each points at, the model the resolver will actually call (the assignment's model, else the provider's default) and the capability's usable status ('household' = a call would reach a provider, 'none' = 402). Every member may read it (#523 P3).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["can_manage", "capabilities", "status"],
+                  "properties": {
+                    "can_manage": {
+                      "type": "boolean"
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "required": ["decision", "reasoning", "vision"],
+                      "properties": {
+                        "decision": {
+                          "type": "object",
+                          "required": [
+                            "provider_id",
+                            "provider_label",
+                            "model",
+                            "effective_model",
+                            "thinking_level",
+                            "source"
+                          ],
+                          "properties": {
+                            "provider_id": {
+                              "type": ["string", "null"]
+                            },
+                            "provider_label": {
+                              "type": ["string", "null"]
+                            },
+                            "model": {
+                              "type": ["string", "null"],
+                              "description": "The assignment's own model; null = inherit the provider's default_model"
+                            },
+                            "effective_model": {
+                              "type": ["string", "null"],
+                              "description": "What the resolver will call: model ?? the provider default; null = not configured"
+                            },
+                            "thinking_level": {
+                              "type": ["string", "null"]
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": ["household", "none"]
+                            }
+                          }
+                        },
+                        "reasoning": {
+                          "type": "object",
+                          "required": [
+                            "provider_id",
+                            "provider_label",
+                            "model",
+                            "effective_model",
+                            "thinking_level",
+                            "source"
+                          ],
+                          "properties": {
+                            "provider_id": {
+                              "type": ["string", "null"]
+                            },
+                            "provider_label": {
+                              "type": ["string", "null"]
+                            },
+                            "model": {
+                              "type": ["string", "null"],
+                              "description": "The assignment's own model; null = inherit the provider's default_model"
+                            },
+                            "effective_model": {
+                              "type": ["string", "null"],
+                              "description": "What the resolver will call: model ?? the provider default; null = not configured"
+                            },
+                            "thinking_level": {
+                              "type": ["string", "null"]
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": ["household", "none"]
+                            }
+                          }
+                        },
+                        "vision": {
+                          "type": "object",
+                          "required": [
+                            "provider_id",
+                            "provider_label",
+                            "model",
+                            "effective_model",
+                            "thinking_level",
+                            "source"
+                          ],
+                          "properties": {
+                            "provider_id": {
+                              "type": ["string", "null"]
+                            },
+                            "provider_label": {
+                              "type": ["string", "null"]
+                            },
+                            "model": {
+                              "type": ["string", "null"],
+                              "description": "The assignment's own model; null = inherit the provider's default_model"
+                            },
+                            "effective_model": {
+                              "type": ["string", "null"],
+                              "description": "What the resolver will call: model ?? the provider default; null = not configured"
+                            },
+                            "thinking_level": {
+                              "type": ["string", "null"]
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": ["household", "none"]
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "status": {
+                      "type": "object",
+                      "required": ["decision", "reasoning", "vision"],
+                      "properties": {
+                        "decision": {
+                          "type": "string",
+                          "enum": ["household", "none"]
+                        },
+                        "reasoning": {
+                          "type": "string",
+                          "enum": ["household", "none"]
+                        },
+                        "vision": {
+                          "type": "string",
+                          "enum": ["household", "none"]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized"
           }
         }
+      }
+    },
+    "/api/ai/capabilities/{capability}": {
+      "put": {
+        "operationId": "putApiAiCapabilitiesByCapability",
+        "description": "Assigns one capability to one of the household's providers (upsert — one assignment per capability). Owner-only. `model` blank inherits the provider's default model; both blank is the normal not-configured state, not an error. 400 when the provider's wire cannot serve the capability, when a thinking level is sent for `vision` or a typed provider, or when the provider has no usable key/endpoint; 404 when the provider id is not this household's.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["provider_id"],
+                "additionalProperties": false,
+                "properties": {
+                  "provider_id": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Blank = inherit the provider default"
+                  },
+                  "thinking_level": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", ""]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["capability", "status"],
+                  "properties": {
+                    "capability": {
+                      "type": "object",
+                      "required": [
+                        "provider_id",
+                        "provider_label",
+                        "model",
+                        "effective_model",
+                        "thinking_level",
+                        "source"
+                      ],
+                      "properties": {
+                        "provider_id": {
+                          "type": ["string", "null"]
+                        },
+                        "provider_label": {
+                          "type": ["string", "null"]
+                        },
+                        "model": {
+                          "type": ["string", "null"],
+                          "description": "The assignment's own model; null = inherit the provider's default_model"
+                        },
+                        "effective_model": {
+                          "type": ["string", "null"],
+                          "description": "What the resolver will call: model ?? the provider default; null = not configured"
+                        },
+                        "thinking_level": {
+                          "type": ["string", "null"]
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": ["household", "none"]
+                        }
+                      }
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["household", "none"]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Kind/capability mismatch, forbidden thinking level, or unusable provider"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only household owners can change AI settings"
+          },
+          "404": {
+            "description": "Provider not found in this household"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "capability",
+            "required": true
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteApiAiCapabilitiesByCapability",
+        "description": "Clears one capability assignment (the capability becomes not configured: 402 on its routes). Owner-only and idempotent — clearing an unassigned capability is a 200, not a 404.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cleared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["capability", "status"],
+                  "properties": {
+                    "capability": {
+                      "type": "object",
+                      "required": [
+                        "provider_id",
+                        "provider_label",
+                        "model",
+                        "effective_model",
+                        "thinking_level",
+                        "source"
+                      ],
+                      "properties": {
+                        "provider_id": {
+                          "type": ["string", "null"]
+                        },
+                        "provider_label": {
+                          "type": ["string", "null"]
+                        },
+                        "model": {
+                          "type": ["string", "null"],
+                          "description": "The assignment's own model; null = inherit the provider's default_model"
+                        },
+                        "effective_model": {
+                          "type": ["string", "null"],
+                          "description": "What the resolver will call: model ?? the provider default; null = not configured"
+                        },
+                        "thinking_level": {
+                          "type": ["string", "null"]
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": ["household", "none"]
+                        }
+                      }
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["household", "none"]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown capability"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Only household owners can change AI settings"
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "capability",
+            "required": true
+          }
+        ]
       }
     },
     "/api/ai/usage": {
@@ -637,8 +1379,7 @@
                     "input_tokens",
                     "output_tokens",
                     "cached_tokens",
-                    "provider",
-                    "key_source"
+                    "provider"
                   ],
                   "properties": {
                     "used": {
@@ -657,10 +1398,6 @@
                     },
                     "provider": {
                       "type": ["string", "null"]
-                    },
-                    "key_source": {
-                      "type": "string",
-                      "enum": ["user", "server"]
                     }
                   }
                 }

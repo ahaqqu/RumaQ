@@ -4,9 +4,12 @@ import { Settings } from '../pages/Settings.jsx'
 import { RouteError } from '../components/RouteError.jsx'
 
 function RouteComponent() {
-  const { aiKey, setAiKey, motion, setMotion } = useApp()
+  const { motion, setMotion } = useApp()
 
-  return <Settings aiKey={aiKey} setAiKey={setAiKey} motion={motion} setMotion={setMotion} />
+  // #523 P3: Settings no longer takes the browser-held AI key. The page reads
+  // the household's providers/capabilities from the API; the last browser-side
+  // provider call (persona rewrite) returns through the door in P5.
+  return <Settings motion={motion} setMotion={setMotion} />
 }
 
 export const Route = createFileRoute('/settings')({

@@ -31,6 +31,33 @@ export async function loginViaUi(page) {
   await expect(page.locator('header').first()).toBeVisible({ timeout: 10_000 })
 }
 
+// The app persists its query cache in IndexedDB (idb-keyval) through TanStack's
+// throttled async persister, and hydrates it on load. A reload that lands inside
+// the throttle window therefore restores a snapshot taken BEFORE the action the
+// scenario just performed — the page shows pre-action data even though the server
+// is correct. Steps that assert SERVER persistence clear the snapshot first, so
+// the reload reads the API; that is exactly what "persists" claims.
+export async function clearPersistedQueryCache(page) {
+  await page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open('keyval-store')
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error)
+    })
+    if (!db.objectStoreNames.contains('keyval')) {
+      db.close()
+      return
+    }
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('keyval', 'readwrite')
+      tx.objectStore('keyval').clear()
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+    db.close()
+  })
+}
+
 Given('I am logged in as the seeded test user', async ({ page }) => {
   await loginViaUi(page)
 })

@@ -25,7 +25,7 @@ defineFeature(feature, (test) => {
     })
   })
 
-  test('GET settings returns public fields without AI key', ({ given, when, then, and }) => {
+  test('GET settings returns preferences and an empty AI block', ({ given, when, then, and }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })
@@ -38,15 +38,20 @@ defineFeature(feature, (test) => {
     then('the response status should be 200', () => {
       ctx.expectStatus(200)
     })
-    and('the settings should include motion_preference and has_ai_key', () => {
+    and('the settings should include motion_preference and the AI block', () => {
       ctx.expectSettingsShape()
     })
-    and('has_ai_key should be false', () => {
-      ctx.expectHasAiKey(false)
+    and('every AI capability should be not configured', () => {
+      for (const capability of ['decision', 'reasoning', 'vision']) {
+        ctx.expectAiStatus(capability, 'none')
+      }
+    })
+    and('the response should not contain key material', () => {
+      ctx.expectNoKeyMaterialInResponse()
     })
   })
 
-  test('PATCH settings encrypts the AI key', ({ given, when, then, and }) => {
+  test('PATCH settings rejects the retired AI key fields', ({ given, when, then, and }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })
@@ -56,14 +61,8 @@ defineFeature(feature, (test) => {
     when(/I send a (PATCH) request to (\S+) with body/, async (method, path, body) => {
       await ctx.sendRequestWithBody(method, path, JSON.parse(body))
     })
-    then('the response status should be 200', () => {
-      ctx.expectStatus(200)
-    })
-    and('has_ai_key should be true', () => {
-      ctx.expectHasAiKey(true)
-    })
-    and('the response should not contain the plain AI key', () => {
-      ctx.expectNoAiKeyInResponse()
+    then('the response status should be 400', () => {
+      ctx.expectStatus(400)
     })
   })
 
@@ -88,15 +87,20 @@ defineFeature(feature, (test) => {
     })
   })
 
-  test('GET settings returns has_ai_key true after key is saved', ({ given, when, then, and }) => {
+  test('A configured provider and capability show up in GET settings', ({
+    given,
+    when,
+    then,
+    and,
+  }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })
     and('I am authenticated as a test user', async () => {
       await ctx.authenticate()
     })
-    and(/I send a (PATCH) request to (\S+) with body/, async (method, path, body) => {
-      await ctx.sendRequestWithBody(method, path, JSON.parse(body))
+    and('the user has a provider configured for "reasoning"', async () => {
+      await ctx.configureAi(['reasoning'])
     })
     when(/I send a (GET) request to (\S+)/, async (method, path) => {
       await ctx.sendRequest(method, path)
@@ -104,8 +108,14 @@ defineFeature(feature, (test) => {
     then('the response status should be 200', () => {
       ctx.expectStatus(200)
     })
-    and('has_ai_key should be true', () => {
-      ctx.expectHasAiKey(true)
+    and('the settings should include motion_preference and the AI block', () => {
+      ctx.expectSettingsShape()
+    })
+    and('the reasoning capability should resolve to a household provider', () => {
+      ctx.expectAiStatus('reasoning', 'household')
+    })
+    and('the response should not contain key material', () => {
+      ctx.expectNoKeyMaterialInResponse()
     })
   })
 })

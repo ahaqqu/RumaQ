@@ -124,7 +124,42 @@ export interface paths {
     patch: operations['patchApiSettings']
     trace?: never
   }
-  '/api/ai-key/test': {
+  '/api/ai/presets': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Lists the AI provider presets a household MAY add: id, label, wire kind and canonical base URL only. Seeds nothing, preselects nothing, defines no default, and carries no model ids — a model is owner-typed data on a provider row (#523 P3, plan §4.1/§4.5). */
+    get: operations['getApiAiPresets']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/ai/providers': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Lists the acting household's AI providers. Every member may read it; `can_manage` is the household role, so a member is never offered a control that would 403. No response path carries key material — `has_key` is the only signal (#523 P3). */
+    get: operations['getApiAiProviders']
+    put?: never
+    /** @description Adds an AI provider to the acting household. Owner-only (403 for a member). The key is write-only and sealed with the provider row's id as additional authenticated data — no endpoint ever returns it. 409 on a duplicate label (case-insensitive), 400 past the ten-provider cap or when the row would have no endpoint. */
+    post: operations['postApiAiProviders']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/ai/providers/{id}': {
     parameters: {
       query?: never
       header?: never
@@ -133,9 +168,62 @@ export interface paths {
     }
     get?: never
     put?: never
-    /** @description Validates an AI provider API key. */
-    post: operations['postApiAiKeyTest']
+    post?: never
+    /** @description Deletes one household AI provider. Owner-only. Returns the capabilities the provider was serving: those assignments are cleared in the same batch, so the UI can warn before the delete and the caller knows what became not configured. */
+    delete: operations['deleteApiAiProvidersById']
+    options?: never
+    head?: never
+    /** @description Updates one household AI provider. Owner-only. The key stays write-only: an omitted `api_key` leaves the stored one, `api_key: ""` clears it (409 while a capability uses the provider), and any value re-seals it. `base_url: ""` / `default_model: ""` clear those columns. 404 for a provider id from another household; 409 on a duplicate label. */
+    patch: operations['patchApiAiProvidersById']
+    trace?: never
+  }
+  '/api/ai/providers/{id}/test': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** @description Tests one household provider’s stored credentials with its own free probe: a `/models` listing for chat kinds, and an EMPTY-questions request for a typed (`questions`) endpoint, whose expected 400 proves authentication without buying an answer. Owner-only (it uses the household credential) and rate-limited per user. The answer is `{ ok: true }` or `{ ok: false, code }` — never the provider body. */
+    post: operations['postApiAiProvidersByIdTest']
     delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/ai/capabilities': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Returns the acting household's three capability assignments: the provider each points at, the model the resolver will actually call (the assignment's model, else the provider's default) and the capability's usable status ('household' = a call would reach a provider, 'none' = 402). Every member may read it (#523 P3). */
+    get: operations['getApiAiCapabilities']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/ai/capabilities/{capability}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    /** @description Assigns one capability to one of the household's providers (upsert — one assignment per capability). Owner-only. `model` blank inherits the provider's default model; both blank is the normal not-configured state, not an error. 400 when the provider's wire cannot serve the capability, when a thinking level is sent for `vision` or a typed provider, or when the provider has no usable key/endpoint; 404 when the provider id is not this household's. */
+    put: operations['putApiAiCapabilitiesByCapability']
+    post?: never
+    /** @description Clears one capability assignment (the capability becomes not configured: 402 on its routes). Owner-only and idempotent — clearing an unassigned capability is a 200, not a 404. */
+    delete: operations['deleteApiAiCapabilitiesByCapability']
     options?: never
     head?: never
     patch?: never
@@ -1499,20 +1587,12 @@ export interface operations {
           'application/json': {
             motion_preference: string
             language: string | null
-            ai_provider: string | null
-            ai_base_url: string | null
-            ai_model: string | null
-            ai_vision_model: string | null
-            ai_thinking_level: string | null
             persona_user_role: string | null
             persona_ai_role: string | null
             persona_enabled: boolean
             theme_hue: number | null
             active_household_id: string
             active_household_name: string | null
-            has_ai_key: boolean
-            /** @description Retired by D8 (#523 P1): always false; removed in P3 with the UI option that reads it. */
-            server_ai_available: boolean
             /** @description The household's provider rows (#523 P1). Never includes key material — has_key is the only signal. */
             ai_providers: {
               id: string
@@ -1583,15 +1663,6 @@ export interface operations {
     requestBody?: {
       content: {
         'application/json': {
-          /** @enum {string} */
-          ai_provider?: 'opencode' | 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'custom'
-          ai_key?: string
-          ai_base_url?: string
-          ai_model?: string
-          /** @description Vision model for vault document OCR (issue #433); empty/omitted falls back to ai_model */
-          ai_vision_model?: string
-          /** @enum {string} */
-          ai_thinking_level?: 'low' | 'medium' | 'high' | ''
           persona_user_role?: string
           persona_ai_role?: string
           persona_enabled?: boolean
@@ -1627,7 +1698,86 @@ export interface operations {
       }
     }
   }
-  postApiAiKeyTest: {
+  getApiAiPresets: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            presets: {
+              id: string
+              label: string
+              /** @enum {string} */
+              kind: 'openai-compatible' | 'anthropic' | 'gemini' | 'questions'
+              /** @description Canonical endpoint; null when the household must supply one */
+              base_url: string | null
+            }[]
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiAiProviders: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            can_manage: boolean
+            /** @description The household owner's display name, for the member's read-only line */
+            managed_by: string | null
+            providers: {
+              id: string
+              label: string
+              /** @enum {string} */
+              kind: 'openai-compatible' | 'anthropic' | 'gemini' | 'questions'
+              preset: string | null
+              base_url: string | null
+              default_model: string | null
+              has_key: boolean
+              created_at: string
+              updated_at: string
+            }[]
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  postApiAiProviders: {
     parameters: {
       query?: never
       header?: never
@@ -1637,22 +1787,41 @@ export interface operations {
     requestBody: {
       content: {
         'application/json': {
+          label: string
           /** @enum {string} */
-          provider: 'opencode' | 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'custom'
-          key?: string
+          kind: 'openai-compatible' | 'anthropic' | 'gemini' | 'questions'
+          preset?: string
           base_url?: string
+          /** @description Optional provider-level default; a capability with a blank model inherits it */
+          default_model?: string
+          api_key: string
         }
       }
     }
     responses: {
-      /** @description OK - key is valid */
-      200: {
+      /** @description Created */
+      201: {
         headers: {
           [name: string]: unknown
         }
-        content?: never
+        content: {
+          'application/json': {
+            provider: {
+              id: string
+              label: string
+              /** @enum {string} */
+              kind: 'openai-compatible' | 'anthropic' | 'gemini' | 'questions'
+              preset: string | null
+              base_url: string | null
+              default_model: string | null
+              has_key: boolean
+              created_at: string
+              updated_at: string
+            }
+          }
+        }
       }
-      /** @description Validation error */
+      /** @description Validation error, provider cap, or no resolvable endpoint */
       400: {
         headers: {
           [name: string]: unknown
@@ -1661,6 +1830,410 @@ export interface operations {
       }
       /** @description Unauthorized */
       401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only household owners can change AI settings */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Duplicate provider label */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  deleteApiAiProvidersById: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Deleted */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            cleared: ('decision' | 'reasoning' | 'vision')[]
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only household owners can change AI settings */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Provider not found in this household */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  patchApiAiProvidersById: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          label?: string
+          /** @enum {string} */
+          kind?: 'openai-compatible' | 'anthropic' | 'gemini' | 'questions'
+          base_url?: string
+          default_model?: string
+          api_key?: string
+        }
+      }
+    }
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            provider: {
+              id: string
+              label: string
+              /** @enum {string} */
+              kind: 'openai-compatible' | 'anthropic' | 'gemini' | 'questions'
+              preset: string | null
+              base_url: string | null
+              default_model: string | null
+              has_key: boolean
+              created_at: string
+              updated_at: string
+            }
+          }
+        }
+      }
+      /** @description Validation error or a row that would have no endpoint */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only household owners can change AI settings */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Provider not found in this household */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Duplicate label, or an edit that would strand an assigned capability: clearing its key, or clearing the default model that assignment inherits */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  postApiAiProvidersByIdTest: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Probe finished — `ok` says whether the key authenticated */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            ok: boolean
+            /** @description Failure code (auth, rate_limited, timeout, provider_error, invalid_response, unsupported, unreadable_key) — present only when ok is false */
+            code?: string
+          }
+        }
+      }
+      /** @description The provider has no key or no resolvable endpoint */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only household owners can change AI settings */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Provider not found in this household */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Too many connection tests */
+      429: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiAiCapabilities: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            can_manage: boolean
+            capabilities: {
+              decision: {
+                provider_id: string | null
+                provider_label: string | null
+                /** @description The assignment's own model; null = inherit the provider's default_model */
+                model: string | null
+                /** @description What the resolver will call: model ?? the provider default; null = not configured */
+                effective_model: string | null
+                thinking_level: string | null
+                /** @enum {string} */
+                source: 'household' | 'none'
+              }
+              reasoning: {
+                provider_id: string | null
+                provider_label: string | null
+                /** @description The assignment's own model; null = inherit the provider's default_model */
+                model: string | null
+                /** @description What the resolver will call: model ?? the provider default; null = not configured */
+                effective_model: string | null
+                thinking_level: string | null
+                /** @enum {string} */
+                source: 'household' | 'none'
+              }
+              vision: {
+                provider_id: string | null
+                provider_label: string | null
+                /** @description The assignment's own model; null = inherit the provider's default_model */
+                model: string | null
+                /** @description What the resolver will call: model ?? the provider default; null = not configured */
+                effective_model: string | null
+                thinking_level: string | null
+                /** @enum {string} */
+                source: 'household' | 'none'
+              }
+            }
+            status: {
+              /** @enum {string} */
+              decision: 'household' | 'none'
+              /** @enum {string} */
+              reasoning: 'household' | 'none'
+              /** @enum {string} */
+              vision: 'household' | 'none'
+            }
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  putApiAiCapabilitiesByCapability: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        capability: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          provider_id: string
+          /** @description Blank = inherit the provider default */
+          model?: string
+          /** @enum {string} */
+          thinking_level?: 'low' | 'medium' | 'high' | ''
+        }
+      }
+    }
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            capability: {
+              provider_id: string | null
+              provider_label: string | null
+              /** @description The assignment's own model; null = inherit the provider's default_model */
+              model: string | null
+              /** @description What the resolver will call: model ?? the provider default; null = not configured */
+              effective_model: string | null
+              thinking_level: string | null
+              /** @enum {string} */
+              source: 'household' | 'none'
+            }
+            /** @enum {string} */
+            status: 'household' | 'none'
+          }
+        }
+      }
+      /** @description Kind/capability mismatch, forbidden thinking level, or unusable provider */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only household owners can change AI settings */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Provider not found in this household */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  deleteApiAiCapabilitiesByCapability: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        capability: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Cleared */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            capability: {
+              provider_id: string | null
+              provider_label: string | null
+              /** @description The assignment's own model; null = inherit the provider's default_model */
+              model: string | null
+              /** @description What the resolver will call: model ?? the provider default; null = not configured */
+              effective_model: string | null
+              thinking_level: string | null
+              /** @enum {string} */
+              source: 'household' | 'none'
+            }
+            /** @enum {string} */
+            status: 'household' | 'none'
+          }
+        }
+      }
+      /** @description Unknown capability */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Only household owners can change AI settings */
+      403: {
         headers: {
           [name: string]: unknown
         }
@@ -1691,8 +2264,6 @@ export interface operations {
             /** @description Provider-reported cached input tokens; null when the provider reports none */
             cached_tokens: number | null
             provider: string | null
-            /** @enum {string} */
-            key_source: 'user' | 'server'
           }
         }
       }

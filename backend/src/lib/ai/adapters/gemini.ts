@@ -16,6 +16,7 @@ import {
   type AiAdapter,
   type DecisionAdapterRequest,
   type DecisionAdapterResult,
+  type ProbeRequest,
 } from './types.js'
 import type { AiContentPart, AiMessage, Capability, ThinkingLevel, TokenUsage } from '../types.js'
 
@@ -142,6 +143,24 @@ async function decide(req: DecisionAdapterRequest): Promise<DecisionAdapterResul
   return decideViaPrompt(LABEL, complete, req)
 }
 
+// Free authentication check (plan §4.6): the models listing uses the same API
+// key as generateContent and bills nothing. The endpoint is CANONICAL here for
+// the same reason it is in `complete` below: this wire builds its URL from
+// ENDPOINT, so probing a row's `base_url` would test an endpoint the call never
+// reaches (#523 P3 review A4). A `gemini` row's stored base URL is inert, exactly
+// as it is for the call path.
+async function probe(req: ProbeRequest): Promise<void> {
+  const res = await providerFetch(
+    LABEL,
+    `${ENDPOINT}/models?key=${encodeURIComponent(req.apiKey)}`,
+    {
+      method: 'GET',
+      signal: req.signal,
+    }
+  )
+  if (!res.ok) throw await responseError(LABEL, res)
+}
+
 export const geminiAdapter: AiAdapter = {
   kind: 'gemini',
   supports(_capability: Capability): boolean {
@@ -150,4 +169,5 @@ export const geminiAdapter: AiAdapter = {
   complete,
   decide,
   structured,
+  probe,
 }

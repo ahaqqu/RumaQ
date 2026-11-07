@@ -337,9 +337,10 @@ module that returns the decrypted key for a handle), hold an API key, contain
 a provider hostname, or `fetch` a model endpoint — a single fetch outside the door silently ignores
 the household's capability assignment, and a second writer would break "what did this household
 spend". `backend/src/__tests__/ai-boundary.test.ts` enforces the rule over the tree and fails on any
-new violation (it follows the plugin-boundary test's design, including the pinned legacy exemptions
-that P3/P4 delete). The frontend keeps the same boundary: it may call `/api/ai/*` and nothing else
-(the browser-side provider calls are removed in P5).
+new violation (it follows the plugin-boundary test's design; its legacy exemption lists are now
+**empty**, since P3 deleted the last transport and hostname carrier outside the door). The frontend
+keeps the same boundary: it may call `/api/ai/*` and nothing else (the browser-side provider calls are
+removed in P5).
 
 **Keys are bound to their row (D10).** `ai_providers.encrypted_key` is AES-GCM sealed with the
 `ai_provider:<row id>` additional authenticated data (`v2:` envelope), so a ciphertext copied onto
@@ -356,7 +357,7 @@ resolution bridge) remain as **deprecated thin shims** so no feature file change
 land; both are deleted in P4, when every call site resolves per capability and imports only
 `lib/ai/index.js`.
 
-Every completed AI call is recorded as one row in `ai_usage_events` (per-call granularity — what the 24h/7d/30d admin analytics and per-user cache hit rates need). Usage never caps a call: BYOK is the norm, and no rate limit is ever applied (issue #353; the owner reaffirmed this for the AI gateway, #523). Retention: a daily cron (`gateway.scheduled`, `cloudflare.config.ts`) deletes events older than 365 days. The effective model is the household's capability assignment — `ai_capabilities.model ?? ai_providers.default_model`, both owner-typed (#523); a capability with neither is not configured (402). The per-user `ai_model` / `ai_vision_model` / `ai_thinking_level` columns the old screen writes are inert from P1 until P3 drops them with that screen, and the backfill carries their values into the capability rows once (`ai_vision_model ?? ai_model` for vision).
+Every completed AI call is recorded as one row in `ai_usage_events` (per-call granularity — what the 24h/7d/30d admin analytics and per-user cache hit rates need). Usage never caps a call: BYOK is the norm, and no rate limit is ever applied (issue #353; the owner reaffirmed this for the AI gateway, #523). Retention: a daily cron (`gateway.scheduled`, `cloudflare.config.ts`) deletes events older than 365 days. The effective model is the household's capability assignment — `ai_capabilities.model ?? ai_providers.default_model`, both owner-typed (#523); a capability with neither is not configured (402). The old per-user `ai_provider` / `encrypted_ai_key` / `ai_base_url` / `ai_model` / `ai_vision_model` / `ai_thinking_level` columns are **gone** (migration 0042, P3): the backfill carried their values into the capability rows once (`ai_vision_model ?? ai_model` for vision), and a household edits its providers and assignments through `GET/POST/PATCH/DELETE /api/ai/providers`, `POST /api/ai/providers/:id/test`, and `GET/PUT/DELETE /api/ai/capabilities[/:capability]`, all owner-only for writes and member-readable. `GET /api/settings` no longer carries AI fields beyond the additive `ai_providers` / `ai_capabilities` / `ai_status` block; `PATCH /api/settings` rejects the retired AI keys (400).
 
 ## 8. Deployment
 

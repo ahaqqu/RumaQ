@@ -10,6 +10,18 @@ export { useStock, useUpdateStock } from './stock.js'
 export { useHome } from './home.js'
 export { useSettings, useUpdateSettings } from './settings.js'
 export { useUsage, useAdminAiUsage } from './usage.js'
+export {
+  aiProvidersQueryKey,
+  useAiProviders,
+  useAiPresets,
+  useAiCapabilities,
+  useCreateAiProvider,
+  useUpdateAiProvider,
+  useDeleteAiProvider,
+  useTestAiProvider,
+  useAssignAiCapability,
+  useClearAiCapability,
+} from './ai-settings.js'
 export { useLocations, useCreateLocation, useDeleteLocation } from './locations.js'
 export { useStores, useCreateStore, useDeleteStore } from './stores.js'
 export { usePlans, useGeneratePlan, useSavePlan, useUpdatePlanItem } from './plans.js'

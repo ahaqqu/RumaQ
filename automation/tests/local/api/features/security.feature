@@ -51,17 +51,15 @@ Feature: Cross-household security
     Then the response status should be 200
     And the plans array should be empty
 
-  Scenario: Settings response never contains AI key material
+  Scenario: AI key material never leaves the provider store
     Given the database has seed data
     And I am authenticated as a test user
-    And I send a PATCH request to /api/settings with body
-      """
-      {"ai_key": "sk-test-key-12345"}
-      """
+    And the user has a provider configured for "reasoning"
     When I send a GET request to /api/settings
     Then the response status should be 200
     And the response should not contain encrypted_ai_key
     And the response should not contain ai_key
+    And the provider list reports a key without exposing it
 
   # ahaqqu/RumaQ#528: the CSRF Origin guard runs in the gateway before any
   # handler, against the real proxy path the browser uses.

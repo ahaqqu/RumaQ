@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { usePlans, useGeneratePlan, useSavePlan, useUpdatePlanItem } from '../lib/queries/index.js'
+import { isAiConfigured } from '../lib/aiStatus.js'
 import { useSettings } from '../lib/queries/index.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { useApp } from '../context/AppContext.jsx'
@@ -36,7 +37,8 @@ export function Plan({ askAssistant, setView }) {
   const saveMutation = useSavePlan()
   const updateItemMutation = useUpdatePlanItem()
 
-  const hasAiKey = settings?.has_ai_key === true
+  // #523 P3: the household's reasoning capability replaces `has_ai_key`.
+  const hasAiKey = isAiConfigured(settings?.ai_status)
   const currency = settings?.currency || 'IDR'
 
   const activePlan = plansData?.plans?.[0] ?? null

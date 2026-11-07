@@ -85,13 +85,16 @@ so you waste less food, shop in fewer trips, and spend less.
 
 - Chat with an AI assistant about your household shopping.
 - One-tap prompts: plan this week, recommend the cheapest store, recipes for expiring items.
-- See AI usage status (calls today + token counts; usage is recorded but never capped — there is no platform key and no rate limit, #523).
+- See AI usage status (calls today + token counts; usage is recorded but never capped — there is no platform key and no rate limit, #523). Every call is funded by the household's own provider key.
 - Turn an assistant answer into a shopping plan in one tap.
 - The assistant answers use your household's real data (stock, history, prices).
 
 ### Personalize & configure (Settings)
 
-- Choose an AI provider (OpenCode/OpenAI/Anthropic/Gemini/Ollama Cloud/custom endpoint), set model, thinking level, and API key; test the connection; see usage (calls + tokens + cache hit rate).
+- **AI providers:** add up to ten of the household's own providers (label, wire protocol, optional vendor preset, base URL, optional default model, API key), edit them, delete one (a confirmation names the capabilities that will become not configured), and test a provider's connection — the answer is an outcome, never the provider's error body. The key is write-only: the list says "key saved", never the value. Nothing is preselected and there is no "use the server default" option: a household with nothing configured sees the empty state, and there is no provider until someone adds one.
+- **AI capabilities:** assign a provider to each of three fixed jobs — Decision (structured choices: review verdicts, classification, JSON answers), Reasoning (chat and shopping plans), and Vision (receipts and documents) — with an optional model per job (blank inherits the provider's default) and a thinking level for Decision and Reasoning. Nothing is preselected; a blank model everywhere means the capability is not configured and its feature says so; Vision has no thinking knob; the three rows only appear once a provider exists.
+- **Read-only for members:** a member sees the same providers, capabilities and resolved status, marked "Managed by <owner>", with every add/edit/delete/test/save control absent — the API decides with `can_manage`, so the UI never guesses from the role.
+- See AI usage (calls + tokens + cache hit rate; recorded, never capped).
 - Define a persona ("I am … , you are …") that AI-rewrites the app's tone and recolors the theme; preview and enable/disable it.
 - Manage storage locations (add/delete).
 - Manage recorded stores (add/delete).
@@ -125,7 +128,7 @@ so you waste less food, shop in fewer trips, and spend less.
 - **Loading** for every async area; **empty** states that explain the next action (e.g. "scan your first receipt"); **error** with retry.
 - **Offline mode:** the app is a PWA and works offline with cached data; changes made offline must survive and sync.
 - **Optimistic feedback:** quantity changes, check-offs, and decisions should feel instant.
-- **AI availability:** the app is usable without any AI key (inventory works; AI features show how to enable them). Usage is recorded but never capped, so there is no quota-exhaustion state; provider failures surface as errors.
+- **AI availability:** the app is usable with no AI configured (inventory works; AI features say to set AI up in Settings). Usage is recorded but never capped, so there is no quota-exhaustion state; provider failures surface as errors that name the capability to fix. There is no shared/server key, so no screen may imply one (no "platform key", no "unlimited on our key").
 - **Two languages** (EN/ID) for all text; admin sections hidden from normal users.
 
 ### Hard functional flows to preserve

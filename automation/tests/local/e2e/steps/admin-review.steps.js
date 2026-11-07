@@ -6,6 +6,8 @@ const { Given, When, Then } = createBdd()
 
 // Review items are born in the scraper — the e2e seeds them through the same
 // bearer channel the real nightly reports on (issue #294).
+import { configureAi } from './ai-setup.js'
+
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
 const INGEST_SECRET = 'test-ingest-secret'
 // Mirrors the seed's pbkdf2 hash for password123 — same password, but the
@@ -201,9 +203,10 @@ Then('the review page shows the forbidden state', async ({ page }) => {
 // things a real deployment gets from outside the harness. Both use mechanisms
 // that already exist — no product-side test route:
 //
-//   * the admin's BYOK key, through the REAL PATCH /api/settings route (a user
-//     flow, not a bypass), so GET /api/admin/review/mode reports
-//     aiConfigured:true and the assist UI renders;
+//   * the household's AI provider, through the REAL provider/capability
+//     endpoints (the user flow #523 P3 introduced — no bypass), so
+//     GET /api/admin/review/mode reports aiConfigured:true and the assist UI
+//     renders;
 //   * one cached verdict through the harness-only TEST_MODE /api/__test/direct-sql
 //     seed (the products-rename precedent). A verdict is normally written by
 //     the evaluator AFTER a provider call; the product deliberately has no
@@ -215,10 +218,10 @@ Then('the review page shows the forbidden state', async ({ page }) => {
 // and never calls the (fake-keyed) provider.
 //
 // Cleanup is the harness's job, not the scenario's: the shared Before hook
-// resets and reseeds the database before every scenario, and reset.sql deletes
-// review_ai_verdicts and app_settings explicitly and recreates the users'
-// settings with no AI key — so the seeded verdict, the key, and any mode
-// switch cannot leak into the next scenario.
+// resets and reseeds the database before every scenario, and reset.sql drops the
+// household's providers and capability assignments along with review_ai_verdicts
+// and app_settings — so the seeded verdict, the provider, and any mode switch
+// cannot leak into the next scenario.
 
 const CACHED_VERDICT = {
   verdict: 'same',
@@ -226,13 +229,6 @@ const CACHED_VERDICT = {
   reason: 'Same brand and 5 kg pack.',
   provider: 'gemini',
   model: 'gemini-2.5-flash',
-}
-
-async function setAdminAiKey(page) {
-  const res = await page.request.patch(`${BASE_URL}/api/settings`, {
-    data: { ai_provider: 'gemini', ai_key: 'test-e2e-key' },
-  })
-  expect(res.status()).toBe(200)
 }
 
 async function seedCachedVerdict(page) {
@@ -261,7 +257,8 @@ Given('the queue holds one flagged pair with a cached AI verdict', async ({ page
   // The scenario logs in first, so the seed can use the session's cookie jar
   // for the admin-only settings and review routes.
   await seedReviewPair()
-  await setAdminAiKey(page)
+  // Decision is the capability the review assist resolves.
+  await configureAi(page, ['decision'])
   await seedCachedVerdict(page)
 })
 

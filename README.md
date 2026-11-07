@@ -15,7 +15,7 @@ Household shopping & inventory assistant. Snap a receipt — stock updates. Know
 ### Quick start
 
 1. Sign in with Google.
-2. Add an AI key in **Settings** (OpenAI / Gemini / Anthropic / OpenCode).
+2. Add an AI provider in **Settings → AI providers**, then assign it to Decision, Reasoning and Vision in **AI capabilities** (OpenAI / Gemini / Anthropic / OpenCode, or any compatible endpoint).
 3. Snap a receipt via **Add from receipt**.
 4. Check the home page and ask the assistant for a plan.
 

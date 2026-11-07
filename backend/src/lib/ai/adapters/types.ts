@@ -95,6 +95,25 @@ export type DecisionAdapterResult = {
   usageReported: boolean
 }
 
+/**
+ * A connection probe (ahaqqu/RumaQ#523 P3, plan §4.6): "does this key
+ * authenticate against this endpoint", costing nothing. The per-kind meaning
+ * lives in the adapter that owns the wire:
+ *   - chat kinds ask the provider's `/models` listing (free, no inference);
+ *   - the typed wire POSTs an EMPTY `questions` object and treats the expected
+ *     400/422 as proof of authentication (it buys no answer).
+ * A probe throws `AdapterError` for every failure, so the route maps one
+ * vocabulary; it never returns a provider body.
+ */
+export type ProbeRequest = {
+  /** The endpoint the row resolves to; null only for kinds that own a canonical one. */
+  baseUrl: string | null
+  /** The model a typed probe names in its body; ignored by `/models` probes. */
+  model: string | null
+  apiKey: string
+  signal: AbortSignal
+}
+
 export interface AiAdapter {
   readonly kind: ProviderKind
   /** Static capability matrix (plan §2.4) — validated at save time, belt at call time. */
@@ -108,4 +127,6 @@ export interface AiAdapter {
    * owns the schema; the adapter only guarantees well-formed JSON text.
    */
   structured?(req: AdapterRequest): Promise<AdapterResult>
+  /** Free authentication check; throws `AdapterError` on any failure (plan §4.6). */
+  probe(req: ProbeRequest): Promise<void>
 }

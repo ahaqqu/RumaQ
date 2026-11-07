@@ -9,7 +9,7 @@ Feature: Shopping Plans
   Scenario: Generate a plan returns draft items
     Given the database has seed data
     And I am authenticated as a test user
-    And the user has an AI key configured
+    And the user has a provider configured
     When I send a POST request to /api/plans/generate
     Then the response status should be 200
     And the response should have generated items
