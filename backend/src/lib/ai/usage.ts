@@ -1,5 +1,6 @@
-// Usage accounting beside the door (ahaqqu/RumaQ#523, plan §5.3). Moved out of
-// lib/ai-access.ts in P1 so the writer and the resolver have one owner each.
+// Usage accounting beside the door (ahaqqu/RumaQ#523, plan §5.3). The writer
+// and the resolver have one owner each; the door builds the row, the FEATURE
+// decides where it goes (the review sweep batches one write per run).
 //
 // One row per provider call, on failure too, now stamped with the dimensions
 // D1/D9 need: `capability`, the household that paid (`household_id`), and the
@@ -12,22 +13,6 @@
 
 import type { Env } from '../../types.js'
 import type { AiCall, TokenUsage } from './types.js'
-
-/**
- * Accumulate provider-reported usage into a caller-owned total across calls.
- * Unreported cache figures leave the running total as-is, so a series with no
- * cache data at all stays null. Moved here from the deprecated shim in P2: it
- * is usage arithmetic, not provider transport.
- */
-export function usageCollector(target: TokenUsage): (usage: TokenUsage) => void {
-  return (usage) => {
-    target.input_tokens += usage.input_tokens
-    target.output_tokens += usage.output_tokens
-    if (usage.cached_tokens !== null) {
-      target.cached_tokens = (target.cached_tokens ?? 0) + usage.cached_tokens
-    }
-  }
-}
 
 export type AiUsageEvent = {
   /** The ACTING member: attribution, not ownership. */

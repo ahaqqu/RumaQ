@@ -1,7 +1,15 @@
-import type { PlanItem } from './ai.js'
-import { completeText, type AiCallOpts } from './ai.js'
+import {
+  completeText,
+  AiError,
+  parseJsonResponse,
+  type AiAccessHandle,
+  type AiCall,
+  type AiCtx,
+  type TokenUsage,
+} from './ai/index.js'
 import {
   object,
+  parse,
   strictObject,
   string,
   number,
@@ -12,7 +20,18 @@ import {
   minLength,
   minValue,
   nullish,
+  type InferOutput,
 } from 'valibot'
+
+/** One generated plan line, as the save route consumes it. */
+export type PlanItem = {
+  name: string
+  qty: number
+  unit: string
+  store_id: string | null
+  price_estimate: number | null
+  why: string
+}
 
 export const planGenerateResponseSchema = object({
   items: array(
@@ -22,10 +41,16 @@ export const planGenerateResponseSchema = object({
       unit: string(),
       store_id: nullish(string()),
       price_estimate: nullish(number()),
-      why: string(),
+      // Optional in the save contract (`planCreateSchema`) too: a line without
+      // its "why" is still a usable plan, and the old answer mapper defaulted
+      // it. Requiring it here made a cosmetic omission fatal to the whole plan.
+      why: optional(string()),
     })
   ),
 })
+
+/** The model answer's shape, as this feature validates it. */
+type PlanGenerateResponse = InferOutput<typeof planGenerateResponseSchema>
 
 export const planItemPatchSchema = strictObject({
   status: picklist(['bought', 'skipped']),
@@ -130,9 +155,26 @@ Rules:
 - Do NOT include any text outside the JSON.`
 }
 
+export type GeneratedPlan = {
+  items: PlanItem[]
+  call: AiCall
+  usage: TokenUsage
+}
+
+/**
+ * One plan generation through the door (#523 P4): the caller has resolved the
+ * `reasoning` capability. The prompt is product policy and stays here; the
+ * answer goes through the ONE JSON extraction policy (`parseJsonResponse`,
+ * plan §2.5 — the previous inline `content.match(/\{...\}/)` copy is gone) and
+ * then through this feature's own schema (planGenerateResponseSchema), which is
+ * the plan route's validation contract.
+ *
+ * An answer that fails either gate is an `invalid_response` CARRYING the call's
+ * bill: the provider read the prompt and answered, so the route records the
+ * attempt (plan §2.2). A plain error here would silently drop that usage row.
+ */
 export async function generateAiPlan(
-  provider: string,
-  apiKey: string,
+  ai: AiCtx & { access: AiAccessHandle },
   lowStock: Array<{
     name: string
     qty: number
@@ -148,26 +190,46 @@ export async function generateAiPlan(
   }>,
   recentPurchases: Array<{ name: string; store_label: string | null }>,
   stores: Array<{ id: string; label: string }>,
-  currency: string,
-  opts?: AiCallOpts
-): Promise<PlanItem[]> {
+  currency: string
+): Promise<GeneratedPlan> {
   const promptStores = stores.map((s) => ({ label: s.label }))
   const prompt = buildPlanPrompt(lowStock, expiring, recentPurchases, promptStores, currency)
   const systemPrompt = `You are a helpful shopping plan assistant. Generate concise, practical shopping plans in JSON format.`
 
-  const content = await completeText(provider, apiKey, systemPrompt, prompt, opts)
+  const result = await completeText({
+    env: ai.env,
+    userId: ai.userId,
+    householdId: ai.householdId,
+    access: ai.access,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt },
+    ],
+  })
 
-  const parsed = JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] || '{}') as Record<string, unknown>
-  const items = (parsed.items || []) as Record<string, unknown>[]
+  let parsed: PlanGenerateResponse
+  try {
+    parsed = parse(planGenerateResponseSchema, parseJsonResponse<unknown>(result.text))
+  } catch {
+    throw new AiError('invalid_response', 'The AI answer was not a usable shopping plan', {
+      call: result.call,
+      usage: result.usage,
+    })
+  }
 
-  return items.slice(0, 50).map((it) => ({
-    name: String(it.name || ''),
-    qty: Number(it.qty) || 1,
-    unit: String(it.unit || 'pcs'),
-    store_id: it.store_id ? String(it.store_id) : null,
-    price_estimate: it.price_estimate != null ? Math.round(Number(it.price_estimate)) : null,
-    why: String(it.why || ''),
+  // The prompt caps the list at 50; the slice is the belt, not the policy.
+  const items = parsed.items.slice(0, 50).map((it) => ({
+    name: it.name,
+    qty: it.qty,
+    unit: it.unit,
+    store_id: it.store_id ?? null,
+    price_estimate: it.price_estimate != null ? Math.round(it.price_estimate) : null,
+    // `why` is optional in the answer (it is optional in the save contract
+    // too); an item without one still belongs in the plan.
+    why: it.why ?? '',
   }))
+
+  return { items, call: result.call, usage: result.usage }
 }
 
 export function normalizeItemName(name: string): string {

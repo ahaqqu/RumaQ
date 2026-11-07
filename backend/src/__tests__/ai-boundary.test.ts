@@ -18,15 +18,12 @@ import { fileURLToPath } from 'node:url'
 // NOT import an adapter, import the key-material module, contain a provider
 // hostname, or read a provider key (`.apiKey`).
 //
-// ONE PINNED legacy exemption remains for P3, and the test asserts its exact
-// contents so a new violation cannot be added silently:
-//   - the P1 bridge (`lib/ai-access.ts`) and its three consumers forward
-//     `access.apiKey` to the deprecated shim; P4 deletes the shim and the
-//     bridge, so this list must become empty. P3/P4 may only shrink it.
-//
-// The HOSTNAME exemption is EMPTY as of P3: `POST /api/ai-key/test` (the last
-// transport outside the door) is deleted, and the provider test's probes live in
-// the adapters' `probe()` inside `lib/ai/**`.
+// THERE ARE NO EXEMPTIONS (#523 P4). The P2/P3 pinned lists existed only while
+// the deprecated shim (`lib/ai.ts`), the P1 bridge (`lib/ai-access.ts`) and the
+// door-internal `lib/ai/legacy.ts` were waiting to be deleted; P4 deleted all
+// three, so every rule below now holds over the WHOLE tree with no allow-list.
+// The `lib/ai.ts` / `lib/ai-access.ts` / `lib/ai/legacy.ts` absence is asserted
+// too: a re-introduced shim must fail here before it can grow a caller.
 
 const BACKEND_SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -55,21 +52,13 @@ const KEY_MATERIAL_MODULES: readonly SourceFile[] = [
   `${DOOR_DIR}key-material.ts`,
 ]
 
-// Empty since P3 deleted `POST /api/ai-key/test`, the last transport outside the
-// door. Kept as a named list so the rule and its test stay symmetric.
-const LEGACY_HOSTNAME_EXEMPTIONS: readonly SourceFile[] = []
-
-// P4 deletes the shim + bridge; until then the legacy shape still carries a key.
-const LEGACY_KEY_EXEMPTIONS: readonly SourceFile[] = [
-  'apps/api.ts',
+// The files P4 deleted. Nothing outside the door may reach them, and nothing
+// may bring them back: these are the names the boundary used to pin instead.
+const RETIRED_LEGACY_FILES: readonly SourceFile[] = [
+  'lib/ai.ts',
   'lib/ai-access.ts',
-  'lib/document-ocr.ts',
-  'lib/review-ai.ts',
+  `${DOOR_DIR}legacy.ts`,
 ]
-
-// Only the two deprecated shims may reach the door-internal legacy bridge; a
-// third importer would be new coupling to code that is being deleted.
-const LEGACY_BRIDGE_IMPORTERS: readonly SourceFile[] = ['lib/ai-access.ts', 'lib/ai.ts']
 
 function listSourceFiles(dir: string): SourceFile[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap(
@@ -157,12 +146,6 @@ export function findAiBoundaryViolations(
           `${file} imports ${keyModule} ('${specifier}') — the decrypted key may only exist inside lib/ai/** (plan §2.3/D10)`
         )
       }
-      // Rule 3 — the deprecated legacy bridge has exactly two importers.
-      if (targets.includes(`${DOOR_DIR}legacy.ts`) && !LEGACY_BRIDGE_IMPORTERS.includes(file)) {
-        violations.push(
-          `${file} imports the deprecated AI legacy bridge ${DOOR_DIR}legacy.ts ('${specifier}') — only lib/ai.ts and lib/ai-access.ts may, and both are deleted in P4`
-        )
-      }
     }
 
     if (insideDoor) {
@@ -184,15 +167,15 @@ export function findAiBoundaryViolations(
     }
 
     // Rule 4 — no provider endpoint literal outside the door.
-    if (PROVIDER_HOSTNAME.test(source) && !LEGACY_HOSTNAME_EXEMPTIONS.includes(file)) {
+    if (PROVIDER_HOSTNAME.test(source)) {
       violations.push(
         `${file} contains a provider hostname — model endpoints are reached through lib/ai/** only (plan §2.3)`
       )
     }
     // Rule 5 — no module outside the door reads a provider key.
-    if (KEY_MATERIAL.test(source) && !LEGACY_KEY_EXEMPTIONS.includes(file)) {
+    if (KEY_MATERIAL.test(source)) {
       violations.push(
-        `${file} reads .apiKey — a provider key never leaves lib/ai/** (plan §2.3/D10); the P2 exemption list may only shrink`
+        `${file} reads .apiKey — a provider key never leaves lib/ai/** (plan §2.3/D10); there are no exemptions`
       )
     }
   }
@@ -221,41 +204,26 @@ const FACADE_EXPORTS: readonly string[] = [
   'recordAiUsageEvent',
   'resolveAccess',
   'structured',
-  'usageCollector',
   'vision',
 ]
 
 describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
-  it('the exemptions are exactly the pinned legacy set (P4 must shrink the rest to empty)', () => {
-    // P3 deleted the last hostname carrier (`/api/ai-key/test`).
-    expect([...LEGACY_HOSTNAME_EXEMPTIONS].sort()).toEqual([])
-    // The key exemption is the P1 bridge plus the routes that forward its key
-    // to the deprecated shim. Adding a file here is a boundary change.
-    expect([...LEGACY_KEY_EXEMPTIONS].sort()).toEqual(
-      ['apps/api.ts', 'lib/ai-access.ts', 'lib/document-ocr.ts', 'lib/review-ai.ts'].sort()
-    )
-    // The deprecated legacy bridge has exactly two importers.
-    expect([...LEGACY_BRIDGE_IMPORTERS].sort()).toEqual(['lib/ai-access.ts', 'lib/ai.ts'])
-  })
-
-  it('every pinned exemption is still a REAL violation (a stale entry cannot linger)', () => {
-    // The hostname list is empty: the rule must hold over the WHOLE tree, which
-    // the walk below proves. The loop stays for the P4-doomed key exemptions.
-    // The lists above only prove they cannot GROW. Without this test, P3 could
-    // delete `/api/ai-key/test`'s hostnames, leave `apps/api.ts` exempt, and
-    // stay green — so "P3/P4 must empty them" would not be enforced by the
-    // build. An exemption that no longer trips its rule fails here, forcing the
-    // list (and the rule's reach) to shrink with the code.
-    for (const file of LEGACY_HOSTNAME_EXEMPTIONS) {
-      expect(PROVIDER_HOSTNAME.test(realRead(file)), `${file} is exempt but clean`).toBe(true)
+  it('the P2/P3 exemptions are GONE and the retired shims cannot come back (#523 P4)', () => {
+    // The exemption lists are deleted, not merely emptied: the rules now hold
+    // over the whole tree with no allow-list (the walk below proves it). A shim
+    // that reappears would have to re-open the list — a deliberate, reviewable
+    // edit — instead of inheriting an exemption.
+    const files = listSourceFiles(BACKEND_SRC)
+    for (const retired of RETIRED_LEGACY_FILES) {
+      expect(files, `${retired} was deleted in P4 and must stay deleted`).not.toContain(retired)
     }
-    for (const file of LEGACY_KEY_EXEMPTIONS) {
-      expect(KEY_MATERIAL.test(realRead(file)), `${file} is exempt but clean`).toBe(true)
-    }
-    for (const file of LEGACY_BRIDGE_IMPORTERS) {
-      expect(realRead(file), `${file} no longer imports the legacy bridge`).toContain(
-        'ai/legacy.js'
-      )
+    // No source file may import a retired shim either (the import would fail to
+    // resolve, but this names the rule at the boundary).
+    for (const file of files) {
+      const source = realRead(file)
+      for (const retired of ['ai-access', 'ai/legacy']) {
+        expect(source, `${file} still references the retired ${retired}`).not.toContain(retired)
+      }
     }
   })
 
@@ -274,16 +242,6 @@ describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
     expect(findAiBoundaryViolations(files, realRead)).toEqual([])
   })
 
-  it('the deprecated shims contain no transport of their own', () => {
-    // lib/ai.ts is a THIN shim (plan §6 P2): it forwards messages and usage, it
-    // neither fetches nor holds an endpoint. Same for the bridge.
-    for (const file of ['lib/ai.ts', 'lib/ai-access.ts']) {
-      const source = realRead(file)
-      expect(source).not.toMatch(/\bfetch\s*\(/)
-      expect(source).not.toMatch(PROVIDER_HOSTNAME)
-    }
-  })
-
   it('the checker itself fires on every rule (a deaf checker is worse than none)', () => {
     const synthetic: Record<SourceFile, string> = {
       'lib/rogue-adapter.ts': "import { openaiAdapter } from './ai/adapters/openai.js'\n",
@@ -294,11 +252,9 @@ describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
       // The facade re-exporting the material is a leak even inside the door.
       'lib/ai/index.ts': "export { accessMaterial } from './key-material.js'\n",
       'lib/ai/rogue-star.ts': "export * from './key-material.js'\n",
-      'lib/rogue-legacy.ts': "import { legacyCompleteText } from './ai/legacy.js'\n",
       'lib/rogue-endpoint.ts': "const url = 'https://api.openai.com/v1/chat/completions'\n",
       'lib/rogue-key-read.ts': 'const key = access.apiKey\n',
-      // Allowed shapes: the door itself, the door's public facade, and the two
-      // pinned legacy shims reaching the bridge.
+      // Allowed shapes: the door itself and the door's public facade.
       'lib/ai/adapters/openai.ts': "const url = 'https://api.openai.com/v1'\n",
       'lib/ai/ok.ts': "import { adapterFor } from './adapters/registry.js'\n",
       'lib/ai/capabilities.ts': "import { holdMaterial } from './key-material.js'\n",
@@ -306,8 +262,6 @@ describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
       'lib/ai/rogue-import.ts': "import { accessMaterial } from './key-material'\n",
       // Extensionless imports of allowed modules must stay clean outside too.
       'lib/feature-extensionless.ts': "import { completeText } from './ai/index'\n",
-      'lib/ai.ts': "import { legacyCompleteText } from './ai/legacy.js'\n",
-      'lib/ai-access.ts': "import { resolveLegacyAccess } from './ai/legacy.js'\n",
       'lib/feature.ts': "import { completeText } from './ai/index.js'\n",
     }
     const read = (file: SourceFile) => synthetic[file]
@@ -323,22 +277,19 @@ describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
     ).toBe(true)
     expect(violations.some((v) => v.startsWith('lib/ai/index.ts re-exports'))).toBe(true)
     expect(violations.some((v) => v.startsWith('lib/ai/rogue-star.ts re-exports'))).toBe(true)
-    expect(violations.some((v) => v.startsWith('lib/rogue-legacy.ts imports'))).toBe(true)
     expect(
       violations.some((v) => v.startsWith('lib/rogue-endpoint.ts contains a provider hostname'))
     ).toBe(true)
     expect(violations.some((v) => v.startsWith('lib/rogue-key-read.ts reads .apiKey'))).toBe(true)
 
     // Nothing else fires: the door owns transport and key material, the facade
-    // is importable, the pinned shims may reach the bridge.
+    // is importable.
     for (const clean of [
       'lib/ai/adapters/openai.ts',
       'lib/ai/ok.ts',
       'lib/ai/capabilities.ts',
       'lib/ai/rogue-import.ts',
       'lib/feature-extensionless.ts',
-      'lib/ai.ts',
-      'lib/ai-access.ts',
       'lib/feature.ts',
     ]) {
       expect(violations.some((v) => v.startsWith(clean))).toBe(false)

@@ -727,7 +727,11 @@
     "from": "from",
     "usageTokensToday": "{{used}} calls today · {{input}} in · {{output}} out",
     "cacheHitRate": "cache hit rate",
-    "ownKeyUnlimited": "Unlimited — your own API key covers the usage."
+    "ownKeyUnlimited": "Unlimited — your own API key covers the usage.",
+    "usageTitle": "AI usage today",
+    "usageUnknownCapability": "Other",
+    "usageTypedCalls": "{{calls}} typed — not token-billed",
+    "usageHouseholdToday": "Household today: {{used}} calls · {{input}} in · {{output}} out"
   },
   "offline": {
     "banner": "You're offline — changes will sync when you reconnect",

@@ -8,24 +8,31 @@ The shopping-plan feature generates AI-powered shopping lists organised by store
 - **Regenerate** — replaces the current plan with a fresh AI-generated one
 - **Check-off** — interactive checklist to track what's been bought
 - **Grand total** — per-store and overall cost estimate
-- **No-key fallback** — shows sample plan when AI key is missing
+- **Not-configured state** — without a usable `reasoning` capability the page asks the household to set AI up (402 from the route)
+
+## How the AI plan is produced
+
+`POST /api/plans/generate` resolves the household's **reasoning** capability through the AI door
+(ahaqqu/RumaQ#523 P4), asks for a JSON plan grounded in low stock, expiring items, recent purchases
+and the household's stores, validates the answer against `planGenerateResponseSchema`, and then
+grounds each price against the observed price catalog. Usage is recorded per call and never capped.
 
 ## How it works
 
-1. The Plan page is mounted with an `aiKey` prop; without one it shows a prompt to configure a key
+1. The Plan page checks `ai_status.reasoning`; without it the page shows a prompt to set AI up
 2. On initial render, a mock plan (`PLAN` from `data/mock.js`) is displayed for demo purposes
 3. Tapping **Regenerate** triggers a simulated 1.3s AI call, replacing the plan
 4. Each trip is grouped by store with items, quantities, and price estimates
 5. Users check items off as they shop; when all items are checked, an "all bought" banner appears
 6. The **Ask Assistant** button opens the assistant panel for custom requests
 
-## API endpoint
+## API endpoints
 
-| Method | Path | Auth | Description                |
-| ------ | ---- | ---- | -------------------------- |
-| —      | —    | —    | Fully frontend (mock data) |
-
-The shopping plan is currently demo-only with mock data. Real AI integration is planned for a future iteration.
+| Method | Path                  | Auth | Description                              |
+| ------ | --------------------- | ---- | ---------------------------------------- |
+| POST   | `/api/plans/generate` | Yes  | Generate a plan with the reasoning model |
+| POST   | `/api/plans`          | Yes  | Save a generated plan as active          |
+| GET    | `/api/plans`          | Yes  | The active plan with its items           |
 
 ## Source
 

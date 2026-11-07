@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vite-plus/test'
 import { buildPlanPrompt } from '../lib/plans.js'
 import { buildChatSystemPrompt } from '../lib/chat.js'
-import { buildScanPrompt } from '../lib/ai.js'
+import { buildScanPrompt } from '../lib/receipt-scan.js'
 
 // Reaching into the private function through module internals would require
 // exporting it. Instead we test the public prompt builders that are used by
@@ -69,11 +69,9 @@ describe('buildChatSystemPrompt prompt isolation', () => {
 
 describe('buildScanPrompt', () => {
   it('contains no household data at all', () => {
-    // The scan prompt is exported privately; verify via the typed export trick
-    // by casting the module. Since it is not exported, we rely on the public
-    // extractReceiptItems behavior. For this unit we simply assert the prompt
-    // shape is known to be static.
-    const prompt = (buildScanPrompt as unknown as () => string)()
+    // The scan prompt is static product policy (lib/receipt-scan.ts): it carries
+    // no household data, so nothing from one household can reach another's read.
+    const prompt = buildScanPrompt()
     expect(prompt).toContain('receipt OCR assistant')
     expect(prompt).not.toContain('household')
     // "store_name" is part of the static receipt schema, not household data.

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test'
+import type { Env } from '../types.js'
 import { resetRateLimit } from '../lib/rate-limit.js'
 import {
   isExpiryOcrSupported,
@@ -7,6 +8,7 @@ import {
   DocumentOcrError,
   logExpiryOcrOutcome,
 } from '../lib/document-ocr.js'
+import { resolveAccess } from '../lib/ai/index.js'
 import { encryptAiKey } from '../lib/crypto.js'
 import {
   createDocumentsHarness,
@@ -129,55 +131,58 @@ describe('document-ocr lib (issue #433)', () => {
   // here without HTTP: the usage event + outcome line land on every path
   // that reaches the provider decision, exactly once.
   describe('runExpiryOcr audit pairing', () => {
-    const access = {
-      provider: 'openai',
-      apiKey: 'sk-user-secret',
-      baseUrl: null,
-      model: null,
-      visionModel: 'vision-model',
-      thinkingLevel: null,
-      keySource: 'user' as const,
-      call: {
-        capability: 'vision' as const,
-        householdId: 'h1',
-        providerKind: 'openai-compatible' as const,
-        providerId: 'p-1',
-        model: 'vision-model',
-        funding: 'household' as const,
-      },
-    }
-    const args = {
-      access,
-      imageBytes: new ArrayBuffer(8),
-      contentType: 'image/jpeg',
-      userId: 'u1',
-      householdId: 'h1',
-      documentId: 'doc-1',
-      fileId: 'file-1',
-    }
-
-    function fakeEnv(testMode: string) {
+    /**
+     * A fake bindings object that answers BOTH reads this path makes: the
+     * resolver's capability JOIN (so the handle is real and carries module-
+     * private material — a hand-built handle fails closed and would prove
+     * nothing) and the usage INSERT.
+     */
+    async function visionAttempt(testMode: string) {
       const runs: Array<{ sql: string; params: unknown[] }> = []
+      // v2: bound to p-1's row id (D10), so the read performs no lazy re-seal
+      // UPDATE — the only run() this path makes is the usage INSERT.
+      const joinRow = capabilityRow(
+        await encryptAiKey('sk-vision-user', 'test-enc-key', 'ai_provider:p-1')
+      )
       const env = {
         DB: {
           prepare: (sql: string) => ({
             bind: (...params: unknown[]) => ({
+              first: async () => (/FROM ai_capabilities c/.test(sql) ? joinRow : null),
               run: async () => {
                 runs.push({ sql, params })
+                return { meta: { changes: 1 } }
               },
             }),
           }),
         },
         TEST_MODE: testMode,
+        WORKER_ENCRYPTION_KEY: 'test-enc-key',
+      } as unknown as Env['Bindings']
+      const access = await resolveAccess({ env, userId: 'u1', householdId: 'h1' }, 'vision')
+      if (!access) throw new Error('test setup: vision capability did not resolve')
+      return { env, access, runs }
+    }
+
+    function attemptArgs(access: Awaited<ReturnType<typeof visionAttempt>>['access']) {
+      return {
+        access,
+        imageBytes: new ArrayBuffer(8),
+        contentType: 'image/jpeg',
+        userId: 'u1',
+        householdId: 'h1',
+        documentId: 'doc-1',
+        fileId: 'file-1',
       }
-      return { env: env as unknown as Parameters<typeof runExpiryOcr>[0], runs }
     }
 
     it('writes the usage event + outcome line exactly once on the success path', async () => {
-      const { env, runs } = fakeEnv('true')
-      const { suggestion, outcome } = await runExpiryOcr(env, args)
+      const { env, access, runs } = await visionAttempt('true')
+      const { suggestion, outcome, model } = await runExpiryOcr(env, attemptArgs(access))
       expect(suggestion).toBe('2027-06-05')
       expect(outcome).toBe('suggested')
+      // The model the CALL resolved (the vision assignment's), not a legacy field.
+      expect(model).toBe('vision-model')
       expect(runs).toHaveLength(1)
       expect(runs[0].sql).toContain('INSERT INTO ai_usage_events')
       // provider(kind), model, capability, household_id, funding bind at 4..8.
@@ -188,28 +193,27 @@ describe('document-ocr lib (issue #433)', () => {
       expect(runs[0].params[8]).toBe('household')
     })
 
-    it('stamps the row with the VISION capability even when the bridge primary is reasoning', async () => {
-      // A backfilled household has all three assignments, so the P1 bridge
-      // resolves 'reasoning' first (ai-access.ts PRIMARY_CAPABILITIES) and the
-      // access it hands OCR carries that capability. The usage row must name
-      // the capability the FEATURE is, not the one the bridge happened to pick
-      // (thermos A5) — otherwise the new ai_usage_events.capability dimension
-      // records every vault OCR call as reasoning spend.
-      const { env, runs } = fakeEnv('true')
-      const viaReasoning = {
-        ...access,
-        call: { ...access.call, capability: 'reasoning' as const, model: 'text-model' },
+    it('calls the provider with the VISION model of its own capability (#523 P4)', async () => {
+      // The scan/OCR fix: a household whose vision assignment names a different
+      // provider than its reasoning one must have the image read by the vision
+      // row. (The route-level test proves the same end-to-end.)
+      const { env, access } = await visionAttempt('false')
+      const fetchMock = vi.fn(async () => openAiAnswer('{"expires_on": null}'))
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+      try {
+        await runExpiryOcr(env, attemptArgs(access))
+      } finally {
+        vi.restoreAllMocks()
       }
-      await runExpiryOcr(env, { ...args, access: viaReasoning })
-      expect(runs[0]?.params[5]).toBe('vision-model')
-      expect(runs[0]?.params[6]).toBe('vision')
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+      expect(JSON.parse(String(init.body)).model).toBe('vision-model')
     })
 
     it('still pairs the audit exactly once when the provider fails, then rethrows', async () => {
-      const { env, runs } = fakeEnv('false')
+      const { env, access, runs } = await visionAttempt('false')
       globalThis.fetch = vi.fn().mockRejectedValue(new Error('socket hung up'))
       try {
-        await expect(runExpiryOcr(env, args)).rejects.toThrow('socket hung up')
+        await expect(runExpiryOcr(env, attemptArgs(access))).rejects.toThrow('socket hung up')
       } finally {
         vi.restoreAllMocks()
       }
@@ -218,10 +222,10 @@ describe('document-ocr lib (issue #433)', () => {
     })
 
     it('still pairs the audit exactly once when the answer fails validation', async () => {
-      const { env, runs } = fakeEnv('false')
+      const { env, access, runs } = await visionAttempt('false')
       globalThis.fetch = vi.fn().mockResolvedValue(openAiAnswer('{"expires_on": "2026-02-31"}'))
       try {
-        await expect(runExpiryOcr(env, args)).rejects.toThrow(DocumentOcrError)
+        await expect(runExpiryOcr(env, attemptArgs(access))).rejects.toThrow(DocumentOcrError)
       } finally {
         vi.restoreAllMocks()
       }
@@ -500,6 +504,10 @@ describe('documents routes — expiry OCR (#433)', () => {
     expect(db.log.some((entry) => /INSERT INTO document_audit/.test(entry.sql))).toBe(false)
   })
 
+  // 31 real route requests, each decrypting the stored key: ~5 s alone, but the
+  // full suite's 72 parallel workers stretch it past the default 15 s budget, so
+  // the burst gets its own. (It timed out exactly there under `--coverage` —
+  // a scheduling flake, not a limiter defect.)
   it('rate-limits bursts of read-date calls per user', async () => {
     const encrypted = await encryptAiKey('sk-household', ENV_KEY)
     const { env, app } = h.setup(householdAiRoutes(encrypted))
@@ -510,5 +518,5 @@ describe('documents routes — expiry OCR (#433)', () => {
       last = await app.request(OCR_PATH, { method: 'POST' }, env)
     }
     expect(last?.status).toBe(429)
-  })
+  }, 30_000)
 })

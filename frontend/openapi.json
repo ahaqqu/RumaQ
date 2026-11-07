@@ -1361,7 +1361,7 @@
     "/api/ai/usage": {
       "get": {
         "operationId": "getApiAiUsage",
-        "description": "Returns today AI usage (UTC day) for the current user. Usage is recorded but never capped.",
+        "description": "Returns today's AI usage (UTC day) for the acting member, broken down by capability, with the household total beside it. Usage is recorded but never capped.",
         "security": [
           {
             "cookieAuth": []
@@ -1379,12 +1379,13 @@
                     "input_tokens",
                     "output_tokens",
                     "cached_tokens",
-                    "provider"
+                    "capabilities",
+                    "household"
                   ],
                   "properties": {
                     "used": {
                       "type": "integer",
-                      "description": "Completed AI calls today (UTC)"
+                      "description": "Completed AI calls today (UTC) made by the acting member"
                     },
                     "input_tokens": {
                       "type": "integer"
@@ -1396,8 +1397,61 @@
                       "type": ["integer", "null"],
                       "description": "Provider-reported cached input tokens; null when the provider reports none"
                     },
-                    "provider": {
-                      "type": ["string", "null"]
+                    "capabilities": {
+                      "type": "array",
+                      "description": "The acting member's calls today broken down by capability; a null capability is pre-gateway history whose capability was never recorded",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "capability",
+                          "used",
+                          "typed_calls",
+                          "input_tokens",
+                          "output_tokens",
+                          "cached_tokens"
+                        ],
+                        "properties": {
+                          "capability": {
+                            "type": ["string", "null"],
+                            "description": "The capability that was served: 'decision', 'reasoning', 'vision', or null for pre-gateway history"
+                          },
+                          "used": {
+                            "type": "integer"
+                          },
+                          "typed_calls": {
+                            "type": "integer",
+                            "description": "Calls answered by a typed (questions) provider — not token-billed"
+                          },
+                          "input_tokens": {
+                            "type": "integer"
+                          },
+                          "output_tokens": {
+                            "type": "integer"
+                          },
+                          "cached_tokens": {
+                            "type": ["integer", "null"]
+                          }
+                        }
+                      }
+                    },
+                    "household": {
+                      "type": "object",
+                      "description": "Today's calls by every member of the household the request acts in (the household cut; readable by every member)",
+                      "required": ["used", "input_tokens", "output_tokens", "cached_tokens"],
+                      "properties": {
+                        "used": {
+                          "type": "integer"
+                        },
+                        "input_tokens": {
+                          "type": "integer"
+                        },
+                        "output_tokens": {
+                          "type": "integer"
+                        },
+                        "cached_tokens": {
+                          "type": ["integer", "null"]
+                        }
+                      }
                     }
                   }
                 }
@@ -1413,7 +1467,7 @@
     "/api/admin/ai/usage": {
       "get": {
         "operationId": "getApiAdminAiUsage",
-        "description": "AI usage totals and per-user breakdown over a recent range (admin-only).",
+        "description": "AI usage totals with per-capability, per-user and per-household breakdowns over a recent range (admin-only).",
         "security": [
           {
             "cookieAuth": []
@@ -1437,7 +1491,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["range", "since", "totals", "users"],
+                  "required": ["range", "since", "totals", "users", "households"],
                   "properties": {
                     "range": {
                       "type": "string",
@@ -1454,7 +1508,8 @@
                         "input_tokens",
                         "output_tokens",
                         "cached_tokens",
-                        "cache_hit_rate"
+                        "cache_hit_rate",
+                        "capabilities"
                       ],
                       "properties": {
                         "calls": {
@@ -1472,6 +1527,42 @@
                         "cache_hit_rate": {
                           "type": ["number", "null"],
                           "description": "cached/input; null when input is 0 or cache unreported"
+                        },
+                        "capabilities": {
+                          "type": "array",
+                          "description": "Totals broken down by capability; typed_calls are calls a typed (questions) provider answered, which report no tokens (not token-billed)",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "capability",
+                              "calls",
+                              "typed_calls",
+                              "input_tokens",
+                              "output_tokens",
+                              "cached_tokens"
+                            ],
+                            "properties": {
+                              "capability": {
+                                "type": ["string", "null"],
+                                "description": "The capability that was served: 'decision', 'reasoning', 'vision', or null for pre-gateway history"
+                              },
+                              "calls": {
+                                "type": "integer"
+                              },
+                              "typed_calls": {
+                                "type": "integer"
+                              },
+                              "input_tokens": {
+                                "type": "integer"
+                              },
+                              "output_tokens": {
+                                "type": "integer"
+                              },
+                              "cached_tokens": {
+                                "type": ["integer", "null"]
+                              }
+                            }
+                          }
                         }
                       }
                     },
@@ -1494,6 +1585,49 @@
                             "type": "string"
                           },
                           "email": {
+                            "type": ["string", "null"]
+                          },
+                          "calls": {
+                            "type": "integer"
+                          },
+                          "input_tokens": {
+                            "type": "integer"
+                          },
+                          "output_tokens": {
+                            "type": "integer"
+                          },
+                          "cached_tokens": {
+                            "type": ["integer", "null"]
+                          },
+                          "cache_hit_rate": {
+                            "type": ["number", "null"]
+                          },
+                          "last_used": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "households": {
+                      "type": "array",
+                      "description": "Totals broken down by the household that paid (the cross-household cut; D9 funding view)",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "household_id",
+                          "name",
+                          "calls",
+                          "input_tokens",
+                          "output_tokens",
+                          "cached_tokens",
+                          "cache_hit_rate",
+                          "last_used"
+                        ],
+                        "properties": {
+                          "household_id": {
+                            "type": ["string", "null"]
+                          },
+                          "name": {
                             "type": ["string", "null"]
                           },
                           "calls": {

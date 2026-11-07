@@ -54,21 +54,6 @@ function aiConfiguredRow(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function aiCapabilityRow(overrides: Record<string, unknown> = {}) {
-  return {
-    capability: 'reasoning',
-    model: null,
-    thinking_level: null,
-    provider_id: 'p-1',
-    kind: 'openai-compatible',
-    preset: 'openai',
-    base_url: null,
-    default_model: 'gpt-4o-mini',
-    encrypted_key: ENCRYPTED_KEY,
-    ...overrides,
-  }
-}
-
 describe('api routes', () => {
   it('/api/health returns ok', async () => {
     const res = await apiApp.request('/api/health', {}, createMockEnv())
@@ -481,73 +466,11 @@ describe('api routes', () => {
     expect(res.status).toBe(204)
   })
 
-  // #523 P3: the usage read resolves the household assignment directly (no
-  // settings projection any more) and no longer reports `key_source` — every
-  // call is household-funded (D9) and the usage row carries `funding`.
-  it('/api/ai/usage sums today events with no cap fields (#353)', async () => {
-    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    // reasoning resolves first (the bridge's primary), then the separate vision
-    // read, then the totals.
-    env.DB.first = vi
-      .fn()
-      .mockResolvedValueOnce(aiCapabilityRow())
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        used: 4,
-        input_tokens: 1200,
-        output_tokens: 350,
-        cached_tokens: 700,
-      })
-    const res = await apiApp.request('/api/ai/usage', {}, env)
-    const body = (await res.json()) as any
-    expect(body).toEqual({
-      used: 4,
-      input_tokens: 1200,
-      output_tokens: 350,
-      cached_tokens: 700,
-      provider: 'openai',
-    })
-    expect(body).not.toHaveProperty('key_source')
-  })
-
-  it('/api/ai/usage reports zeroed usage when there are no events today (no row creation)', async () => {
-    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi
-      .fn()
-      .mockResolvedValueOnce(aiCapabilityRow())
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(null)
-    const res = await apiApp.request('/api/ai/usage', {}, env)
-    const body = (await res.json()) as any
-    expect(body).toEqual({
-      used: 0,
-      input_tokens: 0,
-      output_tokens: 0,
-      cached_tokens: null,
-      provider: 'openai',
-    })
-    // Read-only: no counter row is inserted anymore.
-    expect(env.DB.prepare.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO'))).toBe(
-      false
-    )
-  })
-
-  it('/api/ai/usage reports the household provider, and no settings row is read to find it', async () => {
-    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi
-      .fn()
-      .mockResolvedValueOnce(aiCapabilityRow())
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(null)
-    const res = await apiApp.request('/api/ai/usage', {}, env)
-    const body = (await res.json()) as any
-    // The legacy dispatcher id, as before the swap (the preset, not the wire).
-    expect(body.provider).toBe('openai')
-    // P3 deleted the projection: the route must not SELECT from user_settings at
-    // all — the middleware's household id is the only source.
-    const sqls = env.DB.prepare.mock.calls.map(([sql]) => String(sql))
-    expect(sqls.some((sql) => /FROM\s+user_settings/i.test(sql))).toBe(false)
-  })
+  // The usage endpoints' payloads (per-capability breakdown + the household
+  // cut) are asserted against REAL SQLite in `ai-call-sites.test.ts`: the mock D1
+  // here cannot exercise a GROUP BY, and the old `provider` field is gone
+  // (#523 P4 — there is no single provider once each call site routes by
+  // capability).
 
   describe('/api/admin/ai/usage', () => {
     it('returns 403 for non-admin users', async () => {
@@ -564,82 +487,6 @@ describe('api routes', () => {
         const res = await apiApp.request(`/api/admin/ai/usage${query}`, {}, env)
         expect(res.status).toBe(400)
       }
-    })
-
-    it('serves each documented range with totals and per-user rows', async () => {
-      for (const range of ['24h', '7d', '30d']) {
-        const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-        env.DB.first = vi.fn().mockResolvedValueOnce({ is_admin: 1 }).mockResolvedValueOnce({
-          calls: 12,
-          input_tokens: 3400,
-          output_tokens: 900,
-          cached_tokens: 2100,
-        })
-        env.DB.all = vi.fn().mockResolvedValue({
-          results: [
-            {
-              user_id: 'u2',
-              email: 'b@c.com',
-              calls: 7,
-              input_tokens: 2000,
-              output_tokens: 500,
-              cached_tokens: 1500,
-              last_used: '2026-11-01T02:00:00.000Z',
-            },
-            {
-              user_id: 'u3',
-              email: null,
-              calls: 5,
-              input_tokens: 1400,
-              output_tokens: 400,
-              cached_tokens: null,
-              last_used: '2026-10-30T01:00:00.000Z',
-            },
-          ],
-        })
-        const res = await apiApp.request(`/api/admin/ai/usage?range=${range}`, {}, env)
-        expect(res.status).toBe(200)
-        const body = (await res.json()) as any
-        expect(body.range).toBe(range)
-        expect(new Date(body.since).toISOString()).toBe(body.since)
-        expect(body.totals).toEqual({
-          calls: 12,
-          input_tokens: 3400,
-          output_tokens: 900,
-          cached_tokens: 2100,
-          cache_hit_rate: 2100 / 3400,
-        })
-        // Reported cache → the rate; unreported cache → null, never 0.
-        expect(body.users[0]).toEqual({
-          user_id: 'u2',
-          email: 'b@c.com',
-          calls: 7,
-          input_tokens: 2000,
-          output_tokens: 500,
-          cached_tokens: 1500,
-          cache_hit_rate: 1500 / 2000,
-          last_used: '2026-11-01T02:00:00.000Z',
-        })
-        expect(body.users[1].cache_hit_rate).toBeNull()
-        expect(body.users[1].email).toBeNull()
-      }
-    })
-
-    it('returns zeroed totals with null cache_hit_rate and no users when the range is empty', async () => {
-      const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-      env.DB.first = vi.fn().mockResolvedValueOnce({ is_admin: 1 }).mockResolvedValueOnce(null)
-      env.DB.all = vi.fn().mockResolvedValue({ results: [] })
-      const res = await apiApp.request('/api/admin/ai/usage?range=24h', {}, env)
-      expect(res.status).toBe(200)
-      const body = (await res.json()) as any
-      expect(body.totals).toEqual({
-        calls: 0,
-        input_tokens: 0,
-        output_tokens: 0,
-        cached_tokens: null,
-        cache_hit_rate: null,
-      })
-      expect(body.users).toEqual([])
     })
 
     it('returns 401 without auth props', async () => {
@@ -730,37 +577,6 @@ describe('api routes', () => {
     const res = await apiApp.request('/api/purchases/scan', { method: 'POST', body: formData }, env)
     expect(res.status).toBe(200)
     expect(((await res.json()) as any).items.length).toBeGreaterThan(0)
-  })
-
-  it('/api/purchases/scan meters provider tokens on the error path', async () => {
-    const env = createMockEnv({
-      props: { userId: 'u1', householdId: 'h1' },
-      TEST_MODE: 'false',
-    })
-    env.DB.first = vi
-      .fn()
-      .mockResolvedValueOnce(aiConfiguredRow())
-      .mockResolvedValueOnce(aiCapabilityRow({ preset: 'ollama', provider_id: 'p-ollama' }))
-    env.DB.run = vi.fn().mockResolvedValue(undefined)
-    // Provider responds with usage but empty content: the key owner is billed
-    // for the input tokens even though the scan fails.
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '' } }],
-        usage: { prompt_tokens: 100, completion_tokens: 50 },
-      }),
-    })
-    const file = new File(['x'], 'receipt.jpg', { type: 'image/jpeg' })
-    const formData = new FormData()
-    formData.append('image', file)
-    const res = await apiApp.request('/api/purchases/scan', { method: 'POST', body: formData }, env)
-    expect(res.status).toBe(502)
-    // The failed call still records its event with the billed tokens.
-    expect(
-      env.DB.prepare.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO ai_usage_events'))
-    ).toBe(true)
-    expect(env.DB.bind.mock.calls.flat()).toEqual(expect.arrayContaining([100, 50, null, 'u1']))
   })
 
   it('/api/purchases/scan rejects missing image', async () => {
