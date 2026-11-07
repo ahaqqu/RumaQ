@@ -78,6 +78,9 @@ Feature: Cross-household security
       """
       {"error": "csrf_origin_mismatch"}
       """
+    When I send a GET request to /api/locations
+    Then the response status should be 200
+    And the locations list should not contain "Forged"
 
   Scenario: A cookie write from the app's own origin still works
     Given the database has seed data

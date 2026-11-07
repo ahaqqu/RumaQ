@@ -181,6 +181,18 @@ defineFeature(feature, (test) => {
     and('the response body should match', (body) => {
       ctx.expectBodyToMatch(JSON.parse(body))
     })
+    // 403 is not enough: the write must not have landed. The list is read back
+    // through the same authenticated context (same Origin in ctx.headers, which
+    // is harmless on a GET — the guard only scopes POST/PUT/PATCH/DELETE).
+    when(/I send a (GET) request to (\S+)/, async (method, path) => {
+      await ctx.sendRequest(method, path)
+    })
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+    and(/^the locations list should not contain "(.+)"$/, (label) => {
+      expect(JSON.stringify(ctx.responseBody)).not.toContain(label)
+    })
   })
 
   test("A cookie write from the app's own origin still works", ({ given, when, then, and }) => {

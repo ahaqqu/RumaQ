@@ -333,6 +333,47 @@ describe('CSRF guard through the gateway (real SQL)', () => {
     expect(await res.json()).toEqual({ locations: [] })
   })
 
+  it('rejects a foreign origin on every dispatch path in the gateway', async () => {
+    // One write route per dispatch branch (apiApp, households, tasks, calendar,
+    // the plugin catalog, and a plugin app). The guard runs before validation
+    // and before auth, so an empty body and no cookie still answer 403 — and a
+    // dispatch that drifts above the guard fails here instead of shipping
+    // (#528 review A4).
+    const routes: [string, string][] = [
+      ['POST', '/api/locations'],
+      ['POST', '/api/households'],
+      ['POST', '/api/tasks'],
+      ['POST', '/api/calendar/events'],
+      ['PUT', '/api/plugins/documents/enablement'],
+      ['POST', '/api/plugins/documents/purge'],
+      ['POST', '/api/documents'],
+      ['DELETE', '/api/documents/doc-1'],
+    ]
+    for (const [method, path] of routes) {
+      const res = await callGateway(env, `http://localhost:3000${path}`, {
+        method,
+        headers: { Cookie: await cookieFor(), Origin: 'https://evil.example' },
+      })
+      expect(res.status, `${method} ${path}`).toBe(403)
+      expect(await res.json(), `${method} ${path}`).toEqual({ error: CSRF_ORIGIN_MISMATCH })
+    }
+  })
+
+  it('does not exempt a cookie write for a non-bearer Authorization header', async () => {
+    // The exemption is the bearer *scheme*, not the presence of the header:
+    // a browser-supplied `Basic` token must not switch the guard off.
+    const res = await callGateway(env, 'http://localhost:3000/api/locations', {
+      method: 'POST',
+      headers: {
+        Cookie: await cookieFor(),
+        Origin: 'https://evil.example',
+        Authorization: 'Basic dXNlcjpwYXNz',
+      },
+    })
+    expect(res.status).toBe(403)
+    expect(locations()?.n).toBe(0)
+  })
+
   it('guards the other domain apps dispatched by the gateway too', async () => {
     const res = await callGateway(env, 'http://localhost:3000/api/households', {
       method: 'POST',
