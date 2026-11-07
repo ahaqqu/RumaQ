@@ -326,6 +326,62 @@ describe('POST /api/ai/providers (plan §4.2)', () => {
     expect(String(row.encrypted_key)).toMatch(/^v2:/)
   })
 
+  it('never returns key material under ANY field name, on any read', async () => {
+    // Review A6: the old guard asserted the literal field name (`encrypted_key`)
+    // and used `objectContaining`, so a decrypted `api_key` on the list passed
+    // all 1,305 tests. This pins the exact provider shape and a plaintext canary.
+    const created = await call('POST', '/api/ai/providers', OWNER, {
+      label: 'Canary',
+      kind: 'gemini',
+      preset: 'gemini',
+      default_model: 'gemini-3.6-flash',
+      api_key: 'sk-canary-6b21',
+    })
+    const id = ((await created.json()) as any).provider.id
+    await call('PUT', '/api/ai/capabilities/decision', OWNER, { provider_id: id, model: '' })
+
+    const list = (await (await call('GET', '/api/ai/providers', OWNER)).json()) as any
+    expect(list.providers).toHaveLength(1)
+    // Exact shape, not objectContaining: adding a field to the serialiser fails.
+    expect(Object.keys(list.providers[0]).sort()).toEqual([
+      'base_url',
+      'created_at',
+      'default_model',
+      'has_key',
+      'id',
+      'kind',
+      'label',
+      'preset',
+      'updated_at',
+    ])
+
+    for (const path of ['/api/ai/providers', '/api/ai/capabilities', '/api/settings']) {
+      const res = await call('GET', path, OWNER)
+      expect(res.status, path).toBe(200)
+      const text = await res.text()
+      expect(text, path).not.toContain('sk-canary-6b21')
+      expect(text, path).not.toContain('encrypted_key')
+    }
+  })
+
+  it('a stored key that cannot be decrypted answers ok:false unreadable_key, never a 500', async () => {
+    sqlite
+      .prepare(
+        `INSERT INTO ai_providers
+           (id, household_id, label, kind, preset, base_url, default_model, encrypted_key)
+         VALUES ('p-broken', 'h1', 'Broken', 'gemini', 'gemini', NULL, NULL, 'v2:not-a-real-envelope')`
+      )
+      .run()
+    const fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const res = await call('POST', '/api/ai/providers/p-broken/test', OWNER)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: false, code: 'unreadable_key' })
+    // Nothing was sent to a provider and the error carries no key material.
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('accepts a typed-decision endpoint only WITH a base URL (kind questions)', async () => {
     const missing = await call('POST', '/api/ai/providers', OWNER, {
       label: 'Jev',
