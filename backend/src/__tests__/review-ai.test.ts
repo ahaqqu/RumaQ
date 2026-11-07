@@ -228,9 +228,11 @@ describe('migration 0038 (review AI)', () => {
     expect(REVIEW_MODES).toEqual(['manual', 'assist', 'auto'])
   })
 
-  it('defaults decided_source to human for existing rows and enforces the verdict vocabulary', () => {
+  it('leaves a pending row with decided_source NULL and enforces the verdict vocabulary', () => {
+    // No DEFAULT: a never-decided pair has no decision to attribute — the
+    // same state the undo path writes (thermos A5).
     insertItem('r1')
-    expect(itemRow('r1').decided_source).toBe('human')
+    expect(itemRow('r1').decided_source).toBeNull()
 
     const insertVerdict = sqlite.prepare(
       `INSERT INTO review_ai_verdicts (id, review_item_id, verdict, confidence, mode)
@@ -428,7 +430,7 @@ describe('evaluatePendingReviews', () => {
       status: 'pending',
       decided_by: null,
       decided_at: null,
-      decided_source: 'human',
+      decided_source: null,
     })
     // The attempt was billed either way: usage is still recorded.
     expect(usageRows()).toHaveLength(1)
@@ -824,9 +826,8 @@ describe('review list carries the cached verdict', () => {
       humanAgreement: 'disagreed',
     })
     expect(pending?.aiVerdict).toBeNull()
-    expect(
-      page.items.every((item) => item.decidedSource === 'human' || item.decidedSource === null)
-    ).toBe(true)
+    // Both rows are pending: no decision, so no source (thermos A5).
+    expect(page.items.every((item) => item.decidedSource === null)).toBe(true)
   })
 
   it('never calls the provider on the list read', async () => {
@@ -960,7 +961,7 @@ describe('review AI admin routes', () => {
     expect(page.items[0]).toMatchObject({
       id: 'r1',
       status: 'pending',
-      decidedSource: 'human',
+      decidedSource: null,
       aiVerdict: {
         verdict: 'same',
         confidence: 0.7,

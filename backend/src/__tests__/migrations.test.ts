@@ -2730,23 +2730,24 @@ describe('migration 0034: document_audit ocr action (#433)', () => {
 // review-ai.test.ts; here the migration chain itself is exercised — the
 // backfill for rows that predate 0038 and the seed the admin UI reads.
 describe('migration 0038: review AI (#484)', () => {
-  function insertPre0038ReviewItem(db: Db): void {
+  function insertPre0038ReviewItem(db: Db, id = 'rev-1', status = 'pending'): void {
     db.prepare(
       `INSERT INTO match_review_items
          (id, item_product_key, entry_product_key, pair_data, reason, match_method,
-          confidence, run_started_at, first_flagged_at, last_flagged_at)
-       VALUES ('rev-1', 'item-a', 'entry-a', '{}', 'price_ratio', 'exact', 1,
-               '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')`
-    ).run()
+          confidence, run_started_at, first_flagged_at, last_flagged_at, status)
+       VALUES (?, ? || '-item', ? || '-entry', '{}', 'price_ratio', 'exact', 1,
+               '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', ?)`
+    ).run(id, id, id, status)
   }
 
-  it('seeds review_mode=assist and backfills decided_source=human on pre-0038 rows', () => {
+  it('seeds review_mode=assist and backfills decided_source=human on decided pre-0038 rows only', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
     applyMigrations(
       db,
       migrationFiles().filter((file: string) => file < '0038')
     )
-    insertPre0038ReviewItem(db)
+    insertPre0038ReviewItem(db, 'rev-pending')
+    insertPre0038ReviewItem(db, 'rev-decided', 'approved')
 
     db.exec(readFileSync(join(MIGRATIONS_DIR, '0038_review_ai.sql'), 'utf8'))
 
@@ -2755,11 +2756,15 @@ describe('migration 0038: review AI (#484)', () => {
     expect(db.prepare('SELECT key, value FROM app_settings').all()).toEqual([
       { key: 'review_mode', value: 'assist' },
     ])
-    // Every pre-existing decision was a human one — the column's default is
-    // the backfill.
+    // Every pre-existing DECISION was a human one — the backfill attributes
+    // decided rows. A pending row has nothing to attribute (the same state
+    // undo produces), so it stays NULL (thermos A5).
     expect(
-      db.prepare('SELECT decided_source FROM match_review_items WHERE id = ?').get('rev-1')
+      db.prepare('SELECT decided_source FROM match_review_items WHERE id = ?').get('rev-decided')
     ).toMatchObject({ decided_source: 'human' })
+    expect(
+      db.prepare('SELECT decided_source FROM match_review_items WHERE id = ?').get('rev-pending')
+    ).toMatchObject({ decided_source: null })
   })
 
   it('keeps the full chain green and enforces the verdict vocabulary + cascade', () => {

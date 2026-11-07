@@ -64,7 +64,13 @@ CREATE TABLE IF NOT EXISTS review_ai_verdicts (
 
 -- Provenance of an item's current decision (issue #484): who/what produced
 -- it. Nullable on purpose — a pending (never decided, or undone) row has no
--- decision to attribute, so the undo path clears it. Existing rows are all
--- human decisions, which is what the default backfills.
-ALTER TABLE match_review_items ADD COLUMN decided_source TEXT DEFAULT 'human'
+-- decision to attribute, which is also the state the undo path writes. No
+-- DEFAULT, for the same reason: a freshly flagged pending pair must read NULL
+-- rather than claiming a human decided it.
+ALTER TABLE match_review_items ADD COLUMN decided_source TEXT
   CHECK (decided_source IN ('human', 'ai_assist', 'ai_auto'));
+
+-- Backfill: every DECISION that predates this migration was a human one.
+-- Pending rows stay NULL — "no decision to attribute" is the same state undo
+-- produces, so one truth has one representation.
+UPDATE match_review_items SET decided_source = 'human' WHERE status <> 'pending';
