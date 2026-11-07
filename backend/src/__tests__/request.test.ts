@@ -6,7 +6,7 @@ import { getRequestOrigin } from '../lib/request.js'
 // origin — not just "close enough" for a redirect URI.
 
 function context(url: string, headers: Record<string, string> = {}) {
-  return { req: { url, header: (name: string) => headers[name] } }
+  return { url, header: (name: string) => headers[name] }
 }
 
 describe('getRequestOrigin', () => {

@@ -41,7 +41,7 @@ const SESSION_COOKIE_SAME_SITE = 'Lax' as const
 // rejects the exchange otherwise — so both routes build it here, derived from the
 // request origin: Google returns the browser to the authorize-time redirect_uri,
 // so the callback's own origin is always the value Google validated.
-const oauthRedirectUri = (c: Context<Env>) => `${getRequestOrigin(c)}/api/auth/callback`
+const oauthRedirectUri = (c: Context<Env>) => `${getRequestOrigin(c.req)}/api/auth/callback`
 
 const authApp = new Hono<Env>()
 

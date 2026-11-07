@@ -15,14 +15,29 @@
  * not add these headers, so the `request.url` fallback is what runs. The local
  * Docker test stack forwards them via its reverse proxy.
  */
-export function getRequestOrigin(c: {
-  req: { url: string; header: (name: string) => string | undefined }
-}): string {
-  const url = new URL(c.req.url)
+/**
+ * The two things this helper reads: a Hono `Context['req']` (or a raw `Request`
+ * adapted through `requestOriginSource`) satisfies it structurally. Flattened
+ * from a whole `Context` so non-Hono callers (the CSRF guard takes a raw
+ * `Request`) do not have to fabricate middleware context to ask the question
+ * (#528 review B1).
+ */
+export interface RequestOriginSource {
+  url: string
+  header: (name: string) => string | undefined
+}
 
-  const forwardedProto = c.req.header('X-Forwarded-Proto')
-  const forwardedHost = c.req.header('X-Forwarded-Host')
-  const forwardedPort = c.req.header('X-Forwarded-Port')
+/** Adapt a raw `Request` to `RequestOriginSource`. */
+export function requestOriginSource(request: Request): RequestOriginSource {
+  return { url: request.url, header: (name) => request.headers.get(name) ?? undefined }
+}
+
+export function getRequestOrigin(source: RequestOriginSource): string {
+  const url = new URL(source.url)
+
+  const forwardedProto = source.header('X-Forwarded-Proto')
+  const forwardedHost = source.header('X-Forwarded-Host')
+  const forwardedPort = source.header('X-Forwarded-Port')
 
   if (forwardedHost) {
     const proto = forwardedProto || url.protocol.replace(':', '')

@@ -1,6 +1,6 @@
 import type { Env } from '../types.js'
 import { isConfiguredOrigin, isDevOrigin } from '../cors.js'
-import { getRequestOrigin } from './request.js'
+import { getRequestOrigin, requestOriginSource } from './request.js'
 
 /**
  * CSRF guard for state-changing API requests (ahaqqu/RumaQ#528).
@@ -134,11 +134,7 @@ export function csrfOriginGuard(request: Request, env: Env['Bindings']): Respons
   if (!supplied?.trim()) return null
 
   const suppliedOrigin = parseOrigin(supplied)
-  const ownOrigin = parseOrigin(
-    getRequestOrigin({
-      req: { url: request.url, header: (name) => request.headers.get(name) ?? undefined },
-    })
-  )
+  const ownOrigin = parseOrigin(getRequestOrigin(requestOriginSource(request)))
 
   // Re-parsing the reconstructed own origin above is deliberate: it normalizes
   // default ports on both sides, so `host:443` and `host` compare equal.
