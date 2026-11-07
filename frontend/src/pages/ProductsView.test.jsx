@@ -26,11 +26,17 @@ vi.mock('../lib/queries/products.js', () => ({
   useProductIdentity: vi.fn(),
   useRenameProduct: vi.fn(),
   useRevertRename: vi.fn(),
+  useDecideAlias: vi.fn(),
 }))
 
 import { usePrices, usePriceSources, usePriceMeta, usePriceDetail } from '../lib/queries/index.js'
 import { useMe } from '../lib/queries/me.js'
-import { useProductIdentity, useRenameProduct, useRevertRename } from '../lib/queries/products.js'
+import {
+  useProductIdentity,
+  useRenameProduct,
+  useRevertRename,
+  useDecideAlias,
+} from '../lib/queries/products.js'
 
 const PRODUCT_KEY = 'minyak-goreng--bimoli--1-l'
 
@@ -143,6 +149,7 @@ describe('ProductsView admin rename action (#423)', () => {
     })
     vi.mocked(useRenameProduct).mockReturnValue({ mutate: vi.fn(), isPending: false })
     vi.mocked(useRevertRename).mockReturnValue({ mutate: vi.fn(), isPending: false })
+    vi.mocked(useDecideAlias).mockReturnValue({ mutate: vi.fn(), isPending: false })
     vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
   })
 

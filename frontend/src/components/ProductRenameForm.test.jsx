@@ -11,9 +11,15 @@ vi.mock('../lib/queries/products.js', () => ({
   useProductIdentity: vi.fn(),
   useRenameProduct: vi.fn(),
   useRevertRename: vi.fn(),
+  useDecideAlias: vi.fn(),
 }))
 
-import { useProductIdentity, useRenameProduct, useRevertRename } from '../lib/queries/products.js'
+import {
+  useProductIdentity,
+  useRenameProduct,
+  useRevertRename,
+  useDecideAlias,
+} from '../lib/queries/products.js'
 
 const PRODUCT_KEY = 'beras-ramos-5kg--ramos--5-kg'
 
@@ -46,6 +52,7 @@ function identity(overrides = {}) {
     },
     aliases: [
       {
+        id: 'alias-candidate',
         name: 'Beras Ramos 5 kg',
         storeSlug: 'lotte-mart',
         status: 'candidate',
@@ -54,6 +61,7 @@ function identity(overrides = {}) {
         lastSeenAt: '2026-10-28T00:00:00Z',
       },
       {
+        id: 'alias-approved',
         name: 'Beras Ramos',
         storeSlug: 'superindo',
         status: 'approved',
@@ -64,6 +72,7 @@ function identity(overrides = {}) {
       {
         // The third status (#489): a decision the backend can now return.
         // Without its label the form fell back to "candidate".
+        id: 'alias-rejected',
         name: 'Ramos 5 KG',
         storeSlug: 'alfamart',
         status: 'rejected',
@@ -80,6 +89,7 @@ function identity(overrides = {}) {
 
 const renameMutate = vi.fn()
 const revertMutate = vi.fn()
+const aliasMutate = vi.fn()
 const refetch = vi.fn()
 
 function mockIdentity(value = identity()) {
@@ -92,7 +102,31 @@ function mockIdentity(value = identity()) {
 }
 
 function renderForm(props = {}) {
-  return render(<ProductRenameForm productKey={PRODUCT_KEY} {...props} />)
+  return render(<ProductRenameForm productKey={PRODUCT_KEY} isAdmin {...props} />)
+}
+
+function aliasRows(getByTestId) {
+  return getByTestId('rename-aliases').querySelectorAll('li')
+}
+
+function rowButtonTexts(row) {
+  return [...row.querySelectorAll('button')].map((button) => button.textContent)
+}
+
+function clickRowButton(row, text) {
+  const button = [...row.querySelectorAll('button')].find(
+    (candidate) => candidate.textContent === text
+  )
+  if (!button) throw new Error(`No row button with text ${text}`)
+  fireEvent.click(button)
+}
+
+function lastAliasVariables() {
+  return aliasMutate.mock.calls[aliasMutate.mock.calls.length - 1][0]
+}
+
+function lastAliasOptions() {
+  return aliasMutate.mock.calls[aliasMutate.mock.calls.length - 1][1]
 }
 
 function nameInput(container) {
@@ -125,6 +159,7 @@ describe('ProductRenameForm', () => {
     mockIdentity()
     vi.mocked(useRenameProduct).mockReturnValue({ mutate: renameMutate, isPending: false })
     vi.mocked(useRevertRename).mockReturnValue({ mutate: revertMutate, isPending: false })
+    vi.mocked(useDecideAlias).mockReturnValue({ mutate: aliasMutate, isPending: false })
   })
 
   afterEach(() => {
@@ -151,6 +186,132 @@ describe('ProductRenameForm', () => {
     expect(rows).toHaveLength(3)
     expect(rows[2].textContent).toContain('rename.aliasStatusRejected')
     expect(rows[2].textContent).not.toContain('rename.aliasStatusCandidate')
+  })
+
+  it('offers approve/reject only on candidate rows, addressed by alias id', () => {
+    const { getByTestId } = renderForm()
+    const rows = aliasRows(getByTestId)
+    // Candidate first, then approved and rejected: only the undecided row can
+    // still move.
+    expect(rowButtonTexts(rows[0])).toEqual(['rename.aliasApprove', 'rename.aliasReject'])
+    expect(rowButtonTexts(rows[1])).toEqual([])
+    expect(rowButtonTexts(rows[2])).toEqual([])
+    // The hint explains what each decision does, and only exists with a
+    // candidate on screen.
+    expect(getByTestId('product-rename-form').textContent).toContain('rename.aliasDecisionHint')
+
+    clickRowButton(rows[0], 'rename.aliasApprove')
+    expect(aliasMutate).toHaveBeenCalledTimes(1)
+    expect(lastAliasVariables()).toEqual({
+      productKey: PRODUCT_KEY,
+      aliasId: 'alias-candidate',
+      action: 'approve',
+    })
+  })
+
+  it('sends a reject for the row it was clicked on', () => {
+    const { getByTestId } = renderForm()
+    clickRowButton(aliasRows(getByTestId)[0], 'rename.aliasReject')
+    expect(lastAliasVariables()).toEqual({
+      productKey: PRODUCT_KEY,
+      aliasId: 'alias-candidate',
+      action: 'reject',
+    })
+  })
+
+  it('keeps only the decided row busy and leaves the rename form usable', () => {
+    const { container, getByTestId } = renderForm()
+    const rows = aliasRows(getByTestId)
+    clickRowButton(rows[0], 'rename.aliasApprove')
+
+    // The active row swaps in the busy label and disables both of its actions.
+    expect(rowButtonTexts(rows[0])).toEqual(['rename.aliasApproving', 'rename.aliasReject'])
+    expect([...rows[0].querySelectorAll('button')].every((button) => button.disabled)).toBe(true)
+    // A second click cannot queue a second decision for the same alias.
+    fireEvent.click(rows[0].querySelector('button'))
+    expect(aliasMutate).toHaveBeenCalledTimes(1)
+
+    // The rename fields are untouched by a decision in flight: the draft still
+    // submits (the backend keeps alias decisions off metadata_version).
+    typeName(container, 'Beras Ramos Premium 5 kg')
+    expect(submitButton(container).disabled).toBe(false)
+    fireEvent.click(submitButton(container))
+    expect(renameMutate).toHaveBeenCalledTimes(1)
+  })
+
+  it('confirms an approval with the decided alias and the returned index version', () => {
+    const { getByTestId } = renderForm()
+    clickRowButton(aliasRows(getByTestId)[0], 'rename.aliasApprove')
+    act(() => {
+      lastAliasOptions().onSuccess({
+        alias: { ...identity().aliases[0], status: 'approved' },
+        indexVersion: 17,
+      })
+    })
+
+    const notice = getByTestId('alias-decision-notice')
+    expect(notice.getAttribute('role')).toBe('status')
+    expect(notice.textContent).toBe('rename.aliasApproveSuccess')
+  })
+
+  it('confirms a rejection without claiming an index bump', () => {
+    const { getByTestId } = renderForm()
+    clickRowButton(aliasRows(getByTestId)[0], 'rename.aliasReject')
+    act(() => {
+      lastAliasOptions().onSuccess({
+        alias: { ...identity().aliases[0], status: 'rejected' },
+        indexVersion: 12,
+      })
+    })
+    expect(getByTestId('alias-decision-notice').textContent).toBe('rename.aliasRejectSuccess')
+  })
+
+  it('refetches the identity and says the alias was already decided on 409 alias_state', () => {
+    const { container, getByTestId } = renderForm()
+    clickRowButton(aliasRows(getByTestId)[0], 'rename.aliasApprove')
+    act(() => {
+      lastAliasOptions().onError(
+        new ApiError('alias_state', 409, null, {
+          error: 'alias_state',
+          currentStatus: 'rejected',
+        })
+      )
+    })
+
+    expect(refetch).toHaveBeenCalledTimes(1)
+    const notice = getByTestId('alias-decision-notice')
+    expect(notice.getAttribute('role')).toBe('alert')
+    expect(notice.textContent).toContain('rename.aliasAlreadyDecided')
+    // The raw server code never reaches the DOM.
+    expect(container.textContent).not.toContain('alias_state')
+  })
+
+  it('maps alias decision 404, 403 and network failures to localized copy', () => {
+    const cases = [
+      { error: new ApiError('RAW_404_ALIAS', 404), key: 'rename.aliasErrorNotFound' },
+      { error: new ApiError('RAW_403_FORBIDDEN', 403), key: 'rename.aliasErrorForbidden' },
+      { error: new Error('RAW_NETWORK_FAILURE'), key: 'rename.aliasErrorGeneric' },
+    ]
+    for (const { error, key } of cases) {
+      const { container, getByTestId, unmount } = renderForm()
+      clickRowButton(aliasRows(getByTestId)[0], 'rename.aliasReject')
+      act(() => {
+        lastAliasOptions().onError(error)
+      })
+      expect(getByTestId('alias-decision-notice').textContent).toBe(key)
+      expect(container.textContent).not.toContain(error.message)
+      expect(refetch).not.toHaveBeenCalled()
+      unmount()
+    }
+  })
+
+  it('shows alias states but no decision actions to a non-admin', () => {
+    const { container, getByTestId } = renderForm({ isAdmin: false })
+    const rows = aliasRows(getByTestId)
+    expect(rows[0].textContent).toContain('rename.aliasStatusCandidate')
+    expect(container.textContent).not.toContain('rename.aliasApprove')
+    expect(container.textContent).not.toContain('rename.aliasReject')
+    expect(container.textContent).not.toContain('rename.aliasDecisionHint')
   })
 
   it('previews old → new live and submits the optimistic metadata version', () => {

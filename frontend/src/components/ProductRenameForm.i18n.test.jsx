@@ -40,9 +40,15 @@ vi.mock('../lib/queries/products.js', () => ({
   useProductIdentity: vi.fn(),
   useRenameProduct: vi.fn(),
   useRevertRename: vi.fn(),
+  useDecideAlias: vi.fn(),
 }))
 
-import { useProductIdentity, useRenameProduct, useRevertRename } from '../lib/queries/products.js'
+import {
+  useProductIdentity,
+  useRenameProduct,
+  useRevertRename,
+  useDecideAlias,
+} from '../lib/queries/products.js'
 
 const PRODUCT_KEY = 'beras-ramos-5kg--ramos--5-kg'
 
@@ -55,7 +61,27 @@ const identity = {
     status: 'provisional',
     metadataVersion: 3,
   },
-  aliases: [],
+  aliases: [
+    {
+      // #489: a candidate row is the only one with a decision left to make.
+      id: 'alias-candidate',
+      name: 'Beras Ramos 5 kg',
+      storeSlug: 'lotte-mart',
+      status: 'candidate',
+      source: 'ocr',
+      firstSeenAt: '2026-10-25T00:00:00Z',
+      lastSeenAt: '2026-10-28T00:00:00Z',
+    },
+    {
+      id: 'alias-rejected',
+      name: 'Ramos 5 KG',
+      storeSlug: 'alfamart',
+      status: 'rejected',
+      source: 'ocr',
+      firstSeenAt: '2026-10-18T00:00:00Z',
+      lastSeenAt: '2026-10-26T00:00:00Z',
+    },
+  ],
   stats: { observations: 42, stores: 2 },
   audit: [
     {
@@ -75,9 +101,10 @@ const identity = {
 
 const renameMutate = vi.fn()
 const revertMutate = vi.fn()
+const aliasMutate = vi.fn()
 
 function renderForm() {
-  return render(<ProductRenameForm productKey={PRODUCT_KEY} />)
+  return render(<ProductRenameForm productKey={PRODUCT_KEY} isAdmin />)
 }
 
 function typeName(container, value) {
@@ -92,6 +119,10 @@ function lastOptions() {
   return renameMutate.mock.calls[renameMutate.mock.calls.length - 1][1]
 }
 
+function lastAliasOptions() {
+  return aliasMutate.mock.calls[aliasMutate.mock.calls.length - 1][1]
+}
+
 describe('ProductRenameForm real copy (#423)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -103,6 +134,7 @@ describe('ProductRenameForm real copy (#423)', () => {
     })
     vi.mocked(useRenameProduct).mockReturnValue({ mutate: renameMutate, isPending: false })
     vi.mocked(useRevertRename).mockReturnValue({ mutate: revertMutate, isPending: false })
+    vi.mocked(useDecideAlias).mockReturnValue({ mutate: aliasMutate, isPending: false })
   })
 
   it('renders the lead-in labels and the live old → new preview', () => {
@@ -210,5 +242,70 @@ describe('ProductRenameForm real copy (#423)', () => {
       expect.any(Object)
     )
     confirm.mockRestore()
+  })
+
+  // Candidate-alias decisions (#489): real copy, because a missing key would
+  // otherwise render as the literal `rename.aliasApprove` and no assertion in
+  // the raw-key suite would notice.
+  it('renders the alias decision actions and hint in plain English', () => {
+    const { container, getByTestId } = renderForm()
+    const rows = getByTestId('rename-aliases').querySelectorAll('li')
+    expect(rows[0].textContent).toContain('candidate')
+    expect(rows[0].textContent).toContain('OCR')
+    expect(rows[0].textContent).toContain('Approve')
+    expect(rows[0].textContent).toContain('Reject')
+    expect(rows[0].querySelector('button').getAttribute('aria-label')).toBe(
+      'Approve Beras Ramos 5 kg'
+    )
+    expect(container.textContent).toContain(
+      'Approving a variant adds it to the canonical index; rejecting keeps it out.'
+    )
+    // Terminal rows show their state and stay action-free.
+    expect(rows[1].textContent).toContain('rejected')
+    expect(rows[1].querySelectorAll('button')).toHaveLength(0)
+  })
+
+  it('confirms an approval with the decided alias and index version', () => {
+    const { container, getByTestId } = renderForm()
+    clickText(container, 'Approve')
+    act(() => {
+      lastAliasOptions().onSuccess({
+        alias: { ...identity.aliases[0], status: 'approved' },
+        indexVersion: 17,
+      })
+    })
+    expect(getByTestId('alias-decision-notice').textContent).toContain(
+      'Approved “Beras Ramos 5 kg” — the canonical index is now version 17. The pipeline sees it on its next run.'
+    )
+  })
+
+  it('confirms a rejection without claiming the index moved', () => {
+    const { container, getByTestId } = renderForm()
+    clickText(container, 'Reject')
+    act(() => {
+      lastAliasOptions().onSuccess({
+        alias: { ...identity.aliases[0], status: 'rejected' },
+        indexVersion: 12,
+      })
+    })
+    expect(getByTestId('alias-decision-notice').textContent).toContain(
+      'Rejected “Beras Ramos 5 kg” — the canonical index stays at version 12.'
+    )
+  })
+
+  it('says an alias was already decided in plain English on 409 alias_state', () => {
+    const { container, getByTestId } = renderForm()
+    clickText(container, 'Approve')
+    act(() => {
+      lastAliasOptions().onError(
+        new ApiError('alias_state', 409, null, {
+          error: 'alias_state',
+          currentStatus: 'rejected',
+        })
+      )
+    })
+    expect(getByTestId('alias-decision-notice').textContent).toContain(
+      'This alias was already decided (rejected) — the list has been refreshed.'
+    )
   })
 })

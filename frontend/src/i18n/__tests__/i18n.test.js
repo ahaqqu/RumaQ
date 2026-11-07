@@ -63,6 +63,61 @@ describe('locale files', () => {
     })
   })
 
+  // Candidate-alias decisions (ahaqqu/RumaQ#489, frontend PR 2). The rename
+  // namespace parity above proves key equality; this pins that the decision
+  // copy exists in BOTH locales with real Indonesian and the exact rendered
+  // sentences (the approve/reject verbs, the index-version receipt, and the
+  // CAS-loss notice).
+  describe('alias decisions (#489)', () => {
+    const DECISION_KEYS = [
+      'aliasDecisionHint',
+      'aliasApprove',
+      'aliasReject',
+      'aliasApproveLabel',
+      'aliasRejectLabel',
+      'aliasApproving',
+      'aliasRejecting',
+      'aliasApproveSuccess',
+      'aliasRejectSuccess',
+      'aliasAlreadyDecided',
+      'aliasErrorNotFound',
+      'aliasErrorForbidden',
+      'aliasErrorGeneric',
+    ]
+
+    it('exists in both locales with the same decision keys', () => {
+      for (const key of DECISION_KEYS) {
+        expect(en.rename[key], `rename.${key} missing in en`).toBeTypeOf('string')
+        expect(id.rename[key], `rename.${key} missing in id`).toBeTypeOf('string')
+      }
+    })
+
+    it('has real Indonesian copy, not English copies', () => {
+      for (const key of DECISION_KEYS) {
+        expect(id.rename[key], `rename.${key} is untranslated`).not.toBe(en.rename[key])
+      }
+    })
+
+    it('pins the actions, the receipts and the conflict notice', () => {
+      expect(en.rename.aliasApprove).toBe('Approve')
+      expect(id.rename.aliasApprove).toBe('Setujui')
+      expect(en.rename.aliasReject).toBe('Reject')
+      expect(id.rename.aliasReject).toBe('Tolak')
+      expect(en.rename.aliasApproving).toBe('Approving…')
+      // Approve is the only decision that moves the index: its receipt names
+      // the new version, reject's says the version is unchanged.
+      expect(en.rename.aliasApproveSuccess).toContain('version {{version}}')
+      expect(en.rename.aliasApproveSuccess).toContain('{{name}}')
+      expect(en.rename.aliasRejectSuccess).toContain('stays at version {{version}}')
+      expect(en.rename.aliasAlreadyDecided).toBe(
+        'This alias was already decided ({{status}}) — the list has been refreshed.'
+      )
+      expect(id.rename.aliasAlreadyDecided).toContain('sudah diputuskan')
+      expect(id.rename.aliasAlreadyDecided).toContain('{{status}}')
+      expect(en.rename.aliasErrorForbidden).toBe('Only admins can decide aliases.')
+    })
+  })
+
   // AI review UI (issue #484, frontend PR 2). The global parity tests above
   // prove the shape; these pin that the new AI copy exists in BOTH locales
   // with real Indonesian (not an English copy-paste) and that the rendered

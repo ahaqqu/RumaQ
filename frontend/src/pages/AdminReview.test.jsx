@@ -30,6 +30,7 @@ vi.mock('../lib/queries/products.js', () => ({
   useProductIdentity: vi.fn(),
   useRenameProduct: vi.fn(),
   useRevertRename: vi.fn(),
+  useDecideAlias: vi.fn(),
 }))
 
 import { useMe } from '../lib/queries/me.js'
@@ -42,7 +43,12 @@ import {
   useSetReviewMode,
   useEvaluateReview,
 } from '../lib/queries/review.js'
-import { useProductIdentity, useRenameProduct, useRevertRename } from '../lib/queries/products.js'
+import {
+  useProductIdentity,
+  useRenameProduct,
+  useRevertRename,
+  useDecideAlias,
+} from '../lib/queries/products.js'
 import { fetchReviewExport } from '../lib/api'
 
 const decideMutate = vi.fn()
@@ -162,6 +168,7 @@ describe('AdminReview', () => {
     })
     vi.mocked(useRenameProduct).mockReturnValue({ mutate: vi.fn(), isPending: false })
     vi.mocked(useRevertRename).mockReturnValue({ mutate: vi.fn(), isPending: false })
+    vi.mocked(useDecideAlias).mockReturnValue({ mutate: vi.fn(), isPending: false })
   })
 
   it('shows the forbidden state for non-admins', () => {

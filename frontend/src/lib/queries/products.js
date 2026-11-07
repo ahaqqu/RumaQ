@@ -1,5 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { getAdminProduct, renameProduct, revertProductRename } from '../api'
+import {
+  approveProductAlias,
+  getAdminProduct,
+  rejectProductAlias,
+  renameProduct,
+  revertProductRename,
+} from '../api'
 
 // Admin canonical product identity and its two writes (ahaqqu/RumaQ#423, PR C).
 // The identity is a query of its own — not a slice of ['prices'] — because the
@@ -25,10 +31,10 @@ export function useProductIdentity(productKey, { enabled = true } = {}) {
   })
 }
 
-// Both canonical writes move the same three surfaces: the product's own
-// identity (the new name + appended audit row), the public price lists whose
-// rows carry the name, and the match review queue whose canonical entry column
-// shows it.
+// Every canonical write moves the same three surfaces: the product's own
+// identity (the new name + appended audit row, or a flipped alias status), the
+// public price lists whose rows carry the name, and the match review queue
+// whose canonical entry column shows it.
 function useCanonicalWriteInvalidator() {
   const queryClient = useQueryClient()
   return (productKey) => {
@@ -36,6 +42,25 @@ function useCanonicalWriteInvalidator() {
     queryClient.invalidateQueries({ queryKey: productIdentityQueryKey(productKey) })
     queryClient.invalidateQueries({ queryKey: ['review'] })
   }
+}
+
+// The committed alias is written into the identity cache before the
+// invalidated refetch lands, so the row's status chip flips from candidate to
+// approved/rejected without a frame of stale state (the rename seeding
+// precedent above). The identity query is the only cache that carries aliases.
+function seedDecidedAlias(queryClient, productKey, decidedAlias) {
+  if (!decidedAlias?.id) return
+  queryClient.setQueryData(productIdentityQueryKey(productKey), (previous) => {
+    if (!previous?.aliases) return previous
+    return {
+      ...previous,
+      aliases: previous.aliases.map((alias) =>
+        alias.id === decidedAlias.id
+          ? { ...alias, status: decidedAlias.status ?? alias.status }
+          : alias
+      ),
+    }
+  })
 }
 
 // The committed row is written into the identity cache before the invalidated
@@ -68,5 +93,29 @@ export function useRevertRename() {
     mutationFn: ({ productKey, auditId, ...body }) =>
       revertProductRename(productKey, auditId, body),
     onSuccess: (result, variables) => seed(variables.productKey, result),
+  })
+}
+
+// Candidate-alias decisions (ahaqqu/RumaQ#489). The decision is addressed by
+// the alias id the identity payload carries; the returned alias is seeded into
+// the identity cache and the three canonical surfaces re-read. Note what the
+// hook does NOT touch: `price_products.metadata_version`, because an alias
+// decision changes no canonical field (the backend's own rule) — so a rename
+// and an alias decision never race for the same optimistic version.
+export function useDecideAlias() {
+  const queryClient = useQueryClient()
+  const invalidate = useCanonicalWriteInvalidator()
+  return useMutation({
+    mutationFn: ({ productKey, aliasId, action }) => {
+      if (action === 'approve') return approveProductAlias(productKey, aliasId)
+      if (action === 'reject') return rejectProductAlias(productKey, aliasId)
+      // The routes accept exactly two verbs. Never default an unknown one to a
+      // decision: a reject is terminal and must only happen on purpose.
+      return Promise.reject(new Error(`Unknown alias decision '${action}'`))
+    },
+    onSuccess: (result, variables) => {
+      seedDecidedAlias(queryClient, variables.productKey, result?.alias)
+      invalidate(variables.productKey)
+    },
   })
 }
