@@ -1108,6 +1108,30 @@ describe('api routes edge cases', () => {
     expect(assets.fetch).not.toHaveBeenCalled()
   })
 
+  it('bare /api goes through the GATEWAY to the JSON 404 — runWorkerFirst glob trap (QF-A1)', async () => {
+    // The apiApp-level test above cannot catch the QF-A1 drift: bare `/api`
+    // never reached apiApp at all (gateway dispatched on startsWith('/api/')
+    // and the runWorkerFirst glob ['/api/*'] doesn't match the bare path), so
+    // production answered the SPA shell while this app-level pin stayed
+    // green. Drive the gateway itself, with an ASSETS fetcher that fails the
+    // test if it is ever reached.
+    const { gateway } = await import('../gateway.js')
+    const assets = { fetch: vi.fn().mockResolvedValue(new Response('<html>shell</html>')) }
+    const env = createMockEnv({ ASSETS: assets })
+    const dispatchCtx = { waitUntil: vi.fn() }
+    for (const path of ['/api', '/api/definitely-not-a-route']) {
+      const res = await gateway.fetch(
+        new Request(`https://rumaq.test${path}`),
+        env as unknown as Parameters<typeof gateway.fetch>[1],
+        dispatchCtx as unknown as Parameters<typeof gateway.fetch>[2]
+      )
+      expect(res.status, path).toBe(404)
+      expect(res.headers.get('content-type'), path).toContain('application/json')
+      expect(await res.json(), path).toEqual({ error: 'Not found' })
+    }
+    expect(assets.fetch).not.toHaveBeenCalled()
+  })
+
   it('notFound returns 404 without ASSETS', async () => {
     const env = createMockEnv()
     const res = await apiApp.request('/unknown', {}, env)

@@ -30,6 +30,7 @@ import {
 } from '@rumaq/contract'
 import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
+import { isApiPath } from '../plugins/core-prefixes.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { encryptAiKey, decryptAiKey, timingSafeEqualStrings } from '../lib/crypto.js'
 import { runReportSchema, getPricesStatus } from '../lib/ingest.js'
@@ -4429,8 +4430,10 @@ apiApp.notFound(async (c) => {
   // answer the API's typed JSON 404, never the SPA shell — the ASSETS
   // fallback exists for the frontend's client-side routes, and an API client
   // (pipeline contract consumers included) must never receive HTML (or the
-  // asset server's 405 on non-GET) from an /api/* path.
-  if (c.req.path === '/api' || c.req.path.startsWith('/api/')) {
+  // asset server's 405 on non-GET) from an /api/* path. The namespace
+  // predicate is SHARED with the gateway's dispatch (QF-B1) so the two can
+  // never drift again.
+  if (isApiPath(c.req.path)) {
     return c.json({ error: 'Not found' }, 404, { 'Cache-Control': 'private, no-cache' })
   }
   if (c.env.ASSETS) {

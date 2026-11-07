@@ -6,6 +6,7 @@ import { tasksApp } from './apps/tasks.js'
 import { calendarApp } from './apps/calendar.js'
 import { pluginsApp } from './apps/plugins.js'
 import { matchPlugin } from './plugins/registry.js'
+import { isApiPath } from './plugins/core-prefixes.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai-access.js'
 import { logDueDocumentReminders } from './lib/document-expiry.js'
 import { PURGE_TICK_OBJECT_BUDGET, runPluginPurgeTick } from './lib/plugin-purge.js'
@@ -58,7 +59,7 @@ export const gateway = {
     const url = new URL(request.url)
     const path = url.pathname
 
-    if (path.startsWith('/api/')) {
+    if (isApiPath(path)) {
       if (AUTH_ROUTES.has(path)) {
         const adjustedUrl = new URL(request.url)
         adjustedUrl.pathname = path.replace(/^\/api\/auth/, '')

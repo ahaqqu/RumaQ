@@ -60,9 +60,12 @@ export default defineConfig({
     // Single-deploy topology: the Worker serves both the SPA (frontend build,
     // wired in via publicDir in vite.config.ts) and the API. API requests must
     // always reach the user worker; unknown paths fall back to index.html.
+    // Bare `/api` is listed explicitly (QF-A1, PR #486 review): the `/api/*`
+    // glob does not match it, and without this entry a GET /api would answer
+    // the SPA shell instead of the Worker's typed JSON 404.
     assets: {
       notFoundHandling: 'single-page-application',
-      runWorkerFirst: ['/api/*'],
+      runWorkerFirst: ['/api', '/api/*'],
     },
     // TWO cron schedules (ticket 7, #441 — the strings live in
     // src/cron-schedules.ts, shared with gateway.ts's dispatch, which reads
