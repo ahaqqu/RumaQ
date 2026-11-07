@@ -361,6 +361,9 @@ describe('evaluatePendingReviews', () => {
     }
     // The resolved model is what went on the wire — NOT a pinned constant.
     expect(body.model).toBe('gpt-reviewer-user-choice')
+    // Thermos A3: the provider call carries a deadline, so a stalled
+    // provider cannot hold the evaluate request forever.
+    expect(init.signal).toBeInstanceOf(AbortSignal)
     expect(body.messages[0].role).toBe('system')
     expect(body.messages[0].content).toContain('product-identity reviewer')
     expect(body.messages[1].role).toBe('user')
@@ -650,7 +653,10 @@ describe('taxonomy self-pairs are not identity-reviewed', () => {
       confidence: 0.42,
       lastFlaggedAt: '2026-10-30T02:00:00Z',
     })
-    insertItem('match-1', { entryName: 'a real match question', lastFlaggedAt: '2026-10-30T01:00:00Z' })
+    insertItem('match-1', {
+      entryName: 'a real match question',
+      lastFlaggedAt: '2026-10-30T01:00:00Z',
+    })
     await setReviewMode(d1, 'auto', ADMIN)
     vi.spyOn(console, 'log').mockImplementation(() => {})
     providerMock(() => answer('{"verdict":"same","confidence":0.95,"reason":"Same pack."}'))

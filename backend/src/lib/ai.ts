@@ -157,6 +157,11 @@ export type AiCallOpts = {
   model?: string | null
   thinkingLevel?: ThinkingLevel | null
   onUsage?: (usage: TokenUsage) => void
+  // Optional call deadline. The providers' fetches take it as their
+  // AbortSignal, so a caller with a bounded budget (the review evaluator's
+  // synchronous fan-out) cancels a hung provider instead of awaiting it
+  // forever. Undefined = today's behavior (no deadline).
+  signal?: AbortSignal
 }
 
 const OLLAMA_BASE_URL = 'https://ollama.com/v1'
@@ -181,6 +186,7 @@ const ANTHROPIC_THINKING_BUDGET: Record<ThinkingLevel, number> = {
 type OpenAICompatibleOpts = {
   thinkingLevel?: ThinkingLevel | null
   onUsage?: (usage: TokenUsage) => void
+  signal?: AbortSignal
   maxTokensField?: 'max_tokens' | 'max_completion_tokens'
   // Omit to send no cap and let the provider/model defaults apply (Ollama
   // reasoning models otherwise spend the cap on thinking alone).
@@ -214,6 +220,7 @@ async function callOpenAICompatible(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
+    signal: opts?.signal,
   })
 
   if (!res.ok) {
@@ -249,6 +256,7 @@ async function callOpenAI(
     {
       thinkingLevel: opts?.thinkingLevel,
       onUsage: opts?.onUsage,
+      signal: opts?.signal,
       // Reasoning models reject max_tokens; max_completion_tokens is accepted
       // across OpenAI's chat models.
       maxTokensField: 'max_completion_tokens',
@@ -311,6 +319,7 @@ async function callGemini(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: opts?.signal,
     }
   )
 
@@ -387,6 +396,7 @@ async function callAnthropic(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify(body),
+    signal: opts?.signal,
   })
 
   if (!res.ok) {
@@ -425,6 +435,7 @@ async function callOpenCode(
     {
       thinkingLevel: opts?.thinkingLevel,
       onUsage: opts?.onUsage,
+      signal: opts?.signal,
       maxTokens: 2000,
     }
   )
@@ -489,6 +500,7 @@ async function callProvider(
         {
           thinkingLevel: opts?.thinkingLevel,
           onUsage: opts?.onUsage,
+          signal: opts?.signal,
         }
       )
     case 'custom': {
@@ -500,6 +512,7 @@ async function callProvider(
       return callOpenAICompatible('Custom provider', baseUrl, model, apiKey, messages, {
         thinkingLevel: opts?.thinkingLevel,
         onUsage: opts?.onUsage,
+        signal: opts?.signal,
         maxTokens: 2000,
       })
     }

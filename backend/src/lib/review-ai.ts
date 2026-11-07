@@ -56,6 +56,17 @@ export const REVIEW_CRON_LIMIT = 20
 /** Concurrent provider calls per sweep: below Workers' 6-connection limit. */
 export const REVIEW_AI_CONCURRENCY = 4
 
+/**
+ * Per-call provider deadline. The evaluator runs items at
+ * REVIEW_AI_CONCURRENCY, so a stalled provider is bounded at
+ * ceil(REVIEW_EVALUATE_MAX / REVIEW_AI_CONCURRENCY) × this = 3 × 20 s = 60 s
+ * for the synchronous evaluate request (5 waves for the 20-item cron) instead
+ * of holding the invocation until the client or the platform gives up. An
+ * abort is an ordinary typed failure: no verdict, no decision, the item stays
+ * pending for the next sweep.
+ */
+export const REVIEW_AI_CALL_TIMEOUT_MS = 20_000
+
 /** How long a model-written reason may be (it is display text, not evidence). */
 export const REVIEW_REASON_MAX_CHARS = 500
 
@@ -450,6 +461,7 @@ export async function evaluateReviewPair(
         baseUrl: args.access.baseUrl,
         model: args.access.model,
         thinkingLevel: args.access.thinkingLevel,
+        signal: AbortSignal.timeout(REVIEW_AI_CALL_TIMEOUT_MS),
         onUsage: usageCollector(tokens),
       }
     )
