@@ -61,6 +61,16 @@ function identity(overrides = {}) {
         firstSeenAt: '2026-10-20T00:00:00Z',
         lastSeenAt: '2026-10-27T00:00:00Z',
       },
+      {
+        // The third status (#489): a decision the backend can now return.
+        // Without its label the form fell back to "candidate".
+        name: 'Ramos 5 KG',
+        storeSlug: 'alfamart',
+        status: 'rejected',
+        source: 'ocr',
+        firstSeenAt: '2026-10-18T00:00:00Z',
+        lastSeenAt: '2026-10-26T00:00:00Z',
+      },
     ],
     stats: { observations: 42, stores: 2 },
     audit: [LATEST_RENAME],
@@ -136,6 +146,11 @@ describe('ProductRenameForm', () => {
     expect(aliases.textContent).toContain('rename.aliasSourceOcr')
     expect(aliases.textContent).toContain('rename.aliasStatusApproved')
     expect(aliases.textContent).toContain('rename.aliasSourceCatalog')
+    // #489: 'rejected' is its own label, not the candidate fallback.
+    const rows = aliases.querySelectorAll('li')
+    expect(rows).toHaveLength(3)
+    expect(rows[2].textContent).toContain('rename.aliasStatusRejected')
+    expect(rows[2].textContent).not.toContain('rename.aliasStatusCandidate')
   })
 
   it('previews old → new live and submits the optimistic metadata version', () => {

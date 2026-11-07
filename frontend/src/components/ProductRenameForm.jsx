@@ -33,6 +33,7 @@ const STATUS_KEY = {
 const ALIAS_STATUS_KEY = {
   candidate: 'rename.aliasStatusCandidate',
   approved: 'rename.aliasStatusApproved',
+  rejected: 'rename.aliasStatusRejected',
 }
 
 const ALIAS_SOURCE_KEY = {

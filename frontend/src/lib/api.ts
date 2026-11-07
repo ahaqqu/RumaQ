@@ -467,7 +467,7 @@ export async function fetchReviewExport(): Promise<Blob> {
 // ---------------------------------------------------------------------------
 
 export type ProductStatus = 'canonical' | 'provisional' | 'needs_review'
-export type ProductAliasStatus = 'candidate' | 'approved'
+export type ProductAliasStatus = 'candidate' | 'approved' | 'rejected'
 export type ProductAliasSource = 'ocr' | 'catalog' | 'admin'
 
 export type CanonicalProduct = {
@@ -484,6 +484,9 @@ export type CanonicalProduct = {
 }
 
 export type ProductAlias = {
+  // The handle the approve/reject routes take (PR 2's action target); the
+  // identity route returns it for every alias.
+  id: string
   name: string
   storeSlug: string
   status: ProductAliasStatus

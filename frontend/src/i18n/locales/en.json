@@ -865,6 +865,7 @@
     "aliasesEmpty": "No name variants recorded for this product.",
     "aliasStatusCandidate": "candidate",
     "aliasStatusApproved": "approved",
+    "aliasStatusRejected": "rejected",
     "aliasSourceOcr": "OCR",
     "aliasSourceCatalog": "catalog",
     "aliasSourceAdmin": "admin",
