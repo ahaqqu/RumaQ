@@ -258,12 +258,15 @@ export function AppShell({ children }) {
 
   // Shared by the desktop sidebar and the mobile drawer so both stay in sync.
   // Logout lives in the Settings page, not here. The whole card links into
-  // the Household members screen — the card is the entry point.
+  // the Household members screen — the card is the entry point. No aria-label:
+  // the rendered text (name + count + hint) IS the link's accessible name, so
+  // it can never omit a visible word (WCAG 2.5.3 — an aria-label that drops
+  // "4 people · Your shared kitchen" trips axe's label-content-name-mismatch,
+  // #498).
   const householdCard = householdName ? (
     <Link
       to="/household"
       className="block rounded-xl bg-surface-inset p-3 hover:bg-surface-sunken transition-colors"
-      aria-label={`${householdName} — ${t('nav.household')}`}
     >
       <div data-testid="household-card">
         <div className="text-[13px] font-semibold leading-[145%] text-text truncate">

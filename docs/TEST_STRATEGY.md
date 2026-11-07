@@ -88,6 +88,10 @@ Runs every 6 hours via `.github/workflows/smoke.yml`. Base URL: `rumaq.ahaqqu.co
   name. Known remaining item: the `--ok` token is ~3.8:1 — below AA for body
   text; no audited page currently renders ok-toned body text, so axe does not
   flag it. Revisit when a screen uses it.
+- Follow-up (2026-11): the household card link's accessible name now comes from
+  the card's visible text (household name + member count + hint). The previous
+  `aria-label` carried only the name and the "Household members" suffix, which
+  tripped axe `label-content-name-mismatch` (WCAG 2.5.3) on every page (#498).
 - Manual screen-reader passes (NVDA/VoiceOver) are periodic, not automated.
 
 ## Performance budget
