@@ -679,11 +679,19 @@ defineFeature(feature, (test) => {
     })
 
     and('the meta should report the latest scrape time and count', () => {
-      expect(ctx.responseBody).toEqual({
+      // Additive-field tolerant (issue #459): meta is a growing payload (it
+      // gained `categories` with #373), so assert the freshness fields'
+      // exact values instead of whole-object equality. An added field stays
+      // green; a removed or renamed field still fails here.
+      const meta = ctx.responseBody
+      expect(meta).toMatchObject({
         latestObservedDate: '2026-10-24',
         latestScrapedAt: '2026-10-24T23:00:05Z',
         observationCount: 4,
       })
+      // The other required meta field today: shape only — the slug set
+      // depends on the classifier/backfill state, not on this fixture.
+      expect(Array.isArray(meta.categories)).toBe(true)
     })
 
     and('the meta response should be private and no-cache', () => {
