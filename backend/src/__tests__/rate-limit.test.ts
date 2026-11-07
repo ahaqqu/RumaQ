@@ -1,10 +1,13 @@
-import { describe, it, expect, beforeEach } from 'vite-plus/test'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test'
 import { Hono } from 'hono'
 import {
   isRateLimited,
   getRateLimitConfig,
+  getLoginRateLimitConfig,
   resetRateLimit,
   ipRateLimitMiddleware,
+  DEFAULT_LOGIN_RATE_MAX,
+  DEFAULT_LOGIN_RATE_WINDOW_SEC,
 } from '../lib/rate-limit.js'
 import { createMockEnv, type MockEnv } from './support/env.js'
 
@@ -35,6 +38,73 @@ describe('getRateLimitConfig', () => {
     })
     expect(config.windowMs).toBe(60_000)
     expect(config.maxRequests).toBe(100)
+  })
+})
+
+// QA-F4 login limiter (ahaqqu/RumaQ#402): production runs the compiled-in
+// 10 attempts / 60 s budget. ahaqqu/RumaQ#499 adds env knobs so the e2e
+// harness can raise it; the defaults themselves must never weaken and no
+// invalid value may turn the limiter off.
+describe('getLoginRateLimitConfig', () => {
+  it('defaults to the production budget: 10 attempts per 60 s', () => {
+    const config = getLoginRateLimitConfig({})
+    expect(config.maxAttempts).toBe(DEFAULT_LOGIN_RATE_MAX)
+    expect(config.maxAttempts).toBe(10)
+    expect(config.windowMs).toBe(DEFAULT_LOGIN_RATE_WINDOW_SEC * 1000)
+    expect(config.windowMs).toBe(60_000)
+  })
+
+  it('reads LOGIN_RATE_MAX / LOGIN_RATE_WINDOW_SEC overrides', () => {
+    const config = getLoginRateLimitConfig({
+      LOGIN_RATE_MAX: '1000000',
+      LOGIN_RATE_WINDOW_SEC: '5',
+    })
+    expect(config.maxAttempts).toBe(1_000_000)
+    expect(config.windowMs).toBe(5_000)
+  })
+
+  it('falls back to the production default for invalid values', () => {
+    for (const LOGIN_RATE_MAX of ['', '0', '-5', 'abc', '10.5', 'NaN']) {
+      expect(getLoginRateLimitConfig({ LOGIN_RATE_MAX }).maxAttempts).toBe(10)
+    }
+    for (const LOGIN_RATE_WINDOW_SEC of ['', '0', '-60', 'abc', '0.5']) {
+      expect(getLoginRateLimitConfig({ LOGIN_RATE_WINDOW_SEC }).windowMs).toBe(60_000)
+    }
+  })
+})
+
+describe('login limiter budget', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('trips on the 11th attempt with the default budget', () => {
+    const { windowMs, maxAttempts } = getLoginRateLimitConfig({})
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      expect(isRateLimited('login-default', windowMs, maxAttempts).limited).toBe(false)
+    }
+    expect(isRateLimited('login-default', windowMs, maxAttempts).limited).toBe(true)
+  })
+
+  it('honours the configured window: the budget re-opens once it elapses', () => {
+    const { windowMs, maxAttempts } = getLoginRateLimitConfig({
+      LOGIN_RATE_MAX: '2',
+      LOGIN_RATE_WINDOW_SEC: '5',
+    })
+    expect(isRateLimited('login-window', windowMs, maxAttempts).limited).toBe(false)
+    expect(isRateLimited('login-window', windowMs, maxAttempts).limited).toBe(false)
+    expect(isRateLimited('login-window', windowMs, maxAttempts).limited).toBe(true)
+
+    vi.setSystemTime(Date.now() + 4_999)
+    expect(isRateLimited('login-window', windowMs, maxAttempts).limited).toBe(true)
+
+    vi.setSystemTime(Date.now() + 1)
+    expect(isRateLimited('login-window', windowMs, maxAttempts).limited).toBe(false)
   })
 })
 

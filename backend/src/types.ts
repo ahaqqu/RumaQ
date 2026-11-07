@@ -40,6 +40,11 @@ export type Env = {
     RUN_SECRETS_CHECK?: string
     RATE_LIMIT_WINDOW_MS?: string
     RATE_LIMIT_MAX_REQUESTS?: string
+    /** Login limiter override for the local/e2e harness (ahaqqu/RumaQ#499).
+     *  Unset (production) keeps the 10 attempts / 60 s defaults in
+     *  lib/rate-limit.ts; invalid values fall back to those defaults. */
+    LOGIN_RATE_MAX?: string
+    LOGIN_RATE_WINDOW_SEC?: string
     RUMAQ_SERVER_AI_PROVIDER?: string
     RUMAQ_SERVER_AI_KEY?: string
     RUMAQ_SERVER_AI_MODEL?: string

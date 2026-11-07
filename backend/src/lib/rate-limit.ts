@@ -23,6 +23,37 @@ export function getRateLimitConfig(env: {
   return { windowMs, maxRequests }
 }
 
+// QA-F4 login limiter (ahaqqu/RumaQ#402): /email-login runs its own, much
+// tighter fixed window than the general API limiter. These are the PRODUCTION
+// defaults — 10 attempts per 60 s per client IP — and nothing in the app may
+// weaken them; they are the single source of truth for both the parser default
+// and the docs.
+//
+// The local/e2e harness logs the whole suite in from one Docker IP (browser
+// logins carry no X-Forwarded-For, so every scenario shares one bucket), which
+// is more than 10 attempts. Rather than carrying a test-only branch in the
+// app, it raises the budget through LOGIN_RATE_MAX / LOGIN_RATE_WINDOW_SEC in
+// automation/docker-compose.yml (ahaqqu/RumaQ#499).
+export const DEFAULT_LOGIN_RATE_MAX = 10
+export const DEFAULT_LOGIN_RATE_WINDOW_SEC = 60
+
+// Env parsing for the login limiter. Anything that is not a positive integer
+// (missing, NaN, 0, negative, fractional) falls back to the production default:
+// a typo can make the limit tighter or leave it unchanged, never unlimited.
+function positiveInteger(raw: string | undefined, fallback: number): number {
+  const parsed = Number(raw)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+export function getLoginRateLimitConfig(env: {
+  LOGIN_RATE_MAX?: string
+  LOGIN_RATE_WINDOW_SEC?: string
+}): { windowMs: number; maxAttempts: number } {
+  const maxAttempts = positiveInteger(env.LOGIN_RATE_MAX, DEFAULT_LOGIN_RATE_MAX)
+  const windowMs = positiveInteger(env.LOGIN_RATE_WINDOW_SEC, DEFAULT_LOGIN_RATE_WINDOW_SEC) * 1000
+  return { windowMs, maxAttempts }
+}
+
 export function isRateLimited(
   key: string,
   windowMs: number,

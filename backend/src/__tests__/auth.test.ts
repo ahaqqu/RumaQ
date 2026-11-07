@@ -776,6 +776,58 @@ describe('authApp Hono routes', () => {
     expect(otherIp.status).toBe(401)
   })
 
+  // ahaqqu/RumaQ#499: the local/e2e harness raises the login budget through
+  // LOGIN_RATE_MAX / LOGIN_RATE_WINDOW_SEC (browser logins share one Docker
+  // IP). The route must honour the override — and return the identical 429
+  // shape — without the production default moving.
+  it('/email-login honours LOGIN_RATE_MAX / LOGIN_RATE_WINDOW_SEC', async () => {
+    const mockDb = {
+      prepare: () => mockDb,
+      bind: () => mockDb,
+      first: async () => null,
+      all: async () => ({ results: [] }),
+      batch: async () => [],
+    }
+    const env = {
+      GOOGLE_CLIENT_ID: 'test-client-id',
+      GOOGLE_CLIENT_SECRET: 'test-secret',
+      WORKER_JWT_SECRET: SECRET,
+      WORKER_ENCRYPTION_KEY: 'test-enc-key',
+      DB: mockDb,
+      PAGES_ORIGIN: 'http://localhost:5173',
+      EMAIL_AUTH_ENABLED: 'true',
+      LOGIN_RATE_MAX: '12',
+      LOGIN_RATE_WINDOW_SEC: '30',
+    }
+    const attempt = () =>
+      authApp.request(
+        '/email-login',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'CF-Connecting-IP': '203.0.113.20',
+          },
+          body: JSON.stringify({ email: 'nobody@rumaq.dev', password: 'password123' }),
+        },
+        env as any
+      )
+
+    // The override is the budget: 12 attempts pass, the 13th is limited.
+    for (let i = 0; i < 12; i++) {
+      expect((await attempt()).status).toBe(401)
+    }
+    const limited = await attempt()
+    expect(limited.status).toBe(429)
+    const body = (await limited.json()) as { error: string; retry_after: number }
+    expect(body.error).toContain('Too many login attempts')
+    expect(Number.isInteger(body.retry_after)).toBe(true)
+    // The window override is honoured too: retry_after can never exceed it.
+    expect(body.retry_after).toBeGreaterThan(0)
+    expect(body.retry_after).toBeLessThanOrEqual(30)
+    expect(limited.headers.get('Retry-After')).toBe(String(body.retry_after))
+  })
+
   // Session epoch (ahaqqu/RumaQ#405): the Google path signs the CURRENT epoch
   // from the same lookup that resolves the id.
   it('/callback signs the looked-up session_epoch into the token', async () => {
