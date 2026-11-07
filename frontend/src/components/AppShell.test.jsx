@@ -147,6 +147,24 @@ describe('AppShell', () => {
     expect(card.textContent).toContain('Your shared kitchen')
   })
 
+  it('gives the household card link an accessible name containing its visible text', () => {
+    const { getByTestId, getByRole } = renderWithProviders(
+      React.createElement(AppShell, null, null)
+    )
+    const link = getByTestId('household-card').closest('a')
+    // WCAG 2.5.3 / axe label-content-name-mismatch (#498): every visible
+    // string must be part of the accessible name. Role queries match on the
+    // computed accessible name, so asserting the role proves it — an
+    // aria-label alone would not.
+    for (const visible of ['Keluarga Putri', '4 people', 'Your shared kitchen']) {
+      expect(getByRole('link', { name: new RegExp(visible) })).toBe(link)
+    }
+    // Order matters too: the name starts with the visible lines verbatim.
+    expect(getByRole('link', { name: /^Keluarga Putri 4 people · Your shared kitchen$/ })).toBe(
+      link
+    )
+  })
+
   it('links the household card into the Household members screen', () => {
     const { getByTestId } = renderWithProviders(React.createElement(AppShell, null, null))
     const card = getByTestId('household-card')
