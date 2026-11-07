@@ -4,8 +4,10 @@ import type { Env } from '../types.js'
 import {
   REVIEW_AUTO_MIN_CONFIDENCE,
   REVIEW_MODES,
+  REVIEW_REASON_MAX_CHARS,
   ReviewAiError,
   applyCachedAutoVerdicts,
+  applyVerdictsToItems,
   buildReviewSystemPrompt,
   buildReviewUserPrompt,
   evaluatePendingReviews,
@@ -314,6 +316,12 @@ describe('parseReviewVerdict (strict post-model gate)', () => {
     )
   })
 
+  it('caps a long reason for display', () => {
+    const reason = 'x'.repeat(REVIEW_REASON_MAX_CHARS + 100)
+    const parsed = parseReviewVerdict(JSON.stringify({ verdict: 'same', confidence: 0.9, reason }))
+    expect(parsed.reason).toHaveLength(REVIEW_REASON_MAX_CHARS)
+  })
+
   it('rejects every off-schema answer with a typed failure', () => {
     const bad = [
       'I think they are the same product.',
@@ -526,6 +534,45 @@ describe('evaluatePendingReviews', () => {
     expect(itemRow('r1').status).toBe('approved')
   })
 
+  it('never overwrites a decision through its own apply statement (the CAS)', async () => {
+    insertItem('r1')
+    sqlite
+      .prepare(
+        "UPDATE match_review_items SET status = 'approved', decided_by = 'admin-1', decided_source = 'human' WHERE id = 'r1'"
+      )
+      .run()
+    expect(
+      await applyVerdictsToItems(d1, { itemIds: ['r1'], verdict: 'same', now: new Date() })
+    ).toBe(0)
+    expect(itemRow('r1')).toMatchObject({
+      status: 'approved',
+      decided_by: 'admin-1',
+      decided_source: 'human',
+    })
+  })
+
+  it('is idempotent when two evaluations race for the same item', async () => {
+    insertItem('r1')
+    // Hold both provider calls until BOTH are in flight, so both workers reach
+    // the cache INSERT for the same item — the race the ON CONFLICT guard and
+    // the `cached` check exist for.
+    let calls = 0
+    const release: Array<() => void> = []
+    globalThis.fetch = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        release.push(resolve)
+        if (++calls === 2) release.splice(0).forEach((resume) => resume())
+      })
+      return answer('{"verdict":"same","confidence":0.95,"reason":"Same."}')
+    }) as unknown as typeof fetch
+
+    const [first, second] = await Promise.all([evaluateAs('auto'), evaluateAs('auto')])
+    // Exactly one run owns the item: one verdict row, one decision.
+    expect(first.evaluated + second.evaluated).toBe(1)
+    expect(verdictRows()).toHaveLength(1)
+    expect(itemRow('r1')).toMatchObject({ status: 'approved', decided_by: 'ai' })
+  })
+
   it('skips a malformed pair blob instead of failing the sweep', async () => {
     insertItem('r1')
     sqlite.prepare("UPDATE match_review_items SET pair_data = 'not json' WHERE id = 'r1'").run()
@@ -608,6 +655,67 @@ describe('runReviewAiSweep (the cron tick)', () => {
       decided_by: 'ai',
       decided_source: 'ai_auto',
     })
+  })
+
+  it('keeps a full 20-item auto tick inside the 50-subrequest budget', async () => {
+    for (let i = 0; i < 20; i += 1) {
+      insertItem(`bulk-${String(i).padStart(2, '0')}`, { lastFlaggedAt: '2026-10-30T00:00:00Z' })
+    }
+    await setReviewMode(d1, 'auto', ADMIN)
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const fetchMock = providerMock(() =>
+      answer('{"verdict":"same","confidence":0.9,"reason":"Same."}')
+    )
+    // The free plan caps EVERY invocation at 50 subrequests, and a prepare() is
+    // at most one (statements inside one db.batch collapse to one), so the
+    // prepare count is a conservative budget check: 20 provider fetches + 20
+    // verdict INSERTs + 2 batched writes (usage, decisions) + the fixed reads.
+    // The unbatched per-item writes this replaced were 20 + 20 + 20 + reads.
+    const prepareSpy = vi.spyOn(d1, 'prepare')
+    const outcome = await runReviewAiSweep(env())
+    expect(outcome).toMatchObject({ mode: 'auto', evaluated: 20, applied: 20, failed: 0 })
+    expect(fetchMock).toHaveBeenCalledTimes(20)
+    expect(prepareSpy.mock.calls.length).toBeLessThanOrEqual(50)
+  })
+
+  it('applies a cached verdict at exactly the floor', async () => {
+    insertItem('r1')
+    sqlite
+      .prepare(
+        `INSERT INTO review_ai_verdicts (id, review_item_id, verdict, confidence, mode)
+         VALUES ('v1', 'r1', 'same', 0.8, 'assist')`
+      )
+      .run()
+    await setReviewMode(d1, 'auto', ADMIN)
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const fetchMock = providerMock(() =>
+      answer('{"verdict":"different","confidence":0.2,"reason":"x"}')
+    )
+    expect(await runReviewAiSweep(env())).toMatchObject({ applied: 1 })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(itemRow('r1').status).toBe('approved')
+  })
+
+  it('evaluates without a stored admin, skipping the usage row (unattributed)', async () => {
+    insertItem('r1')
+    // Auto enabled with no acting user and no stored admin: the sweep falls
+    // back to the server key, and there is no users row to attribute usage to.
+    await setReviewMode(d1, 'auto')
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchMock = providerMock(() =>
+      answer('{"verdict":"same","confidence":0.95,"reason":"Same."}')
+    )
+
+    expect(await runReviewAiSweep(env())).toMatchObject({
+      mode: 'auto',
+      evaluated: 1,
+      applied: 1,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(usageRows()).toEqual([])
+    // Never silent: the cost visibility gap is logged with the model.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ran unattributed'))
   })
 
   it('still applies the floor to a cached verdict below it', async () => {
@@ -935,6 +1043,11 @@ describe('review AI admin routes', () => {
     })
     expect(fetchMock).not.toHaveBeenCalled()
     expect(verdictRows()).toEqual([])
+  })
+
+  it('POST /api/admin/review/evaluate rejects a limit above the route cap', async () => {
+    const res = await request('/api/admin/review/evaluate', jsonRequest('POST', { limit: 11 }))
+    expect(res.status).toBe(400)
   })
 
   it('POST /api/admin/review/evaluate caches verdicts in assist and the list joins them', async () => {

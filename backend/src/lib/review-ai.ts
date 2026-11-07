@@ -12,8 +12,11 @@
 // the prompt, the strict post-model validation, the verdict cache, the
 // confidence floor and the apply/sweep rules; apps/api.ts owns HTTP and
 // gateway.ts owns the cron trigger. Every path that reaches the provider
-// records ONE ai_usage_events row (the #353 precedent — ai.ts itself records
-// nothing; the caller does), so cost stays visible per admin/model.
+// records ONE ai_usage_events row per attempt (the #353 precedent — ai.ts
+// itself records nothing; the caller does), so cost stays visible per
+// admin/model. The rows of one run are written in a single db.batch, and the
+// auto decisions likewise: a sweep must fit the invocation's 50-subrequest
+// cap, not spend one subrequest per item on each write.
 //
 // Failure posture (issue #484 "Safety / failure"): provider error, timeout,
 // or an off-schema answer is a typed failure — NO verdict, NO decision, the
@@ -24,8 +27,8 @@ import type { ReviewItemPair } from '@rumaq/contract'
 import type { Env } from '../types.js'
 import { completeText, parseJsonResponse, usageCollector, type TokenUsage } from './ai.js'
 import {
+  buildAiUsageEventStatement,
   loadUserAiSettings,
-  recordAiUsageEvent,
   resolveAiAccess,
   type AiAccess,
 } from './ai-access.js'
@@ -47,11 +50,25 @@ export const REVIEW_MODE_DEFAULT: ReviewMode = 'assist'
  */
 export const REVIEW_AUTO_MIN_CONFIDENCE = 0.8
 
+// The three caps below are bounded by the Workers free plan's 50-subrequest
+// cap per invocation (each provider fetch, each D1 read and each D1 batch is
+// one subrequest — the lib/plugin-purge.ts accounting). One evaluated item
+// costs 1 provider fetch + 1 verdict INSERT; the attempt's usage row and the
+// (auto) decision ride ONE batched write at the end of the run (thermos A2),
+// so the whole run is:
+//
+//   fixed reads (mode, stored admin, AI settings, list, cached apply)  ≈ 5
+//   + items × 2 (fetch + verdict insert)
+//   + 1 usage batch + 1 apply batch
+//
+//   10 items → ~27 (evaluate route, plus its auth/admin reads still < 50)
+//   20 items → ~47 (the cron tick, comfortably under 50)
+
 /** The on-demand evaluate route's per-request cap (a synchronous HTTP call). */
 export const REVIEW_EVALUATE_MAX = 10
 /** The bounded sweep a manual mode switch to `auto` kicks off (waitUntil). */
 export const REVIEW_SWITCH_SWEEP_LIMIT = 10
-/** The cron invocation's per-tick cap — its own 50-subrequest budget. */
+/** The cron invocation's per-tick cap — its own 50-subrequest budget (~47). */
 export const REVIEW_CRON_LIMIT = 20
 /** Concurrent provider calls per sweep: below Workers' 6-connection limit. */
 export const REVIEW_AI_CONCURRENCY = 4
@@ -395,57 +412,57 @@ async function mapWithConcurrency<T, R>(
   return results
 }
 
-/** Record one attempt's usage; analytics must never discard a verdict. */
-async function recordReviewUsage(
+type Statement = ReturnType<D1Database['prepare']>
+
+/**
+ * One attempt's usage row, as a STATEMENT so a sweep writes every attempt of
+ * the tick in ONE db.batch — one subrequest instead of one per attempt (the
+ * free plan's 50-subrequest invocation cap counts each statement; thermos A2).
+ *
+ * Null when there is nobody to attribute: ai_usage_events.user_id is a NOT NULL
+ * FK to users, and an unattributed server-fallback evaluation (no stored admin)
+ * has no row to point at. That edge is a SKIPPED row — the cost stays visible
+ * only in the provider's billing, and the sweep logs that it ran unattributed.
+ */
+function usageStatement(
   env: Env['Bindings'],
-  args: {
-    userId: string | null
-    access: AiAccess
-    tokens: TokenUsage
-  }
-): Promise<void> {
-  // ai_usage_events.user_id is a NOT NULL FK to users: an unattributed
-  // server-fallback evaluation (no stored admin) has no row to write, and the
-  // sweep's log line carries the provider/model instead.
-  if (!args.userId) return
-  try {
-    await recordAiUsageEvent(env, {
-      userId: args.userId,
-      provider: args.access.provider,
-      // The model asked for IS the recorded model (the ai-access contract);
-      // null = the provider default applied.
-      model: args.access.model,
-      keySource: args.access.keySource,
-      inputTokens: args.tokens.input_tokens,
-      outputTokens: args.tokens.output_tokens,
-      cachedTokens: args.tokens.cached_tokens,
-    })
-  } catch (err) {
-    console.warn(
-      `[review-ai] usage event not recorded: ${err instanceof Error ? err.message : 'unknown error'}`
-    )
-  }
+  args: { userId: string | null; access: AiAccess; tokens: TokenUsage }
+): Statement | null {
+  if (!args.userId) return null
+  return buildAiUsageEventStatement(env, {
+    userId: args.userId,
+    provider: args.access.provider,
+    // The model asked for IS the recorded model (the ai-access contract);
+    // null = the provider default applied.
+    model: args.access.model,
+    keySource: args.access.keySource,
+    inputTokens: args.tokens.input_tokens,
+    outputTokens: args.tokens.output_tokens,
+    cachedTokens: args.tokens.cached_tokens,
+  })
 }
 
 /**
- * One review item through the provider. Returns the validated verdict, or
- * null on ANY failure (provider error, timeout, malformed answer, malformed
- * pair blob) — the caller never sees an exception and never decides on one.
- * Every attempt records its usage row, failures included, because the
- * provider billed those tokens either way (the vault's OCR rule).
+ * One review item through the provider. Returns the validated verdict (null on
+ * ANY failure: provider error, timeout, malformed answer) plus the tokens the
+ * attempt consumed — the caller batches the usage rows, so nothing here writes
+ * (thermos A2). A failure is never thrown: the caller never decides on one.
  */
+export type PairEvaluation = {
+  verdict: ReviewVerdict | null
+  /** Provider-reported usage; zeroes when the call never got that far. */
+  tokens: TokenUsage
+}
+
 export async function evaluateReviewPair(
   env: Env['Bindings'],
   args: {
     access: AiAccess
-    /** Attribution for ai_usage_events; null = unattributed (cron fallback). */
-    userId: string | null
     itemId: string
     pair: ReviewItemPair
   }
-): Promise<ReviewVerdict | null> {
+): Promise<PairEvaluation> {
   const tokens: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
-  let verdict: ReviewVerdict | null = null
   try {
     const content = await completeText(
       args.access.provider,
@@ -460,17 +477,14 @@ export async function evaluateReviewPair(
         onUsage: usageCollector(tokens),
       }
     )
-    verdict = parseReviewVerdict(content)
-    return verdict
+    return { verdict: parseReviewVerdict(content), tokens }
   } catch (err) {
     // Audit line only: the pair's content and the key never ride the log.
     console.warn(
       `[review-ai] evaluation failed: item=${args.itemId} model=${args.access.model ?? '(provider default)'} ` +
         `error=${err instanceof Error ? err.message : 'unknown error'}`
     )
-    return null
-  } finally {
-    await recordReviewUsage(env, { userId: args.userId, access: args.access, tokens })
+    return { verdict: null, tokens }
   }
 }
 
@@ -511,24 +525,71 @@ async function cacheVerdict(
 }
 
 /**
- * Apply a verdict to a still-pending item: the ONLY writer of an AI decision.
- * The `status = 'pending'` predicate makes it a compare-and-set — a human (or
- * a concurrent sweep) that decided first is never overwritten, which is what
- * keeps the sweep idempotent.
+ * One grouped apply statement: the ONLY writer of an AI decision, for every
+ * item of one verdict at once (a sweep spends one subrequest on all its
+ * decisions, not one per item — thermos A2). The `status = 'pending'`
+ * predicate is the compare-and-set: a human (or a concurrent sweep) that
+ * decided first is never overwritten, which is what keeps the sweep
+ * idempotent.
  */
-async function applyVerdictToItem(
+function applyVerdictStatement(
   db: D1Database,
-  args: { itemId: string; verdict: ReviewVerdictName; now: Date }
-): Promise<boolean> {
-  const result = await db
+  args: { itemIds: string[]; verdict: ReviewVerdictName; now: Date }
+): Statement {
+  const placeholders = args.itemIds.map(() => '?').join(', ')
+  return db
     .prepare(
       `UPDATE match_review_items
        SET status = ?, decided_at = ?, decided_by = ?, decided_source = 'ai_auto'
-       WHERE id = ? AND status = 'pending'`
+       WHERE id IN (${placeholders}) AND status = 'pending'`
     )
-    .bind(verdictDecision(args.verdict), args.now.toISOString(), REVIEW_AI_DECIDED_BY, args.itemId)
-    .run()
-  return (result.meta?.changes ?? 0) > 0
+    .bind(
+      verdictDecision(args.verdict),
+      args.now.toISOString(),
+      REVIEW_AI_DECIDED_BY,
+      ...args.itemIds
+    )
+}
+
+/**
+ * Apply one verdict to every still-pending item in `itemIds`. Exported for the
+ * compare-and-set test: the selection paths filter on `status = 'pending'`
+ * already, so only a direct call can prove the UPDATE's own guard bites.
+ */
+export async function applyVerdictsToItems(
+  db: D1Database,
+  args: { itemIds: string[]; verdict: ReviewVerdictName; now: Date }
+): Promise<number> {
+  if (args.itemIds.length === 0) return 0
+  const result = await applyVerdictStatement(db, args).run()
+  return result.meta?.changes ?? 0
+}
+
+/**
+ * Apply a run's decisions grouped by verdict: ONE db.batch (one subrequest)
+ * for the whole set, however many items it decided.
+ */
+async function applyDecisions(
+  db: D1Database,
+  decisions: Array<{ verdict: ReviewVerdictName; itemIds: string[] }>,
+  now: Date
+): Promise<number> {
+  const statements = decisions
+    .filter((decision) => decision.itemIds.length > 0)
+    .map((decision) => applyVerdictStatement(db, { ...decision, now }))
+  if (statements.length === 0) return 0
+  const results = await db.batch(statements)
+  return results.reduce((total, result) => total + (result.meta?.changes ?? 0), 0)
+}
+
+/** Group rows by their verdict so the apply is one statement per direction. */
+function groupByVerdict(
+  rows: Array<{ id: string; verdict: ReviewVerdictName }>
+): Array<{ verdict: ReviewVerdictName; itemIds: string[] }> {
+  return (['same', 'different'] as const).map((verdict) => ({
+    verdict,
+    itemIds: rows.filter((row) => row.verdict === verdict).map((row) => row.id),
+  }))
 }
 
 /**
@@ -537,6 +598,17 @@ async function applyVerdictToItem(
  * The mode is the caller's: 'assist' never decides, 'auto' decides at/above
  * the floor, 'manual' never calls this function at all (zero AI calls).
  */
+type ItemOutcome = {
+  /** The attempt's usage row, when there is an admin to attribute it to. */
+  usage: Statement | null
+  /** A usable verdict for THIS item was cached by this run. */
+  evaluated: boolean
+  /** The verdict this run would apply (auto, at/above the floor, cache won). */
+  apply: { itemId: string; verdict: ReviewVerdictName } | null
+  /** No verdict — the item stays pending for the next sweep. */
+  failed: boolean
+}
+
 export async function evaluatePendingReviews(
   env: Env['Bindings'],
   options: {
@@ -549,46 +621,70 @@ export async function evaluatePendingReviews(
 ): Promise<ReviewEvaluation> {
   const now = options.now ?? new Date()
   const rows = await listPendingWithoutVerdict(env.DB, Math.max(1, options.limit))
-  const outcomes = await mapWithConcurrency(rows, REVIEW_AI_CONCURRENCY, async (row) => {
-    const pair = parsePair(row.pair_data)
-    if (!pair) return { evaluated: 0, applied: 0, failed: 1 }
-    const verdict = await evaluateReviewPair(env, {
-      access: options.access,
-      userId: options.userId,
-      itemId: row.id,
-      pair,
-    })
-    if (!verdict) return { evaluated: 0, applied: 0, failed: 1 }
-    const cached = await cacheVerdict(env.DB, {
-      itemId: row.id,
-      verdict,
-      access: options.access,
-      mode: options.mode,
-      now,
-    })
-    // A concurrent writer won the cache race: its verdict owns the item.
-    if (!cached) return { evaluated: 0, applied: 0, failed: 0 }
-    let applied = 0
-    if (options.mode === 'auto' && verdict.confidence >= REVIEW_AUTO_MIN_CONFIDENCE) {
-      applied = (await applyVerdictToItem(env.DB, {
+  const outcomes = await mapWithConcurrency(
+    rows,
+    REVIEW_AI_CONCURRENCY,
+    async (row): Promise<ItemOutcome> => {
+      const pair = parsePair(row.pair_data)
+      if (!pair) return { usage: null, evaluated: false, apply: null, failed: true }
+      const evaluation = await evaluateReviewPair(env, {
+        access: options.access,
         itemId: row.id,
-        verdict: verdict.verdict,
+        pair,
+      })
+      const usage = usageStatement(env, {
+        userId: options.userId,
+        access: options.access,
+        tokens: evaluation.tokens,
+      })
+      if (!evaluation.verdict) return { usage, evaluated: false, apply: null, failed: true }
+      const cached = await cacheVerdict(env.DB, {
+        itemId: row.id,
+        verdict: evaluation.verdict,
+        access: options.access,
+        mode: options.mode,
         now,
-      }))
-        ? 1
-        : 0
+      })
+      // A concurrent writer won the cache race: its verdict owns the item.
+      if (!cached) return { usage, evaluated: false, apply: null, failed: false }
+      const apply =
+        options.mode === 'auto' && evaluation.verdict.confidence >= REVIEW_AUTO_MIN_CONFIDENCE
+          ? { itemId: row.id, verdict: evaluation.verdict.verdict }
+          : null
+      return { usage, evaluated: true, apply, failed: false }
     }
-    return { evaluated: 1, applied, failed: 0 }
-  })
-
-  return outcomes.reduce<ReviewEvaluation>(
-    (total, outcome) => ({
-      evaluated: total.evaluated + outcome.evaluated,
-      applied: total.applied + outcome.applied,
-      failed: total.failed + outcome.failed,
-    }),
-    { evaluated: 0, applied: 0, failed: 0 }
   )
+
+  // Every attempt's usage row in ONE batch (thermos A2): analytics must never
+  // discard a verdict, so a failed batch is logged, not thrown.
+  const usageStatements = outcomes
+    .map((outcome) => outcome.usage)
+    .filter((statement): statement is Statement => statement !== null)
+  if (usageStatements.length > 0) {
+    try {
+      await env.DB.batch(usageStatements)
+    } catch (err) {
+      console.warn(
+        `[review-ai] usage events not recorded: ${err instanceof Error ? err.message : 'unknown error'}`
+      )
+    }
+  }
+
+  // And every decision in ONE batch of grouped UPDATEs — same reason.
+  const toApply = outcomes
+    .map((outcome) => outcome.apply)
+    .filter((apply): apply is { itemId: string; verdict: ReviewVerdictName } => apply !== null)
+  const applied = await applyDecisions(
+    env.DB,
+    groupByVerdict(toApply.map((apply) => ({ id: apply.itemId, verdict: apply.verdict }))),
+    now
+  )
+
+  return {
+    evaluated: outcomes.filter((outcome) => outcome.evaluated).length,
+    applied,
+    failed: outcomes.filter((outcome) => outcome.failed).length,
+  }
 }
 
 /**
@@ -615,13 +711,7 @@ export async function applyCachedAutoVerdicts(
     )
     .bind(REVIEW_AUTO_MIN_CONFIDENCE, Math.max(1, limit))
     .all<{ id: string; verdict: ReviewVerdictName }>()
-  let applied = 0
-  for (const row of results ?? []) {
-    if (await applyVerdictToItem(db, { itemId: row.id, verdict: row.verdict, now })) {
-      applied += 1
-    }
-  }
-  return applied
+  return applyDecisions(db, groupByVerdict(results ?? []), now)
 }
 
 export type ReviewSweepOutcome = ReviewEvaluation & { mode: ReviewMode }
@@ -664,6 +754,16 @@ export async function runReviewAiSweep(
     now: options.now,
   })
   applied += outcome.applied
+  if (!userId && outcome.evaluated > 0) {
+    // Unattributed: ai_usage_events.user_id is a NOT NULL FK, so these attempts
+    // have no row to write and the provider cost is only visible in the
+    // provider's own billing. Log the fact (with the model) so the gap is
+    // never silent — thermos B2.
+    console.warn(
+      `[review-ai] sweep ran unattributed (no stored admin): evaluated=${outcome.evaluated} ` +
+        `model=${access.model ?? '(provider default)'}`
+    )
+  }
   logSweep({ ...outcome, applied })
   return { mode, ...outcome, applied }
 }
