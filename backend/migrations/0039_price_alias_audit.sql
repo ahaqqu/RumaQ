@@ -32,6 +32,23 @@
 -- selects `status = 'approved'` only (0030's rule), and the rename path
 -- approves only `status = 'candidate'` rows, so a rejected spelling cannot be
 -- promoted by a later rename either.
+--
+-- APPLY-SEMANTICS (why DROP + RENAME is safe here, re-verified for #489): this
+-- file is only correct because the migration runner applies it as ONE
+-- transaction. `cf d1 migrations apply` sends the whole file (plus its
+-- d1_migrations insert) as a single multi-statement `sql` payload, which D1
+-- executes as a batch; Miniflare wraps that payload in a transaction. Verified
+-- on a scratch local state: a failure anywhere — including at the RENAME, which
+-- lands AFTER the DROP — rolls the file back to the pre-0039 table with every
+-- row, and the corrected file then applies cleanly. Three consequences:
+--   1. Given that contract the file is retryable as-is; no recovery SQL is
+--      needed or wanted.
+--   2. Never add `DROP TABLE IF EXISTS price_product_aliases_new` to "make the
+--      retry safe": if a non-atomic apply ever died between DROP and RENAME,
+--      that table holds the ONLY copy of the rows and the drop would destroy it.
+--   3. The unit tests apply files via `db.exec` (statement-by-statement, not one
+--      transaction), so they can prove the happy path but not this property —
+--      it is the runner's contract, not the file's.
 CREATE TABLE price_product_aliases_new (
   id TEXT PRIMARY KEY,
   product_id TEXT NOT NULL REFERENCES price_products(id) ON DELETE CASCADE,
