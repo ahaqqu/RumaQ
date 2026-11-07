@@ -467,4 +467,47 @@ describe('runs ingest stores the v2 receipt fields (issue #463)', () => {
     expect(feed.runs[0]!.products).toBeNull()
     expect(feed.runs[0]!.perStore['superindo']!.provisionalMatches).toBeUndefined()
   })
+
+  // Issue #463 (thermos C1): two invariants the fake-DB tests cannot see.
+  // 1. Version 0 is a real canonical index (the initial index), never
+  //    "absent" — so neither the write nor the read may turn 0 into NULL
+  //    (`||` instead of `??` on either side stayed green before this test).
+  // 2. run_started_at is the upsert key, so a replayed report must REFRESH
+  //    the receipt columns — dropping products_summary from the DO UPDATE
+  //    set (the only assertion was a string match) stayed green too.
+  it('keeps index version 0 and refreshes the receipt columns on a replay (issue #463)', async () => {
+    const { d1 } = createDb()
+    const post = (report: unknown) =>
+      apiApp.request(
+        '/api/internal/ingest/runs',
+        {
+          method: 'POST',
+          body: JSON.stringify(report),
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer s3cret' },
+        },
+        { HAQITA_INGEST_SECRET: 's3cret', DB: d1 } as never
+      )
+
+    const first = await post({
+      ...sampleReport(),
+      indexVersion: 0,
+      products: { created: 1, existing: 0 },
+    })
+    expect(first.status).toBe(200)
+    const before = await listPriceRuns(d1)
+    expect(before.runs[0]!.indexVersion).toBe(0)
+    expect(before.runs[0]!.products).toEqual({ created: 1, existing: 0 })
+
+    // Same runStartedAt → the idempotent upsert path, not a second row.
+    const replay = await post({
+      ...sampleReport(),
+      indexVersion: 42,
+      products: { created: 5, existing: 2 },
+    })
+    expect(replay.status).toBe(200)
+    const after = await listPriceRuns(d1)
+    expect(after.runs).toHaveLength(1)
+    expect(after.runs[0]!.indexVersion).toBe(42)
+    expect(after.runs[0]!.products).toEqual({ created: 5, existing: 2 })
+  })
 })
