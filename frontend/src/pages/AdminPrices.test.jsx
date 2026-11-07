@@ -476,4 +476,77 @@ describe('AdminPrices', () => {
     expect(container.textContent).not.toContain('monitor.auditSummary')
     expect(container.textContent).not.toContain('monitor.auditMore')
   })
+
+  // Issue #463: the v2 receipt's index version, product summary, and per-store
+  // provisional count are additive-optional — the run detail renders them when
+  // the pipeline sends them.
+  it('renders the index version, product summary, and provisional count (issue #463)', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [
+          {
+            ...mockFeed.runs[0],
+            perStore: {
+              superindo: {
+                ...mockFeed.runs[0].perStore.superindo,
+                provisionalMatches: 3,
+              },
+            },
+            indexVersion: 42,
+            products: { created: 5, existing: 2 },
+          },
+        ],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    // Keys only: the suite's i18n mock returns raw keys (the real-copy
+    // interpolation is pinned in AdminPrices.i18n.test.jsx).
+    expect(container.textContent).toContain('monitor.indexVersion')
+    expect(container.textContent).toContain('monitor.productsSummary')
+    expect(container.textContent).toContain('monitor.provisionalMatches')
+  })
+
+  it('renders nothing new for a pre-#463 report (absent receipt fields)', () => {
+    // mockFeed.runs[0] predates issue #463 — no indexVersion/products and no
+    // per-store provisionalMatches. Historical runs must render as before.
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    expect(container.textContent).not.toContain('monitor.indexVersion')
+    expect(container.textContent).not.toContain('monitor.productsSummary')
+    expect(container.textContent).not.toContain('monitor.provisionalMatches')
+  })
+
+  it('keeps a zero provisional count out of the store row (issue #463)', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [
+          {
+            ...mockFeed.runs[0],
+            perStore: {
+              superindo: {
+                ...mockFeed.runs[0].perStore.superindo,
+                provisionalMatches: 0,
+              },
+            },
+            indexVersion: 0,
+            products: { created: 0, existing: 7 },
+          },
+        ],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    // Zero provisional matches is noise, not a signal (the rejects rule).
+    expect(container.textContent).not.toContain('monitor.provisionalMatches')
+    // Version 0 is a real index version (the initial index), never "absent".
+    expect(container.textContent).toContain('monitor.indexVersion')
+    expect(container.textContent).toContain('monitor.productsSummary')
+  })
 })
