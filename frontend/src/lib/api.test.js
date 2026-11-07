@@ -35,6 +35,8 @@ import {
   getAdminProduct,
   renameProduct,
   revertProductRename,
+  approveProductAlias,
+  rejectProductAlias,
   getReviewMode,
   setReviewMode,
   evaluateReviewItems,
@@ -535,6 +537,43 @@ describe('api', () => {
         status: 409,
         message: 'duplicate_name',
         body: { error: 'duplicate_name', conflicts },
+      })
+    })
+
+    // Candidate-alias decisions (#489, PR 2): the alias id is the whole
+    // request — no body — and the decision is the route verb.
+    it('approveProductAlias posts to the alias approve route with both path ids', async () => {
+      clientMock.POST.mockResolvedValueOnce(
+        ok({ alias: { id: 'alias-1', status: 'approved' }, indexVersion: 17 })
+      )
+      const result = await approveProductAlias('minyak--bimoli--1-l', 'alias-1')
+      expect(result.indexVersion).toBe(17)
+      expect(clientMock.POST).toHaveBeenCalledWith(
+        '/api/admin/products/{productKey}/aliases/{aliasId}/approve',
+        { params: { path: { productKey: 'minyak--bimoli--1-l', aliasId: 'alias-1' } } }
+      )
+    })
+
+    it('rejectProductAlias posts to the alias reject route with both path ids', async () => {
+      clientMock.POST.mockResolvedValueOnce(
+        ok({ alias: { id: 'alias-2', status: 'rejected' }, indexVersion: 17 })
+      )
+      await rejectProductAlias('k', 'alias-2')
+      expect(clientMock.POST).toHaveBeenCalledWith(
+        '/api/admin/products/{productKey}/aliases/{aliasId}/reject',
+        { params: { path: { productKey: 'k', aliasId: 'alias-2' } } }
+      )
+    })
+
+    it('carries the alias_state 409 body on ApiError.body', async () => {
+      clientMock.POST.mockResolvedValueOnce(
+        fail({ error: 'alias_state', currentStatus: 'approved' }, 409)
+      )
+      await expect(approveProductAlias('k', 'alias-1')).rejects.toMatchObject({
+        name: 'ApiError',
+        status: 409,
+        message: 'alias_state',
+        body: { error: 'alias_state', currentStatus: 'approved' },
       })
     })
   })

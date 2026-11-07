@@ -30,6 +30,7 @@ vi.mock('../lib/queries/products.js', () => ({
   useProductIdentity: vi.fn(),
   useRenameProduct: vi.fn(),
   useRevertRename: vi.fn(),
+  useDecideAlias: vi.fn(),
 }))
 
 import { useMe } from '../lib/queries/me.js'
@@ -42,7 +43,12 @@ import {
   useSetReviewMode,
   useEvaluateReview,
 } from '../lib/queries/review.js'
-import { useProductIdentity, useRenameProduct, useRevertRename } from '../lib/queries/products.js'
+import {
+  useProductIdentity,
+  useRenameProduct,
+  useRevertRename,
+  useDecideAlias,
+} from '../lib/queries/products.js'
 import { fetchReviewExport } from '../lib/api'
 
 const decideMutate = vi.fn()
@@ -152,7 +158,19 @@ describe('AdminReview', () => {
           status: 'provisional',
           metadataVersion: 3,
         },
-        aliases: [],
+        // A candidate alias makes the shared form's admin-only decision
+        // actions observable here (#489): the page's isAdmin must reach them.
+        aliases: [
+          {
+            id: 'alias-candidate',
+            name: 'Beras Ramos 5 kg',
+            storeSlug: 'lotte-mart',
+            status: 'candidate',
+            source: 'ocr',
+            firstSeenAt: '2026-10-25T00:00:00Z',
+            lastSeenAt: '2026-10-28T00:00:00Z',
+          },
+        ],
         stats: { observations: 7, stores: 2 },
         audit: [],
       },
@@ -162,6 +180,7 @@ describe('AdminReview', () => {
     })
     vi.mocked(useRenameProduct).mockReturnValue({ mutate: vi.fn(), isPending: false })
     vi.mocked(useRevertRename).mockReturnValue({ mutate: vi.fn(), isPending: false })
+    vi.mocked(useDecideAlias).mockReturnValue({ mutate: vi.fn(), isPending: false })
   })
 
   it('shows the forbidden state for non-admins', () => {
@@ -564,6 +583,11 @@ describe('AdminReview', () => {
       expect(container.querySelector('[data-testid="rename-current-name"]').textContent).toBe(
         reviewItem.entryName
       )
+      // #489: the page's admin flag reaches the shared form; without it the
+      // candidate row would stay read-only for an admin.
+      expect(
+        [...container.querySelectorAll('button')].map((button) => button.textContent)
+      ).toContain('rename.aliasApprove')
     })
 
     it('collapses the form again from the row action', () => {

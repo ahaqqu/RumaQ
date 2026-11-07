@@ -372,6 +372,7 @@ function ReviewRow({
   entrySideLabelId,
   mode,
   aiEnabled,
+  isAdmin,
   busy,
   saving,
   onDecide,
@@ -529,6 +530,7 @@ function ReviewRow({
           <p className="text-xs text-text-muted mb-2">{t('rename.frozenPairNote')}</p>
           <ProductRenameForm
             productKey={item.entryProductKey}
+            isAdmin={isAdmin}
             onClose={() => setRenameOpen(false)}
           />
         </div>
@@ -802,6 +804,7 @@ export function AdminReview() {
                   entrySideLabelId={entrySideLabelId}
                   mode={mode}
                   aiEnabled={aiEnabled}
+                  isAdmin={isAdmin}
                   busy={busy}
                   saving={savingItemId === item.id}
                   onDecide={(id, decision, agreement) =>

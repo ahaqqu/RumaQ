@@ -161,7 +161,11 @@ function PriceDetail({ productKey, isAdmin }) {
           </Button>
           {renameOpen && (
             <div id={renameFormId} className="mt-2">
-              <ProductRenameForm productKey={productKey} onClose={() => setRenameOpen(false)} />
+              <ProductRenameForm
+                productKey={productKey}
+                isAdmin={isAdmin}
+                onClose={() => setRenameOpen(false)}
+              />
             </div>
           )}
         </div>

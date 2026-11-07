@@ -1,7 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError } from '../lib/api'
-import { useProductIdentity, useRenameProduct, useRevertRename } from '../lib/queries/products.js'
+import {
+  useDecideAlias,
+  useProductIdentity,
+  useRenameProduct,
+  useRevertRename,
+} from '../lib/queries/products.js'
 import { Panel, PanelBody } from './Panel.jsx'
 import { Button } from './Button.jsx'
 import { Chip } from './Chip.jsx'
@@ -18,6 +23,12 @@ import { IconCheck, IconWarning } from './icons.jsx'
 //   stale_revert    -> re-read the identity, say the history moved on
 // The backend lib (canonical-products.ts) is the contract; no server string is
 // ever rendered (the Household.jsx error-vocabulary precedent).
+//
+// #489 adds candidate-alias decisions to the same alias list: the alias id is
+// the target, approve/reject is the verb, and a row — not the form — owns the
+// busy state, so the rename fields stay usable while a decision is in flight.
+// The decision's only 409 is `alias_state` (someone else already decided the
+// row), mapped to a refetch plus "already decided", never to backend prose.
 
 const REASON_MAX = 200
 // Mirrors the backend's PRODUCT_NAME_MAX: a longer name is a 400, so the input
@@ -65,6 +76,21 @@ function noticeFromError(error) {
   if (status === 403) return { kind: 'forbidden' }
   if (status === 400) return { kind: 'invalid' }
   return { kind: 'error' }
+}
+
+// The alias decision's answer vocabulary (#489). `alias_state` is the CAS loss:
+// the row was decided while it was on screen, so the caller refetches and says
+// so. Everything else is a plain localized failure.
+function aliasNoticeFromError(error) {
+  const status = error instanceof ApiError ? error.status : undefined
+  const body = error instanceof ApiError ? error.body : undefined
+  const code = body && typeof body === 'object' ? body.error : undefined
+  if (status === 409 && code === 'alias_state') {
+    return { kind: 'alreadyDecided', currentStatus: body.currentStatus }
+  }
+  if (status === 404) return { kind: 'aliasNotFound' }
+  if (status === 403) return { kind: 'aliasForbidden' }
+  return { kind: 'aliasError' }
 }
 
 function SimilarWarnings({ warnings }) {
@@ -207,11 +233,68 @@ function RenameNotice({ notice, busy, canAcknowledge, onAcknowledge }) {
   )
 }
 
+// The alias section's one result slot (#489). Kept apart from RenameNotice:
+// a decision result belongs next to the rows it changed, and the rename
+// notice's focus contract must not be disturbed by a list action.
+function AliasDecisionNotice({ notice }) {
+  const { t } = useTranslation()
+  if (notice.kind === 'approved' || notice.kind === 'rejected') {
+    const approved = notice.kind === 'approved'
+    return (
+      <div
+        role="status"
+        data-testid="alias-decision-notice"
+        className="mt-2 flex items-start gap-2 rounded-lg bg-ok-soft px-3 py-2 text-sm text-text"
+      >
+        <IconCheck size={16} className="mt-0.5 shrink-0 text-ok" />
+        <span>
+          {t(approved ? 'rename.aliasApproveSuccess' : 'rename.aliasRejectSuccess', {
+            name: notice.name,
+            version: notice.indexVersion ?? '—',
+          })}
+        </span>
+      </div>
+    )
+  }
+
+  if (notice.kind === 'alreadyDecided') {
+    return (
+      <div
+        role="alert"
+        data-testid="alias-decision-notice"
+        className="mt-2 flex items-start gap-2 rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn"
+      >
+        <IconWarning size={16} className="mt-0.5 shrink-0" />
+        <span>
+          {t('rename.aliasAlreadyDecided', {
+            status: t(ALIAS_STATUS_KEY[notice.currentStatus] ?? 'rename.aliasStatusCandidate'),
+          })}
+        </span>
+      </div>
+    )
+  }
+
+  const key =
+    notice.kind === 'aliasNotFound'
+      ? 'rename.aliasErrorNotFound'
+      : notice.kind === 'aliasForbidden'
+        ? 'rename.aliasErrorForbidden'
+        : 'rename.aliasErrorGeneric'
+  return (
+    <p role="alert" data-testid="alias-decision-notice" className="mt-2 text-sm text-danger">
+      {t(key)}
+    </p>
+  )
+}
+
 /**
  * Canonical product rename form. `onClose` collapses the surface that opened
- * it; without it the Cancel button still resets the local draft.
+ * it; without it the Cancel button still resets the local draft. `isAdmin`
+ * gates the alias decision actions — both current surfaces already render this
+ * form only for admins, but the actions stay hidden if that ever stops being
+ * true (or if the form is reused on a shopper surface).
  */
-export function ProductRenameForm({ productKey, onClose }) {
+export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   const { t } = useTranslation()
   const nameId = useId()
   const previewId = useId()
@@ -224,6 +307,12 @@ export function ProductRenameForm({ productKey, onClose }) {
   const [draftName, setDraftName] = useState(null)
   const [reason, setReason] = useState('')
   const [notice, setNotice] = useState(null)
+  // Alias decisions are per-row server writes, deliberately separate from the
+  // rename draft: `decidingAliases` maps an alias id to the action in flight
+  // (one row in flight never blocks another row or the form), and
+  // `aliasNotice` is the list's own result slot.
+  const [decidingAliases, setDecidingAliases] = useState({})
+  const [aliasNotice, setAliasNotice] = useState(null)
   // Focus follows the answer: a keyboard user must land on the explanation (a
   // duplicate/similar/stale 409 or the success block), and the submit button
   // disables itself after a success, which would otherwise drop focus to
@@ -234,6 +323,7 @@ export function ProductRenameForm({ productKey, onClose }) {
   const identityQuery = useProductIdentity(productKey, { enabled: Boolean(productKey) })
   const rename = useRenameProduct()
   const revert = useRevertRename()
+  const aliasDecision = useDecideAlias()
 
   const identity = identityQuery.data
   const product = identity?.product
@@ -361,6 +451,48 @@ export function ProductRenameForm({ productKey, onClose }) {
     )
   }
 
+  // A candidate-alias decision (#489). The row being acted on is the only thing
+  // that goes busy: `busy` above stays false, so a rename can still be typed
+  // and submitted while the decision is in flight. The per-row guard plus the
+  // disabled buttons make a double submit of the same row impossible.
+  function decideAlias(alias, action) {
+    if (!alias?.id || !isAdmin || decidingAliases[alias.id]) return
+    setAliasNotice(null)
+    setDecidingAliases((previous) => ({ ...previous, [alias.id]: action }))
+    aliasDecision.mutate(
+      { productKey, aliasId: alias.id, action },
+      {
+        onSuccess: (result) => {
+          setAliasNotice({
+            kind: action === 'approve' ? 'approved' : 'rejected',
+            name: result?.alias?.name ?? alias.name,
+            indexVersion: result?.indexVersion,
+          })
+        },
+        onError: (error) => {
+          const mapped = aliasNoticeFromError(error)
+          // The identity is the only source of truth for a decision this form
+          // lost: `alias_state` means another admin decided the row while it
+          // was on screen, and a 404 means the row (or its product) is gone.
+          // Both re-read the list, so "already decided" and "no longer exists
+          // — the list has been refreshed" are true when shown.
+          if (mapped.kind === 'alreadyDecided' || mapped.kind === 'aliasNotFound') {
+            identityQuery.refetch()
+          }
+          setAliasNotice(mapped)
+        },
+        onSettled: () => {
+          setDecidingAliases((previous) => {
+            if (!previous[alias.id]) return previous
+            const next = { ...previous }
+            delete next[alias.id]
+            return next
+          })
+        },
+      }
+    )
+  }
+
   if (identityQuery.isLoading) {
     return (
       <Panel data-testid="product-rename-form">
@@ -394,6 +526,12 @@ export function ProductRenameForm({ productKey, onClose }) {
   }
 
   const aliases = identity.aliases ?? []
+  // The decision actions exist only for an admin, only on a row that still has
+  // a decision to make, and only when the payload carries the id the routes
+  // address (a candidate without an id cannot be acted on; hiding beats a
+  // dead button).
+  const showAliasActions =
+    isAdmin && aliases.some((alias) => alias.status === 'candidate' && alias.id)
 
   return (
     <Panel data-testid="product-rename-form" aria-busy={busy || undefined}>
@@ -484,27 +622,63 @@ export function ProductRenameForm({ productKey, onClose }) {
 
           <div>
             <div className="text-sm font-medium text-text-muted">{t('rename.aliases')}</div>
+            {showAliasActions && (
+              <p className="mt-1 text-xs text-text-muted">{t('rename.aliasDecisionHint')}</p>
+            )}
             {aliases.length === 0 ? (
               <p className="text-xs text-text-muted mt-1">{t('rename.aliasesEmpty')}</p>
             ) : (
               <ul className="mt-1 flex flex-col gap-1" data-testid="rename-aliases">
-                {aliases.map((alias, index) => (
-                  <li
-                    key={`${alias.storeSlug}-${alias.name}-${index}`}
-                    className="flex flex-wrap items-center gap-2 text-sm"
-                  >
-                    <span className="font-medium">{alias.name}</span>
-                    <span className="text-xs text-text-muted">{alias.storeSlug}</span>
-                    <Chip variant="default">
-                      {t(ALIAS_STATUS_KEY[alias.status] ?? 'rename.aliasStatusCandidate')}
-                    </Chip>
-                    <Chip variant="loc">
-                      {t(ALIAS_SOURCE_KEY[alias.source] ?? 'rename.aliasSourceOcr')}
-                    </Chip>
-                  </li>
-                ))}
+                {aliases.map((alias, index) => {
+                  const pendingAction = decidingAliases[alias.id]
+                  const rowBusy = Boolean(pendingAction)
+                  const decidable = isAdmin && alias.status === 'candidate' && Boolean(alias.id)
+                  return (
+                    <li
+                      key={alias.id ?? `${alias.storeSlug}-${alias.name}-${index}`}
+                      className="flex flex-wrap items-center gap-2 text-sm"
+                      aria-busy={rowBusy || undefined}
+                    >
+                      <span className="font-medium">{alias.name}</span>
+                      <span className="text-xs text-text-muted">{alias.storeSlug}</span>
+                      <Chip variant="default">
+                        {t(ALIAS_STATUS_KEY[alias.status] ?? 'rename.aliasStatusCandidate')}
+                      </Chip>
+                      <Chip variant="loc">
+                        {t(ALIAS_SOURCE_KEY[alias.source] ?? 'rename.aliasSourceOcr')}
+                      </Chip>
+                      {decidable && (
+                        <span className="flex flex-wrap items-center gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            disabled={rowBusy}
+                            aria-label={t('rename.aliasApproveLabel', { name: alias.name })}
+                            onClick={() => decideAlias(alias, 'approve')}
+                          >
+                            {pendingAction === 'approve'
+                              ? t('rename.aliasApproving')
+                              : t('rename.aliasApprove')}
+                          </Button>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            disabled={rowBusy}
+                            aria-label={t('rename.aliasRejectLabel', { name: alias.name })}
+                            onClick={() => decideAlias(alias, 'reject')}
+                          >
+                            {pendingAction === 'reject'
+                              ? t('rename.aliasRejecting')
+                              : t('rename.aliasReject')}
+                          </Button>
+                        </span>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
             )}
+            {aliasNotice && <AliasDecisionNotice notice={aliasNotice} />}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

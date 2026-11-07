@@ -575,6 +575,39 @@ export function revertProductRename(
   )
 }
 
+// Candidate-alias decisions (#489). The alias id the identity payload carries
+// is the whole request — no body, the verb is the decision. Approve admits the
+// store spelling to the canonical index and returns the bumped version; reject
+// records the refusal and returns the unchanged version.
+export type AliasDecisionAction = 'approve' | 'reject'
+
+export type AliasDecisionResult = {
+  alias: ProductAlias
+  indexVersion: number
+}
+
+export function approveProductAlias(
+  productKey: string,
+  aliasId: string
+): Promise<AliasDecisionResult> {
+  return unwrap(
+    client.POST('/api/admin/products/{productKey}/aliases/{aliasId}/approve', {
+      params: { path: { productKey, aliasId } },
+    })
+  )
+}
+
+export function rejectProductAlias(
+  productKey: string,
+  aliasId: string
+): Promise<AliasDecisionResult> {
+  return unwrap(
+    client.POST('/api/admin/products/{productKey}/aliases/{aliasId}/reject', {
+      params: { path: { productKey, aliasId } },
+    })
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Households (issue #331) — member management, invites, active-household
 // switching. Shapes mirror the backend's households app; member profile
