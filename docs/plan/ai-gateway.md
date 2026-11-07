@@ -1,6 +1,6 @@
 # AI gateway — one door, capability-routed providers
 
-> Status: **implemented — all five phases shipped (P1 #530, P2 #532, P3 #533, P4 #535, P5 #523).**
+> Status: **implemented — all five phases shipped (P1 #530, P2 #532, P3 #533, P4 #535, P5 #538).**
 > Issue: `ahaqqu/RumaQ#523`. Owner directive: 2026-11-07 ("AI is the core of RumaQ — every
 > feature routes through one door").
 >
