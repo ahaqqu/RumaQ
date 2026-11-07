@@ -211,7 +211,10 @@ export type AiProviderList = {
 export type AiCapabilityAssignment = {
   provider_id: string | null
   provider_label: string | null
+  /** The assignment's own model; null = inherit the provider default. */
   model: string | null
+  /** What the resolver will call: `model ?? provider.default_model`. */
+  effective_model: string | null
   thinking_level: string | null
   source: 'household' | 'none'
 }

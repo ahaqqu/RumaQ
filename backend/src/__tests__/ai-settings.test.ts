@@ -213,7 +213,11 @@ describe('AI settings routes — the member boundary (plan §4.1)', () => {
     const caps = (await capabilities.json()) as any
     expect(caps.can_manage).toBe(false)
     expect(caps.status.reasoning).toBe('household')
-    expect(caps.capabilities.reasoning.model).toBe('gemini-3.6-flash')
+    // The assignment has no model of its own; the payload reports the column
+    // (null = inherit) and the resolved value separately, so the Settings form
+    // can round-trip a pinned model without guessing (#523 P3 review A2).
+    expect(caps.capabilities.reasoning.model).toBeNull()
+    expect(caps.capabilities.reasoning.effective_model).toBe('gemini-3.6-flash')
 
     const presets = await call('GET', '/api/ai/presets', MEMBER)
     expect(presets.status).toBe(200)
@@ -509,7 +513,10 @@ describe('PUT/DELETE /api/ai/capabilities/:capability (plan §4.1/§4.2)', () =>
     expect(body.status).toBe('household')
     expect(body.capability).toMatchObject({
       provider_id: 'p-1',
-      model: 'gemini-3.6-flash',
+      // `model: ''` is the inherit sentinel: the column stays null and the
+      // resolved value comes back in `effective_model`.
+      model: null,
+      effective_model: 'gemini-3.6-flash',
       thinking_level: 'medium',
       source: 'household',
     })
@@ -519,7 +526,7 @@ describe('PUT/DELETE /api/ai/capabilities/:capability (plan §4.1/§4.2)', () =>
     const second = await call('PUT', '/api/ai/capabilities/reasoning', OWNER, {
       provider_id: 'p-2',
     })
-    expect(((await second.json()) as any).capability.model).toBe('gemini-3.6-pro')
+    expect(((await second.json()) as any).capability.effective_model).toBe('gemini-3.6-pro')
     expect(
       sqlite
         .prepare(
@@ -540,6 +547,7 @@ describe('PUT/DELETE /api/ai/capabilities/:capability (plan §4.1/§4.2)', () =>
     expect(body.status).toBe('none')
     expect(body.capability.source).toBe('household')
     expect(body.capability.model).toBeNull()
+    expect(body.capability.effective_model).toBeNull()
   })
 
   it('rejects a kind that cannot serve the capability (400)', async () => {

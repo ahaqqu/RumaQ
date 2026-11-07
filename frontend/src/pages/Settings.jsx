@@ -174,10 +174,12 @@ function emptyCapabilityDrafts(assignments) {
         row.id,
         {
           providerId: assignment?.provider_id ?? '',
-          // Deliberately blank: the field means "inherit the provider default",
-          // and the resolved model is shown beside it, not smuggled into a value
-          // that a save would then pin.
-          model: '',
+          // The form edits the assignment's OWN model column: blank still means
+          // "inherit the provider default", but a pinned model round-trips. Left
+          // blank it would be wiped by any save that only changed the thinking
+          // level (#523 P3 review A2). The resolved value is shown beside the
+          // field as `effective_model`, never smuggled into this value.
+          model: assignment?.model ?? '',
           thinking: assignment?.thinking_level ?? '',
         },
       ]
@@ -347,15 +349,21 @@ function AiSettingsSection({ isOnline }) {
     }
   }
 
+  // The resolver's truth per capability, not the "an assignment row exists"
+  // dimension: a saved assignment with no model anywhere, or with an unreadable
+  // key, is NOT configured — its features answer 402, and the card must say so
+  // (plan §4.4: "Using <label>" or "Not configured", no third state).
+  const capabilityUsable = (capability) => capabilityData?.status?.[capability] === 'household'
+
   const capabilityStatus = (capability) => {
     const assignment = capabilityData?.capabilities?.[capability]
-    if (!assignment || assignment.source === 'none' || !assignment.provider_id) {
+    if (!assignment?.provider_id || !capabilityUsable(capability)) {
       return t('settings.ai.notConfigured')
     }
-    if (assignment.model) {
+    if (assignment.effective_model) {
       return t('settings.ai.usingWithModel', {
         label: assignment.provider_label,
-        model: assignment.model,
+        model: assignment.effective_model,
       })
     }
     return t('settings.ai.using', { label: assignment.provider_label })
@@ -701,9 +709,9 @@ function AiSettingsSection({ isOnline }) {
                           {capabilityStatus(row.id)}
                         </span>
                       )}
-                      {canManage && assignment?.source === 'household' && assignment.model && (
+                      {canManage && capabilityUsable(row.id) && assignment?.effective_model && (
                         <span className="text-xs text-text-muted">
-                          {t('settings.ai.effectiveModel', { model: assignment.model })}
+                          {t('settings.ai.effectiveModel', { model: assignment.effective_model })}
                         </span>
                       )}
                     </Setting>

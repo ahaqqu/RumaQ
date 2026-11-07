@@ -209,6 +209,7 @@ describe('api routes', () => {
         provider_id: null,
         provider_label: null,
         model: null,
+        effective_model: null,
         thinking_level: null,
         source: 'none',
       },
@@ -216,6 +217,7 @@ describe('api routes', () => {
         provider_id: null,
         provider_label: null,
         model: null,
+        effective_model: null,
         thinking_level: null,
         source: 'none',
       },
@@ -223,6 +225,7 @@ describe('api routes', () => {
         provider_id: null,
         provider_label: null,
         model: null,
+        effective_model: null,
         thinking_level: null,
         source: 'none',
       },
@@ -362,11 +365,13 @@ describe('api routes', () => {
       provider_id: 'p-1',
       provider_label: 'OpenAI (imported)',
       model: 'gpt-4o-mini',
+      effective_model: 'gpt-4o-mini',
       thinking_level: 'low',
       source: 'household',
     })
     expect(body.ai_capabilities.vision).toMatchObject({
       model: 'gpt-4o-vision',
+      effective_model: 'gpt-4o-vision',
       thinking_level: null,
       source: 'household',
     })

@@ -1038,6 +1038,7 @@
                             "provider_id",
                             "provider_label",
                             "model",
+                            "effective_model",
                             "thinking_level",
                             "source"
                           ],
@@ -1049,7 +1050,12 @@
                               "type": ["string", "null"]
                             },
                             "model": {
-                              "type": ["string", "null"]
+                              "type": ["string", "null"],
+                              "description": "The assignment's own model; null = inherit the provider's default_model"
+                            },
+                            "effective_model": {
+                              "type": ["string", "null"],
+                              "description": "What the resolver will call: model ?? the provider default; null = not configured"
                             },
                             "thinking_level": {
                               "type": ["string", "null"]
@@ -1066,6 +1072,7 @@
                             "provider_id",
                             "provider_label",
                             "model",
+                            "effective_model",
                             "thinking_level",
                             "source"
                           ],
@@ -1077,7 +1084,12 @@
                               "type": ["string", "null"]
                             },
                             "model": {
-                              "type": ["string", "null"]
+                              "type": ["string", "null"],
+                              "description": "The assignment's own model; null = inherit the provider's default_model"
+                            },
+                            "effective_model": {
+                              "type": ["string", "null"],
+                              "description": "What the resolver will call: model ?? the provider default; null = not configured"
                             },
                             "thinking_level": {
                               "type": ["string", "null"]
@@ -1094,6 +1106,7 @@
                             "provider_id",
                             "provider_label",
                             "model",
+                            "effective_model",
                             "thinking_level",
                             "source"
                           ],
@@ -1105,7 +1118,12 @@
                               "type": ["string", "null"]
                             },
                             "model": {
-                              "type": ["string", "null"]
+                              "type": ["string", "null"],
+                              "description": "The assignment's own model; null = inherit the provider's default_model"
+                            },
+                            "effective_model": {
+                              "type": ["string", "null"],
+                              "description": "What the resolver will call: model ?? the provider default; null = not configured"
                             },
                             "thinking_level": {
                               "type": ["string", "null"]
@@ -1197,6 +1215,7 @@
                         "provider_id",
                         "provider_label",
                         "model",
+                        "effective_model",
                         "thinking_level",
                         "source"
                       ],
@@ -1208,7 +1227,12 @@
                           "type": ["string", "null"]
                         },
                         "model": {
-                          "type": ["string", "null"]
+                          "type": ["string", "null"],
+                          "description": "The assignment's own model; null = inherit the provider's default_model"
+                        },
+                        "effective_model": {
+                          "type": ["string", "null"],
+                          "description": "What the resolver will call: model ?? the provider default; null = not configured"
                         },
                         "thinking_level": {
                           "type": ["string", "null"]
@@ -1275,6 +1299,7 @@
                         "provider_id",
                         "provider_label",
                         "model",
+                        "effective_model",
                         "thinking_level",
                         "source"
                       ],
@@ -1286,7 +1311,12 @@
                           "type": ["string", "null"]
                         },
                         "model": {
-                          "type": ["string", "null"]
+                          "type": ["string", "null"],
+                          "description": "The assignment's own model; null = inherit the provider's default_model"
+                        },
+                        "effective_model": {
+                          "type": ["string", "null"],
+                          "description": "What the resolver will call: model ?? the provider default; null = not configured"
                         },
                         "thinking_level": {
                           "type": ["string", "null"]

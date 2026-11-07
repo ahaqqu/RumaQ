@@ -1452,11 +1452,26 @@ const PROVIDER_SCHEMA: OpenAPIV3_1.SchemaObject = {
 
 const CAPABILITY_ASSIGNMENT_SCHEMA: OpenAPIV3_1.SchemaObject = {
   type: 'object',
-  required: ['provider_id', 'provider_label', 'model', 'thinking_level', 'source'],
+  required: [
+    'provider_id',
+    'provider_label',
+    'model',
+    'effective_model',
+    'thinking_level',
+    'source',
+  ],
   properties: {
     provider_id: { type: ['string', 'null'] },
     provider_label: { type: ['string', 'null'] },
-    model: { type: ['string', 'null'] },
+    model: {
+      type: ['string', 'null'],
+      description: "The assignment's own model; null = inherit the provider's default_model",
+    },
+    effective_model: {
+      type: ['string', 'null'],
+      description:
+        'What the resolver will call: model ?? the provider default; null = not configured',
+    },
     thinking_level: { type: ['string', 'null'] },
     source: { type: 'string', enum: ['household', 'none'] },
   },

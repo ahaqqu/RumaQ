@@ -514,11 +514,13 @@ describe('loadHouseholdAiConfig (the settings read model)', () => {
       provider_id: 'p-1',
       provider_label: 'OpenAI (imported)',
       model: 'gpt-4o-mini',
+      effective_model: 'gpt-4o-mini',
       thinking_level: 'low',
       source: 'household',
     })
     expect(config.capabilities.vision).toMatchObject({
       model: 'gpt-4o-vision',
+      effective_model: 'gpt-4o-vision',
       thinking_level: null,
     })
     expect(config.status).toEqual({
@@ -551,10 +553,13 @@ describe('loadHouseholdAiConfig (the settings read model)', () => {
 
     const config = await loadHouseholdAiConfig(env, 'h1')
     expect(config.providers[0]).toMatchObject({ default_model: 'chatgpt-4o-latest' })
-    // reasoning has no model of its own, so it reports the inherited one...
-    expect(config.capabilities.reasoning.model).toBe('chatgpt-4o-latest')
-    // ...and a capability model still wins.
+    // reasoning has no model of its own (the column stays null, so the Settings
+    // form shows a blank "inherit" field) but it resolves to the inherited one.
+    expect(config.capabilities.reasoning.model).toBeNull()
+    expect(config.capabilities.reasoning.effective_model).toBe('chatgpt-4o-latest')
+    // ...and a capability model still wins on both fields.
     expect(config.capabilities.vision.model).toBe('gpt-4o-vision')
+    expect(config.capabilities.vision.effective_model).toBe('gpt-4o-vision')
     expect(config.status.reasoning).toBe('household')
     expect(config.status.vision).toBe('household')
   })
@@ -571,6 +576,7 @@ describe('loadHouseholdAiConfig (the settings read model)', () => {
     // Configured (an owner chose a provider) but unusable (no model anywhere).
     expect(config.capabilities.reasoning.source).toBe('household')
     expect(config.capabilities.reasoning.model).toBeNull()
+    expect(config.capabilities.reasoning.effective_model).toBeNull()
     expect(config.status.reasoning).toBe('none')
   })
 
@@ -594,6 +600,7 @@ describe('loadHouseholdAiConfig (the settings read model)', () => {
       provider_id: null,
       provider_label: null,
       model: null,
+      effective_model: null,
       thinking_level: null,
       source: 'none',
     })

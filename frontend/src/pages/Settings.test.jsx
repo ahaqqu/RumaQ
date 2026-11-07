@@ -36,6 +36,7 @@ const emptyCapabilities = {
     provider_id: null,
     provider_label: null,
     model: null,
+    effective_model: null,
     thinking_level: null,
     source: 'none',
   },
@@ -43,6 +44,7 @@ const emptyCapabilities = {
     provider_id: null,
     provider_label: null,
     model: null,
+    effective_model: null,
     thinking_level: null,
     source: 'none',
   },
@@ -50,6 +52,7 @@ const emptyCapabilities = {
     provider_id: null,
     provider_label: null,
     model: null,
+    effective_model: null,
     thinking_level: null,
     source: 'none',
   },
@@ -362,7 +365,8 @@ describe('Settings', () => {
       reasoning: {
         provider_id: 'p-1',
         provider_label: 'Home key',
-        model: 'a-model',
+        model: null,
+        effective_model: 'a-model',
         thinking_level: null,
         source: 'household',
       },
@@ -454,7 +458,8 @@ describe('Settings', () => {
       decision: {
         provider_id: 'p-1',
         provider_label: 'Home key',
-        model: 'a-model',
+        model: null,
+        effective_model: 'a-model',
         thinking_level: null,
         source: 'household',
       },
@@ -478,6 +483,7 @@ describe('Settings', () => {
         provider_id: 'p-1',
         provider_label: 'Home key',
         model: 'pinned-model',
+        effective_model: 'pinned-model',
         thinking_level: 'low',
         source: 'household',
       },
@@ -493,6 +499,68 @@ describe('Settings', () => {
   })
 
   // ─── member read-only ───────────────────────────────────────────────────
+
+  it('prefills a pinned capability model so a thinking-only save keeps it', async () => {
+    // #523 P3 review A2: the model field edits the assignment's OWN model. A
+    // blank field means "inherit"; if a pinned model rendered blank, Save would
+    // clear it (and with no provider default the capability would go 402).
+    aiProviderData.providers = [assignedProvider()]
+    aiCapabilityData.status = { decision: 'none', reasoning: 'household', vision: 'none' }
+    aiCapabilityData.capabilities = {
+      ...emptyCapabilities,
+      reasoning: {
+        provider_id: 'p-1',
+        provider_label: 'Home key',
+        model: 'pinned-model',
+        effective_model: 'pinned-model',
+        thinking_level: 'low',
+        source: 'household',
+      },
+    }
+    aiMutations.assign.mockResolvedValue({ capability: {}, status: 'household' })
+    const { container } = renderWithQuery(React.createElement(Settings, baseProps))
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-testid="ai-capability-model-reasoning"]').value).toBe(
+        'pinned-model'
+      )
+    )
+    fireEvent.change(container.querySelector('[data-testid="ai-capability-thinking-reasoning"]'), {
+      target: { value: 'high' },
+    })
+    fireEvent.click(container.querySelector('[data-testid="ai-capability-save-reasoning"]'))
+
+    await waitFor(() =>
+      expect(aiMutations.assign).toHaveBeenCalledWith({
+        capability: 'reasoning',
+        payload: { provider_id: 'p-1', model: 'pinned-model', thinking_level: 'high' },
+      })
+    )
+  })
+
+  it('says NOT CONFIGURED for an assigned capability the resolver cannot use', () => {
+    // #523 P3 review A3: `source: 'household'` only means "an assignment exists".
+    // A row with no model anywhere (or an unreadable key) answers 402, so the
+    // card must not claim "Using <label>" — the status map is the truth.
+    aiProviderData.providers = [assignedProvider()]
+    aiCapabilityData.status = { decision: 'none', reasoning: 'none', vision: 'none' }
+    aiCapabilityData.capabilities = {
+      ...emptyCapabilities,
+      reasoning: {
+        provider_id: 'p-1',
+        provider_label: 'Home key',
+        model: null,
+        effective_model: null,
+        thinking_level: null,
+        source: 'household',
+      },
+    }
+    const { container } = renderWithQuery(React.createElement(Settings, baseProps))
+    expect(
+      container.querySelector('[data-testid="ai-capability-status-reasoning"]').textContent
+    ).toContain('settings.ai.notConfigured')
+    expect(container.textContent).not.toContain('settings.ai.usingWithModel')
+  })
 
   it('a member sees the configuration read-only, with no manage affordance', () => {
     aiProviderData.can_manage = false

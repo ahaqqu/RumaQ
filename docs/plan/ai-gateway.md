@@ -1501,6 +1501,11 @@ and the legacy removal all landed together, as designed. Deviations, all recorde
   (`configureAi` in the API helpers, `ai-setup.js` in the E2E steps). The typed `questions` wire is
   covered by backend tests only — a typed provider is a single-capability (decision) choice with no
   chat surface to drive from the UI.
+- **A capability reports its own model next to the resolved one.** `GET /api/ai/capabilities` and the
+  `ai_capabilities` block of `GET /api/settings` carry `model` (the assignment column; null = inherit
+  the provider default) **and** `effective_model` (`model ?? provider.default_model`). §4.1 sketched a
+  single `model`; the Settings form edits the column, and reporting only the resolved value made a
+  blank field clear a pinned model on any save (review A2).
 - **The browser-side persona rewrite is paused, not dropped.** The P5 scope below still moves it
   behind the door; until then `Settings.applyPersona` saves the persona and applies the built-in
   copy, but does not call `regenerateCopy()`. The provider/base-URL/model fields that call read were

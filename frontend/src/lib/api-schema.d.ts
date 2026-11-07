@@ -2059,7 +2059,10 @@ export interface operations {
               decision: {
                 provider_id: string | null
                 provider_label: string | null
+                /** @description The assignment's own model; null = inherit the provider's default_model */
                 model: string | null
+                /** @description What the resolver will call: model ?? the provider default; null = not configured */
+                effective_model: string | null
                 thinking_level: string | null
                 /** @enum {string} */
                 source: 'household' | 'none'
@@ -2067,7 +2070,10 @@ export interface operations {
               reasoning: {
                 provider_id: string | null
                 provider_label: string | null
+                /** @description The assignment's own model; null = inherit the provider's default_model */
                 model: string | null
+                /** @description What the resolver will call: model ?? the provider default; null = not configured */
+                effective_model: string | null
                 thinking_level: string | null
                 /** @enum {string} */
                 source: 'household' | 'none'
@@ -2075,7 +2081,10 @@ export interface operations {
               vision: {
                 provider_id: string | null
                 provider_label: string | null
+                /** @description The assignment's own model; null = inherit the provider's default_model */
                 model: string | null
+                /** @description What the resolver will call: model ?? the provider default; null = not configured */
+                effective_model: string | null
                 thinking_level: string | null
                 /** @enum {string} */
                 source: 'household' | 'none'
@@ -2132,7 +2141,10 @@ export interface operations {
             capability: {
               provider_id: string | null
               provider_label: string | null
+              /** @description The assignment's own model; null = inherit the provider's default_model */
               model: string | null
+              /** @description What the resolver will call: model ?? the provider default; null = not configured */
+              effective_model: string | null
               thinking_level: string | null
               /** @enum {string} */
               source: 'household' | 'none'
@@ -2193,7 +2205,10 @@ export interface operations {
             capability: {
               provider_id: string | null
               provider_label: string | null
+              /** @description The assignment's own model; null = inherit the provider's default_model */
               model: string | null
+              /** @description What the resolver will call: model ?? the provider default; null = not configured */
+              effective_model: string | null
               thinking_level: string | null
               /** @enum {string} */
               source: 'household' | 'none'
