@@ -66,7 +66,7 @@
 // Reject ships no bump statement at all, so a rejected alias never invalidates
 // the pipeline's cached index.
 
-import { BATCH_CHUNK, selectIn } from './d1.js'
+import { BATCH_CHUNK, D1_QUERY_BUDGET, selectIn } from './d1.js'
 
 const PRODUCT_NAME_MAX = 500
 const REASON_MAX = 200
@@ -97,6 +97,19 @@ const DUPLICATE_PRODUCTS_CEILING = 900
 // (BATCH_CHUNK, lib/d1.ts) carries 25 aliases. A batch is atomic, so a chunk
 // either approves all of its aliases or none of them.
 const BULK_APPROVE_ALIASES_PER_BATCH = Math.floor(BATCH_CHUNK / 2)
+
+// One run must fit ONE Worker invocation's D1 query budget, or its own tail
+// never runs. The path spends auth + admin + the candidate read + one batch per
+// chunk + the tail batch = N + 4 queries against D1_QUERY_BUDGET (50 on the free
+// plan — and a db.batch() counts as one query, the rule lib/d1.ts encodes). The
+// failure path needs one more query for its retry-finalize, so one run is capped
+// at (budget - 5) chunks: a ~2,000-entry catalogue is then drained over two
+// runs, not one. Every run still ends with its own single gated bump, which is
+// the property that matters — an over-budget run would commit chunks and lose
+// the bump, leaving approved aliases invisible to the pipeline until a later
+// canonical write.
+const BULK_APPROVE_MAX_CHUNKS = D1_QUERY_BUDGET - 5
+const BULK_APPROVE_ALIASES_PER_RUN = BULK_APPROVE_MAX_CHUNKS * BULK_APPROVE_ALIASES_PER_BATCH
 
 // Unicode control characters (the Cc category: C0, DEL, C1). Newlines and tabs
 // are rejected on purpose: the canonical index schema's rawText(500) rejects
@@ -252,9 +265,10 @@ type ExactAliasCandidate = {
 
 /**
  * The bulk approval's receipt (#515). `exactCandidates` is the set the run
- * targeted (0 on an idempotent second run), `approved` the rows this run
- * actually flipped, `remainingCandidates` the catalog-wide candidate count
- * afterwards, and `indexVersion` the version the run's single bump left behind.
+ * targeted — capped at one run's query budget, 0 on an idempotent second run —
+ * `approved` the rows this run actually flipped, `remainingCandidates` the
+ * catalog-wide candidate count afterwards, and `indexVersion` the version the
+ * run's single bump left behind.
  */
 type BulkAliasApproveResult = {
   exactCandidates: number
@@ -1381,14 +1395,19 @@ async function finalizeBulkApprove(
  * fails, the approvals already committed are real, so the failing path bumps
  * the index for them and throws BulkAliasApproveError carrying the count
  * reached — the route turns that into an honest 500, and a rerun continues
- * where this one stopped. A run larger than the D1 query budget therefore
- * still makes progress instead of losing everything.
+ * where this one stopped.
+ *
+ * Bounded: one run approves at most BULK_APPROVE_ALIASES_PER_RUN aliases, the
+ * number that lets the whole path — auth, admin, the candidate read, every
+ * chunk batch and the tail bump — fit one invocation's D1 query budget. A
+ * larger catalogue is drained by running again (the panel's counts name the
+ * remainder); each run is a complete unit and still bumps exactly once.
  */
 export async function bulkApproveExactNameAliases(
   db: D1Database,
   actorUserId: string
 ): Promise<BulkAliasApproveResult> {
-  const candidates =
+  const found =
     (
       await db
         .prepare(
@@ -1404,6 +1423,11 @@ export async function bulkApproveExactNameAliases(
         )
         .all<ExactAliasCandidate>()
     ).results ?? []
+  // Bound the run to what one invocation can afford (the constants above): the
+  // queries a longer run needs past this point kill its own tail bump, and a
+  // committed approval with no bump is invisible to the pipeline. A capped run
+  // is still a complete unit; the next click continues from the next matches.
+  const candidates = found.slice(0, BULK_APPROVE_ALIASES_PER_RUN)
 
   const now = new Date().toISOString()
   let approved = 0
