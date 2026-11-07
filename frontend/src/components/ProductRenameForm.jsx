@@ -534,9 +534,13 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   }
 
   // The second click. Only the armed row can confirm, so a keyboard user cannot
-  // fire a reject by tabbing onto a button that was never armed.
-  function confirmReject(alias) {
-    if (!alias?.id || armedAliasId !== alias.id) return
+  // fire a reject by tabbing onto a button that was never armed — and only a
+  // gesture of its own can confirm: the second click of a double-click reports
+  // `detail` 2 because it is the same gesture as the click that armed the row,
+  // and confirming it would put the terminal decision back one stray
+  // double-click (or one chattering mouse) away. Keyboard activations report 0.
+  function confirmReject(alias, clickCount) {
+    if (!alias?.id || armedAliasId !== alias.id || clickCount > 1) return
     decideAlias(alias, 'reject')
   }
 
@@ -735,7 +739,9 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
                               armed ? 'rename.aliasRejectConfirmLabel' : 'rename.aliasRejectLabel',
                               { name: alias.name }
                             )}
-                            onClick={() => (armed ? confirmReject(alias) : armReject(alias))}
+                            onClick={(event) =>
+                              armed ? confirmReject(alias, event.detail) : armReject(alias)
+                            }
                           >
                             {pendingAction === 'reject'
                               ? t('rename.aliasRejecting')

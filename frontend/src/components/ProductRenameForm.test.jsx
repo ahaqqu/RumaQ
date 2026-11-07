@@ -271,6 +271,32 @@ describe('ProductRenameForm', () => {
     expect(getByTestId('alias-reject-announcement').textContent).toBe('')
   })
 
+  it('never confirms from the second click of a double-click', () => {
+    const { getByTestId } = renderForm()
+    const row = aliasRows(getByTestId)[0]
+    const reject = [...row.querySelectorAll('button')].find(
+      (button) => button.textContent === 'rename.aliasReject'
+    )
+
+    // A double-click is one gesture: the browser reports the second click as
+    // click count 2. That click must not confirm the prompt the first one
+    // opened, or the terminal decision is still one stray double-click away.
+    fireEvent.click(reject, { detail: 1 })
+    fireEvent.click(reject, { detail: 2 })
+    expect(aliasMutate).not.toHaveBeenCalled()
+    expect(row.getAttribute('data-armed')).toBe('true')
+
+    // A click of its own does confirm: the guard ignores the gesture, not the
+    // prompt.
+    fireEvent.click(reject, { detail: 1 })
+    expect(aliasMutate).toHaveBeenCalledTimes(1)
+    expect(lastAliasVariables()).toEqual({
+      productKey: PRODUCT_KEY,
+      aliasId: 'alias-candidate',
+      action: 'reject',
+    })
+  })
+
   it('sends the reject only on the confirm click, once, for the armed row', () => {
     const { getByTestId } = renderForm()
     const row = aliasRows(getByTestId)[0]
