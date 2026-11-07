@@ -86,8 +86,24 @@ export function login() {
   window.location.href = '/api/auth/login'
 }
 
-export function logout() {
-  window.location.href = '/api/auth/logout'
+export async function logout() {
+  // POST, not a link (ahaqqu/RumaQ#528 review A1): the session-epoch bump that
+  // revokes the token on every device is a state change, and the CSRF guard in
+  // backend/src/lib/csrf.ts only covers POST/PUT/PATCH/DELETE. A GET navigation
+  // to /api/auth/logout would be forgeable from any site (a top-level GET still
+  // carries the SameSite=Lax cookie) and is limited to clearing the cookie.
+  // The typed client has no logout path (the backend registers it with `all`,
+  // which api-schema.d.ts does not emit), so this is a plain fetch.
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+    window.location.href = '/'
+  } catch {
+    // POST unreachable (offline, proxy error): fall back to the GET navigation
+    // so the cookie is still cleared. The epoch bump is lost, so the token
+    // stays valid on other devices — the lesser evil versus a logout that
+    // silently leaves the session live.
+    window.location.href = '/api/auth/logout'
+  }
 }
 
 export async function emailAuthStatus(): Promise<{ enabled: boolean }> {

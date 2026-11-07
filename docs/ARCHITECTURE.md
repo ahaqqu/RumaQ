@@ -217,8 +217,9 @@ Google OAuth 2.0 is implemented inside the Worker using the [Authorization Code 
    - Upserts the user in D1.
    - Issues a long-lived signed JWT in an `HttpOnly`, `SameSite=Lax` cookie named `rumaq_session` (`Secure` on HTTPS). `Lax`, never `None`: the SPA and API share one origin in production and previews, and local dev is same-site (#528).
 
-3. `GET /api/auth/logout`
-   - Clears the session cookie and redirects to the app origin.
+3. `POST /api/auth/logout` (the SPA) and `GET /api/auth/logout` (legacy link/navigation)
+   - Both clear the session cookie; the GET also redirects to the app origin.
+   - Only the **POST** bumps the user's session epoch, revoking every token on every device (#405). The GET is a navigation: the CSRF guard leaves `GET` alone, and a top-level cross-site GET still carries the `sameSite=Lax` cookie, so a link or redirect to it must not be able to force-log-out every device (#528 review A1).
 
 4. Protected-route middleware
    - The **gateway** (`backend/src/gateway.ts`) routes `/api/*` non-auth requests to the `CachedApi` entrypoint (which wraps `apiApp`).

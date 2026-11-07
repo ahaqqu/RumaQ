@@ -325,6 +325,21 @@ describe('CSRF guard through the gateway (real SQL)', () => {
     expect(row?.session_epoch).toBe(1)
   })
 
+  it('does not revoke other sessions from the unguarded GET logout', async () => {
+    // The guard leaves GET alone (a top-level cross-site navigation carries the
+    // Lax cookie), so the GET route must stay a cookie clear: the epoch bump
+    // that revokes every device belongs to the guard-covered POST (#528 A1).
+    const res = await callGateway(env, 'http://localhost:3000/api/auth/logout', {
+      method: 'GET',
+      headers: { Cookie: await cookieFor(), Origin: 'https://evil.example' },
+    })
+    expect(res.status).toBe(302)
+    const row = sqlite.prepare('SELECT session_epoch FROM users WHERE id = ?').get(USER_ID) as
+      | { session_epoch: number }
+      | undefined
+    expect(row?.session_epoch).toBe(0)
+  })
+
   it('lets the bearer ingest channel write with a foreign Origin', async () => {
     const key = 'lotte-mart/20261102/promo.png'
     const res = await callGateway(env, `http://localhost:3000/api/internal/brochures/${key}`, {

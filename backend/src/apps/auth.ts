@@ -261,7 +261,7 @@ authApp.all(
   '/logout',
   describeRoute({
     description:
-      'Revokes the session server-side by bumping the user’s session epoch (ahaqqu/RumaQ#405) — every token issued before the bump stops working, on all devices — then clears the cookie. POST returns { ok: true }; GET redirects to /. Without a valid session cookie it is a no-op that only clears the cookie.',
+      'Clears the session cookie. POST (the SPA’s logout) additionally revokes the session server-side by bumping the user’s session epoch (ahaqqu/RumaQ#405) — every token issued before the bump stops working, on all devices — and returns { ok: true }. GET is a navigation (legacy links, the e2e smoke flow) and is limited to clearing the cookie before redirecting to /, because a top-level cross-site GET still carries a sameSite=Lax cookie and must not be able to revoke every session (#528 review A1). Without a valid session cookie it is a no-op that only clears the cookie.',
     responses: {
       200: {
         description: 'OK',
@@ -279,13 +279,21 @@ authApp.all(
     // the sub of an unverified token would let anyone revoke a victim's
     // sessions by crafting a cookie. No/expired/forged cookie: clear the
     // cookie and move on (logout stays idempotent and leak-free).
+    //
+    // Only a non-GET (the SPA POSTs) may touch the epoch: revoking every
+    // session on the user's account is a state change, and `lib/csrf.ts`
+    // deliberately leaves GET alone — a top-level cross-site GET navigation
+    // still carries the sameSite=Lax cookie, so a link, redirect or
+    // `location.href` to this URL would otherwise force-log-out every device
+    // (#528 review A1). GET keeps the cookie clear it has always done.
+    const revokeAllSessions = c.req.method !== 'GET'
     let token: string | undefined
     try {
       token = getCookie(c, COOKIE_NAME)
     } catch {
       // c.req.raw not available (test mock)
     }
-    if (token) {
+    if (token && revokeAllSessions) {
       const payload = await verifyJwt(token, c.env.WORKER_JWT_SECRET)
       if (payload && typeof payload.sub === 'string') {
         // Monotonic bump, never a reset: setting the epoch back to 0 would

@@ -14,7 +14,7 @@ How RumaQ protects household data and credentials. The full system design lives 
 - Google OAuth 2.0 with `state` + PKCE (email/password auth exists for local testing behind `EMAIL_AUTH_ENABLED`).
 - Session is a signed JWT (HMAC-SHA256, 30-day expiry) in a `rumaq_session` cookie that is `HttpOnly`, `SameSite=Lax` everywhere, and on HTTPS `Secure` too. It is deliberately **not** `SameSite=None` (ahaqqu/RumaQ#528): the app and API share one origin in production and previews (a single Worker serves the SPA and the API), and local dev is same-site even though the SPA (`:5173`) and API (`:8787`) are different origins, so no legitimate caller needs a cross-site cookie. `Lax` is what stops a cross-site form/fetch POST from carrying the session at all.
 - Sessions issued before #528 keep their old `SameSite=None` attribute until the user's next login/logout (the browser owns that attribute); the server-side CSRF guard below covers them in the meantime.
-- Logout clears the cookie with matching attributes.
+- Logout clears the cookie with matching attributes. The epoch bump that revokes every session on every device rides `POST /api/auth/logout` (what the SPA calls, and therefore Origin-guarded); the legacy `GET` navigation only clears the cookie, so a cross-site link or redirect cannot force-log-out every device (#528 review A1).
 - Rotate `WORKER_JWT_SECRET` to invalidate all sessions (users just sign in again).
 
 ## CSRF

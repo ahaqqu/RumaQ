@@ -175,7 +175,14 @@ describe('api', () => {
     })
   })
 
-  it('logout navigates to /api/auth/logout', () => {
+  it('logout POSTs /api/auth/logout and then navigates home', async () => {
+    // POST, not a GET navigation (ahaqqu/RumaQ#528 review A1): the epoch bump
+    // that revokes the token everywhere is guard-covered only on POST, so a
+    // cross-site link to the GET route must not be the client's logout.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    })
     const origLocation = window.location
     const setter = vi.fn()
     const mockLocation = {}
@@ -185,8 +192,32 @@ describe('api', () => {
       configurable: true,
       writable: true,
     })
-    logout()
-    expect(setter).toHaveBeenCalledWith(expect.stringContaining('/api/auth/logout'))
+    await logout()
+    const [url, opts] = globalThis.fetch.mock.calls[0]
+    expect(url).toBe('/api/auth/logout')
+    expect(opts.method).toBe('POST')
+    expect(opts.credentials).toBe('include')
+    expect(setter).toHaveBeenCalledWith('/')
+    Object.defineProperty(window, 'location', {
+      value: origLocation,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  it('logout falls back to the GET navigation when the POST fails', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('offline'))
+    const origLocation = window.location
+    const setter = vi.fn()
+    const mockLocation = {}
+    Object.defineProperty(mockLocation, 'href', { set: setter, get: () => '' })
+    Object.defineProperty(window, 'location', {
+      value: mockLocation,
+      configurable: true,
+      writable: true,
+    })
+    await logout()
+    expect(setter).toHaveBeenCalledWith('/api/auth/logout')
     Object.defineProperty(window, 'location', {
       value: origLocation,
       configurable: true,

@@ -45,13 +45,13 @@ Attempts are rate limited per client IP — 10 per 60 s in production (QA-F4, #4
 
 ## API endpoints
 
-| Method | Path                    | Auth | Description                                      |
-| ------ | ----------------------- | ---- | ------------------------------------------------ |
-| GET    | `/api/auth/login`       | —    | Redirects to Google OAuth consent screen         |
-| GET    | `/api/auth/callback`    | —    | Google OAuth callback, sets session cookie       |
-| POST   | `/api/auth/email-login` | —    | Email/password login, sets session cookie        |
-| GET    | `/api/auth/logout`      | —    | Clears session cookie and redirects              |
-| POST   | `/api/auth/logout`      | —    | Clears session cookie and returns `{ ok: true }` |
+| Method | Path                    | Auth | Description                                           |
+| ------ | ----------------------- | ---- | ----------------------------------------------------- |
+| GET    | `/api/auth/login`       | —    | Redirects to Google OAuth consent screen              |
+| GET    | `/api/auth/callback`    | —    | Google OAuth callback, sets session cookie            |
+| POST   | `/api/auth/email-login` | —    | Email/password login, sets session cookie             |
+| GET    | `/api/auth/logout`      | —    | Clears session cookie, redirects (no epoch bump)      |
+| POST   | `/api/auth/logout`      | —    | Clears cookie + session epoch, returns `{ ok: true }` |
 
 ## Configuration
 
