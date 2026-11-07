@@ -287,7 +287,7 @@ function providerMock(
   return mock
 }
 
-async function evaluateAs(mode: 'assist' | 'auto', limit = 10, userId: string | null = ADMIN) {
+async function evaluateAs(mode: 'assist' | 'auto', limit = 10, userId: string = ADMIN) {
   const bindings = env()
   const resolved = await resolveReviewAiAccess(bindings, userId)
   if (!resolved) throw new Error('test setup: no AI access resolved')

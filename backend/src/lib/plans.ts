@@ -1,5 +1,6 @@
 import {
   completeText,
+  AiError,
   parseJsonResponse,
   type AiAccessHandle,
   type AiCall,
@@ -19,6 +20,7 @@ import {
   minLength,
   minValue,
   nullish,
+  type InferOutput,
 } from 'valibot'
 
 /** One generated plan line, as the save route consumes it. */
@@ -39,10 +41,16 @@ export const planGenerateResponseSchema = object({
       unit: string(),
       store_id: nullish(string()),
       price_estimate: nullish(number()),
-      why: string(),
+      // Optional in the save contract (`planCreateSchema`) too: a line without
+      // its "why" is still a usable plan, and the old answer mapper defaulted
+      // it. Requiring it here made a cosmetic omission fatal to the whole plan.
+      why: optional(string()),
     })
   ),
 })
+
+/** The model answer's shape, as this feature validates it. */
+type PlanGenerateResponse = InferOutput<typeof planGenerateResponseSchema>
 
 export const planItemPatchSchema = strictObject({
   status: picklist(['bought', 'skipped']),
@@ -160,6 +168,10 @@ export type GeneratedPlan = {
  * plan §2.5 — the previous inline `content.match(/\{...\}/)` copy is gone) and
  * then through this feature's own schema (planGenerateResponseSchema), which is
  * the plan route's validation contract.
+ *
+ * An answer that fails either gate is an `invalid_response` CARRYING the call's
+ * bill: the provider read the prompt and answered, so the route records the
+ * attempt (plan §2.2). A plain error here would silently drop that usage row.
  */
 export async function generateAiPlan(
   ai: AiCtx & { access: AiAccessHandle },
@@ -195,8 +207,15 @@ export async function generateAiPlan(
     ],
   })
 
-  const raw = parseJsonResponse<unknown>(result.text)
-  const parsed = parse(planGenerateResponseSchema, raw)
+  let parsed: PlanGenerateResponse
+  try {
+    parsed = parse(planGenerateResponseSchema, parseJsonResponse<unknown>(result.text))
+  } catch {
+    throw new AiError('invalid_response', 'The AI answer was not a usable shopping plan', {
+      call: result.call,
+      usage: result.usage,
+    })
+  }
 
   // The prompt caps the list at 50; the slice is the belt, not the policy.
   const items = parsed.items.slice(0, 50).map((it) => ({
@@ -205,7 +224,9 @@ export async function generateAiPlan(
     unit: it.unit,
     store_id: it.store_id ?? null,
     price_estimate: it.price_estimate != null ? Math.round(it.price_estimate) : null,
-    why: it.why,
+    // `why` is optional in the answer (it is optional in the save contract
+    // too); an item without one still belongs in the plan.
+    why: it.why ?? '',
   }))
 
   return { items, call: result.call, usage: result.usage }

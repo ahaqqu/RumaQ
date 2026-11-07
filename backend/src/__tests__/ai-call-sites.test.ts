@@ -48,6 +48,17 @@ function openAiAnswer(content: string, usage = { prompt_tokens: 100, completion_
   } as unknown as Response
 }
 
+/** A provider that answers with an error status (a billed, failed attempt). */
+function failedAnswer(status: number) {
+  return {
+    ok: false,
+    status,
+    headers: new Headers(),
+    json: async () => ({}),
+    text: async () => 'upstream is down',
+  } as unknown as Response
+}
+
 function geminiAnswer(text: string, usage = { promptTokenCount: 90, candidatesTokenCount: 9 }) {
   return {
     ok: true,
@@ -418,6 +429,76 @@ describe('usage attribution (#523 P4)', () => {
         model: VISION_MODEL,
         input_tokens: 100,
         output_tokens: 50,
+      }),
+    ])
+  })
+
+  it('the failed chat records the REASONING attempt (failure carries the bill)', async () => {
+    // A provider 500 is a billed attempt: the row still names the call's own
+    // dimensions, so the admin cut sees the failure.
+    providerMock(() => failedAnswer(500))
+    const res = await request('/api/ai/chat', jsonRequest('POST', { message: 'hi' }), OWNER)
+    expect(res.status).toBe(502)
+    expect(usageRows()).toEqual([
+      expect.objectContaining({
+        user_id: OWNER,
+        capability: 'reasoning',
+        household_id: HOUSEHOLD,
+        model: REASONING_MODEL,
+      }),
+    ])
+  })
+
+  it('the failed plan records the REASONING attempt (failure carries the bill)', async () => {
+    providerMock(() => failedAnswer(500))
+    const res = await request('/api/plans/generate', jsonRequest('POST', {}), OWNER)
+    expect(res.status).toBe(502)
+    expect(usageRows()).toEqual([
+      expect.objectContaining({
+        user_id: OWNER,
+        capability: 'reasoning',
+        household_id: HOUSEHOLD,
+        model: REASONING_MODEL,
+      }),
+    ])
+  })
+
+  it('an unparseable scan answer still records the VISION call it was billed for', async () => {
+    // The provider answered (and billed) but the reply is not JSON: the route's
+    // parser rejects it AFTER the call, so the attempt's call/usage must be
+    // captured before the parse or the usage row is silently lost.
+    providerMock(() =>
+      geminiAnswer('I cannot read this receipt', {
+        promptTokenCount: 120,
+        candidatesTokenCount: 30,
+      })
+    )
+    const res = await request('/api/purchases/scan', scanRequest(), OWNER)
+    expect(res.status).toBe(502)
+    expect(usageRows()).toEqual([
+      expect.objectContaining({
+        user_id: OWNER,
+        capability: 'vision',
+        household_id: HOUSEHOLD,
+        model: VISION_MODEL,
+        input_tokens: 120,
+        output_tokens: 30,
+      }),
+    ])
+  })
+
+  it('an unparseable plan answer still records the REASONING call it was billed for', async () => {
+    providerMock(() => openAiAnswer('I cannot build a plan'))
+    const res = await request('/api/plans/generate', jsonRequest('POST', {}), OWNER)
+    expect(res.status).toBe(502)
+    expect(usageRows()).toEqual([
+      expect.objectContaining({
+        user_id: OWNER,
+        capability: 'reasoning',
+        household_id: HOUSEHOLD,
+        model: REASONING_MODEL,
+        input_tokens: 100,
+        output_tokens: 10,
       }),
     ])
   })

@@ -1559,10 +1559,21 @@ Deviations, recorded where they landed:
   `parseScanResult` live in `lib/receipt-scan.ts`; `buildExpiryExtractionPrompt` +
   `parseExpiryExtraction` live in `lib/document-ocr.ts`. Plans now validate the answer with its own
   `planGenerateResponseSchema` after the shared `parseJsonResponse` (the inline `content.match`
-  copy is gone; an unparseable answer is a 502, not a silently empty plan).
+  copy is gone; an unparseable answer is a 502, not a silently empty plan). The schema keeps `why`
+  **optional**, matching `planCreateSchema` and the retired mapper: requiring it made one cosmetic
+  omission fail the whole plan, which the save route would have accepted (P4 review A2).
 - **`usageCollector` is deleted with the shims.** The door returns the call's usage on success and
   `AiError.usage` on failure, so no call site accumulates tokens by hand; the scan/OCR failure path
-  still bills the attempt from `AiError`.
+  still bills the attempt from `AiError`. A failure raised AFTER a successful call — an unparseable
+  scan reply, or a plan answer that fails the schema (an `invalid_response` carrying
+  `call`/`usage`) — records the captured attempt too: the provider was billed even though its answer
+  was unusable (P4 review A1; the route used to record it from the retired `onUsage` callback).
+- **The legacy 2000-token output cap is gone, deliberately.** The deleted `lib/ai/legacy.ts` applied
+  `maxTokens: 2000` for the `openai`, `opencode` and `custom` wires (gemini had none, anthropic
+  defaulted to 2000 in its adapter, ollama never had one). No call site passes `maxTokens` any more,
+  so those requests carry no cap field and the provider's own default applies; the door's per-call
+  deadline (`AI_TIMEOUT_MS`) is what bounds a reply now. A household's own key pays either way, and
+  a plan or chat answer is no longer truncated at ~1,500 words (P4 review C2).
 - **`GET /api/ai/usage` loses `provider` and gains the cuts.** A household can point each capability
   at a different provider, so a single `provider` field would name one of three rows; the response is
   now the acting member's totals + a `capabilities` breakdown (with `typed_calls`, the not-token-billed

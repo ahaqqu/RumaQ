@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { buildPlanPrompt, generateAiPlan, normalizeItemName } from '../lib/plans.js'
+import { AiError } from '../lib/ai/index.js'
 import {
   AI_TEST_HOUSEHOLD,
   AI_TEST_USER,
@@ -79,9 +80,39 @@ describe('generateAiPlan', () => {
     // for any unparseable answer; the one extraction policy makes it a typed
     // failure the route can answer 502 for (plan §2.5).
     globalThis.fetch = vi.fn().mockResolvedValue(openAiChatAnswer('not json'))
-    await expect(generateAiPlan(await reasoningCall(), [], [], [], [], 'IDR')).rejects.toThrow(
-      /did not contain valid JSON/
+    // The failure carries the call's bill: the route records the attempt from
+    // `AiError.call`/`usage` (plan §2.2), so it must be an AiError, not a plain
+    // parse error.
+    const failure = await generateAiPlan(await reasoningCall(), [], [], [], [], 'IDR').catch(
+      (err: unknown) => err
     )
+    expect(failure).toBeInstanceOf(AiError)
+    expect(failure).toMatchObject({
+      code: 'invalid_response',
+      call: { capability: 'reasoning', model: 'gpt-4o-mini' },
+      usage: { input_tokens: 100, output_tokens: 10 },
+    })
+  })
+
+  it('keeps an item without a "why" — the field is optional in the save contract too', async () => {
+    // #523 P4 review A2: the answer schema required `why`, so one cosmetic
+    // omission sank the whole plan (502) where `planCreateSchema` and the old
+    // mapper both accept it.
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      openAiChatAnswer(
+        JSON.stringify({
+          items: [
+            { name: 'Susu', qty: 1, unit: 'L', store_id: null, price_estimate: 18000 },
+            { name: 'Roti', qty: 2, unit: 'pack', store_id: 's1', why: 'Habis' },
+          ],
+        })
+      )
+    )
+    const plan = await generateAiPlan(await reasoningCall(), [], [], [], [], 'IDR')
+    expect(plan.items).toEqual([
+      { name: 'Susu', qty: 1, unit: 'L', store_id: null, price_estimate: 18000, why: '' },
+      { name: 'Roti', qty: 2, unit: 'pack', store_id: 's1', price_estimate: null, why: 'Habis' },
+    ])
   })
 
   it('rejects an off-schema answer through the plan schema', async () => {

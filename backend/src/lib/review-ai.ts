@@ -588,7 +588,9 @@ export async function evaluatePendingReviews(
   options: {
     mode: Exclude<ReviewMode, 'manual'>
     access: AiAccessHandle
-    userId: string | null
+    /** Who acts: the usage row's attribution. Always present — the sweep and
+     * the route both refuse to evaluate without an acting admin. */
+    userId: string
     /** The household that owns the resolved assignment (billing + attribution). */
     householdId: string
     limit: number
@@ -606,7 +608,7 @@ export async function evaluatePendingReviews(
       const evaluation = await evaluateReviewPair(
         {
           env,
-          userId: options.userId ?? '',
+          userId: options.userId,
           householdId: options.householdId,
           access: options.access,
         },

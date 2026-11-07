@@ -2058,14 +2058,28 @@ function recordAiCallUsage(
 
 /**
  * The failed attempt's usage row ("failure carries the bill", plan §2.2): the
- * provider read the inputs even when its answer was unusable. A
- * `not_configured` failure has no call and no bill, so it writes nothing.
+ * provider read the inputs even when its answer was unusable, so every failure
+ * AFTER a call has a row.
+ *
+ * The bill comes from the error when the door dispatched and failed
+ * (`AiError.call`/`usage`), and from the caller's captured attempt when the call
+ * itself succeeded and the failure is the feature rejecting its answer (an
+ * unparseable scan reply is a plain `Error`, and the provider still billed it —
+ * the #523 P4 regression this argument repairs). `not_configured` is the one
+ * failure with no call and no bill, so it writes nothing.
  */
-function recordAiFailureUsage(env: Env['Bindings'], userId: string, err: unknown): Promise<void> {
-  if (err instanceof AiError && err.call) {
-    return recordAiUsageEvent(env, { userId, call: err.call, usage: err.usage })
+function recordAiFailureUsage(
+  env: Env['Bindings'],
+  userId: string,
+  attempt: { call: AiCall; usage: TokenUsage },
+  err: unknown
+): Promise<void> {
+  if (err instanceof AiError) {
+    return err.call
+      ? recordAiUsageEvent(env, { userId, call: err.call, usage: err.usage })
+      : Promise.resolve()
   }
-  return Promise.resolve()
+  return recordAiUsageEvent(env, { userId, call: attempt.call, usage: attempt.usage })
 }
 
 apiApp.get(
@@ -2675,7 +2689,7 @@ apiApp.post(
       } catch (err) {
         // The provider billed the failed attempt's input tokens; record them
         // as the call's event even though no reply came back.
-        await recordAiFailureUsage(c.env, userId, err)
+        await recordAiFailureUsage(c.env, userId, { call: usedCall, usage: tokenUsage }, err)
         return c.json(
           {
             error: `AI chat failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -2789,13 +2803,16 @@ apiApp.post(
             { type: 'image', bytes: file.data, mimeType: file.type },
           ],
         })
-        scanResult = parseScanResult(result.text)
+        // The call's dimensions + tokens are captured BEFORE the answer is
+        // parsed: a reply that fails the parser was still a billed call, and
+        // the catch below must record it (plan §2.2).
         usedCall = result.call
         tokenUsage = result.usage
+        scanResult = parseScanResult(result.text)
       } catch (err) {
         // The provider billed the failed attempt's input tokens; record them
         // as the call's event even though no scan came back.
-        await recordAiFailureUsage(c.env, userId, err)
+        await recordAiFailureUsage(c.env, userId, { call: usedCall, usage: tokenUsage }, err)
         return c.json(
           {
             error: `AI scan failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -5760,7 +5777,7 @@ apiApp.post(
       } catch (err) {
         // The provider billed the failed attempt's input tokens; record them
         // as the call's event even though no plan came back.
-        await recordAiFailureUsage(c.env, userId, err)
+        await recordAiFailureUsage(c.env, userId, { call: usedCall, usage: tokenUsage }, err)
         return c.json(
           {
             error: `AI plan generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
