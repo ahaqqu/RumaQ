@@ -110,13 +110,15 @@ export function useClearAiCapability() {
  * result belongs to the persona (localStorage), so there is no cache slice to
  * refetch. It IS a billed reasoning call, though, so the day's usage meter —
  * rendered right above the persona form in Settings — is invalidated instead of
- * silently under-reporting the household's spend.
+ * silently under-reporting the household's spend. That includes the FAILED
+ * rewrite: an unparseable answer is a 502 whose usage row was still written
+ * (the #523 P4 A1 rule), so the invalidation runs on settle, not on success.
  */
 export function useGeneratePersonaCopy() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (persona) => generatePersonaCopy(persona),
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['ai-usage'] })
     },
   })
