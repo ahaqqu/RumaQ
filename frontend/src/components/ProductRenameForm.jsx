@@ -471,10 +471,14 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
         },
         onError: (error) => {
           const mapped = aliasNoticeFromError(error)
-          // Someone else decided the row between the read and the write: the
-          // identity is the only source of truth for the status that won, so
-          // re-read it instead of leaving the stale candidate row on screen.
-          if (mapped.kind === 'alreadyDecided') identityQuery.refetch()
+          // The identity is the only source of truth for a decision this form
+          // lost: `alias_state` means another admin decided the row while it
+          // was on screen, and a 404 means the row (or its product) is gone.
+          // Both re-read the list, so "already decided" and "no longer exists
+          // — the list has been refreshed" are true when shown.
+          if (mapped.kind === 'alreadyDecided' || mapped.kind === 'aliasNotFound') {
+            identityQuery.refetch()
+          }
           setAliasNotice(mapped)
         },
         onSettled: () => {

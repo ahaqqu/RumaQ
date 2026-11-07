@@ -288,11 +288,26 @@ describe('ProductRenameForm', () => {
 
   it('maps alias decision 404, 403 and network failures to localized copy', () => {
     const cases = [
-      { error: new ApiError('RAW_404_ALIAS', 404), key: 'rename.aliasErrorNotFound' },
-      { error: new ApiError('RAW_403_FORBIDDEN', 403), key: 'rename.aliasErrorForbidden' },
-      { error: new Error('RAW_NETWORK_FAILURE'), key: 'rename.aliasErrorGeneric' },
+      // A vanished alias re-reads the list so the notice's "refreshed" claim
+      // holds; a forbidden or network failure changes nothing on the server.
+      {
+        error: new ApiError('RAW_404_ALIAS', 404),
+        key: 'rename.aliasErrorNotFound',
+        refreshes: true,
+      },
+      {
+        error: new ApiError('RAW_403_FORBIDDEN', 403),
+        key: 'rename.aliasErrorForbidden',
+        refreshes: false,
+      },
+      {
+        error: new Error('RAW_NETWORK_FAILURE'),
+        key: 'rename.aliasErrorGeneric',
+        refreshes: false,
+      },
     ]
-    for (const { error, key } of cases) {
+    for (const { error, key, refreshes } of cases) {
+      refetch.mockClear()
       const { container, getByTestId, unmount } = renderForm()
       clickRowButton(aliasRows(getByTestId)[0], 'rename.aliasReject')
       act(() => {
@@ -300,7 +315,7 @@ describe('ProductRenameForm', () => {
       })
       expect(getByTestId('alias-decision-notice').textContent).toBe(key)
       expect(container.textContent).not.toContain(error.message)
-      expect(refetch).not.toHaveBeenCalled()
+      expect(refetch).toHaveBeenCalledTimes(refreshes ? 1 : 0)
       unmount()
     }
   })
