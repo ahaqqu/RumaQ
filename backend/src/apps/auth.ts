@@ -4,7 +4,7 @@ import { openAPIRouteHandler, describeRoute } from 'hono-openapi'
 import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { signJwt, verifyJwt, verifyPassword, base64UrlEncode, randomState } from '../auth.js'
-import { isRateLimited, getClientIp } from '../lib/rate-limit.js'
+import { isRateLimited, getClientIp, getLoginRateLimitConfig } from '../lib/rate-limit.js'
 import { getRequestOrigin } from '../lib/request.js'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
@@ -21,8 +21,11 @@ const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000
 // spree, and the 429 is EXPLICIT — Retry-After header plus retry_after
 // seconds in the body — so a client at human pace gets a visible, actionable
 // signal instead of an identical 401 on every attempt.
-const LOGIN_RATE_WINDOW_MS = 60_000
-const LOGIN_RATE_MAX = 10
+//
+// The production budget (10 attempts / 60 s per IP) and its env knobs live in
+// lib/rate-limit.ts, next to the general limiter's config: the local/e2e
+// harness raises it through LOGIN_RATE_MAX / LOGIN_RATE_WINDOW_SEC, never
+// through a branch in this handler (ahaqqu/RumaQ#499).
 
 // The authorize-time and token-exchange redirect_uri must match exactly — Google
 // rejects the exchange otherwise — so both routes build it here, derived from the
@@ -350,12 +353,13 @@ authApp.post(
     },
   }),
   async (c) => {
-    // QA-F4 limiter (see LOGIN_RATE_* above) — counts every attempt, keyed by
+    // QA-F4 limiter (see lib/rate-limit.ts) — counts every attempt, keyed by
     // the same client-IP derivation the shared middleware uses.
+    const { windowMs, maxAttempts } = getLoginRateLimitConfig(c.env)
     const { limited, retryAfter } = isRateLimited(
       `email-login:${getClientIp(c)}`,
-      LOGIN_RATE_WINDOW_MS,
-      LOGIN_RATE_MAX
+      windowMs,
+      maxAttempts
     )
     if (limited) {
       return c.json(

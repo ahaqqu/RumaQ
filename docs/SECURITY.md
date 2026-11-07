@@ -29,7 +29,8 @@ Defined in `backend/src/cors.ts`, unit-tested in `backend/src/__tests__/cors.tes
 
 - AI endpoints (`/api/purchases/scan`, `/api/plans/generate`, `/api/ai/chat`) are NOT volume-capped: every completed call is recorded in the `ai_usage_events` D1 table for analytics (admin view at `/api/admin/ai/usage`, 1-year retention) and no usage volume ever gates a call (issue #353). Abuse is instead bounded by the general per-IP limiter below.
 - A general per-IP fixed-window limiter (60 s / 100 requests by default, env-tunable via `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS`) guards the whole API with `Retry-After` on 429.
-- Known limitation: the general limiter is in-memory (per-isolate); the ingest endpoint (`POST /api/internal/ingest/prices`) is exempt because it authenticates with a bearer secret, not a session.
+- `/api/auth/email-login` has its own, much tighter limiter (QA-F4, #402): **10 attempts per 60 s per client IP in production**, always answered with a 429 carrying `Retry-After` plus `retry_after` seconds in the body. The budget is env-tunable via `LOGIN_RATE_MAX` / `LOGIN_RATE_WINDOW_SEC` (defaults `10` / `60`), and the parser is defensive: missing, non-integer, zero, or negative values fall back to those defaults, so no typo can make the limiter unlimited. Only the local/e2e harness raises it (`automation/docker-compose.yml`, #499) — the production and preview defaults never move.
+- Known limitation: both limiters are in-memory (per-isolate); the ingest endpoint (`POST /api/internal/ingest/prices`) is exempt because it authenticates with a bearer secret, not a session.
 
 ## Secrets & key material
 

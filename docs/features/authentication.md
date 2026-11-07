@@ -28,6 +28,8 @@ RumaQ uses **session-based authentication** with signed JWTs stored in an `httpO
 2. Password verified against the stored hash via `verifyPassword()`
 3. Same JWT and cookie as Google OAuth are issued
 
+Attempts are rate limited per client IP — 10 per 60 s in production (QA-F4, #402). Exhausting the budget answers 429 with `Retry-After` and `retry_after` seconds in the body. The budget is env-tunable via `LOGIN_RATE_MAX` / `LOGIN_RATE_WINDOW_SEC`; only the local/e2e harness raises it (#499), and invalid values fall back to the 10 / 60 s defaults. See [`docs/SECURITY.md` § Rate limiting](../SECURITY.md).
+
 ### Session verification (middleware)
 
 1. `propsAuthMiddleware` reads the `rumaq_session` cookie
@@ -53,13 +55,15 @@ RumaQ uses **session-based authentication** with signed JWTs stored in an `httpO
 
 ## Configuration
 
-| Environment variable   | Required | Description                                  |
-| ---------------------- | -------- | -------------------------------------------- |
-| `GOOGLE_CLIENT_ID`     | Yes\*    | Google OAuth client ID                       |
-| `GOOGLE_CLIENT_SECRET` | Yes\*    | Google OAuth client secret                   |
-| `WORKER_JWT_SECRET`    | Yes      | Secret used to sign and verify JWTs          |
-| `EMAIL_AUTH_ENABLED`   | No       | Set to `true` to enable email/password login |
-| `PAGES_ORIGIN`         | No       | Frontend origin for OAuth callback redirect  |
+| Environment variable    | Required | Description                                                                 |
+| ----------------------- | -------- | --------------------------------------------------------------------------- |
+| `GOOGLE_CLIENT_ID`      | Yes\*    | Google OAuth client ID                                                      |
+| `GOOGLE_CLIENT_SECRET`  | Yes\*    | Google OAuth client secret                                                  |
+| `WORKER_JWT_SECRET`     | Yes      | Secret used to sign and verify JWTs                                         |
+| `EMAIL_AUTH_ENABLED`    | No       | Set to `true` to enable email/password login                                |
+| `LOGIN_RATE_MAX`        | No       | Login attempts per IP per window (default `10`; tests raise it, #499)       |
+| `LOGIN_RATE_WINDOW_SEC` | No       | Login rate-limit window in seconds (default `60`; invalid values fall back) |
+| `PAGES_ORIGIN`          | No       | Frontend origin for OAuth callback redirect                                 |
 
 \*Required only when Google OAuth is used.
 

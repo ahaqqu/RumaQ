@@ -74,6 +74,12 @@ const mf = new Miniflare({
     ...(process.env.RATE_LIMIT_MAX_REQUESTS && {
       RATE_LIMIT_MAX_REQUESTS: process.env.RATE_LIMIT_MAX_REQUESTS,
     }),
+    // Login limiter (QA-F4, #499): the suite logs in from one Docker IP, far
+    // past the production 10/60 s budget, so docker-compose raises it here.
+    ...(process.env.LOGIN_RATE_MAX && { LOGIN_RATE_MAX: process.env.LOGIN_RATE_MAX }),
+    ...(process.env.LOGIN_RATE_WINDOW_SEC && {
+      LOGIN_RATE_WINDOW_SEC: process.env.LOGIN_RATE_WINDOW_SEC,
+    }),
   },
 })
 
