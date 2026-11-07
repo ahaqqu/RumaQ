@@ -41,8 +41,11 @@ personalisation, storage locations, recorded stores, and display preferences.
    with the provider row's id as additional authenticated data and never leaves
    the server. Deleting a provider clears its assignments in the same batch and
    the confirmation names the capabilities that will become not configured.
-5. Persona roles are saved via `PATCH /api/settings`; with a configured reasoning
-   capability, `regenerateCopy()` rewrites all app copy.
+5. Persona roles are saved via `PATCH /api/settings`; the persona's roles and
+   colours apply immediately from the built-in copy. The AI rewrite of the app
+   text is NOT called from the page in P3 — the provider/base-URL/model fields it
+   read are gone with the columns, so it returns through the door in P5 (#523
+   P5). Copy that still promised a browser-key rewrite is removed.
 6. Locations and stores are CRUD-managed through their respective endpoints.
 7. Language changes via i18n and persists to settings; motion preference controls
    CSS animation levels across the app.

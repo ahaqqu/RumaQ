@@ -1501,6 +1501,11 @@ and the legacy removal all landed together, as designed. Deviations, all recorde
   (`configureAi` in the API helpers, `ai-setup.js` in the E2E steps). The typed `questions` wire is
   covered by backend tests only — a typed provider is a single-capability (decision) choice with no
   chat surface to drive from the UI.
+- **The browser-side persona rewrite is paused, not dropped.** The P5 scope below still moves it
+  behind the door; until then `Settings.applyPersona` saves the persona and applies the built-in
+  copy, but does not call `regenerateCopy()`. The provider/base-URL/model fields that call read were
+  dropped with the columns (§4.3), so leaving it wired would have sent a stale browser key to a
+  guessed vendor (or thrown on the deleted identifiers).
 - **The retired copy went with the fields.** `has_ai_key`/`server_ai_available` no longer exist, so
   `/api/ai/usage` stopped returning `key_source`, the usage meter has no "shared server key" sentence,
   and the Plan and Assistant empty states now say to set AI up in Settings instead of asking for a

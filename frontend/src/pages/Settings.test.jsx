@@ -3,6 +3,7 @@ import { render, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { Settings } from './Settings.jsx'
+import { usePersona } from '../context/PersonaContext.jsx'
 
 const mockLocations = [
   { id: 'loc-1', label: 'Kitchen', sort_order: 1 },
@@ -191,7 +192,6 @@ function resetAiFixtures() {
 
 describe('Settings', () => {
   const baseProps = {
-    aiKey: null,
     motion: 'standard',
     setMotion: vi.fn(),
   }
@@ -604,6 +604,18 @@ describe('Settings', () => {
     if (applyBtn) {
       fireEvent.click(applyBtn)
     }
+  })
+
+  it('saves the persona without calling the browser-side AI rewrite (P5 owns it)', async () => {
+    // #523 P3 removed the provider/base-URL/model fields the old rewrite read;
+    // calling it with undefined identifiers threw a ReferenceError. The page
+    // must save the persona and never reach the browser provider path.
+    const { regenerateCopy } = usePersona()
+    regenerateCopy.mockClear()
+    const { getByText } = renderWithQuery(React.createElement(Settings, baseProps))
+    fireEvent.click(getByText('settings.apply'))
+    await waitFor(() => expect(mockMutateAsync).toHaveBeenCalled())
+    expect(regenerateCopy).not.toHaveBeenCalled()
   })
 
   it('saves persona preferences through the settings PATCH', async () => {

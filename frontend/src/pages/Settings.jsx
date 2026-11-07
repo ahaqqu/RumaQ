@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { i18n } from '../i18n/index.js'
 import { UsageMeter, SkeletonRows } from '../components/ui.jsx'
 import { usePersona } from '../context/PersonaContext.jsx'
-import { personaText, deriveHue } from '../lib/persona.js'
+import { personaText } from '../lib/persona.js'
 import {
   IconCheck,
   IconTrash,
@@ -724,11 +724,11 @@ function AiSettingsSection({ isOnline }) {
   )
 }
 
-export function Settings({ aiKey, motion, setMotion }) {
+export function Settings({ motion, setMotion }) {
   const { t } = useTranslation()
   const [newLoc, setNewLoc] = useState('')
   const [newStore, setNewStore] = useState('')
-  const { persona, setPersona, regenerateCopy } = usePersona()
+  const { persona, setPersona } = usePersona()
   const [personaDraft, setPersonaDraft] = useState({
     userRole: persona.userRole,
     aiRole: persona.aiRole,
@@ -800,18 +800,11 @@ export function Settings({ aiKey, motion, setMotion }) {
         persona_enabled: personaDraft.enabled,
       })
 
-      if (personaDraft.enabled && personaDraft.userRole && personaDraft.aiRole && aiKey) {
-        await regenerateCopy(
-          aiKey,
-          provider,
-          {
-            ...personaDraft,
-            hue: deriveHue(personaDraft.userRole, personaDraft.aiRole),
-          },
-          { baseUrl: customBaseUrl, model: customModel }
-        )
-      }
-
+      // P3 removed the browser-visible provider config this call used to read
+      // (`ai_provider` / `ai_base_url` / `ai_model` are gone with the columns),
+      // so the persona is SAVED but the AI rewrite is not attempted from here:
+      // `regenerateCopy` moves behind the door in P5 (#523 P5). Keeping a call
+      // with no provider would send a stale browser key to a guessed vendor.
       setPersonaApplied(true)
       setTimeout(() => setPersonaApplied(false), 2000)
     } catch (err) {
@@ -973,13 +966,7 @@ export function Settings({ aiKey, motion, setMotion }) {
                 </div>
               </Setting>
 
-              <Setting
-                desc={
-                  <span className="text-xs">
-                    {aiKey ? t('settings.personaInfoWithKey') : t('settings.personaInfoNoKey')}
-                  </span>
-                }
-              />
+              <Setting desc={<span className="text-xs">{t('settings.personaInfo')}</span>} />
 
               {personaError && (
                 <Setting
