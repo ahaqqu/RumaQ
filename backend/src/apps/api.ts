@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
-import type { MiddlewareHandler } from 'hono'
+import type { Context, MiddlewareHandler } from 'hono'
 
 import { sValidator } from '@hono/standard-validator'
 import { openAPIRouteHandler, describeRoute } from 'hono-openapi'
@@ -3894,6 +3894,26 @@ apiApp.post(
 // ---------------------------------------------------------------------------
 const ALIAS_DECISION_PARAMETERS = [PRODUCT_KEY_PARAMETER, ALIAS_ID_PARAMETER]
 
+/**
+ * The typed-error → status/code mapping both alias decisions answer with. The
+ * lib deliberately shares one `decideAlias`, so the HTTP contract of the two
+ * routes is one thing and lives in one place: a change to the 409
+ * `{ error: 'alias_state', currentStatus }` body (the shape PR 2 switches on)
+ * must not be made twice.
+ */
+function aliasDecisionError(c: Context<Env>, error: unknown): Response {
+  if (error instanceof ProductNotFoundError) {
+    return c.json({ error: 'Product not found' }, 404)
+  }
+  if (error instanceof AliasNotFoundError) {
+    return c.json({ error: 'Alias not found' }, 404)
+  }
+  if (error instanceof AliasStateError) {
+    return c.json({ error: 'alias_state', currentStatus: error.currentStatus }, 409)
+  }
+  throw error
+}
+
 apiApp.post(
   '/api/admin/products/:productKey/aliases/:aliasId/approve',
   describeRoute({
@@ -3927,16 +3947,7 @@ apiApp.post(
       res.headers.set('Cache-Control', 'private, no-cache')
       return res
     } catch (error) {
-      if (error instanceof ProductNotFoundError) {
-        return c.json({ error: 'Product not found' }, 404)
-      }
-      if (error instanceof AliasNotFoundError) {
-        return c.json({ error: 'Alias not found' }, 404)
-      }
-      if (error instanceof AliasStateError) {
-        return c.json({ error: 'alias_state', currentStatus: error.currentStatus }, 409)
-      }
-      throw error
+      return aliasDecisionError(c, error)
     }
   }
 )
@@ -3974,16 +3985,7 @@ apiApp.post(
       res.headers.set('Cache-Control', 'private, no-cache')
       return res
     } catch (error) {
-      if (error instanceof ProductNotFoundError) {
-        return c.json({ error: 'Product not found' }, 404)
-      }
-      if (error instanceof AliasNotFoundError) {
-        return c.json({ error: 'Alias not found' }, 404)
-      }
-      if (error instanceof AliasStateError) {
-        return c.json({ error: 'alias_state', currentStatus: error.currentStatus }, 409)
-      }
-      throw error
+      return aliasDecisionError(c, error)
     }
   }
 )
