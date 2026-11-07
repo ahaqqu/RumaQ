@@ -321,6 +321,11 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   // a set: one row is armed at a time by construction, so the prompt can never
   // follow the cursor to another row.
   const [armedAliasId, setArmedAliasId] = useState(null)
+  // The armed row's own Reject button, so cancelling can hand focus back to it,
+  // and the node Cancel captured for that hand-back (the ref detaches with the
+  // prompt, so the node is read while the prompt is still open).
+  const rejectTriggerRef = useRef(null)
+  const returnFocusRef = useRef(null)
   // Focus follows the answer: a keyboard user must land on the explanation (a
   // duplicate/similar/stale 409 or the success block), and the submit button
   // disables itself after a success, which would otherwise drop focus to
@@ -530,8 +535,20 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   }
 
   function disarmReject() {
+    // Cancel removes itself, so the browser would drop focus to <body> and a
+    // keyboard user would restart their walk through the page. The row's own
+    // Reject button — the node that opened the prompt — takes it back instead.
+    returnFocusRef.current = rejectTriggerRef.current
     setArmedAliasId(null)
   }
+
+  // Hands focus back once the prompt is gone. Only a Cancel sets the node, so a
+  // disarm from a re-read or a decision elsewhere never steals focus.
+  useEffect(() => {
+    if (armedAliasId !== null || !returnFocusRef.current) return
+    returnFocusRef.current.focus()
+    returnFocusRef.current = null
+  }, [armedAliasId])
 
   // The second click. Only the armed row can confirm, so a keyboard user cannot
   // fire a reject by tabbing onto a button that was never armed — and only a
@@ -735,6 +752,9 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
                             variant="danger"
                             size="sm"
                             disabled={rowBusy}
+                            // The armed row's button is what cancel returns
+                            // focus to, so only that row's node is tracked.
+                            ref={armed ? rejectTriggerRef : undefined}
                             aria-label={t(
                               armed ? 'rename.aliasRejectConfirmLabel' : 'rename.aliasRejectLabel',
                               { name: alias.name }

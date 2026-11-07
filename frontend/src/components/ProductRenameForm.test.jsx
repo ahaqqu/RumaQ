@@ -271,6 +271,24 @@ describe('ProductRenameForm', () => {
     expect(getByTestId('alias-reject-announcement').textContent).toBe('')
   })
 
+  it('gives the focus back to the row Reject button when the prompt is cancelled', () => {
+    const { getByTestId } = renderForm()
+    const row = aliasRows(getByTestId)[0]
+    armRowReject(row)
+    const [approve, reject, cancel] = [...row.querySelectorAll('button')]
+    // The keyboard lands on the prompt's Cancel (the row's own button, so the
+    // browser's own focus is on it when it is activated).
+    cancel.focus()
+    fireEvent.click(cancel)
+
+    // Cancel removes itself: without the hand-back the browser drops focus to
+    // <body> and the user restarts their walk through the page from the top.
+    expect(document.activeElement).toBe(reject)
+    expect(document.activeElement).not.toBe(document.body)
+    expect(reject.textContent).toBe('rename.aliasReject')
+    expect(approve.textContent).toBe('rename.aliasApprove')
+  })
+
   it('never confirms from the second click of a double-click', () => {
     const { getByTestId } = renderForm()
     const row = aliasRows(getByTestId)[0]
