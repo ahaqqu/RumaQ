@@ -41,6 +41,13 @@ const RETIRED_ENDPOINT = '/api/ai-key/test'
 /** Files P5 deleted. Bringing one back re-opens the whole class of bug. */
 const RETIRED_FILES = ['lib/aiProviders.js']
 
+/** What counts as a shipped source file — shared by the walk and its census. */
+function isScanned(name) {
+  // Tests may name a provider endpoint as DATA (the API returns `base_url`
+  // and the Settings test asserts it renders); shipping code may not.
+  return /\.(js|jsx|ts|tsx|mjs|cjs)$/.test(name) && !/\.test\.(js|jsx|ts|tsx)$/.test(name)
+}
+
 /** Every shipped source file, frontend-src-relative ('lib/persona.js'). */
 function listSourceFiles(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -49,12 +56,30 @@ function listSourceFiles(dir) {
       if (entry.name === 'node_modules') return []
       return listSourceFiles(full)
     }
-    if (!/\.(js|jsx|ts|tsx|mjs|cjs)$/.test(entry.name)) return []
-    // Tests may name a provider endpoint as DATA (the API returns `base_url`
-    // and the Settings test asserts it renders); shipping code may not.
-    if (/\.test\.(js|jsx|ts|tsx)$/.test(entry.name)) return []
+    if (!isScanned(entry.name)) return []
     return [relative(FRONTEND_SRC, full).split('\\').join('/')]
   })
+}
+
+/**
+ * A census deliberately INDEPENDENT of the walk. The walk is the thing a
+ * careless edit skips files in (a dropped directory, a narrower filter, one
+ * file's name), and a boundary test that stops reading a file fails silently:
+ * it reports zero violations because it never looked. Comparing the walk's
+ * count with this second recursion makes any skip fail the suite, whichever
+ * file it dropped — the guarantee the two `toContain` canaries below only
+ * approximate.
+ */
+function censusSourceFiles(dir) {
+  let count = 0
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (entry.name !== 'node_modules') count += censusSourceFiles(join(dir, entry.name))
+      continue
+    }
+    if (isScanned(entry.name)) count += 1
+  }
+  return count
 }
 
 /** Every rule that fires on one source file, by name (empty = clean). */
@@ -76,10 +101,13 @@ describe('the frontend AI boundary (#523 P5)', () => {
   it('ships no provider hostname, key header, or absolute fetch', () => {
     const files = listSourceFiles(FRONTEND_SRC)
     // A walk that silently stops finding files would make this test vacuous
-    // (the backend boundary test makes the same guard explicit).
+    // (the backend boundary test makes the same guard explicit). The canaries
+    // pin the two files the walk must always reach; the census pins EVERY file,
+    // so a skip anywhere in the tree is a failure, not a quiet gap.
     expect(files.length).toBeGreaterThan(40)
     expect(files).toContain('lib/persona.js')
     expect(files).toContain('lib/api.ts')
+    expect(files.length).toBe(censusSourceFiles(FRONTEND_SRC))
 
     const offenders = []
     for (const file of files) {
