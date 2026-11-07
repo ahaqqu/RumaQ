@@ -104,9 +104,16 @@ export async function runExpiryOcr(
   }
 ): Promise<{ suggestion: string | null; outcome: ExpiryOcrOutcome }> {
   // The model asked for IS the usage event's model — vision work records
-  // access.visionModel (null = the provider default applied). The access's
-  // call supplies capability/household/funding (#523 P1).
-  const usageCall = { ...args.access.call, model: args.access.visionModel }
+  // access.visionModel (null = the provider default applied). The capability is
+  // THIS feature's ('vision'), not whichever assignment the P1 bridge resolved
+  // first: a backfilled household has all three assigned, so the primary is
+  // 'reasoning' and would stamp a vision call as a reasoning one (#523 P1,
+  // thermos A5). providerKind/providerId/funding stay what was actually called.
+  const usageCall = {
+    ...args.access.call,
+    capability: 'vision' as const,
+    model: args.access.visionModel,
+  }
   const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
 
   // The audit pairing exists ONCE (T4-B2): every path that reaches the

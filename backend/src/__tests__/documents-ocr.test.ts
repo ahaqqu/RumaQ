@@ -188,6 +188,23 @@ describe('document-ocr lib (issue #433)', () => {
       expect(runs[0].params[8]).toBe('household')
     })
 
+    it('stamps the row with the VISION capability even when the bridge primary is reasoning', async () => {
+      // A backfilled household has all three assignments, so the P1 bridge
+      // resolves 'reasoning' first (ai-access.ts PRIMARY_CAPABILITIES) and the
+      // access it hands OCR carries that capability. The usage row must name
+      // the capability the FEATURE is, not the one the bridge happened to pick
+      // (thermos A5) — otherwise the new ai_usage_events.capability dimension
+      // records every vault OCR call as reasoning spend.
+      const { env, runs } = fakeEnv('true')
+      const viaReasoning = {
+        ...access,
+        call: { ...access.call, capability: 'reasoning' as const, model: 'text-model' },
+      }
+      await runExpiryOcr(env, { ...args, access: viaReasoning })
+      expect(runs[0]?.params[5]).toBe('vision-model')
+      expect(runs[0]?.params[6]).toBe('vision')
+    })
+
     it('still pairs the audit exactly once when the provider fails, then rethrows', async () => {
       const { env, runs } = fakeEnv('false')
       globalThis.fetch = vi.fn().mockRejectedValue(new Error('socket hung up'))
