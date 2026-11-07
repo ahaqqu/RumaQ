@@ -2582,27 +2582,70 @@ describe('migration 0039: price_product_alias_audit + rejected alias status (#48
     })
   })
 
-  it('recreates the NOCASE duplicate-detection index over the rebuilt table', () => {
+  // The rebuilt table's read shapes, as plans rather than index NAMES: a
+  // CREATE INDEX recreated with the right name but the wrong columns passes a
+  // sqlite_master lookup and silently turns every read into a scan (the 0039
+  // review probe: the product-status index moved to (store_slug, status) and
+  // this suite stayed green), so each index is pinned by the query it serves.
+  function aliasPlan(db: Db, sql: string, ...params: unknown[]): string {
+    return db
+      .prepare(`EXPLAIN QUERY PLAN ${sql}`)
+      .all(...params)
+      .map((row: Record<string, unknown>) => String(row.detail))
+      .join(' | ')
+  }
+
+  it('recreates all three alias indexes so their reads seek, not scan', () => {
     const db = preAliasAuditDb()
     seedAliases(db)
     apply0039(db)
 
     // The rename guard's exact shape (0037's pin): the rebuilt table must keep
     // answering a NOCASE seek, not fall back to a scan.
-    const plan = db
-      .prepare(
-        `EXPLAIN QUERY PLAN SELECT id FROM price_product_aliases WHERE name = ? COLLATE NOCASE`
-      )
-      .all('beras ramos')
-      .map((row: Record<string, unknown>) => String(row.detail))
-      .join(' | ')
-    expect(plan).toContain('USING INDEX idx_aliases_name_nocase')
-    expect(plan).not.toMatch(/SCAN price_product_aliases/i)
+    const nocase = aliasPlan(
+      db,
+      `SELECT id FROM price_product_aliases WHERE name = ? COLLATE NOCASE`,
+      'beras ramos'
+    )
+    expect(nocase).toContain('USING INDEX idx_aliases_name_nocase')
+    expect(nocase).not.toMatch(/SCAN price_product_aliases/i)
     expect(
       db
         .prepare('SELECT id FROM price_product_aliases WHERE name = ? COLLATE NOCASE')
         .all('BERAS ramos')
     ).toEqual([{ id: 'al-candidate' }])
+
+    // The product detail read (aliases of one product) and the ingest/rename
+    // store+name lookup: both indexes must survive with the columns 0030 gave
+    // them, not merely with their names.
+    const byProductStatus = aliasPlan(
+      db,
+      `SELECT id FROM price_product_aliases WHERE product_id = ? AND status = ?`,
+      'prod-1',
+      'candidate'
+    )
+    expect(byProductStatus).toContain('USING INDEX idx_aliases_product_status')
+    expect(byProductStatus).not.toMatch(/SCAN price_product_aliases/i)
+    const byStoreName = aliasPlan(
+      db,
+      `SELECT id FROM price_product_aliases WHERE store_slug = ? AND name = ?`,
+      'superindo',
+      'Beras Ramos'
+    )
+    expect(byStoreName).toContain('USING INDEX idx_aliases_store_name')
+    expect(byStoreName).not.toMatch(/SCAN price_product_aliases/i)
+
+    // The rebuild DROPs the alias table, so any object that referenced it by
+    // name (a view, a trigger) would either break the migration or survive
+    // pointing at nothing; D1 has no way to recreate it from the file.
+    expect(
+      db
+        .prepare(
+          `SELECT type, name FROM sqlite_master
+            WHERE type IN ('view', 'trigger') AND sql LIKE '%price_product_aliases%'`
+        )
+        .all()
+    ).toEqual([])
   })
 
   it('fills the receipt defaults and rejects any action outside approve/reject', () => {
