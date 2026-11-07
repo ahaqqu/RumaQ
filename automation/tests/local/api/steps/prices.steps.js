@@ -415,6 +415,73 @@ defineFeature(feature, (test) => {
       expect(ctx.responseBody.runs[0].perStore.superindo.itemsExtracted).toBe(7)
       expect(ctx.responseBody.lastSuccessAt).toBe('2026-10-24T23:00:05Z')
     })
+
+    // Issue #463: fields this report predates must read back as absent, not
+    // break the feed (historical runs keep rendering on the monitor).
+    and('the monitor feed reports no receipt fields for that run', async () => {
+      expect(ctx.responseBody.runs[0].indexVersion).toBeNull()
+      expect(ctx.responseBody.runs[0].products).toBeNull()
+      expect(ctx.responseBody.runs[0].perStore.superindo.provisionalMatches).toBeUndefined()
+    })
+  })
+
+  // Issue #463 (RumaQ PR 1 of 2): the pipeline sends the v2 publish receipt's
+  // index version, a created/existing product summary, and the per-store
+  // provisional match count once this contract ships.
+  function v2RunReport() {
+    const report = runReport()
+    return {
+      ...report,
+      perStore: {
+        ...report.perStore,
+        superindo: { ...report.perStore.superindo, provisionalMatches: 2 },
+      },
+      indexVersion: 42,
+      products: { created: 5, existing: 2 },
+    }
+  }
+
+  test('Run report carries the v2 receipt fields', ({ given, and, when, then }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a valid price snapshot has been pushed', async () => {
+      await pushSnapshot()
+      ctx.expectStatus(200)
+    })
+
+    when(
+      'the scraper pushes a run report with an index version and provisional counts',
+      async () => {
+        ctx.response = await fetch(`${ctx.baseUrl}/api/internal/ingest/runs`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${INGEST_SECRET}`,
+          },
+          body: JSON.stringify(v2RunReport()),
+        })
+        try {
+          ctx.responseBody = await ctx.response.json()
+        } catch {
+          ctx.responseBody = null
+        }
+      }
+    )
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and('the admin sees the receipt fields in the monitor feed', async () => {
+      await ctx.authenticate()
+      await ctx.sendRequest('GET', '/api/admin/price-runs')
+      ctx.expectStatus(200)
+      expect(ctx.responseBody.runs[0].indexVersion).toBe(42)
+      expect(ctx.responseBody.runs[0].products).toEqual({ created: 5, existing: 2 })
+      expect(ctx.responseBody.runs[0].perStore.superindo.provisionalMatches).toBe(2)
+    })
   })
 
   async function pushJsonSnapshot(snapshot, bearer = INGEST_SECRET) {

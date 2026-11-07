@@ -447,6 +447,17 @@ export const runTimingSchema = strictObject({
 
 export type RunTiming = InferOutput<typeof runTimingSchema>
 
+// Issue #463: the bounded product summary of a v2 publish receipt — counts
+// only (how many product keys the backend created vs. already had), never the
+// productKey → UUID map. The map stays on the pipeline's local receipt; the
+// monitor needs the shape of the outcome, not the identities.
+export const runProductsSummarySchema = strictObject({
+  created: pipe(number(), integer(), minValue(0)),
+  existing: pipe(number(), integer(), minValue(0)),
+})
+
+export type RunProductsSummary = InferOutput<typeof runProductsSummarySchema>
+
 // Run report (haqita-integration.md §7.1): the scraper reports each live run
 // to the backend so the admin scraping monitor can show run history without
 // reading journald. One POST per finished run — including failed runs, which
@@ -496,6 +507,12 @@ export const runReportStoreSchema = strictObject({
   // scrapers' reports (no field) still validate; a new scraper's report on
   // an OLD Worker fails loudly (Worker deploys first).
   timing: nullish(runStoreTimingSchema),
+  // Issue #463: matches this store made against a canonical-index product the
+  // backend still holds provisionally (not yet promoted to canonical) — the
+  // monitor's measure of how much of a run's matching rides provisional
+  // identities. Additive-nullish like the blocks above: absent on reports from
+  // before the field existed.
+  provisionalMatches: nullish(pipe(number(), integer(), minValue(0))),
 })
 
 // One flagged candidate pair the matcher reports for the admin review queue
@@ -613,6 +630,19 @@ export const runReportSchema = strictObject({
       error: nullish(string()),
     })
   ),
+  // Issue #463: the v2 publish receipt's canonical index version — the
+  // receipt (not the payload) is the source of truth for what the backend
+  // accepted, so the monitor shows which index the run published at. Nullish
+  // (not optional-only) like the other additive fields: old scrapers' reports
+  // without it still validate, a new scraper's report on an OLD Worker fails
+  // loudly (Worker-first deploy order), and a dry-run/never-published run
+  // legitimately carries none. schemaVersion stays 1 — additive, optional.
+  indexVersion: nullish(pipe(number(), integer(), minValue(0))),
+  // Issue #463: the bounded product summary of that receipt — created vs.
+  // already-existing product keys, counts only. The productKey → UUID map
+  // stays on the pipeline's local receipt: the monitor needs the shape of
+  // the outcome, not the identities.
+  products: nullish(runProductsSummarySchema),
   // Issue #409: run-level timing (runTimingSchema) — the global match/
   // taxonomy/publish stage times plus the per-stage totals the monitor
   // sorts by to answer "which process took long". Absent from reports

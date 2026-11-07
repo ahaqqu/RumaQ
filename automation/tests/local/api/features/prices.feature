@@ -77,6 +77,17 @@ Feature: Price data ingest and explorer
     When the scraper pushes a run report
     Then the response status should be 200
     And the admin sees the run in the monitor feed
+    And the monitor feed reports no receipt fields for that run
+
+  # Issue #463 (RumaQ PR 1 of 2): the pipeline sends the v2 publish receipt's
+  # index version, the created/existing product summary, and the per-store
+  # provisional match count once the additive contract ships.
+  Scenario: Run report carries the v2 receipt fields
+    Given the database has seed data
+    And a valid price snapshot has been pushed
+    When the scraper pushes a run report with an index version and provisional counts
+    Then the response status should be 200
+    And the admin sees the receipt fields in the monitor feed
 
   Scenario: Price explorer sorts by cheapest, savings, expiry, and name
     Given the database has seed data

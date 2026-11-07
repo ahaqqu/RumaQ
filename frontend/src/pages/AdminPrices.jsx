@@ -105,6 +105,12 @@ function RunDetail({ run }) {
                         {t('monitor.items', { count: stats.itemsExtracted })}
                         {stats.itemsRejected > 0 &&
                           `, ${t('monitor.rejected', { count: stats.itemsRejected })}`}
+                        {/* Issue #463: matches against products the backend
+                        still holds provisionally — inline with the counts,
+                        like the rejects above. Absent on pre-#463 reports,
+                        so nothing renders for historical runs. */}
+                        {stats.provisionalMatches > 0 &&
+                          `, ${t('monitor.provisionalMatches', { count: stats.provisionalMatches })}`}
                       </span>
                       {/* Issue #357: a store that rode more than one OCR
                       rung rode a degraded chain — the compact chain (final
@@ -249,6 +255,23 @@ function RunDetail({ run }) {
             </div>
           ) : (
             <div className="text-text-muted text-xs">—</div>
+          )}
+          {/* Issue #463: the v2 publish receipt's index version and bounded
+          product summary. Both are optional — absent on pre-#463 reports and
+          dry-runs — so nothing renders for historical runs. Raw numbers
+          outside t(), like the counts above. */}
+          {run.indexVersion != null && (
+            <div className="text-xs text-text-muted mt-1">
+              {t('monitor.indexVersion', { version: run.indexVersion })}
+            </div>
+          )}
+          {run.products && (
+            <div className="text-xs text-text-muted">
+              {t('monitor.productsSummary', {
+                created: run.products.created,
+                existing: run.products.existing,
+              })}
+            </div>
           )}
         </div>
       </div>

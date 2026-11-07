@@ -1,4 +1,4 @@
-import type { ReviewItemPair, RunReport, RunTaxonomy } from '@rumaq/contract'
+import type { ReviewItemPair, RunProductsSummary, RunReport, RunTaxonomy } from '@rumaq/contract'
 
 // Storage for scraper run reports (haqita-integration.md §7.1). One row per
 // finished live run; the monitor reads these instead of journald. Detail
@@ -14,8 +14,8 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
   await db
     .prepare(
       `INSERT INTO price_runs
-         (id, run_started_at, finished_at, exit_code, status, stage, per_store, match_stats, publish_result, error)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (id, run_started_at, finished_at, exit_code, status, stage, per_store, match_stats, publish_result, index_version, products_summary, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(run_started_at) DO UPDATE SET
          finished_at = excluded.finished_at,
          exit_code = excluded.exit_code,
@@ -24,6 +24,8 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
          per_store = excluded.per_store,
          match_stats = excluded.match_stats,
          publish_result = excluded.publish_result,
+         index_version = excluded.index_version,
+         products_summary = excluded.products_summary,
          error = excluded.error`
     )
     .bind(
@@ -36,6 +38,11 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
       JSON.stringify(report.perStore),
       report.match ? JSON.stringify(report.match) : null,
       report.publish ? JSON.stringify(report.publish) : null,
+      // Issue #463: the v2 receipt's index version + bounded product summary.
+      // Nullish on old scrapers' reports and dry-runs — stored as NULL, which
+      // the monitor renders as absent.
+      report.indexVersion ?? null,
+      report.products ? JSON.stringify(report.products) : null,
       report.error ?? null
     )
     .run()
@@ -56,6 +63,9 @@ export type RunStoreSummary = {
   /** Issue #373: taxonomy-classification metrics (RUMAQ_CATEGORY shadow/on);
    * absent when the gate is off or the store had no items. */
   taxonomy?: RunTaxonomy
+  /** Issue #463: matches against products the backend still holds
+   * provisionally; absent on reports produced before the field existed. */
+  provisionalMatches?: number
 }
 
 export type RunMatchSummary = {
@@ -90,6 +100,12 @@ export type PriceRun = {
   perStore: Record<string, RunStoreSummary>
   match: RunMatchSummary | null
   publish: RunPublishSummary | null
+  /** Issue #463: the v2 receipt's canonical index version, null for runs
+   * recorded before the field existed (and dry-runs). */
+  indexVersion: number | null
+  /** Issue #463: the v2 receipt's bounded product summary (created/existing
+   * counts), null for pre-#463 rows and dry-runs. */
+  products: RunProductsSummary | null
   error: string | null
 }
 
@@ -103,6 +119,8 @@ type PriceRunRow = {
   per_store: string | null
   match_stats: string | null
   publish_result: string | null
+  index_version: number | null
+  products_summary: string | null
   error: string | null
 }
 
@@ -125,7 +143,7 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
   const { results } = await db
     .prepare(
       `SELECT id, run_started_at, finished_at, exit_code, status, stage,
-              per_store, match_stats, publish_result, error
+              per_store, match_stats, publish_result, index_version, products_summary, error
        FROM price_runs
        ORDER BY run_started_at DESC
        LIMIT ?`
@@ -143,6 +161,10 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
     perStore: parseJson<Record<string, RunStoreSummary>>(row.per_store) ?? {},
     match: parseJson<RunMatchSummary>(row.match_stats),
     publish: parseJson<RunPublishSummary>(row.publish_result),
+    // Issue #463: old rows have NULL in both columns — the monitor reads that
+    // as "absent" and must keep rendering them.
+    indexVersion: row.index_version ?? null,
+    products: parseJson<RunProductsSummary>(row.products_summary),
     error: row.error,
   }))
 

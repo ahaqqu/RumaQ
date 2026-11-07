@@ -1,0 +1,24 @@
+-- Pipeline run report: the v2 publish receipt's index version and product
+-- summary (ahaqqu/RumaQ#463, RumaQ PR 1 of 2). The pipeline reports
+-- `status.publish = {mode, accepted, skipped, products, indexVersion}` after a
+-- v2 publish; the run report now carries the canonical `indexVersion` and a
+-- bounded `products` summary (`{created, existing}` counts only — never the
+-- productKey map) so the admin monitor can say which index a run published at
+-- and how much of it was new. Both fields are OPTIONAL in the contract
+-- (`runReportSchema`, schemaVersion stays 1), and the per-store
+-- `provisionalMatches` count rides the existing per_store JSON blob — no column
+-- needed for that one.
+--
+-- NUMBERING NOTE: 0039 is applied (candidate-alias decisions); this file takes
+-- the next free number, 0040. NEVER rename an applied migration: wrangler keys
+-- its d1_migrations table by filename, so a rename re-runs the file.
+--
+-- Nullable on purpose: rows recorded before the pipeline sends the fields keep
+-- NULL, and the monitor reads NULL as "absent" (historical runs must keep
+-- rendering). ADD COLUMN is the smallest change — the detail objects already
+-- live as JSON blobs, and these two are the only new top-level values. The
+-- file applies as one transaction (the 0039 note), so the two statements land
+-- together or not at all.
+ALTER TABLE price_runs ADD COLUMN index_version INTEGER;
+-- JSON: {created, existing} — the bounded product summary of the v2 receipt.
+ALTER TABLE price_runs ADD COLUMN products_summary TEXT;
