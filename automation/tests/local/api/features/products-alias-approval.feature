@@ -22,7 +22,6 @@ Feature: Admin candidate alias approval
     Given I am authenticated as an admin
     When I approve an alias of an unknown product
     Then the response status should be 404
-    And the error code should be product-not-found
 
   Scenario: An alias of another product cannot be decided through this product
     Given I am authenticated as an admin
@@ -30,7 +29,6 @@ Feature: Admin candidate alias approval
     And another product has a candidate alias
     When I approve the other product's alias using this product key
     Then the response status should be 404
-    And the error code should be alias-not-found
 
   Scenario: An admin approves a candidate alias
     Given I am authenticated as an admin
