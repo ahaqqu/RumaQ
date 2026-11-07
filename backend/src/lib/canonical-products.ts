@@ -66,6 +66,8 @@
 // Reject ships no bump statement at all, so a rejected alias never invalidates
 // the pipeline's cached index.
 
+import { selectIn } from './d1.js'
+
 const PRODUCT_NAME_MAX = 500
 const REASON_MAX = 200
 const AUDIT_PAGE = 10
@@ -77,6 +79,17 @@ const AUDIT_PAGE = 10
 const SIMILAR_CANDIDATE_LIMIT = 1000
 const SIMILAR_WARNINGS_LIMIT = 10
 const SIMILAR_THRESHOLD = 0.8
+
+// Duplicate-name report bounds (#485). The catalog is a few hundred products,
+// so these ceilings never bite in practice — they exist so a report can never
+// turn into an unbounded read. The group list is capped, each group lists at
+// most 25 products, and the whole report carries at most 900 product rows, so
+// the stores lookup costs at most 10 chunked queries (SELECT_IN_CHUNK) and the
+// invocation stays well inside D1's ~50-query budget.
+const DUPLICATE_GROUPS_DEFAULT = 200
+const DUPLICATE_GROUPS_MAX = 500
+const DUPLICATE_PRODUCTS_PER_GROUP = 25
+const DUPLICATE_PRODUCTS_CEILING = 900
 
 // Unicode control characters (the Cc category: C0, DEL, C1). Newlines and tabs
 // are rejected on purpose: the canonical index schema's rawText(500) rejects
@@ -136,6 +149,35 @@ type ProductIdentity = {
   aliases: ProductAliasDto[]
   stats: ProductStatsDto
   audit: ProductAuditDto[]
+}
+
+/**
+ * One product in the duplicate-name report (#485). `stores` is every store
+ * that recorded a name variant for it (alias rows, any status — a rejected
+ * spelling is still evidence the store sells the product); `primaryStore` is
+ * the most recently observed one, null when the product has no alias yet.
+ */
+type DuplicateProductDto = {
+  productKey: string
+  name: string
+  status: ProductStatus
+  updatedAt: string | null
+  stores: string[]
+  primaryStore: string | null
+}
+
+/** Canonical products that share one name case-insensitively. */
+type DuplicateNameGroup = {
+  normalizedName: string
+  displayName: string
+  productCount: number
+  products: DuplicateProductDto[]
+}
+
+type DuplicateNameReport = {
+  limit: number
+  truncated: boolean
+  groups: DuplicateNameGroup[]
 }
 
 /** A product or approved alias already carrying the candidate name. */
@@ -695,6 +737,160 @@ export async function getProductIdentity(
     stats: { observations: Number(stats.observations), stores: Number(stats.stores) },
     audit: ((auditResult?.results ?? []) as AuditRow[]).map(toAudit),
   }
+}
+
+/**
+ * Read-only duplicate-name report (#485): canonical products that share a name
+ * case-insensitively, grouped by the name, newest-first inside each group.
+ *
+ * Why this exists: a rename and a concurrent ingest can race the rename guard's
+ * pre-check, and a rename during the pipeline's ≤48 h cached-index window can
+ * found a duplicate provisional product. Neither is enforced — there is
+ * deliberately no UNIQUE index on `price_products.name` while legacy duplicate
+ * names exist, and merges are a non-goal — so this surfaces the collision for
+ * an admin instead.
+ *
+ * READ-ONLY by contract: no INSERT/UPDATE/DELETE, and in particular no
+ * `canonical_index_state` bump. Reading the catalog must never invalidate the
+ * pipeline's cache; a report that bumped the version would be a write.
+ *
+ * Bounds (one invocation must stay inside D1's ~50-query budget): `limit`
+ * groups (default 200, max 500), at most 25 products per group, and at most
+ * `DUPLICATE_PRODUCTS_CEILING` product rows in the whole report — the stores
+ * lookup then costs ≤10 chunked queries. `truncated` is true when any of those
+ * bounds bit, so the UI never presents a partial report as complete.
+ */
+export async function getDuplicateNameReport(
+  db: D1Database,
+  options: { limit?: number } = {}
+): Promise<DuplicateNameReport> {
+  const requested = options.limit ?? DUPLICATE_GROUPS_DEFAULT
+  const limit = Math.min(Math.max(Math.trunc(requested), 1), DUPLICATE_GROUPS_MAX)
+
+  // One extra row distinguishes "truncated at the limit" from "exactly the
+  // limit". GROUP BY name COLLATE NOCASE is the same equality the rename guard
+  // uses (`name = ? COLLATE NOCASE`) and rides idx_products_name_nocase.
+  const groupRows =
+    (
+      await db
+        .prepare(
+          `SELECT name COLLATE NOCASE AS groupName, COUNT(*) AS productCount
+           FROM price_products
+           GROUP BY name COLLATE NOCASE
+           HAVING COUNT(*) > 1
+           ORDER BY COUNT(*) DESC, groupName ASC
+           LIMIT ?`
+        )
+        .bind(limit + 1)
+        .all<{ groupName: string; productCount: number }>()
+    ).results ?? []
+  if (groupRows.length === 0) return { limit, truncated: false, groups: [] }
+
+  const groups: DuplicateNameGroup[] = groupRows.slice(0, limit).map((row) => ({
+    // NOCASE equality is ASCII-only, so lowercasing both members of a group
+    // yields the same key — the normalized name the report groups by.
+    normalizedName: row.groupName.toLowerCase(),
+    displayName: row.groupName,
+    productCount: Number(row.productCount),
+    products: [],
+  }))
+  const groupByKey = new Map(groups.map((group) => [group.normalizedName, group]))
+
+  // Products per group (capped at DUPLICATE_PRODUCTS_PER_GROUP via ROW_NUMBER)
+  // in one statement: the group list is a subquery, so no bind-count ceiling
+  // applies. `LIMIT ceiling + 1` bounds the whole report and flags truncation.
+  const productRows =
+    (
+      await db
+        .prepare(
+          `SELECT product_key, name, status, updated_at
+           FROM (
+             SELECT p.product_key, p.name, p.status, p.updated_at,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY p.name COLLATE NOCASE
+                      ORDER BY p.updated_at DESC, p.product_key ASC
+                    ) AS rn
+             FROM price_products p
+             JOIN (
+               SELECT name AS dupName
+               FROM price_products
+               GROUP BY name COLLATE NOCASE
+               HAVING COUNT(*) > 1
+               ORDER BY COUNT(*) DESC, dupName ASC
+               LIMIT ?
+             ) d ON d.dupName = p.name COLLATE NOCASE
+           )
+           WHERE rn <= ?
+           ORDER BY name COLLATE NOCASE, rn
+           LIMIT ?`
+        )
+        .bind(limit, DUPLICATE_PRODUCTS_PER_GROUP, DUPLICATE_PRODUCTS_CEILING + 1)
+        .all<{
+          product_key: string
+          name: string
+          status: ProductStatus
+          updated_at: string | null
+        }>()
+    ).results ?? []
+
+  const products = productRows.slice(0, DUPLICATE_PRODUCTS_CEILING)
+  const storesByKey = new Map<string, Array<{ storeSlug: string; lastSeenAt: string }>>()
+  if (products.length > 0) {
+    const storeRows = await selectIn<{
+      productKey: string
+      storeSlug: string
+      lastSeenAt: string
+    }>(
+      db,
+      // GROUP BY rides inside the subquery because selectIn appends the IN
+      // list at the end of the statement. One row per (product, store), with
+      // the newest sighting of ANY spelling — a rejected alias still proves
+      // the store carries the product.
+      `SELECT productKey, storeSlug, lastSeenAt FROM (
+         SELECT p.product_key AS productKey, a.store_slug AS storeSlug,
+                MAX(a.last_seen_at) AS lastSeenAt
+         FROM price_product_aliases a
+         JOIN price_products p ON p.id = a.product_id
+         GROUP BY p.product_key, a.store_slug
+       )
+       WHERE productKey IN`,
+      products.map((row) => row.product_key)
+    )
+    for (const row of storeRows) {
+      const list = storesByKey.get(row.productKey) ?? []
+      list.push({ storeSlug: row.storeSlug, lastSeenAt: row.lastSeenAt ?? '' })
+      storesByKey.set(row.productKey, list)
+    }
+  }
+
+  for (const row of products) {
+    const group = groupByKey.get(row.name.toLowerCase())
+    // A product whose group vanished between the two reads (a concurrent
+    // delete) is dropped rather than inventing a group; reads are not a
+    // transaction here and the report is advisory.
+    if (!group) continue
+    const stores = (storesByKey.get(row.product_key) ?? []).sort(
+      (a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt) || a.storeSlug.localeCompare(b.storeSlug)
+    )
+    group.products.push({
+      productKey: row.product_key,
+      name: row.name,
+      status: row.status,
+      updatedAt: row.updated_at ?? null,
+      stores: stores.map((store) => store.storeSlug),
+      primaryStore: stores[0]?.storeSlug ?? null,
+    })
+    // The newest product's wording is the group's display name — deterministic
+    // regardless of which row SQLite's GROUP BY happened to keep.
+    if (group.products.length === 1) group.displayName = row.name
+  }
+
+  const truncated =
+    groupRows.length > limit ||
+    productRows.length > DUPLICATE_PRODUCTS_CEILING ||
+    groups.some((group) => group.productCount > group.products.length)
+
+  return { limit, truncated, groups }
 }
 
 /**

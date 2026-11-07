@@ -96,6 +96,7 @@ import {
   StaleProductError,
   StaleRevertError,
   approveAlias,
+  getDuplicateNameReport,
   getProductIdentity,
   rejectAlias,
   renameProduct,
@@ -668,7 +669,10 @@ apiApp.use('/api/admin/review/:id/decision', propsAuthMiddleware)
 // Canonical product admin (#423), plus alias decisions (#489): the same
 // per-path discipline as the review queue — the identity read, the rename, the
 // revert, and each alias decision get a line (#292: a use-line does not cover
-// subpaths).
+// subpaths). The static duplicate-name report (#485) has no line of its own:
+// the `:productKey` line below matches it, which is exactly the props-auth
+// gate it needs, and it is registered before the identity route so the static
+// path wins.
 apiApp.use('/api/admin/products/:productKey', propsAuthMiddleware)
 apiApp.use('/api/admin/products/:productKey/rename', propsAuthMiddleware)
 apiApp.use('/api/admin/products/:productKey/audit/:auditId/revert', propsAuthMiddleware)
@@ -3702,6 +3706,88 @@ const ALIAS_ID_PARAMETER = {
   required: true,
   schema: { type: 'string', maxLength: 100 },
 } as const
+
+// Read-only duplicate-name report (#485).
+const DUPLICATE_PRODUCT_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    productKey: { type: 'string' },
+    name: { type: 'string' },
+    status: { type: 'string', enum: ['canonical', 'provisional', 'needs_review'] },
+    updatedAt: { type: ['string', 'null'] },
+    stores: { type: 'array', items: { type: 'string' } },
+    primaryStore: { type: ['string', 'null'] },
+  },
+}
+
+const DUPLICATE_NAME_GROUP_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    normalizedName: { type: 'string' },
+    displayName: { type: 'string' },
+    productCount: { type: 'integer', minimum: 2 },
+    products: { type: 'array', items: DUPLICATE_PRODUCT_SCHEMA },
+  },
+}
+
+const DUPLICATE_NAME_REPORT_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    limit: { type: 'integer', minimum: 1, maximum: 500 },
+    truncated: { type: 'boolean' },
+    groups: { type: 'array', items: DUPLICATE_NAME_GROUP_SCHEMA },
+  },
+}
+
+const duplicateProductsQuery = object({
+  // Hono delivers query params as strings — accept a digit string and coerce
+  // (the OpenAPI annotation below still documents an integer).
+  limit: optional(
+    pipe(string(), transform(Number), number(), integer(), minValue(1), maxValue(500))
+  ),
+})
+
+// Read-only duplicate-name report (#485). Registered BEFORE the identity route
+// on purpose: Hono matches in registration order, so the static path must win
+// over `/api/admin/products/:productKey` (which would otherwise answer with a
+// product named 'duplicates'). Auth rides the existing `use` line for that
+// param pattern — it matches this static path too — and the handler adds
+// requireAdmin. Reads only: no write, and no canonical-index bump, so opening
+// the report never invalidates the pipeline's cached index.
+apiApp.get(
+  '/api/admin/products/duplicates',
+  describeRoute({
+    description:
+      'Read-only duplicate-name report: canonical products sharing a name case-insensitively, grouped by that name (admin-only). Bounded by `limit` groups (1-500, default 200); each group lists at most 25 products and the whole report at most 900, with `truncated` set when a bound bit. Never writes and never bumps the canonical index version.',
+    security: [{ cookieAuth: [] }],
+    parameters: [
+      {
+        in: 'query',
+        name: 'limit',
+        required: false,
+        schema: { type: 'integer', minimum: 1, maximum: 500, default: 200 },
+      },
+    ],
+    responses: {
+      200: {
+        description: 'OK',
+        content: { 'application/json': { schema: DUPLICATE_NAME_REPORT_SCHEMA } },
+      },
+      400: { description: 'Invalid limit' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  sValidator('query', duplicateProductsQuery),
+  async (c) => {
+    const { limit } = c.req.valid('query')
+    const report = await getDuplicateNameReport(c.env.DB, { limit })
+    const res = c.json(report)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
 
 apiApp.get(
   '/api/admin/products/:productKey',

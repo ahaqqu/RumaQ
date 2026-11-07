@@ -27,6 +27,7 @@ vi.mock('../lib/queries/products.js', () => ({
   useRenameProduct: vi.fn(),
   useRevertRename: vi.fn(),
   useDecideAlias: vi.fn(),
+  useDuplicateProductNames: vi.fn(),
 }))
 
 import { usePrices, usePriceSources, usePriceMeta, usePriceDetail } from '../lib/queries/index.js'
@@ -36,6 +37,7 @@ import {
   useRenameProduct,
   useRevertRename,
   useDecideAlias,
+  useDuplicateProductNames,
 } from '../lib/queries/products.js'
 
 const PRODUCT_KEY = 'minyak-goreng--bimoli--1-l'
@@ -162,6 +164,12 @@ describe('ProductsView admin rename action (#423)', () => {
     vi.mocked(useRenameProduct).mockReturnValue({ mutate: vi.fn(), isPending: false })
     vi.mocked(useRevertRename).mockReturnValue({ mutate: vi.fn(), isPending: false })
     vi.mocked(useDecideAlias).mockReturnValue({ mutate: vi.fn(), isPending: false })
+    vi.mocked(useDuplicateProductNames).mockReturnValue({
+      data: { limit: 200, truncated: false, groups: [] },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
     vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
   })
 
@@ -205,5 +213,19 @@ describe('ProductsView admin rename action (#423)', () => {
     expect(container.textContent).toContain('prices.currentPrices')
     expect(renameToggle(container)).toBeUndefined()
     expect(useProductIdentity).not.toHaveBeenCalled()
+  })
+
+  it('mounts the read-only duplicate-name report for admins only (#485)', () => {
+    const admin = renderProducts()
+    expect(admin.container.querySelector('[data-testid="duplicate-names-panel"]')).not.toBeNull()
+    // Collapsed: the page never fetches the catalog-wide report on mount.
+    expect(useDuplicateProductNames).toHaveBeenCalledWith({ enabled: false })
+    admin.unmount()
+
+    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
+    const shopper = renderProducts()
+    expect(shopper.container.querySelector('[data-testid="duplicate-names-panel"]')).toBeNull()
+    // Nor does a shopper's page ever ask for it.
+    expect(useDuplicateProductNames).toHaveBeenCalledTimes(1)
   })
 })

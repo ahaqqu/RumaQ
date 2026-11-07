@@ -922,5 +922,20 @@
     "revertSuccessTitle": "Rename reverted",
     "revertSuccessBody": "The canonical name is {{name}} again. Canonical index version {{version}}.",
     "frozenPairNote": "The match above keeps its frozen catalog label; only the canonical product name changes."
+  },
+  "duplicates": {
+    "title": "Duplicate names",
+    "desc": "Canonical products that share a name (case-insensitive). Read-only — nothing is merged or renamed here.",
+    "show": "Show report",
+    "hide": "Hide report",
+    "loading": "Loading duplicate names…",
+    "error": "The duplicate-name report could not be loaded.",
+    "retry": "Retry",
+    "empty": "No duplicate names.",
+    "productCount_one": "{{count}} product",
+    "productCount_other": "{{count}} products",
+    "noStores": "No store observed yet",
+    "updated": "updated {{date}}",
+    "truncated": "Showing the first {{limit}} groups — the report is not complete."
   }
 }
