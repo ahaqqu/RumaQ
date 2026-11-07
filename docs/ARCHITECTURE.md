@@ -215,7 +215,7 @@ Google OAuth 2.0 is implemented inside the Worker using the [Authorization Code 
    - Exchanges the authorization code for an access token.
    - Fetches user info (`email`, `name`, `picture`, `sub`) from Google's userinfo endpoint.
    - Upserts the user in D1.
-   - Issues a long-lived signed JWT in an `HttpOnly`, `Secure`, `SameSite=None` cookie named `rumaq_session`.
+   - Issues a long-lived signed JWT in an `HttpOnly`, `SameSite=Lax` cookie named `rumaq_session` (`Secure` on HTTPS). `Lax`, never `None`: the SPA and API share one origin in production and previews, and local dev is same-site (#528).
 
 3. `GET /api/auth/logout`
    - Clears the session cookie and redirects to the app origin.
@@ -508,7 +508,7 @@ If usage grows, the first upgrade is Workers Paid ($5/mo) for higher request and
 
 ## 10. Security checklist
 
-- [x] Session JWT is `HttpOnly`, `Secure`, `SameSite=None`, and signed.
+- [x] Session JWT is `HttpOnly`, `Secure` (on HTTPS), `SameSite=Lax`, and signed; cookie-authenticated writes also pass a server-side Origin/Referer guard (#528, `backend/src/lib/csrf.ts`, enforced in the gateway before any handler).
 - [x] AI API keys are encrypted at rest (AES-GCM) and only decrypted in the Worker.
 - [x] Google OAuth `state` and PKCE verifier prevent CSRF/replay.
 - [x] R2 objects are private; frontend receives receipt images through `GET /api/purchases/:id/receipt` (proxy stream). R2 signed URLs are out of current scope (open security item).

@@ -12,13 +12,26 @@ How RumaQ protects household data and credentials. The full system design lives 
 ## Session & cookies
 
 - Google OAuth 2.0 with `state` + PKCE (email/password auth exists for local testing behind `EMAIL_AUTH_ENABLED`).
-- Session is a signed JWT (HMAC-SHA256, 30-day expiry) in a `rumaq_session` cookie that is `HttpOnly`, and on HTTPS `Secure` + `SameSite=None` (`Lax` on local plain-HTTP dev).
+- Session is a signed JWT (HMAC-SHA256, 30-day expiry) in a `rumaq_session` cookie that is `HttpOnly`, `SameSite=Lax` everywhere, and on HTTPS `Secure` too. It is deliberately **not** `SameSite=None` (ahaqqu/RumaQ#528): the app and API share one origin in production and previews (a single Worker serves the SPA and the API), and local dev is same-site even though the SPA (`:5173`) and API (`:8787`) are different origins, so no legitimate caller needs a cross-site cookie. `Lax` is what stops a cross-site form/fetch POST from carrying the session at all.
+- Sessions issued before #528 keep their old `SameSite=None` attribute until the user's next login/logout (the browser owns that attribute); the server-side CSRF guard below covers them in the meantime.
 - Logout clears the cookie with matching attributes.
 - Rotate `WORKER_JWT_SECRET` to invalidate all sessions (users just sign in again).
 
+## CSRF
+
+Cookie-authenticated state-changing requests are guarded in `backend/src/lib/csrf.ts`, called once from `backend/src/gateway.ts` **before any app/plugin handler runs**, so every domain app (`auth`, `api`, `households`, `tasks`, `calendar`, `plugins`) and every plugin route is covered by construction.
+
+- In scope: `POST`/`PUT`/`PATCH`/`DELETE` on `/api/*`. If the request supplies `Origin` — or `Referer` when `Origin` is absent — and that origin is neither the request's own origin (`getRequestOrigin`, which honours the local stack's proxy `X-Forwarded-*`) nor on the shared CORS allow-list, the Worker answers `403 {"error":"csrf_origin_mismatch"}` without running a handler and without writing anything.
+- `Origin: null` (sandboxed iframe / opaque origin) and unparseable values are rejected.
+- A request with **no** `Origin` and **no** `Referer` is allowed. Browsers always send at least one on these methods, so this is what keeps `curl` and scripted admin flows working.
+- Bearer/internal calls are exempt: `/api/internal/*` (the scraper's bearer-secret channel) and any request carrying `Authorization: Bearer …`. They never carry the session cookie, and a browser cannot attach `Authorization` cross-origin without a CORS preflight, which the allow-list refuses.
+- Reads (`GET`/`HEAD`/`OPTIONS`) are unaffected, so cross-site link previews, navigations, and the OAuth redirects keep working.
+
+`SameSite=Lax` is the first layer (the browser refuses to attach the cookie to a cross-site request at all); the Origin guard is the server-side second layer — defense in depth, and the only layer that covers sessions still holding a pre-fix `SameSite=None` cookie. Tests: `backend/src/__tests__/csrf.test.ts` (policy branches plus real-SQLite route assertions: cross-origin write → 403 with no row written, same-origin and no-Origin writes allowed, logout guarded, bearer/internal unaffected, GET unaffected, the session cookie minted as `SameSite=Lax`).
+
 ## CORS
 
-Defined in `backend/src/cors.ts`, unit-tested in `backend/src/__tests__/cors.test.ts`:
+Defined in `backend/src/cors.ts`, unit-tested in `backend/src/__tests__/cors.test.ts`. The allow-list itself is `isAllowedOrigin()`, shared with the CSRF guard so "the app's own origins" has exactly one definition:
 
 - Reflects only: the configured origin (`PAGES_ORIGIN`), `http://localhost:5173` / `:8788` for local dev, and branch previews under the configured `*.pages.dev` hostname.
 - Unknown origins get `Access-Control-Allow-Origin: null`, which fails browser CORS checks for credentialed requests.

@@ -20,7 +20,7 @@ RumaQ uses **session-based authentication** with signed JWTs stored in an `httpO
 4. The user is upserted into the `users` table (keyed on `google_id`)
 5. If the user has no household, one is created with default locations (Kulkas, Freezer, Lemari, Rak) and stores (Indomaret, Alfamart, Pasar)
 6. A `rumaq_session` JWT is signed with `sub` (user ID), `email`, `iat`, and `exp` (30 days)
-7. The cookie is set (`httpOnly`, `secure`, `sameSite: None`) and the browser redirects to the app
+7. The cookie is set (`httpOnly`, `secure` on HTTPS, `sameSite: Lax` — never `None`; see `docs/SECURITY.md` §CSRF, #528) and the browser redirects to the app
 
 ### Email login flow
 

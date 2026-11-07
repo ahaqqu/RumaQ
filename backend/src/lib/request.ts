@@ -5,10 +5,15 @@
  * behind a reverse proxy locally, the Worker sees the proxy's internal URL, so
  * we reconstruct the original origin from standard X-Forwarded-* headers.
  *
- * Security note: this helper is only used for auth redirect URI construction.
- * In production, Cloudflare does not allow clients to set X-Forwarded-Host, so
- * the fallback to `request.url` always wins. The local Docker test stack
- * controls these headers via its reverse proxy.
+ * Used for auth redirect URI construction and by the CSRF origin guard
+ * (ahaqqu/RumaQ#528), so it must agree with the browser's `Origin` header.
+ *
+ * Security note: the guard only decides browser-driven requests, and a browser
+ * cannot set X-Forwarded-* cross-origin without a CORS preflight (which the
+ * allow-list in `cors.ts` refuses), so a client-supplied value cannot be used
+ * to forge the "own origin" of a forged write. In production Cloudflare does
+ * not add these headers, so the `request.url` fallback is what runs. The local
+ * Docker test stack forwards them via its reverse proxy.
  */
 export function getRequestOrigin(c: {
   req: { url: string; header: (name: string) => string | undefined }
@@ -21,7 +26,11 @@ export function getRequestOrigin(c: {
 
   if (forwardedHost) {
     const proto = forwardedProto || url.protocol.replace(':', '')
-    const port = forwardedPort || (forwardedHost.includes(':') ? '' : url.port)
+    // A port already carried by the forwarded host wins: appending
+    // X-Forwarded-Port on top would produce `host:3000:3000` (the Docker
+    // harness sends both; #528's guard parses this value, so it must be a
+    // valid origin).
+    const port = forwardedHost.includes(':') ? '' : forwardedPort || url.port
     const hostPort = port ? `${forwardedHost}:${port}` : forwardedHost
     return `${proto}://${hostPort}`
   }

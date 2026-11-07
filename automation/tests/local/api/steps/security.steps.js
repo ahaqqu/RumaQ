@@ -159,4 +159,65 @@ defineFeature(feature, (test) => {
       expect(ctx.responseBody).not.toHaveProperty('ai_key')
     })
   })
+
+  // ahaqqu/RumaQ#528: the Origin guard is exercised through the real stack —
+  // the same proxy headers a browser request carries decide the own origin.
+  test('A cross-origin cookie write is rejected', ({ given, when, then, and }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+    and('I am authenticated as a test user', async () => {
+      await ctx.authenticate()
+    })
+    and(/^the request Origin is "(.+)"$/, (origin) => {
+      ctx.headers = { ...ctx.headers, Origin: origin }
+    })
+    when(/I send a (POST) request to (\S+) with body/, async (method, path, body) => {
+      await ctx.sendRequestWithBody(method, path, JSON.parse(body))
+    })
+    then('the response status should be 403', () => {
+      ctx.expectStatus(403)
+    })
+    and('the response body should match', (body) => {
+      ctx.expectBodyToMatch(JSON.parse(body))
+    })
+  })
+
+  test("A cookie write from the app's own origin still works", ({ given, when, then, and }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+    and('I am authenticated as a test user', async () => {
+      await ctx.authenticate()
+    })
+    and(/^the request Origin is "(.+)"$/, (origin) => {
+      ctx.headers = { ...ctx.headers, Origin: origin }
+    })
+    when(/I send a (POST) request to (\S+) with body/, async (method, path, body) => {
+      await ctx.sendRequestWithBody(method, path, JSON.parse(body))
+    })
+    then('the response status should be 201', () => {
+      ctx.expectStatus(201)
+    })
+  })
+
+  test('A cookie write with no Origin (scripted admin) still works', ({
+    given,
+    when,
+    then,
+    and,
+  }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+    and('I am authenticated as a test user', async () => {
+      await ctx.authenticate()
+    })
+    when(/I send a (POST) request to (\S+) with body/, async (method, path, body) => {
+      await ctx.sendRequestWithBody(method, path, JSON.parse(body))
+    })
+    then('the response status should be 201', () => {
+      ctx.expectStatus(201)
+    })
+  })
 })

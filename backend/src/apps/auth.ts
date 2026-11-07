@@ -14,6 +14,16 @@ const COOKIE_NAME = 'rumaq_session'
 const OAUTH_STATE_COOKIE = 'rumaq_oauth_state'
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000
 
+// CSRF (ahaqqu/RumaQ#528): the session cookie is `SameSite=Lax` — no longer
+// `None` on HTTPS. Nothing legitimately needs a cross-site cookie any more:
+// one Worker serves the SPA and the API from the same origin in production,
+// branch previews do the same, and local dev is same-SITE even though the SPA
+// (:5173) and API (:8787) are different origins (cookies ignore ports).
+// `Lax` is what stops a cross-site form/fetch POST from carrying the session
+// at all; `lib/csrf.ts`'s Origin guard is the server-side second layer (it
+// also covers sessions still holding a pre-fix `None` cookie until re-login).
+const SESSION_COOKIE_SAME_SITE = 'Lax' as const
+
 // QA-F4 (ahaqqu/RumaQ#402): /email-login gets its own, much tighter limiter
 // than the general per-IP window (which the auth app does not run at all —
 // only api/households/documents do). Credential probing is the cheapest
@@ -239,7 +249,7 @@ authApp.get(
       path: '/',
       httpOnly: true,
       secure: isHttps,
-      sameSite: isHttps ? 'None' : 'Lax',
+      sameSite: SESSION_COOKIE_SAME_SITE,
       maxAge: 60 * 60 * 24 * 30,
     })
 
@@ -297,7 +307,7 @@ authApp.all(
       path: '/',
       httpOnly: true,
       secure: isHttps,
-      sameSite: isHttps ? 'None' : 'Lax',
+      sameSite: SESSION_COOKIE_SAME_SITE,
       maxAge: 0,
     })
     if (c.req.method === 'GET') {
@@ -471,7 +481,7 @@ authApp.post(
       path: '/',
       httpOnly: true,
       secure: isHttps,
-      sameSite: isHttps ? 'None' : 'Lax',
+      sameSite: SESSION_COOKIE_SAME_SITE,
       maxAge: 60 * 60 * 24 * 30,
     })
 
