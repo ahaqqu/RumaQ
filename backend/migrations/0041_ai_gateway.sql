@@ -148,14 +148,23 @@ labelled AS (
            WHEN 'openai' THEN 'OpenAI' WHEN 'opencode' THEN 'OpenCode'
            WHEN 'anthropic' THEN 'Anthropic' WHEN 'gemini' THEN 'Gemini'
            WHEN 'ollama' THEN 'Ollama Cloud' ELSE 'Custom provider'
-         END || ' (imported)' AS base_label,
-         ROW_NUMBER() OVER (
-           PARTITION BY src.household_id, src.ai_provider
-           ORDER BY src.user_id
-         ) AS rn
+         END || ' (imported)' AS base_label
     FROM source src
     JOIN users u ON u.id = src.user_id
    WHERE src.household_id IS NOT NULL
+),
+-- The sequence is numbered per WRITTEN label, not per raw preset id: every
+-- unrecognised ai_provider collapses to the same 'Custom provider' prefix, so
+-- numbering by the id would hand two different unknown ids rn = 1 each and
+-- abort the deploy on the (household, lower(label)) index. Partitioning by the
+-- label makes that uniqueness structural.
+numbered AS (
+  SELECT labelled.*,
+         ROW_NUMBER() OVER (
+           PARTITION BY household_id, base_label
+           ORDER BY user_id
+         ) AS rn
+    FROM labelled
 )
 INSERT INTO ai_providers (id, household_id, label, kind, preset, base_url, encrypted_key)
 SELECT 'legacy-' || user_id,
@@ -171,7 +180,7 @@ SELECT 'legacy-' || user_id,
        -- The v1: envelope is copied VERBATIM: no re-encryption, no re-entry.
        -- The AAD-bound v2: form arrives with P2; rows convert on first read.
        encrypted_ai_key
-  FROM labelled;
+  FROM numbered;
 
 -- 2) Capabilities are household-level, so exactly one member's legacy values
 --    win per capability: the household OWNER's, else the earliest-joined
@@ -204,9 +213,16 @@ candidate AS (
   -- reasoning + decision inherit the text model / thinking level; vision
   -- inherits the explicit vision model, else the text model, and NEVER a
   -- thinking level (the CHECK above requires it).
+  --
+  -- The thinking level is NORMALISED, not trusted: 0009 added the column with
+  -- no CHECK and only the settings schema constrains the vocabulary, so one
+  -- hand-edited value would fail ai_capabilities' CHECK and abort the whole
+  -- migration for everyone — the same hazard the 'v1:' key filter above
+  -- guards. A corrupt preference is dropped; the user keeps their key.
   SELECT src.household_id, src.user_id, m.role, m.joined_at,
          'reasoning' AS capability, src.ai_model AS model,
-         src.ai_thinking_level AS thinking_level
+         CASE WHEN src.ai_thinking_level IN ('low', 'medium', 'high')
+              THEN src.ai_thinking_level END AS thinking_level
     FROM source src
     JOIN household_members m ON m.user_id = src.user_id AND m.household_id = src.household_id
   UNION ALL
@@ -216,7 +232,9 @@ candidate AS (
     JOIN household_members m ON m.user_id = src.user_id AND m.household_id = src.household_id
   UNION ALL
   SELECT src.household_id, src.user_id, m.role, m.joined_at,
-         'decision', src.ai_model, src.ai_thinking_level
+         'decision', src.ai_model,
+         CASE WHEN src.ai_thinking_level IN ('low', 'medium', 'high')
+              THEN src.ai_thinking_level END
     FROM source src
     JOIN household_members m ON m.user_id = src.user_id AND m.household_id = src.household_id
 ),

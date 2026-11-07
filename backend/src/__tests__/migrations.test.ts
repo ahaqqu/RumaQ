@@ -3526,4 +3526,60 @@ describe('migration 0041: AI gateway (#523 P1)', () => {
     expect(db.prepare('SELECT COUNT(*) AS cnt FROM ai_providers').get()).toEqual({ cnt: 0 })
     expect(db.prepare('SELECT COUNT(*) AS cnt FROM ai_capabilities').get()).toEqual({ cnt: 0 })
   })
+
+  it('drops a non-enum legacy thinking level instead of aborting the deploy (thermos A3)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, PRE_0041())
+    // 0009 added ai_thinking_level with no CHECK; only the settings schema
+    // constrains it. One hand-edited value must not fail the migration for
+    // everyone — the same rule the 'v1:' key filter enforces.
+    seedLegacy(db)
+    db.prepare(`UPDATE user_settings SET ai_thinking_level = 'max' WHERE user_id = 'u1'`).run()
+
+    expect(() => apply0041(db)).not.toThrow()
+    // The owner still wins the assignments; only the corrupt knob is dropped.
+    expect(
+      db
+        .prepare(
+          `SELECT capability, thinking_level FROM ai_capabilities
+            WHERE household_id = 'h1' ORDER BY capability`
+        )
+        .all()
+    ).toEqual([
+      { capability: 'decision', thinking_level: null },
+      { capability: 'reasoning', thinking_level: null },
+      { capability: 'vision', thinking_level: null },
+    ])
+    expect(providerRows(db)).toHaveLength(3)
+  })
+
+  it('numbers labels by the written label, so two unknown preset ids never collide (thermos A4)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, PRE_0041())
+    // ai_provider is a bare TEXT column (0001): the six-value vocabulary lives
+    // only in Valibot. Two DIFFERENT unknown ids both render as
+    // 'Custom provider (imported)', so numbering by the id would hand each
+    // rn = 1 and abort on idx_ai_providers_household_label.
+    seedLegacy(db)
+    db.prepare(`UPDATE user_settings SET ai_provider = 'openrouter' WHERE user_id = 'u1'`).run()
+    db.prepare(`UPDATE user_settings SET ai_provider = 'together' WHERE user_id = 'u2'`).run()
+
+    expect(() => apply0041(db)).not.toThrow()
+    expect(
+      db
+        .prepare(`SELECT id, label, preset FROM ai_providers WHERE household_id = 'h1' ORDER BY id`)
+        .all()
+    ).toEqual([
+      {
+        id: 'legacy-u1',
+        label: 'Custom provider (imported)',
+        preset: 'openrouter',
+      },
+      {
+        id: 'legacy-u2',
+        label: 'Custom provider (imported) · Bob #2',
+        preset: 'together',
+      },
+    ])
+  })
 })
