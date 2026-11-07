@@ -393,6 +393,52 @@ describe('decide() shape across the chat kinds vs the typed kind', () => {
   })
 })
 
+// The two quirks that vary by ENDPOINT rather than by kind (plan §5.4). They
+// live in the adapter because they are wire behaviour, and they are the sort of
+// thing that breaks silently: an Ollama reasoning model that receives a 100-token
+// cap spends the cap thinking and returns empty content.
+describe('openai-compatible host quirks (endpoint, not capability)', () => {
+  const OK = () => fakeResponse({ choices: [{ message: { content: 'ok' } }] })
+
+  it('Ollama Cloud gets NO token cap; every other host gets max_tokens', async () => {
+    const signal = new AbortController().signal
+    const send = async (baseUrl: string) => {
+      const fetchMock = vi.fn().mockResolvedValue(OK())
+      globalThis.fetch = fetchMock
+      await adapterFor('openai-compatible').complete(completeRequest(baseUrl, signal))
+      return bodyOf(fetchMock.mock.calls[0]![1] as RequestInit)
+    }
+
+    const ollama = await send('https://ollama.com/v1')
+    expect(ollama.max_tokens).toBeUndefined()
+    expect(ollama.max_completion_tokens).toBeUndefined()
+
+    const opencode = await send('https://api.opencode.ai/v1')
+    expect(opencode.max_tokens).toBe(100)
+    expect(opencode.max_completion_tokens).toBeUndefined()
+
+    // A custom base URL is "elsewhere": max_tokens, never the OpenAI-proper field.
+    const custom = await send('https://llm.example.test/v1')
+    expect(custom.max_tokens).toBe(100)
+    expect(custom.max_completion_tokens).toBeUndefined()
+  })
+
+  it('labels a failure with the host it recognised (the route-test contract)', async () => {
+    const signal = new AbortController().signal
+    const failLabel = async (baseUrl: string) => {
+      globalThis.fetch = vi.fn().mockResolvedValue(fakeResponse('nope', { ok: false, status: 401 }))
+      const error = await adapterFor('openai-compatible')
+        .complete(completeRequest(baseUrl, signal))
+        .catch((err: unknown) => err)
+      return (error as Error).message
+    }
+
+    expect(await failLabel('https://ollama.com/v1')).toContain('Ollama Cloud')
+    expect(await failLabel('https://api.opencode.ai/v1')).toContain('OpenCode')
+    expect(await failLabel('https://llm.example.test/v1')).toContain('Provider')
+  })
+})
+
 describe('adapter registry and capability matrix (plan §2.4)', () => {
   it('maps every kind to exactly one adapter and no kind is missing', () => {
     expect([...ADAPTER_KINDS].sort()).toEqual(

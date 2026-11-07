@@ -340,6 +340,40 @@ describe('the door: failures carry the bill (§2.2/§5.2)', () => {
     expect(error).toMatchObject({ code: 'timeout', httpStatus: 502, retryable: true })
   })
 
+  it('a caller abort cancels an in-flight request (the deadline does not swallow it)', async () => {
+    const { env } = await envWith({ reasoning: {} })
+    // The provider hangs; only the signal we hand to fetch can end the call.
+    let handed: AbortSignal | undefined
+    globalThis.fetch = vi.fn().mockImplementation(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          handed = init.signal ?? undefined
+          init.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          )
+        })
+    )
+
+    const controller = new AbortController()
+    const pending = completeText({
+      ...ctx(env),
+      messages: MESSAGES,
+      // A deadline far beyond the test: only the caller's signal can end this.
+      timeoutMs: 30_000,
+      signal: controller.signal,
+    }).catch((err: unknown) => err)
+
+    await vi.waitFor(() => expect(handed).toBeDefined())
+    expect(handed!.aborted).toBe(false)
+
+    controller.abort()
+
+    // Same public code/status as a deadline (client handling is unchanged,
+    // §5.2); the point is that the caller's cancellation REACHES the fetch.
+    await expect(pending).resolves.toMatchObject({ code: 'timeout', httpStatus: 502 })
+    expect(handed!.aborted).toBe(true)
+  })
+
   it('a failed answer still reports the tokens the provider billed', async () => {
     const { env } = await envWith({ reasoning: {} })
     globalThis.fetch = vi.fn().mockResolvedValue(

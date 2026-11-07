@@ -371,6 +371,20 @@ describe('completeText', () => {
     ).rejects.toThrow('OpenAI returned empty response')
   })
 
+  it('fails closed when the resolved row has no model (no vendor default is invented)', async () => {
+    const fetchMock = vi.fn()
+    globalThis.fetch = fetchMock
+    // P2 deleted every compiled-in default model (plan §5.1/§6 P2). Production
+    // always passes the assignment's model; a model-less call must be
+    // not_configured (402), never a silent call to "the vendor's usual".
+    await expect(completeText('openai', 'sk-test', 'system', 'user')).rejects.toMatchObject({
+      code: 'not_configured',
+      httpStatus: 402,
+      call: null,
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('throws when provider request fails', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,

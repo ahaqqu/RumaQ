@@ -167,6 +167,45 @@ describe('v1: → v2: lazy rewrite (plan §3.6)', () => {
     expect(updates).toHaveLength(1)
   })
 
+  it('a concurrent key change is not overwritten by the lazy re-seal (compare-and-set)', async () => {
+    addProvider('p-legacy', await encryptAiKey('sk-legacy', ENCRYPTION_KEY))
+    assign('reasoning', 'p-legacy')
+    // The owner rotates the key in another request between our read and our
+    // UPDATE. The CAS (`WHERE encrypted_key = <the v1 we read>`) is what keeps
+    // the re-seal from clobbering the fresh envelope with the old key.
+    const concurrent = await encryptProviderKey(env, 'p-legacy', 'sk-rotated')
+    let raced = false
+    const racingDb = {
+      ...env.DB,
+      prepare: (sql: string) => {
+        if (!raced && /UPDATE\s+ai_providers/i.test(sql)) {
+          raced = true
+          sqlite
+            .prepare('UPDATE ai_providers SET encrypted_key = ? WHERE id = ?')
+            .run(concurrent, 'p-legacy')
+        }
+        return env.DB.prepare(sql)
+      },
+    } as D1Database
+    const racingEnv = {
+      DB: racingDb,
+      WORKER_ENCRYPTION_KEY: ENCRYPTION_KEY,
+    } as unknown as Env['Bindings']
+
+    const access = await resolveAccess(
+      { env: racingEnv, userId: 'u1', householdId: HOUSEHOLD },
+      'reasoning'
+    )
+
+    // This read still answers with the key it decrypted…
+    expect(accessMaterial(access!)?.apiKey).toBe('sk-legacy')
+    // …and the concurrent writer's envelope survives: the CAS matched no row.
+    expect(storedEnvelope('p-legacy')).toBe(concurrent)
+    await expect(
+      decryptAiKey(storedEnvelope('p-legacy')!, ENCRYPTION_KEY, providerKeyAad('p-legacy'))
+    ).resolves.toBe('sk-rotated')
+  })
+
   it('a failed rewrite still returns the key and never fails the call', async () => {
     // Same database, but the re-seal UPDATE is refused at prepare time — the
     // D1 failure the plan says must never fail the call.
