@@ -104,6 +104,15 @@ async function resolveFor(
         { call: args.access.call }
       )
     }
+    if (args.access.call.householdId !== args.householdId) {
+      // The handle carries the household that owns the provider and pays for
+      // the call; the request acts in another one. Billing the wrong household
+      // is not a recoverable state, so fail closed before the provider is
+      // contacted instead of stamping a usage row that lies (plan §5.3).
+      throw new AiError('unsupported', 'AI access handle was resolved for another household', {
+        call: args.access.call,
+      })
+    }
     handle = args.access
   } else {
     handle = await resolveCapabilityAccess(args, capability)

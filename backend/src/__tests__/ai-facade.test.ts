@@ -242,6 +242,23 @@ describe('the door: resolution and dispatch', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
+  it('refuses a handle resolved for another household (never bills the wrong one)', async () => {
+    const { env } = await envWith({ reasoning: {} })
+    const access = await resolveAccess(ctx(env), 'reasoning')
+    const error = await completeText({
+      ...ctx(env),
+      householdId: 'h2',
+      access: access!,
+      messages: MESSAGES,
+    }).catch((err: unknown) => err)
+
+    // The handle names the household that owns the provider and pays; the
+    // request acts in another. A usage row from this pair would lie (§5.3).
+    expect(error).toMatchObject({ code: 'unsupported', httpStatus: 500 })
+    expect((error as Error).message).toContain('another household')
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
   it('uses the resolved thinking level, and a per-call override wins', async () => {
     const { env } = await envWith({ reasoning: { thinking_level: 'high' } })
     const fetchMock = vi
