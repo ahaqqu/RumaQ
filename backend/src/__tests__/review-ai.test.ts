@@ -976,7 +976,19 @@ describe('review AI admin routes', () => {
     const configured = await request('/api/admin/review/mode')
     expect(configured.status).toBe(200)
     expect(configured.headers.get('Cache-Control')).toBe('private, no-cache')
-    expect(await configured.json()).toEqual({ mode: 'assist', aiConfigured: true })
+    const body = (await configured.json()) as {
+      mode: string
+      aiConfigured: boolean
+      autoMinConfidence: number
+    }
+    // Issue #493: the auto-apply floor rides the mode payload, so the UI's
+    // copy renders the number the sweep compares against.
+    expect(body).toEqual({
+      mode: 'assist',
+      aiConfigured: true,
+      autoMinConfidence: REVIEW_AUTO_MIN_CONFIDENCE,
+    })
+    expect(body.autoMinConfidence).toBe(0.8)
 
     const notConfigured = await request(
       '/api/admin/review/mode',
@@ -986,13 +998,21 @@ describe('review AI admin routes', () => {
         RUMAQ_SERVER_AI_KEY: undefined,
       }
     )
-    expect(await notConfigured.json()).toEqual({ mode: 'assist', aiConfigured: false })
+    expect(await notConfigured.json()).toEqual({
+      mode: 'assist',
+      aiConfigured: false,
+      autoMinConfidence: REVIEW_AUTO_MIN_CONFIDENCE,
+    })
   })
 
   it('PUT /api/admin/review/mode persists the mode and stores the acting admin for auto', async () => {
     const manual = await request('/api/admin/review/mode', jsonRequest('PUT', { mode: 'manual' }))
     expect(manual.status).toBe(200)
-    expect(await manual.json()).toEqual({ mode: 'manual', aiConfigured: true })
+    expect(await manual.json()).toEqual({
+      mode: 'manual',
+      aiConfigured: true,
+      autoMinConfidence: REVIEW_AUTO_MIN_CONFIDENCE,
+    })
     expect(await getReviewMode(d1)).toBe('manual')
 
     // No AI configured here: the auto switch's waitUntil sweep degrades to
@@ -1002,7 +1022,11 @@ describe('review AI admin routes', () => {
       RUMAQ_SERVER_AI_KEY: undefined,
     })
     expect(auto.status).toBe(200)
-    expect(await auto.json()).toEqual({ mode: 'auto', aiConfigured: false })
+    expect(await auto.json()).toEqual({
+      mode: 'auto',
+      aiConfigured: false,
+      autoMinConfidence: REVIEW_AUTO_MIN_CONFIDENCE,
+    })
     expect(await getReviewMode(d1)).toBe('auto')
     expect(await getReviewAiUserId(d1)).toBe(ADMIN)
 

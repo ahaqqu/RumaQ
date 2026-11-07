@@ -209,8 +209,13 @@ defineFeature(feature, (test) => {
       ctx.expectAuthenticatedCacheHeaders()
       // The automation worker carries no provider key: the default (assist)
       // mode is stored by the migration, and the admin UI is told the AI is
-      // not configured so it can degrade instead of silently failing.
-      expect(ctx.modeBody).toEqual({ mode: 'assist', aiConfigured: false })
+      // not configured so it can degrade instead of silently failing. The
+      // auto floor rides the same payload (#493).
+      expect(ctx.modeBody).toEqual({
+        mode: 'assist',
+        aiConfigured: false,
+        autoMinConfidence: 0.8,
+      })
     })
 
     when('I evaluate the review queue with AI', async () => {
@@ -236,7 +241,11 @@ defineFeature(feature, (test) => {
 
     then('the AI review mode should be manual', () => {
       ctx.expectStatus(200)
-      expect(ctx.responseBody).toEqual({ mode: 'manual', aiConfigured: false })
+      expect(ctx.responseBody).toEqual({
+        mode: 'manual',
+        aiConfigured: false,
+        autoMinConfidence: 0.8,
+      })
     })
 
     when('I switch the AI review mode to auto', async () => {
@@ -249,7 +258,11 @@ defineFeature(feature, (test) => {
       // switch parity rule), so the setting is D1, not client state.
       await ctx.sendRequest('GET', '/api/admin/review/mode')
       ctx.expectStatus(200)
-      expect(ctx.responseBody).toEqual({ mode: 'auto', aiConfigured: false })
+      expect(ctx.responseBody).toEqual({
+        mode: 'auto',
+        aiConfigured: false,
+        autoMinConfidence: 0.8,
+      })
     })
 
     when('I try to switch the AI review mode to an unknown value', async () => {

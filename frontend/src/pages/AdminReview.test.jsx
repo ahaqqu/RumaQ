@@ -886,6 +886,47 @@ describe('AdminReview', () => {
       expect(container.textContent).not.toContain('review.aiWaiting')
     })
 
+    // Issue #493: the queue rendered every non-price_ratio reason under the
+    // verifier label, so a classification flag read as an unresolved product
+    // match. The chip now names the category question and the row states the
+    // #484 exclusion (no AI verdict, no provider call) instead of leaving the
+    // missing verdict unexplained.
+    it('labels a taxonomy flag as a category question, never the verifier', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({ items: [{ ...reviewItem, reason: 'taxonomy' }] })
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('review.reasonTaxonomy')
+      expect(container.textContent).not.toContain('review.reasonVerifierUnresolved')
+      expect(container.textContent).not.toContain('review.aiVerdict')
+      expect(container.textContent).not.toContain('review.aiAgree')
+      expect(container.textContent).toContain('review.aiTaxonomyExcluded')
+      expect(container.textContent).not.toContain('review.aiWaiting')
+      expect(evaluateMutate).not.toHaveBeenCalled()
+    })
+
+    it('drops the taxonomy no-verdict note when AI is off or the row is decided', () => {
+      // Manual mode: no AI surface at all, so no exclusion to explain.
+      vi.mocked(useReviewMode).mockReturnValue(modeData({ mode: 'manual', aiConfigured: true }))
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({ items: [{ ...reviewItem, reason: 'taxonomy' }] })
+      )
+      const manual = renderAdmin()
+      expect(manual.container.textContent).toContain('review.reasonTaxonomy')
+      expect(manual.container.textContent).not.toContain('review.aiTaxonomyExcluded')
+      manual.unmount()
+
+      // A decided row records what happened; the note is about a pending
+      // row's missing verdict.
+      vi.mocked(useReviewMode).mockReturnValue(modeData({ mode: 'assist', aiConfigured: true }))
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({ items: [{ ...reviewItem, reason: 'taxonomy', status: 'approved' }] })
+      )
+      const decided = renderAdmin()
+      expect(decided.container.textContent).toContain('review.reasonTaxonomy')
+      expect(decided.container.textContent).not.toContain('review.aiTaxonomyExcluded')
+    })
+
     it('shows the waiting hint and evaluates 10 more on demand', async () => {
       const { container, getByText } = renderAdmin()
       expect(container.textContent).toContain('review.aiWaiting')

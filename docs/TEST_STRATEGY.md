@@ -39,20 +39,20 @@ scenario resets and reseeds the database through the `TEST_MODE` admin
 endpoints (`shared.steps.js` `Before` hook), and scenarios run with
 `workers: 1` because they share one seeded backend.
 
-| Feature                   | Covers                                                                                                                                                    |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `smoke.feature`           | App shell loads, email login, logout recovers to the login form                                                                                           |
-| `inventory.feature`       | Stock list, search, location filter, empty state, quantity +/- with optimistic update                                                                     |
-| `plan.feature`            | Connect-key state, AI generate (mocked), save draft, check-off persists after reload                                                                      |
-| `history.feature`         | Month groups, totals, store filter, item search (whole-purchase match semantics)                                                                          |
-| `settings.feature`        | Seeded locations/stores listed, add + remove location and store                                                                                           |
-| `add-receipt.feature`     | Upload → mock scan → review → confirm → stock updated; unsupported type rejected                                                                          |
-| `prices-explorer.feature` | Server-side sort, promo badges, freshness line, #productKey deep-link expand + scroll                                                                     |
-| `price-promos.feature`    | Promos segment: fixed-order cards, expand, example jump into the explorer, empty state                                                                    |
-| `admin-review.feature`    | Match review queue: side-by-side pair, decide persists across reload, undo, versioned export download, monitor cross-link, forbidden state for non-admins |
-| `admin-rename.feature`    | Canonical rename (#423): versioned write, explorer row refetch + reload persistence, frozen review-pair labels, cold load (#488)                          |
-| `duplicate-names.feature` | Duplicate-name report (#485): admin-only panel, collapsed until opened, one lazy fetch, group rows with product keys and observing stores                 |
-| `accessibility.feature`   | axe-core scan (wcag2a/2aa/21a/21aa) of every main page; fails on critical/serious                                                                         |
+| Feature                   | Covers                                                                                                                                                                                                                                                         |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `smoke.feature`           | App shell loads, email login, logout recovers to the login form                                                                                                                                                                                                |
+| `inventory.feature`       | Stock list, search, location filter, empty state, quantity +/- with optimistic update                                                                                                                                                                          |
+| `plan.feature`            | Connect-key state, AI generate (mocked), save draft, check-off persists after reload                                                                                                                                                                           |
+| `history.feature`         | Month groups, totals, store filter, item search (whole-purchase match semantics)                                                                                                                                                                               |
+| `settings.feature`        | Seeded locations/stores listed, add + remove location and store                                                                                                                                                                                                |
+| `add-receipt.feature`     | Upload → mock scan → review → confirm → stock updated; unsupported type rejected                                                                                                                                                                               |
+| `prices-explorer.feature` | Server-side sort, promo badges, freshness line, #productKey deep-link expand + scroll                                                                                                                                                                          |
+| `price-promos.feature`    | Promos segment: fixed-order cards, expand, example jump into the explorer, empty state                                                                                                                                                                         |
+| `admin-review.feature`    | Match review queue: side-by-side pair, decide persists across reload, undo, versioned export download, monitor cross-link, forbidden state for non-admins; AI mode switch persists across reload, and Agree on a cached verdict records `ai_assist` provenance |
+| `admin-rename.feature`    | Canonical rename (#423): versioned write, explorer row refetch + reload persistence, frozen review-pair labels, cold load (#488)                                                                                                                               |
+| `duplicate-names.feature` | Duplicate-name report (#485): admin-only panel, collapsed until opened, one lazy fetch, group rows with product keys and observing stores                                                                                                                      |
+| `accessibility.feature`   | axe-core scan (wcag2a/2aa/21a/21aa) of every main page; fails on critical/serious                                                                                                                                                                              |
 
 Notes for writing new E2E scenarios:
 
@@ -64,6 +64,11 @@ Notes for writing new E2E scenarios:
   (#484) is the deliberate exception: under `TEST_MODE` it is NOT stubbed —
   with no provider configured it returns the documented 200
   `{ evaluated: 0, aiConfigured: false }` degrade, never a fabricated verdict.
+  When a scenario needs a cached verdict, seed one through the harness-only
+  `POST /api/__test/direct-sql` endpoint (the products-rename precedent) and
+  set the admin's BYOK key through the real `PATCH /api/settings` route so the
+  queue reports `aiConfigured: true` — the scenario then exercises the assist
+  decision (Agree → `ai_assist`), never a model call.
 - Assert item names in the receipt review via input values (`getByRole
   'textbox'`), not text — review rows are editable inputs.
 - Scope history item assertions to `getByRole('table')` — the Patterns

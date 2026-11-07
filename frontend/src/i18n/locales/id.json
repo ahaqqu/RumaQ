@@ -779,7 +779,7 @@
   },
   "review": {
     "lead": "Kecocokan produk yang ditandai matcher untuk ditinjau manusia.",
-    "whyReview": "Tinjauan dipicu oleh penanda — selisih harga yang tidak wajar terhadap harga terakhir katalog, atau verifier AI yang tidak tuntas — bukan oleh keyakinan cocok.",
+    "whyReview": "Tinjauan dipicu oleh penanda — selisih harga yang tidak wajar terhadap harga terakhir katalog, verifier AI yang tidak tuntas, atau klasifikasi kategori dengan keyakinan rendah — bukan oleh keyakinan cocok.",
     "pending": "Menunggu",
     "approved": "Disetujui",
     "rejected": "Ditolak",
@@ -793,6 +793,7 @@
     "noBrandUnit": "Merek atau unit tidak tercatat",
     "reasonPriceRatio": "Rasio harga",
     "reasonVerifierUnresolved": "Verifier tidak tuntas",
+    "reasonTaxonomy": "Kategori perlu ditinjau manusia",
     "flagPrefix": "Penanda tinjauan:",
     "confidence": "Keyakinan cocok",
     "confidenceHint": "Seberapa yakin matcher bahwa kedua sisi adalah produk yang sama — 100% berarti nama dan unit cocok persis. Tinjauan dipicu oleh penanda, bukan oleh skor ini.",
@@ -821,7 +822,7 @@
     "aiModeAssist": "Otomatiskan tinjauan dengan persetujuan",
     "aiModeAssistDesc": "AI mengusulkan keputusan dengan keyakinan dan alasan; kamu setuju atau tidak setuju.",
     "aiModeAuto": "Otomatiskan tinjauan sepenuhnya",
-    "aiModeAutoDesc": "AI memutuskan sendiri jika keyakinannya minimal 80%; sisanya menunggu kamu.",
+    "aiModeAutoDesc": "AI memutuskan sendiri jika keyakinannya minimal {{percent}}%; sisanya menunggu kamu.",
     "aiModeSaving": "Menyimpan mode…",
     "aiModeFailed": "Gagal menyimpan mode tinjauan — coba lagi.",
     "aiModeUnavailable": "Mode tinjauan AI gagal dimuat.",
@@ -843,6 +844,7 @@
     "aiWaiting": "{{count}} menunggu AI",
     "aiEvaluateFailed": "Penilaian AI gagal — coba lagi.",
     "aiAutoCronNote": "AI menilai secara otomatis setiap 30 menit.",
+    "aiTaxonomyExcluded": "Tidak ada putusan AI untuk penanda kategori — AI hanya menilai identitas produk. Yang ini kamu yang putuskan.",
     "aiProvenanceHuman": "Diputuskan oleh manusia",
     "aiProvenanceAssist": "Diputuskan oleh manusia · dibantu AI",
     "aiProvenanceAuto": "Diterapkan oleh AI · otomatis"

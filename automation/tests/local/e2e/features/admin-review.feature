@@ -17,6 +17,22 @@ Feature: Admin review queue
     When I undo the verdict
     Then the pair is pending again
 
+  Scenario: The AI review mode switch persists across a reload
+    Given I am logged in as the seeded test user
+    When I navigate to "/admin/review"
+    And I switch the AI review mode to full auto
+    Then the full-auto review mode is selected
+    When I reload the review page as-is
+    Then the full-auto review mode is selected
+
+  Scenario: Agreeing with a cached AI verdict records AI-assisted provenance
+    Given I am logged in as the seeded test user
+    And the queue holds one flagged pair with a cached AI verdict
+    When I navigate to "/admin/review"
+    Then the queue shows the cached AI verdict
+    When I agree with the AI verdict
+    Then the pair records AI-assisted provenance
+
   Scenario: Exporting decisions downloads the versioned file
     Given the queue holds one flagged pair
     And I am logged in as the seeded test user

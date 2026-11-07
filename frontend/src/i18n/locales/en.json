@@ -779,7 +779,7 @@
   },
   "review": {
     "lead": "Candidate product matches the matcher flagged for human review.",
-    "whyReview": "Review is triggered by a flag — an implausible price gap against the catalog's last price, or an unresolved AI verifier — not by the match confidence.",
+    "whyReview": "Review is triggered by a flag — an implausible price gap against the catalog's last price, an unresolved AI verifier, or a low-confidence category classification — not by the match confidence.",
     "pending": "Pending",
     "approved": "Approved",
     "rejected": "Rejected",
@@ -793,6 +793,7 @@
     "noBrandUnit": "No brand or unit recorded",
     "reasonPriceRatio": "Price ratio",
     "reasonVerifierUnresolved": "Verifier unresolved",
+    "reasonTaxonomy": "Category needs a human look",
     "flagPrefix": "Review flag:",
     "confidence": "Match confidence",
     "confidenceHint": "How sure the matcher is that both sides are the same product — 100% means an exact name and unit match. Review is triggered by the flag, not by this score.",
@@ -821,7 +822,7 @@
     "aiModeAssist": "Automate review with approval",
     "aiModeAssistDesc": "The AI proposes a verdict with confidence and reason; you agree or disagree.",
     "aiModeAuto": "Full automate review",
-    "aiModeAutoDesc": "The AI decides on its own when it is at least 80% confident; the rest waits for you.",
+    "aiModeAutoDesc": "The AI decides on its own when it is at least {{percent}}% confident; the rest waits for you.",
     "aiModeSaving": "Saving mode…",
     "aiModeFailed": "Could not save the review mode — try again.",
     "aiModeUnavailable": "Could not load the AI review mode.",
@@ -843,6 +844,7 @@
     "aiWaiting": "{{count}} waiting for AI",
     "aiEvaluateFailed": "AI evaluation failed — try again.",
     "aiAutoCronNote": "AI evaluates automatically every 30 minutes.",
+    "aiTaxonomyExcluded": "No AI verdict for a category flag — the AI only judges product identity. This one is yours to decide.",
     "aiProvenanceHuman": "Decided by human",
     "aiProvenanceAssist": "Decided by human · AI assisted",
     "aiProvenanceAuto": "Applied by AI · full auto"
