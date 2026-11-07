@@ -1,6 +1,7 @@
 # AI gateway — one door, capability-routed providers
 
-> Status: **implemented — all five phases shipped (P1 #530, P2 #532, P3 #533, P4 #535, P5 #538).**
+> Status: **implemented — all five phases shipped (P1 #530, P2 #532, P3 #533, P4 #535, P5 #538);
+> amended by the OpenRouter presets + decisions wire (§9, #523 follow-up).**
 > Issue: `ahaqqu/RumaQ#523`. Owner directive: 2026-11-07 ("AI is the core of RumaQ — every
 > feature routes through one door").
 >
@@ -15,8 +16,8 @@ D8, D9, D10) and are no longer open; the rest need sign-off with the document.
 | #   | Decision             | Choice                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | --- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | D1  | Data model           | **Owner-decided 2026-11-07.** Two new tables — `ai_providers` (label, wire kind, preset, base URL, sealed key) and `ai_capabilities` (one assignment per capability) — **owned by the household**: `household_id` FK, unique `(household_id, lower(label))`, PK `(household_id, capability)`. Keys are household property; usage rows keep the acting `user_id` **and** the household. `user_settings.ai_*` stays one release as a compatibility projection, then drops. |
-| D2  | Provider abstraction | **Owner-decided 2026-11-07.** Four **wire-protocol** adapters — `openai-compatible` (OpenAI, Ollama, OpenCode, custom base URL), `anthropic`, `gemini`, `questions` — behind one interface. The six vendor presets are data rows (label + canonical base URL), never classes; models are capability/provider data, never preset data.                                                                                                                                    |
-| D3  | Decision wire        | **Owner-decided 2026-11-07.** The `questions` adapter speaks a typed question/answer contract: `POST {base}` with `{state, model, questions:{<name>:{type,instructions,criteria}}}` → `answers.<name>.{choice, confidence}`. Reason-as-NULL and zero reported tokens are accepted limitations.                                                                                                                                                                           |
+| D2  | Provider abstraction | **Owner-decided 2026-11-07.** Four **wire-protocol** adapters — `openai-compatible` (OpenAI, Ollama, OpenCode, custom base URL), `anthropic`, `gemini`, `questions` — behind one interface. The six vendor presets are data rows (label + canonical base URL; eight since §9), never classes; models are capability/provider data, never preset data.                                                                                                                    |
+| D3  | Decision wire        | **Owner-decided 2026-11-07.** The `questions` adapter speaks a typed question/answer contract: `POST {base}` with `{state, model, questions:{<name>:{type,instructions,criteria}}}` → `answers.<name>.{choice, confidence}`. Reason-as-NULL and zero reported tokens are accepted limitations. **Amended in §9**: `state` is an array and `criteria` a record keyed by the allowed choice.                                                                               |
 | D4  | The door             | `backend/src/lib/ai/` (barrel `index.ts`). Outside `lib/ai/**` no file may import an adapter, hold an API key, or contain a provider hostname — enforced by a test.                                                                                                                                                                                                                                                                                                      |
 | D5  | Capability enum      | `decision` \| `reasoning` \| `vision`. Additive; `embedding` is explicitly out of scope.                                                                                                                                                                                                                                                                                                                                                                                 |
 | D6  | Migration            | Backfill is **behaviour-preserving**: every configured user's one provider becomes provider #1 and is assigned to all three capabilities with today's model values. **No compatibility window** (owner-decided): the legacy `user_settings.ai_*` columns are left untouched by P1 and **dropped in P3**, in the same PR that replaces the Settings screen.                                                                                                               |
@@ -412,7 +413,7 @@ a key: catch, read `err.usage` and `err.call`, write the row, rethrow.
 Enforced by a test, following `backend/src/__tests__/plugin-boundary.test.ts`:
 
 - `ai-boundary.test.ts` walks `backend/src/**` (excluding `lib/ai/**`) and fails on
-  `from '.*ai/adapters`, `api.anthropic.com|generativelanguage.googleapis.com|api.openai.com|ollama.com|api.opencode.ai|api.typesafe.ai`, on `\.apiKey\b`, and on any import of the two key-material
+  `from '.*ai/adapters`, `api.anthropic.com|generativelanguage.googleapis.com|api.openai.com|ollama.com|api.opencode.ai|openrouter.ai`, on `\.apiKey\b`, and on any import of the two key-material
   modules (`credentials.ts`, `key-material.ts`). Relative specifiers are resolved in every form the
   bundler accepts (`.js`, extensionless, directory index), the door may not re-export key material,
   and the facade's VALUE export surface is pinned to an exact list — so neither an extensionless
@@ -875,9 +876,11 @@ P1 the variables are inert even if a Worker still has them — the code no longe
 **QA and testing accounts are ordinary users.** `alice@rumaq` and `test@rumaq` get their rows in the
 database through Settings, like anyone else:
 
-- **decision** → one provider of kind `questions`, base URL `https://api.typesafe.ai/v1/systemone`,
-  model `jev-latest`, and the owner's key. The key is entered once in Settings (a
-  `docs/MANUAL_ACTIONS.md` item) — never committed, never an env var.
+- **decision** → one provider of kind `questions`, preset `openrouter-decisions` (base URL
+  `https://openrouter.ai/api/alpha/decisions`) and the owner's key; the model is owner-typed on the
+  row (the pipeline's own default is `perplexity/pplx-decider-v1.2`, §9.1; `DECISION_MODEL`
+  switches it). The key is entered once in Settings (a `docs/MANUAL_ACTIONS.md` item) — never
+  committed, never an env var.
 - **reasoning** and **vision** → a chat-capable provider the account already uses (kind
   `openai-compatible`, `gemini`, or `anthropic`, with its own model), because a `questions` provider
   answers only choice questions (§2.4).
@@ -1113,11 +1116,12 @@ UI reads `ai_model` after that.
 
 ### 4.5 Copy and defaults
 
-- **No vendor is a default.** `presets.ts` carries only the catalog a user may choose from (the six
-  presets that exist today: OpenAI, OpenCode, Anthropic, Gemini, Ollama, custom). There is no seeded
-  provider, no preselected preset, and no copy that implies one. A typed-decision endpoint is
-  configured through the advanced form — kind `questions` + base URL + model — and this document
-  mentions "Jev" only as the owner's concrete example of such an endpoint, never as a preset id.
+- **No vendor is a default.** `presets.ts` carries only the catalog a user may choose from (the eight
+  presets that exist today: OpenAI, OpenCode, Anthropic, Gemini, Ollama, OpenRouter (decisions),
+  OpenRouter, custom — the last two added by §9). There is no seeded provider, no preselected preset,
+  and no copy that implies one. A typed-decision endpoint can still be configured through the
+  advanced form — kind `questions` + base URL + model — and §9 ships OpenRouter's as a preset; the
+  document mentions "Jev" only as the retired direct provider, never as a preset id.
 - The **only** default the UI offers is per chosen provider: the provider form has an optional
   "default model" field (`ai_providers.default_model`), and every capability that leaves its own
   model blank inherits it — `capability.model ?? provider.default_model ?? not configured` (owner
@@ -1138,12 +1142,13 @@ UI reads `ai_model` after that.
 | `gemini`            | `GET /v1/models?key=…`                                          | free                                                                          |
 | `questions`         | `POST {base}` with an **empty `questions` object**              | **free** — a 400 proves the key authenticates without buying an answer (§7.2) |
 
-**The typed probe is deliberately a malformed request.** `{"state": "", "model": <assigned>, "questions": {}}`
+**The typed probe is deliberately a malformed request.** `{"state": [], "model": <assigned>, "questions": {}}`
 is expected to come back `400` or `422` — an error that proves the key authenticated while buying no
-answer. This is **pending confirmation from Jev** and is recorded as a `docs/MANUAL_ACTIONS.md`
+answer. This is **pending confirmation from OpenRouter** and is recorded as a `docs/MANUAL_ACTIONS.md`
 verification item in P3; if the endpoint 500s or bills on an empty body, the fallback is the billed
 micro-question (one trivial question over the assigned model, labelled as billable in the UI and
-rate-limited like OCR — `plugins/documents/ocr.ts:46-54`).
+rate-limited like OCR — `plugins/documents/ocr.ts:46-54`). §9 confirms the envelope validator returns
+400 on a malformed body, which is the premise this probe rests on.
 
 The test is owner-only (it may spend the household's credential budget) and never uses a stored
 provider's key for a _different_ provider. The response is `{ ok: true }` / `{ ok: false, code }` —
@@ -1703,15 +1708,15 @@ the design rather than a TODO.
 
 ### 7.2 Resolved questions (owner, 2026-11-07)
 
-| #   | Question                     | Decision                                                                                                                                                                                                                                                                | Where it lives |
-| --- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| 1   | Embeddings now or later?     | **Later.** No fourth capability in v1; `embedding` is an additive enum value when a feature needs it.                                                                                                                                                                   | D5, §2.4       |
-| 2   | Typed-provider token counts  | **Accept zeros**, marked `provider = 'questions'`. The admin breakdown shows "typed — not token-billed" instead of a misleading `0`. No counter in v1.                                                                                                                  | §5.3           |
-| 3   | Local/private endpoints      | **HTTPS-only stands.** No private-network HTTP, and no `TEST_MODE` exception to the rule.                                                                                                                                                                               | §4.2           |
-| 4   | Legacy column drop           | **No compatibility window.** P6 is deleted; the six `user_settings.ai_*` columns are dropped in **P3**, with the new Settings screen and the old `PATCH` handling. P1 leaves the columns untouched and adds no write-through.                                           | D6, §4.3, P3   |
-| 5   | Chat provider for `decision` | **Both allowed.** A JSON-mode chat provider may answer the verdict; the typed provider is the other option, not the only one.                                                                                                                                           | §2.4, §4.2     |
-| 6   | Provider test cost           | **Free probe**: an empty `questions` object, expecting a 400 that proves authentication with no billing — **pending Jev's confirmation**. If Jev 500s or bills on an empty body, the fallback is the billed micro-question. A `MANUAL_ACTIONS` verification item in P3. | §4.6, P3       |
-| 7   | Premium metering             | **Shape only**: `funding`, facade-only metering, reserved `quota_exceeded`. Quota numbers and plans are designed with the premium feature, not before it exists.                                                                                                        | D9, §2.6       |
+| #   | Question                     | Decision                                                                                                                                                                                                                                                                                                                                               | Where it lives |
+| --- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
+| 1   | Embeddings now or later?     | **Later.** No fourth capability in v1; `embedding` is an additive enum value when a feature needs it.                                                                                                                                                                                                                                                  | D5, §2.4       |
+| 2   | Typed-provider token counts  | **Accept zeros**, marked `provider = 'questions'`. The admin breakdown shows "typed — not token-billed" instead of a misleading `0`. No counter in v1.                                                                                                                                                                                                 | §5.3           |
+| 3   | Local/private endpoints      | **HTTPS-only stands.** No private-network HTTP, and no `TEST_MODE` exception to the rule.                                                                                                                                                                                                                                                              | §4.2           |
+| 4   | Legacy column drop           | **No compatibility window.** P6 is deleted; the six `user_settings.ai_*` columns are dropped in **P3**, with the new Settings screen and the old `PATCH` handling. P1 leaves the columns untouched and adds no write-through.                                                                                                                          | D6, §4.3, P3   |
+| 5   | Chat provider for `decision` | **Both allowed.** A JSON-mode chat provider may answer the verdict; the typed provider is the other option, not the only one.                                                                                                                                                                                                                          | §2.4, §4.2     |
+| 6   | Provider test cost           | **Free probe**: an empty `questions` object, expecting a 400 that proves authentication with no billing — **pending OpenRouter's confirmation**. If the endpoint 500s or bills on an empty body, the fallback is the billed micro-question. A `MANUAL_ACTIONS` verification item in P3; §9 confirms the validator returns 400 on a malformed envelope. | §4.6, P3       |
+| 7   | Premium metering             | **Shape only**: `funding`, facade-only metering, reserved `quota_exceeded`. Quota numbers and plans are designed with the premium feature, not before it exists.                                                                                                                                                                                       | D9, §2.6       |
 
 ---
 
@@ -1725,5 +1730,98 @@ the design rather than a TODO.
 - Migrations `0001`, `0008`, `0009`, `0015`, `0033`, `0038`.
 - `docs/ARCHITECTURE.md` §7 (AI integration), §9 (env table).
 - `docs/plan/plugin-architecture.md` §4.2 (port/adapter precedent), §7 (phase-as-PR style).
-- `RumaQ-pipeline/groceries/scraper/src/categorize/jev.ts` (the typed-decision wire, for reference
-  only — no code is shared).
+- `RumaQ-pipeline/groceries/scraper/src/categorize/decision.ts` (the typed-decision client, for
+  reference only — no code is shared; it moved off the direct-typesafe wire in §9).
+
+---
+
+## 9. Post-ship amendment — OpenRouter presets and the decisions wire (2026-11-07)
+
+Owner decision: Jev's direct typesafe API is **retired** in favour of OpenRouter's decisions API, and
+OpenRouter becomes a selectable catalog vendor. The RumaQ half shipped as
+`feat(ai): OpenRouter presets (decisions + chat)`; the pipeline's own client moved in a separate PR in
+`ahaqqu/RumaQ-pipeline` (nothing is shared across the two repos).
+
+### 9.1 Catalog — eight presets, still data only
+
+| id                     | label                  | kind                | endpoint                                    |
+| ---------------------- | ---------------------- | ------------------- | ------------------------------------------- |
+| `openrouter-decisions` | OpenRouter (decisions) | `questions`         | `https://openrouter.ai/api/alpha/decisions` |
+| `openrouter`           | OpenRouter             | `openai-compatible` | `https://openrouter.ai/api/v1`              |
+
+Both are rows in `presets.ts` — label + kind + canonical endpoint, no model id, no default, no
+preselection. `openrouter` serves reasoning/vision through the OpenAI chat wire (`/chat/completions`
+appended by the adapter); `openrouter-decisions` serves the `decision` capability through the typed
+`questions` wire (D3, amended below). `presetEndpoint()` still refuses a row whose `kind` disagrees
+with the preset, so neither vendor can be half-configured.
+
+**Suggested model for the decisions preset — still not preset data.** A household types the model on
+its `openrouter-decisions` row. The measured suggestion is `perplexity/pplx-decider-v1.2`: the
+`RumaQ-pipeline#48` benchmark (200 real catalogue names, 3 arms, 600 calls, $0.033) found it **2.9×
+cheaper** than `~typesafe/jev-latest` ($0.0371 vs $0.1085 per 1,000 decisions) at similar quality
+(mean confidence 0.838 vs 0.867; 89.5% raw agreement, **97.5%** when both confidence ≥ 0.60), while
+the `pplx-decider-flash-v1.2` arm was confidently wrong on clear names and is **not adopted**. The
+pipeline's own default is the same model (`DECISION_MODEL` switches it); RumaQ ships no default, so
+the suggestion lives here and in the pipeline docs, never as a preset field.
+
+### 9.2 What a live probe pinned about the decisions wire
+
+A live probe against the alpha endpoint (key `OPEN_ROUTER_KEY`, sourced — never printed) pinned the
+envelope and corrected D3's wording. **The direct-typesafe shape is retired, not dual-supported.**
+
+- `state` is an **array of strings** (`[<state>]`), not a string.
+- `criteria` is a **record keyed by the allowed choice** (`{"<choice>": "<criterion>", …}`), not the
+  newline-separated rubric string D3 described. A string returns `400` with a Zod path
+  (`questions.<name>.criteria: expected record, received string`): the endpoint validates, it never
+  coerces.
+- The record's **keys ARE the answer vocabulary**. A probe sending `deskripsi_a`/`deskripsi_b` got
+  `choice: "deskripsi_a"` and `probabilities` keyed the same way; the adapter's `answers.<q>.choice`
+  must therefore be one of `ask.choices`, and the record is built from that list.
+
+So the adapter POSTs
+`{state: [ask.state], model, questions: {verdict: {type: 'choice', instructions, criteria}}}`.
+`instructions` carries the question and the allowed-choice list; the ask's rubric is shared rather
+than per-choice, so it rides **every** choice's criterion verbatim (with no rubric, the choice label
+is its own criterion).
+
+The response is a **superset**: `answers.<q>.{type, choice, confidence, probabilities}`,
+`usage.{input_tokens, output_tokens, cost, is_byok, cost_details}`, `model`, `provider`, `id`. The
+adapter reads `choice` and `confidence` only — extra keys are ignored, never an error; `probabilities`
+stays on the parsed envelope for a future confidence-calibration use; a missing or off-vocabulary
+answer is a typed `invalid_response`, never a silent default.
+
+**Usage stays zeroes.** OpenRouter now reports token counts and a cost, but the typed row keeps D3's
+accepted limitation (`usageReported: false`, `provider = 'questions'`, rendered "typed — not
+token-billed", §5.3). Folding the reported usage into metering is a separate decision (§7.2 #2), not a
+silent change.
+
+**Model choice.** The probe ran with `~typesafe/jev-latest` and its response resolved the alias to
+`typesafe/jev-1.14-20261014` in the `model` field — the pinned-vs-latest trade this document already
+made for owner-typed models (§3.6). The later #48 benchmark (above) switched the pipeline's default
+to the cheaper, similarly-agreeing `perplexity/pplx-decider-v1.2`, with the alias kept as the
+documented alternative via `DECISION_MODEL`. RumaQ names no model at all.
+
+### 9.3 Probe evidence
+
+Five calls total on 2026-11-07 — one `400`, four `200`s, combined reported cost ≈ **$0.00025**:
+
+| #   | request                                                                                                     | result                                                                                                                                                                                                                                                                                         |
+| --- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | documented shape, `criteria` as a rubric **string**                                                         | `400` — `questions.kategori.criteria: expected record, received string`                                                                                                                                                                                                                        |
+| 2   | 2-choice record (`teh-kopi`/`minuman-lain`)                                                                 | `200` — `choice: "teh-kopi"`, `confidence: 1`, `probabilities` over both keys; `usage` = 348 in / 40 out / $0.000014616                                                                                                                                                                        |
+| 3   | 2-choice record with non-slug keys (`deskripsi_a`/`deskripsi_b`)                                            | `200` — `choice: "deskripsi_a"`, proving the record keys are the answer vocabulary                                                                                                                                                                                                             |
+| 4–5 | the pipeline's real client + 48-bucket taxonomy, end to end (then-default jev alias, before the #48 switch) | `200` — `state: ["Kopi Kapal Api Special Mix 165g"]`, `model: "~typesafe/jev-latest"` resolved to `typesafe/jev-1.14-20261014`, `provider: "TypeSafe"`, `answers.kategori.choice: "teh-kopi"`, `confidence: 1`, `probabilities` over all 48 buckets; `usage` = 2580 in / 523 out / $0.00010836 |
+
+No key material appears in any response or in this document. The `400` also proved the envelope
+validator runs before inference (the billing line is absent).
+
+### 9.4 What did not change
+
+- Presets remain data; no migration, no new `kind`, no model id in code, no seeded row.
+- The free probe (§4.6) still POSTs the documented envelope with an EMPTY `questions` object and
+  accepts `400`/`422` as proof of authentication; its body now sends `state: []`. OpenRouter's
+  envelope validation returns `400` (observed), so the premise holds, but the empty-`questions` 400
+  itself remains an owner verification item (#523 §7.2 #6).
+- The direct-typesafe host is no longer a preset or a test fixture in this repo (the pipeline moves
+  its client in its own PR); `ai-boundary.test.ts` bans `openrouter.ai` as a literal outside
+  `lib/ai/**` exactly like the other vendor hosts, so the one-door rule still holds.

@@ -27,7 +27,7 @@ const FRONTEND_SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 /** The vendor endpoints the door's presets own server-side. */
 const PROVIDER_HOSTNAME =
-  /api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.openai\.com|ollama\.com|api\.opencode\.ai|api\.typesafe\.ai/
+  /api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.openai\.com|ollama\.com|api\.opencode\.ai|openrouter\.ai/
 
 /** A key header in browser code: the Worker is the only place a key is read. */
 const KEY_HEADER = /\bAuthorization\s*:\s*[`'"]\s*Bearer|['"`]x-api-key['"`]/i
@@ -139,6 +139,16 @@ describe('the frontend AI boundary (#523 P5)', () => {
       'a provider key header',
       'fetch() to an absolute URL',
       'the retired key-test endpoint',
+    ])
+  })
+
+  it('would catch an OpenRouter client that came back', () => {
+    // The §9 vendor hosts are each in the rule: a source that names ONLY one of
+    // them must still fire, so deleting an alternation fails here (the backend
+    // boundary suite proves the same with its per-host fixture).
+    expect(violationsOf("fetch('https://openrouter.ai/api/v1/chat/completions')")).toEqual([
+      'a provider hostname',
+      'fetch() to an absolute URL',
     ])
   })
 

@@ -1,16 +1,32 @@
-// `questions` — Jev's typed question/answer wire (owner decision D3, plan
-// §5.4): one POST to the row's base URL with
+// `questions` — OpenRouter's typed question/answer wire (owner decision D3,
+// plan §5.4, amended in §9): one POST to the row's base URL with
 //
-//   {state, model, questions: {<name>: {type: 'choice', instructions, criteria}}}
+//   {state: [<state>], model,
+//    questions: {<name>: {type: 'choice', instructions, criteria: {<choice>: <criterion>}}}}
 //
-// answering `answers.<name>.{choice, confidence}`. It answers CLOSED CHOICES
-// only: no text completion, no vision, no JSON document, no reasoning knob
-// (validated at save time; `supports()` is the call-time belt). The reason the
-// review layer records under a typed provider is NULL — an accepted limitation.
+// answering `answers.<name>.{choice, confidence, probabilities}`. It answers
+// CLOSED CHOICES only: no text completion, no vision, no JSON document, no
+// reasoning knob (validated at save time; `supports()` is the call-time belt).
+// The reason the review layer records under a typed provider is NULL — an
+// accepted limitation.
 //
-// The wire reports no token counts, so usage is zeroes and `usageReported` is
-// false; the usage row is distinguished by `provider = 'questions'` and the
-// admin breakdown renders it as "typed — not token-billed" (plan §5.3).
+// The wire shape is OpenRouter's, and the direct-typesafe shape is RETIRED
+// (§9), not dual-supported: `state` is an ARRAY of strings, and `criteria` is
+// a RECORD keyed by the allowed choice — a live probe returned 400 for the old
+// rubric string, proving the endpoint validates the envelope rather than
+// coercing it (§9.3). The ask's rubric is shared rather than per-choice, so it
+// is sent verbatim under every allowed choice; the question and the choice
+// list ride `instructions`.
+//
+// The response is a SUPERSET — `type`, `probabilities`, `usage.{input_tokens,
+// output_tokens, cost, …}`, `model`, `provider`, `id`. Extra keys are ignored
+// (never an error): a missing/invalid `answers.<name>` is still a typed
+// `invalid_response`. `probabilities` stays on the parsed envelope for a
+// later confidence-calibration use; it is not surfaced here. Usage stays
+// zeroes with `usageReported: false` — the usage row is distinguished by
+// `provider = 'questions'` and the admin breakdown renders it as "typed — not
+// token-billed" (plan §5.3). OpenRouter does report usage now; folding it in
+// is a separate metering decision (§9).
 
 import { providerFetch, readJson, responseError, trimBaseUrl } from './wire.js'
 import {
@@ -31,8 +47,22 @@ export const TYPED_QUESTION_NAME = 'verdict'
 
 export const TYPED_USAGE: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
 
-type SystemOneResponse = {
-  answers?: Record<string, { choice?: unknown; confidence?: unknown }>
+/**
+ * The answer envelope as far as this adapter reads it. `probabilities` is part
+ * of the wire and deliberately kept here (confidence calibration is a later
+ * use); `type`, `usage`, `model`, `provider` and `id` are ignored extras — the
+ * envelope is a superset and extra keys are never an error.
+ */
+type DecisionsResponse = {
+  answers?: Record<
+    string,
+    {
+      type?: unknown
+      choice?: unknown
+      confidence?: unknown
+      probabilities?: Record<string, unknown>
+    }
+  >
 }
 
 async function complete(_req: AdapterRequest): Promise<AdapterResult> {
@@ -45,14 +75,20 @@ async function decide(req: DecisionAdapterRequest): Promise<DecisionAdapterResul
     throw new AdapterError('provider_error', `${LABEL} requires a base URL`)
   }
   const instructions = `${req.ask.question}\nAnswer with exactly one of: ${req.ask.choices.join(', ')}`
+  // OpenRouter's `criteria` is a RECORD keyed by the allowed choice — it IS
+  // the answer vocabulary, so the keys are exactly `ask.choices`. The ask's
+  // rubric is shared (not per-choice), so the verbatim rubric rides every
+  // choice's criterion; with no rubric the choice label is its own criterion.
+  const rubric = req.ask.criteria?.trim() || null
+  const criteria = Object.fromEntries(req.ask.choices.map((choice) => [choice, rubric ?? choice]))
   const body = {
-    state: req.ask.state,
+    state: [req.ask.state],
     model: req.model,
     questions: {
       [TYPED_QUESTION_NAME]: {
         type: 'choice',
         instructions,
-        criteria: req.ask.criteria ?? '',
+        criteria,
       },
     },
   }
@@ -68,7 +104,7 @@ async function decide(req: DecisionAdapterRequest): Promise<DecisionAdapterResul
   })
   if (!res.ok) throw await responseError(LABEL, res)
 
-  const data = await readJson<SystemOneResponse>(LABEL, res)
+  const data = await readJson<DecisionsResponse>(LABEL, res)
   const answer = data.answers?.[TYPED_QUESTION_NAME]
   const choice = answer?.choice
   const confidence = answer?.confidence
@@ -118,7 +154,7 @@ async function probe(req: ProbeRequest): Promise<void> {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${req.apiKey}`,
     },
-    body: JSON.stringify({ state: '', model: req.model ?? '', questions: {} }),
+    body: JSON.stringify({ state: [], model: req.model ?? '', questions: {} }),
     signal: req.signal,
   })
   if (res.ok || res.status === 400 || res.status === 422) return

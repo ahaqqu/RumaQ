@@ -195,12 +195,14 @@ const HARNESSES: readonly KindHarness[] = [
   {
     kind: 'questions',
     label: 'Typed decision provider',
-    baseUrl: 'https://api.typesafe.ai/v1/systemone',
+    // The ONE questions endpoint: OpenRouter's decisions wire (plan §9).
+    baseUrl: 'https://openrouter.ai/api/alpha/decisions',
     // The typed wire reports no token counts: zeroes, distinguished by kind.
+    // OpenRouter's `usage` is a superset key and is deliberately not read yet.
     expectedUsage: { input_tokens: 0, output_tokens: 0, cached_tokens: null },
     expectedReported: false,
     invoke: async (adapter, signal) => {
-      const baseUrl = 'https://api.typesafe.ai/v1/systemone'
+      const baseUrl = 'https://openrouter.ai/api/alpha/decisions'
       const result = await adapter.decide(decideRequest(baseUrl, signal))
       return {
         choice: result.choice,
@@ -210,23 +212,40 @@ const HARNESSES: readonly KindHarness[] = [
     },
     happy: () =>
       fakeResponse({
-        answers: { verdict: { choice: 'same', confidence: 0.91 } },
+        // A real OpenRouter envelope: extra keys are ignored, never an error.
+        model: 'typesafe/jev-1.14-20261014',
+        provider: 'TypeSafe',
+        id: 'gen-dec-test',
+        answers: {
+          verdict: {
+            type: 'choice',
+            choice: 'same',
+            confidence: 0.91,
+            probabilities: { same: 0.91, different: 0.09 },
+          },
+        },
+        usage: { input_tokens: 100, output_tokens: 20, cost: 0.000001 },
       }),
     empty: () => fakeResponse({ answers: { verdict: {} } }),
     assertHappyRequest: (url, init) => {
-      expect(url).toBe('https://api.typesafe.ai/v1/systemone')
+      expect(url).toBe('https://openrouter.ai/api/alpha/decisions')
       expect(headerOf(init, 'authorization')).toBe(`Bearer ${API_KEY}`)
       const body = bodyOf(init)
-      expect(body.state).toBe(ASK.state)
+      // OpenRouter's contract: `state` is an ARRAY, `criteria` is a RECORD
+      // keyed by the allowed choice (the direct-typesafe shape is retired).
+      expect(body.state).toEqual([ASK.state])
       expect(body.model).toBe(MODEL)
       const questions = body.questions as Record<
         string,
-        { type: string; instructions: string; criteria: string }
+        { type: string; instructions: string; criteria: Record<string, string> }
       >
       expect(questions.verdict?.type).toBe('choice')
       expect(questions.verdict?.instructions).toContain(ASK.question)
       expect(questions.verdict?.instructions).toContain('same')
-      expect(questions.verdict?.criteria).toBe(ASK.criteria)
+      expect(questions.verdict?.criteria).toEqual({
+        same: ASK.criteria,
+        different: ASK.criteria,
+      })
     },
   },
 ]
@@ -373,15 +392,23 @@ describe('decide() shape across the chat kinds vs the typed kind', () => {
   }
 
   it('questions: the same decision, answered natively, with reason null', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue(
-        fakeResponse({ answers: { verdict: { choice: 'different', confidence: 0.4 } } })
-      )
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      fakeResponse({
+        answers: {
+          verdict: {
+            type: 'choice',
+            choice: 'different',
+            confidence: 0.4,
+            probabilities: { same: 0.6, different: 0.4 },
+          },
+        },
+        usage: { input_tokens: 10, output_tokens: 5, cost: 0.0000004 },
+      })
+    )
     const signal = new AbortController().signal
 
     const result = await adapterFor('questions').decide(
-      decideRequest('https://api.typesafe.ai/v1/systemone', signal)
+      decideRequest('https://openrouter.ai/api/alpha/decisions', signal)
     )
 
     expect(result).toMatchObject({
@@ -469,7 +496,7 @@ describe('adapter registry and capability matrix (plan §2.4)', () => {
   it('a typed provider refuses a text completion (fail closed)', async () => {
     await expect(
       adapterFor('questions').complete(
-        completeRequest('https://api.typesafe.ai/v1/systemone', new AbortController().signal)
+        completeRequest('https://openrouter.ai/api/alpha/decisions', new AbortController().signal)
       )
     ).rejects.toMatchObject({ code: 'unsupported' })
   })

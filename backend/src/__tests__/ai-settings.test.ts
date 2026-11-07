@@ -268,6 +268,8 @@ describe('GET /api/ai/presets (plan §4.1/§4.5)', () => {
       'anthropic',
       'gemini',
       'ollama',
+      'openrouter-decisions',
+      'openrouter',
       'custom',
     ])
     for (const preset of body.presets) {
@@ -382,23 +384,49 @@ describe('POST /api/ai/providers (plan §4.2)', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('accepts a typed-decision endpoint only WITH a base URL (kind questions)', async () => {
+  it('accepts a typed-decision row from its preset or an explicit base URL', async () => {
+    // No endpoint anywhere: the row could never resolve one (400).
     const missing = await call('POST', '/api/ai/providers', OWNER, {
-      label: 'Jev',
+      label: 'Typed without endpoint',
       kind: 'questions',
       api_key: 'sk-typed',
     })
     expect(missing.status).toBe(400)
 
-    const ok = await call('POST', '/api/ai/providers', OWNER, {
-      label: 'Jev',
+    // The preset carries the canonical endpoint, exactly like every other
+    // preset row: the base URL does not need to be repeated on the row (A1).
+    const fromPreset = await call('POST', '/api/ai/providers', OWNER, {
+      label: 'OpenRouter decisions',
       kind: 'questions',
-      base_url: 'https://api.example.test/v1/systemone',
+      preset: 'openrouter-decisions',
+      default_model: 'perplexity/pplx-decider-v1.2',
       api_key: 'sk-typed',
     })
-    expect(ok.status).toBe(201)
-    expect(((await ok.json()) as any).provider.base_url).toBe(
-      'https://api.example.test/v1/systemone'
+    expect(fromPreset.status).toBe(201)
+    const presetBody = (await fromPreset.json()) as any
+    expect(presetBody.provider.base_url).toBeNull()
+    expect(presetBody.provider.preset).toBe('openrouter-decisions')
+
+    // And it is assignable: the endpoint resolves through the preset, so the
+    // capability is usable rather than silently 402 (the same resolver rule).
+    const assigned = await call('PUT', '/api/ai/capabilities/decision', OWNER, {
+      provider_id: presetBody.provider.id,
+      model: '',
+    })
+    expect(assigned.status).toBe(200)
+    const assignedBody = (await assigned.json()) as any
+    expect(assignedBody.status).toBe('household')
+    expect(assignedBody.capability.effective_model).toBe('perplexity/pplx-decider-v1.2')
+
+    const explicit = await call('POST', '/api/ai/providers', OWNER, {
+      label: 'Typed custom',
+      kind: 'questions',
+      base_url: 'https://ai.example.test/decisions',
+      api_key: 'sk-typed',
+    })
+    expect(explicit.status).toBe(201)
+    expect(((await explicit.json()) as any).provider.base_url).toBe(
+      'https://ai.example.test/decisions'
     )
   })
 
@@ -651,7 +679,7 @@ describe('PUT/DELETE /api/ai/capabilities/:capability (plan §4.1/§4.2)', () =>
       label: 'Typed',
       kind: 'questions',
       preset: null,
-      baseUrl: 'https://api.example.test/v1/systemone',
+      baseUrl: 'https://ai.example.test/decisions',
     })
     // A typed provider answers closed choices only (decision), never vision.
     const vision = await call('PUT', '/api/ai/capabilities/vision', OWNER, { provider_id: typed })
@@ -683,7 +711,7 @@ describe('PUT/DELETE /api/ai/capabilities/:capability (plan §4.1/§4.2)', () =>
       label: 'Typed',
       kind: 'questions',
       preset: null,
-      baseUrl: 'https://api.example.test/v1/systemone',
+      baseUrl: 'https://ai.example.test/decisions',
     })
     const typedThinking = await call('PUT', '/api/ai/capabilities/decision', OWNER, {
       provider_id: typed,
@@ -813,7 +841,7 @@ describe('POST /api/ai/providers/:id/test (plan §4.6)', () => {
       id: 'p-typed',
       kind: 'questions',
       preset: null,
-      baseUrl: 'https://api.example.test/v1/systemone',
+      baseUrl: 'https://ai.example.test/decisions',
       defaultModel: 'jev-latest',
     })
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(400, { error: 'no questions' }))
@@ -823,9 +851,10 @@ describe('POST /api/ai/providers/:id/test (plan §4.6)', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true })
 
-    // The body is the deliberately malformed probe: an EMPTY questions object.
+    // The body is the deliberately malformed probe: the documented envelope
+    // (array state) with an EMPTY questions object.
     const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
-    expect(body).toEqual({ state: '', model: 'jev-latest', questions: {} })
+    expect(body).toEqual({ state: [], model: 'jev-latest', questions: {} })
   })
 
   it('reports a failure as a CODE, never the provider body', async () => {

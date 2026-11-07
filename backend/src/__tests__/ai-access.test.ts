@@ -262,7 +262,7 @@ describe('resolveAccess (household capability ladder)', () => {
       key: 'sk-typed',
       kind: 'questions',
       preset: null,
-      baseUrl: 'https://api.typesafe.ai/v1/systemone',
+      baseUrl: 'https://openrouter.ai/api/alpha/decisions',
     })
     addCapability('decision', providerId, { model: 'jev-latest' })
     const access = await resolveAccess(ctx(), 'decision')

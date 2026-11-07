@@ -206,7 +206,7 @@ describe('the door: resolution and dispatch', () => {
       reasoning: {
         kind: 'questions',
         preset: null,
-        base_url: 'https://api.typesafe.ai/v1/systemone',
+        base_url: 'https://openrouter.ai/api/alpha/decisions',
       },
     })
 
@@ -492,7 +492,7 @@ describe('the door: decide() across the two provider shapes', () => {
         kind: 'questions',
         preset: null,
         model: 'jev-latest',
-        base_url: 'https://api.typesafe.ai/v1/systemone',
+        base_url: 'https://openrouter.ai/api/alpha/decisions',
       },
     })
     const fetchMock = vi.fn().mockResolvedValue(
@@ -506,17 +506,17 @@ describe('the door: decide() across the two provider shapes', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('https://api.typesafe.ai/v1/systemone')
+    expect(url).toBe('https://openrouter.ai/api/alpha/decisions')
     expect(new Headers(init.headers).get('authorization')).toBe('Bearer sk-household')
     const body = JSON.parse(String(init.body))
     expect(body).toEqual({
-      state: ASK.state,
+      state: [ASK.state],
       model: 'jev-latest',
       questions: {
         verdict: {
           type: 'choice',
           instructions: `${ASK.question}\nAnswer with exactly one of: same, different`,
-          criteria: ASK.criteria,
+          criteria: { same: ASK.criteria, different: ASK.criteria },
         },
       },
     })
@@ -536,7 +536,7 @@ describe('the door: decide() across the two provider shapes', () => {
         kind: 'questions',
         preset: null,
         model: 'jev-latest',
-        base_url: 'https://api.typesafe.ai/v1/systemone',
+        base_url: 'https://openrouter.ai/api/alpha/decisions',
       },
     })
     globalThis.fetch = vi
@@ -608,7 +608,7 @@ describe('the door: vision() and structured()', () => {
         kind: 'questions',
         preset: null,
         model: 'jev-latest',
-        base_url: 'https://api.typesafe.ai/v1/systemone',
+        base_url: 'https://openrouter.ai/api/alpha/decisions',
       },
     })
 
