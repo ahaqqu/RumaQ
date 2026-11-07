@@ -85,6 +85,8 @@ import {
   setReviewMode,
 } from '../lib/review-ai.js'
 import {
+  AliasNotFoundError,
+  AliasStateError,
   AuditNotFoundError,
   DuplicateNameError,
   InvalidNameError,
@@ -93,7 +95,9 @@ import {
   SimilarNameError,
   StaleProductError,
   StaleRevertError,
+  approveAlias,
   getProductIdentity,
+  rejectAlias,
   renameProduct,
   revertProductRename,
 } from '../lib/canonical-products.js'
@@ -661,12 +665,15 @@ apiApp.use('/api/admin/review/export', propsAuthMiddleware)
 apiApp.use('/api/admin/review/mode', propsAuthMiddleware)
 apiApp.use('/api/admin/review/evaluate', propsAuthMiddleware)
 apiApp.use('/api/admin/review/:id/decision', propsAuthMiddleware)
-// Canonical product admin (#423): the same per-path discipline as the review
-// queue — the identity read, the rename, and the revert each get a line
-// (#292: a use-line does not cover subpaths).
+// Canonical product admin (#423), plus alias decisions (#489): the same
+// per-path discipline as the review queue — the identity read, the rename, the
+// revert, and each alias decision get a line (#292: a use-line does not cover
+// subpaths).
 apiApp.use('/api/admin/products/:productKey', propsAuthMiddleware)
 apiApp.use('/api/admin/products/:productKey/rename', propsAuthMiddleware)
 apiApp.use('/api/admin/products/:productKey/audit/:auditId/revert', propsAuthMiddleware)
+apiApp.use('/api/admin/products/:productKey/aliases/:aliasId/approve', propsAuthMiddleware)
+apiApp.use('/api/admin/products/:productKey/aliases/:aliasId/reject', propsAuthMiddleware)
 apiApp.use('/api/ai-key/*', propsAuthMiddleware)
 
 apiApp.get(
@@ -3572,12 +3579,35 @@ const PRODUCT_SCHEMA: OpenAPIV3_1.SchemaObject = {
 const PRODUCT_ALIAS_SCHEMA: OpenAPIV3_1.SchemaObject = {
   type: 'object',
   properties: {
+    // The alias id is the handle the approve/reject routes take (#489); the
+    // identity payload must carry it or the UI cannot act on a row.
+    id: { type: 'string' },
     name: { type: 'string' },
     storeSlug: { type: 'string' },
-    status: { type: 'string', enum: ['candidate', 'approved'] },
+    status: { type: 'string', enum: ['candidate', 'approved', 'rejected'] },
     source: { type: 'string', enum: ['ocr', 'catalog', 'admin'] },
     firstSeenAt: { type: 'string' },
     lastSeenAt: { type: 'string' },
+  },
+}
+
+// 200 body for an alias decision (#489): the decided alias and the canonical
+// index version the decision left behind. Reject returns the unchanged
+// version — the pipeline cache is not invalidated by a refusal.
+const ALIAS_DECISION_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    alias: PRODUCT_ALIAS_SCHEMA,
+    indexVersion: { type: 'integer', minimum: 0 },
+  },
+}
+
+// 409 body when the alias was already decided (the CAS lost).
+const ALIAS_STATE_RESPONSE_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    error: { type: 'string' },
+    currentStatus: { type: 'string', enum: ['candidate', 'approved', 'rejected'] },
   },
 }
 
@@ -3666,11 +3696,18 @@ const PRODUCT_KEY_PARAMETER = {
   schema: { type: 'string', maxLength: 300 },
 } as const
 
+const ALIAS_ID_PARAMETER = {
+  in: 'path',
+  name: 'aliasId',
+  required: true,
+  schema: { type: 'string', maxLength: 100 },
+} as const
+
 apiApp.get(
   '/api/admin/products/:productKey',
   describeRoute({
     description:
-      'Canonical product identity: the product row, every alias (candidate and approved), observation stats, and the last 10 audit rows newest first (admin-only).',
+      'Canonical product identity: the product row, every alias with its id (candidate, approved, and rejected), observation stats, and the last 10 audit rows newest first (admin-only).',
     security: [{ cookieAuth: [] }],
     parameters: [PRODUCT_KEY_PARAMETER],
     responses: {
@@ -3840,6 +3877,111 @@ apiApp.post(
       }
       if (error instanceof InvalidReasonError) {
         return c.json({ error: error.message }, 400)
+      }
+      throw error
+    }
+  }
+)
+
+// ---------------------------------------------------------------------------
+// Candidate alias decisions (ahaqqu/RumaQ#489). No request body on either
+// route: the alias id is the path, the decision is the verb, and the receipt
+// has no reason field — a body would only carry unvalidated data with nowhere
+// to go. The lib owns the CAS/receipt/bump rules (lib/canonical-products.ts);
+// these handlers only map typed errors to status + stable codes. Approve bumps
+// the canonical index version once; reject bumps nothing (a candidate was
+// never in the published index). Neither touches product metadata_version.
+// ---------------------------------------------------------------------------
+const ALIAS_DECISION_PARAMETERS = [PRODUCT_KEY_PARAMETER, ALIAS_ID_PARAMETER]
+
+apiApp.post(
+  '/api/admin/products/:productKey/aliases/:aliasId/approve',
+  describeRoute({
+    description:
+      'Approve a candidate alias (admin-only): the store spelling enters the canonical index and the index version advances exactly once, so the pipeline sees it on its next fetch. No request body. 409 alias_state when the alias was already approved or rejected.',
+    security: [{ cookieAuth: [] }],
+    parameters: ALIAS_DECISION_PARAMETERS,
+    responses: {
+      200: {
+        description: 'OK',
+        content: { 'application/json': { schema: ALIAS_DECISION_SCHEMA } },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      404: { description: 'Unknown product, or the alias does not belong to this product' },
+      409: {
+        description: 'alias_state: the alias was already approved or rejected',
+        content: { 'application/json': { schema: ALIAS_STATE_RESPONSE_SCHEMA } },
+      },
+    },
+  }),
+  requireAdmin,
+  async (c) => {
+    try {
+      const result = await approveAlias(c.env.DB, {
+        productKey: c.req.param('productKey'),
+        aliasId: c.req.param('aliasId'),
+        actorUserId: c.get('userId'),
+      })
+      const res = c.json(result)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (error) {
+      if (error instanceof ProductNotFoundError) {
+        return c.json({ error: 'Product not found' }, 404)
+      }
+      if (error instanceof AliasNotFoundError) {
+        return c.json({ error: 'Alias not found' }, 404)
+      }
+      if (error instanceof AliasStateError) {
+        return c.json({ error: 'alias_state', currentStatus: error.currentStatus }, 409)
+      }
+      throw error
+    }
+  }
+)
+
+apiApp.post(
+  '/api/admin/products/:productKey/aliases/:aliasId/reject',
+  describeRoute({
+    description:
+      'Reject a candidate alias (admin-only): the decision is recorded and the spelling stays out of the canonical index. No request body. No index bump — the rejected spelling was never published, so the pipeline cache is not invalidated. 409 alias_state when the alias was already approved or rejected.',
+    security: [{ cookieAuth: [] }],
+    parameters: ALIAS_DECISION_PARAMETERS,
+    responses: {
+      200: {
+        description: 'OK',
+        content: { 'application/json': { schema: ALIAS_DECISION_SCHEMA } },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      404: { description: 'Unknown product, or the alias does not belong to this product' },
+      409: {
+        description: 'alias_state: the alias was already approved or rejected',
+        content: { 'application/json': { schema: ALIAS_STATE_RESPONSE_SCHEMA } },
+      },
+    },
+  }),
+  requireAdmin,
+  async (c) => {
+    try {
+      const result = await rejectAlias(c.env.DB, {
+        productKey: c.req.param('productKey'),
+        aliasId: c.req.param('aliasId'),
+        actorUserId: c.get('userId'),
+      })
+      const res = c.json(result)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (error) {
+      if (error instanceof ProductNotFoundError) {
+        return c.json({ error: 'Product not found' }, 404)
+      }
+      if (error instanceof AliasNotFoundError) {
+        return c.json({ error: 'Alias not found' }, 404)
+      }
+      if (error instanceof AliasStateError) {
+        return c.json({ error: 'alias_state', currentStatus: error.currentStatus }, 409)
       }
       throw error
     }

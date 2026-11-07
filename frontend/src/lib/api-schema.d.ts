@@ -561,7 +561,7 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description Canonical product identity: the product row, every alias (candidate and approved), observation stats, and the last 10 audit rows newest first (admin-only). */
+    /** @description Canonical product identity: the product row, every alias with its id (candidate, approved, and rejected), observation stats, and the last 10 audit rows newest first (admin-only). */
     get: operations['getApiAdminProductsByProductKey']
     put?: never
     post?: never
@@ -599,6 +599,40 @@ export interface paths {
     put?: never
     /** @description Append a compensating revert for the LATEST rename of this product (admin-only): restores the previous canonical name, writes a revert audit row (old/new swapped, revertsAuditId set), and bumps the canonical index version once. An older rename or a second compensation is 409 stale_revert. */
     post: operations['postApiAdminProductsByProductKeyAuditByAuditIdRevert']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/admin/products/{productKey}/aliases/{aliasId}/approve': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** @description Approve a candidate alias (admin-only): the store spelling enters the canonical index and the index version advances exactly once, so the pipeline sees it on its next fetch. No request body. 409 alias_state when the alias was already approved or rejected. */
+    post: operations['postApiAdminProductsByProductKeyAliasesByAliasIdApprove']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/admin/products/{productKey}/aliases/{aliasId}/reject': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** @description Reject a candidate alias (admin-only): the decision is recorded and the spelling stays out of the canonical index. No request body. No index bump — the rejected spelling was never published, so the pipeline cache is not invalidated. 409 alias_state when the alias was already approved or rejected. */
+    post: operations['postApiAdminProductsByProductKeyAliasesByAliasIdReject']
     delete?: never
     options?: never
     head?: never
@@ -2885,10 +2919,11 @@ export interface operations {
               updatedAt?: string | null
             }
             aliases?: {
+              id?: string
               name?: string
               storeSlug?: string
               /** @enum {string} */
-              status?: 'candidate' | 'approved'
+              status?: 'candidate' | 'approved' | 'rejected'
               /** @enum {string} */
               source?: 'ocr' | 'catalog' | 'admin'
               firstSeenAt?: string
@@ -3150,6 +3185,146 @@ export interface operations {
         }
         content: {
           'application/json': Record<string, never>
+        }
+      }
+    }
+  }
+  postApiAdminProductsByProductKeyAliasesByAliasIdApprove: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        productKey: string
+        aliasId: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            alias?: {
+              id?: string
+              name?: string
+              storeSlug?: string
+              /** @enum {string} */
+              status?: 'candidate' | 'approved' | 'rejected'
+              /** @enum {string} */
+              source?: 'ocr' | 'catalog' | 'admin'
+              firstSeenAt?: string
+              lastSeenAt?: string
+            }
+            indexVersion?: number
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unknown product, or the alias does not belong to this product */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description alias_state: the alias was already approved or rejected */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            error?: string
+            /** @enum {string} */
+            currentStatus?: 'candidate' | 'approved' | 'rejected'
+          }
+        }
+      }
+    }
+  }
+  postApiAdminProductsByProductKeyAliasesByAliasIdReject: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        productKey: string
+        aliasId: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            alias?: {
+              id?: string
+              name?: string
+              storeSlug?: string
+              /** @enum {string} */
+              status?: 'candidate' | 'approved' | 'rejected'
+              /** @enum {string} */
+              source?: 'ocr' | 'catalog' | 'admin'
+              firstSeenAt?: string
+              lastSeenAt?: string
+            }
+            indexVersion?: number
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unknown product, or the alias does not belong to this product */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description alias_state: the alias was already approved or rejected */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            error?: string
+            /** @enum {string} */
+            currentStatus?: 'candidate' | 'approved' | 'rejected'
+          }
         }
       }
     }

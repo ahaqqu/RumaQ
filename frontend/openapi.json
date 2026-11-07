@@ -2196,7 +2196,7 @@
     "/api/admin/products/{productKey}": {
       "get": {
         "operationId": "getApiAdminProductsByProductKey",
-        "description": "Canonical product identity: the product row, every alias (candidate and approved), observation stats, and the last 10 audit rows newest first (admin-only).",
+        "description": "Canonical product identity: the product row, every alias with its id (candidate, approved, and rejected), observation stats, and the last 10 audit rows newest first (admin-only).",
         "security": [
           {
             "cookieAuth": []
@@ -2263,6 +2263,9 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "id": {
+                            "type": "string"
+                          },
                           "name": {
                             "type": "string"
                           },
@@ -2271,7 +2274,7 @@
                           },
                           "status": {
                             "type": "string",
-                            "enum": ["candidate", "approved"]
+                            "enum": ["candidate", "approved", "rejected"]
                           },
                           "source": {
                             "type": "string",
@@ -2767,6 +2770,216 @@
               "application/json": {
                 "schema": {
                   "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/products/{productKey}/aliases/{aliasId}/approve": {
+      "post": {
+        "operationId": "postApiAdminProductsByProductKeyAliasesByAliasIdApprove",
+        "description": "Approve a candidate alias (admin-only): the store spelling enters the canonical index and the index version advances exactly once, so the pipeline sees it on its next fetch. No request body. 409 alias_state when the alias was already approved or rejected.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "productKey",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            }
+          },
+          {
+            "in": "path",
+            "name": "aliasId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "alias": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "storeSlug": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["candidate", "approved", "rejected"]
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": ["ocr", "catalog", "admin"]
+                        },
+                        "firstSeenAt": {
+                          "type": "string"
+                        },
+                        "lastSeenAt": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "indexVersion": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Unknown product, or the alias does not belong to this product"
+          },
+          "409": {
+            "description": "alias_state: the alias was already approved or rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "currentStatus": {
+                      "type": "string",
+                      "enum": ["candidate", "approved", "rejected"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/products/{productKey}/aliases/{aliasId}/reject": {
+      "post": {
+        "operationId": "postApiAdminProductsByProductKeyAliasesByAliasIdReject",
+        "description": "Reject a candidate alias (admin-only): the decision is recorded and the spelling stays out of the canonical index. No request body. No index bump — the rejected spelling was never published, so the pipeline cache is not invalidated. 409 alias_state when the alias was already approved or rejected.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "productKey",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            }
+          },
+          {
+            "in": "path",
+            "name": "aliasId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "alias": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "storeSlug": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["candidate", "approved", "rejected"]
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": ["ocr", "catalog", "admin"]
+                        },
+                        "firstSeenAt": {
+                          "type": "string"
+                        },
+                        "lastSeenAt": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "indexVersion": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Unknown product, or the alias does not belong to this product"
+          },
+          "409": {
+            "description": "alias_state: the alias was already approved or rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "currentStatus": {
+                      "type": "string",
+                      "enum": ["candidate", "approved", "rejected"]
+                    }
+                  }
                 }
               }
             }
