@@ -84,6 +84,33 @@ function rejection(): Response {
   })
 }
 
+/** Headers are attack-controlled; keep one hostile value from flooding the log. */
+const LOG_VALUE_MAX = 200
+
+function truncate(value: string): string {
+  return value.length > LOG_VALUE_MAX ? `${value.slice(0, LOG_VALUE_MAX)}…` : value
+}
+
+/**
+ * One structured line per rejection (#528 review A3). Without it a wrong "own
+ * origin" — the failure mode the Docker harness actually shipped before this
+ * PR (`localhost:3000:3000`) — is undiagnosable: every write answers 403 with
+ * nothing in the logs, the same gap #451 closed for the ingest channel
+ * (`apps/api.ts`'s `logRejection`). No cookie or token value is logged; origins
+ * are not secrets and the supplied header is truncated.
+ */
+function logRejection(request: Request, supplied: string, ownOrigin: string | null): void {
+  console.log(
+    JSON.stringify({
+      evt: 'csrf_rejected',
+      route: new URL(request.url).pathname,
+      supplied: truncate(supplied),
+      own: ownOrigin,
+      ray: request.headers.get('cf-ray') ?? null,
+    })
+  )
+}
+
 /**
  * Returns a 403 Response when a state-changing request's supplied origin
  * disagrees with this deployment, or null when the request may proceed.
@@ -107,22 +134,28 @@ export function csrfOriginGuard(request: Request, env: Env['Bindings']): Respons
   if (!supplied?.trim()) return null
 
   const suppliedOrigin = parseOrigin(supplied)
-  if (suppliedOrigin === null) return rejection()
-
   const ownOrigin = parseOrigin(
     getRequestOrigin({
       req: { url: request.url, header: (name) => request.headers.get(name) ?? undefined },
     })
   )
-  if (suppliedOrigin === ownOrigin) return null
-  if (isConfiguredOrigin(suppliedOrigin, env)) return null
-  // Local dev's SPA port (:5173/:8788) is cross-origin but same-site, so it is
-  // on the CORS *read* list. It may drive writes only when this request is
-  // itself loopback: in production a page served from the user's own localhost
-  // is not this app, and letting it authorize writes would reopen — for the
-  // pre-fix `SameSite=None` sessions this guard exists to cover — exactly what
-  // SameSite=Lax just closed (#528 review A2).
-  if (isDevOrigin(suppliedOrigin) && isLoopbackOrigin(ownOrigin)) return null
 
+  // Re-parsing the reconstructed own origin above is deliberate: it normalizes
+  // default ports on both sides, so `host:443` and `host` compare equal.
+  const allowed =
+    suppliedOrigin !== null &&
+    (suppliedOrigin === ownOrigin ||
+      isConfiguredOrigin(suppliedOrigin, env) ||
+      // Local dev's SPA port (:5173/:8788) is cross-origin but same-site, so it
+      // is on the CORS *read* list. It may drive writes only when this request
+      // is itself loopback: in production a page served from the user's own
+      // localhost is not this app, and letting it authorize writes would
+      // reopen — for the pre-fix `SameSite=None` sessions this guard exists to
+      // cover — exactly what SameSite=Lax just closed (#528 review A2).
+      (isDevOrigin(suppliedOrigin) && isLoopbackOrigin(ownOrigin)))
+
+  if (allowed) return null
+
+  logRejection(request, supplied, ownOrigin)
   return rejection()
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vite-plus/test'
+import { describe, it, expect, beforeEach, vi } from 'vite-plus/test'
 
 import { gateway } from '../gateway.js'
 import { csrfOriginGuard, CSRF_ORIGIN_MISMATCH } from '../lib/csrf.js'
@@ -133,6 +133,36 @@ describe('csrfOriginGuard policy', () => {
 
   it('allows a request with no Origin at all (curl / scripted admin)', () => {
     expect(csrfOriginGuard(request(undefined), policyEnv)).toBeNull()
+  })
+
+  it('logs one structured line per rejection, with no unbounded header', () => {
+    // The harness's pre-fix `localhost:3000:3000` own origin failed every write
+    // with this 403 and no diagnostic (#528 review A3).
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      csrfOriginGuard(request('https://evil.example'), policyEnv)
+      const line = log.mock.calls
+        .map((call) => String(call[0]))
+        .find((entry) => entry.includes('csrf_rejected'))
+      expect(line).toBeTruthy()
+      expect(JSON.parse(line!)).toMatchObject({
+        evt: 'csrf_rejected',
+        route: '/api/locations',
+        supplied: 'https://evil.example',
+        own: 'https://rumaq.ahaqqu.com',
+      })
+
+      log.mockClear()
+      csrfOriginGuard(
+        request(undefined, { headers: { Referer: `https://evil.example/${'a'.repeat(5000)}` } }),
+        policyEnv
+      )
+      const long = log.mock.calls.map((call) => String(call[0]))[0]
+      const logged = JSON.parse(long) as { supplied: string }
+      expect(logged.supplied.length).toBeLessThanOrEqual(201)
+    } finally {
+      log.mockRestore()
+    }
   })
 
   it('rejects a same-site subdomain origin (SameSite alone would not)', () => {
