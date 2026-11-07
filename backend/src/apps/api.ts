@@ -79,6 +79,7 @@ import {
   REVIEW_EVALUATE_MAX,
   REVIEW_MODES,
   REVIEW_SWITCH_SWEEP_LIMIT,
+  type ReviewMode,
   applyCachedAutoVerdicts,
   evaluatePendingReviews,
   getReviewMode,
@@ -3272,8 +3273,19 @@ apiApp.get(
 //
 // Issue #493: the mode payload also carries the auto-apply floor. The UI's
 // "at least N% confident" copy is then rendered from the number the sweep
-// actually compares against, so the two cannot drift.
-function reviewModePayload(mode: string, aiConfigured: boolean) {
+// actually compares against, so the two cannot drift. One schema describes
+// the payload for BOTH routes — the body and its documented shape travel
+// together instead of being pasted twice.
+const REVIEW_MODE_RESPONSE_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    mode: { type: 'string', enum: [...REVIEW_MODES] },
+    aiConfigured: { type: 'boolean' },
+    autoMinConfidence: { type: 'number' },
+  },
+}
+
+function reviewModePayload(mode: ReviewMode, aiConfigured: boolean) {
   return { mode, aiConfigured, autoMinConfidence: REVIEW_AUTO_MIN_CONFIDENCE }
 }
 
@@ -3288,14 +3300,7 @@ apiApp.get(
         description: 'OK',
         content: {
           'application/json': {
-            schema: {
-              type: 'object',
-              properties: {
-                mode: { type: 'string', enum: [...REVIEW_MODES] },
-                aiConfigured: { type: 'boolean' },
-                autoMinConfidence: { type: 'number' },
-              },
-            },
+            schema: REVIEW_MODE_RESPONSE_SCHEMA,
           },
         },
       },
@@ -3336,14 +3341,7 @@ apiApp.put(
         description: 'OK',
         content: {
           'application/json': {
-            schema: {
-              type: 'object',
-              properties: {
-                mode: { type: 'string', enum: [...REVIEW_MODES] },
-                aiConfigured: { type: 'boolean' },
-                autoMinConfidence: { type: 'number' },
-              },
-            },
+            schema: REVIEW_MODE_RESPONSE_SCHEMA,
           },
         },
       },
