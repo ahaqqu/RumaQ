@@ -800,8 +800,14 @@ Notes the implementation must honour:
 - The migration is **idempotent only in the sense of not re-running**: wrangler tracks filenames, and
   the legacy ids are deterministic. A re-run on a migrated DB would violate the provider PK — that is
   the intended loud failure, not silent duplication.
-- `ai_model`-less users (provider + key, no model) migrate with `model = NULL` = adapter default —
-  identical to today.
+- **`ai_model`-less users (provider + key, no model) are NOT configured by the backfill.** The provider
+  row is created, but P1 deletes the adapter's model default (§4.5), so the migration leaves the
+  legacy value (NULL or `''`) on all three assignments and `default_model` NULL: the resolver answers
+  402 / the settings payload reports `status: none` until an owner types a model. That is the one
+  behavior change for a backfilled account (the release note below says so), and it is deliberate —
+  filling `default_model` from the old per-provider default here would re-introduce the vendor
+  aliases the owner decision retired. Nothing is discarded: the key and the row stay, and one model
+  on the provider restores every capability that inherits it.
 - The backfill copies the **`v1:` envelope verbatim**. It does not re-encrypt: the AAD-bound `v2:`
   form arrives with P2, and each row converts on its first read (§3.6). Nothing in the migration
   depends on `crypto.ts` changing first, and no user re-enters a key.
@@ -1339,7 +1345,11 @@ and **no legacy write-through**.
 **Rollback:** revert the PR. The migration is additive, the legacy columns were never touched, and the
 env fallback returns with the reverted code — so the old screen is fully live again after a revert.
 **Release note:** from this PR until P3, Settings → AI accepts edits but they do nothing (§4.3), and a
-broken key cannot be re-entered. P1, P2 and P3 ship to the QA deployment as one release.
+broken key cannot be re-entered. An account that never typed a model — the field's documented
+default, "leave empty to use its default" — is **not configured** after the swap (blank capability
+models, `default_model` NULL) and every AI feature answers 402 until its owner sets a model on the
+new screen; the backfill does not invent one (§3.3). P1, P2 and P3 ship to the QA deployment as one
+release.
 
 ### P2 — The door: facade + protocol adapters
 

@@ -79,9 +79,9 @@ Notes for writing new E2E scenarios:
   `ai_capabilities` and the legacy `PATCH /api/settings` `ai_key` write is dead
   until P3 ships the provider/capability endpoints (design §3.4, §4.3). The
   scenarios that need a resolved provider (API: chat reply, plan generate,
-  receipt scan, both `ai_usage` ones; E2E: the three plan flows and the cached
-  verdict assist) are marked pending with a `#523` reference — not deleted.
-  P3 reactivates them against the public endpoints.
+  receipt scan, both `ai_usage` ones; E2E: the receipt scan, the three plan
+  flows and the cached verdict assist — 5 + 5) are marked pending with a `#523`
+  reference — not deleted. P3 reactivates them against the public endpoints.
 
 - Assert item names in the receipt review via input values (`getByRole
   'textbox'`), not text — review rows are editable inputs.
