@@ -71,6 +71,7 @@ This phase touches R2, AI provider proxy, multi-table D1 writes, and the full Ad
 4. **Purchase creation endpoint** (`POST /api/purchases`):
    - Valibot schema: `store_id` (optional), `date` (ISO date), `items` array of `{ name, qty, unit, price, item_id? }`.
    - If `item_id` is missing, canonicalize name and create a new `items` row for the household (or match an existing one by normalized name).
+   - A supplied `item_id` is client-controlled: it must resolve within the caller's household (`item_id` + `household_id`). Foreign and unknown ids are indistinguishable — `404`, no write (#517). The plan check-off path that copies `plan_items.item_id` into `purchase_items`/`stock` carries the same guard.
    - Insert into `purchases` with `receipt_image_key` from scan if provided.
    - Insert into `purchase_items`.
    - Update or insert `stock` rows:

@@ -219,7 +219,7 @@ export interface paths {
     /** @description List purchase history for the active household with filters and pagination. */
     get: operations['getApiPurchases']
     put?: never
-    /** @description Create a purchase with items, updating stock and purchase history. */
+    /** @description Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. */
     post: operations['postApiPurchases']
     delete?: never
     options?: never
@@ -1846,6 +1846,13 @@ export interface operations {
       }
       /** @description Unauthorized */
       401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Item not found in this household */
+      404: {
         headers: {
           [name: string]: unknown
         }

@@ -2014,7 +2014,8 @@ apiApp.post(
 apiApp.post(
   '/api/purchases',
   describeRoute({
-    description: 'Create a purchase with items, updating stock and purchase history.',
+    description:
+      "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing.",
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -2051,6 +2052,7 @@ apiApp.post(
       201: { description: 'Purchase created' },
       400: { description: 'Validation error' },
       401: { description: 'Unauthorized' },
+      404: { description: 'Item not found in this household' },
     },
   }),
   sValidator('json', purchaseCreateSchema),
@@ -2096,9 +2098,26 @@ apiApp.post(
     const itemIds: string[] = []
 
     for (const item of body.items) {
-      let itemId = item.item_id || null
+      let itemId: string
 
-      if (!itemId) {
+      if (item.item_id) {
+        // #517 (security): the receipt client names the item it is buying, so
+        // the id is client-supplied and must resolve INSIDE the household — a
+        // foreign id would otherwise write another household's item (and its
+        // name, via the purchase_items → items join) into this household's
+        // stock and history. Unknown and foreign ids are indistinguishable:
+        // same 404, and the batch below never runs, so nothing is written.
+        const owned = await c.env.DB.prepare(
+          'SELECT id FROM items WHERE id = ? AND household_id = ?'
+        )
+          .bind(item.item_id, householdId)
+          .first<{ id: string }>()
+
+        if (!owned) {
+          return c.json({ error: 'Item not found' }, 404)
+        }
+        itemId = owned.id
+      } else {
         const trimmed = item.name.trim().toLowerCase()
         const existing = await c.env.DB.prepare(
           'SELECT id FROM items WHERE household_id = ? AND LOWER(name) = LOWER(?)'
@@ -5101,10 +5120,18 @@ apiApp.patch(
     }
 
     const planItem = await c.env.DB.prepare(
+      // #517 (security): checking a plan item off copies its item_id into
+      // purchase_items and stock, so the row only resolves when that item
+      // belongs to the caller's household. A plan item pointing outside the
+      // household (a foreign id from any past or future write path) is
+      // indistinguishable from a missing one: 404, and the batch never runs.
       `SELECT pi.id, pi.item_id, pi.store_id, pi.qty, pi.unit, pi.price_estimate, pi.status, pi.plan_id
-       FROM plan_items pi WHERE pi.id = ? AND pi.plan_id = ?`
+       FROM plan_items pi
+       WHERE pi.id = ? AND pi.plan_id = ?
+         AND (pi.item_id IS NULL
+              OR EXISTS (SELECT 1 FROM items i WHERE i.id = pi.item_id AND i.household_id = ?))`
     )
-      .bind(itemId, planId)
+      .bind(itemId, planId, householdId)
       .first<{
         id: string
         item_id: string | null

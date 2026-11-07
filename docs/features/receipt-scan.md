@@ -16,7 +16,7 @@ The receipt-scan feature lets users take or upload a photo of a shopping receipt
 3. The AI returns a structured list of items, a store guess, and a date guess
 4. Existing stores and items are fetched for the review form
 5. User reviews and edits parsed data, optionally matching items to existing catalog entries
-6. On confirm, a purchase is created with items referencing matched `item_id`s or creating new items
+6. On confirm, a purchase is created with items referencing matched `item_id`s or creating new items. A supplied `item_id` is client-controlled and must resolve inside the caller's household — a foreign or unknown id answers `404` and nothing is written (#517).
 
 ## API endpoints
 

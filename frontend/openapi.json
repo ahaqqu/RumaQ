@@ -664,7 +664,7 @@
     "/api/purchases": {
       "post": {
         "operationId": "postApiPurchases",
-        "description": "Create a purchase with items, updating stock and purchase history.",
+        "description": "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing.",
         "security": [
           {
             "cookieAuth": []
@@ -730,6 +730,9 @@
           },
           "401": {
             "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Item not found in this household"
           }
         }
       },
