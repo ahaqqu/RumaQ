@@ -10,6 +10,13 @@ feature ships (new surface, new migration, auth/authorization change), or on
 demand from the owner. It complements — never replaces — `docs/TEST_STRATEGY.md`
 and the local/live automation suites.
 
+Local automation runs are parallel-safe: each checkout derives its own Compose
+project (`automation-<worktree>-<hash>`) and picks a free host port, so suites
+from different worktrees/sessions never share containers or ports. Override
+with `COMPOSE_PROJECT_NAME` / `RUMAQ_TEST_PORT` (repeat both for `--down`);
+`--down` only removes the caller's project, and a stack owned by another
+checkout is never reused or torn down.
+
 ## 1. Trigger and tracking ticket
 
 - Trigger: optional step after significant features, or on demand.
