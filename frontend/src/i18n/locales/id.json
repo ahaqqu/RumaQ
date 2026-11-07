@@ -869,7 +869,7 @@
     "aliasSourceOcr": "OCR",
     "aliasSourceCatalog": "katalog",
     "aliasSourceAdmin": "admin",
-    "aliasDecisionHint": "Menyetujui varian menambahkannya ke indeks kanonik; menolaknya membuatnya tetap di luar indeks.",
+    "aliasDecisionHint": "Menyetujui varian menambahkannya ke indeks kanonik; menolaknya membuatnya tetap di luar indeks. Keputusan bersifat final.",
     "aliasApprove": "Setujui",
     "aliasReject": "Tolak",
     "aliasApproveLabel": "Setujui {{name}}",

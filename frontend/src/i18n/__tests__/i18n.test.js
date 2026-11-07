@@ -115,6 +115,10 @@ describe('locale files', () => {
       expect(id.rename.aliasAlreadyDecided).toContain('sudah diputuskan')
       expect(id.rename.aliasAlreadyDecided).toContain('{{status}}')
       expect(en.rename.aliasErrorForbidden).toBe('Only admins can decide aliases.')
+      // The decision is terminal in the backend (candidate-only CAS, no reset
+      // path), so the hint must say so instead of reading like a toggle.
+      expect(en.rename.aliasDecisionHint).toContain('A decision is final.')
+      expect(id.rename.aliasDecisionHint).toContain('Keputusan bersifat final.')
     })
   })
 

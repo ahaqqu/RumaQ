@@ -869,7 +869,7 @@
     "aliasSourceOcr": "OCR",
     "aliasSourceCatalog": "catalog",
     "aliasSourceAdmin": "admin",
-    "aliasDecisionHint": "Approving a variant adds it to the canonical index; rejecting keeps it out.",
+    "aliasDecisionHint": "Approving a variant adds it to the canonical index; rejecting keeps it out. A decision is final.",
     "aliasApprove": "Approve",
     "aliasReject": "Reject",
     "aliasApproveLabel": "Approve {{name}}",

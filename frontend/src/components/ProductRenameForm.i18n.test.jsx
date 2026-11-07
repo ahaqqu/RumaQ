@@ -258,7 +258,7 @@ describe('ProductRenameForm real copy (#423)', () => {
       'Approve Beras Ramos 5 kg'
     )
     expect(container.textContent).toContain(
-      'Approving a variant adds it to the canonical index; rejecting keeps it out.'
+      'Approving a variant adds it to the canonical index; rejecting keeps it out. A decision is final.'
     )
     // Terminal rows show their state and stay action-free.
     expect(rows[1].textContent).toContain('rejected')
