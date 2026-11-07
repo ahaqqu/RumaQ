@@ -8,23 +8,28 @@
 
 ## 0. Decision summary
 
-The seven decisions this document asks the owner to approve. Everything else follows from them.
+The nine decisions this document rests on. **Three of them were taken by the owner on 2026-11-07**
+(D2, D3, D8) and are no longer open; the rest need sign-off with the document.
 
 | #   | Decision             | Choice                                                                                                                                                                                                                                                                                                      |
 | --- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | D1  | Data model           | New `ai_providers` + `ai_capabilities` tables. `user_settings.ai_*` columns stay for one release as a compatibility projection, then drop.                                                                                                                                                                  |
-| D2  | Provider abstraction | Four **wire-protocol** adapters (`openai`, `anthropic`, `gemini`, `questions`) behind one interface. The six current vendor presets become data (label + base URL + default models), not code paths.                                                                                                        |
-| D3  | The door             | `backend/src/lib/ai/` (barrel `index.ts`). Outside `lib/ai/**` no file may import an adapter, hold an API key, or contain a provider hostname — enforced by a test.                                                                                                                                         |
-| D4  | Capability enum      | `decision` \| `reasoning` \| `vision`. Additive; `embedding` is explicitly out of scope.                                                                                                                                                                                                                    |
-| D5  | Migration            | Backfill is **behaviour-preserving**: every configured user's one provider becomes provider #1 and is assigned to all three capabilities with today's model values. Never a forced rewrite of a working setup.                                                                                              |
-| D6  | Empty start          | **No per-user default provider.** A new account has zero `ai_providers`, zero `ai_capabilities`, no implicit model — and therefore today's exact "not configured" behaviour (402, review assist/auto → manual, no calls) until the user adds a provider and assigns capabilities. No preset is preselected. |
-| D7  | Rollout              | Six independently shippable PRs (P1–P6). P1 is schema + resolver swap with zero behaviour change. The destructive column drop is its own PR (P6).                                                                                                                                                           |
+| D2  | Provider abstraction | **Owner-decided 2026-11-07.** Four **wire-protocol** adapters — `openai-compatible` (OpenAI, Ollama, OpenCode, custom base URL), `anthropic`, `gemini`, `questions` — behind one interface. The six vendor presets are data rows (label + base URL + default models), never classes.                        |
+| D3  | Decision wire        | **Owner-decided 2026-11-07.** The `questions` adapter speaks a typed question/answer contract: `POST {base}` with `{state, model, questions:{<name>:{type,instructions,criteria}}}` → `answers.<name>.{choice, confidence}`. Reason-as-NULL and zero reported tokens are accepted limitations.              |
+| D4  | The door             | `backend/src/lib/ai/` (barrel `index.ts`). Outside `lib/ai/**` no file may import an adapter, hold an API key, or contain a provider hostname — enforced by a test.                                                                                                                                         |
+| D5  | Capability enum      | `decision` \| `reasoning` \| `vision`. Additive; `embedding` is explicitly out of scope.                                                                                                                                                                                                                    |
+| D6  | Migration            | Backfill is **behaviour-preserving**: every configured user's one provider becomes provider #1 and is assigned to all three capabilities with today's model values. Never a forced rewrite of a working setup.                                                                                              |
+| D7  | Empty start          | **No per-user default provider.** A new account has zero `ai_providers`, zero `ai_capabilities`, no implicit model — and therefore today's exact "not configured" behaviour (402, review assist/auto → manual, no calls) until the user adds a provider and assigns capabilities. No preset is preselected. |
+| D8  | No server fallback   | **Owner-decided 2026-11-07.** `RUMAQ_SERVER_AI_*` is retired: no env key, no implicit provider, no platform-funded call. Resolution is the caller's assignment → 402. QA/testing accounts get ordinary rows through Settings; automation seeds the same rows in its setup step (§3.4).                      |
+| D9  | Rollout              | Six independently shippable PRs (P1–P6). P1 is schema + resolver swap. The destructive column drop is its own PR (P6).                                                                                                                                                                                      |
 
-The one deliberate deviation from the directive's literal wording is D2. The directive lists five
-adapter names ("OpenAI-compatible, Anthropic, Gemini, Ollama, custom base URL"); three of those are
-the same wire protocol with a different base URL. Collapsing them is what makes "one interface"
-true instead of decorative, and it is what lets a typed-decision provider sit beside chat providers
-without a special case. **This needs an explicit owner yes/no — see OQ2.**
+D2 is the one place this document refines the directive's literal wording. The directive listed five
+adapter names ("OpenAI-compatible, Anthropic, Gemini, Ollama, custom base URL"); the owner confirmed
+that three of them are one wire protocol with different base URLs. Collapsing them is what makes "one
+interface" true instead of decorative, and it is what lets the typed-decision adapter (D3) sit beside
+chat adapters without a special case.
+
+The other open questions are in §7; nothing in §1–§6 depends on them.
 
 ---
 
@@ -82,6 +87,9 @@ with the _text_ model while the vault's OCR sends the vision model (`document-oc
    provider must be in `SERVER_PROVIDER_PRESETS` (`:70-76`, which excludes `custom`). One model
    (`RUMAQ_SERVER_AI_MODEL`) serves **both** text and vision (`:126`); no thinking level.
 3. Otherwise `null` → every route maps that to **402** "AI provider not configured".
+
+Step 2 is **retired by D8**: after P1 there is no server branch at all, so an unconfigured account is
+unconfigured rather than platform-funded (§3.4).
 
 There is exactly one access per request, resolved once and passed down. The review sweep resolves
 **once per run** (`review-ai.ts:322-338`), deliberately — one settings read for up to 20 items,
@@ -186,10 +194,10 @@ export type ThinkingLevel = 'low' | 'medium' | 'high'
 /** What a provider call costs/attributed to. Carried on success AND failure. */
 export type AiCall = {
   capability: Capability
-  providerKind: ProviderKind // 'openai' | 'anthropic' | 'gemini' | 'questions'
-  providerId: string | null // null on the server fallback
+  providerKind: ProviderKind // 'openai-compatible' | 'anthropic' | 'gemini' | 'questions'
+  providerId: string // always a user-owned row; there is no server fallback (D8)
   model: string | null // null = the adapter's default for this capability
-  keySource: 'user' | 'server'
+  keySource: 'user' // historical usage rows may still say 'server'; nothing writes it now
 }
 
 /**
@@ -335,7 +343,8 @@ The frontend keeps the boundary too: it may call `/api/ai/*` and nothing else.
 
 ```ts
 // backend/src/lib/ai/adapters/types.ts
-export type ProviderKind = 'openai' | 'anthropic' | 'gemini' | 'questions'
+// Owner-decided kind set (D2). The vendor a row came from is `preset`, not a fifth kind.
+export type ProviderKind = 'openai-compatible' | 'anthropic' | 'gemini' | 'questions'
 
 export interface AiAdapter {
   readonly kind: ProviderKind
@@ -367,15 +376,17 @@ export type AdapterRequest = {
 Capability support must be **data, checked twice** — at save time (`supports(capability)`, plus the
 shape check where a capability has two) and at call time (`AiError('unsupported')` as a belt):
 
-| kind        | reasoning (`completeText`) | vision (`vision`)                     | decision · choice (`decide`) | decision · JSON (`structured`) |
-| ----------- | -------------------------- | ------------------------------------- | ---------------------------- | ------------------------------ |
-| `openai`    | ✅                         | ✅ (image support is the model's job) | ✅ prompt + strict parse     | ✅                             |
-| `anthropic` | ✅                         | ✅                                    | ✅ prompt + strict parse     | ✅                             |
-| `gemini`    | ✅                         | ✅                                    | ✅ prompt + strict parse     | ✅                             |
-| `questions` | ❌                         | ❌                                    | ✅ native                    | ❌                             |
+| kind                | reasoning (`completeText`) | vision (`vision`)                     | decision · choice (`decide`) | decision · JSON (`structured`) |
+| ------------------- | -------------------------- | ------------------------------------- | ---------------------------- | ------------------------------ |
+| `openai-compatible` | ✅                         | ✅ (image support is the model's job) | ✅ prompt + strict parse     | ✅                             |
+| `anthropic`         | ✅                         | ✅                                    | ✅ prompt + strict parse     | ✅                             |
+| `gemini`            | ✅                         | ✅                                    | ✅ prompt + strict parse     | ✅                             |
+| `questions`         | ❌                         | ❌                                    | ✅ native (D3)               | ❌                             |
 
 `supports()` for a chat kind is a static `true`; whether a _model_ reads images is not something we
-pretend to know (today's behaviour: send it, let the provider 400).
+pretend to know (today's behaviour: send it, let the provider 400). `gemini` is its own kind rather
+than an `openai-compatible` base URL because its request/response shape (`contents`/`parts`,
+`usageMetadata`, thinking budgets) is genuinely different.
 
 The two decision shapes are deliberate: a closed-choice answer (`same`/`different`, a category slug)
 is what a typed decision endpoint is built for, while quick-add must return a JSON document. Assigning
@@ -436,9 +447,10 @@ CREATE TABLE IF NOT EXISTS ai_providers (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   -- The user's own name for it ("Work account", "Personal key").
   label TEXT NOT NULL,
-  -- The WIRE protocol, not the vendor: 'openai' also serves OpenAI-compatible
-  -- endpoints (OpenCode, Ollama, any custom base URL) — see presets.ts.
-  kind TEXT NOT NULL CHECK (kind IN ('openai', 'anthropic', 'gemini', 'questions')),
+  -- The WIRE protocol, not the vendor: 'openai-compatible' serves OpenAI, OpenCode,
+  -- Ollama and any custom base URL — see presets.ts. 'gemini' is separate because
+  -- its wire is genuinely different; 'questions' is a typed choice/answer wire.
+  kind TEXT NOT NULL CHECK (kind IN ('openai-compatible', 'anthropic', 'gemini', 'questions')),
   -- The vendor preset this row was created from ('openai', 'opencode', 'ollama',
   -- 'custom', 'anthropic', 'gemini', or NULL for a hand-configured
   -- endpoint). DATA, not a type: a new vendor is a row in presets.ts, never a
@@ -468,7 +480,7 @@ CREATE TABLE IF NOT EXISTS ai_capabilities (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   capability TEXT NOT NULL CHECK (capability IN ('decision', 'reasoning', 'vision')),
   -- Deleting a provider clears the assignments that pointed at it (CASCADE):
-  -- the capability then falls to the server fallback, then to 402. The API
+  -- the capability then becomes not configured (402). The API
   -- reports the cleared capabilities so the UI can warn BEFORE the delete.
   provider_id TEXT NOT NULL REFERENCES ai_providers(id) ON DELETE CASCADE,
   -- NULL = the adapter's default model for this capability (today's behaviour).
@@ -522,7 +534,7 @@ SELECT 'legacy-' || user_id,
        END || ' (imported)',   -- the label tells the user where it came from
        CASE ai_provider WHEN 'anthropic' THEN 'anthropic'
                         WHEN 'gemini' THEN 'gemini'
-                        ELSE 'openai' END,
+                        ELSE 'openai-compatible' END,
        ai_provider,          -- the legacy value IS a preset id (0008 vocabulary)
        ai_base_url,
        encrypted_ai_key
@@ -560,8 +572,7 @@ Notes the implementation must honour:
 - A legacy `ai_provider = 'custom'` row with **no** `ai_base_url` is migrated as-is and stays broken
   in exactly the same way (the old dispatcher threw at call time, `ai.ts:506-511`). It must **not**
   silently become an OpenAI call: `preset = 'custom'` has no canonical endpoint, so the row resolves as
-  unusable (log line, fall through to the server fallback, then 402) and the Settings screen flags
-  it "needs a base URL".
+  unusable (log line, not configured → 402) and the Settings screen flags it "needs a base URL".
 - The capability INSERTs repeat `ai_provider IS NOT NULL` on purpose: a user can hold a key with no
   provider chosen (`PATCH /api/settings` accepts `ai_key` alone), and such a row has no
   `legacy-…` provider to reference — the FK would abort the whole migration.
@@ -576,52 +587,62 @@ Notes the implementation must honour:
 - `ai_model`-less users (provider + key, no model) migrate with `model = NULL` = adapter default —
   identical to today.
 
-### 3.4 Server fallback mapping (`RUMAQ_SERVER_AI_*`)
+### 3.4 No server fallback — `RUMAQ_SERVER_AI_*` is retired (D8)
 
-The env fallback is **not** a user row and never appears in `ai_providers`. It resolves per
-capability, in this order:
+**Owner decision, 2026-11-07.** There is no implicit provider and no shared server key. Resolution
+for a capability is exactly: the caller's own assignment → `not_configured` (402). A new account is
+empty, and an account that has not configured a capability is _unconfigured_, never silently served
+by the platform.
 
-| Capability  | 1st: capability-specific provider                                      | 2nd: shared server provider         | Model                                                                         |
-| ----------- | ---------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------- |
-| `decision`  | `RUMAQ_SERVER_AI_DECISION_PROVIDER` + `_KEY` (+ `_BASE_URL`, `_MODEL`) | `RUMAQ_SERVER_AI_PROVIDER` + `_KEY` | `RUMAQ_SERVER_AI_DECISION_MODEL` → `RUMAQ_SERVER_AI_MODEL` → adapter default  |
-| `reasoning` | —                                                                      | `RUMAQ_SERVER_AI_PROVIDER` + `_KEY` | `RUMAQ_SERVER_AI_REASONING_MODEL` → `RUMAQ_SERVER_AI_MODEL` → adapter default |
-| `vision`    | —                                                                      | `RUMAQ_SERVER_AI_PROVIDER` + `_KEY` | `RUMAQ_SERVER_AI_VISION_MODEL` → `RUMAQ_SERVER_AI_MODEL` → adapter default    |
+**Removed in P1, with the resolver swap** — not later, because leaving the branch alive would keep
+two ladders in the code and two truths in the docs:
 
-- New env vars: `RUMAQ_SERVER_AI_BASE_URL`, `RUMAQ_SERVER_AI_DECISION_{PROVIDER,KEY,BASE_URL,MODEL}`,
-  `RUMAQ_SERVER_AI_{REASONING,VISION}_MODEL`. Declared in `backend/src/types.ts:43-45` and
-  `backend/cloudflare.config.ts` (which today deliberately leaves `RUMAQ_SERVER_AI_*` undeclared —
-  see the comment at `cloudflare.config.ts:118`).
-- The provider value accepts a kind (`openai|anthropic|gemini|questions`) **or** a legacy preset
-  (`opencode|ollama|custom`); presets map through `presets.ts`. `custom` stops being excluded
-  (`ai-access.ts:70-76` is deleted): with `RUMAQ_SERVER_AI_BASE_URL` it is representable.
-- Backward compatibility: with only the three existing vars set, every capability resolves exactly
-  as today, including "one model for text and vision" (`RUMAQ_SERVER_AI_MODEL`).
-- **The decision fallback is a deployment setting, not a product default.** In the testing/QA
-  deployment the owner sets `RUMAQ_SERVER_AI_DECISION_PROVIDER=questions`,
-  `..._BASE_URL=https://api.typesafe.ai/v1/systemone`, `..._MODEL=jev-latest`, `..._KEY=<secret>`.
-  Production ships **without** any `RUMAQ_SERVER_AI_*`: the fallback simply does not exist there and
-  a new account stays empty.
-- **Nothing is per-user by default.** No `DEFAULT_PROVIDER` constant, no seeded `ai_providers` row, no
-  `capability_defaults`, no preselected preset in the UI. `resolveAccess` has exactly three outcomes
-  per capability: a user assignment, the deployment's server fallback, or not configured.
-- **Fallback use is attributable**: every call that resolves to the server records
-  `key_source = 'server'` **and** the `capability` it served, so the admin views can tell
-  "platform-paid reasoning" from "platform-paid decision".
-- **Chosen posture: env-gated, "unset in prod".** No feature flag, no per-user switch, no seeded
-  row — the fallback exists exactly when the deployment's env vars do. A stronger gate (admin-only
-  users, `TEST_MODE`, or a `deployment_flags` row) is deliberately _not_ built now; it becomes worth
-  it the day a shared key is meant to serve real users, and OQ6 records that as the owner's call.
+| Removed                                                       | Where it is today                                                                                                                                                          |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The server branch of the resolver                             | `backend/src/lib/ai-access.ts:114-130`                                                                                                                                     |
+| The server provider allowlist                                 | `ai-access.ts:70-76` (`SERVER_PROVIDER_PRESETS`)                                                                                                                           |
+| The env bindings                                              | `backend/src/types.ts:43-45` (`RUMAQ_SERVER_AI_{PROVIDER,KEY,MODEL}`)                                                                                                      |
+| The "leave `RUMAQ_SERVER_AI_*` undeclared" comment            | `backend/cloudflare.config.ts:116-119`                                                                                                                                     |
+| The "shared server key is uncapped" paragraph                 | `docs/ARCHITECTURE.md:313`                                                                                                                                                 |
+| `server_ai_available` in the settings payload                 | `backend/src/apps/api.ts:1114` — dropped in P3 together with the UI option that reads it                                                                                   |
+| Four test suites plus the env fixture that build the fallback | `ai-access.test.ts`, `documents-ocr.test.ts`, `api-routes.test.ts`, `review-ai.test.ts`, `__tests__/support/env.ts` — rewritten to seed provider + capability rows instead |
+
+No env var replaces them, and no new one is introduced. The QA Worker's copies are deleted by the
+owner (a `docs/MANUAL_ACTIONS.md` entry created in P1); the deploy never wrote them
+(`cloudflare.config.ts` leaves them undeclared on purpose), so no `scripts/` change is needed. After
+P1 the variables are inert even if a Worker still has them — the code no longer reads them.
+
+**QA and testing accounts are ordinary users.** `alice@rumaq` and `test@rumaq` get their rows in the
+database through Settings, like anyone else:
+
+- **decision** → one provider of kind `questions`, base URL `https://api.typesafe.ai/v1/systemone`,
+  model `jev-latest`, and the owner's key. The key is entered once in Settings (a
+  `docs/MANUAL_ACTIONS.md` item) — never committed, never an env var.
+- **reasoning** and **vision** → a chat-capable provider the account already uses (kind
+  `openai-compatible`, `gemini`, or `anthropic`, with its own model), because a `questions` provider
+  answers only choice questions (§2.4).
+
+**Automation seeds the same rows.** The harness setup step creates a provider and the three
+assignments through the public endpoints the UI uses (`POST /api/ai/providers`, then
+`PUT /api/ai/capabilities/{decision,reasoning,vision}`); the legacy `PATCH /api/settings`
+write-through (§4.3) keeps today's scenarios green until P6. `TEST_MODE` still stubs the transport,
+so seeded rows exercise the **resolver** without a real provider call — which is exactly why the rows
+must exist. The "no AI key returns 402" scenarios stay honest by seeding nothing.
+
+**Key provenance.** `ai_usage_events.key_source` keeps its column and its history, but new rows are
+always `'user'`. Nothing in the product can spend a platform key any more, so the admin views no
+longer need to distinguish a platform-paid call.
 
 ### 3.5 Uniqueness, deletion, ownership
 
-| Rule                                     | Where                                                | Behaviour                                                                                                         |
-| ---------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| One assignment per capability            | `PRIMARY KEY (user_id, capability)`                  | `PUT /api/ai/capabilities/:capability` is an upsert                                                               |
-| Labels unique per user, case-insensitive | `idx_ai_providers_user_label`                        | 409 on create/rename                                                                                              |
-| Deleting a provider                      | `ON DELETE CASCADE` on `ai_capabilities.provider_id` | the capability falls to server → 402; DELETE response reports `{ cleared: ['reasoning'] }`; the UI confirms first |
-| Deleting a user                          | `ON DELETE CASCADE` from `users` on both tables      | no orphans                                                                                                        |
-| Usage rows survive provider edits        | no FK from `ai_usage_events`                         | history stays readable after a provider is deleted (it stores kind + model + capability, not provider id)         |
-| Ownership                                | `ai_providers.user_id`                               | per-user for v1; household-shared keys are OQ3                                                                    |
+| Rule                                     | Where                                                | Behaviour                                                                                                                |
+| ---------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| One assignment per capability            | `PRIMARY KEY (user_id, capability)`                  | `PUT /api/ai/capabilities/:capability` is an upsert                                                                      |
+| Labels unique per user, case-insensitive | `idx_ai_providers_user_label`                        | 409 on create/rename                                                                                                     |
+| Deleting a provider                      | `ON DELETE CASCADE` on `ai_capabilities.provider_id` | the capability becomes not configured → 402; DELETE response reports `{ cleared: ['reasoning'] }`; the UI confirms first |
+| Deleting a user                          | `ON DELETE CASCADE` from `users` on both tables      | no orphans                                                                                                               |
+| Usage rows survive provider edits        | no FK from `ai_usage_events`                         | history stays readable after a provider is deleted (it stores kind + model + capability, not provider id)                |
+| Ownership                                | `ai_providers.user_id`                               | per-user for v1; household-shared keys are OQ1                                                                           |
 
 `ai_usage_events` stores the **kind** in `provider` (as today) plus `capability`; it does not store
 `provider_id`, because a deleted provider must not orphan or rewrite history.
@@ -644,12 +665,12 @@ each new path 401s without a session.
 | `PATCH`       | `/api/ai/providers/:id`            | Update `{ label?, kind?, base_url?, api_key? }`; `api_key: ''` clears it, omitted leaves it                                                                                                                         |
 | `DELETE`      | `/api/ai/providers/:id`            | Delete + cascade; returns `{ cleared: Capability[] }`                                                                                                                                                               |
 | `POST`        | `/api/ai/providers/:id/test`       | Test connection (see §4.6). Body `{}`; rate-limited                                                                                                                                                                 |
-| `GET`         | `/api/ai/capabilities`             | `{ capabilities: { decision: { provider_id, model, thinking_level, source: 'user'\|'server'\|'none', provider_label } , … } }`                                                                                      |
+| `GET`         | `/api/ai/capabilities`             | `{ capabilities: { decision: { provider_id, model, thinking_level, source: 'user'\|'none', provider_label } , … } }`                                                                                                |
 | `PUT`         | `/api/ai/capabilities/:capability` | Upsert `{ provider_id, model?, thinking_level? }`                                                                                                                                                                   |
-| `DELETE`      | `/api/ai/capabilities/:capability` | Clear the assignment (falls back to server)                                                                                                                                                                         |
+| `DELETE`      | `/api/ai/capabilities/:capability` | Clear the assignment (the capability becomes not configured)                                                                                                                                                        |
 | `GET`         | `/api/ai/usage`                    | Existing (`api.ts:1439`) + per-capability breakdown for today                                                                                                                                                       |
 | `GET`         | `/api/admin/ai/usage`              | Existing (`api.ts:1523`) + per-capability totals                                                                                                                                                                    |
-| `GET`/`PATCH` | `/api/settings`                    | Unchanged shape + additive `ai_providers`, `ai_capabilities`, `ai_status { decision, reasoning, vision: 'user'\|'server'\|'none' }`                                                                                 |
+| `GET`/`PATCH` | `/api/settings`                    | Unchanged shape + additive `ai_providers`, `ai_capabilities`, `ai_status { decision, reasoning, vision: 'user'\|'none' }`; `server_ai_available` is **removed** in P3 (D8)                                          |
 
 Deprecated but kept until P6: `POST /api/ai-key/test` (`api.ts:1298`), superseded by
 `/api/ai/providers/:id/test`.
@@ -658,11 +679,11 @@ Deprecated but kept until P6: `POST /api/ai-key/test` (`api.ts:1298`), supersede
 
 Valibot schemas in `backend/src/schemas.ts` beside the existing `settingsPatchSchema:26`:
 
-- `kind` — `picklist(['openai', 'anthropic', 'gemini', 'questions'])`.
+- `kind` — `picklist(['openai-compatible', 'anthropic', 'gemini', 'questions'])`.
 - `label` — `pipe(string(), minLength(1), maxLength(60))`, trimmed; unique per user (409).
 - `base_url` — `maxLength(500)`, trimmed, trailing slashes stripped, **HTTPS only** (the existing
   rule, `api.ts:1198-1200`), required when `kind = 'questions'` or when no canonical endpoint
-  exists for the kind. HTTP / private-network endpoints are OQ8.
+  exists for the kind. HTTP / private-network endpoints are OQ5.
 - `api_key` — `minLength(1)` on create, trimmed, encrypted with `encryptAiKey` (`crypto.ts:85`)
   before the INSERT; never echoed, never logged; `has_key` is the only signal the API returns.
 - **An assignment requires a usable provider**: the target row must have an `encrypted_key` and a
@@ -681,7 +702,10 @@ Valibot schemas in `backend/src/schemas.ts` beside the existing `settingsPatchSc
 ### 4.3 Legacy compatibility window
 
 `GET/PATCH /api/settings` keep their AI fields for one release, because the PWA and mobile wrappers
-update on their own schedule:
+update on their own schedule. **The write-through lands in P1, with the resolver swap** — that is
+what keeps the _existing_ Settings screen able to configure AI while the new UI is still being built,
+and it is how the QA accounts get their rows (§3.4). P3 adds the new endpoints; P6 removes the legacy
+fields.
 
 - **Read-through**: `ai_provider` / `ai_model` / `ai_vision_model` / `ai_thinking_level` are derived
   from the new tables (reasoning assignment → provider kind/base URL/model; vision model; reasoning
@@ -689,7 +713,7 @@ update on their own schedule:
 - **Write-through**: a legacy `PATCH` updates the migration-shaped provider and the three
   assignments, so an old client can never desynchronise the new model. `ai_key` writes to that
   provider's `encrypted_key`.
-- P6 drops the columns, the shim, and this window (OQ9 is the timing decision).
+- P6 drops the columns, the shim, and this window (OQ6 is the timing decision).
 
 ### 4.4 Screen structure — Settings → AI
 
@@ -711,18 +735,17 @@ One section. **Two states, and the empty state comes first.**
 1. **Lead copy** — same sentence, plus the resolved reminder ("Changes apply to the next AI call").
 2. **Capability cards** — three rows in the existing `Setting` component:
    - **Decision model** — "Structured choices: review verdicts, classification, JSON answers."
-     Provider `<select>` listing the user's providers (nothing preselected; the first option is
-     "Choose a provider"), plus "Use server default" **only when** the deployment exposes a fallback
-     (the existing `server_ai_available` flag, `api.ts:1114`); model input whose placeholder is the
-     adapter's default; thinking select (hidden when the provider has none).
+     Provider `<select>` listing only the user's providers (nothing preselected; the first option is
+     "Choose a provider") — **no "use server default" option exists** (D8); model input whose
+     placeholder is the adapter's default; thinking select (hidden when the provider has none).
    - **Reasoning model** — "Chat and shopping plans." Same shape.
    - **Vision model** — "Reading receipts and documents." No thinking select.
-     Each card renders its resolved source as a status line: _"Using <label> · server default ·
-     not configured"_.
+     Each card renders its resolved source as a status line: _"Using <label>"_ or _"Not
+     configured"_. There is no third state.
 3. **Providers** — list rows (label, kind, base URL, key state) with **Test**, **Edit**, **Delete**;
    the **Add provider** form (preset picker, nothing preselected; advanced: kind + base URL + model
    for a typed-decision endpoint). Deleting a provider that is assigned shows which capabilities will
-   fall back **before** the confirm.
+   become **not configured** before the confirm.
 4. **Usage** — today's calls/tokens, broken down by capability.
 
 The legacy provider/model/thinking inputs (`Settings.jsx:351-437`) are removed in P3; nothing in the
@@ -744,12 +767,12 @@ UI reads `ai_model` after that.
 
 ### 4.6 What "test connection" means per kind
 
-| kind        | Request                                                         | Cost                                                                                                                  |
-| ----------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `openai`    | `GET {base}/models` with the decrypted key                      | free                                                                                                                  |
-| `anthropic` | `GET https://api.anthropic.com/v1/models` + `anthropic-version` | free                                                                                                                  |
-| `gemini`    | `GET /v1/models?key=…`                                          | free                                                                                                                  |
-| `questions` | one minimal question over the assigned model                    | **billable** — labelled as such in the UI, rate-limited (the OCR limiter precedent, `plugins/documents/ocr.ts:46-54`) |
+| kind                | Request                                                         | Cost                                                                                                                  |
+| ------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `openai-compatible` | `GET {base}/models` with the decrypted key                      | free                                                                                                                  |
+| `anthropic`         | `GET https://api.anthropic.com/v1/models` + `anthropic-version` | free                                                                                                                  |
+| `gemini`            | `GET /v1/models?key=…`                                          | free                                                                                                                  |
+| `questions`         | one minimal question over the assigned model                    | **billable** — labelled as such in the UI, rate-limited (the OCR limiter precedent, `plugins/documents/ocr.ts:46-54`) |
 
 The test never uses a stored provider's key for a _different_ provider, and the response is
 `{ ok: true }` / `{ ok: false, code }` — never the provider body verbatim (it can echo key material
@@ -778,25 +801,25 @@ resolveAccess(ctx, capability):
     else:
       log '[ai] capability assignment has no usable provider user=…'   -- Settings flags it
 
-  server = serverFallback(capability)                        -- env only, §3.4
-  if server: return handle(server)
   return null                                                -- routes answer 402
 ```
 
+There is no server branch (D8): an unconfigured capability is unconfigured, and the ladder above is
+the whole ladder.
+
 Rules that make this honest:
 
-- **User configuration never silently mixes with the server's.** A user-keyed call uses that
-  provider's model or the adapter default — never `RUMAQ_SERVER_AI_MODEL` (the `ai-access.ts:108`
-  rule, restated because it is easy to lose in a refactor).
-- **A broken user key degrades to the server fallback**, then to 402 — matching
-  `resolveReviewAiAccess`'s tolerance (`review-ai.ts:322-338`) and removing today's inconsistency
-  where chat/scan throw 500 on an undecryptable key.
+- **The user's own rows are the only source.** There is no env key, no shared provider, and no
+  "platform default" to fall back to (D8). The only default in the system is the adapter's model
+  default _within_ a provider the user chose.
+- **A broken stored key is not a 500.** An undecryptable ciphertext or an unusable row (missing key,
+  no resolvable endpoint) is logged, treated as not configured, and shown as "needs setup" in
+  Settings — the same 402 the user would get with nothing configured, instead of today's
+  inconsistency where chat/scan throw 500 on an undecryptable key.
 - **`not_configured` is a normal state**, not an error: the review layer keeps degrading assist/auto
   to manual (`review-ai.ts:727-740`), routes keep 402.
 - **Empty means empty.** A new account has no rows for any capability, so `resolveAccess` returns
-  `null` unless the deployment's server fallback exists (§3.4). No code path invents a provider, a
-  model, or a vendor; the only default in the system is the adapter's model default _within_ a
-  provider the user chose.
+  `null` for every capability. No code path invents a provider, a model, or a vendor.
 
 ### 5.2 Error and timeout normalisation
 
@@ -818,15 +841,15 @@ class AiError extends Error {
 }
 ```
 
-| code               | cause                                                | HTTP | note                                                                                                    |
-| ------------------ | ---------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------- |
-| `not_configured`   | no user assignment, no usable server fallback        | 402  | unchanged route strings                                                                                 |
-| `unsupported`      | kind cannot serve the capability                     | 500  | should be unreachable: save-time validation                                                             |
-| `auth`             | provider 401/403                                     | 502  | body truncated, key never echoed                                                                        |
-| `rate_limited`     | provider 429                                         | 502  | `Retry-After` surfaced on the error, not re-sent as a retry                                             |
-| `timeout`          | our `AbortSignal` fired                              | 502  | **same status as today** so client handling is unchanged; `code` carries the distinction                |
-| `provider_error`   | other 4xx/5xx                                        | 502  | message keeps the provider label (`"Gemini request failed: 500 …"`) so existing route tests stay honest |
-| `invalid_response` | empty content, unparseable JSON, off-schema decision | 502  | feature-level validation still runs after and can reject further                                        |
+| code               | cause                                                         | HTTP | note                                                                                                    |
+| ------------------ | ------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------- |
+| `not_configured`   | no assignment for the capability, or its provider is unusable | 402  | unchanged route strings                                                                                 |
+| `unsupported`      | kind cannot serve the capability                              | 500  | should be unreachable: save-time validation                                                             |
+| `auth`             | provider 401/403                                              | 502  | body truncated, key never echoed                                                                        |
+| `rate_limited`     | provider 429                                                  | 502  | `Retry-After` surfaced on the error, not re-sent as a retry                                             |
+| `timeout`          | our `AbortSignal` fired                                       | 502  | **same status as today** so client handling is unchanged; `code` carries the distinction                |
+| `provider_error`   | other 4xx/5xx                                                 | 502  | message keeps the provider label (`"Gemini request failed: 500 …"`) so existing route tests stay honest |
+| `invalid_response` | empty content, unparseable JSON, off-schema decision          | 502  | feature-level validation still runs after and can reject further                                        |
 
 **No automatic retries in the facade.** Each retry is a subrequest against the 50-per-invocation cap
 (`review-ai.ts:60-66`); the review sweep already retries on its next tick, and a 429 storm is a
@@ -854,19 +877,20 @@ INSERT INTO ai_usage_events
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ```
 
-- `provider` = the **kind** (`'openai'`, `'questions'`) — continues today's meaning.
+- `provider` = the **kind** (`'openai-compatible'`, `'questions'`) — continues today's meaning.
 - `model` = the model actually sent; NULL = adapter default.
 - `capability` = the dimension the directive asks for.
-- `key_source` = `'user' | 'server'`.
+- `key_source` = `'user'` on every new row; the column and its historical `'server'` values stay for
+  continuity (D8 retired the fallback).
 - The sweep keeps its single batched write (`review-ai.ts:650-662`); `document-ocr.ts` keeps its
   "audit every attempt" pairing (`:121-136`), now reading `err.call`/`err.usage` from `AiError`.
 - **Known gap**: the typed-decision wire reports no token counts. Such calls record
   `input_tokens = 0, output_tokens = 0, cached_tokens = NULL` and are distinguishable by
-  `provider = 'questions'`; per-call billing analytics for that kind are approximate (OQ7).
+  `provider = 'questions'`; per-call billing analytics for that kind are approximate (OQ4).
 
 ### 5.4 Adapter quirks (the per-provider knowledge, isolated)
 
-| Concern       | `openai`                                                                                  | `anthropic`                                                                                   | `gemini`                                                                                       | `questions`                     |
+| Concern       | `openai-compatible`                                                                       | `anthropic`                                                                                   | `gemini`                                                                                       | `questions`                     |
 | ------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------- |
 | Endpoint      | `{base}/chat/completions`                                                                 | `https://api.anthropic.com/v1/messages`                                                       | `…/v1beta/models/{model}:generateContent`                                                      | `{base}` (one POST)             |
 | Auth          | `Authorization: Bearer`                                                                   | `x-api-key` + `anthropic-version: 2023-06-01`                                                 | `?key=` query param                                                                            | `Authorization: Bearer`         |
@@ -903,7 +927,7 @@ expects it to read receipts. It gets its own test and a release note, and it rid
 One nuance for review: a `questions` provider answers choice + confidence only, so
 `review_ai_verdicts.reason` becomes NULL under a typed (`questions`) decision provider. The column
 already allows NULL (`migrations/0038_review_ai.sql:49`) and the UI renders the reason when present;
-the contract change is "reason is optional" (OQ1).
+the contract change is "reason is optional" (D3 accepts it).
 
 ---
 
@@ -914,31 +938,45 @@ Each phase is one PR, shippable alone, with its own rollback. Every phase runs
 when routes change — `./scripts/docs.sh` and `bunx vp run api:codegen` (CI diffs both artifacts,
 `scripts/github/ci.sh:16-24`).
 
-### P1 — Schema, resolver swap, usage dimension (no behaviour change)
+### P1 — Schema, resolver swap, server-fallback removal
 
 **The first PR, exactly:**
 
 1. `backend/migrations/0039_ai_gateway.sql` — the two tables, indexes, CHECKs, backfill, and
    `ai_usage_events.capability` (§3.2–§3.3).
 2. `backend/src/lib/ai/{types,presets,credentials,capabilities,usage}.ts` — `resolveAccess` on the
-   **new** tables with the server-fallback ladder; `buildAiUsageEventStatement`/`recordAiUsageEvent`/
-   `deleteExpiredAiUsageEvents` moved here unchanged except the `capability` column.
-3. `backend/src/lib/ai-access.ts` keeps its exported shape (`UserAiSettings`,
-   `USER_AI_SETTINGS_COLUMNS`, `loadUserAiSettings`, `AiAccess`, `resolveAiAccess`) but its body now
-   reads the new tables — no call site is touched, so the diff is reviewable and the blast radius is
-   storage only.
-4. `GET /api/settings` gains additive `ai_providers`, `ai_capabilities`, `ai_status` (read-only).
-5. Tests: `migrations.test.ts` (apply the chain in real SQLite; assert backfill row counts, the
+   **new** tables with the **two-outcome ladder** (assignment → null); `buildAiUsageEventStatement`/
+   `recordAiUsageEvent`/`deleteExpiredAiUsageEvents` moved here, with the `capability` column.
+3. **The server fallback is deleted here, not later** (D8): `ai-access.ts:114-130`, the
+   `SERVER_PROVIDER_PRESETS` allowlist (`:70-76`), the `RUMAQ_SERVER_AI_*` bindings
+   (`backend/src/types.ts:43-45`), and the undeclared-vars comment (`cloudflare.config.ts:116-119`).
+   `backend/src/lib/ai-access.ts` keeps its exported shape (`UserAiSettings`,
+   `USER_AI_SETTINGS_COLUMNS`, `loadUserAiSettings`, `AiAccess`, `resolveAiAccess`) so no call site is
+   touched; only its body changes.
+4. `docs/ARCHITECTURE.md:313` loses the "shared server key is uncapped" sentence; §9's env table
+   never listed the variables, so it needs no row removed. `docs/MANUAL_ACTIONS.md` gets one entry:
+   delete `RUMAQ_SERVER_AI_{PROVIDER,KEY,MODEL}` from the QA Worker (they are inert after this PR but
+   should not linger).
+5. `GET /api/settings` gains additive `ai_providers`, `ai_capabilities`, `ai_status`, and the legacy
+   `PATCH` gains the **write-through** (§4.3): it upserts the migration-shaped provider and the three
+   capability assignments from `ai_key` / `ai_provider` / `ai_model` / `ai_vision_model` /
+   `ai_thinking_level`, so the current Settings screen keeps working and can seed the QA accounts.
+6. Tests: `migrations.test.ts` (apply the chain in real SQLite; assert backfill row counts, the
    vision precedence, the case-insensitive label index, the CASCADE, the vision/thinking CHECK, and
    that a user with no legacy AI settings gets **zero** provider and capability rows);
-   `ai-access.test.ts` precedence matrix (user → server → null, undecryptable → server, broken
-   provider row → server, empty account + no env → null); `api-routes.test.ts` settings additive
-   payload (`ai_status` all `none` for a fresh user).
-6. `docs/ARCHITECTURE.md` §7 gets one paragraph pointing at this document.
+   `ai-access.test.ts` **rewritten** as the two-outcome matrix — assignment → row, undecryptable key →
+   null, missing/unusable provider → null, empty account → null, and "env vars present but ignored";
+   the four suites that constructed the fallback (`documents-ocr`, `api-routes`, `review-ai`, plus
+   `__tests__/support/env.ts`) seed provider + capability rows instead; `api-routes.test.ts` asserts
+   the settings payload with `ai_status` all `none` for a fresh user; a route test that a legacy
+   `PATCH /api/settings` creates the provider + three assignments (idempotently, on repeat patches).
 
-**Not in P1:** no new endpoints, no UI, no call-site edits, no adapter extraction, no deletion.
+**Not in P1:** no new endpoints, no new UI, no call-site edits, no adapter extraction, no deletion.
 **Rollback:** revert the PR. The migration is additive (old code ignores the tables and the extra
-column); the written capability values are simply unread.
+column), the write-through wrote the legacy columns too, and the env fallback returns with the
+reverted code — so QA keeps working either way. The QA rows themselves are configured once through
+the existing Settings screen during this PR's verification (a `docs/MANUAL_ACTIONS.md` step): the
+owner adds the `questions` provider for decision and the chat provider for reasoning/vision.
 
 ### P2 — The door: facade + protocol adapters
 
@@ -956,14 +994,20 @@ lands without touching features; delete the shim in P4.
 ### P3 — Settings API + UI (first user-visible PR)
 
 The `/api/ai/providers`, `/api/ai/capabilities`, `/api/ai/presets` endpoints, the provider test
-endpoint, legacy write-through (§4.3), and the Settings screen rebuild (§4.4) with en+id copy.
+endpoint, and the Settings screen rebuild (§4.4) with en+id copy. The legacy write-through from P1
+stays in place and keeps being tested; P6 removes it with the columns. `server_ai_available` leaves
+the `/api/settings` payload here, together with the "use server default" option that read it
+(`api.ts:1114`, `Settings.jsx:487-500`), and the QA accounts' rows from P1 render as ordinary
+providers.
 
 - Tests: route tests for CRUD, 401 without a session, 404 on another user's provider id, 409 on a
   duplicate label, 400 on kind/capability mismatch, 400 on `vision` + thinking, 404 assigning a
   provider that does not exist, cascade reporting on delete; `Settings.test.jsx` for the **empty
   state** (no capability selectors until a provider exists, nothing preselected), the three
-  capability cards, add/delete provider, "falls back" warning; legacy `PATCH /api/settings` still
-  lands in the new tables.
+  capability cards, add/delete provider, "becomes not configured" warning, and the absence of any
+  server-default affordance; the automation setup step moves to `POST /api/ai/providers` +
+  `PUT /api/ai/capabilities/*` (legacy `PATCH /api/settings` keeps its write-through, so both paths
+  stay tested).
 - Rollback: revert the PR; the API additions are unused by the old UI, and the legacy fields still
   work because P1's resolver reads whatever the backfill wrote.
 
@@ -1012,6 +1056,10 @@ see and fix what the runtime resolves (P3 before P4), and destruction last and i
 
 ## 7. Risks and open questions for the owner
 
+The three questions this section carried at review time were **decided by the owner on 2026-11-07**
+and now live in §0 as **D2** (four wire adapters), **D3** (typed decision contract) and **D8** (no
+server fallback). What follows is the risk list and the questions that are still open.
+
 ### Risks
 
 1. **Subrequest budget.** The Workers free plan allows 50 subrequests per invocation and the review
@@ -1022,69 +1070,53 @@ see and fix what the runtime resolves (P3 before P4), and destruction last and i
    under the same `WORKER_ENCRYPTION_KEY`. Rotating that key already invalidates every stored key
    (`docs/ARCHITECTURE.md:478`); now it invalidates N per user. Option: bind the ciphertext to the
    provider row id as AES-GCM additional data (a `crypto.ts` change) so a copied ciphertext cannot
-   be re-planted on another row — worth doing in P2 if we accept touching `crypto.ts`.
+   be re-planted on another row — worth doing in P2 if we accept touching `crypto.ts` (OQ2).
 3. **Behaviour change disguised as a fix.** Receipt scan switching to the vision model (§5.5) can
    surprise a user whose text model was doing fine. Mitigation: release note, and the UI shows
-   "Vision model" on the scan path; the vision assignment defaults to the migrated `ai_vision_model`
+   "Vision model" on the scan path; the vision assignment inherits the migrated `ai_vision_model`
    which, when unset, is the old text model — so nothing changes for users who never set it.
-4. **Silent fallback (only where a fallback exists).** Production has no `RUMAQ_SERVER_AI_*`, so a
-   cleared assignment becomes 402 — loud and correct. In QA/testing, where the fallback does exist,
-   any signed-in account can spend the platform key once an assignment is cleared; accepted because
-   the QA accounts are the owner's, and mitigated by `ai_status` per capability in Settings plus
-   `key_source = 'server'` on every usage row (OQ6 is the decision to keep it that way).
+4. **No safety net, by design.** D8 removes the platform key, so a user who deletes a provider — or
+   whose key stops decrypting — gets 402 and the feature degrades (review assist/auto → manual, chat
+   unavailable) with nobody to bill but themselves. That is the intended trade, but it puts real
+   weight on the empty state and on the 402 copy being actionable ("Add a provider in Settings"),
+   and on `ai_status` telling the truth per capability. P3 tests the copy, P4 tests the degradation.
 5. **Two sources of truth during P1–P5.** Legacy columns and new tables coexist; every write path
-   must write both (P3) or the compatibility window produces drift. Mitigation: the write-through is
+   must write both (from P1 on) or the compatibility window produces drift. Mitigation: the write-through is
    one function with its own test, and P6 removes the ambiguity.
-6. **Typed-decision answers are thin.** Choice + confidence only: no reason, no tokens. Two product
-   consequences (review justification empty, cost analytics approximate) — see OQ1/OQ7.
+6. **Typed-decision answers are thin — accepted by D3.** Choice + confidence only: no reason, no
+   tokens. Consequences: `review_ai_verdicts.reason` is empty under a `questions` provider, and the
+   admin cost view shows zero tokens for those calls (OQ4). Both are visible, not hidden.
 
 ### Open questions
 
-1. **Jev's wire.** The pipeline calls `POST https://api.typesafe.ai/v1/systemone` with
-   `{state, model:"jev-latest", questions:{<name>:{type:"choice", instructions, criteria}}}` and
-   reads `answers.<name>.{choice, confidence}` (`RumaQ-pipeline/groceries/scraper/src/categorize/jev.ts:13-14,52-71`).
-   Is that the endpoint/contract RumaQ should adopt for the decision capability? Does it support a
-   free-text rationale (for `review_ai_verdicts.reason`) or a usage/token report? Recommendation:
-   adopt the typed contract; treat reason-as-NULL and zero tokens as accepted limitations.
-2. **Adapter collapse (D2).** Confirm four wire kinds (`openai`, `anthropic`, `gemini`, `questions`)
-   with the six vendor presets as data, instead of one adapter class per vendor. Without a yes, the
-   design still works but carries three near-identical adapters.
-3. **Whose keys are these?** Per-user today (`user_settings`), which is why `ai_providers.user_id` is
+1. **Whose keys are these?** Per-user today (`user_settings`), which is why `ai_providers.user_id` is
    per-user. A family sharing one key would need `household_id` ownership plus an attribution rule
    for `ai_usage_events.user_id`. Recommendation: keep per-user for v1; revisit with the household
    plan.
-4. **Encryption hardening.** Bind the provider ciphertext to its row id (risk 2)? It is a small
-   `crypto.ts` change but it invalidates existing ciphertexts, so it must land with a re-encrypt-on-
-   read or a forced key re-entry.
-5. **Embeddings now or later?** Recommendation: later. A fourth capability is an additive enum value
+2. **Encryption hardening.** Bind the provider ciphertext to its row id (risk 2)? It is a small
+   `crypto.ts` change but it invalidates existing ciphertexts, so it must land with a
+   re-encrypt-on-read or a forced key re-entry.
+3. **Embeddings now or later?** Recommendation: later. A fourth capability is an additive enum value
    plus a new adapter method, but embeddings have a different shape (no messages, no completion,
    different usage units) and no feature needs them yet. Modelling them now would make `decide()`'s
    simplicity worse.
-6. **Server fallback gating.** Confirm §3.4: the decision → Jev wiring exists only in the
-   testing/QA deployment (`RUMAQ_SERVER_AI_DECISION_{PROVIDER,KEY,BASE_URL,MODEL}`), production ships
-   without `RUMAQ_SERVER_AI_*`, and no user is ever seeded. Second half: should the fallback be
-   _additionally_ gated — `TEST_MODE` only, admin-only users, or a `deployment_flags` row — so a
-   stray production env var can never bill the platform for a user who configured nothing?
-   Recommendation: "unset in prod" plus the `key_source = 'server'` record is enough for now, because
-   it is visible and attributable; add the admin-only gate the day a shared key is meant to serve
-   real users.
-7. **Token accounting for typed providers.** Accept zeros (recommended, with `provider='questions'`
+4. **Token accounting for typed providers.** Accept zeros (recommended, with `provider='questions'`
    as the marker) or add a per-call counter so the admin view stays meaningful?
-8. **Local/private endpoints.** The HTTPS-only rule (`api.ts:1198-1200`) blocks a self-hosted Ollama
+5. **Local/private endpoints.** The HTTPS-only rule (`api.ts:1198-1200`) blocks a self-hosted Ollama
    on `http://192.168.x.x`. Allow private-network HTTP for user-owned base URLs (a real SSRF surface
    on Workers, which cannot reach the LAN anyway) or keep HTTPS-only? Recommendation: keep HTTPS-only.
-9. **Legacy column drop timing (P6).** One full release after P5? The PWA and any mobile wrapper
-   must be observed in the wild before the columns go.
-10. **Decision on chat providers.** Should a chat provider be assignable to `decision` (JSON prompt)
-    at all, or only a typed-decision provider? Recommendation: allow both — the migration itself
-    assigns the legacy chat provider to `decision`, and a user with one key would otherwise lose the
-    review feature.
-11. **Per-provider rate limiting.** A single bad key can 429 repeatedly; today only the OCR route is
-    limited (`plugins/documents/ocr.ts:46-54`). Add a per-user AI rate limit in P4, or leave it to
-    the provider's own quota?
-12. **Should the provider test be free?** A typed-decision test is a billable question. Alternatives:
-    probe with an intentionally empty `questions` object and accept a 400 (proves auth, no billing) —
-    needs the provider's confirmation.
+6. **Legacy column drop timing (P6).** One full release after P5? The PWA and any mobile wrapper must
+   be observed in the wild before the columns go.
+7. **Decision on chat providers.** Should a chat provider be assignable to `decision` (JSON prompt and
+   prompt-parsed choice) at all, or only a typed provider? Recommendation: allow both — the migration
+   itself assigns the legacy chat provider to `decision`, and a user with one key would otherwise lose
+   the review feature.
+8. **Per-provider rate limiting.** A single bad key can 429 repeatedly; today only the OCR route is
+   limited (`plugins/documents/ocr.ts:46-54`). Add a per-user AI rate limit in P4, or leave it to the
+   provider's own quota?
+9. **Should the provider test be free?** A typed-decision test is a billable question. Alternatives:
+   probe with an intentionally empty `questions` object and accept a 400 (proves auth, no billing) —
+   needs the provider's confirmation.
 
 ---
 
