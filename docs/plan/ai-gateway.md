@@ -1,10 +1,11 @@
 # AI gateway — one door, capability-routed providers
 
-> Status: **proposed; awaiting owner sign-off.** Design only — no product code in this PR.
+> Status: **implemented — all five phases shipped (P1 #530, P2 #532, P3 #533, P4 #535, P5 #523).**
 > Issue: `ahaqqu/RumaQ#523`. Owner directive: 2026-11-07 ("AI is the core of RumaQ — every
 > feature routes through one door").
 >
-> Reviewed against `origin/main` @ `30ea632`.
+> Reviewed against `origin/main` @ `30ea632`; each phase's "what shipped" block records where the
+> code deviated from this design.
 
 ## 0. Decision summary
 
@@ -1599,6 +1600,50 @@ clients and `frontend/src/lib/aiProviders.js` (the "keep in sync" duplication,
 - Tests: persona route (auth, rate limit, prompt isolation), Settings persona flow, and the
   `frontend-ai-boundary.test.js` hostname ban now green.
 - Rollback: revert; the old browser path is self-contained and needs no server support.
+
+**What P5 shipped, and where it deviated from this sketch.** The rewrite moved behind the door, the
+browser lost every provider path, and the boundary is now a test on both sides. Deviations, recorded
+here rather than in code comments:
+
+- **The request is `{ user_role, ai_role, language, copy }` — the browser still supplies the base
+  strings, as DATA.** The backend cannot own the copy: the UI must render it offline and before any
+  call, so `frontend/src/i18n/locales/{en,id}.json` stays the one copy source and the route receives
+  the slots it is asked to rewrite. What moved server-side is the PROMPT (the instruction text, the
+  JSON data framing, the output shape) and the provider call. `copy` is a strict object of the nine
+  `persona.*` slots: an unknown key is a 400, and `schemas.ts` ties its field list to
+  `lib/persona.ts`'s `PERSONA_COPY_KEYS` at compile time (`satisfies Record<PersonaCopyKey, …>`), so
+  a slot cannot be accepted and silently never rewritten. `language` selects the EN/ID prompt
+  template because the copy the browser sends is already translated.
+- **Prompt isolation is JSON framing, not an adjective.** Both inputs are user text, so the roles ride
+  a `JSON.stringify` object and the copy a JSON object, under a sentence that names the blocks DATA and
+  forbids following instructions inside them. A role containing quotes or newlines cannot close the
+  block, and `prompt-isolation.test.ts` parses the block back to prove the payload is exactly the two
+  role strings. The route test asserts the same on the wire.
+- **`testAiKey` is DELETED, not rewritten as a delegate.** It had no caller after P3: the provider
+  row's Test button already calls `POST /api/ai/providers/:id/test` through `useTestAiProvider`, and
+  the old signature (`provider`, `aiKey`, `baseUrl`) has no meaning when the key never reaches the
+  browser and the endpoint is a row id. A delegating wrapper would have been a dead export holding a
+  second way to name a provider; the boundary test pins the retired route path instead.
+- **The rate limit is the provider test's window (30/min per user), applied AFTER the 402 gate.** It is
+  a burst guard on a billed call, not a budget cap: D9 still says no usage/token limit exists anywhere,
+  and an unconfigured household keeps getting the honest 402 instead of a 429 that implies its request
+  would otherwise run. The route answers 429 + `Retry-After`, like the OCR and provider-test limiters.
+- **An unusable answer is a 502 that carries the bill.** Per-key fallback is preserved (a slot the
+  model omits, empties, or bloats past 600 characters keeps the browser's own string — the rewrite is
+  a flourish, never a way to blank the UI), but an answer that is not a JSON object at all is
+  `AiError('invalid_response', …, {call, usage})`, so the route records the billed attempt (the P4 A1
+  rule) and the UI shows the failure instead of silently pretending it rewrote nothing.
+- **The 402 is not an error in Settings.** Apply saves the persona and then asks for the rewrite; a
+  402 keeps the built-in copy, settles the button on "Saved", and shows no failure — the persona works
+  without AI (plan §5.1 "not_configured is a normal state"). Only a real failure surfaces the error.
+  `settings.personaInfo` (en + id) no longer says the rewrite is unavailable.
+- **The boundary test lives at `frontend/src/lib/frontend-ai-boundary.test.js` and scans more than
+  hostnames.** It bans a provider hostname, a `Bearer`/`x-api-key` header, a hardcoded absolute
+  `fetch()` URL, and the retired `/api/ai-key/test` path across `frontend/src/**`, and asserts the
+  deleted `lib/aiProviders.js` stays deleted; `*.test.js(x)` files are exempt because a fixture may
+  name an endpoint the API returns (the Settings preset test does exactly that). `aiProviders.js` was
+  already readerless after P3 — the screen learns labels and endpoints from `GET /api/ai/presets` — so
+  P5 deleted the table and its test rather than rewiring it.
 
 **Why this order:** enforcement before the move (P2's boundary test exists before P4 relocates five
 call sites), data before behaviour (P1 before P4), and **screen and schema together** in P3 so a user

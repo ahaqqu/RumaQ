@@ -1668,6 +1668,114 @@
         }
       }
     },
+    "/api/ai/generate/persona": {
+      "post": {
+        "operationId": "postApiAiGeneratePersona",
+        "description": "Rewrites the app's interface copy in the user's declared persona roles, behind the door (#523 P5). The browser sends the two role names and the interface strings it renders; the prompt, the provider row and the key stay server-side, and the call is a REASONING capability call recorded in ai_usage_events. Roles and copy are treated as DATA (JSON-quoted in the prompt), never as instructions. Answers 402 when the household has no usable reasoning assignment, in which case the UI simply keeps its built-in copy.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["user_role", "ai_role", "copy"],
+                "properties": {
+                  "user_role": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "ai_role": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "language": {
+                    "type": "string",
+                    "enum": ["en", "id"]
+                  },
+                  "copy": {
+                    "type": "object",
+                    "description": "The interface strings to rewrite, keyed by the persona.* slots the UI renders. At least one entry; unknown keys are rejected.",
+                    "properties": {
+                      "homeLead": {
+                        "type": "string"
+                      },
+                      "inventoryLead": {
+                        "type": "string"
+                      },
+                      "planLeadNoKey": {
+                        "type": "string"
+                      },
+                      "planLead": {
+                        "type": "string"
+                      },
+                      "historyLead": {
+                        "type": "string"
+                      },
+                      "receiptLead": {
+                        "type": "string"
+                      },
+                      "settingsLead": {
+                        "type": "string"
+                      },
+                      "assistantGreeting": {
+                        "type": "string"
+                      },
+                      "assistantQuestion": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rewritten copy, keyed exactly like the request. A slot the model omitted falls back to the string that was sent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["copy"],
+                  "properties": {
+                    "copy": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "402": {
+            "description": "AI provider not configured"
+          },
+          "429": {
+            "description": "Too many persona rewrites"
+          },
+          "502": {
+            "description": "AI provider error, or an unusable rewrite answer"
+          }
+        }
+      }
+    },
     "/api/ai/chat": {
       "post": {
         "operationId": "postApiAiChat",

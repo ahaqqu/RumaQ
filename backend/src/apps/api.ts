@@ -132,6 +132,11 @@ import {
   type AiCall,
   type TokenUsage,
 } from '../lib/ai/index.js'
+import {
+  generatePersonaCopy,
+  type PersonaCopyInput,
+  type PersonaCopyLanguage,
+} from '../lib/persona.js'
 import { loadHouseholdAiConfig } from '../lib/ai/capabilities.js'
 import { buildScanPrompt, parseScanResult } from '../lib/receipt-scan.js'
 import {
@@ -160,6 +165,7 @@ import {
   aiProviderCreateSchema,
   aiProviderPatchSchema,
   aiCapabilityAssignSchema,
+  personaCopySchema,
   stockPatchSchema,
   purchaseCreateSchema,
   chatSchema,
@@ -661,6 +667,7 @@ apiApp.use('/api/ai/providers/:id/test', propsAuthMiddleware)
 apiApp.use('/api/ai/presets', propsAuthMiddleware)
 apiApp.use('/api/ai/capabilities', propsAuthMiddleware)
 apiApp.use('/api/ai/capabilities/:capability', propsAuthMiddleware)
+apiApp.use('/api/ai/generate/persona', propsAuthMiddleware)
 apiApp.use('/api/locations', propsAuthMiddleware)
 apiApp.use('/api/locations/:id', propsAuthMiddleware)
 apiApp.use('/api/items', propsAuthMiddleware)
@@ -1417,6 +1424,14 @@ apiApp.patch(
 
 const PROVIDER_TEST_RATE_WINDOW_MS = 60_000
 const PROVIDER_TEST_RATE_MAX = 30
+
+// The persona rewrite (#523 P5) is ONE billed reasoning call per Apply, so it
+// reuses the provider-test window (30/min per user) — the shared shape for the
+// small, user-triggered AI surfaces: a per-user fixed window, applied after the
+// 402 gate, answered 429 + Retry-After. It is a burst guard, NOT a budget cap
+// (D9): no usage counter gates an AI call anywhere in the product.
+const PERSONA_RATE_WINDOW_MS = 60_000
+const PERSONA_RATE_MAX = 30
 
 /**
  * The one translation from the settings module's typed refusals (and the owner
@@ -2519,6 +2534,152 @@ apiApp.get(
   }
 )
 
+apiApp.post(
+  '/api/ai/generate/persona',
+  describeRoute({
+    description:
+      "Rewrites the app's interface copy in the user's declared persona roles, behind the door (#523 P5). The browser sends the two role names and the interface strings it renders; the prompt, the provider row and the key stay server-side, and the call is a REASONING capability call recorded in ai_usage_events. Roles and copy are treated as DATA (JSON-quoted in the prompt), never as instructions. Answers 402 when the household has no usable reasoning assignment, in which case the UI simply keeps its built-in copy.",
+    security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['user_role', 'ai_role', 'copy'],
+            properties: {
+              user_role: { type: 'string', minLength: 1, maxLength: 200 },
+              ai_role: { type: 'string', minLength: 1, maxLength: 200 },
+              language: { type: 'string', enum: ['en', 'id'] },
+              copy: {
+                type: 'object',
+                description:
+                  'The interface strings to rewrite, keyed by the persona.* slots the UI renders. At least one entry; unknown keys are rejected.',
+                properties: {
+                  homeLead: { type: 'string' },
+                  inventoryLead: { type: 'string' },
+                  planLeadNoKey: { type: 'string' },
+                  planLead: { type: 'string' },
+                  historyLead: { type: 'string' },
+                  receiptLead: { type: 'string' },
+                  settingsLead: { type: 'string' },
+                  assistantGreeting: { type: 'string' },
+                  assistantQuestion: { type: 'string' },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          'The rewritten copy, keyed exactly like the request. A slot the model omitted falls back to the string that was sent.',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['copy'],
+              properties: {
+                copy: {
+                  type: 'object',
+                  additionalProperties: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+      },
+      400: { description: 'Validation error' },
+      401: { description: 'Unauthorized' },
+      402: { description: 'AI provider not configured' },
+      429: { description: 'Too many persona rewrites' },
+      502: { description: 'AI provider error, or an unusable rewrite answer' },
+    },
+  }),
+  sValidator('json', personaCopySchema),
+  async (c) => {
+    const userId = c.get('userId')
+    const householdId = c.get('householdId')
+    const { user_role, ai_role, language, copy } = c.req.valid('json')
+
+    // The rewrite is a REASONING call (#523 P5, plan §5.5): chat, plans and the
+    // persona copy all bill the same capability, resolved once for this request.
+    const aiCtx = { env: c.env, userId, householdId }
+    const access = await resolveAccess(aiCtx, 'reasoning')
+    if (!access) {
+      return c.json(
+        {
+          error: 'AI provider not configured. Go to Settings to set up your AI key.',
+        },
+        402
+      )
+    }
+
+    // The limiter sits AFTER the 402 gate: only a household that can actually
+    // spend needs throttling, and an unconfigured one keeps getting the honest
+    // answer instead of a 429 that implies a request would otherwise run.
+    const { limited, retryAfter } = isRateLimited(
+      `ai-persona:${userId}`,
+      PERSONA_RATE_WINDOW_MS,
+      PERSONA_RATE_MAX
+    )
+    if (limited) {
+      return c.json({ error: 'Too many persona rewrites. Please slow down.' }, 429, {
+        'Retry-After': String(retryAfter),
+      })
+    }
+
+    const requested = copy as PersonaCopyInput
+    const promptLanguage: PersonaCopyLanguage = language ?? 'en'
+
+    // The attempt's call dimensions + tokens: success overwrites them, and the
+    // TEST_MODE stub records the resolved assignment with zero tokens (the
+    // chat/plan precedent).
+    let generated: PersonaCopyInput
+    let usedCall: AiCall = access.call
+    let tokenUsage: TokenUsage = EMPTY_USAGE
+
+    if (c.env.TEST_MODE === 'true') {
+      // No provider in TEST_MODE: hand back the caller's own strings unchanged,
+      // so the persona flow is exercisable end to end without a key.
+      generated = requested
+    } else {
+      try {
+        const result = await generatePersonaCopy(
+          { ...aiCtx, access },
+          {
+            userRole: user_role,
+            aiRole: ai_role,
+            language: promptLanguage,
+            copy: requested,
+          }
+        )
+        generated = result.copy
+        usedCall = result.call
+        tokenUsage = result.usage
+      } catch (err) {
+        // An unusable answer is billed too: `AiError('invalid_response', …)`
+        // carries the call's usage (plan §2.2).
+        await recordAiFailureUsage(c.env, userId, { call: usedCall, usage: tokenUsage }, err)
+        return c.json(
+          {
+            error: `AI persona rewrite failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          },
+          502
+        )
+      }
+    }
+
+    await recordAiCallUsage(c.env, userId, usedCall, tokenUsage)
+
+    const res = c.json({ copy: generated })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
 apiApp.post(
   '/api/ai/chat',
   describeRoute({

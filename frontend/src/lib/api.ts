@@ -267,6 +267,25 @@ export function testAiProvider(id: string): Promise<AiProviderTestResult> {
   return unwrap(client.POST('/api/ai/providers/{id}/test', { params: { path: { id } } }))
 }
 
+/**
+ * The persona rewrite (#523 P5, plan §6 P5): the only way the browser gets
+ * AI-written app copy. The payload carries the two role names, the language and
+ * the built-in strings the UI renders — never a provider, an endpoint or a key.
+ * The server builds the prompt (roles and copy as data), dispatches the
+ * household's `reasoning` assignment behind the door and records a usage row.
+ *
+ * 402 = the household has no usable reasoning assignment; the persona keeps its
+ * built-in copy, so the caller treats it as a normal state.
+ */
+export function generateAiPersonaCopy(payload: {
+  user_role: string
+  ai_role: string
+  language: 'en' | 'id'
+  copy: Partial<Record<string, string>>
+}): Promise<{ copy: Record<string, string> }> {
+  return unwrap(client.POST('/api/ai/generate/persona', { body: payload }))
+}
+
 export function getAiCapabilities(): Promise<AiCapabilityConfig> {
   return unwrap(client.GET('/api/ai/capabilities'))
 }

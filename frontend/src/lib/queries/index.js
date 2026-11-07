@@ -15,6 +15,7 @@ export {
   useAiProviders,
   useAiPresets,
   useAiCapabilities,
+  useGeneratePersonaCopy,
   useCreateAiProvider,
   useUpdateAiProvider,
   useDeleteAiProvider,

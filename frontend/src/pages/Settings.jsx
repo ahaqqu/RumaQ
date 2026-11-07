@@ -104,7 +104,7 @@ export function Settings({ motion, setMotion }) {
   const { t } = useTranslation()
   const [newLoc, setNewLoc] = useState('')
   const [newStore, setNewStore] = useState('')
-  const { persona, setPersona } = usePersona()
+  const { persona, setPersona, regenerateCopy } = usePersona()
   const [personaDraft, setPersonaDraft] = useState({
     userRole: persona.userRole,
     aiRole: persona.aiRole,
@@ -176,11 +176,19 @@ export function Settings({ motion, setMotion }) {
         persona_enabled: personaDraft.enabled,
       })
 
-      // P3 removed the browser-visible provider config this call used to read
-      // (`ai_provider` / `ai_base_url` / `ai_model` are gone with the columns),
-      // so the persona is SAVED but the AI rewrite is not attempted from here:
-      // `regenerateCopy` moves behind the door in P5 (#523 P5). Keeping a call
-      // with no provider would send a stale browser key to a guessed vendor.
+      // The AI rewrite is one server call behind the door (#523 P5): the page
+      // hands over the roles and the built-in copy, and the Worker owns the
+      // prompt, the provider and the key. Nothing provider-shaped is read here
+      // any more (the P3 columns are gone).
+      try {
+        await regenerateCopy({ ...personaDraft })
+      } catch (err) {
+        // 402 = this household has no usable reasoning assignment. The persona
+        // still works with the built-in copy, so this is the documented normal
+        // state ("not_configured is a normal state", plan §5.1), not an error.
+        if (err?.status !== 402) throw err
+      }
+
       setPersonaApplied(true)
       setTimeout(() => setPersonaApplied(false), 2000)
     } catch (err) {

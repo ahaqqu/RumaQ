@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vite-plus/test'
+import openapi from '../../openapi.json'
 import {
   DEFAULT_PERSONA,
   PERSONA_KEY,
+  PERSONA_COPY_KEYS,
   loadPersona,
   savePersona,
   personaText,
@@ -9,8 +11,16 @@ import {
   speak,
   buildSystemPrompt,
   applyTheme,
+  buildPersonaCopyRequest,
   generatePersonaCopy,
 } from './persona.js'
+import { generateAiPersonaCopy } from './api'
+import { i18n } from '../i18n/index.js'
+
+// The browser has no provider client any more (#523 P5): persona.js delegates
+// the rewrite to POST /api/ai/generate/persona, so this suite mocks the API
+// client rather than `fetch` to a vendor.
+vi.mock('./api', () => ({ generateAiPersonaCopy: vi.fn() }))
 
 const ID_TEMPLATES = {
   'persona.homeLead':
@@ -193,196 +203,95 @@ describe('applyTheme', () => {
   })
 })
 
-describe('generatePersonaCopy', () => {
-  it('returns null when persona is not enabled', async () => {
-    const result = await generatePersonaCopy(DEFAULT_PERSONA, 'sk-test', 'opencode', idT)
-    expect(result).toBeNull()
+describe('buildPersonaCopyRequest (#523 P5)', () => {
+  it('sends the two roles, the language and every built-in slot', () => {
+    const request = buildPersonaCopyRequest(
+      { enabled: true, userRole: ' raja ', aiRole: 'prajurit' },
+      (key) => `copy:${key}`
+    )
+    expect(request.user_role).toBe('raja')
+    expect(request.ai_role).toBe('prajurit')
+    expect(request.language).toBe('en')
+    expect(Object.keys(request.copy)).toEqual([...PERSONA_COPY_KEYS])
+    expect(request.copy.homeLead).toBe('copy:persona.homeLead')
   })
 
-  it('returns null when aiKey is missing', async () => {
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit' }
-    const result = await generatePersonaCopy(p, null, 'opencode', idT)
-    expect(result).toBeNull()
-  })
-
-  it('rejects when the AI call fails so the caller can surface the error', async () => {
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit' }
-    await expect(generatePersonaCopy(p, 'sk-invalid', 'opencode', idT)).rejects.toThrow()
-  })
-
-  it('returns null when AI returns non-JSON', async () => {
-    globalThis.fetch = async () => ({
-      ok: true,
-      json: async () => ({
-        candidates: [{ content: { parts: [{ text: 'not json' }] } }],
-      }),
-    })
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
-    const result = await generatePersonaCopy(p, 'sk-valid', 'gemini', idT)
-    expect(result).toBeNull()
-  })
-
-  it('succeeds with valid Gemini response', async () => {
-    const jsonResponse = JSON.stringify({
-      homeLead: 'AI home lead',
-      inventoryLead: 'AI inventory lead',
-      planLeadNoKey: 'AI plan lead no key',
-      planLead: 'AI plan lead',
-      historyLead: 'AI history lead',
-      receiptLead: 'AI receipt lead',
-      settingsLead: 'AI settings lead',
-      assistantGreeting: 'AI greeting',
-      assistantQuestion: 'AI question',
-    })
-    globalThis.fetch = async () => ({
-      ok: true,
-      json: async () => ({
-        candidates: [{ content: { parts: [{ text: jsonResponse }] } }],
-      }),
-    })
-    const p = {
-      enabled: true,
-      userRole: 'raja',
-      aiRole: 'prajurit',
-      hue: 270,
-      generatedCopy: null,
+  it('reports the language the copy is written in', () => {
+    i18n.changeLanguage('id')
+    try {
+      expect(buildPersonaCopyRequest({ userRole: 'raja', aiRole: 'prajurit' }).language).toBe('id')
+    } finally {
+      i18n.changeLanguage('en')
     }
-    const result = await generatePersonaCopy(p, 'sk-valid', 'gemini', idT)
-    expect(result).not.toBeNull()
-    expect(result.homeLead).toBe('AI home lead')
   })
 
-  it('succeeds with markdown-wrapped JSON', async () => {
-    const jsonResponse = '```json\n{"homeLead": "MD lead"}\n```'
-    globalThis.fetch = async () => ({
-      ok: true,
-      json: async () => ({
-        candidates: [{ content: { parts: [{ text: jsonResponse }] } }],
-      }),
-    })
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
-    const result = await generatePersonaCopy(p, 'sk-valid', 'gemini', idT)
-    expect(result).not.toBeNull()
-    expect(result.homeLead).toBe('MD lead')
+  it('carries no provider, endpoint, model or key field', () => {
+    // The browser lost provider access in P5: the request is roles + copy only.
+    const request = buildPersonaCopyRequest({ userRole: 'raja', aiRole: 'prajurit' })
+    expect(Object.keys(request).sort()).toEqual(['ai_role', 'copy', 'language', 'user_role'])
+    expect(JSON.stringify(request)).not.toMatch(/sk-|api.openai|generativelanguage|anthropic/)
   })
+})
 
-  it('generates with openai provider', async () => {
-    globalThis.fetch = async () => ({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"homeLead":"AI"}' } }],
-      }),
-    })
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
-    const result = await generatePersonaCopy(p, 'sk-valid', 'openai', idT)
-    expect(result).not.toBeNull()
-  })
+describe('the persona request contract (#523 P5)', () => {
+  // The generated spec is the SERVER's contract (CI regenerates it from the
+  // routed API). Pinning the UI's slot list to it is what keeps the frontend
+  // from sending a key the backend would 400 on — the drift `aiProviders.js`
+  // used to carry, now a test.
+  const operation = openapi.paths['/api/ai/generate/persona'].post
+  const bodySchema = operation.requestBody.content['application/json'].schema
 
-  it('generates with anthropic provider', async () => {
-    globalThis.fetch = async () => ({
-      ok: true,
-      json: async () => ({ content: [{ text: '{"homeLead":"AI"}' }] }),
-    })
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
-    const result = await generatePersonaCopy(p, 'sk-valid', 'anthropic', idT)
-    expect(result).not.toBeNull()
-  })
-
-  it('falls back to the default Anthropic model when none is selected', async () => {
-    let calledBody = null
-    globalThis.fetch = async (url, init) => {
-      calledBody = JSON.parse(init.body)
-      return {
-        ok: true,
-        json: async () => ({ content: [{ text: '{"homeLead":"AI"}' }] }),
-      }
-    }
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
-    await generatePersonaCopy(p, 'sk-valid', 'anthropic', idT)
-    expect(calledBody.model).toBe('claude-3-haiku-20240307')
-  })
-
-  it('generates with opencode provider (default)', async () => {
-    globalThis.fetch = async () => ({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"homeLead":"AI"}' } }],
-      }),
-    })
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
-    const result = await generatePersonaCopy(p, 'sk-valid', 'opencode', idT)
-    expect(result).not.toBeNull()
-  })
-
-  it('generates with ollama provider', async () => {
-    let calledUrl = ''
-    globalThis.fetch = async (url) => {
-      calledUrl = url
-      return {
-        ok: true,
-        json: async () => ({
-          choices: [{ message: { content: '{"homeLead":"AI"}' } }],
-        }),
-      }
-    }
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
-    const result = await generatePersonaCopy(p, 'sk-valid', 'ollama', idT)
-    expect(result).not.toBeNull()
-    expect(calledUrl).toContain('https://ollama.com/v1/chat/completions')
-  })
-
-  it('generates with custom provider using base URL and model', async () => {
-    let calledUrl = ''
-    globalThis.fetch = async (url) => {
-      calledUrl = url
-      return {
-        ok: true,
-        json: async () => ({
-          choices: [{ message: { content: '{"homeLead":"AI"}' } }],
-        }),
-      }
-    }
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
-    const result = await generatePersonaCopy(p, 'sk-valid', 'custom', idT, {
-      baseUrl: 'https://api.example.com/v1',
-      model: 'llama3.3:70b',
-    })
-    expect(result).not.toBeNull()
-    expect(calledUrl).toContain('https://api.example.com/v1/chat/completions')
-  })
-
-  it('uses the selected model for Ollama when a model option is passed', async () => {
-    let calledBody = null
-    globalThis.fetch = async (url, init) => {
-      calledBody = JSON.parse(init.body)
-      return {
-        ok: true,
-        json: async () => ({
-          choices: [{ message: { content: '{"homeLead":"AI"}' } }],
-        }),
-      }
-    }
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
-    await generatePersonaCopy(p, 'sk-valid', 'ollama', idT, { model: 'llama3.3:70b' })
-    expect(calledBody.model).toBe('llama3.3:70b')
-  })
-
-  it('throws for custom provider without base URL or model', async () => {
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
-    await expect(generatePersonaCopy(p, 'sk-valid', 'custom', idT)).rejects.toThrow(
-      'requires a base URL and model'
+  it('accepts exactly the slots this module generates', () => {
+    expect(Object.keys(bodySchema.properties.copy.properties).sort()).toEqual(
+      [...PERSONA_COPY_KEYS].sort()
     )
   })
 
-  it('returns null when AI response is empty', async () => {
-    globalThis.fetch = async () => ({
-      ok: true,
-      json: async () => ({
-        candidates: [{ content: { parts: [{ text: '' }] } }],
-      }),
-    })
-    const p = { enabled: true, userRole: 'raja', aiRole: 'prajurit', hue: 270 }
-    const result = await generatePersonaCopy(p, 'sk-valid', 'gemini', idT)
-    expect(result).toBeNull()
+  it('is roles + copy only — no provider, model or key reaches the browser API', () => {
+    expect(Object.keys(bodySchema.properties).sort()).toEqual([
+      'ai_role',
+      'copy',
+      'language',
+      'user_role',
+    ])
+  })
+})
+
+describe('generatePersonaCopy (#523 P5)', () => {
+  it('returns null without calling the API when the persona is off or incomplete', async () => {
+    for (const persona of [
+      DEFAULT_PERSONA,
+      { enabled: false, userRole: 'raja', aiRole: 'prajurit' },
+      { enabled: true, userRole: '', aiRole: 'prajurit' },
+      { enabled: true, userRole: 'raja', aiRole: '' },
+    ]) {
+      expect(await generatePersonaCopy(persona, idT)).toBeNull()
+    }
+    expect(generateAiPersonaCopy).not.toHaveBeenCalled()
+  })
+
+  it('delegates to the server route and returns the rewritten slots', async () => {
+    generateAiPersonaCopy.mockResolvedValue({ copy: { homeLead: 'Sire, the kitchen is calm.' } })
+    const persona = { enabled: true, userRole: 'raja', aiRole: 'prajurit' }
+
+    const result = await generatePersonaCopy(persona, idT)
+
+    expect(result).toEqual({ homeLead: 'Sire, the kitchen is calm.' })
+    expect(generateAiPersonaCopy).toHaveBeenCalledTimes(1)
+    expect(generateAiPersonaCopy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_role: 'raja',
+        ai_role: 'prajurit',
+        copy: expect.objectContaining({ homeLead: idT('persona.homeLead') }),
+      })
+    )
+  })
+
+  it('lets the failure reach the caller (Settings 402/502 handling)', async () => {
+    const err = Object.assign(new Error('AI provider not configured'), { status: 402 })
+    generateAiPersonaCopy.mockRejectedValue(err)
+    await expect(
+      generatePersonaCopy({ enabled: true, userRole: 'raja', aiRole: 'prajurit' }, idT)
+    ).rejects.toBe(err)
   })
 })

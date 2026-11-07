@@ -1,5 +1,5 @@
 import { i18n } from '../i18n/index.js'
-import { AI_PROVIDER_DEFAULTS } from './aiProviders.js'
+import { generateAiPersonaCopy } from './api'
 
 export const PERSONA_KEY = 'rumaq:persona'
 
@@ -118,212 +118,54 @@ function resolveMoodInstruction(mood, persona, t) {
   return dict[mood] || instructions[mood]
 }
 
-export function generatePersonaCopy(persona, aiKey, provider, t, opts = {}) {
-  if (!persona.enabled || !persona.userRole || !persona.aiRole || !aiKey) {
-    return Promise.resolve(null)
-  }
+// The interface slots the persona rewrite may replace: the `persona.*` strings
+// the UI renders through personaText(). The backend owns the prompt and rejects
+// any other key (backend/src/schemas.ts); persona.test.js pins this list against
+// the route's generated request contract, so the two cannot drift.
+export const PERSONA_COPY_KEYS = [
+  'homeLead',
+  'inventoryLead',
+  'planLeadNoKey',
+  'planLead',
+  'historyLead',
+  'receiptLead',
+  'settingsLead',
+  'assistantGreeting',
+  'assistantQuestion',
+]
 
+/**
+ * The request the browser sends (#523 P5, plan §6 P5): the two role names, the
+ * language the copy is written in, and the built-in strings it wants rewritten.
+ * There is no prompt, provider, endpoint or key in this object any more — the
+ * prompt is server policy (backend/src/lib/persona.ts) and the provider call
+ * happens behind the door, so nothing provider-shaped reaches page memory.
+ */
+export function buildPersonaCopyRequest(persona, t) {
   const translate = t || i18n.t
-  const lang = i18n.language
-
-  const copyEntries = [
-    'homeLead',
-    'inventoryLead',
-    'planLeadNoKey',
-    'planLead',
-    'historyLead',
-    'receiptLead',
-    'settingsLead',
-    'assistantGreeting',
-    'assistantQuestion',
-  ]
-
-  const copyBlock = copyEntries
-    .map((key) => `${key}: """${translate(`persona.${key}`)}"""`)
-    .join('\n')
-
-  const isId = lang === 'id'
-  const role = persona.aiRole
-  const target = persona.userRole
-
-  const intro = isId
-    ? `Kamu sedang menyesuaikan bahasa aplikasi RumaQ (asisten inventaris rumah tangga) agar sesuai peran.\n\nPengguna menyatakan: "saya adalah ${target}, kamu adalah ${role}".\nArtinya, seluruh teks aplikasi harus ditulis seolah-olah aplikasi/kamu (${role}) sedang berbicara kepada pengguna (${target}).`
-    : `You are adapting the language of RumaQ (a household inventory assistant) to match roles.\n\nThe user declared: "I am ${target}, you are ${role}".\nThis means all app text should be written as if the app/you (${role}) are speaking to the user (${target}).`
-
-  const task = isId
-    ? `Tugas:\n1. Tulis ulang setiap teks di atas dengan gaya, pilihan kata, dan tingkat formalitas yang cocok untuk peran "${role}" berbicara kepada "${target}".\n2. Jangan ubah makna atau informasi penting (misalnya tetap sebutkan struk, stok, rencana, dll).\n3. Jangan membuat teks terlalu panjang; tetap singkat dan nyaman dibaca di layar kecil.\n4. Kembalikan hasil dalam format JSON murni, kunci sama persis dengan daftar di atas, tanpa markdown atau penjelasan tambahan.`
-    : `Task:\n1. Rewrite each text above with style, word choice, and formality matching the role "${role}" speaking to "${target}".\n2. Do not change the meaning or key information (e.g., still mention receipts, stock, plans, etc.).\n3. Keep text concise and comfortable to read on a small screen.\n4. Return the result in pure JSON format, exact same keys as listed above, no markdown or extra explanation.`
-
-  const example = isId
-    ? 'Contoh output:\n{\n  "homeLead": "...",\n  "inventoryLead": "..."\n}'
-    : 'Example output:\n{\n  "homeLead": "...",\n  "inventoryLead": "..."\n}'
-
-  const prompt = `${intro}\n\nBerikut teks dasar yang perlu ditulis ulang:\n${copyBlock}\n\n${task}\n\n${example}`
-
-  return callAI(prompt, aiKey, provider, opts).then((raw) => {
-    const json = stripJsonMarkdown(raw)
-    let parsed
-    try {
-      parsed = JSON.parse(json)
-    } catch {
-      return null
-    }
-    const result = {}
-    for (const key of copyEntries) {
-      result[key] = typeof parsed[key] === 'string' ? parsed[key] : translate(`persona.${key}`)
-    }
-    return result
-  })
-  // No catch: failures (missing custom config, network, non-OK responses)
-  // must reach the caller so Settings can show them instead of silently
-  // keeping the fallback copy.
-}
-
-function stripJsonMarkdown(text) {
-  return text
-    .replace(/^```json\s*/i, '')
-    .replace(/\s*```$/, '')
-    .trim()
-}
-
-async function callOpenAICompatible(prompt, aiKey, baseUrl, model) {
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${aiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
-    }),
-  })
-  if (!res.ok) throw new Error(`AI request failed: ${res.status}`)
-  const data = await res.json()
-  return data.choices?.[0]?.message?.content || ''
-}
-
-async function callGemini(prompt, aiKey, model) {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${aiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-    }
-  )
-  if (!res.ok) throw new Error(`AI request failed: ${res.status}`)
-  const data = await res.json()
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
-}
-
-async function callAnthropic(prompt, aiKey, model = 'claude-3-haiku-20240307') {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': aiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 2048,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  })
-  if (!res.ok) throw new Error(`AI request failed: ${res.status}`)
-  const data = await res.json()
-  return data.content?.[0]?.text || ''
-}
-
-const OLLAMA_BASE_URL = 'https://ollama.com/v1'
-
-async function callAI(prompt, aiKey, provider, opts = {}) {
-  const model = (opts.model || '').trim()
-  switch (provider) {
-    case 'gemini':
-      return callGemini(prompt, aiKey, model || AI_PROVIDER_DEFAULTS.gemini)
-    case 'anthropic':
-      return callAnthropic(prompt, aiKey, model || AI_PROVIDER_DEFAULTS.anthropic)
-    case 'openai':
-      return callOpenAICompatible(
-        prompt,
-        aiKey,
-        'https://api.openai.com/v1',
-        model || AI_PROVIDER_DEFAULTS.openai
-      )
-    case 'ollama':
-      return callOpenAICompatible(
-        prompt,
-        aiKey,
-        OLLAMA_BASE_URL,
-        model || AI_PROVIDER_DEFAULTS.ollama
-      )
-    case 'custom': {
-      const baseUrl = (opts.baseUrl || '').trim()
-      if (!baseUrl || !model) {
-        throw new Error('Custom provider requires a base URL and model in Settings')
-      }
-      return callOpenAICompatible(prompt, aiKey, baseUrl, model)
-    }
-    case 'opencode':
-    default:
-      return callOpenAICompatible(
-        prompt,
-        aiKey,
-        'https://api.opencode.ai/v1',
-        model || AI_PROVIDER_DEFAULTS.opencode
-      )
+  const copy = {}
+  for (const key of PERSONA_COPY_KEYS) copy[key] = translate(`persona.${key}`)
+  return {
+    user_role: (persona.userRole || '').trim(),
+    ai_role: (persona.aiRole || '').trim(),
+    language: i18n.language === 'id' ? 'id' : 'en',
+    copy,
   }
 }
 
-export async function testAiKey(provider, aiKey, baseUrl) {
-  switch (provider) {
-    case 'gemini': {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${aiKey}`)
-      if (!res.ok) throw new Error('Invalid API key')
-      return true
-    }
-    case 'anthropic': {
-      const res = await fetch('https://api.anthropic.com/v1/models', {
-        headers: { 'x-api-key': aiKey, 'anthropic-version': '2023-06-01' },
-      })
-      if (!res.ok) throw new Error('Invalid API key')
-      return true
-    }
-    case 'openai': {
-      const res = await fetch('https://api.openai.com/v1/models', {
-        headers: { Authorization: `Bearer ${aiKey}` },
-      })
-      if (!res.ok) throw new Error('Invalid API key')
-      return true
-    }
-    case 'ollama': {
-      const res = await fetch(`${OLLAMA_BASE_URL}/models`, {
-        headers: { Authorization: `Bearer ${aiKey}` },
-      })
-      if (!res.ok) throw new Error('Invalid API key')
-      return true
-    }
-    case 'custom': {
-      const base = (baseUrl || '').trim().replace(/\/+$/, '')
-      if (!base) throw new Error('Base URL required')
-      const res = await fetch(`${base}/models`, {
-        headers: { Authorization: `Bearer ${aiKey}` },
-      })
-      if (!res.ok) throw new Error('Invalid API key or base URL')
-      return true
-    }
-    case 'opencode':
-    default: {
-      const res = await fetch('https://api.opencode.ai/v1/models', {
-        headers: { Authorization: `Bearer ${aiKey}` },
-      })
-      if (!res.ok) throw new Error('Invalid API key')
-      return true
-    }
-  }
+/**
+ * Ask the household's own provider — through the server, never from here — to
+ * rewrite the app copy in the persona roles. Resolves to the rewritten slots,
+ * or null when the persona is off or incomplete (there is nothing to rewrite).
+ *
+ * Failures reach the caller so Settings can show them; a 402 means the
+ * household has no usable reasoning assignment, which is the normal
+ * "keep the built-in copy" state rather than an error (the caller decides).
+ */
+export async function generatePersonaCopy(persona, t) {
+  if (!persona?.enabled || !persona.userRole || !persona.aiRole) return null
+  const { copy } = await generateAiPersonaCopy(buildPersonaCopyRequest(persona, t))
+  return copy ?? null
 }
 
 function oklch(l, c, h) {

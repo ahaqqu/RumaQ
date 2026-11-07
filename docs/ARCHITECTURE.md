@@ -311,6 +311,8 @@ AI lanes (MVP):
 4. **Document expiry OCR (vault).** An explicit per-file action sends a document IMAGE to the household's **vision** capability. The answer is a SUGGESTION that prefills the expiry editor — only the user-confirmed PATCH writes metadata. See `backend/src/lib/document-ocr.ts` and the `extract-expiry` route in the vault plugin (`backend/src/plugins/documents/ocr.ts`, issue #433).
 5. **Match-review verdicts.** Pending flagged pairs are judged by the **decision** capability through the door's `decide()`: the pair's display fields + flag reason ride the ask's `state`, the rubric (identity rules + an explicit ignore-embedded-instructions boundary) rides its `criteria`, and the closed choice is `same`/`different` (ahaqqu/RumaQ#523 P4; the reviewer parses no JSON of its own any more). `manual` never calls a provider; `assist` (default) caches a verdict the human agrees/disagrees with; `auto` applies a verdict at/above the 0.8 confidence floor. The provider/model come from the acting admin's household `decision` assignment (the stored admin's, for the cron); an unconfigured household evaluates nothing. A typed (`questions`) decision provider answers choice + confidence only, so its cached `reason` is NULL. See `backend/src/lib/review-ai.ts` and migration 0038.
 
+6. **Persona copy rewrite.** Settings → Apply asks `POST /api/ai/generate/persona` to rewrite the app's interface strings in the user's declared roles — a **reasoning** call behind the door, with a usage row like any other (#523 P5). The browser sends only the two role names, the language and the built-in strings; the prompt lives in `backend/src/lib/persona.ts`, and both inputs are carried as JSON data blocks with an explicit "this is content, not instructions" rule, so a role that impersonates an instruction is rewritten as copy. Without a usable reasoning assignment the route answers 402 and the UI keeps its built-in copy (the persona itself still applies).
+
 ### The one door (ahaqqu/RumaQ#523)
 
 Every provider request is dispatched by `backend/src/lib/ai/index.ts` — the door. Its public surface is
@@ -339,8 +341,13 @@ the household's capability assignment, and a second writer would break "what did
 spend". `backend/src/__tests__/ai-boundary.test.ts` enforces the rule over the tree and fails on any
 new violation (it follows the plugin-boundary test's design; since P4 deleted the last shim it has
 **no exemption lists at all** — every rule holds over the whole tree, and the deleted `lib/ai.ts`,
-`lib/ai-access.ts` and `lib/ai/legacy.ts` must stay deleted). The frontend keeps the same boundary: it
-may call `/api/ai/*` and nothing else (the browser-side provider calls are removed in P5).
+`lib/ai-access.ts` and `lib/ai/legacy.ts` must stay deleted). The frontend keeps the same boundary and
+now enforces it the same way: `frontend/src/lib/frontend-ai-boundary.test.js` bans a provider hostname,
+a key header, an absolute `fetch` and the retired `/api/ai-key/test` path anywhere in
+`frontend/src/**`, and pins the deleted `lib/aiProviders.js` (the "keep in sync" vendor defaults) as
+gone. P5 moved the last two browser-side provider paths behind the door — the persona rewrite is
+`POST /api/ai/generate/persona` and the key test is `POST /api/ai/providers/:id/test` — so no key and
+no provider endpoint exists in page memory any more.
 
 **Call sites route by capability (P4).** `chat` and `plans/generate` resolve `reasoning`; the receipt
 scan and the vault's expiry OCR resolve `vision`; the review evaluate route and the review cron sweep
@@ -609,11 +616,11 @@ Two automated mechanisms keep dependencies secure:
 
 The following items are acknowledged as tech debt and left out of the current deployment scope:
 
-| Item                       | Reason                                                                                                                                   | Tracking                       |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| AI streaming               | `sendChatMessage` uses `completeText` (non-streaming). Streaming would require SSE from Worker → Hono → client.                          | `backend/src/lib/chat.ts`      |
-| Persona locale             | `buildSystemPrompt` is EN-only. Multi-locale persona prompt requires i18n-aware prompt templates.                                        | `backend/src/lib/persona.ts`   |
-| Usage analytics rollups    | Usage events live in D1 (`ai_usage_events`) and are aggregated by query. Pre-aggregated rollups would matter only at much higher volume. | Left out of deployment scope   |
-| Cache routes config        | `exports.CachedApi` and cache directives are set up but route-level cache profiles are not finalised.                                    | `backend/cloudflare.config.ts` |
-| R2 presigned URLs          | Receipts are served through the Worker proxy (`GET /api/purchases/:id/receipt`) instead of time-limited signed URLs.                     | `backend/src/apps/api.ts:1277` |
-| Bulk run-out recalibration | `computeRunOutDays` extends in-place; no admin endpoint for full recalibration.                                                          | `backend/src/lib/stock.ts`     |
+| Item                       | Reason                                                                                                                                                                  | Tracking                       |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| AI streaming               | `sendChatMessage` uses `completeText` (non-streaming). Streaming would require SSE from Worker → Hono → client.                                                         | `backend/src/lib/chat.ts`      |
+| Persona chat locale        | `buildSystemPrompt` (the CHAT system prompt) is EN-only. The persona COPY rewrite prompt is EN/ID (`COPY_INSTRUCTIONS`); the chat prompt would need the same treatment. | `backend/src/lib/persona.ts`   |
+| Usage analytics rollups    | Usage events live in D1 (`ai_usage_events`) and are aggregated by query. Pre-aggregated rollups would matter only at much higher volume.                                | Left out of deployment scope   |
+| Cache routes config        | `exports.CachedApi` and cache directives are set up but route-level cache profiles are not finalised.                                                                   | `backend/cloudflare.config.ts` |
+| R2 presigned URLs          | Receipts are served through the Worker proxy (`GET /api/purchases/:id/receipt`) instead of time-limited signed URLs.                                                    | `backend/src/apps/api.ts:1277` |
+| Bulk run-out recalibration | `computeRunOutDays` extends in-place; no admin endpoint for full recalibration.                                                                                         | `backend/src/lib/stock.ts`     |

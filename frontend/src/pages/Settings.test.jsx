@@ -674,27 +674,69 @@ describe('Settings', () => {
     }
   })
 
-  it('saves the persona without calling the browser-side AI rewrite (P5 owns it)', async () => {
-    // #523 P3 removed the provider/base-URL/model fields the old rewrite read;
-    // calling it with undefined identifiers threw a ReferenceError. The page
-    // must save the persona and never reach the browser provider path.
-    const { regenerateCopy } = usePersona()
-    regenerateCopy.mockClear()
-    const { getByText } = renderWithQuery(React.createElement(Settings, baseProps))
-    fireEvent.click(getByText('settings.apply'))
-    await waitFor(() => expect(mockMutateAsync).toHaveBeenCalled())
-    expect(regenerateCopy).not.toHaveBeenCalled()
-  })
+  describe('persona rewrite behind the door (#523 P5)', () => {
+    let regenerateCopy
 
-  it('saves persona preferences through the settings PATCH', async () => {
-    mockMutateAsync.mockResolvedValue({ ...mockSettings })
-    const { getByText } = renderWithQuery(React.createElement(Settings, baseProps))
-    fireEvent.click(getByText('settings.apply'))
-    await waitFor(() => expect(mockMutateAsync).toHaveBeenCalled())
-    const payload = mockMutateAsync.mock.calls[0][0]
-    expect(payload).not.toHaveProperty('ai_key')
-    expect(payload).not.toHaveProperty('ai_provider')
-    expect(payload).toHaveProperty('persona_enabled')
+    beforeEach(() => {
+      mockMutateAsync.mockReset()
+      mockMutateAsync.mockResolvedValue({ ...mockSettings })
+      regenerateCopy = usePersona().regenerateCopy
+      regenerateCopy.mockReset()
+      regenerateCopy.mockResolvedValue(null)
+    })
+
+    it('saves persona preferences through the settings PATCH', async () => {
+      const { getByText } = renderWithQuery(React.createElement(Settings, baseProps))
+      fireEvent.click(getByText('settings.apply'))
+      await waitFor(() => expect(mockMutateAsync).toHaveBeenCalled())
+      const payload = mockMutateAsync.mock.calls[0][0]
+      expect(payload).not.toHaveProperty('ai_key')
+      expect(payload).not.toHaveProperty('ai_provider')
+      expect(payload).toHaveProperty('persona_enabled')
+    })
+
+    it('asks the SERVER for the rewrite after saving — no browser provider call', async () => {
+      const { container, getByText } = renderWithQuery(React.createElement(Settings, baseProps))
+      fireEvent.change(container.querySelector('input[aria-label="settings.aria.aiRole"]'), {
+        target: { value: 'prajurit' },
+      })
+      fireEvent.click(getByText('settings.apply'))
+      await waitFor(() => expect(regenerateCopy).toHaveBeenCalledTimes(1))
+      // The DRAFT the user is applying, not the stale saved persona.
+      expect(regenerateCopy).toHaveBeenCalledWith({
+        userRole: '',
+        aiRole: 'prajurit',
+        enabled: false,
+      })
+      // The rewrite runs AFTER the PATCH: the persona is stored before the copy
+      // is asked for, so a failed rewrite can never leave text describing a
+      // persona that was not saved.
+      expect(mockMutateAsync.mock.invocationCallOrder[0]).toBeLessThan(
+        regenerateCopy.mock.invocationCallOrder[0]
+      )
+    })
+
+    it('keeps the built-in copy without an error when the household has no AI (402)', async () => {
+      regenerateCopy.mockRejectedValue(
+        Object.assign(new Error('AI provider not configured.'), { status: 402 })
+      )
+      const { getByText, queryByText } = renderWithQuery(React.createElement(Settings, baseProps))
+      fireEvent.click(getByText('settings.apply'))
+      await waitFor(() => expect(regenerateCopy).toHaveBeenCalled())
+      // Normal state, not a failure: the persona still applies with its
+      // built-in copy (plan §5.1). The button settles on "Saved".
+      await waitFor(() => expect(getByText('settings.saved')).toBeTruthy())
+      expect(queryByText('AI provider not configured.')).toBeNull()
+    })
+
+    it('surfaces a rewrite failure instead of silently keeping fallback copy', async () => {
+      regenerateCopy.mockRejectedValue(new Error('AI persona rewrite failed: upstream is down'))
+      const { getByText } = renderWithQuery(React.createElement(Settings, baseProps))
+      fireEvent.click(getByText('settings.apply'))
+      expect(
+        await waitFor(() => getByText('AI persona rewrite failed: upstream is down'))
+      ).toBeTruthy()
+    })
   })
 
   it('adds location with Enter key', () => {
