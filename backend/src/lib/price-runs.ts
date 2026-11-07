@@ -1,4 +1,4 @@
-import type { ReviewItemPair, RunProductsSummary, RunReport, RunTaxonomy } from '@rumaq/contract'
+import type { RunProductsSummary, RunReport, RunReportStore } from '@rumaq/contract'
 
 // Storage for scraper run reports (haqita-integration.md §7.1). One row per
 // finished live run; the monitor reads these instead of journald. Detail
@@ -48,47 +48,15 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
     .run()
 }
 
-export type RunStoreSummary = {
-  pagesFound: number
-  newImages: number
-  existingImages: number
-  skipped: number
-  itemsExtracted: number
-  itemsRejected: number
-  error?: string
-  /** By-design skip: Tier-2 store needs a Tier-3 proxy, none configured. */
-  needsProxy?: boolean
-  /** Issue #322 (A4): non-fatal anomalies the store rode through, with URLs. */
-  warnings?: string[]
-  /** Issue #373: taxonomy-classification metrics (RUMAQ_CATEGORY shadow/on);
-   * absent when the gate is off or the store had no items. */
-  taxonomy?: RunTaxonomy
-  /** Issue #463: matches against products the backend still holds
-   * provisionally; absent on reports produced before the field existed. */
-  provisionalMatches?: number
-}
-
-export type RunMatchSummary = {
-  exact: number
-  embedding: number
-  ai: number
-  solo: number
-  reviewItems: number
-  embeddingsDegraded: boolean
-  // Issue #294 ride-alongs — stored verbatim in the match_stats blob and
-  // consumed by the runs ingest handler (recordReviewItems), never by the
-  // monitor, which keeps reading the reviewItems count.
-  reviewItemPairs?: ReviewItemPair[]
-  reviewItemsTotal?: number
-  reviewItemsTruncated?: boolean
-}
-
-export type RunPublishSummary = {
-  mode: 'dry-run' | 'published'
-  accepted?: number | null
-  skipped?: number | null
-  error?: string | null
-}
+// The three detail blobs store exactly the validated report slices (the
+// schema output, stringified verbatim), so their read types are derived from
+// the contract rather than mirrored by hand: a hand-written copy drifts
+// silently — this one had already lost modelsUsed / rejectedItems / audit /
+// timing before issue #463 had to add provisionalMatches to it, and it cannot
+// express the `null` a nullish contract field legitimately stores.
+export type RunStoreSummary = RunReportStore
+export type RunMatchSummary = NonNullable<RunReport['match']>
+export type RunPublishSummary = NonNullable<RunReport['publish']>
 
 export type PriceRun = {
   id: string
