@@ -1705,7 +1705,10 @@ apiApp.patch(
       401: { description: 'Unauthorized' },
       403: { description: 'Only household owners can change AI settings' },
       404: { description: 'Provider not found in this household' },
-      409: { description: 'Duplicate label, or clearing a key an assigned capability needs' },
+      409: {
+        description:
+          'Duplicate label, or an edit that would strand an assigned capability: clearing its key, or clearing the default model that assignment inherits',
+      },
     },
   }),
   sValidator('json', aiProviderPatchSchema),

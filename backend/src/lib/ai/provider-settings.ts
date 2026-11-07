@@ -22,12 +22,17 @@
 
 import type { Env } from '../../types.js'
 import { CAPABILITIES, type Capability, type ProviderKind, type ThinkingLevel } from './types.js'
-import { PRESETS, presetById, presetEndpoint } from './presets.js'
+import { PRESETS, presetById } from './presets.js'
 import { decryptProviderKey, encryptProviderKey } from './credentials.js'
 import { adapterFor } from './adapters/registry.js'
 import { AdapterError } from './adapters/types.js'
 import { withTimeout } from './signal.js'
-import { loadHouseholdAiConfig, type HouseholdCapabilityAssignment } from './capabilities.js'
+import {
+  endpointResolvable,
+  loadHouseholdAiConfig,
+  resolvedEndpoint,
+  type HouseholdCapabilityAssignment,
+} from './capabilities.js'
 
 /** ahaqqu/RumaQ#523 §4.1: a household may hold ten providers, no more. */
 export const MAX_AI_PROVIDERS = 10
@@ -141,11 +146,6 @@ function normalizeBaseUrl(raw: string | null | undefined): string | null {
   return trimmed.replace(/\/+$/, '')
 }
 
-/** The endpoint a row resolves to: its own base URL wins over the preset's. */
-function rowEndpoint(row: Pick<ProviderDbRow, 'base_url' | 'preset' | 'kind'>): string | null {
-  return row.base_url ?? presetEndpoint(row.preset, row.kind)
-}
-
 /**
  * Is this row able to serve a call at all? Key + endpoint, the two conditions
  * `resolveAccess` refuses on besides the model. The model is deliberately NOT
@@ -157,7 +157,7 @@ function assertAssignableProvider(row: ProviderDbRow): void {
   if (!row.encrypted_key) {
     throw badRequest('This provider has no API key yet — add a key before assigning it')
   }
-  if (!rowEndpoint(row)) {
+  if (!endpointResolvable(row)) {
     throw badRequest('This provider needs a base URL before a capability can use it')
   }
 }
@@ -188,18 +188,32 @@ function assertKindSupports(kind: ProviderKind, capability: Capability): void {
   }
 }
 
-/** The capability assignments that point at one provider, for cascade reporting. */
+/**
+ * The capability assignments that point at one provider, with the model each
+ * carries. The model matters: an edit that removes the provider's default model
+ * strands an assignment whose own model is blank (#523 P3 review A5).
+ */
+async function assignedCapabilityRows(
+  env: Env['Bindings'],
+  householdId: string,
+  providerId: string
+): Promise<Array<{ capability: Capability; model: string | null }>> {
+  const { results } = await env.DB.prepare(
+    `SELECT capability, model FROM ai_capabilities
+      WHERE household_id = ? AND provider_id = ? ORDER BY capability`
+  )
+    .bind(householdId, providerId)
+    .all<{ capability: Capability; model: string | null }>()
+  return results ?? []
+}
+
+/** Just the names, for messages and the delete report. */
 async function assignedCapabilities(
   env: Env['Bindings'],
   householdId: string,
   providerId: string
 ): Promise<Capability[]> {
-  const { results } = await env.DB.prepare(
-    'SELECT capability FROM ai_capabilities WHERE household_id = ? AND provider_id = ? ORDER BY capability'
-  )
-    .bind(householdId, providerId)
-    .all<{ capability: Capability }>()
-  return (results ?? []).map((row) => row.capability)
+  return (await assignedCapabilityRows(env, householdId, providerId)).map((row) => row.capability)
 }
 
 async function providerById(
@@ -275,15 +289,9 @@ export async function createProvider(
     }
   }
   const baseUrl = normalizeBaseUrl(input.base_url)
-  // A row needs an endpoint from somewhere: its own base URL or its preset's.
-  // 'questions' never has a canonical one; a hand-configured
-  // 'openai-compatible' row has no preset at all.
-  if (
-    !baseUrl &&
-    !presetEndpoint(preset, input.kind) &&
-    input.kind !== 'anthropic' &&
-    input.kind !== 'gemini'
-  ) {
+  // A row needs an endpoint from somewhere: its own base URL, its preset's, or
+  // the canonical one its wire owns. The resolver's rule decides (A4).
+  if (!endpointResolvable({ base_url: baseUrl, preset, kind: input.kind })) {
     throw badRequest('This provider needs a base URL')
   }
 
@@ -329,7 +337,8 @@ export async function updateProvider(
   input: UpdateProviderInput
 ): Promise<ProviderRow> {
   const current = await providerById(env, householdId, providerId)
-  const assigned = await assignedCapabilities(env, householdId, providerId)
+  const assignedRows = await assignedCapabilityRows(env, householdId, providerId)
+  const assigned = assignedRows.map((row) => row.capability)
 
   const nextKind = input.kind ?? current.kind
 
@@ -371,9 +380,10 @@ export async function updateProvider(
 
   const nextBaseUrl =
     input.base_url !== undefined ? normalizeBaseUrl(input.base_url) : current.base_url
-  // The row must still resolve an endpoint after the edit — clearing the base
-  // URL of a row whose preset has none would leave an unusable provider.
-  if (!(nextBaseUrl ?? presetEndpoint(current.preset, nextKind))) {
+  // The row must still resolve an endpoint after the edit — the resolver's rule,
+  // not a second expression of it: clearing a base URL is refused only when the
+  // row would have no endpoint left at all (A4).
+  if (!endpointResolvable({ base_url: nextBaseUrl, preset: current.preset, kind: nextKind })) {
     throw badRequest('This provider needs a base URL')
   }
 
@@ -384,6 +394,26 @@ export async function updateProvider(
     throw conflict(
       `This provider is used by ${assigned.join(', ')} — reassign or clear those capabilities first`
     )
+  }
+
+  // Clearing the default model is the model half of the key rule above: an
+  // assigned capability whose own model is blank would silently become
+  // not-configured (402) with no signal in the write that caused it (A5). Only a
+  // real non-null → null transition strands a row; an edit that merely re-sends
+  // the existing blank value is allowed.
+  if (input.default_model !== undefined) {
+    const currentDefault = normalizeModel(current.default_model)
+    const nextDefault = normalizeModel(input.default_model)
+    if (currentDefault != null && nextDefault == null) {
+      const stranded = assignedRows
+        .filter((row) => normalizeModel(row.model) == null)
+        .map((row) => row.capability)
+      if (stranded.length > 0) {
+        throw conflict(
+          `Clearing the default model would leave ${stranded.join(', ')} with no model — set a model on those capabilities first`
+        )
+      }
+    }
   }
 
   const updates: string[] = []
@@ -541,8 +571,10 @@ export async function testProvider(
   if (!provider.encrypted_key) {
     throw badRequest('This provider has no API key to test')
   }
-  const endpoint = rowEndpoint(provider)
-  if (!endpoint) {
+  // Null means "the kind owns a canonical endpoint" for the adapters that do;
+  // the probe must test the endpoint a call uses, whatever the row stores (A4).
+  const endpoint = resolvedEndpoint(provider)
+  if (!endpoint && !endpointResolvable(provider)) {
     throw badRequest('This provider needs a base URL before it can be tested')
   }
 

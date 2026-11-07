@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test'
 import type { Env } from '../types.js'
 import { apiApp } from '../apps/api.js'
 import { encryptProviderKey } from '../lib/ai/credentials.js'
+import { resetRateLimit } from '../lib/rate-limit.js'
 import { createDb, type Db } from './support/d1-sqlite.js'
 
 // The AI gateway SETTINGS surface (ahaqqu/RumaQ#523 P3, plan §4). Real SQLite
@@ -36,6 +37,10 @@ beforeEach(() => {
     PAGES_ORIGIN: 'http://localhost:5173',
   } as unknown as Env['Bindings']
   realFetch = globalThis.fetch
+  // The general per-IP limiter and the provider-test limiter keep module-scope
+  // windows keyed by IP/user; a fresh database per test must not inherit the
+  // previous test's budget (the file crosses 100 requests in one window).
+  resetRateLimit()
 })
 
 afterEach(() => {
@@ -472,6 +477,40 @@ describe('PATCH/DELETE /api/ai/providers/:id (plan §4.1/§4.2)', () => {
     })
   })
 
+  it('refuses to clear the default model an assigned capability inherits (409)', async () => {
+    // Review A5: the model is the third usability input, so clearing the last
+    // model an assignment relies on is the same silent-402 hazard as clearing
+    // its key — refused, with the capability named.
+    await insertProvider({ id: 'p-1', label: 'One', defaultModel: 'gemini-3.6-flash' })
+    insertCapability('reasoning', 'p-1')
+
+    const res = await call('PATCH', '/api/ai/providers/p-1', OWNER, { default_model: '' })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as any).error).toMatch(/reasoning/)
+    expect(sqlite.prepare("SELECT default_model FROM ai_providers WHERE id = 'p-1'").get()).toEqual(
+      { default_model: 'gemini-3.6-flash' }
+    )
+
+    // Re-sending the existing value, or a value, is not a clear.
+    expect(
+      (await call('PATCH', '/api/ai/providers/p-1', OWNER, { default_model: 'gemini-3.6-flash' }))
+        .status
+    ).toBe(200)
+  })
+
+  it('allows clearing the default model when every assignment pins its own', async () => {
+    await insertProvider({ id: 'p-1', label: 'One', defaultModel: 'gemini-3.6-flash' })
+    insertCapability('reasoning', 'p-1', { model: 'own-model' })
+
+    const res = await call('PATCH', '/api/ai/providers/p-1', OWNER, { default_model: '' })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as any).provider.default_model).toBeNull()
+    // The capability keeps resolving through its own model.
+    const caps = (await (await call('GET', '/api/ai/capabilities', OWNER)).json()) as any
+    expect(caps.capabilities.reasoning.effective_model).toBe('own-model')
+    expect(caps.status.reasoning).toBe('household')
+  })
+
   it('reports the capabilities a delete cleared, and the assignments are gone', async () => {
     await insertProvider({ id: 'p-1', label: 'One' })
     await insertProvider({ id: 'p-2', label: 'Two' })
@@ -647,6 +686,56 @@ describe('PUT/DELETE /api/ai/capabilities/:capability (plan §4.1/§4.2)', () =>
 
 describe('POST /api/ai/providers/:id/test (plan §4.6)', () => {
   beforeEach(seedHouseholds)
+
+  it('a preset-less gemini row is assignable and probes its canonical endpoint', async () => {
+    // Review A4: kind gemini/anthropic own a canonical endpoint, the resolver
+    // accepts a row without a base URL, and createProvider allows creating one —
+    // so assign and test must accept it too (one rule, capabilities.ts).
+    const created = await call('POST', '/api/ai/providers', OWNER, {
+      label: 'Canonical',
+      kind: 'gemini',
+      api_key: 'sk-canonical',
+    })
+    expect(created.status).toBe(201)
+    const provider = ((await created.json()) as any).provider
+    expect(provider).toMatchObject({ preset: null, base_url: null, has_key: true })
+
+    const assigned = await call('PUT', '/api/ai/capabilities/vision', OWNER, {
+      provider_id: provider.id,
+      model: 'gemini-3.6-flash',
+    })
+    expect(assigned.status).toBe(200)
+    expect(((await assigned.json()) as any).status).toBe('household')
+
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { models: [] }))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const tested = await call('POST', `/api/ai/providers/${provider.id}/test`, OWNER)
+    expect(tested.status).toBe(200)
+    expect(await tested.json()).toEqual({ ok: true })
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models?key=sk-canonical'
+    )
+  })
+
+  it('a gemini probe tests the endpoint the CALL uses, not a stored base URL', async () => {
+    // Review A4: gemini.complete builds its URL from the canonical ENDPOINT, so
+    // probing a row's base_url would report on an endpoint no call reaches.
+    await insertProvider({
+      id: 'p-proxy',
+      kind: 'gemini',
+      preset: 'gemini',
+      baseUrl: 'https://proxy.example.test/v1beta',
+      defaultModel: 'gemini-3.6-flash',
+    })
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { models: [] }))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const res = await call('POST', '/api/ai/providers/p-proxy/test', OWNER)
+    expect(res.status).toBe(200)
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models?key=sk-fixture'
+    )
+  })
 
   it('a chat provider probes its free /models listing', async () => {
     await insertProvider({ id: 'p-1', kind: 'openai-compatible', preset: 'openai' })

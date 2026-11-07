@@ -74,8 +74,15 @@ function normalizeThinkingLevel(value: string | null): ThinkingLevel | null {
     : null
 }
 
-/** The endpoint a row resolves to: its own base URL wins over the preset's. */
-function resolvedEndpoint(row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>): string | null {
+/**
+ * The endpoint a row resolves to: its own base URL wins over the preset's.
+ * Exported for the settings writes (provider-settings.ts), which must answer
+ * "can this row serve a call" with THIS rule and not a second copy of it
+ * (#523 P3 review A4 — the P2 review B1 lesson, applied to the endpoint).
+ */
+export function resolvedEndpoint(
+  row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>
+): string | null {
   return row.base_url ?? presetEndpoint(row.preset, row.kind)
 }
 
@@ -84,7 +91,7 @@ function resolvedEndpoint(row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>):
  * missing endpoint is only fatal for kinds that have no canonical one
  * ('openai-compatible' without a preset, 'questions' always custom).
  */
-function endpointResolvable(row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>): boolean {
+export function endpointResolvable(row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>): boolean {
   if (row.kind === 'questions') return row.base_url != null
   if (row.kind === 'openai-compatible') return resolvedEndpoint(row) != null
   // anthropic / gemini adapters own their canonical endpoint; anything else is
