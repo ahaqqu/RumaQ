@@ -8,26 +8,33 @@
 
 ## 0. Decision summary
 
-The nine decisions this document rests on. **Three of them were taken by the owner on 2026-11-07**
-(D2, D3, D8) and are no longer open; the rest need sign-off with the document.
+The ten decisions this document rests on. **Five were taken by the owner on 2026-11-07** (D1, D2, D3,
+D8, D9) and are no longer open; the rest need sign-off with the document.
 
-| #   | Decision             | Choice                                                                                                                                                                                                                                                                                                      |
-| --- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | Data model           | New `ai_providers` + `ai_capabilities` tables. `user_settings.ai_*` columns stay for one release as a compatibility projection, then drop.                                                                                                                                                                  |
-| D2  | Provider abstraction | **Owner-decided 2026-11-07.** Four **wire-protocol** adapters — `openai-compatible` (OpenAI, Ollama, OpenCode, custom base URL), `anthropic`, `gemini`, `questions` — behind one interface. The six vendor presets are data rows (label + base URL + default models), never classes.                        |
-| D3  | Decision wire        | **Owner-decided 2026-11-07.** The `questions` adapter speaks a typed question/answer contract: `POST {base}` with `{state, model, questions:{<name>:{type,instructions,criteria}}}` → `answers.<name>.{choice, confidence}`. Reason-as-NULL and zero reported tokens are accepted limitations.              |
-| D4  | The door             | `backend/src/lib/ai/` (barrel `index.ts`). Outside `lib/ai/**` no file may import an adapter, hold an API key, or contain a provider hostname — enforced by a test.                                                                                                                                         |
-| D5  | Capability enum      | `decision` \| `reasoning` \| `vision`. Additive; `embedding` is explicitly out of scope.                                                                                                                                                                                                                    |
-| D6  | Migration            | Backfill is **behaviour-preserving**: every configured user's one provider becomes provider #1 and is assigned to all three capabilities with today's model values. Never a forced rewrite of a working setup.                                                                                              |
-| D7  | Empty start          | **No per-user default provider.** A new account has zero `ai_providers`, zero `ai_capabilities`, no implicit model — and therefore today's exact "not configured" behaviour (402, review assist/auto → manual, no calls) until the user adds a provider and assigns capabilities. No preset is preselected. |
-| D8  | No server fallback   | **Owner-decided 2026-11-07.** `RUMAQ_SERVER_AI_*` is retired: no env key, no implicit provider, no platform-funded call. Resolution is the caller's assignment → 402. QA/testing accounts get ordinary rows through Settings; automation seeds the same rows in its setup step (§3.4).                      |
-| D9  | Rollout              | Six independently shippable PRs (P1–P6). P1 is schema + resolver swap. The destructive column drop is its own PR (P6).                                                                                                                                                                                      |
+| #   | Decision             | Choice                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| D1  | Data model           | **Owner-decided 2026-11-07.** Two new tables — `ai_providers` (label, wire kind, preset, base URL, sealed key) and `ai_capabilities` (one assignment per capability) — **owned by the household**: `household_id` FK, unique `(household_id, lower(label))`, PK `(household_id, capability)`. Keys are household property; usage rows keep the acting `user_id` **and** the household. `user_settings.ai_*` stays one release as a compatibility projection, then drops. |
+| D2  | Provider abstraction | **Owner-decided 2026-11-07.** Four **wire-protocol** adapters — `openai-compatible` (OpenAI, Ollama, OpenCode, custom base URL), `anthropic`, `gemini`, `questions` — behind one interface. The six vendor presets are data rows (label + base URL + default models), never classes.                                                                                                                                                                                     |
+| D3  | Decision wire        | **Owner-decided 2026-11-07.** The `questions` adapter speaks a typed question/answer contract: `POST {base}` with `{state, model, questions:{<name>:{type,instructions,criteria}}}` → `answers.<name>.{choice, confidence}`. Reason-as-NULL and zero reported tokens are accepted limitations.                                                                                                                                                                           |
+| D4  | The door             | `backend/src/lib/ai/` (barrel `index.ts`). Outside `lib/ai/**` no file may import an adapter, hold an API key, or contain a provider hostname — enforced by a test.                                                                                                                                                                                                                                                                                                      |
+| D5  | Capability enum      | `decision` \| `reasoning` \| `vision`. Additive; `embedding` is explicitly out of scope.                                                                                                                                                                                                                                                                                                                                                                                 |
+| D6  | Migration            | Backfill is **behaviour-preserving**: every configured user's one provider becomes provider #1 and is assigned to all three capabilities with today's model values. Never a forced rewrite of a working setup.                                                                                                                                                                                                                                                           |
+| D7  | Empty start          | **No default provider.** A new household has zero `ai_providers`, zero `ai_capabilities`, no implicit model — and therefore today's exact "not configured" behaviour (402, review assist/auto → manual, no calls) until a household owner adds a provider and assigns capabilities. No preset is preselected.                                                                                                                                                            |
+| D8  | No server fallback   | **Owner-decided 2026-11-07.** `RUMAQ_SERVER_AI_*` is retired: no env key, no implicit provider, no platform-funded call. Resolution is the caller's assignment → 402. QA/testing accounts get ordinary rows through Settings; automation seeds the same rows in its setup step (§3.4).                                                                                                                                                                                   |
+| D9  | Funding & limits     | **Owner-decided 2026-11-07.** Resolved access and usage rows carry `funding: 'household' \| 'platform'`. v1 is always `'household'` — BYOK is the caller's own bill, so **no AI rate limits** and no per-user cap. A future RumaQ-provided (premium) mode reuses the same dimension; **all** metering and limits live in the facade, and no call site may implement a cap.                                                                                               |
+| D10 | Rollout              | Six independently shippable PRs (P1-P6). P1 is schema + resolver swap. The destructive column drop is its own PR (P6).                                                                                                                                                                                                                                                                                                                                                   |
 
 D2 is the one place this document refines the directive's literal wording. The directive listed five
 adapter names ("OpenAI-compatible, Anthropic, Gemini, Ollama, custom base URL"); the owner confirmed
 that three of them are one wire protocol with different base URLs. Collapsing them is what makes "one
 interface" true instead of decorative, and it is what lets the typed-decision adapter (D3) sit beside
 chat adapters without a special case.
+
+Two more of the owner's calls shaped the model rather than the code. **D1** puts providers on the
+household because the household is what pays, and the only thing claiming a key is personal was the
+schema. **D9** reserves a `funding` dimension so that a later platform-funded mode is a new value on
+an existing field, not a second resolution path — and it removes the temptation to rate-limit BYOK
+calls, which are the user's own bill.
 
 The other open questions are in §7; nothing in §1–§6 depends on them.
 
@@ -91,6 +98,11 @@ with the _text_ model while the vault's OCR sends the vision model (`document-oc
 Step 2 is **retired by D8**: after P1 there is no server branch at all, so an unconfigured account is
 unconfigured rather than platform-funded (§3.4).
 
+Everything above is **per user**. `user_settings` is keyed by `user_id`, but the thing that pays is
+the household — so P1 moves provider ownership to `households` (§3.1). `ACTIVE_HOUSEHOLD_SQL`
+(`auth.ts:136-145`) is the one definition of "the household this request acts in"; the backfill
+mirrors it, so migration and runtime can never disagree about whose household a key belongs to.
+
 There is exactly one access per request, resolved once and passed down. The review sweep resolves
 **once per run** (`review-ai.ts:322-338`), deliberately — one settings read for up to 20 items,
 because each D1 read is a subrequest against the free plan's 50-per-invocation cap
@@ -136,6 +148,10 @@ it is the reason the AI settings columns have one owner today.
   — `migrations/0015_ai_usage_events.sql:14-33`; `provider` is the kind string, `model` NULL means
   "provider default"; one-year retention via `deleteExpiredAiUsageEvents` (`ai-access.ts:191`).
 
+**Usage knows a person but not the thing that pays.** There is no `household_id` and no funding
+column, so today's data cannot answer "what did this household spend" — the question any
+RumaQ-funded mode is built on.
+
 All of it is **one provider per user**, which is the root cause: the schema has no place to put a
 second provider, and no place to say "this capability uses that one".
 
@@ -152,7 +168,31 @@ second provider, and no place to say "this capability uses that one".
 
 ---
 
+### 1.7 What hurts today, structurally
+
+Four problems share one cause — no single owner of "how AI is paid for and by whom":
+
+- **Ownership mismatch.** A key belongs to a `user_id` in the schema and to a household in reality.
+  Partners cannot share a key without copying it, and a member leaving a household takes the
+  household's AI configuration with them (the rows cascade with the user).
+- **Nothing can be metered.** Five server call sites each resolve their own credentials, and two
+  browser paths call providers directly. A RumaQ-funded mode built on that surface would need five
+  implementations plus two that cannot be enforced client-side.
+- **Rate limits have nothing to attach to.** Limiting a BYOK call protects nobody's bill but the
+  caller's, which is why the app does not do it — the only sound reason to add a cap is platform
+  funding (D9).
+- **Cost cannot be attributed to a household.** Usage rows carry `user_id` and no household, so
+  "which household spent this" is a join, not a record.
+
 ## 2. Target architecture
+
+**Why one door is load-bearing, not stylistic.** Three requirements only exist if every call goes
+through one module: **(a)** platform-funded AI can only be metered, attributed and limited if there
+is exactly one place that dispatches a provider request; **(b)** a capability assignment is only
+meaningful if nothing can bypass it — a single `fetch` outside the door silently ignores the
+assignment; **(c)** "what did this household spend" needs one writer for `ai_usage_events` and one
+place that knows the funding source. Today none of the three holds (§1.7), which is why the boundary
+test in §2.3 is a security control and not a style rule.
 
 ### 2.1 Module layout
 
@@ -161,8 +201,8 @@ backend/src/lib/ai/
   index.ts            ← THE DOOR. The only AI import allowed outside lib/ai/**.
   types.ts            ← Capability, AiMessage, AiCall, AiResult, ThinkingLevel, TokenUsage
   errors.ts           ← AiError + code→HTTP mapping
-  capabilities.ts     ← resolveAccess(ctx, capability), the precedence ladder
-  credentials.ts      ← provider rows ←→ env fallback; decrypt; NO other module may import this
+  capabilities.ts     ← resolveAccess(ctx, capability): household-scoped, the whole precedence ladder
+  credentials.ts      ← household provider rows → decrypt; NO other module may import this
   presets.ts          ← the vendor catalog as DATA (label, kind, base URL, default models)
   usage.ts            ← buildAiUsageEventStatement / recordAiUsageEvent / retention (moved)
   decision.ts         ← the {choice, confidence} parse shared by chat-shaped decision calls
@@ -191,13 +231,22 @@ Everything a feature needs, and nothing else. No `apiKey` ever appears in a sign
 export type Capability = 'decision' | 'reasoning' | 'vision'
 export type ThinkingLevel = 'low' | 'medium' | 'high'
 
-/** What a provider call costs/attributed to. Carried on success AND failure. */
+/**
+ * Who pays for this call. Reserved by D9: v1 has exactly one value, so every
+ * branch below is a no-op today and a single line the day RumaQ funds a call.
+ * 'household' = the caller's own provider row; 'platform' = a future
+ * RumaQ-provided (premium) provider, metered by subscription.
+ */
+export type Funding = 'household' | 'platform'
+
+/** What a provider call costs / is attributed to. Carried on success AND failure. */
 export type AiCall = {
   capability: Capability
+  householdId: string // the household that owns the provider (D1)
   providerKind: ProviderKind // 'openai-compatible' | 'anthropic' | 'gemini' | 'questions'
-  providerId: string // always a user-owned row; there is no server fallback (D8)
+  providerId: string // always a household-owned row; there is no server fallback (D8)
   model: string | null // null = the adapter's default for this capability
-  keySource: 'user' // historical usage rows may still say 'server'; nothing writes it now
+  funding: Funding // v1 always 'household' (D9)
 }
 
 /**
@@ -211,7 +260,13 @@ export type AiAccessHandle = {
   readonly call: AiCall
 }
 
-export type AiCtx = { env: Env['Bindings']; userId: string | null }
+/**
+ * `householdId` is the RESOLVED household the request acts in — the same value
+ * `propsAuthMiddleware` sets via ACTIVE_HOUSEHOLD_SQL (auth.ts:136-145), never
+ * re-derived here. `userId` is the acting member: it is not used to resolve
+ * anything, only to attribute the usage row.
+ */
+export type AiCtx = { env: Env['Bindings']; userId: string; householdId: string }
 
 export type AiMessage =
   | { role: 'system'; content: string }
@@ -228,7 +283,7 @@ export type AiResult = {
   usage: TokenUsage // provider-reported; zeroes when it reported none
 }
 
-/** Resolve once. null = this capability is not configured (routes answer 402). */
+/** Resolve once. null = this capability is not configured for the household (402). */
 export function resolveAccess(ctx: AiCtx, capability: Capability): Promise<AiAccessHandle | null>
 
 /**
@@ -300,7 +355,11 @@ export function structured<T>(
   }
 ): Promise<{ value: T; call: AiCall; usage: TokenUsage }>
 
-/** Usage accounting, beside the door so call sites never hand-build SQL. */
+/**
+ * Usage accounting, beside the door so call sites never hand-build SQL.
+ * The row records the ACTING user (`userId`) plus `call.householdId` and
+ * `call.funding`, so a member's call is attributable without exposing the key.
+ */
 export function buildUsageEventStatement(
   env: Env['Bindings'],
   args: { userId: string; call: AiCall; usage: TokenUsage },
@@ -406,14 +465,59 @@ a silent degradation, and it is why `structured()` is not used by any shipped fe
 - **Usage placement** (which call writes which row, and batching): the door returns the record, the
   feature writes it — that is what keeps the sweep at one batch (P1 must not add a read or a write).
 
+### 2.6 Funding, metering and limits — the reserved shape (D9)
+
+D9 exists so that a future **RumaQ-provided (premium) AI** mode has one home instead of five. v1 ships
+the shape, not the mode:
+
+- **`funding` is data, not a branch.** It rides on `AiCall` and on every usage row: `'household'` for
+  every call the product can make today. There is no `if (premium)` anywhere in a feature.
+- **v1 has no caps, deliberately.** A BYOK call is the household's own bill; rate-limiting it protects
+  nobody. So there is no limiter, no per-user quota, and no daily counter for AI (the old `ai_usage`
+  daily cap died with #353).
+- **The future check has exactly one location**: inside `completeText` / `vision` / `decide` /
+  `structured`, before the provider fetch — read the household's entitlement, throw
+  `AiError('quota_exceeded', 402)` when the meter says no, otherwise proceed and let the usage row be
+  the meter. Nothing outside `lib/ai/**` may count, cap, retry-budget or token-check an AI call;
+  adding one at a call site is precisely how a metered mode starts leaking. The P4 boundary test
+  already fails any out-of-door import, which is what makes this rule enforceable rather than aspirational.
+- **No platform provider exists in v1** (D8 stands): no env key, no seeded row, no fallback. Switching
+  `funding` to `'platform'` later is a new provider resolution plus a subscription lookup — not a new
+  call path, and not a second resolution ladder in the features.
+
 ---
 
 ## 3. Data model
 
-### 3.1 Decision: new tables (D1)
+### 3.1 Decision: new tables, owned by the household (D1)
+
+Two tables, because they are two different nouns: a **provider** (credentials + wire + endpoint) and a
+**capability assignment** (which provider, which model, which thinking level, for what). The unique key
+on `ai_capabilities` is then literally the directive: one row per capability.
+
+The owner's D1 adds the scope — **the household owns both tables, not the user**:
+
+- **The household is what pays.** One bill, one subscription, one card, therefore one key set.
+  Per-user providers meant a partner's key could not be shared without copying it, and a departing
+  member's key left with them — the household's AI configuration _was_ one person's settings.
+- **Use stays personal.** The provider is household property; the _call_ is still the member's. Every
+  usage row records the acting `user_id` **and** the household, so "Alice spent 40k tokens of the
+  family's key" is a row, not a guess (§3.5).
+- **Management is owner-only.** The role vocabulary is `owner|member` (`0001_schema.sql:25-31`,
+  `lib/households.ts:134-142`): an owner adds/edits/deletes providers and assignments (`requireOwner`,
+  403 for members); members read the configuration and use it, but cannot change which key the
+  household spends. That is the same gate the roster and invite surfaces use, so there is one
+  permission model, not two.
+- **Keys stay write-only.** No endpoint returns `encrypted_key` or a decrypted key, for any role;
+  `has_key` is the only signal, in either direction. A member never sees the key — they only benefit
+  from it.
 
 Rejected alternatives, briefly:
 
+- **Keep providers per-user and add a share table.** Two scopes (owned + shared) means every read
+  checks both, capability assignments need a scope column, and the migration has to invent grant rows
+  for every existing household. The household is already the billing and permission unit; making it the
+  owner is smaller than modelling sharing.
 - **Extend `user_settings` with `ai_decision_model` only.** Cheapest migration, but cannot express
   "decision → Jev, reasoning → Claude": one `ai_provider` column means one key, one base URL, one
   vendor. It also makes the owner's core ask ("multiple providers at once") unrepresentable.
@@ -423,29 +527,28 @@ Rejected alternatives, briefly:
   vision on one provider, decision on another" works, but the capability becomes a column triple in
   one table (`decision_model`, `vision_model`…) and the unique-per-capability invariant has no home.
 
-Two tables, because they are two different nouns: a **provider** (credentials + wire + endpoint)
-and a **capability assignment** (which provider, which model, which thinking level, for what).
-The unique key on `ai_capabilities` is then literally the directive: one row per capability.
-
 ### 3.2 DDL sketch — `backend/migrations/0039_ai_gateway.sql`
 
 ```sql
--- AI gateway (ahaqqu/RumaQ#523): multiple providers per user, one assignment per
--- capability (decision / reasoning / vision), and a capability stamp on usage rows.
+-- AI gateway (ahaqqu/RumaQ#523): multiple providers per HOUSEHOLD, one assignment
+-- per capability (decision / reasoning / vision), plus capability, household and
+-- funding stamps on usage rows.
 -- NUMBERING: 0038 is applied (review_ai); this takes the next free slot. Never
 -- rename an applied migration — wrangler keys d1_migrations by filename.
 
 -- A provider instance: the wire kind, a preset, an optional base URL, one sealed key.
 -- A typed-decision endpoint is a row like any other — a label, kind 'questions',
 -- and a base URL. No vendor name appears in a table, column, or type: the
--- abstraction is the wire, and nothing is seeded per user.
+-- abstraction is the wire, and nothing is seeded.
 CREATE TABLE IF NOT EXISTS ai_providers (
   -- Dashed UUID at runtime; TEXT PK NOT NULL per the 0021 note (on rowid tables a
   -- TEXT PRIMARY KEY does not imply NOT NULL). The 0039 backfill writes
   -- 'legacy-' || user_id so the migration can address the row deterministically.
   id TEXT PRIMARY KEY NOT NULL,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  -- The user's own name for it ("Work account", "Personal key").
+  -- D1: the HOUSEHOLD owns the credentials, because the household pays. Which
+  -- member made a call is recorded per call (ai_usage_events.user_id), never here.
+  household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+  -- The household's name for it ("Work account", "Personal key").
   label TEXT NOT NULL,
   -- The WIRE protocol, not the vendor: 'openai-compatible' serves OpenAI, OpenCode,
   -- Ollama and any custom base URL — see presets.ts. 'gemini' is separate because
@@ -462,7 +565,7 @@ CREATE TABLE IF NOT EXISTS ai_providers (
   base_url TEXT,
   -- AES-GCM ciphertext (lib/crypto.ts). NULL means the row cannot serve a call:
   -- it may be edited and re-keyed, but it cannot be ASSIGNED to a capability
-  -- until it has a key. NEVER returned by an API.
+  -- until it has a key. NEVER returned by an API, for any role.
   encrypted_key TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -470,25 +573,25 @@ CREATE TABLE IF NOT EXISTS ai_providers (
   CHECK (encrypted_key IS NULL OR encrypted_key LIKE 'v1:%')
 );
 
--- Case-insensitive per-user label uniqueness: two "Gemini" rows are a UX bug,
--- not a feature. Expression index, so the check is the database's, not the route's.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_providers_user_label
-  ON ai_providers (user_id, lower(label));
+-- Case-insensitive label uniqueness WITHIN a household: two "Gemini" rows are a
+-- UX bug, not a feature. Expression index, so the check is the database's.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_providers_household_label
+  ON ai_providers (household_id, lower(label));
 
--- Exactly one assignment per (user, capability) — the PK IS the invariant.
+-- Exactly one assignment per (household, capability) — the PK IS the invariant.
 CREATE TABLE IF NOT EXISTS ai_capabilities (
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
   capability TEXT NOT NULL CHECK (capability IN ('decision', 'reasoning', 'vision')),
   -- Deleting a provider clears the assignments that pointed at it (CASCADE):
-  -- the capability then becomes not configured (402). The API
-  -- reports the cleared capabilities so the UI can warn BEFORE the delete.
+  -- the capability then becomes not configured (402). The API reports the
+  -- cleared capabilities so the UI can warn BEFORE the delete.
   provider_id TEXT NOT NULL REFERENCES ai_providers(id) ON DELETE CASCADE,
   -- NULL = the adapter's default model for this capability (today's behaviour).
   model TEXT,
   -- Per-capability thinking level: NULL = the provider default.
   thinking_level TEXT CHECK (thinking_level IN ('low', 'medium', 'high')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  PRIMARY KEY (user_id, capability),
+  PRIMARY KEY (household_id, capability),
   -- Vision and typed-decision providers take no reasoning knob: a vision OCR read
   -- wants a cheap deterministic answer, and a questions endpoint has no such field.
   -- Enforced here so no adapter has to silently drop it.
@@ -497,89 +600,180 @@ CREATE TABLE IF NOT EXISTS ai_capabilities (
 
 CREATE INDEX IF NOT EXISTS idx_ai_capabilities_provider ON ai_capabilities (provider_id);
 
--- Usage rows gain the capability dimension. NULL on rows written before 0039
--- (they are still valid history; the admin views treat NULL as "unknown").
+-- Usage rows gain the three dimensions D1 and D9 need. All NULL on pre-0039
+-- history (still valid; the admin views treat NULL as "unknown").
 ALTER TABLE ai_usage_events ADD COLUMN capability TEXT;
+-- The household the call acted for. SET NULL, not CASCADE: deleting a household
+-- must not delete the record that its tokens were spent.
+ALTER TABLE ai_usage_events ADD COLUMN household_id TEXT REFERENCES households(id) ON DELETE SET NULL;
+-- D9's reserved dimension: 'household' (BYOK) today, 'platform' if RumaQ ever pays.
+ALTER TABLE ai_usage_events ADD COLUMN funding TEXT CHECK (funding IN ('household', 'platform'));
 
--- Capability-scoped "today" and per-capability admin breakdowns.
+-- Per-user "today" (the existing route) and per-household accounting (D1).
 CREATE INDEX IF NOT EXISTS idx_ai_usage_events_user_date_capability
   ON ai_usage_events (user_id, date, capability);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_events_household_date
+  ON ai_usage_events (household_id, date);
 ```
 
 Deliberately **not** modelled: a `default_provider` flag (the capability assignments say what is
-used), an `is_active` flag (delete is the off switch), and any secret material outside
-`encrypted_key` (the existing `crypto.ts` helpers handle it, and the v1: envelope keeps rotation
-possible).
+used), an `is_active` flag (delete is the off switch), a member-level permission table (the household
+role says who manages, §3.1), and any secret material outside `encrypted_key` (the existing `crypto.ts`
+helpers handle it, and the v1: envelope keeps rotation possible).
 
-Both SQL blocks below were executed against `node:sqlite` (the engine class `migrations.test.ts`
-already uses) on a 0015/0033-shaped schema before this document was published: the backfill row set,
-the `ON DELETE CASCADE` behaviour, and the kind / label / vision-thinking CHECKs all behave as
-described here. P1 turns that ad-hoc check into the committed migration test.
+Both SQL blocks in this section and §3.3 were executed against `node:sqlite` (the engine class
+`migrations.test.ts` already uses) on a 0015/0033/0020-shaped schema before this document was
+published: the backfill row set (including a two-member household and a two-household user), the
+`ON DELETE CASCADE`/`SET NULL` behaviour, and the kind / label / vision-thinking / funding CHECKs all
+behave as described here. P1 turns that ad-hoc check into the committed migration test.
 
 ### 3.3 Migration from today's single provider
 
+The one ambiguity the migration must resolve is _whose household a legacy row belongs to_. The answer
+is already in the code: `ACTIVE_HOUSEHOLD_SQL` (`auth.ts:136-145`) resolves the household a request
+acts in — `user_settings.active_household_id` while it is still a membership, else the oldest
+membership. The backfill mirrors that rule exactly, so the migration cannot disagree with the runtime:
+
 ```sql
--- 1) One provider per configured user. A user with no key is not migrated: there
---    is nothing to preserve, and a keyless provider row would render as broken.
-INSERT INTO ai_providers (id, user_id, label, kind, preset, base_url, encrypted_key)
+-- 0) The household a legacy row belongs to = the household the request would have
+--    acted in (ACTIVE_HOUSEHOLD_SQL, auth.ts:136-145). Repeated in each statement
+--    below rather than stored in a temp table: a D1 migration file must not depend
+--    on session-local objects surviving between statements.
+WITH source AS (
+  SELECT s.user_id, s.ai_provider, s.ai_base_url, s.ai_model,
+         s.ai_vision_model, s.ai_thinking_level, s.encrypted_ai_key,
+         COALESCE(
+           (SELECT m.household_id
+              FROM household_members m
+              JOIN user_settings a ON a.user_id = m.user_id
+                                   AND a.active_household_id = m.household_id
+             WHERE m.user_id = s.user_id
+             LIMIT 1),
+           (SELECT m.household_id
+              FROM household_members m
+             WHERE m.user_id = s.user_id
+             ORDER BY m.joined_at, m.household_id
+             LIMIT 1)
+         ) AS household_id
+    FROM user_settings s
+   WHERE s.ai_provider IS NOT NULL
+     AND s.encrypted_ai_key IS NOT NULL AND s.encrypted_ai_key <> ''
+     AND s.encrypted_ai_key LIKE 'v1:%'
+),
+-- 1) One provider per configured user, handed to that user's household. Members of
+--    the same household keep ONE row each; the label disambiguates them with the
+--    member's name and a partition-unique sequence, so the (household, lower(label))
+--    index can never abort the deploy.
+labelled AS (
+  SELECT src.*, u.name AS user_name,
+         CASE src.ai_provider
+           WHEN 'openai' THEN 'OpenAI' WHEN 'opencode' THEN 'OpenCode'
+           WHEN 'anthropic' THEN 'Anthropic' WHEN 'gemini' THEN 'Gemini'
+           WHEN 'ollama' THEN 'Ollama Cloud' ELSE 'Custom provider'
+         END || ' (imported)' AS base_label,
+         ROW_NUMBER() OVER (
+           PARTITION BY src.household_id, src.ai_provider
+           ORDER BY src.user_id
+         ) AS rn
+    FROM source src
+    JOIN users u ON u.id = src.user_id
+   WHERE src.household_id IS NOT NULL
+)
+INSERT INTO ai_providers (id, household_id, label, kind, preset, base_url, encrypted_key)
 SELECT 'legacy-' || user_id,
-       user_id,
-       CASE ai_provider
-         WHEN 'openai' THEN 'OpenAI'
-         WHEN 'opencode' THEN 'OpenCode'
-         WHEN 'anthropic' THEN 'Anthropic'
-         WHEN 'gemini' THEN 'Gemini'
-         WHEN 'ollama' THEN 'Ollama Cloud'
-         ELSE 'Custom provider'
-       END || ' (imported)',   -- the label tells the user where it came from
+       household_id,
+       base_label || CASE WHEN rn > 1
+                          THEN ' · ' || COALESCE(NULLIF(user_name, ''), user_id) || ' #' || rn
+                          ELSE '' END,
        CASE ai_provider WHEN 'anthropic' THEN 'anthropic'
                         WHEN 'gemini' THEN 'gemini'
                         ELSE 'openai-compatible' END,
        ai_provider,          -- the legacy value IS a preset id (0008 vocabulary)
        ai_base_url,
        encrypted_ai_key
-  FROM user_settings
- WHERE ai_provider IS NOT NULL
-   AND encrypted_ai_key IS NOT NULL AND encrypted_ai_key <> ''
-   AND encrypted_ai_key LIKE 'v1:%';
+  FROM labelled;
 
--- 2) All three capabilities inherit today's behaviour EXACTLY:
---    reasoning = ai_model + ai_thinking_level
---    vision    = COALESCE(ai_vision_model, ai_model)   (0033's precedence, ai-access.ts:108)
---    decision  = ai_model + ai_thinking_level          (review already runs on these)
-INSERT INTO ai_capabilities (user_id, capability, provider_id, model, thinking_level)
-SELECT user_id, 'reasoning', 'legacy-' || user_id, ai_model, ai_thinking_level
-  FROM user_settings
- WHERE ai_provider IS NOT NULL
-   AND encrypted_ai_key IS NOT NULL AND encrypted_ai_key <> ''
-   AND encrypted_ai_key LIKE 'v1:%';
-INSERT INTO ai_capabilities (user_id, capability, provider_id, model, thinking_level)
-SELECT user_id, 'vision', 'legacy-' || user_id, COALESCE(ai_vision_model, ai_model), NULL
-  FROM user_settings
- WHERE ai_provider IS NOT NULL
-   AND encrypted_ai_key IS NOT NULL AND encrypted_ai_key <> ''
-   AND encrypted_ai_key LIKE 'v1:%';
-INSERT INTO ai_capabilities (user_id, capability, provider_id, model, thinking_level)
-SELECT user_id, 'decision', 'legacy-' || user_id, ai_model, ai_thinking_level
-  FROM user_settings
- WHERE ai_provider IS NOT NULL
-   AND encrypted_ai_key IS NOT NULL AND encrypted_ai_key <> ''
-   AND encrypted_ai_key LIKE 'v1:%';
+-- 2) Capabilities are household-level, so exactly one member's legacy values win per
+--    capability: the household OWNER's, else the earliest-joined member's, else the
+--    lowest user id. Deterministic, and every other member's provider row still
+--    exists for the owner to assign later — no key is discarded.
+WITH source AS ( /* same CTE as above */ ),
+candidate AS (
+  SELECT src.household_id, src.user_id, m.role, m.joined_at,
+         'reasoning' AS capability, src.ai_model AS model,
+         src.ai_thinking_level AS thinking_level
+    FROM source src
+    JOIN household_members m ON m.user_id = src.user_id AND m.household_id = src.household_id
+  UNION ALL
+  SELECT src.household_id, src.user_id, m.role, m.joined_at,
+         'vision', COALESCE(src.ai_vision_model, src.ai_model), NULL
+    FROM source src
+    JOIN household_members m ON m.user_id = src.user_id AND m.household_id = src.household_id
+  UNION ALL
+  SELECT src.household_id, src.user_id, m.role, m.joined_at,
+         'decision', src.ai_model, src.ai_thinking_level
+    FROM source src
+    JOIN household_members m ON m.user_id = src.user_id AND m.household_id = src.household_id
+),
+ranked AS (
+  SELECT candidate.*,
+         ROW_NUMBER() OVER (
+           PARTITION BY household_id, capability
+           ORDER BY (role = 'owner') DESC, joined_at, user_id
+         ) AS rn
+    FROM candidate
+)
+INSERT INTO ai_capabilities (household_id, capability, provider_id, model, thinking_level)
+SELECT household_id, capability, 'legacy-' || user_id, model, thinking_level
+  FROM ranked
+ WHERE rn = 1;
+
+-- 3) History gains the household and the funding source it actually used: the old
+--    per-user key is a household call, the retired shared key was platform-funded.
+UPDATE ai_usage_events
+   SET household_id = (
+     SELECT COALESCE(
+       (SELECT m.household_id
+          FROM household_members m
+          JOIN user_settings a ON a.user_id = m.user_id
+                               AND a.active_household_id = m.household_id
+         WHERE m.user_id = ai_usage_events.user_id
+         LIMIT 1),
+       (SELECT m.household_id
+          FROM household_members m
+         WHERE m.user_id = ai_usage_events.user_id
+         ORDER BY m.joined_at, m.household_id
+         LIMIT 1)))
+ WHERE household_id IS NULL;
+
+UPDATE ai_usage_events
+   SET funding = CASE key_source WHEN 'server' THEN 'platform' WHEN 'user' THEN 'household' END
+ WHERE funding IS NULL AND key_source IN ('user', 'server');
 ```
 
 Notes the implementation must honour:
 
-- A legacy `ai_provider = 'custom'` row with **no** `ai_base_url` is migrated as-is and stays broken
-  in exactly the same way (the old dispatcher threw at call time, `ai.ts:506-511`). It must **not**
+- **The capability INSERTs repeat the join on `household_members`** on purpose: it both resolves the
+  role (owner wins) and drops a legacy row whose user has no household — the column is `NOT NULL`, so
+  an unmatched row must be skipped, not inserted as NULL.
+- **A user in two households gets their provider in exactly one** — the active/oldest one, never
+  duplicated. Switching households at runtime switches the provider set with it, which is the point of
+  the household scope.
+- **Multi-member households keep every key but only one assignment set.** Member B's old key becomes a
+  provider row (`… · Bob #2`) they can be assigned later; until then B's calls use the household's
+  assignment and are billed to the owner's key. That is the intended consequence of D1, not an
+  accident — it is called out in the release note and in risk 7.
+- A legacy `ai_provider = 'custom'` row with **no** `ai_base_url` is migrated as-is and stays broken in
+  exactly the same way (the old dispatcher threw at call time, `ai.ts:506-511`). It must **not**
   silently become an OpenAI call: `preset = 'custom'` has no canonical endpoint, so the row resolves as
   unusable (log line, not configured → 402) and the Settings screen flags it "needs a base URL".
-- The capability INSERTs repeat `ai_provider IS NOT NULL` on purpose: a user can hold a key with no
+- The provider INSERT repeats `ai_provider IS NOT NULL` on purpose: a user can hold a key with no
   provider chosen (`PATCH /api/settings` accepts `ai_key` alone), and such a row has no
   `legacy-…` provider to reference — the FK would abort the whole migration.
-- All four statements filter `encrypted_ai_key LIKE 'v1:%'` for the same reason: one hand-edited
-  non-envelope ciphertext would fail the `ai_providers.encrypted_key` CHECK and abort the entire
-  migration. Such a row is skipped (its key could never be decrypted anyway) and the user lands in
-  the normal "not configured" state instead of blocking everyone else's deploy.
+- All provider/capability statements filter `encrypted_ai_key LIKE 'v1:%'` for the same reason: one
+  hand-edited non-envelope ciphertext would fail the `ai_providers.encrypted_key` CHECK and abort the
+  entire migration. Such a row is skipped (its key could never be decrypted anyway) and the user lands
+  in the normal "not configured" state instead of blocking everyone else's deploy.
 - `thinking_level` for `vision` is forced NULL: 0033 never had one, and the CHECK above requires it.
 - The migration is **idempotent only in the sense of not re-running**: wrangler tracks filenames, and
   the legacy ids are deterministic. A re-run on a migrated DB would violate the provider PK — that is
@@ -629,23 +823,34 @@ write-through (§4.3) keeps today's scenarios green until P6. `TEST_MODE` still 
 so seeded rows exercise the **resolver** without a real provider call — which is exactly why the rows
 must exist. The "no AI key returns 402" scenarios stay honest by seeding nothing.
 
-**Key provenance.** `ai_usage_events.key_source` keeps its column and its history, but new rows are
-always `'user'`. Nothing in the product can spend a platform key any more, so the admin views no
-longer need to distinguish a platform-paid call.
+**Key provenance.** New usage rows record `funding = 'household'` (D9) and no longer write
+`key_source`, whose column and historical values stay until P6. Nothing in the product can spend a
+platform key any more, so the admin views no longer need to distinguish a platform-paid call — but the
+column is still there for the rows that were.
+
+**No platform provider is seeded, now or later.** D9 reserves a `funding` dimension and D8 removes the
+env fallback; together they mean v1 has no RumaQ-funded provider of any kind. A future premium mode
+adds a provider row and a subscription check **inside the door** (§2.6) — it does not add an env var,
+a per-user grant, or a call-site branch.
 
 ### 3.5 Uniqueness, deletion, ownership
 
-| Rule                                     | Where                                                | Behaviour                                                                                                                |
-| ---------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| One assignment per capability            | `PRIMARY KEY (user_id, capability)`                  | `PUT /api/ai/capabilities/:capability` is an upsert                                                                      |
-| Labels unique per user, case-insensitive | `idx_ai_providers_user_label`                        | 409 on create/rename                                                                                                     |
-| Deleting a provider                      | `ON DELETE CASCADE` on `ai_capabilities.provider_id` | the capability becomes not configured → 402; DELETE response reports `{ cleared: ['reasoning'] }`; the UI confirms first |
-| Deleting a user                          | `ON DELETE CASCADE` from `users` on both tables      | no orphans                                                                                                               |
-| Usage rows survive provider edits        | no FK from `ai_usage_events`                         | history stays readable after a provider is deleted (it stores kind + model + capability, not provider id)                |
-| Ownership                                | `ai_providers.user_id`                               | per-user for v1; household-shared keys are OQ1                                                                           |
+| Rule                              | Where                                                 | Behaviour                                                                                                                       |
+| --------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| One assignment per capability     | `PRIMARY KEY (household_id, capability)`              | `PUT /api/ai/capabilities/:capability` is an upsert                                                                             |
+| Labels unique per household       | `idx_ai_providers_household_label`                    | 409 on create/rename                                                                                                            |
+| Deleting a provider               | `ON DELETE CASCADE` on `ai_capabilities.provider_id`  | the capability becomes not configured → 402; DELETE reports `{ cleared: ['reasoning'] }`; the UI confirms first                 |
+| Deleting a household              | `ON DELETE CASCADE` from `households` on both tables  | providers and assignments go with it; usage rows keep `household_id = NULL` (the tokens were still spent)                       |
+| A member leaving or joining       | `household_members` only                              | the household's providers and assignments are untouched — the point of D1                                                       |
+| Deleting a user                   | `ON DELETE CASCADE` from `users` on `ai_usage_events` | their usage history goes with the account; the household's configuration stays                                                  |
+| Usage rows survive provider edits | no FK from `ai_usage_events` to `ai_providers`        | history stays readable after a provider is deleted (it stores kind + model + capability + household + funding, not provider id) |
+| Who may manage                    | household role (`lib/households.ts:134-142`)          | `owner` creates/edits/deletes providers and assignments; `member` reads and uses them; 403 otherwise                            |
+| Key secrecy                       | `encrypted_key` never serialised                      | `has_key` is the only signal any GET returns, for any role; the decrypted key only ever exists inside `lib/ai/**`               |
 
-`ai_usage_events` stores the **kind** in `provider` (as today) plus `capability`; it does not store
-`provider_id`, because a deleted provider must not orphan or rewrite history.
+`ai_usage_events` stores the **kind** in `provider` (as today) plus `capability`, `household_id` and
+`funding`; it does not store `provider_id`, because a deleted provider must not orphan or rewrite
+history. Attribution is two-dimensional on purpose: `user_id` answers "who made the call", and
+`household_id` answers "who paid for it" — the pair is what makes a shared key auditable.
 
 ---
 
@@ -653,24 +858,27 @@ longer need to distinguish a platform-paid call.
 
 ### 4.1 Endpoints
 
-All authenticated and registered in the existing `apiApp.use(..., propsAuthMiddleware)` block
-(`apps/api.ts:621-669`) — a missed entry is an unauthenticated route, so the phase test asserts
-each new path 401s without a session.
+All routes act on the **resolved household** (`c.get('householdId')`), never on a user id: switching
+households switches the provider set, which is the point of D1. Reads are open to every member; every
+write goes through `requireOwner` (`lib/households.ts:134-142`) and answers 403 for a member. All are
+authenticated and registered in the existing `apiApp.use(..., propsAuthMiddleware)` block
+(`apps/api.ts:621-669`) — a missed entry is an unauthenticated route, so the phase test asserts each
+new path 401s without a session.
 
 | Method        | Path                               | Purpose                                                                                                                                                                                                             |
 | ------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET`         | `/api/ai/presets`                  | The catalog of presets a user MAY add: id, label, kind, canonical base URL, default models per capability. Seeds nothing, preselects nothing, and defines no default. **The one place the UI learns vendors from.** |
-| `GET`         | `/api/ai/providers`                | `{ providers: [{ id, label, kind, base_url, has_key, created_at, updated_at }] }` — never the key                                                                                                                   |
-| `POST`        | `/api/ai/providers`                | Create `{ label, kind, base_url?, api_key, preset? }` → 201 with the row                                                                                                                                            |
-| `PATCH`       | `/api/ai/providers/:id`            | Update `{ label?, kind?, base_url?, api_key? }`; `api_key: ''` clears it, omitted leaves it                                                                                                                         |
-| `DELETE`      | `/api/ai/providers/:id`            | Delete + cascade; returns `{ cleared: Capability[] }`                                                                                                                                                               |
-| `POST`        | `/api/ai/providers/:id/test`       | Test connection (see §4.6). Body `{}`; rate-limited                                                                                                                                                                 |
-| `GET`         | `/api/ai/capabilities`             | `{ capabilities: { decision: { provider_id, model, thinking_level, source: 'user'\|'none', provider_label } , … } }`                                                                                                |
-| `PUT`         | `/api/ai/capabilities/:capability` | Upsert `{ provider_id, model?, thinking_level? }`                                                                                                                                                                   |
-| `DELETE`      | `/api/ai/capabilities/:capability` | Clear the assignment (the capability becomes not configured)                                                                                                                                                        |
-| `GET`         | `/api/ai/usage`                    | Existing (`api.ts:1439`) + per-capability breakdown for today                                                                                                                                                       |
-| `GET`         | `/api/admin/ai/usage`              | Existing (`api.ts:1523`) + per-capability totals                                                                                                                                                                    |
-| `GET`/`PATCH` | `/api/settings`                    | Unchanged shape + additive `ai_providers`, `ai_capabilities`, `ai_status { decision, reasoning, vision: 'user'\|'none' }`; `server_ai_available` is **removed** in P3 (D8)                                          |
+| `GET`         | `/api/ai/providers`                | `{ can_manage, providers: [{ id, label, kind, base_url, has_key, created_at, updated_at }] }` — never the key; `can_manage` is the household role, so the UI never guesses                                          |
+| `POST`        | `/api/ai/providers`                | Owner only. Create `{ label, kind, base_url?, api_key, preset? }` → 201 with the row                                                                                                                                |
+| `PATCH`       | `/api/ai/providers/:id`            | Owner only. Update `{ label?, kind?, base_url?, api_key? }`; `api_key: ''` clears it, omitted leaves it                                                                                                             |
+| `DELETE`      | `/api/ai/providers/:id`            | Owner only. Delete + cascade; returns `{ cleared: Capability[] }`                                                                                                                                                   |
+| `POST`        | `/api/ai/providers/:id/test`       | Owner only. Test connection (see §4.6). Body `{}`                                                                                                                                                                   |
+| `GET`         | `/api/ai/capabilities`             | `{ capabilities: { decision: { provider_id, model, thinking_level, source: 'household'\|'none', provider_label } , … } }`                                                                                           |
+| `PUT`         | `/api/ai/capabilities/:capability` | Owner only. Upsert `{ provider_id, model?, thinking_level? }`                                                                                                                                                       |
+| `DELETE`      | `/api/ai/capabilities/:capability` | Owner only. Clear the assignment (the capability becomes not configured)                                                                                                                                            |
+| `GET`         | `/api/ai/usage`                    | Existing (`api.ts:1439`) + per-capability breakdown for today. Scoped to the **acting user** — "your calls", not the household's                                                                                    |
+| `GET`         | `/api/admin/ai/usage`              | Existing (`api.ts:1523`) + per-capability and per-household totals (the funding view D9 will need)                                                                                                                  |
+| `GET`/`PATCH` | `/api/settings`                    | Unchanged shape + additive `ai_providers`, `ai_capabilities`, `ai_status { decision, reasoning, vision: 'household'\|'none' }`; `server_ai_available` is **removed** in P3 (D8)                                     |
 
 Deprecated but kept until P6: `POST /api/ai-key/test` (`api.ts:1298`), superseded by
 `/api/ai/providers/:id/test`.
@@ -680,10 +888,10 @@ Deprecated but kept until P6: `POST /api/ai-key/test` (`api.ts:1298`), supersede
 Valibot schemas in `backend/src/schemas.ts` beside the existing `settingsPatchSchema:26`:
 
 - `kind` — `picklist(['openai-compatible', 'anthropic', 'gemini', 'questions'])`.
-- `label` — `pipe(string(), minLength(1), maxLength(60))`, trimmed; unique per user (409).
+- `label` — `pipe(string(), minLength(1), maxLength(60))`, trimmed; unique per household (409).
 - `base_url` — `maxLength(500)`, trimmed, trailing slashes stripped, **HTTPS only** (the existing
   rule, `api.ts:1198-1200`), required when `kind = 'questions'` or when no canonical endpoint
-  exists for the kind. HTTP / private-network endpoints are OQ5.
+  exists for the kind. HTTP / private-network endpoints are OQ4.
 - `api_key` — `minLength(1)` on create, trimmed, encrypted with `encryptAiKey` (`crypto.ts:85`)
   before the INSERT; never echoed, never logged; `has_key` is the only signal the API returns.
 - **An assignment requires a usable provider**: the target row must have an `encrypted_key` and a
@@ -693,11 +901,15 @@ Valibot schemas in `backend/src/schemas.ts` beside the existing `settingsPatchSc
   Gemini interpolates the model into the URL path (`ai.ts:312-315`).
 - `thinking_level` — `low|medium|high|''`; rejected (400) for `vision` and for `kind = 'questions'`.
 - **Cross-field checks** (server-side, not just UI): provider kind must `supports(capability)`; a
-  capability assignment must reference a provider owned by the caller (`WHERE id = ? AND user_id = ?`,
-  so a leaked id is a 404, not another user's provider).
-- **There is no implicit assignment.** `PUT /api/ai/capabilities/:capability` is a 404 when the caller
-  has no provider with that id, and nothing creates a provider or an assignment on the user's behalf —
-  not the migration, not the UI, not the first AI request.
+  capability assignment must reference a provider of the **caller's household**
+  (`WHERE id = ? AND household_id = ?`, so a leaked id from another household is a 404, never a 403
+  that would confirm it exists).
+- **Role checks come first on every write**: `requireOwner(db, c.get('householdId'), c.get('userId'))`
+  → 403 `Only household owners can change AI settings`, before any row is touched. Reads skip the
+  check on purpose: a member must see what their household is spending.
+- **There is no implicit assignment.** `PUT /api/ai/capabilities/:capability` is a 404 when the
+  household has no provider with that id, and nothing creates a provider or an assignment on the
+  household's behalf — not the migration, not the UI, not the first AI request.
 
 ### 4.3 Legacy compatibility window
 
@@ -710,16 +922,28 @@ fields.
 - **Read-through**: `ai_provider` / `ai_model` / `ai_vision_model` / `ai_thinking_level` are derived
   from the new tables (reasoning assignment → provider kind/base URL/model; vision model; reasoning
   thinking level). `has_ai_key` = any provider row has a key.
-- **Write-through**: a legacy `PATCH` updates the migration-shaped provider and the three
-  assignments, so an old client can never desynchronise the new model. `ai_key` writes to that
-  provider's `encrypted_key`.
-- P6 drops the columns, the shim, and this window (OQ6 is the timing decision).
+- **Write-through**: a legacy `PATCH` updates the household's `legacy-<caller_id>` provider (created on
+  first use) and the three assignments, so an old client can never desynchronise the new model.
+  `ai_key` writes to that provider's `encrypted_key`.
+- **Owner-only, from P1**: the AI fields of `PATCH /api/settings` now change household property, so
+  they go through `requireOwner` like the new endpoints. A member gets 403
+  `Only household owners can change AI settings`. During the window the _old_ UI still renders the
+  form for members, so this is a visible transition wart rather than a silent no-op — release note and
+  risk 7.
+- P6 drops the columns, the shim, and this window (OQ5 is the timing decision).
 
 ### 4.4 Screen structure — Settings → AI
 
-One section. **Two states, and the empty state comes first.**
+One section. **Two states, and the empty state comes first.** The section is **household-scoped**: what
+it shows is what the household's members will spend on their next call.
 
-**State A — no provider yet** (`providers.length === 0`), for every new account:
+**Who sees what.** A member sees the same data read-only: providers listed without Add/Edit/Delete/
+Test, assignments shown as status lines, and one sentence naming the decision maker ("Managed by
+Alice — ask them to change it"). The empty state for a member says "Ask your household owner to add a
+provider." Every manage affordance is gated on `can_manage` from `GET /api/ai/providers`, never on a
+client-side guess about the role.
+
+**State A — no provider yet** (`providers.length === 0`), for every new household:
 
 1. **Lead copy** — "RumaQ uses AI in three places: decisions, chat and plans, and reading receipts
    and documents. Add a provider to turn any of them on."
@@ -735,18 +959,19 @@ One section. **Two states, and the empty state comes first.**
 1. **Lead copy** — same sentence, plus the resolved reminder ("Changes apply to the next AI call").
 2. **Capability cards** — three rows in the existing `Setting` component:
    - **Decision model** — "Structured choices: review verdicts, classification, JSON answers."
-     Provider `<select>` listing only the user's providers (nothing preselected; the first option is
+     Provider `<select>` listing only the household's providers (nothing preselected; the first option is
      "Choose a provider") — **no "use server default" option exists** (D8); model input whose
      placeholder is the adapter's default; thinking select (hidden when the provider has none).
    - **Reasoning model** — "Chat and shopping plans." Same shape.
    - **Vision model** — "Reading receipts and documents." No thinking select.
      Each card renders its resolved source as a status line: _"Using <label>"_ or _"Not
      configured"_. There is no third state.
-3. **Providers** — list rows (label, kind, base URL, key state) with **Test**, **Edit**, **Delete**;
-   the **Add provider** form (preset picker, nothing preselected; advanced: kind + base URL + model
-   for a typed-decision endpoint). Deleting a provider that is assigned shows which capabilities will
-   become **not configured** before the confirm.
-4. **Usage** — today's calls/tokens, broken down by capability.
+3. **Providers** — list rows (label, kind, base URL, key state) with **Test**, **Edit**, **Delete**
+   for owners (members: the same list, no buttons); the **Add provider** form (preset picker, nothing
+   preselected; advanced: kind + base URL + model for a typed-decision endpoint). Deleting a provider
+   that is assigned shows which capabilities will become **not configured** before the confirm.
+4. **Usage** — today's calls/tokens for the acting member, broken down by capability, with the
+   household total beside it (readable by every member; the admin view owns the cross-household cut).
 
 The legacy provider/model/thinking inputs (`Settings.jsx:351-437`) are removed in P3; nothing in the
 UI reads `ai_model` after that.
@@ -774,7 +999,8 @@ UI reads `ai_model` after that.
 | `gemini`            | `GET /v1/models?key=…`                                          | free                                                                                                                  |
 | `questions`         | one minimal question over the assigned model                    | **billable** — labelled as such in the UI, rate-limited (the OCR limiter precedent, `plugins/documents/ocr.ts:46-54`) |
 
-The test never uses a stored provider's key for a _different_ provider, and the response is
+The test is owner-only (it spends the household's credential budget) and never uses a stored provider's
+key for a _different_ provider. The response is
 `{ ok: true }` / `{ ok: false, code }` — never the provider body verbatim (it can echo key material
 in error messages).
 
@@ -786,40 +1012,47 @@ in error messages).
 
 ```
 resolveAccess(ctx, capability):
-  if ctx.userId:
-    row = SELECT c.model, c.thinking_level,
-                 p.id, p.kind, p.preset, p.base_url, p.encrypted_key
-            FROM ai_capabilities c JOIN ai_providers p ON p.id = c.provider_id
-           WHERE c.user_id = ? AND c.capability = ?          -- 1 subrequest, 1 join
+  row = SELECT c.model, c.thinking_level,
+               p.id, p.kind, p.preset, p.base_url, p.encrypted_key
+          FROM ai_capabilities c JOIN ai_providers p ON p.id = c.provider_id
+         WHERE c.household_id = ? AND c.capability = ?       -- 1 subrequest, 1 join
 
-    if row and row.encrypted_key:                            -- no key: row is unusable
-      baseUrl = row.base_url ?? presetEndpoint(row.preset)   -- presets.ts, null for 'custom'
-      if baseUrl or row.kind != 'questions':                 -- questions has no canonical endpoint
-        try:   key = decryptAiKey(row.encrypted_key, WORKER_ENCRYPTION_KEY)
-        catch: log '[ai] stored provider unusable user=…'    -- never 500
-        else:  return handle(user)                           -- model NULL = adapter default
-    else:
-      log '[ai] capability assignment has no usable provider user=…'   -- Settings flags it
+  if row and row.encrypted_key:                              -- no key: row is unusable
+    baseUrl = row.base_url ?? presetEndpoint(row.preset)     -- presets.ts, null for 'custom'
+    if baseUrl or row.kind != 'questions':                   -- questions has no canonical endpoint
+      try:   key = decryptAiKey(row.encrypted_key, WORKER_ENCRYPTION_KEY)
+      catch: log '[ai] stored provider unusable household=…' -- never 500
+      else:  return handle(funding='household')              -- model NULL = adapter default
+  else:
+    log '[ai] capability assignment has no usable provider household=…'   -- Settings flags it
 
   return null                                                -- routes answer 402
 ```
+
+The household is the lookup key, not the user: two members of the same household resolve the **same**
+row (and therefore the same key), which is exactly what D1 asks for. The acting `userId` never enters
+this query — it only appears when the usage row is written (§5.3), so a member can never be served a
+different provider than the one the owner configured.
 
 There is no server branch (D8): an unconfigured capability is unconfigured, and the ladder above is
 the whole ladder.
 
 Rules that make this honest:
 
-- **The user's own rows are the only source.** There is no env key, no shared provider, and no
+- **The household's own rows are the only source.** There is no env key, no shared provider, and no
   "platform default" to fall back to (D8). The only default in the system is the adapter's model
-  default _within_ a provider the user chose.
+  default _within_ a provider the household chose.
 - **A broken stored key is not a 500.** An undecryptable ciphertext or an unusable row (missing key,
   no resolvable endpoint) is logged, treated as not configured, and shown as "needs setup" in
-  Settings — the same 402 the user would get with nothing configured, instead of today's
+  Settings — the same 402 a household would get with nothing configured, instead of today's
   inconsistency where chat/scan throw 500 on an undecryptable key.
 - **`not_configured` is a normal state**, not an error: the review layer keeps degrading assist/auto
   to manual (`review-ai.ts:727-740`), routes keep 402.
-- **Empty means empty.** A new account has no rows for any capability, so `resolveAccess` returns
+- **Empty means empty.** A new household has no rows for any capability, so `resolveAccess` returns
   `null` for every capability. No code path invents a provider, a model, or a vendor.
+- **`funding` is decided here, once.** Every handle v1 can return is `'household'`; the day a platform
+  provider exists, this function is the only place that decides which one it is, and §2.6's meter is
+  the only place a limit is applied.
 
 ### 5.2 Error and timeout normalisation
 
@@ -841,15 +1074,16 @@ class AiError extends Error {
 }
 ```
 
-| code               | cause                                                         | HTTP | note                                                                                                    |
-| ------------------ | ------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------- |
-| `not_configured`   | no assignment for the capability, or its provider is unusable | 402  | unchanged route strings                                                                                 |
-| `unsupported`      | kind cannot serve the capability                              | 500  | should be unreachable: save-time validation                                                             |
-| `auth`             | provider 401/403                                              | 502  | body truncated, key never echoed                                                                        |
-| `rate_limited`     | provider 429                                                  | 502  | `Retry-After` surfaced on the error, not re-sent as a retry                                             |
-| `timeout`          | our `AbortSignal` fired                                       | 502  | **same status as today** so client handling is unchanged; `code` carries the distinction                |
-| `provider_error`   | other 4xx/5xx                                                 | 502  | message keeps the provider label (`"Gemini request failed: 500 …"`) so existing route tests stay honest |
-| `invalid_response` | empty content, unparseable JSON, off-schema decision          | 502  | feature-level validation still runs after and can reject further                                        |
+| code               | cause                                                         | HTTP | note                                                                                                                   |
+| ------------------ | ------------------------------------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------- |
+| `not_configured`   | no assignment for the capability, or its provider is unusable | 402  | unchanged route strings                                                                                                |
+| `unsupported`      | kind cannot serve the capability                              | 500  | should be unreachable: save-time validation                                                                            |
+| `auth`             | provider 401/403                                              | 502  | body truncated, key never echoed                                                                                       |
+| `rate_limited`     | provider 429                                                  | 502  | `Retry-After` surfaced on the error, not re-sent as a retry                                                            |
+| `timeout`          | our `AbortSignal` fired                                       | 502  | **same status as today** so client handling is unchanged; `code` carries the distinction                               |
+| `provider_error`   | other 4xx/5xx                                                 | 502  | message keeps the provider label (`"Gemini request failed: 500 …"`) so existing route tests stay honest                |
+| `invalid_response` | empty content, unparseable JSON, off-schema decision          | 502  | feature-level validation still runs after and can reject further                                                       |
+| `quota_exceeded`   | platform funding and the household's meter is exhausted       | 402  | **reserved by D9**: unreachable in v1 (nothing is platform-funded); the only place a cap may live is the facade (§2.6) |
 
 **No automatic retries in the facade.** Each retry is a subrequest against the 50-per-invocation cap
 (`review-ai.ts:60-66`); the review sweep already retries on its next tick, and a 429 storm is a
@@ -873,20 +1107,26 @@ One row per provider call, on failure too, now carrying `capability`:
 
 ```sql
 INSERT INTO ai_usage_events
-  (id, user_id, ts, date, provider, model, capability, input_tokens, output_tokens, cached_tokens, key_source)
+  (id, user_id, ts, date, provider, model, capability, household_id, funding,
+   input_tokens, output_tokens, cached_tokens)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ```
 
+- `user_id` = the **acting member** — who made the call (attribution, not ownership).
+- `household_id` = the household that owns the provider and pays for the call: it is `call.householdId`,
+  i.e. the resolved request household, and P4's test pins that the two cannot differ.
 - `provider` = the **kind** (`'openai-compatible'`, `'questions'`) — continues today's meaning.
 - `model` = the model actually sent; NULL = adapter default.
 - `capability` = the dimension the directive asks for.
-- `key_source` = `'user'` on every new row; the column and its historical `'server'` values stay for
-  continuity (D8 retired the fallback).
+- `funding` = `'household'` on every v1 row; the dimension D9 reserves for a metered platform mode.
+- `key_source` is **no longer written** (D9 replaced it with `funding`). Historical rows keep theirs and
+  the backfill maps them (`'server'` → `'platform'`, `'user'` → `'household'`); the column survives
+  until P6.
 - The sweep keeps its single batched write (`review-ai.ts:650-662`); `document-ocr.ts` keeps its
   "audit every attempt" pairing (`:121-136`), now reading `err.call`/`err.usage` from `AiError`.
 - **Known gap**: the typed-decision wire reports no token counts. Such calls record
   `input_tokens = 0, output_tokens = 0, cached_tokens = NULL` and are distinguishable by
-  `provider = 'questions'`; per-call billing analytics for that kind are approximate (OQ4).
+  `provider = 'questions'`; per-call billing analytics for that kind are approximate (OQ3).
 
 ### 5.4 Adapter quirks (the per-provider knowledge, isolated)
 
@@ -938,15 +1178,16 @@ Each phase is one PR, shippable alone, with its own rollback. Every phase runs
 when routes change — `./scripts/docs.sh` and `bunx vp run api:codegen` (CI diffs both artifacts,
 `scripts/github/ci.sh:16-24`).
 
-### P1 — Schema, resolver swap, server-fallback removal
+### P1 — Schema, household resolver swap, server-fallback removal
 
 **The first PR, exactly:**
 
 1. `backend/migrations/0039_ai_gateway.sql` — the two tables, indexes, CHECKs, backfill, and
    `ai_usage_events.capability` (§3.2–§3.3).
-2. `backend/src/lib/ai/{types,presets,credentials,capabilities,usage}.ts` — `resolveAccess` on the
-   **new** tables with the **two-outcome ladder** (assignment → null); `buildAiUsageEventStatement`/
-   `recordAiUsageEvent`/`deleteExpiredAiUsageEvents` moved here, with the `capability` column.
+2. `backend/src/lib/ai/{types,presets,credentials,capabilities,usage}.ts` — `resolveAccess(ctx,
+   capability)` on the **new** tables, keyed by **`ctx.householdId`** and with the **two-outcome ladder**
+   (assignment → null); `buildAiUsageEventStatement`/`recordAiUsageEvent`/
+   `deleteExpiredAiUsageEvents` moved here, writing `capability` + `household_id` + `funding`.
 3. **The server fallback is deleted here, not later** (D8): `ai-access.ts:114-130`, the
    `SERVER_PROVIDER_PRESETS` allowlist (`:70-76`), the `RUMAQ_SERVER_AI_*` bindings
    (`backend/src/types.ts:43-45`), and the undeclared-vars comment (`cloudflare.config.ts:116-119`).
@@ -958,18 +1199,23 @@ when routes change — `./scripts/docs.sh` and `bunx vp run api:codegen` (CI dif
    delete `RUMAQ_SERVER_AI_{PROVIDER,KEY,MODEL}` from the QA Worker (they are inert after this PR but
    should not linger).
 5. `GET /api/settings` gains additive `ai_providers`, `ai_capabilities`, `ai_status`, and the legacy
-   `PATCH` gains the **write-through** (§4.3): it upserts the migration-shaped provider and the three
-   capability assignments from `ai_key` / `ai_provider` / `ai_model` / `ai_vision_model` /
-   `ai_thinking_level`, so the current Settings screen keeps working and can seed the QA accounts.
+   `PATCH` gains the **write-through** (§4.3): it upserts the household's `legacy-<caller>` provider and
+   the three capability assignments from `ai_key` / `ai_provider` / `ai_model` / `ai_vision_model` /
+   `ai_thinking_level`, so the current Settings screen keeps working and can seed the QA accounts. The
+   AI fields of that PATCH become **owner-only** here (`requireOwner` → 403 for a member).
 6. Tests: `migrations.test.ts` (apply the chain in real SQLite; assert backfill row counts, the
-   vision precedence, the case-insensitive label index, the CASCADE, the vision/thinking CHECK, and
-   that a user with no legacy AI settings gets **zero** provider and capability rows);
+   vision precedence, the case-insensitive label index, the CASCADE, the vision/thinking/funding
+   CHECKs, that a user with no legacy AI settings gets **zero** provider and capability rows, and the
+   household rules: a two-member household keeps **two** provider rows with distinct labels, only the
+   owner's legacy values become assignments, a user with two memberships lands in exactly one
+   household (the active one), and legacy usage rows gain `household_id` + `funding`);
    `ai-access.test.ts` **rewritten** as the two-outcome matrix — assignment → row, undecryptable key →
    null, missing/unusable provider → null, empty account → null, and "env vars present but ignored";
    the four suites that constructed the fallback (`documents-ocr`, `api-routes`, `review-ai`, plus
    `__tests__/support/env.ts`) seed provider + capability rows instead; `api-routes.test.ts` asserts
-   the settings payload with `ai_status` all `none` for a fresh user; a route test that a legacy
-   `PATCH /api/settings` creates the provider + three assignments (idempotently, on repeat patches).
+   the settings payload with `ai_status` all `none` for a fresh household, that a legacy
+   `PATCH /api/settings` creates the provider + three assignments (idempotently, on repeat patches),
+   and that a **member's** AI PATCH is 403 while their reads stay 200.
 
 **Not in P1:** no new endpoints, no new UI, no call-site edits, no adapter extraction, no deletion.
 **Rollback:** revert the PR. The migration is additive (old code ignores the tables and the extra
@@ -1000,10 +1246,11 @@ the `/api/settings` payload here, together with the "use server default" option 
 (`api.ts:1114`, `Settings.jsx:487-500`), and the QA accounts' rows from P1 render as ordinary
 providers.
 
-- Tests: route tests for CRUD, 401 without a session, 404 on another user's provider id, 409 on a
-  duplicate label, 400 on kind/capability mismatch, 400 on `vision` + thinking, 404 assigning a
-  provider that does not exist, cascade reporting on delete; `Settings.test.jsx` for the **empty
-  state** (no capability selectors until a provider exists, nothing preselected), the three
+- Tests: route tests for CRUD, 401 without a session, **403 for every write as a member and 200 for
+  their reads**, 404 on a provider id from another household, 409 on a duplicate label, 400 on
+  kind/capability mismatch, 400 on `vision` + thinking, 404 assigning a provider that does not exist,
+  cascade reporting on delete; `Settings.test.jsx` for the member's read-only section (no
+  add/edit/delete/test, "Managed by …" line) and the **empty state** (no capability selectors until a provider exists, nothing preselected), the three
   capability cards, add/delete provider, "becomes not configured" warning, and the absence of any
   server-default affordance; the automation setup step moves to `POST /api/ai/providers` +
   `PUT /api/ai/capabilities/*` (legacy `PATCH /api/settings` keeps its write-through, so both paths
@@ -1014,15 +1261,17 @@ providers.
 ### P4 — Call sites route by capability
 
 Chat/plans → `reasoning`; scan/expiry OCR → `vision`; review (route + cron) → `decision` via
-`decide()`; usage rows carry `capability`; `/api/ai/usage` and `/api/admin/ai/usage` gain the
-breakdown; delete `lib/ai.ts`, `ai-access.ts`'s access types, and the `plans.ts` inline JSON parse;
-resolve once per run in the sweep and pass the handle.
+`decide()`; usage rows carry `capability` + `household_id` + `funding`; `/api/ai/usage` and
+`/api/admin/ai/usage` gain the breakdown (and the household cut); delete `lib/ai.ts`,
+`ai-access.ts`'s access types, and the `plans.ts` inline JSON parse; resolve once per run in the sweep
+and pass the handle.
 
 - Tests: per-route capability assertions (a fake provider records the capability it was called for),
   scan uses the vision model (the fix), review verdict from a typed provider (reason NULL) and from a
-  chat provider (reason present), an empty account gets 402 on every AI route and the review sweep
-  makes **zero** calls (still degrading to manual), usage rows include capability, the sweep still
-  writes **one** batch and reads **one** capability row per run.
+  chat provider (reason present), an empty household gets 402 on every AI route and the review sweep
+  makes **zero** calls (still degrading to manual), usage rows include capability + household +
+  funding, a call made by a **member** records that member's `user_id` with the household's
+  `household_id`, the sweep still writes **one** batch and reads **one** capability row per run.
 - Rollback: revert; P3's UI edits and P1's data stay valid, chat/plans/scan revert to the shim.
 
 ### P5 — Persona and key test behind the door; browser loses provider access
@@ -1056,67 +1305,74 @@ see and fix what the runtime resolves (P3 before P4), and destruction last and i
 
 ## 7. Risks and open questions for the owner
 
-The three questions this section carried at review time were **decided by the owner on 2026-11-07**
-and now live in §0 as **D2** (four wire adapters), **D3** (typed decision contract) and **D8** (no
-server fallback). What follows is the risk list and the questions that are still open.
+The questions this section carried at review time were **decided by the owner on 2026-11-07** and now
+live in §0 as **D1** (household ownership), **D2** (four wire adapters), **D3** (typed decision
+contract), **D8** (no server fallback) and **D9** (funding dimension; no BYOK rate limits). What
+follows is the risk list and the **eight** questions that are still open.
 
 ### Risks
 
 1. **Subrequest budget.** The Workers free plan allows 50 subrequests per invocation and the review
    sweep budgets ~47 for 20 items (`review-ai.ts:60-66`). A per-item capability read would add 20
    reads and blow it. Mitigation is in the design: `resolveAccess` once per run, `AiAccessHandle`
-   reused, no per-call DB reads. P4's test pins "one capability read per sweep".
-2. **Key blast radius.** Today one `encrypted_ai_key` per user; after this change, N per user, all
+   reused, no per-call DB reads. The household key is the same one join the user key was — this
+   change costs no subrequest. P4's test pins "one capability read per sweep".
+2. **Key blast radius.** Today one `encrypted_ai_key` per user; after this change, N per household, all
    under the same `WORKER_ENCRYPTION_KEY`. Rotating that key already invalidates every stored key
-   (`docs/ARCHITECTURE.md:478`); now it invalidates N per user. Option: bind the ciphertext to the
-   provider row id as AES-GCM additional data (a `crypto.ts` change) so a copied ciphertext cannot
-   be re-planted on another row — worth doing in P2 if we accept touching `crypto.ts` (OQ2).
+   (`docs/ARCHITECTURE.md:478`); now it invalidates N per household. Option: bind the ciphertext to the
+   provider row id as AES-GCM additional data (a `crypto.ts` change) so a copied ciphertext cannot be
+   re-planted on another row — worth doing in P2 if we accept touching `crypto.ts` (OQ1).
 3. **Behaviour change disguised as a fix.** Receipt scan switching to the vision model (§5.5) can
-   surprise a user whose text model was doing fine. Mitigation: release note, and the UI shows
+   surprise a household whose text model was doing fine. Mitigation: release note, and the UI shows
    "Vision model" on the scan path; the vision assignment inherits the migrated `ai_vision_model`
-   which, when unset, is the old text model — so nothing changes for users who never set it.
-4. **No safety net, by design.** D8 removes the platform key, so a user who deletes a provider — or
-   whose key stops decrypting — gets 402 and the feature degrades (review assist/auto → manual, chat
-   unavailable) with nobody to bill but themselves. That is the intended trade, but it puts real
-   weight on the empty state and on the 402 copy being actionable ("Add a provider in Settings"),
-   and on `ai_status` telling the truth per capability. P3 tests the copy, P4 tests the degradation.
-5. **Two sources of truth during P1–P5.** Legacy columns and new tables coexist; every write path
-   must write both (from P1 on) or the compatibility window produces drift. Mitigation: the write-through is
-   one function with its own test, and P6 removes the ambiguity.
+   which, when unset, is the old text model — so nothing changes for households that never set it.
+4. **No safety net, by design.** D8 removes the platform key, so a household that deletes a provider —
+   or whose key stops decrypting — gets 402 and the feature degrades (review assist/auto → manual,
+   chat unavailable) with nobody to bill but themselves. That is the intended trade, but it puts real
+   weight on the empty state, on the 402 copy being actionable ("Add a provider in Settings"), and on
+   `ai_status` telling the truth per capability. P3 tests the copy, P4 tests the degradation.
+5. **Two sources of truth during P1–P5.** Legacy columns and new tables coexist; the write-through
+   writes both or the compatibility window produces drift. Mitigation: it is one function with its own
+   test, it is owner-only from P1, and P6 removes the ambiguity.
 6. **Typed-decision answers are thin — accepted by D3.** Choice + confidence only: no reason, no
    tokens. Consequences: `review_ai_verdicts.reason` is empty under a `questions` provider, and the
-   admin cost view shows zero tokens for those calls (OQ4). Both are visible, not hidden.
+   admin cost view shows zero tokens for those calls (OQ3). Both are visible, not hidden.
+7. **Sharing changes who pays.** D1 moves ownership from the person to the household, and the backfill
+   cannot guess intent: in a two-member household where both had keys, the **owner's** assignment wins
+   and the other member's calls now run on the owner's key (their own key survives as an unassigned
+   provider row). This is the largest real-world discontinuity in the whole design, and it is
+   deliberate. Mitigations: every row says whose key served the call (`user_id` + `household_id`), the
+   Settings UI names the owner, the release note calls it out, and an owner can re-point the
+   assignment in two clicks. The member-side consequence is equally real: a member cannot fix a broken
+   key — only an owner can, so the UI must say so instead of offering a control that 403s.
 
 ### Open questions
 
-1. **Whose keys are these?** Per-user today (`user_settings`), which is why `ai_providers.user_id` is
-   per-user. A family sharing one key would need `household_id` ownership plus an attribution rule
-   for `ai_usage_events.user_id`. Recommendation: keep per-user for v1; revisit with the household
-   plan.
-2. **Encryption hardening.** Bind the provider ciphertext to its row id (risk 2)? It is a small
+1. **Encryption hardening.** Bind the provider ciphertext to its row id (risk 2)? It is a small
    `crypto.ts` change but it invalidates existing ciphertexts, so it must land with a
    re-encrypt-on-read or a forced key re-entry.
-3. **Embeddings now or later?** Recommendation: later. A fourth capability is an additive enum value
+2. **Embeddings now or later?** Recommendation: later. A fourth capability is an additive enum value
    plus a new adapter method, but embeddings have a different shape (no messages, no completion,
    different usage units) and no feature needs them yet. Modelling them now would make `decide()`'s
    simplicity worse.
-4. **Token accounting for typed providers.** Accept zeros (recommended, with `provider='questions'`
+3. **Token accounting for typed providers.** Accept zeros (recommended, with `provider='questions'`
    as the marker) or add a per-call counter so the admin view stays meaningful?
-5. **Local/private endpoints.** The HTTPS-only rule (`api.ts:1198-1200`) blocks a self-hosted Ollama
-   on `http://192.168.x.x`. Allow private-network HTTP for user-owned base URLs (a real SSRF surface
-   on Workers, which cannot reach the LAN anyway) or keep HTTPS-only? Recommendation: keep HTTPS-only.
-6. **Legacy column drop timing (P6).** One full release after P5? The PWA and any mobile wrapper must
+4. **Local/private endpoints.** The HTTPS-only rule (`api.ts:1198-1200`) blocks a self-hosted Ollama
+   on `http://192.168.x.x`. Allow private-network HTTP for household-owned base URLs (a real SSRF
+   surface on Workers, which cannot reach the LAN anyway) or keep HTTPS-only? Recommendation: keep
+   HTTPS-only.
+5. **Legacy column drop timing (P6).** One full release after P5? The PWA and any mobile wrapper must
    be observed in the wild before the columns go.
-7. **Decision on chat providers.** Should a chat provider be assignable to `decision` (JSON prompt and
+6. **Decision on chat providers.** Should a chat provider be assignable to `decision` (JSON prompt and
    prompt-parsed choice) at all, or only a typed provider? Recommendation: allow both — the migration
-   itself assigns the legacy chat provider to `decision`, and a user with one key would otherwise lose
-   the review feature.
-8. **Per-provider rate limiting.** A single bad key can 429 repeatedly; today only the OCR route is
-   limited (`plugins/documents/ocr.ts:46-54`). Add a per-user AI rate limit in P4, or leave it to the
-   provider's own quota?
-9. **Should the provider test be free?** A typed-decision test is a billable question. Alternatives:
+   itself assigns the legacy chat provider to `decision`, and a household with one key would otherwise
+   lose the review feature.
+7. **Should the provider test be free?** A typed-decision test is a billable question. Alternatives:
    probe with an intentionally empty `questions` object and accept a 400 (proves auth, no billing) —
    needs the provider's confirmation.
+8. **Premium metering, when it comes.** D9 reserves the shape but not the pricing: per-household
+   subscription, token packs, or a soft cap with a warning? Worth answering before any code is written
+   in `lib/ai/metering`, because the answer decides whether `funding` needs a `plan_id` beside it.
 
 ---
 
@@ -1124,6 +1380,9 @@ server fallback). What follows is the risk list and the questions that are still
 
 - Issue: `ahaqqu/RumaQ#523`; owner directive quoted in the issue body.
 - `backend/src/lib/ai.ts`, `ai-access.ts`, `chat.ts`, `plans.ts`, `review-ai.ts`, `document-ocr.ts`.
+- `backend/src/lib/households.ts` (`HouseholdRole`, `requireOwner`), `backend/src/auth.ts:136-145`
+  (`ACTIVE_HOUSEHOLD_SQL`), `backend/migrations/0001_schema.sql:17-31` (`households`,
+  `household_members` roles).
 - Migrations `0001`, `0008`, `0009`, `0015`, `0033`, `0038`.
 - `docs/ARCHITECTURE.md` §7 (AI integration), §9 (env table).
 - `docs/plan/plugin-architecture.md` §4.2 (port/adapter precedent), §7 (phase-as-PR style).
