@@ -76,9 +76,3 @@ export function presetEndpoint(preset: string | null, kind?: ProviderKind): stri
   if (kind !== undefined && row.kind !== kind) return null
   return row.endpoint
 }
-
-/**
- * The preset ids the legacy dispatcher (lib/ai.ts `callProvider`) understands
- * as a chat wire. Used only by the P1 bridge in ai-access.ts; deleted with it.
- */
-export const LEGACY_CHAT_PRESETS: ReadonlySet<string> = new Set(['openai', 'opencode', 'ollama'])

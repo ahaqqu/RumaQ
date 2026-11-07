@@ -39,6 +39,12 @@ export function withTimeout(caller: AbortSignal | undefined, timeoutMs: number):
   return {
     signal: controller.signal,
     timedOut,
-    dispose: () => caller.removeEventListener('abort', onCallerAbort),
+    // Both listeners go: the deadline fires after this call has already
+    // settled, and a retained `onDeadline` would keep the caller's controller
+    // (and this request's closure) reachable for the rest of the timeout.
+    dispose: () => {
+      caller.removeEventListener('abort', onCallerAbort)
+      deadline.removeEventListener('abort', onDeadline)
+    },
   }
 }

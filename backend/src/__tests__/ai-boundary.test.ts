@@ -41,6 +41,17 @@ const PROVIDER_HOSTNAME =
 // The property that only the door may read (the key material).
 const KEY_MATERIAL = /\.apiKey\b/
 
+// The door-internal modules that hand out or read key material. BOTH are
+// import-banned outside the door: `credentials.ts` decrypts a stored envelope,
+// `key-material.ts` returns the decrypted key for a handle. Blocking only the
+// first left `accessMaterial(handle)?.apiKey` (or a destructuring of it, which
+// the `.apiKey` text rule cannot see) reachable from a feature, because
+// `capabilities.ts` is legitimately importable outside the door.
+const KEY_MATERIAL_MODULES: readonly SourceFile[] = [
+  `${DOOR_DIR}credentials.ts`,
+  `${DOOR_DIR}key-material.ts`,
+]
+
 // P3 deletes `POST /api/ai-key/test`, the last transport outside the door.
 const LEGACY_HOSTNAME_EXEMPTIONS: readonly SourceFile[] = ['apps/api.ts']
 
@@ -117,8 +128,8 @@ export function findAiBoundaryViolations(
           `${file} imports the AI adapter ${target} ('${specifier}') — provider transport lives inside lib/ai/** only (plan §2.3)`
         )
       }
-      // Rule 2 — the key-material module is never imported from outside.
-      if (target === `${DOOR_DIR}credentials.ts`) {
+      // Rule 2 — a key-material module is never imported from outside.
+      if (KEY_MATERIAL_MODULES.includes(target)) {
         violations.push(
           `${file} imports ${target} ('${specifier}') — the decrypted key may only exist inside lib/ai/** (plan §2.3/D10)`
         )
@@ -165,6 +176,25 @@ describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
     expect([...LEGACY_BRIDGE_IMPORTERS].sort()).toEqual(['lib/ai-access.ts', 'lib/ai.ts'])
   })
 
+  it('every pinned exemption is still a REAL violation (a stale entry cannot linger)', () => {
+    // The lists above only prove they cannot GROW. Without this test, P3 could
+    // delete `/api/ai-key/test`'s hostnames, leave `apps/api.ts` exempt, and
+    // stay green — so "P3/P4 must empty them" would not be enforced by the
+    // build. An exemption that no longer trips its rule fails here, forcing the
+    // list (and the rule's reach) to shrink with the code.
+    for (const file of LEGACY_HOSTNAME_EXEMPTIONS) {
+      expect(PROVIDER_HOSTNAME.test(realRead(file)), `${file} is exempt but clean`).toBe(true)
+    }
+    for (const file of LEGACY_KEY_EXEMPTIONS) {
+      expect(KEY_MATERIAL.test(realRead(file)), `${file} is exempt but clean`).toBe(true)
+    }
+    for (const file of LEGACY_BRIDGE_IMPORTERS) {
+      expect(realRead(file), `${file} no longer imports the legacy bridge`).toContain(
+        'ai/legacy.js'
+      )
+    }
+  })
+
   it('every backend source file outside the door passes the boundary rules', () => {
     const files = listSourceFiles(BACKEND_SRC)
     expect(files.length).toBeGreaterThan(10)
@@ -185,6 +215,7 @@ describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
     const synthetic: Record<SourceFile, string> = {
       'lib/rogue-adapter.ts': "import { openaiAdapter } from './ai/adapters/openai.js'\n",
       'lib/rogue-key.ts': "import { decryptProviderKey } from './ai/credentials.js'\n",
+      'lib/rogue-material.ts': "import { accessMaterial } from './ai/key-material.js'\n",
       'lib/rogue-legacy.ts': "import { legacyCompleteText } from './ai/legacy.js'\n",
       'lib/rogue-endpoint.ts': "const url = 'https://api.openai.com/v1/chat/completions'\n",
       'lib/rogue-key-read.ts': 'const key = access.apiKey\n',
@@ -192,6 +223,7 @@ describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
       // pinned legacy shims reaching the bridge.
       'lib/ai/adapters/openai.ts': "const url = 'https://api.openai.com/v1'\n",
       'lib/ai/ok.ts': "import { adapterFor } from './adapters/registry.js'\n",
+      'lib/ai/capabilities.ts': "import { holdMaterial } from './key-material.js'\n",
       'lib/ai.ts': "import { legacyCompleteText } from './ai/legacy.js'\n",
       'lib/ai-access.ts': "import { resolveLegacyAccess } from './ai/legacy.js'\n",
       'lib/feature.ts': "import { completeText } from './ai/index.js'\n",
@@ -203,17 +235,19 @@ describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
       violations.some((v) => v.startsWith('lib/rogue-adapter.ts imports the AI adapter'))
     ).toBe(true)
     expect(violations.some((v) => v.startsWith('lib/rogue-key.ts imports'))).toBe(true)
+    expect(violations.some((v) => v.startsWith('lib/rogue-material.ts imports'))).toBe(true)
     expect(violations.some((v) => v.startsWith('lib/rogue-legacy.ts imports'))).toBe(true)
     expect(
       violations.some((v) => v.startsWith('lib/rogue-endpoint.ts contains a provider hostname'))
     ).toBe(true)
     expect(violations.some((v) => v.startsWith('lib/rogue-key-read.ts reads .apiKey'))).toBe(true)
 
-    // Nothing else fires: the door owns transport, the facade is importable,
-    // the pinned shims may reach the bridge.
+    // Nothing else fires: the door owns transport and key material, the facade
+    // is importable, the pinned shims may reach the bridge.
     for (const clean of [
       'lib/ai/adapters/openai.ts',
       'lib/ai/ok.ts',
+      'lib/ai/capabilities.ts',
       'lib/ai.ts',
       'lib/ai-access.ts',
       'lib/feature.ts',

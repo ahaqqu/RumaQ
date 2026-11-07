@@ -206,6 +206,7 @@ backend/src/lib/ai/
   errors.ts           ← AiError + code→HTTP mapping
   capabilities.ts     ← resolveAccess(ctx, capability): household-scoped, the whole precedence ladder
   credentials.ts      ← household provider rows → decrypt (AAD-bound, D10, lazy re-encrypt); NO other module may import this
+  key-material.ts     ← the decrypted key/endpoint/thinking level beside an opaque handle (WeakMap); NO other module may import this
   presets.ts          ← the vendor catalog as DATA (label, kind, canonical base URL)
   usage.ts            ← buildAiUsageEventStatement / recordAiUsageEvent / retention (moved)
   decision.ts         ← the {choice, confidence} parse shared by chat-shaped decision calls
@@ -410,14 +411,16 @@ a key: catch, read `err.usage` and `err.call`, write the row, rethrow.
 Enforced by a test, following `backend/src/__tests__/plugin-boundary.test.ts`:
 
 - `ai-boundary.test.ts` walks `backend/src/**` (excluding `lib/ai/**`) and fails on
-  `from '.*ai/adapters`, `api.anthropic.com|generativelanguage.googleapis.com|api.openai.com|ollama.com|api.opencode.ai|api.typesafe.ai`, and on `\.apiKey\b`. It also pins the deprecated
+  `from '.*ai/adapters`, `api.anthropic.com|generativelanguage.googleapis.com|api.openai.com|ollama.com|api.opencode.ai|api.typesafe.ai`, on `\.apiKey\b`, and on any import of the two key-material
+  modules (`credentials.ts`, `key-material.ts`). It also pins the deprecated
   `lib/ai/legacy.ts` importers (`lib/ai.ts` + `lib/ai-access.ts`) and asserts that exact set, so a new
   consumer of the dying bridge fails here first.
 - **P2's two pinned exemptions**, asserted by the test so they can only shrink: the hostname rule
   exempts `apps/api.ts` — the legacy `POST /api/ai-key/test` probe, deleted in P3 — and the `.apiKey`
   rule exempts `lib/ai-access.ts` plus the three modules that forward its key to the shim
   (`apps/api.ts`, `lib/document-ocr.ts`, `lib/review-ai.ts`), deleted in P4. Without them the test
-  cannot be green while P2 is forbidden to touch a feature file; P3 and P4 must empty them.
+  cannot be green while P2 is forbidden to touch a feature file; P3 and P4 must empty them — the test
+  asserts each listed file is still a real violation, so a stale exemption cannot outlive its code.
 - `frontend-ai-boundary.test.js` walks `frontend/src/**` and fails on the same hostnames (after P5
   there are zero legitimate hits; today it would fail at `persona.js:189-330`).
 

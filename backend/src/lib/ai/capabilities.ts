@@ -13,8 +13,8 @@
 //
 // KEY MATERIAL IS MODULE-PRIVATE (plan §2.2): `resolveAccess` returns
 // `{capability, call}` only, and the decrypted key + endpoint + thinking level
-// live in a WeakMap here. The door's facade (index.ts) is the only consumer of
-// `accessMaterial`; no route, feature, or response can reach a key. A handle
+// live in `key-material.ts` — a door-internal module the boundary test forbids
+// ANY outside import. No route, feature, or response can reach a key; a handle
 // this module did not issue carries no material, so every call fails closed.
 
 import type { Env } from '../../types.js'
@@ -30,6 +30,7 @@ import {
 } from './types.js'
 import { presetEndpoint } from './presets.js'
 import { decryptProviderKey } from './credentials.js'
+import { holdMaterial } from './key-material.js'
 
 type AccessRow = {
   capability: Capability
@@ -44,23 +45,9 @@ type AccessRow = {
 }
 
 /**
- * Everything a provider call needs that must never leave the door: the
- * decrypted key, the resolved endpoint, the row's preset and the assignment's
- * thinking level. Stored beside the public handle, never on it.
+ * Everything a provider call needs that must never leave the door lives in
+ * `key-material.ts` (a module the boundary test forbids any outside import).
  */
-export type AccessMaterial = {
-  apiKey: string
-  baseUrl: string | null
-  preset: string | null
-  thinkingLevel: ThinkingLevel | null
-}
-
-const ACCESS_MATERIAL = new WeakMap<AiAccessHandle, AccessMaterial>()
-
-/** The door-internal reader for a resolved handle. Null = not issued here. */
-export function accessMaterial(handle: AiAccessHandle): AccessMaterial | null {
-  return ACCESS_MATERIAL.get(handle) ?? null
-}
 
 // One subrequest, one join (plan §5.1). The PK (household_id, capability) makes
 // this a single-row seek; provider_id is indexed on the provider side. The join
@@ -110,6 +97,29 @@ function endpointResolvable(row: Pick<AccessRow, 'base_url' | 'preset' | 'kind'>
   return row.kind === 'anthropic' || row.kind === 'gemini'
 }
 
+/**
+ * The ONE model rule (owner decision, #523): `capability.model ??
+ * provider.default_model ?? not configured`. The resolver and the settings
+ * status read call this same function, so the payload can never claim a
+ * capability the resolver would refuse (the P1 A1 "two queries disagree" class).
+ */
+function effectiveModel(row: Pick<AccessRow, 'model' | 'default_model'>): string | null {
+  return normalizeModel(row.model) ?? normalizeModel(row.default_model)
+}
+
+/**
+ * Is this row actually usable by the resolver? Key + endpoint + model, the
+ * three conditions `toAccessHandle` refuses on. `loadHouseholdAiConfig` asks
+ * the same question so `ai_status` and `resolveAccess` cannot drift.
+ */
+function rowUsable(
+  row: Pick<AccessRow, 'encrypted_key' | 'base_url' | 'preset' | 'kind' | 'model' | 'default_model'>
+): boolean {
+  if (!row.encrypted_key) return false
+  if (!endpointResolvable(row)) return false
+  return effectiveModel(row) != null
+}
+
 async function toAccessHandle(ctx: AiCtx, row: AccessRow): Promise<AiAccessHandle | null> {
   const where = `household=${ctx.householdId} capability=${row.capability}`
   if (!endpointResolvable(row)) {
@@ -119,7 +129,7 @@ async function toAccessHandle(ctx: AiCtx, row: AccessRow): Promise<AiAccessHandl
   // capability.model ?? provider.default_model ?? not configured (owner
   // decision, #523). There is deliberately NO adapter default behind this: a
   // row with no model anywhere is not configured, not "the vendor's usual".
-  const model = normalizeModel(row.model) ?? normalizeModel(row.default_model)
+  const model = effectiveModel(row)
   if (model == null) {
     console.warn(
       `[ai] capability assignment has no model ${where} (set one on the capability or the provider)`
@@ -158,7 +168,7 @@ async function toAccessHandle(ctx: AiCtx, row: AccessRow): Promise<AiAccessHandl
     funding: 'household',
   }
   const handle: AiAccessHandle = { capability: row.capability, call }
-  ACCESS_MATERIAL.set(handle, {
+  holdMaterial(handle, {
     apiKey,
     baseUrl: resolvedEndpoint(row),
     preset: row.preset,
@@ -313,7 +323,7 @@ export async function loadHouseholdAiConfig(
       capabilities[row.capability] = {
         provider_id: row.id,
         provider_label: row.label,
-        model: normalizeModel(row.model) ?? normalizeModel(row.default_model),
+        model: effectiveModel(row),
         thinking_level: row.thinking_level,
         source: 'household',
       }
@@ -326,11 +336,9 @@ export async function loadHouseholdAiConfig(
 
   for (const row of results ?? []) {
     if (!row.capability) continue
-    const provider = providers.get(row.id)
-    if (!provider?.has_key) continue
-    if (!endpointResolvable(row)) continue
-    // Same model rule as resolveAccess: capability.model ?? provider default.
-    if (normalizeModel(row.model) == null && normalizeModel(row.default_model) == null) continue
+    // The SAME usability rule the resolver applies (key + endpoint + model), so
+    // this payload can never claim a capability `resolveAccess` would refuse.
+    if (!rowUsable(row)) continue
     try {
       if (
         (await decryptProviderKey(

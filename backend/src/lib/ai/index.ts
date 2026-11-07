@@ -22,7 +22,8 @@
 
 import { adapterFor } from './adapters/registry.js'
 import { AdapterError, type AdapterRequest, type AiAdapter } from './adapters/types.js'
-import { accessMaterial, resolveAccess as resolveCapabilityAccess } from './capabilities.js'
+import { resolveAccess as resolveCapabilityAccess } from './capabilities.js'
+import { accessMaterial } from './key-material.js'
 import { AiError } from './errors.js'
 import { withTimeout } from './signal.js'
 import { parseJsonResponse } from './parse.js'

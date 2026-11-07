@@ -14,7 +14,8 @@
 // provider hostname and no transport, so the boundary test stays honest.
 
 import type { Env } from '../../types.js'
-import { accessMaterial, resolveAccess } from './capabilities.js'
+import { resolveAccess } from './capabilities.js'
+import { accessMaterial } from './key-material.js'
 import { AiError } from './errors.js'
 import { presetEndpoint } from './presets.js'
 import { adapterFor } from './adapters/registry.js'

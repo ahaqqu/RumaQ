@@ -332,7 +332,8 @@ prompts. The typed wire reports no tokens, so those calls record zeroes and are 
 
 **The boundary rule is a security control.** Outside `backend/src/lib/ai/**`, a module may build
 prompts, validate the model's answer, write usage rows through the door's statement builder, and map
-`AiError` to HTTP. It may **not** import an adapter, import `credentials.ts`, hold an API key, contain
+`AiError` to HTTP. It may **not** import an adapter, import `credentials.ts` or `key-material.ts` (the
+module that returns the decrypted key for a handle), hold an API key, contain
 a provider hostname, or `fetch` a model endpoint — a single fetch outside the door silently ignores
 the household's capability assignment, and a second writer would break "what did this household
 spend". `backend/src/__tests__/ai-boundary.test.ts` enforces the rule over the tree and fails on any
