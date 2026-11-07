@@ -8,8 +8,8 @@
 
 ## 0. Decision summary
 
-The ten decisions this document rests on. **Five were taken by the owner on 2026-11-07** (D1, D2, D3,
-D8, D9) and are no longer open; the rest need sign-off with the document.
+The eleven decisions this document rests on. **Six were taken by the owner on 2026-11-07** (D1, D2, D3,
+D8, D9, D10) and are no longer open; the rest need sign-off with the document.
 
 | #   | Decision             | Choice                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | --- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -22,7 +22,8 @@ D8, D9) and are no longer open; the rest need sign-off with the document.
 | D7  | Empty start          | **No default provider.** A new household has zero `ai_providers`, zero `ai_capabilities`, no implicit model — and therefore today's exact "not configured" behaviour (402, review assist/auto → manual, no calls) until a household owner adds a provider and assigns capabilities. No preset is preselected.                                                                                                                                                            |
 | D8  | No server fallback   | **Owner-decided 2026-11-07.** `RUMAQ_SERVER_AI_*` is retired: no env key, no implicit provider, no platform-funded call. Resolution is the caller's assignment → 402. QA/testing accounts get ordinary rows through Settings; automation seeds the same rows in its setup step (§3.4).                                                                                                                                                                                   |
 | D9  | Funding & limits     | **Owner-decided 2026-11-07.** Resolved access and usage rows carry `funding: 'household' \| 'platform'`. v1 is always `'household'` — BYOK is the caller's own bill, so **no AI rate limits** and no per-user cap. A future RumaQ-provided (premium) mode reuses the same dimension; **all** metering and limits live in the facade, and no call site may implement a cap.                                                                                               |
-| D10 | Rollout              | Six independently shippable PRs (P1-P6). P1 is schema + resolver swap. The destructive column drop is its own PR (P6).                                                                                                                                                                                                                                                                                                                                                   |
+| D10 | Ciphertext binding   | **Owner-decided 2026-11-07.** Each provider key is AES-GCM encrypted with its **row id as additional authenticated data** (`v2:` envelope). P2 ships it with a **transparent re-encrypt-on-read** for legacy `v1:` ciphertext: decrypt without AAD, rewrite bound to the row, never ask the user for the key again. A copied ciphertext cannot be re-planted on another provider row.                                                                                    |
+| D11 | Rollout              | Six independently shippable PRs (P1-P6). P1 is schema + resolver swap. The destructive column drop is its own PR (P6).                                                                                                                                                                                                                                                                                                                                                   |
 
 D2 is the one place this document refines the directive's literal wording. The directive listed five
 adapter names ("OpenAI-compatible, Anthropic, Gemini, Ollama, custom base URL"); the owner confirmed
@@ -30,11 +31,12 @@ that three of them are one wire protocol with different base URLs. Collapsing th
 interface" true instead of decorative, and it is what lets the typed-decision adapter (D3) sit beside
 chat adapters without a special case.
 
-Two more of the owner's calls shaped the model rather than the code. **D1** puts providers on the
+Three more of the owner's calls shaped the model rather than the code. **D1** puts providers on the
 household because the household is what pays, and the only thing claiming a key is personal was the
 schema. **D9** reserves a `funding` dimension so that a later platform-funded mode is a new value on
 an existing field, not a second resolution path — and it removes the temptation to rate-limit BYOK
-calls, which are the user's own bill.
+calls, which are the user's own bill. **D10** closes the one place where "one door" was also a
+security boundary in name only: a sealed key can no longer be moved between provider rows.
 
 The other open questions are in §7; nothing in §1–§6 depends on them.
 
@@ -202,7 +204,7 @@ backend/src/lib/ai/
   types.ts            ← Capability, AiMessage, AiCall, AiResult, ThinkingLevel, TokenUsage
   errors.ts           ← AiError + code→HTTP mapping
   capabilities.ts     ← resolveAccess(ctx, capability): household-scoped, the whole precedence ladder
-  credentials.ts      ← household provider rows → decrypt; NO other module may import this
+  credentials.ts      ← household provider rows → decrypt (AAD-bound, D10, lazy re-encrypt); NO other module may import this
   presets.ts          ← the vendor catalog as DATA (label, kind, base URL, default models)
   usage.ts            ← buildAiUsageEventStatement / recordAiUsageEvent / retention (moved)
   decision.ts         ← the {choice, confidence} parse shared by chat-shaped decision calls
@@ -570,7 +572,10 @@ CREATE TABLE IF NOT EXISTS ai_providers (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   -- If a key is stored it must be a crypto.ts envelope, not a plaintext slip.
-  CHECK (encrypted_key IS NULL OR encrypted_key LIKE 'v1:%')
+  -- BOTH versions are accepted from day one ON PURPOSE: SQLite cannot alter a CHECK
+  -- without rebuilding the table, and D10's AAD-bound 'v2:' envelope arrives in P2 —
+  -- one release after this migration. v1: = legacy (no AAD), v2: = bound to this row's id.
+  CHECK (encrypted_key IS NULL OR encrypted_key LIKE 'v1:%' OR encrypted_key LIKE 'v2:%')
 );
 
 -- Case-insensitive label uniqueness WITHIN a household: two "Gemini" rows are a
@@ -780,6 +785,9 @@ Notes the implementation must honour:
   the intended loud failure, not silent duplication.
 - `ai_model`-less users (provider + key, no model) migrate with `model = NULL` = adapter default —
   identical to today.
+- The backfill copies the **`v1:` envelope verbatim**. It does not re-encrypt: the AAD-bound `v2:`
+  form arrives with P2, and each row converts on its first read (§3.6). Nothing in the migration
+  depends on `crypto.ts` changing first, and no user re-enters a key.
 
 ### 3.4 No server fallback — `RUMAQ_SERVER_AI_*` is retired (D8)
 
@@ -846,11 +854,60 @@ a per-user grant, or a call-site branch.
 | Usage rows survive provider edits | no FK from `ai_usage_events` to `ai_providers`        | history stays readable after a provider is deleted (it stores kind + model + capability + household + funding, not provider id) |
 | Who may manage                    | household role (`lib/households.ts:134-142`)          | `owner` creates/edits/deletes providers and assignments; `member` reads and uses them; 403 otherwise                            |
 | Key secrecy                       | `encrypted_key` never serialised                      | `has_key` is the only signal any GET returns, for any role; the decrypted key only ever exists inside `lib/ai/**`               |
+| Key material at rest              | `v2:` envelope + `ai_provider:<id>` AAD (D10)         | a ciphertext copied onto another row fails the GCM tag; `v1:` rows convert on first read (§3.6)                                 |
 
 `ai_usage_events` stores the **kind** in `provider` (as today) plus `capability`, `household_id` and
 `funding`; it does not store `provider_id`, because a deleted provider must not orphan or rewrite
 history. Attribution is two-dimensional on purpose: `user_id` answers "who made the call", and
 `household_id` answers "who paid for it" — the pair is what makes a shared key auditable.
+
+### 3.6 Key material at rest — row-bound AAD (D10)
+
+Today `encryptAiKey` (`crypto.ts:85-98`) seals a plaintext with AES-GCM and **no additional data**, and
+`decryptAiKey` (`:100-111`) refuses anything that is not `v1:`. D10 adds one authenticated field — the
+provider row id — and a second envelope version:
+
+| Envelope | AES-GCM AAD        | Written by                                    | Read behaviour                                                     |
+| -------- | ------------------ | --------------------------------------------- | ------------------------------------------------------------------ |
+| `v1:`    | none               | everything before P2 (including the backfill) | decrypt, then **re-encrypt as `v2:` and UPDATE** (compare-and-set) |
+| `v2:`    | `ai_provider:<id>` | P2 onward, every write                        | decrypt with the AAD; a transplant fails the authentication tag    |
+
+Why the row id and not the household or the user: the provider row is the unit that gets copied (a
+backup restore, a support export, a hand-rolled `INSERT`), and its id is immutable and generated by us —
+`crypto.randomUUID()` at runtime, `legacy-<user_id>` in the backfill — so a copied ciphertext has no
+valid context anywhere else. `additionalData` is one line on each side of `crypto.ts`; the tag covers it.
+
+The read path, in `credentials.ts`:
+
+1. `v2:` → decrypt with `aad(providerId)`. One attempt, no fallback: a tag mismatch is final.
+2. `v1:` → decrypt **without** AAD (it still authenticates the ciphertext itself, just not the row), then
+   `UPDATE ai_providers SET encrypted_key = <v2> WHERE id = ? AND encrypted_key = <the v1 just read>`.
+   The compare-and-set means two concurrent reads cannot fight; both would write the same `v2` value.
+3. A `v1:` that fails to decrypt, or a `v2:` whose tag fails → the row is unusable: log, do not throw,
+   resolve to not configured (§5.1). Never a 500.
+
+Cost and failure handling:
+
+- The rewrite is **one extra subrequest, once per legacy row** — not per call. The sweep resolves once
+  per run, so the worst case is one extra write per run until every row has been read.
+- A failed rewrite must **not** fail the call: the decrypted key is already in memory; the UPDATE is
+  best-effort, logged, retried on the next read.
+- No user-visible change, no forced re-entry, no downtime window: P1 copies `v1:` verbatim and P2
+  converts lazily.
+
+What it buys, and what it does not:
+
+- **Buys**: a ciphertext copied from provider A to provider B (or from a backup onto a row an attacker
+  created) fails to decrypt, because the tag covers the AAD. Before D10 that transplant **succeeds** —
+  it is the one way a database-level attacker could redirect a household's key to their own endpoint.
+- **Does not buy**: protection from someone holding both the ciphertext _and_
+  `WORKER_ENCRYPTION_KEY`; rotation semantics are unchanged (rotating the key still invalidates every
+  row — risk 2); and rows still on `v1:` stay transplantable until their first read. That residual
+  window is exactly why this lands in P2 and not in the P6 cleanup.
+- **A deleted provider row's ciphertext becomes useless immediately**: the id is gone, the app never
+  re-creates a row with the same id (`legacy-…` ids come only from a migration that cannot re-run), and
+  the AAD cannot be reconstructed from the ciphertext. A backup copy restores only if the row itself is
+  restored with the same id — which is what a legitimate restore does.
 
 ---
 
@@ -891,9 +948,11 @@ Valibot schemas in `backend/src/schemas.ts` beside the existing `settingsPatchSc
 - `label` — `pipe(string(), minLength(1), maxLength(60))`, trimmed; unique per household (409).
 - `base_url` — `maxLength(500)`, trimmed, trailing slashes stripped, **HTTPS only** (the existing
   rule, `api.ts:1198-1200`), required when `kind = 'questions'` or when no canonical endpoint
-  exists for the kind. HTTP / private-network endpoints are OQ4.
-- `api_key` — `minLength(1)` on create, trimmed, encrypted with `encryptAiKey` (`crypto.ts:85`)
-  before the INSERT; never echoed, never logged; `has_key` is the only signal the API returns.
+  exists for the kind. HTTP / private-network endpoints are OQ3.
+- `api_key` — `minLength(1)` on create, trimmed, encrypted **before** the INSERT with the provider's own
+  id as AAD (`encryptAiKey(key, WORKER_ENCRYPTION_KEY, 'ai_provider:' + id)`, `crypto.ts:85`), so the
+  stored envelope is `v2:` (D10, §3.6) — the id is therefore generated first, never derived from the
+  ciphertext. Never echoed, never logged; `has_key` is the only signal the API returns.
 - **An assignment requires a usable provider**: the target row must have an `encrypted_key` and a
   resolvable endpoint (its own `base_url` or its preset's). Clearing a key on an assigned provider is
   a 409, not a silent downgrade ("this provider is used by reasoning — reassign first").
@@ -930,7 +989,7 @@ fields.
   `Only household owners can change AI settings`. During the window the _old_ UI still renders the
   form for members, so this is a visible transition wart rather than a silent no-op — release note and
   risk 7.
-- P6 drops the columns, the shim, and this window (OQ5 is the timing decision).
+- P6 drops the columns, the shim, and this window (OQ4 is the timing decision).
 
 ### 4.4 Screen structure — Settings → AI
 
@@ -1020,7 +1079,7 @@ resolveAccess(ctx, capability):
   if row and row.encrypted_key:                              -- no key: row is unusable
     baseUrl = row.base_url ?? presetEndpoint(row.preset)     -- presets.ts, null for 'custom'
     if baseUrl or row.kind != 'questions':                   -- questions has no canonical endpoint
-      try:   key = decryptAiKey(row.encrypted_key, WORKER_ENCRYPTION_KEY)
+      try:   key = decryptProviderKey(row)       -- v2: AAD · v1: legacy + lazy rewrite (§3.6)
       catch: log '[ai] stored provider unusable household=…' -- never 500
       else:  return handle(funding='household')              -- model NULL = adapter default
   else:
@@ -1126,7 +1185,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   "audit every attempt" pairing (`:121-136`), now reading `err.call`/`err.usage` from `AiError`.
 - **Known gap**: the typed-decision wire reports no token counts. Such calls record
   `input_tokens = 0, output_tokens = 0, cached_tokens = NULL` and are distinguishable by
-  `provider = 'questions'`; per-call billing analytics for that kind are approximate (OQ3).
+  `provider = 'questions'`; per-call billing analytics for that kind are approximate (OQ2).
 
 ### 5.4 Adapter quirks (the per-provider knowledge, isolated)
 
@@ -1182,8 +1241,10 @@ when routes change — `./scripts/docs.sh` and `bunx vp run api:codegen` (CI dif
 
 **The first PR, exactly:**
 
-1. `backend/migrations/0039_ai_gateway.sql` — the two tables, indexes, CHECKs, backfill, and
-   `ai_usage_events.capability` (§3.2–§3.3).
+1. `backend/migrations/0039_ai_gateway.sql` — the two tables, indexes, CHECKs, backfill, and the
+   `ai_usage_events` dimensions (§3.2–§3.3). The `encrypted_key` CHECK accepts **both** envelope
+   prefixes (`v1:` legacy, `v2:` AAD-bound) from day one: SQLite cannot alter a CHECK without
+   rebuilding the table, and D10's `v2:` writer arrives a release later.
 2. `backend/src/lib/ai/{types,presets,credentials,capabilities,usage}.ts` — `resolveAccess(ctx,
    capability)` on the **new** tables, keyed by **`ctx.householdId`** and with the **two-outcome ladder**
    (assignment → null); `buildAiUsageEventStatement`/`recordAiUsageEvent`/
@@ -1208,7 +1269,8 @@ when routes change — `./scripts/docs.sh` and `bunx vp run api:codegen` (CI dif
    CHECKs, that a user with no legacy AI settings gets **zero** provider and capability rows, and the
    household rules: a two-member household keeps **two** provider rows with distinct labels, only the
    owner's legacy values become assignments, a user with two memberships lands in exactly one
-   household (the active one), and legacy usage rows gain `household_id` + `funding`);
+   household (the active one), legacy usage rows gain `household_id` + `funding`, and the
+   `encrypted_key` CHECK accepts both `v1:` and `v2:`);
    `ai-access.test.ts` **rewritten** as the two-outcome matrix — assignment → row, undecryptable key →
    null, missing/unusable provider → null, empty account → null, and "env vars present but ignored";
    the four suites that constructed the fallback (`documents-ocr`, `api-routes`, `review-ai`, plus
@@ -1231,11 +1293,25 @@ Move all provider transport into `lib/ai/adapters/*` behind `AiAdapter`; introdu
 (module-private key). `lib/ai.ts` becomes a thin deprecated shim delegating to the door so the PR
 lands without touching features; delete the shim in P4.
 
+**Ciphertext binding (D10) lands in this PR**, because it is a `crypto.ts` + `credentials.ts` change
+with no schema work (0039 already permits `v2:`): `encryptAiKey`/`decryptAiKey` gain an
+`additionalData` argument and a `v2:` envelope (§3.6); `credentials.ts` decrypts `v2:` with
+`ai_provider:<row id>` and `v1:` without it, then rewrites the row to `v2:` with a compare-and-set.
+The write paths (create, key change, legacy `PATCH` write-through) all write `v2:` from here on.
+
 - Tests: an adapter contract suite driven by a fake `fetch` (one table of cases × 4 kinds: happy path,
   auth error, 429, 5xx, empty content, timeout via an aborted signal, usage mapping); the
   `decide()` shape across chat kinds vs the typed kind; `ai-boundary.test.ts` (the import/hostname
-  rule) with an allow-list of exactly `lib/ai/**`.
-- Rollback: revert; the shim and the old dispatcher come back, no schema change.
+  rule) with an allow-list of exactly `lib/ai/**`; **crypto**: a `v2:` ciphertext copied onto another
+  provider row fails to decrypt (D10's guarantee) while the same envelope in its own row succeeds, a
+  `v1:` row decrypts and is rewritten exactly once (the second read is a no-op), a failed rewrite still
+  returns the key and does not fail the call, and a tag/auth failure maps to `not_configured`.
+- Rollback: revert; the shim and the old dispatcher come back, no schema change. **One caveat**: the
+  ciphertext change is forward-only — reverted code decodes only `v1:`, so rows already rewritten to
+  `v2:` would stop decrypting. The safe partial revert is to keep the P2 reader and revert only the
+  writer (one line); a full revert means those owners re-enter their keys, with Settings showing
+  "needs setup" and the assignments intact. Because the rewrite is lazy, that set is only "rows read
+  since P2 was deployed", not the whole table.
 
 ### P3 — Settings API + UI (first user-visible PR)
 
@@ -1307,8 +1383,9 @@ see and fix what the runtime resolves (P3 before P4), and destruction last and i
 
 The questions this section carried at review time were **decided by the owner on 2026-11-07** and now
 live in §0 as **D1** (household ownership), **D2** (four wire adapters), **D3** (typed decision
-contract), **D8** (no server fallback) and **D9** (funding dimension; no BYOK rate limits). What
-follows is the risk list and the **eight** questions that are still open.
+contract), **D8** (no server fallback), **D9** (funding dimension; no BYOK rate limits) and **D10**
+(row-bound AAD with lazy re-encrypt). What follows is the risk list and the **seven** questions that are
+still open.
 
 ### Risks
 
@@ -1319,9 +1396,10 @@ follows is the risk list and the **eight** questions that are still open.
    change costs no subrequest. P4's test pins "one capability read per sweep".
 2. **Key blast radius.** Today one `encrypted_ai_key` per user; after this change, N per household, all
    under the same `WORKER_ENCRYPTION_KEY`. Rotating that key already invalidates every stored key
-   (`docs/ARCHITECTURE.md:478`); now it invalidates N per household. Option: bind the ciphertext to the
-   provider row id as AES-GCM additional data (a `crypto.ts` change) so a copied ciphertext cannot be
-   re-planted on another row — worth doing in P2 if we accept touching `crypto.ts` (OQ1).
+   (`docs/ARCHITECTURE.md:478`); now it invalidates N per household. The **transplant** half of this
+   risk is closed by D10 (§3.6): a ciphertext can no longer be moved to another provider row, and the
+   rotation half is unchanged by design — a single `WORKER_ENCRYPTION_KEY` is still the blast radius
+   that key rotation exists for.
 3. **Behaviour change disguised as a fix.** Receipt scan switching to the vision model (§5.5) can
    surprise a household whose text model was doing fine. Mitigation: release note, and the UI shows
    "Vision model" on the scan path; the vision assignment inherits the migrated `ai_vision_model`
@@ -1336,7 +1414,7 @@ follows is the risk list and the **eight** questions that are still open.
    test, it is owner-only from P1, and P6 removes the ambiguity.
 6. **Typed-decision answers are thin — accepted by D3.** Choice + confidence only: no reason, no
    tokens. Consequences: `review_ai_verdicts.reason` is empty under a `questions` provider, and the
-   admin cost view shows zero tokens for those calls (OQ3). Both are visible, not hidden.
+   admin cost view shows zero tokens for those calls (OQ2). Both are visible, not hidden.
 7. **Sharing changes who pays.** D1 moves ownership from the person to the household, and the backfill
    cannot guess intent: in a two-member household where both had keys, the **owner's** assignment wins
    and the other member's calls now run on the owner's key (their own key survives as an unassigned
@@ -1348,29 +1426,26 @@ follows is the risk list and the **eight** questions that are still open.
 
 ### Open questions
 
-1. **Encryption hardening.** Bind the provider ciphertext to its row id (risk 2)? It is a small
-   `crypto.ts` change but it invalidates existing ciphertexts, so it must land with a
-   re-encrypt-on-read or a forced key re-entry.
-2. **Embeddings now or later?** Recommendation: later. A fourth capability is an additive enum value
+1. **Embeddings now or later?** Recommendation: later. A fourth capability is an additive enum value
    plus a new adapter method, but embeddings have a different shape (no messages, no completion,
    different usage units) and no feature needs them yet. Modelling them now would make `decide()`'s
    simplicity worse.
-3. **Token accounting for typed providers.** Accept zeros (recommended, with `provider='questions'`
+2. **Token accounting for typed providers.** Accept zeros (recommended, with `provider='questions'`
    as the marker) or add a per-call counter so the admin view stays meaningful?
-4. **Local/private endpoints.** The HTTPS-only rule (`api.ts:1198-1200`) blocks a self-hosted Ollama
+3. **Local/private endpoints.** The HTTPS-only rule (`api.ts:1198-1200`) blocks a self-hosted Ollama
    on `http://192.168.x.x`. Allow private-network HTTP for household-owned base URLs (a real SSRF
    surface on Workers, which cannot reach the LAN anyway) or keep HTTPS-only? Recommendation: keep
    HTTPS-only.
-5. **Legacy column drop timing (P6).** One full release after P5? The PWA and any mobile wrapper must
+4. **Legacy column drop timing (P6).** One full release after P5? The PWA and any mobile wrapper must
    be observed in the wild before the columns go.
-6. **Decision on chat providers.** Should a chat provider be assignable to `decision` (JSON prompt and
+5. **Decision on chat providers.** Should a chat provider be assignable to `decision` (JSON prompt and
    prompt-parsed choice) at all, or only a typed provider? Recommendation: allow both — the migration
    itself assigns the legacy chat provider to `decision`, and a household with one key would otherwise
    lose the review feature.
-7. **Should the provider test be free?** A typed-decision test is a billable question. Alternatives:
+6. **Should the provider test be free?** A typed-decision test is a billable question. Alternatives:
    probe with an intentionally empty `questions` object and accept a 400 (proves auth, no billing) —
    needs the provider's confirmation.
-8. **Premium metering, when it comes.** D9 reserves the shape but not the pricing: per-household
+7. **Premium metering, when it comes.** D9 reserves the shape but not the pricing: per-household
    subscription, token packs, or a soft cap with a warning? Worth answering before any code is written
    in `lib/ai/metering`, because the answer decides whether `funding` needs a `plan_id` beside it.
 
