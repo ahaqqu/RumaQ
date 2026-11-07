@@ -764,11 +764,53 @@ describe('AdminReview', () => {
       expect(container.textContent).toContain('review.aiAutoCronNote')
     })
 
+    it('keeps the verdict block off a decided row that still carries its verdict', () => {
+      // The list LEFT JOINs the cached verdict with no status filter
+      // (backend/src/lib/match-review.ts), so the row that comes back after an
+      // assisted decision is BOTH approved and carrying aiVerdict. The
+      // provenance chip is the whole story then — re-rendering the verdict
+      // block would offer Agree/Disagree on an already-decided row and a second
+      // click would rewrite the decision and its human_agreement (thermos A2).
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            {
+              ...reviewItem,
+              status: 'approved',
+              decidedSource: 'ai_assist',
+              aiVerdict: VERDICT,
+            },
+          ],
+        })
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('review.aiProvenanceAssist')
+      expect(container.textContent).not.toContain('review.aiVerdict')
+      expect(container.textContent).not.toContain('review.aiAgree')
+      expect(container.textContent).not.toContain('review.aiDisagree')
+      // The reason disclosure is part of the verdict block, not the chip row.
+      expect(container.textContent).not.toContain('review.aiReasonShow')
+    })
+
     it('runs one bounded evaluation on first load when pending rows lack verdicts', async () => {
       const view = renderAdmin()
       await waitFor(() => expect(evaluateMutate).toHaveBeenCalledWith(5))
       expect(evaluateMutate).toHaveBeenCalledTimes(1)
-      // A re-render must not fire a second probe.
+      // A plain re-render must not fire a second probe.
+      view.rerender(
+        React.createElement(
+          QueryClientProvider,
+          { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+          React.createElement(AdminReview, null)
+        )
+      )
+      expect(evaluateMutate).toHaveBeenCalledTimes(1)
+      // Nor may the refetch the settle-invalidation triggers. That refetch
+      // lands a NEW list payload whose rows are still waiting (the verdicts
+      // have not arrived yet) — the exact shape that would re-fire the effect,
+      // and re-bill, if the mount-scoped ref were ever dropped. A re-render
+      // over the same mocked object proves nothing here (thermos A1).
+      vi.mocked(useReviewItems).mockReturnValue(mockReviewData())
       view.rerender(
         React.createElement(
           QueryClientProvider,
