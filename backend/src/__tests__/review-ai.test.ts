@@ -658,6 +658,18 @@ describe('decision provenance (agree / disagree)', () => {
     expect(item?.aiVerdict?.humanAgreement).toBeNull()
   })
 
+  it('clears an earlier agreement when the item is re-decided without one', async () => {
+    insertItem('r1')
+    cacheVerdict()
+    await decideReviewItem(d1, 'r1', 'approved', ADMIN, 'agreed')
+    const item = await decideReviewItem(d1, 'r1', 'rejected', ADMIN)
+    // The agreement belonged to the decision that was just replaced; a
+    // human-provenance row must not carry a stale "agreed" next to the verdict.
+    expect(item?.decidedSource).toBe('human')
+    expect(item?.aiVerdict?.humanAgreement).toBeNull()
+    expect(verdictRows()[0]).toMatchObject({ human_agreement: null })
+  })
+
   it('ignores an agreement for an item with no verdict (human provenance)', async () => {
     insertItem('r1')
     const item = await decideReviewItem(d1, 'r1', 'approved', ADMIN, 'agreed')

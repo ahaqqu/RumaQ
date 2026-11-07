@@ -444,11 +444,14 @@ export async function decideReviewItem(
       )
       .bind(decision, new Date().toISOString(), userId, decidedSource, id),
   ]
-  if (agreement && verdict) {
+  if (verdict) {
+    // The agreement describes THIS decision (issue #484), so a plain decision
+    // after an Agree/Disagree clears it rather than leaving stale provenance
+    // next to a `decided_source='human'` row. The verdict itself is untouched.
     statements.push(
       db
         .prepare('UPDATE review_ai_verdicts SET human_agreement = ? WHERE review_item_id = ?')
-        .bind(agreement, id)
+        .bind(agreement ?? null, id)
     )
   }
   await db.batch(statements)
