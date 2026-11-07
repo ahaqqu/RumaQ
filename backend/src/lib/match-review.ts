@@ -170,11 +170,20 @@ export type ReviewListPage = {
   filteredTotal: number
 }
 
-function parsePair(json: string): ReviewItemPair | null {
+/**
+ * The `pair_data` blob parser — the ONE place a stored pair becomes a
+ * `ReviewItemPair`, shared by the list/decide/undo/export reads and by
+ * lib/review-ai.ts's prompt builder (thermos B1). A malformed blob must never
+ * break a page, and a non-object JSON value (a bare string/number/array) is
+ * malformed too: spreading it would fabricate fields.
+ */
+export function parseReviewPair(json: string): ReviewItemPair | null {
   try {
-    return JSON.parse(json) as ReviewItemPair
+    const parsed = JSON.parse(json) as unknown
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as ReviewItemPair)
+      : null
   } catch {
-    // A malformed blob must never break the whole page.
     return null
   }
 }
@@ -198,7 +207,7 @@ function toCachedVerdict(row: ReviewRow): CachedReviewVerdict | null {
 }
 
 function toReviewItem(row: ReviewRow): ReviewItem | null {
-  const pair = parsePair(row.pair_data)
+  const pair = parseReviewPair(row.pair_data)
   if (!pair) return null
   return {
     ...pair,
@@ -548,7 +557,7 @@ type ExportRow = {
 }
 
 function toExportRow(row: ExportRow): ReviewExportRow | null {
-  const pair = parsePair(row.pair_data)
+  const pair = parseReviewPair(row.pair_data)
   if (!pair) return null
   return {
     itemProductKey: pair.itemProductKey,

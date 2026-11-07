@@ -32,7 +32,7 @@ import {
   resolveAiAccess,
   type AiAccess,
 } from './ai-access.js'
-import { verdictDecision, type ReviewVerdictName } from './match-review.js'
+import { parseReviewPair, verdictDecision, type ReviewVerdictName } from './match-review.js'
 
 // ---------------------------------------------------------------------------
 // Modes and limits (exported: the routes, the cron, and the tests share them).
@@ -358,16 +358,6 @@ export type ReviewEvaluation = {
 
 type PendingPairRow = { id: string; pair_data: string }
 
-function parsePair(json: string): ReviewItemPair | null {
-  try {
-    const parsed = JSON.parse(json) as unknown
-    return isRecord(parsed) ? (parsed as ReviewItemPair) : null
-  } catch {
-    // A malformed blob is skipped, never fatal — same rule as the list read.
-    return null
-  }
-}
-
 /**
  * Pending items the reviewer may answer, in the queue's own order (newest flag
  * first, natural key tie-break). Two guards: the LEFT JOIN (a cached verdict —
@@ -625,7 +615,7 @@ export async function evaluatePendingReviews(
     rows,
     REVIEW_AI_CONCURRENCY,
     async (row): Promise<ItemOutcome> => {
-      const pair = parsePair(row.pair_data)
+      const pair = parseReviewPair(row.pair_data)
       if (!pair) return { usage: null, evaluated: false, apply: null, failed: true }
       const evaluation = await evaluateReviewPair(env, {
         access: options.access,
