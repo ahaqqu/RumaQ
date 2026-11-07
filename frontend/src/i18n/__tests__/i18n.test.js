@@ -63,6 +63,65 @@ describe('locale files', () => {
     })
   })
 
+  // AI review UI (issue #484, frontend PR 2). The global parity tests above
+  // prove the shape; these pin that the new AI copy exists in BOTH locales
+  // with real Indonesian (not an English copy-paste) and that the rendered
+  // chip/banner copy is the intended text.
+  describe('review AI namespace (#484)', () => {
+    // Format-only strings: identical in both languages by design (the "AI"
+    // label, placeholders, and the confidence/verdict template).
+    const LANGUAGE_NEUTRAL = new Set(['aiVerdict', 'aiModel', 'aiModeLegend'])
+
+    function aiKeys(locale) {
+      return Object.keys(locale.review)
+        .filter((key) => key.startsWith('ai'))
+        .sort()
+    }
+
+    it('exists in both locales with the same ai* keys', () => {
+      expect(aiKeys(en)).toEqual(aiKeys(id))
+      expect(aiKeys(en)).toContain('aiModeManual')
+      expect(aiKeys(en)).toContain('aiModeAssist')
+      expect(aiKeys(en)).toContain('aiModeAuto')
+      expect(aiKeys(en)).toContain('aiNotConfigured')
+      expect(aiKeys(en)).toContain('aiVerdict')
+      expect(aiKeys(en)).toContain('aiAgree')
+      expect(aiKeys(en)).toContain('aiDisagree')
+      expect(aiKeys(en)).toContain('aiEvaluateMore')
+      expect(aiKeys(en)).toContain('aiWaiting')
+      expect(aiKeys(en)).toContain('aiProvenanceHuman')
+      expect(aiKeys(en)).toContain('aiProvenanceAssist')
+      expect(aiKeys(en)).toContain('aiProvenanceAuto')
+    })
+
+    it('has real Indonesian copy, not English copies', () => {
+      for (const key of aiKeys(en)) {
+        if (LANGUAGE_NEUTRAL.has(key)) continue
+        expect(id.review[key], `review.${key} is untranslated`).not.toBe(en.review[key])
+      }
+    })
+
+    it('pins the mode labels and the default explanation', () => {
+      expect(en.review.aiModeManual).toBe('Manual review')
+      expect(en.review.aiModeAssist).toBe('Automate review with approval')
+      expect(en.review.aiModeAuto).toBe('Full automate review')
+      expect(en.review.aiModeAssistDesc).toContain('proposes a verdict')
+      expect(id.review.aiModeManual).toBe('Tinjauan manual')
+      expect(id.review.aiModeAssist).toBe('Otomatiskan tinjauan dengan persetujuan')
+      expect(id.review.aiModeAuto).toBe('Otomatiskan tinjauan sepenuhnya')
+    })
+
+    it('pins the verdict chip, banner, and provenance copy', () => {
+      expect(en.review.aiVerdict).toBe('AI: {{verdict}} · {{confidence}}%')
+      expect(en.review.aiSame).toBe('same')
+      expect(en.review.aiDifferent).toBe('different')
+      expect(en.review.aiNotConfigured).toContain('AI is not configured')
+      expect(en.review.aiProvenanceHuman).toBe('Decided by human')
+      expect(en.review.aiProvenanceAuto).toBe('Applied by AI · full auto')
+      expect(en.review.aiAutoCronNote).toBe('AI evaluates automatically every 30 minutes.')
+    })
+  })
+
   it('en and id have the same top-level keys', () => {
     const enKeys = Object.keys(en).sort()
     const idKeys = Object.keys(id).sort()

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
-import { render } from '@testing-library/react'
+import { fireEvent, render } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { AdminReview } from './AdminReview.jsx'
@@ -42,12 +42,22 @@ vi.mock('../lib/queries/review.js', () => ({
   useReviewItems: vi.fn(),
   useDecideReview: vi.fn(),
   useUndoReview: vi.fn(),
+  useReviewMode: vi.fn(),
+  useSetReviewMode: vi.fn(),
+  useEvaluateReview: vi.fn(),
 }))
 vi.mock('../lib/api', () => ({ fetchReviewExport: vi.fn() }))
 
 import { useMe } from '../lib/queries/me.js'
 import { usePriceSources } from '../lib/queries/index.js'
-import { useReviewItems, useDecideReview, useUndoReview } from '../lib/queries/review.js'
+import {
+  useReviewItems,
+  useDecideReview,
+  useUndoReview,
+  useReviewMode,
+  useSetReviewMode,
+  useEvaluateReview,
+} from '../lib/queries/review.js'
 
 const reviewItem = {
   id: '31b35444-4c2b-4b8e-9a4f-0d2c6e7f8a90',
@@ -134,6 +144,21 @@ describe('AdminReview — initialized i18n copy (issue #480)', () => {
     vi.mocked(useReviewItems).mockReturnValue(reviewData())
     vi.mocked(useDecideReview).mockReturnValue({ mutate: vi.fn(), isPending: false })
     vi.mocked(useUndoReview).mockReturnValue({ mutate: vi.fn(), isPending: false })
+    vi.mocked(useReviewMode).mockReturnValue({
+      data: { mode: 'assist', aiConfigured: true },
+      isLoading: false,
+      isError: false,
+    })
+    vi.mocked(useSetReviewMode).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: false,
+    })
+    vi.mocked(useEvaluateReview).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: false,
+    })
   })
 
   it('renders the approve/reject rubric next to the record-only note', () => {
@@ -188,5 +213,112 @@ describe('AdminReview — initialized i18n copy (issue #480)', () => {
     expect(id.review.confidence).toBe('Keyakinan cocok')
     expect(id.review.confidenceHint).toBe(ID_CONFIDENCE_HINT)
     expect(id.review.flagPrefix).toBe('Penanda tinjauan:')
+  })
+
+  describe('issue #484 — AI review copy', () => {
+    const VERDICT = {
+      verdict: 'same',
+      confidence: 0.87,
+      reason: 'Both are the same brand and 5 kg pack.',
+      model: 'gemini-2.5-flash',
+      humanAgreement: null,
+    }
+
+    it('renders the three mode labels with their one-line explanations', () => {
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('Manual review')
+      expect(container.textContent).toContain('No AI calls — you decide every item yourself.')
+      expect(container.textContent).toContain('Automate review with approval')
+      expect(container.textContent).toContain(
+        'The AI proposes a verdict with confidence and reason; you agree or disagree.'
+      )
+      expect(container.textContent).toContain('Full automate review')
+      expect(container.textContent).toContain(
+        'The AI decides on its own when it is at least 80% confident; the rest waits for you.'
+      )
+    })
+
+    it('renders the verdict chip, the expandable reason, and the assist actions', () => {
+      vi.mocked(useReviewItems).mockReturnValue(reviewData([{ ...reviewItem, aiVerdict: VERDICT }]))
+      const { container, getByText } = renderAdmin()
+      expect(container.textContent).toContain('AI: same · 87%')
+      expect(container.textContent).toContain('Model: gemini-2.5-flash')
+      // This row already carries a verdict, so it is not waiting for AI.
+      expect(container.textContent).not.toContain('waiting for AI')
+      expect(container.textContent).not.toContain(VERDICT.reason)
+
+      fireEvent.click(getByText('Why?'))
+      expect(container.textContent).toContain(VERDICT.reason)
+      expect(getByText('Hide reason')).not.toBeUndefined()
+      expect(getByText('Agree with AI')).not.toBeUndefined()
+      expect(getByText('Disagree with AI')).not.toBeUndefined()
+    })
+
+    it('renders the waiting hint and the on-demand evaluate action', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        reviewData([reviewItem, { ...reviewItem, id: 'aaaa1111-2222-4333-8444-555566667777' }])
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('Evaluate more')
+      expect(container.textContent).toContain('2 waiting for AI')
+    })
+
+    it('renders the unconfigured banner copy and keeps the selector', () => {
+      vi.mocked(useReviewMode).mockReturnValue({
+        data: { mode: 'assist', aiConfigured: false },
+        isLoading: false,
+        isError: false,
+      })
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain(
+        'AI is not configured — set a provider key in AI settings; manual review still works'
+      )
+      expect(container.querySelectorAll('input[name="review-ai-mode"]')).toHaveLength(3)
+    })
+
+    it('renders the provenance copy and the auto-sweep note', () => {
+      vi.mocked(useReviewMode).mockReturnValue({
+        data: { mode: 'auto', aiConfigured: true },
+        isLoading: false,
+        isError: false,
+      })
+      vi.mocked(useReviewItems).mockReturnValue(
+        reviewData([
+          { ...reviewItem, status: 'approved', decidedSource: 'ai_auto' },
+          {
+            ...reviewItem,
+            id: 'aaaa1111-2222-4333-8444-555566667777',
+            status: 'rejected',
+            decidedSource: 'ai_assist',
+          },
+          {
+            ...reviewItem,
+            id: 'bbbb1111-2222-4333-8444-555566667777',
+            status: 'approved',
+            decidedSource: 'human',
+          },
+        ])
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('Applied by AI · full auto')
+      expect(container.textContent).toContain('Decided by human · AI assisted')
+      expect(container.textContent).toContain('Decided by human')
+      expect(container.textContent).toContain('AI evaluates automatically every 30 minutes.')
+    })
+
+    it('carries real Indonesian AI copy', () => {
+      expect(id.review.aiModeLegend).toBe('Mode tinjauan AI')
+      expect(id.review.aiModeAssist).toBe('Otomatiskan tinjauan dengan persetujuan')
+      expect(id.review.aiModeAuto).toBe('Otomatiskan tinjauan sepenuhnya')
+      expect(id.review.aiNotConfigured).toBe(
+        'AI belum dikonfigurasi — atur kunci provider di pengaturan AI; tinjauan manual tetap berjalan'
+      )
+      expect(id.review.aiAgree).toBe('Setuju dengan AI')
+      expect(id.review.aiDisagree).toBe('Tidak setuju dengan AI')
+      expect(id.review.aiWaiting).toBe('{{count}} menunggu AI')
+      expect(id.review.aiProvenanceAuto).toBe('Diterapkan oleh AI · otomatis')
+      expect(id.review.aiProvenanceAssist).toBe('Diputuskan oleh manusia · dibantu AI')
+      expect(id.review.aiProvenanceHuman).toBe('Diputuskan oleh manusia')
+    })
   })
 })

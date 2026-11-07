@@ -35,6 +35,10 @@ import {
   getAdminProduct,
   renameProduct,
   revertProductRename,
+  getReviewMode,
+  setReviewMode,
+  evaluateReviewItems,
+  decideReviewItem,
 } from './api'
 
 // The client is mocked at the openapi-fetch boundary: these tests cover the
@@ -44,6 +48,7 @@ const { clientMock } = vi.hoisted(() => ({
   clientMock: {
     GET: vi.fn(),
     POST: vi.fn(),
+    PUT: vi.fn(),
     PATCH: vi.fn(),
     DELETE: vi.fn(),
   },
@@ -69,6 +74,7 @@ const fail = (error, status = 500) => ({
 beforeEach(() => {
   clientMock.GET.mockReset()
   clientMock.POST.mockReset()
+  clientMock.PUT.mockReset()
   clientMock.PATCH.mockReset()
   clientMock.DELETE.mockReset()
 })
@@ -529,6 +535,49 @@ describe('api', () => {
         status: 409,
         message: 'duplicate_name',
         body: { error: 'duplicate_name', conflicts },
+      })
+    })
+  })
+
+  describe('AI review (issue #484)', () => {
+    it('getReviewMode calls the admin mode route', async () => {
+      clientMock.GET.mockResolvedValueOnce(ok({ mode: 'assist', aiConfigured: true }))
+      const result = await getReviewMode()
+      expect(clientMock.GET).toHaveBeenCalledWith('/api/admin/review/mode', { signal: undefined })
+      expect(result).toEqual({ mode: 'assist', aiConfigured: true })
+    })
+
+    it('setReviewMode PUTs the chosen mode', async () => {
+      clientMock.PUT.mockResolvedValueOnce(ok({ mode: 'auto', aiConfigured: true }))
+      const result = await setReviewMode('auto')
+      expect(clientMock.PUT).toHaveBeenCalledWith('/api/admin/review/mode', {
+        body: { mode: 'auto' },
+      })
+      expect(result).toEqual({ mode: 'auto', aiConfigured: true })
+    })
+
+    it('evaluateReviewItems POSTs the bounded limit', async () => {
+      clientMock.POST.mockResolvedValueOnce(
+        ok({ evaluated: 5, applied: 0, mode: 'assist', aiConfigured: true })
+      )
+      const result = await evaluateReviewItems(5)
+      expect(clientMock.POST).toHaveBeenCalledWith('/api/admin/review/evaluate', {
+        body: { limit: 5 },
+      })
+      expect(result.evaluated).toBe(5)
+    })
+
+    it('decideReviewItem sends agreement only when one is given', async () => {
+      clientMock.POST.mockResolvedValue(ok({ item: { id: 'rev-1' } }))
+      await decideReviewItem('rev-1', 'approved')
+      expect(clientMock.POST).toHaveBeenLastCalledWith('/api/admin/review/{id}/decision', {
+        params: { path: { id: 'rev-1' } },
+        body: { decision: 'approved' },
+      })
+      await decideReviewItem('rev-1', 'rejected', 'disagreed')
+      expect(clientMock.POST).toHaveBeenLastCalledWith('/api/admin/review/{id}/decision', {
+        params: { path: { id: 'rev-1' } },
+        body: { decision: 'rejected', agreement: 'disagreed' },
       })
     })
   })
