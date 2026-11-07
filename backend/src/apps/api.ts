@@ -3902,6 +3902,10 @@ apiApp.post(
       return res
     } catch (error) {
       if (error instanceof BulkAliasApproveError) {
+        // The catch converts the failure into an honest 500, which means the
+        // shared onError handler never sees it: log the cause here or a failed
+        // catalog-wide run leaves no server-side trace of why the chunk died.
+        console.error('[products] bulk alias approval failed', error.failure)
         return c.json(
           {
             error: 'bulk_approve_failed',
