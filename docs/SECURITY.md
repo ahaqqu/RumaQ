@@ -68,7 +68,7 @@ Setup steps and the full variable table: [`docs/ARCHITECTURE.md` §8](ARCHITECTU
 - AI prompts are built from the current household only and pass store **labels**, not internal IDs — covered by `backend/src/__tests__/prompt-isolation.test.ts`.
 - Receipt images sit in a private R2 bucket and are only readable through the household-checked proxy `GET /api/purchases/:id/receipt`.
 - Document-vault files (ahaqqu/RumaQ#388; multi-file per document since #422) live under the `documents/` prefix of the same private bucket and stream only through the household-scoped, auth-required, per-file `GET /api/documents/{id}/files/{fileId}/content` (`Cache-Control: private, no-store`, view/download audited per request; the file must belong to the named document). No public or presigned URLs exist for them.
-- AI keys are encrypted at rest with AES-GCM (PBKDF2-derived 256-bit key, random IV) and never returned by the API — only a `has_ai_key` flag.
+- AI provider keys are encrypted at rest with AES-GCM (PBKDF2-derived 256-bit key, random IV) **bound to their provider row**: the `v2:` envelope authenticates `ai_provider:<row id>` as additional data, so a ciphertext copied onto another row fails to decrypt (D10, #523 P2). No API path returns key material for any role — `has_key` is the only signal the provider list carries, and `GET /api/settings` no longer projects any AI field but the additive `ai_providers` / `ai_capabilities` / `ai_status` block (#523 P3). Every provider/capability write is owner-gated; reads are member-open; a cross-household id is a 404, not a 403.
 
 ## Dependency & vulnerability management
 

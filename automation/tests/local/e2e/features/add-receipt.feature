@@ -5,13 +5,8 @@ Feature: Add From Receipt
 
   Background:
     Given I am logged in as the seeded test user
-    And the test user has an AI key configured
+    And the test user has AI configured
 
-  # #523 P1: the scan route resolves the household's vision capability and
-  # the legacy PATCH ai_key Background step is a dead write until P3 (design
-  # §3.4, §4.3), so the upload answers 402 and no review renders. Pending, NOT
-  # deleted: P3 seeds a provider through the public endpoints and reactivates it.
-  @skip
   Scenario: Scan, review, and confirm adds items to stock
     When I navigate to "/add"
     And I upload the receipt fixture image

@@ -151,8 +151,18 @@ export type LegacyCompleteArgs = {
   signal?: AbortSignal
 }
 
-/** A signal that never fires — the legacy call shape has no door deadline. */
-const NEVER_ABORTED = new AbortController().signal
+/**
+ * A signal that never fires — the legacy call shape has no door deadline.
+ *
+ * NOT module scope: constructing an `AbortController` while the Worker bundle is
+ * still evaluating trips the runtime's global-scope restriction ("generating
+ * random values are not allowed within global scope") and the WHOLE Worker fails
+ * to start, which is how this line took the nightly Docker stack down after P2.
+ * Created per call, inside the request handler, where it is allowed.
+ */
+function neverAborted(): AbortSignal {
+  return new AbortController().signal
+}
 
 /**
  * One legacy provider call through the door's adapters. Returns the text plus
@@ -196,7 +206,7 @@ export async function legacyCompleteText(
     maxTokens: wire.maxTokens,
     baseUrl,
     apiKey: args.apiKey,
-    signal: args.signal ?? NEVER_ABORTED,
+    signal: args.signal ?? neverAborted(),
   }
   try {
     const result = await adapter.complete(request)

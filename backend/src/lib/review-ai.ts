@@ -27,7 +27,8 @@
 import type { ReviewItemPair } from '@rumaq/contract'
 import type { Env } from '../types.js'
 import { completeText, parseJsonResponse, usageCollector, type TokenUsage } from './ai.js'
-import { loadUserAiSettings, resolveAiAccess, type AiAccess } from './ai-access.js'
+import { resolveAiAccess, type AiAccess } from './ai-access.js'
+import { ACTIVE_HOUSEHOLD_SQL } from '../auth.js'
 import { buildAiUsageEventStatement } from './ai/usage.js'
 import { parseReviewPair, verdictDecision, type ReviewVerdictName } from './match-review.js'
 
@@ -310,11 +311,16 @@ export async function getReviewAiUserId(db: D1Database): Promise<string | null> 
 }
 
 /**
- * Resolve the AI access a review evaluation runs on: the given user's
- * household assignment through lib/ai-access.ts. There is no fallback ladder
- * left — no acting user or no usable assignment means "not configured", and
- * assist/auto degrade to manual per the issue rather than 500ing the queue.
- * The error text carries no key material.
+ * Resolve the AI access a review evaluation runs on: the household the stored
+ * acting admin's request would act in, then that household's assignment
+ * through lib/ai-access.ts. There is no fallback ladder left — no acting user,
+ * no household or no usable assignment means "not configured", and assist/auto
+ * degrade to manual per the issue rather than 500ing the queue. The error text
+ * carries no key material.
+ *
+ * P3 (#523) deleted the settings projection that used to carry the household
+ * along with the user's AI fields; the household is resolved with the SAME
+ * rule the auth middleware uses, once per run (the sweep resolves once).
  */
 export async function resolveReviewAiAccess(
   env: Env['Bindings'],
@@ -322,8 +328,10 @@ export async function resolveReviewAiAccess(
 ): Promise<AiAccess | null> {
   if (!userId) return null
   try {
-    const settings = await loadUserAiSettings(env.DB, userId)
-    return await resolveAiAccess(env, settings)
+    const row = await env.DB.prepare(ACTIVE_HOUSEHOLD_SQL)
+      .bind(userId, userId, userId)
+      .first<{ household_id: string | null }>()
+    return await resolveAiAccess(env, row?.household_id ?? null)
   } catch (err) {
     console.warn(
       `[review-ai] stored AI settings unusable for user=${userId}: ${err instanceof Error ? err.message : 'unknown error'}`

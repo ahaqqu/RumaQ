@@ -41,8 +41,12 @@ const mockActivePlan = {
   ],
 }
 
-const mockSettingsWithKey = { has_ai_key: true }
-const mockSettingsNoKey = { has_ai_key: false }
+// #523 P3: the plan gate reads the household's reasoning capability, not the
+// retired `has_ai_key` field.
+const mockSettingsWithKey = {
+  ai_status: { decision: 'none', reasoning: 'household', vision: 'none' },
+}
+const mockSettingsNoKey = { ai_status: { decision: 'none', reasoning: 'none', vision: 'none' } }
 
 vi.mock('../lib/queries/index.js', () => ({
   usePlans: vi.fn(),

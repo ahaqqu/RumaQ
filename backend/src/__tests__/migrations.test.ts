@@ -2910,9 +2910,15 @@ describe('migration 0033: user_settings.ai_vision_model (#433)', () => {
     ).toMatchObject({ ai_vision_model: 'gemini-3.6-flash' })
   })
 
-  it('keeps the full chain green on a fresh database (additive)', () => {
+  it('keeps the chain green through 0033..0041 (the column 0042 later drops)', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
-    applyMigrations(db, migrationFiles())
+    // `ai_vision_model` is dropped by 0042 (#523 P3), so "this migration added
+    // it" is asserted on the chain STOPPING before the drop — the historical
+    // claim stays true without re-adding a dropped column's assertion.
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0042')
+    )
     const columns = db.prepare('PRAGMA table_info(user_settings)').all()
     expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('ai_vision_model')
   })
@@ -3479,9 +3485,14 @@ describe('migration 0041: AI gateway (#523 P1)', () => {
     expect(householdPlan).not.toMatch(/SCAN ai_usage_events|TEMP B-TREE/i)
   })
 
-  it('keeps the full chain green on a fresh database (additive: no legacy column touched)', () => {
+  it('keeps the chain green on a fresh database (additive: no legacy column touched by 0041)', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
-    applyMigrations(db, migrationFiles())
+    // Stop before 0042: P1's claim is that THIS migration touched no legacy
+    // column — the P3 drop is asserted in its own describe below.
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0042')
+    )
 
     const providerColumns = db.prepare('PRAGMA table_info(ai_providers)').all()
     expect(providerColumns.map((column: Record<string, unknown>) => column.name)).toEqual([
@@ -3581,5 +3592,156 @@ describe('migration 0041: AI gateway (#523 P1)', () => {
         preset: 'together',
       },
     ])
+  })
+})
+
+// ahaqqu/RumaQ#523 P3 (plan §4.3, D6): the legacy per-user AI settings are
+// DROPPED. This is the one destructive migration of the AI-gateway project, so
+// its contract is pinned against a real SQLite engine: the six columns are gone,
+// everything else on `user_settings` survives, and a FRESH database still serves
+// a working Settings payload (no route can reference a dropped column).
+describe('migration 0042: legacy AI settings dropped (#523 P3)', () => {
+  const LEGACY_COLUMNS = [
+    'ai_provider',
+    'encrypted_ai_key',
+    'ai_base_url',
+    'ai_model',
+    'ai_vision_model',
+    'ai_thinking_level',
+  ]
+
+  function columnNames(db: Db, table: string): string[] {
+    return db
+      .prepare(`PRAGMA table_info(${table})`)
+      .all()
+      .map((column: Record<string, unknown>) => String(column.name))
+  }
+
+  it('drops exactly the six legacy columns and keeps the rest of user_settings', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0042')
+    )
+    const before = columnNames(db, 'user_settings')
+    // The pre-drop world really has them: the drop below would otherwise be a
+    // no-op on an empty set and the assertion meaningless.
+    expect(before).toEqual(expect.arrayContaining(LEGACY_COLUMNS))
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0042_drop_legacy_ai_settings.sql'), 'utf8'))
+
+    const after = columnNames(db, 'user_settings')
+    expect(after.filter((column: string) => LEGACY_COLUMNS.includes(column))).toEqual([])
+    // The surviving columns are exactly (before − the six), so nothing else was
+    // rebuilt away with them.
+    expect(after).toEqual(before.filter((column: string) => !LEGACY_COLUMNS.includes(column)))
+  })
+
+  it('preserves the surviving values of an existing settings row through the drop', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0042')
+    )
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare(
+      `INSERT INTO user_settings (id, user_id, motion_preference, language, theme_hue,
+                                  persona_user_role, ai_provider, ai_model)
+       VALUES ('s1', 'u1', 'reduced', 'id', 210, 'chef', 'gemini', 'gemini-3.6-flash')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0042_drop_legacy_ai_settings.sql'), 'utf8'))
+
+    expect(
+      db
+        .prepare(
+          `SELECT motion_preference, language, theme_hue, persona_user_role
+             FROM user_settings WHERE user_id = 'u1'`
+        )
+        .get()
+    ).toEqual({
+      motion_preference: 'reduced',
+      language: 'id',
+      theme_hue: 210,
+      persona_user_role: 'chef',
+    })
+  })
+
+  it('the full chain is green and a FRESH database still yields a working Settings payload', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    // 1) The schema the settings route selects from: no legacy column, and every
+    //    column the route's SELECT names is present.
+    const settingsColumns = columnNames(db, 'user_settings')
+    expect(settingsColumns.filter((column: string) => LEGACY_COLUMNS.includes(column))).toEqual([])
+    const routeSelect = [
+      'motion_preference',
+      'language',
+      'persona_user_role',
+      'persona_ai_role',
+      'persona_enabled',
+      'theme_hue',
+      'active_household_id',
+    ]
+    expect(settingsColumns).toEqual(expect.arrayContaining(routeSelect))
+
+    // 2) A fresh account: the bootstrap row exists (the settings route and the
+    //    auth middleware both rely on it) and the SELECT returns the documented
+    //    defaults — this is the payload the UI receives on a brand-new database.
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare("INSERT INTO households (id, name, created_by) VALUES ('h1', 'H1', 'u1')").run()
+    db.prepare(
+      "INSERT INTO household_members (id, household_id, user_id, role) VALUES ('m1', 'h1', 'u1', 'owner')"
+    ).run()
+    db.prepare("INSERT INTO user_settings (id, user_id) VALUES ('s1', 'u1')").run()
+    const fresh = db
+      .prepare(`SELECT ${routeSelect.join(', ')} FROM user_settings WHERE user_id = ?`)
+      .get('u1')
+    expect(fresh).toEqual({
+      motion_preference: 'standard',
+      language: null,
+      persona_user_role: null,
+      persona_ai_role: null,
+      persona_enabled: 0,
+      theme_hue: null,
+      active_household_id: null,
+    })
+
+    // 3) The AI block is honest on a fresh household: zero rows, and the status
+    //    read (loadHouseholdAiConfig's SELECT) returns nothing to serialize.
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM ai_providers').get()).toEqual({ cnt: 0 })
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM ai_capabilities').get()).toEqual({ cnt: 0 })
+    expect(db.prepare('SELECT * FROM ai_providers WHERE household_id = ?').all('h1')).toEqual([])
+  })
+
+  it('keeps the household AI tables and the usage dimensions intact after the drop', () => {
+    // The drop is scoped to `user_settings`: providers, assignments and the
+    // capability/household/funding stamps on usage rows are what AI runs on now.
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    expect(columnNames(db, 'ai_providers')).toEqual([
+      'id',
+      'household_id',
+      'label',
+      'kind',
+      'preset',
+      'base_url',
+      'default_model',
+      'encrypted_key',
+      'created_at',
+      'updated_at',
+    ])
+    expect(columnNames(db, 'ai_capabilities')).toEqual([
+      'household_id',
+      'capability',
+      'provider_id',
+      'model',
+      'thinking_level',
+      'updated_at',
+    ])
+    expect(columnNames(db, 'ai_usage_events')).toEqual(
+      expect.arrayContaining(['capability', 'household_id', 'funding'])
+    )
   })
 })

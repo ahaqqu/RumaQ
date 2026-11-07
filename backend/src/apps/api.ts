@@ -33,7 +33,7 @@ import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { isApiPath } from '../plugins/core-prefixes.js'
 import { propsAuthMiddleware } from '../auth.js'
-import { encryptAiKey, decryptAiKey, timingSafeEqualStrings } from '../lib/crypto.js'
+import { timingSafeEqualStrings } from '../lib/crypto.js'
 import { runReportSchema, getPricesStatus } from '../lib/ingest.js'
 import {
   CanonicalIndexIntegrityError,
@@ -124,21 +124,35 @@ import {
   extFromType,
 } from '../lib/receipts.js'
 import { extractReceiptItems, usageCollector, type TokenUsage } from '../lib/ai.js'
-import {
-  loadUserAiSettings,
-  resolveAiAccess,
-  USER_AI_SETTINGS_COLUMNS,
-  type AiAccess,
-  type UserAiSettings,
-} from '../lib/ai-access.js'
+import { resolveAiAccess, type AiAccess } from '../lib/ai-access.js'
 import { loadHouseholdAiConfig } from '../lib/ai/capabilities.js'
 import { recordAiUsageEvent } from '../lib/ai/usage.js'
+import {
+  AiProviderSettingsError,
+  assignCapability,
+  clearCapability,
+  createProvider,
+  deleteProvider,
+  listPresets,
+  listProviders,
+  testProvider,
+  updateProvider,
+} from '../lib/ai/provider-settings.js'
+import {
+  HouseholdForbiddenError,
+  HouseholdNotFoundError,
+  getMembership,
+  requireOwner,
+} from '../lib/households.js'
+import { isRateLimited } from '../lib/rate-limit.js'
 import { sendChatMessage } from '../lib/chat.js'
 import {
   settingsPatchSchema,
   locationSchema,
   storeSchema,
-  aiKeyTestSchema,
+  aiProviderCreateSchema,
+  aiProviderPatchSchema,
+  aiCapabilityAssignSchema,
   stockPatchSchema,
   purchaseCreateSchema,
   chatSchema,
@@ -632,6 +646,14 @@ apiApp.use('/api/stock/:id', propsAuthMiddleware)
 apiApp.use('/api/home', propsAuthMiddleware)
 apiApp.use('/api/settings', propsAuthMiddleware)
 apiApp.use('/api/ai/usage', propsAuthMiddleware)
+// The AI gateway settings surface (#523 P3). apiApp.use(path) does NOT cover
+// subpaths (#292), so every path gets its own line, statics before params.
+apiApp.use('/api/ai/providers', propsAuthMiddleware)
+apiApp.use('/api/ai/providers/:id', propsAuthMiddleware)
+apiApp.use('/api/ai/providers/:id/test', propsAuthMiddleware)
+apiApp.use('/api/ai/presets', propsAuthMiddleware)
+apiApp.use('/api/ai/capabilities', propsAuthMiddleware)
+apiApp.use('/api/ai/capabilities/:capability', propsAuthMiddleware)
 apiApp.use('/api/locations', propsAuthMiddleware)
 apiApp.use('/api/locations/:id', propsAuthMiddleware)
 apiApp.use('/api/items', propsAuthMiddleware)
@@ -691,7 +713,6 @@ apiApp.use('/api/admin/products/:productKey/aliases/:aliasId/reject', propsAuthM
 // subpaths). Each route therefore gets its own gate.
 apiApp.use('/api/admin/products/aliases/candidates', propsAuthMiddleware)
 apiApp.use('/api/admin/products/aliases/bulk-approve', propsAuthMiddleware)
-apiApp.use('/api/ai-key/*', propsAuthMiddleware)
 
 apiApp.get(
   '/api/me',
@@ -1090,19 +1111,12 @@ apiApp.get(
               required: [
                 'motion_preference',
                 'language',
-                'ai_provider',
-                'ai_base_url',
-                'ai_model',
-                'ai_vision_model',
-                'ai_thinking_level',
                 'persona_user_role',
                 'persona_ai_role',
                 'persona_enabled',
                 'theme_hue',
                 'active_household_id',
                 'active_household_name',
-                'has_ai_key',
-                'server_ai_available',
                 'ai_providers',
                 'ai_capabilities',
                 'ai_status',
@@ -1110,23 +1124,12 @@ apiApp.get(
               properties: {
                 motion_preference: { type: 'string' },
                 language: { type: ['string', 'null'] },
-                ai_provider: { type: ['string', 'null'] },
-                ai_base_url: { type: ['string', 'null'] },
-                ai_model: { type: ['string', 'null'] },
-                ai_vision_model: { type: ['string', 'null'] },
-                ai_thinking_level: { type: ['string', 'null'] },
                 persona_user_role: { type: ['string', 'null'] },
                 persona_ai_role: { type: ['string', 'null'] },
                 persona_enabled: { type: 'boolean' },
                 theme_hue: { type: ['integer', 'null'] },
                 active_household_id: { type: 'string' },
                 active_household_name: { type: ['string', 'null'] },
-                has_ai_key: { type: 'boolean' },
-                server_ai_available: {
-                  type: 'boolean',
-                  description:
-                    'Retired by D8 (#523 P1): always false; removed in P3 with the UI option that reads it.',
-                },
                 ai_providers: {
                   type: 'array',
                   description:
@@ -1239,29 +1242,23 @@ apiApp.get(
     },
   }),
   async (c) => {
-    // The AI column half comes from USER_AI_SETTINGS_COLUMNS (T4-B3) — this
-    // serializer does not own the AI projection.
+    // The legacy `user_settings.ai_*` projection is GONE (#523 P3, plan §4.3):
+    // migration 0042 dropped the columns and the household's providers /
+    // assignments below are the only AI configuration this payload carries.
     const settings = await c.env.DB.prepare(
-      `SELECT motion_preference, language, ${USER_AI_SETTINGS_COLUMNS},
-               persona_user_role, persona_ai_role,
-               persona_enabled, theme_hue, active_household_id
+      `SELECT motion_preference, language, persona_user_role, persona_ai_role,
+              persona_enabled, theme_hue, active_household_id
         FROM user_settings WHERE user_id = ?`
     )
       .bind(c.get('userId'))
       .first<{
         motion_preference: string
         language: string | null
-        ai_provider: string | null
-        ai_base_url: string | null
-        ai_model: string | null
-        ai_vision_model: string | null
-        ai_thinking_level: string | null
         persona_user_role: string | null
         persona_ai_role: string | null
         persona_enabled: number
         theme_hue: number | null
         active_household_id: string | null
-        encrypted_ai_key: string | null
       }>()
 
     // The household identity echoes the middleware's RESOLVED household
@@ -1281,23 +1278,12 @@ apiApp.get(
     const res = c.json({
       motion_preference: settings?.motion_preference ?? 'standard',
       language: settings?.language ?? null,
-      ai_provider: settings?.ai_provider ?? null,
-      ai_base_url: settings?.ai_base_url ?? null,
-      ai_model: settings?.ai_model ?? null,
-      ai_vision_model: settings?.ai_vision_model ?? null,
-      ai_thinking_level: settings?.ai_thinking_level ?? null,
       persona_user_role: settings?.persona_user_role ?? null,
       persona_ai_role: settings?.persona_ai_role ?? null,
       persona_enabled: settings?.persona_enabled === 1,
       theme_hue: settings?.theme_hue ?? null,
       active_household_id: resolvedHouseholdId,
       active_household_name: household?.name ?? null,
-      has_ai_key: settings?.encrypted_ai_key != null && settings.encrypted_ai_key !== '',
-      // D8 retired the shared server key (#523 P1): the platform cannot serve
-      // an AI call any more, so this is the truthful constant. The legacy AI
-      // settings fields above stay untouched (and dead) until P3 drops them
-      // with the screen and this field together with the UI option reading it.
-      server_ai_available: false,
       ai_providers: aiConfig.providers,
       ai_capabilities: aiConfig.capabilities,
       ai_status: aiConfig.status,
@@ -1319,21 +1305,9 @@ apiApp.patch(
           schema: {
             type: 'object',
             additionalProperties: false,
+            description:
+              'Preference fields only. AI configuration lives at /api/ai/providers and /api/ai/capabilities; the legacy ai_* fields are gone with the columns migration 0042 dropped (#523 P3).',
             properties: {
-              ai_provider: {
-                type: 'string',
-                enum: ['opencode', 'openai', 'anthropic', 'gemini', 'ollama', 'custom'],
-              },
-              ai_key: { type: 'string', minLength: 1 },
-              ai_base_url: { type: 'string', maxLength: 500 },
-              ai_model: { type: 'string', maxLength: 200 },
-              ai_vision_model: {
-                type: 'string',
-                maxLength: 200,
-                description:
-                  'Vision model for vault document OCR (issue #433); empty/omitted falls back to ai_model',
-              },
-              ai_thinking_level: { type: 'string', enum: ['low', 'medium', 'high', ''] },
               persona_user_role: { type: 'string' },
               persona_ai_role: { type: 'string' },
               persona_enabled: { type: 'boolean' },
@@ -1357,56 +1331,10 @@ apiApp.patch(
     const updates: string[] = []
     const params: unknown[] = []
 
-    if (body.ai_key !== undefined) {
-      const normalized = typeof body.ai_key === 'string' ? body.ai_key.trim() : ''
-      if (normalized.length === 0) {
-        updates.push('encrypted_ai_key = NULL')
-      } else {
-        const encrypted = await encryptAiKey(normalized, c.env.WORKER_ENCRYPTION_KEY)
-        updates.push('encrypted_ai_key = ?')
-        params.push(encrypted)
-      }
-    }
+    // No AI branch: the legacy `ai_*` fields are not part of this schema any
+    // more (#523 P3). Providers and capability assignments are written through
+    // /api/ai/providers and /api/ai/capabilities.
     const fields = body
-    if (fields.ai_provider !== undefined) {
-      updates.push('ai_provider = ?')
-      params.push(fields.ai_provider)
-    }
-    if (fields.ai_base_url !== undefined) {
-      const trimmed = fields.ai_base_url.trim()
-      if (trimmed === '') {
-        updates.push('ai_base_url = ?')
-        params.push(null)
-      } else {
-        let parsed: URL
-        try {
-          parsed = new URL(trimmed)
-        } catch {
-          return c.json({ error: 'Invalid AI base URL' }, 400)
-        }
-        if (parsed.protocol !== 'https:') {
-          return c.json({ error: 'AI base URL must use HTTPS' }, 400)
-        }
-        updates.push('ai_base_url = ?')
-        params.push(trimmed.replace(/\/+$/, ''))
-      }
-    }
-    if (fields.ai_model !== undefined) {
-      const trimmed = fields.ai_model.trim()
-      updates.push('ai_model = ?')
-      params.push(trimmed === '' ? null : trimmed)
-    }
-    if (fields.ai_vision_model !== undefined) {
-      const trimmed = fields.ai_vision_model.trim()
-      updates.push('ai_vision_model = ?')
-      // Empty string clears the field (the ai_model rule): no explicit vision
-      // model means the OCR path falls back to ai_model.
-      params.push(trimmed === '' ? null : trimmed)
-    }
-    if (fields.ai_thinking_level !== undefined) {
-      updates.push('ai_thinking_level = ?')
-      params.push(fields.ai_thinking_level === '' ? null : fields.ai_thinking_level)
-    }
     if (fields.persona_user_role !== undefined) {
       updates.push('persona_user_role = ?')
       params.push(fields.persona_user_role)
@@ -1441,10 +1369,8 @@ apiApp.patch(
         .run()
     }
 
-    // Same USER_AI_SETTINGS_COLUMNS half as the GET (T4-B3).
     const settings = await c.env.DB.prepare(
-      `SELECT motion_preference, language, ${USER_AI_SETTINGS_COLUMNS},
-              persona_user_role, persona_ai_role,
+      `SELECT motion_preference, language, persona_user_role, persona_ai_role,
               persona_enabled, theme_hue
         FROM user_settings WHERE user_id = ?`
     )
@@ -1452,31 +1378,200 @@ apiApp.patch(
       .first<{
         motion_preference: string
         language: string | null
-        ai_provider: string | null
-        ai_base_url: string | null
-        ai_model: string | null
-        ai_vision_model: string | null
-        ai_thinking_level: string | null
         persona_user_role: string | null
         persona_ai_role: string | null
         persona_enabled: number
         theme_hue: number | null
-        encrypted_ai_key: string | null
       }>()
 
     const res = c.json({
       motion_preference: settings?.motion_preference ?? 'standard',
       language: settings?.language ?? null,
-      ai_provider: settings?.ai_provider ?? null,
-      ai_base_url: settings?.ai_base_url ?? null,
-      ai_model: settings?.ai_model ?? null,
-      ai_vision_model: settings?.ai_vision_model ?? null,
-      ai_thinking_level: settings?.ai_thinking_level ?? null,
       persona_user_role: settings?.persona_user_role ?? null,
       persona_ai_role: settings?.persona_ai_role ?? null,
       persona_enabled: settings?.persona_enabled === 1,
       theme_hue: settings?.theme_hue ?? null,
-      has_ai_key: settings?.encrypted_ai_key != null && settings.encrypted_ai_key !== '',
+    })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+// ─── AI gateway settings (ahaqqu/RumaQ#523 P3, plan §4) ─────────────────────
+//
+// Six endpoints replace the single dead `PATCH /api/settings` AI branch and the
+// retired `POST /api/ai-key/test`. Rules enforced here (the body rules live in
+// lib/ai/provider-settings.ts):
+//   - every route is authenticated (the `apiApp.use` lines above);
+//   - READS are open to every member (a member must see what their household
+//     spends); every WRITE runs `requireOwner` first and answers 403 otherwise;
+//   - `can_manage` comes from the household role, so the UI never guesses;
+//   - nothing ever serialises a key: `has_key` is the only signal.
+
+const PROVIDER_TEST_RATE_WINDOW_MS = 60_000
+const PROVIDER_TEST_RATE_MAX = 30
+
+/**
+ * The one translation from the settings module's typed refusals (and the owner
+ * gate's) onto HTTP. `apiApp.onError` is the generic 500 handler — the typed
+ * 403/404 of the household gate would otherwise fall through it, so the routes
+ * catch and map here instead.
+ */
+function aiSettingsError(c: Context<Env>, err: unknown): Response {
+  if (err instanceof AiProviderSettingsError) return c.json({ error: err.message }, err.status)
+  if (err instanceof HouseholdNotFoundError) return c.json({ error: err.message }, 404)
+  if (err instanceof HouseholdForbiddenError) return c.json({ error: err.message }, 403)
+  throw err
+}
+
+const PROVIDER_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  required: [
+    'id',
+    'label',
+    'kind',
+    'preset',
+    'base_url',
+    'default_model',
+    'has_key',
+    'created_at',
+    'updated_at',
+  ],
+  properties: {
+    id: { type: 'string' },
+    label: { type: 'string' },
+    kind: { type: 'string', enum: ['openai-compatible', 'anthropic', 'gemini', 'questions'] },
+    preset: { type: ['string', 'null'] },
+    base_url: { type: ['string', 'null'] },
+    default_model: { type: ['string', 'null'] },
+    has_key: { type: 'boolean' },
+    created_at: { type: 'string' },
+    updated_at: { type: 'string' },
+  },
+}
+
+const CAPABILITY_ASSIGNMENT_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  required: ['provider_id', 'provider_label', 'model', 'thinking_level', 'source'],
+  properties: {
+    provider_id: { type: ['string', 'null'] },
+    provider_label: { type: ['string', 'null'] },
+    model: { type: ['string', 'null'] },
+    thinking_level: { type: ['string', 'null'] },
+    source: { type: 'string', enum: ['household', 'none'] },
+  },
+}
+
+apiApp.get(
+  '/api/ai/presets',
+  describeRoute({
+    description:
+      'Lists the AI provider presets a household MAY add: id, label, wire kind and canonical base URL only. Seeds nothing, preselects nothing, defines no default, and carries no model ids — a model is owner-typed data on a provider row (#523 P3, plan §4.1/§4.5).',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['presets'],
+              properties: {
+                presets: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['id', 'label', 'kind', 'base_url'],
+                    properties: {
+                      id: { type: 'string' },
+                      label: { type: 'string' },
+                      kind: {
+                        type: 'string',
+                        enum: ['openai-compatible', 'anthropic', 'gemini', 'questions'],
+                      },
+                      base_url: {
+                        type: ['string', 'null'],
+                        description: 'Canonical endpoint; null when the household must supply one',
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+    },
+  }),
+  (c) => {
+    const res = c.json({ presets: listPresets() })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+apiApp.get(
+  '/api/ai/providers',
+  describeRoute({
+    description:
+      "Lists the acting household's AI providers. Every member may read it; `can_manage` is the household role, so a member is never offered a control that would 403. No response path carries key material — `has_key` is the only signal (#523 P3).",
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['can_manage', 'managed_by', 'providers'],
+              properties: {
+                can_manage: { type: 'boolean' },
+                managed_by: {
+                  type: ['string', 'null'],
+                  description:
+                    "The household owner's display name, for the member's read-only line",
+                },
+                providers: { type: 'array', items: PROVIDER_SCHEMA },
+              },
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+    },
+  }),
+  async (c) => {
+    const householdId = c.get('householdId')
+    const userId = c.get('userId')
+    const membership = await getMembership(c.env.DB, householdId, userId)
+    if (!membership) {
+      return c.json({ error: 'Household not found' }, 404)
+    }
+    const providers = await listProviders(c.env, householdId)
+
+    // The owner's name powers the member's "Managed by …" line. NULL when the
+    // household somehow has no owner row (the role CHECK makes that unusual,
+    // but the UI must render either way).
+    let managedBy: string | null = null
+    if (membership.role !== 'owner') {
+      const owner = await c.env.DB.prepare(
+        `SELECT COALESCE(NULLIF(u.name, ''), u.email) AS name
+           FROM household_members m
+           JOIN users u ON u.id = m.user_id
+          WHERE m.household_id = ? AND m.role = 'owner'
+          ORDER BY m.joined_at, m.user_id
+          LIMIT 1`
+      )
+        .bind(householdId)
+        .first<{ name: string | null }>()
+      managedBy = owner?.name ?? null
+    }
+
+    const res = c.json({
+      can_manage: membership.role === 'owner',
+      managed_by: managedBy,
+      providers,
     })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
@@ -1484,9 +1579,10 @@ apiApp.patch(
 )
 
 apiApp.post(
-  '/api/ai-key/test',
+  '/api/ai/providers',
   describeRoute({
-    description: 'Validates an AI provider API key.',
+    description:
+      "Adds an AI provider to the acting household. Owner-only (403 for a member). The key is write-only and sealed with the provider row's id as additional authenticated data — no endpoint ever returns it. 409 on a duplicate label (case-insensitive), 400 past the ten-provider cap or when the row would have no endpoint.",
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -1494,113 +1590,396 @@ apiApp.post(
         'application/json': {
           schema: {
             type: 'object',
-            required: ['provider'],
+            required: ['label', 'kind', 'api_key'],
+            additionalProperties: false,
             properties: {
-              provider: {
+              label: { type: 'string', minLength: 1, maxLength: 60 },
+              kind: {
                 type: 'string',
-                enum: ['opencode', 'openai', 'anthropic', 'gemini', 'ollama', 'custom'],
+                enum: ['openai-compatible', 'anthropic', 'gemini', 'questions'],
               },
-              key: { type: 'string', minLength: 1 },
+              preset: { type: 'string', maxLength: 40 },
               base_url: { type: 'string', maxLength: 500 },
+              default_model: {
+                type: 'string',
+                maxLength: 200,
+                description:
+                  'Optional provider-level default; a capability with a blank model inherits it',
+              },
+              api_key: { type: 'string', minLength: 1 },
             },
           },
         },
       },
     },
     responses: {
-      200: { description: 'OK - key is valid' },
-      400: { description: 'Validation error' },
+      201: {
+        description: 'Created',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['provider'],
+              properties: { provider: PROVIDER_SCHEMA },
+            },
+          },
+        },
+      },
+      400: { description: 'Validation error, provider cap, or no resolvable endpoint' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Only household owners can change AI settings' },
+      409: { description: 'Duplicate provider label' },
+    },
+  }),
+  sValidator('json', aiProviderCreateSchema),
+  async (c) => {
+    const householdId = c.get('householdId')
+    try {
+      await requireOwner(c.env.DB, householdId, c.get('userId'))
+      const provider = await createProvider(c.env, householdId, c.req.valid('json'))
+      const res = c.json({ provider }, 201)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (err) {
+      return aiSettingsError(c, err)
+    }
+  }
+)
+
+apiApp.patch(
+  '/api/ai/providers/:id',
+  describeRoute({
+    description:
+      'Updates one household AI provider. Owner-only. The key stays write-only: an omitted `api_key` leaves the stored one, `api_key: ""` clears it (409 while a capability uses the provider), and any value re-seals it. `base_url: ""` / `default_model: ""` clear those columns. 404 for a provider id from another household; 409 on a duplicate label.',
+    security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              label: { type: 'string', minLength: 1, maxLength: 60 },
+              kind: {
+                type: 'string',
+                enum: ['openai-compatible', 'anthropic', 'gemini', 'questions'],
+              },
+              base_url: { type: 'string', maxLength: 500 },
+              default_model: { type: 'string', maxLength: 200 },
+              api_key: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['provider'],
+              properties: { provider: PROVIDER_SCHEMA },
+            },
+          },
+        },
+      },
+      400: { description: 'Validation error or a row that would have no endpoint' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Only household owners can change AI settings' },
+      404: { description: 'Provider not found in this household' },
+      409: { description: 'Duplicate label, or clearing a key an assigned capability needs' },
+    },
+  }),
+  sValidator('json', aiProviderPatchSchema),
+  async (c) => {
+    const householdId = c.get('householdId')
+    try {
+      await requireOwner(c.env.DB, householdId, c.get('userId'))
+      const provider = await updateProvider(
+        c.env,
+        householdId,
+        c.req.param('id'),
+        c.req.valid('json')
+      )
+      const res = c.json({ provider })
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (err) {
+      return aiSettingsError(c, err)
+    }
+  }
+)
+
+apiApp.delete(
+  '/api/ai/providers/:id',
+  describeRoute({
+    description:
+      'Deletes one household AI provider. Owner-only. Returns the capabilities the provider was serving: those assignments are cleared in the same batch, so the UI can warn before the delete and the caller knows what became not configured.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'Deleted',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['cleared'],
+              properties: {
+                cleared: {
+                  type: 'array',
+                  items: { type: 'string', enum: ['decision', 'reasoning', 'vision'] },
+                },
+              },
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Only household owners can change AI settings' },
+      404: { description: 'Provider not found in this household' },
+    },
+  }),
+  async (c) => {
+    const householdId = c.get('householdId')
+    try {
+      await requireOwner(c.env.DB, householdId, c.get('userId'))
+      const result = await deleteProvider(c.env, householdId, c.req.param('id'))
+      const res = c.json(result)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (err) {
+      return aiSettingsError(c, err)
+    }
+  }
+)
+
+apiApp.post(
+  '/api/ai/providers/:id/test',
+  describeRoute({
+    description:
+      'Tests one household provider’s stored credentials with its own free probe: a `/models` listing for chat kinds, and an EMPTY-questions request for a typed (`questions`) endpoint, whose expected 400 proves authentication without buying an answer. Owner-only (it uses the household credential) and rate-limited per user. The answer is `{ ok: true }` or `{ ok: false, code }` — never the provider body.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'Probe finished — `ok` says whether the key authenticated',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['ok'],
+              properties: {
+                ok: { type: 'boolean' },
+                code: {
+                  type: 'string',
+                  description:
+                    'Failure code (auth, rate_limited, timeout, provider_error, invalid_response, unsupported, unreadable_key) — present only when ok is false',
+                },
+              },
+            },
+          },
+        },
+      },
+      400: { description: 'The provider has no key or no resolvable endpoint' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Only household owners can change AI settings' },
+      404: { description: 'Provider not found in this household' },
+      429: { description: 'Too many connection tests' },
+    },
+  }),
+  async (c) => {
+    const householdId = c.get('householdId')
+    const { limited, retryAfter } = isRateLimited(
+      `ai-provider-test:${c.get('userId')}`,
+      PROVIDER_TEST_RATE_WINDOW_MS,
+      PROVIDER_TEST_RATE_MAX
+    )
+    if (limited) {
+      return c.json({ error: 'Too many provider tests. Please slow down.' }, 429, {
+        'Retry-After': String(retryAfter),
+      })
+    }
+    try {
+      await requireOwner(c.env.DB, householdId, c.get('userId'))
+      const result = await testProvider(c.env, householdId, c.req.param('id'))
+      const res = c.json(result)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (err) {
+      return aiSettingsError(c, err)
+    }
+  }
+)
+
+apiApp.get(
+  '/api/ai/capabilities',
+  describeRoute({
+    description:
+      "Returns the acting household's three capability assignments: the provider each points at, the model the resolver will actually call (the assignment's model, else the provider's default) and the capability's usable status ('household' = a call would reach a provider, 'none' = 402). Every member may read it (#523 P3).",
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['can_manage', 'capabilities', 'status'],
+              properties: {
+                can_manage: { type: 'boolean' },
+                capabilities: {
+                  type: 'object',
+                  required: ['decision', 'reasoning', 'vision'],
+                  properties: {
+                    decision: CAPABILITY_ASSIGNMENT_SCHEMA,
+                    reasoning: CAPABILITY_ASSIGNMENT_SCHEMA,
+                    vision: CAPABILITY_ASSIGNMENT_SCHEMA,
+                  },
+                },
+                status: {
+                  type: 'object',
+                  required: ['decision', 'reasoning', 'vision'],
+                  properties: {
+                    decision: { type: 'string', enum: ['household', 'none'] },
+                    reasoning: { type: 'string', enum: ['household', 'none'] },
+                    vision: { type: 'string', enum: ['household', 'none'] },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
       401: { description: 'Unauthorized' },
     },
   }),
-  sValidator('json', aiKeyTestSchema),
   async (c) => {
-    const body = c.req.valid('json')
-    const provider = body.provider
-    const providedKey = body.key
-    let apiKey: string | undefined
-
-    if (providedKey !== undefined && providedKey.trim().length > 0) {
-      apiKey = providedKey.trim()
+    const householdId = c.get('householdId')
+    const membership = await getMembership(c.env.DB, householdId, c.get('userId'))
+    if (!membership) {
+      return c.json({ error: 'Household not found' }, 404)
     }
+    const config = await loadHouseholdAiConfig(c.env, householdId)
+    const res = c.json({
+      can_manage: membership.role === 'owner',
+      capabilities: config.capabilities,
+      status: config.status,
+    })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
 
-    if (apiKey === undefined) {
-      const settings = await c.env.DB.prepare(
-        'SELECT encrypted_ai_key FROM user_settings WHERE user_id = ?'
-      )
-        .bind(c.get('userId'))
-        .first<{ encrypted_ai_key: string | null }>()
-
-      if (!settings?.encrypted_ai_key) {
-        return c.json({ error: 'No API key saved' }, 400)
-      }
-
-      apiKey = await decryptAiKey(settings.encrypted_ai_key, c.env.WORKER_ENCRYPTION_KEY)
-    }
-
-    try {
-      switch (provider) {
-        case 'gemini': {
-          const res = await fetch(
-            `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`
-          )
-          if (!res.ok) throw new Error()
-          break
-        }
-        case 'anthropic': {
-          const res = await fetch('https://api.anthropic.com/v1/models', {
-            headers: {
-              'x-api-key': apiKey,
-              'anthropic-version': '2023-06-01',
+apiApp.put(
+  '/api/ai/capabilities/:capability',
+  describeRoute({
+    description:
+      "Assigns one capability to one of the household's providers (upsert — one assignment per capability). Owner-only. `model` blank inherits the provider's default model; both blank is the normal not-configured state, not an error. 400 when the provider's wire cannot serve the capability, when a thinking level is sent for `vision` or a typed provider, or when the provider has no usable key/endpoint; 404 when the provider id is not this household's.",
+    security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['provider_id'],
+            additionalProperties: false,
+            properties: {
+              provider_id: { type: 'string' },
+              model: {
+                type: 'string',
+                maxLength: 200,
+                description: 'Blank = inherit the provider default',
+              },
+              thinking_level: { type: 'string', enum: ['low', 'medium', 'high', ''] },
             },
-          })
-          if (!res.ok) throw new Error()
-          break
-        }
-        case 'openai': {
-          const res = await fetch('https://api.openai.com/v1/models', {
-            headers: { Authorization: `Bearer ${apiKey}` },
-          })
-          if (!res.ok) throw new Error()
-          break
-        }
-        case 'opencode': {
-          const res = await fetch('https://api.opencode.ai/v1/models', {
-            headers: { Authorization: `Bearer ${apiKey}` },
-          })
-          if (!res.ok) throw new Error()
-          break
-        }
-        case 'ollama': {
-          const res = await fetch('https://ollama.com/v1/models', {
-            headers: { Authorization: `Bearer ${apiKey}` },
-          })
-          if (!res.ok) throw new Error()
-          break
-        }
-        case 'custom': {
-          const baseUrl = body.base_url?.trim()
-          if (!baseUrl) return c.json({ error: 'Base URL required for custom provider' }, 400)
-          let modelsUrl: URL
-          try {
-            modelsUrl = new URL(`${baseUrl.replace(/\/+$/, '')}/models`)
-          } catch {
-            return c.json({ error: 'Invalid base URL' }, 400)
-          }
-          if (modelsUrl.protocol !== 'https:') {
-            return c.json({ error: 'Base URL must use HTTPS' }, 400)
-          }
-          const res = await fetch(modelsUrl.toString(), {
-            headers: { Authorization: `Bearer ${apiKey}` },
-          })
-          if (!res.ok) throw new Error()
-          break
-        }
-      }
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['capability', 'status'],
+              properties: {
+                capability: CAPABILITY_ASSIGNMENT_SCHEMA,
+                status: { type: 'string', enum: ['household', 'none'] },
+              },
+            },
+          },
+        },
+      },
+      400: {
+        description: 'Kind/capability mismatch, forbidden thinking level, or unusable provider',
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Only household owners can change AI settings' },
+      404: { description: 'Provider not found in this household' },
+    },
+  }),
+  sValidator('json', aiCapabilityAssignSchema),
+  async (c) => {
+    const householdId = c.get('householdId')
+    try {
+      await requireOwner(c.env.DB, householdId, c.get('userId'))
+      const result = await assignCapability(
+        c.env,
+        householdId,
+        c.req.param('capability'),
+        c.req.valid('json')
+      )
+      const res = c.json(result)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (err) {
+      return aiSettingsError(c, err)
+    }
+  }
+)
 
-      return c.json({ ok: true })
-    } catch {
-      return c.json({ error: 'Invalid API key' }, 400)
+apiApp.delete(
+  '/api/ai/capabilities/:capability',
+  describeRoute({
+    description:
+      'Clears one capability assignment (the capability becomes not configured: 402 on its routes). Owner-only and idempotent — clearing an unassigned capability is a 200, not a 404.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'Cleared',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['capability', 'status'],
+              properties: {
+                capability: CAPABILITY_ASSIGNMENT_SCHEMA,
+                status: { type: 'string', enum: ['household', 'none'] },
+              },
+            },
+          },
+        },
+      },
+      400: { description: 'Unknown capability' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Only household owners can change AI settings' },
+    },
+  }),
+  async (c) => {
+    const householdId = c.get('householdId')
+    try {
+      await requireOwner(c.env.DB, householdId, c.get('userId'))
+      const result = await clearCapability(c.env, householdId, c.req.param('capability'))
+      const res = c.json(result)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (err) {
+      return aiSettingsError(c, err)
     }
   }
 )
@@ -1631,14 +2010,7 @@ apiApp.get(
           'application/json': {
             schema: {
               type: 'object',
-              required: [
-                'used',
-                'input_tokens',
-                'output_tokens',
-                'cached_tokens',
-                'provider',
-                'key_source',
-              ],
+              required: ['used', 'input_tokens', 'output_tokens', 'cached_tokens', 'provider'],
               properties: {
                 used: { type: 'integer', description: 'Completed AI calls today (UTC)' },
                 input_tokens: { type: 'integer' },
@@ -1649,7 +2021,6 @@ apiApp.get(
                     'Provider-reported cached input tokens; null when the provider reports none',
                 },
                 provider: { type: ['string', 'null'] },
-                key_source: { type: 'string', enum: ['user', 'server'] },
               },
             },
           },
@@ -1662,13 +2033,13 @@ apiApp.get(
     const userId = c.get('userId')
     const today = new Date().toISOString().slice(0, 10)
 
-    const settings = await loadUserAiSettings(c.env.DB, userId)
-
-    // Resolved fresh so provider/key_source always reflect the user's current
-    // configuration, not the state when past events were recorded.
-    const access = await resolveAiAccess(c.env, settings)
-    const keySource = access?.keySource ?? 'user'
-    const provider = access?.provider ?? settings?.ai_provider ?? null
+    // Resolved fresh against the household the request acts in, so the provider
+    // always reflects the current configuration rather than the state when the
+    // events were recorded. `key_source` is gone with the legacy surface
+    // (#523 P3): every call is household-funded (D9), and the usage row carries
+    // `funding` instead.
+    const access = await resolveAiAccess(c.env, c.get('householdId'))
+    const provider = access?.provider ?? null
 
     const totals = await c.env.DB.prepare(
       `SELECT COUNT(*) AS used,
@@ -1693,7 +2064,6 @@ apiApp.get(
       // SUM over all-null cached figures is NULL: unreported, not zero.
       cached_tokens: totals?.cached_tokens ?? null,
       provider,
-      key_source: keySource,
     })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
@@ -1901,23 +2271,21 @@ apiApp.post(
     const householdId = c.get('householdId')
     const { message, history } = c.req.valid('json')
 
-    // The AI half rides USER_AI_SETTINGS_COLUMNS (T4-B3); the persona fields
-    // are chat-specific extras appended by this call site.
+    // Only the persona fields are this route's own read: the AI configuration is
+    // the household's rows, resolved by the door (#523 P3 dropped the legacy
+    // `user_settings.ai_*` projection this query used to carry).
     const settings = await c.env.DB.prepare(
-      `SELECT ${USER_AI_SETTINGS_COLUMNS},
-              persona_enabled, persona_user_role, persona_ai_role
+      `SELECT persona_enabled, persona_user_role, persona_ai_role
          FROM user_settings WHERE user_id = ?`
     )
       .bind(userId)
-      .first<
-        UserAiSettings & {
-          persona_enabled: number | null
-          persona_user_role: string | null
-          persona_ai_role: string | null
-        }
-      >()
+      .first<{
+        persona_enabled: number | null
+        persona_user_role: string | null
+        persona_ai_role: string | null
+      }>()
 
-    const access = await resolveAiAccess(c.env, settings)
+    const access = await resolveAiAccess(c.env, householdId)
     if (!access) {
       return c.json(
         {
@@ -2091,9 +2459,7 @@ apiApp.post(
       return c.json({ error: validationError }, 400)
     }
 
-    const settings = await loadUserAiSettings(c.env.DB, userId)
-
-    const access = await resolveAiAccess(c.env, settings)
+    const access = await resolveAiAccess(c.env, householdId)
     if (!access) {
       return c.json(
         {
@@ -4968,16 +5334,13 @@ apiApp.post(
     const userId = c.get('userId')
     const householdId = c.get('householdId')
 
-    // The AI half rides USER_AI_SETTINGS_COLUMNS (T4-B3); currency is a
-    // plan-generation-specific extra appended by this call site.
-    const settings = await c.env.DB.prepare(
-      `SELECT ${USER_AI_SETTINGS_COLUMNS}, currency
-        FROM user_settings WHERE user_id = ?`
-    )
+    // Currency is the only user preference this route needs; the AI access is
+    // the household's assignment through the door (#523 P3).
+    const settings = await c.env.DB.prepare('SELECT currency FROM user_settings WHERE user_id = ?')
       .bind(userId)
-      .first<UserAiSettings & { currency: string | null }>()
+      .first<{ currency: string | null }>()
 
-    const access = await resolveAiAccess(c.env, settings)
+    const access = await resolveAiAccess(c.env, householdId)
     if (!access) {
       return c.json(
         {

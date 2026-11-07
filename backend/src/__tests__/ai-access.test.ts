@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vite-plus/test'
 import type { Env } from '../types.js'
 import { encryptAiKey } from '../lib/crypto.js'
-import { USER_AI_SETTINGS_COLUMNS, loadUserAiSettings, resolveAiAccess } from '../lib/ai-access.js'
-import { ACTIVE_HOUSEHOLD_SQL } from '../auth.js'
+import { resolveAiAccess } from '../lib/ai-access.js'
 import { loadHouseholdAiConfig, resolveAccess } from '../lib/ai/capabilities.js'
 import { accessMaterial } from '../lib/ai/key-material.js'
 import { deleteExpiredAiUsageEvents, recordAiUsageEvent } from '../lib/ai/usage.js'
@@ -382,14 +381,13 @@ describe('resolveAccess (household capability ladder)', () => {
   })
 })
 
-// --- the P1 bridge ---------------------------------------------------------
+// --- the legacy bridge (household-scoped since P3) -------------------------
 
 describe('resolveAiAccess (legacy single-provider bridge)', () => {
   it('maps the household assignment onto the legacy dispatcher shape', async () => {
     await seedHousehold()
-    const settings = await loadUserAiSettings(d1, 'u1')
 
-    const access = await resolveAiAccess(env, settings)
+    const access = await resolveAiAccess(env, 'h1')
 
     expect(access).toMatchObject({
       provider: 'openai',
@@ -398,16 +396,17 @@ describe('resolveAiAccess (legacy single-provider bridge)', () => {
       model: 'gpt-4o-mini',
       visionModel: 'gpt-4o-vision',
       thinkingLevel: 'low',
-      keySource: 'user',
       call: { capability: 'reasoning', householdId: 'h1', funding: 'household' },
     })
+    // P3 dropped `keySource`: every call is household-funded (D9).
+    expect(access).not.toHaveProperty('keySource')
   })
 
   it('falls back to the decision assignment when reasoning is unconfigured', async () => {
     await seedHousehold()
     sqlite.prepare(`DELETE FROM ai_capabilities WHERE capability = 'reasoning'`).run()
 
-    const access = await resolveAiAccess(env, await loadUserAiSettings(d1, 'u1'))
+    const access = await resolveAiAccess(env, 'h1')
     expect(access?.call.capability).toBe('decision')
     expect(access?.model).toBe('gpt-4o-mini')
     // The vision assignment still supplies the vision model.
@@ -427,13 +426,13 @@ describe('resolveAiAccess (legacy single-provider bridge)', () => {
       .prepare(`UPDATE ai_capabilities SET provider_id = ? WHERE capability = 'vision'`)
       .run(second)
 
-    const access = await resolveAiAccess(env, await loadUserAiSettings(d1, 'u1'))
+    const access = await resolveAiAccess(env, 'h1')
     // The legacy access is one provider: it cannot borrow another row's model.
     expect(access?.provider).toBe('openai')
     expect(access?.visionModel).toBe('gpt-4o-mini')
   })
 
-  it('returns null for an empty account and for a typed-only household (no chat wire in P1)', async () => {
+  it('returns null for an empty account and for a typed-only household (no chat wire)', async () => {
     addUser('u1')
     addHousehold('h1')
     addMember('h1', 'u1')
@@ -450,155 +449,50 @@ describe('resolveAiAccess (legacy single-provider bridge)', () => {
     })
     addCapability('decision', typed, { householdId: 'h2', model: 'jev-latest' })
 
-    expect(await resolveAiAccess(env, await loadUserAiSettings(d1, 'u1'))).toBeNull()
-    expect(await resolveAiAccess(env, await loadUserAiSettings(d1, 'u2'))).toBeNull()
+    expect(await resolveAiAccess(env, 'h1')).toBeNull()
+    expect(await resolveAiAccess(env, 'h2')).toBeNull()
   })
 
-  it('ignores the legacy user_settings AI columns the moment the resolver swaps', async () => {
-    // Exactly the P1 dead-write state: a user_settings row with a provider/key
-    // that used to resolve, and NO household provider rows.
-    addUser('u1')
-    addHousehold('h1')
-    addMember('h1', 'u1')
-    sqlite
-      .prepare(
-        `INSERT INTO user_settings (id, user_id, ai_provider, ai_model, encrypted_ai_key)
-         VALUES ('s1', 'u1', 'gemini', 'gemini-legacy', ?)`
-      )
-      .run(ENCRYPTED_KEY)
-    sqlite.prepare(`UPDATE user_settings SET active_household_id = 'h1' WHERE user_id = 'u1'`).run()
+  it('resolves ONLY the household it is handed (no user_settings re-derivation)', async () => {
+    // P3 deleted the settings projection that used to carry the household
+    // (plan §4.3): the middleware's `c.get('householdId')` is the single source.
+    // Two households, both configured with different keys; the caller's
+    // user_settings row points at h2, yet passing h1 must resolve h1's rows.
+    await seedHousehold()
+    addUser('u2')
+    addHousehold('h2', 'u2')
+    addMember('h2', 'u2')
+    const second = await addProvider({
+      id: 'p-h2',
+      householdId: 'h2',
+      label: 'Gemini',
+      kind: 'gemini',
+      preset: 'gemini',
+      key: 'sk-h2',
+    })
+    addCapability('reasoning', second, { householdId: 'h2', model: 'gemini-3.6-flash' })
+    sqlite.prepare(`UPDATE user_settings SET active_household_id = 'h2' WHERE user_id = 'u1'`).run()
+    // No settings row for u1 would also do: resolution never reads one.
+    sqlite.prepare(`DELETE FROM user_settings WHERE user_id = 'u1'`).run()
 
-    const settings = await loadUserAiSettings(d1, 'u1')
-    expect(settings).toMatchObject({ ai_provider: 'gemini', household_id: 'h1' })
-    expect(await resolveAiAccess(env, settings)).toBeNull()
+    expect((await resolveAiAccess(env, 'h1'))?.apiKey).toBe('sk-household')
+    expect((await resolveAiAccess(env, 'h2'))?.apiKey).toBe('sk-h2')
+    expect((await resolveAiAccess(env, null))?.apiKey).toBeUndefined()
   })
 
-  it('ignores env-only server access (present but inert) and a null settings row', async () => {
+  it('ignores env-only server access (present but inert)', async () => {
+    // D8: there is no server ladder, no env key, no platform default.
+    await seedHousehold()
     const legacyEnv = {
       ...env,
       RUMAQ_SERVER_AI_PROVIDER: 'gemini',
       RUMAQ_SERVER_AI_KEY: 'sk-server',
       RUMAQ_SERVER_AI_MODEL: 'gemini-3.6-pro',
     } as unknown as Env['Bindings']
+    expect((await resolveAiAccess(legacyEnv, 'h1'))?.apiKey).toBe('sk-household')
+    // A household with no rows stays unconfigured even with every env var set.
+    expect(await resolveAiAccess(legacyEnv, 'h-empty')).toBeNull()
     expect(await resolveAiAccess(legacyEnv, null)).toBeNull()
-  })
-})
-
-// --- the settings projection / read model ----------------------------------
-
-describe('loadUserAiSettings (the owned projection)', () => {
-  it('carries the six legacy columns AND the resolved household', async () => {
-    expect(USER_AI_SETTINGS_COLUMNS).toContain('encrypted_ai_key')
-    expect(USER_AI_SETTINGS_COLUMNS).toContain('household_id')
-
-    addUser('u1')
-    addHousehold('h1')
-    addHousehold('h2')
-    addMember('h1', 'u1', 'member', '2026-01-01 00:00:00')
-    addMember('h2', 'u1', 'owner', '2026-02-01 00:00:00')
-    sqlite
-      .prepare(`INSERT INTO user_settings (id, user_id, ai_provider) VALUES ('s1', 'u1', 'openai')`)
-      .run()
-
-    // No active pointer yet: the oldest membership is the baseline.
-    expect((await loadUserAiSettings(d1, 'u1'))?.household_id).toBe('h1')
-
-    // The active pointer wins while it is still a membership (ACTIVE_HOUSEHOLD_SQL).
-    sqlite.prepare(`UPDATE user_settings SET active_household_id = 'h2' WHERE user_id = 'u1'`).run()
-    expect((await loadUserAiSettings(d1, 'u1'))?.household_id).toBe('h2')
-  })
-
-  it('falls back to the oldest membership when the active pointer is stale', async () => {
-    addUser('u1')
-    addUser('u2')
-    addHousehold('h1')
-    addHousehold('h2')
-    addMember('h1', 'u1', 'owner', '2026-01-01 00:00:00')
-    addMember('h2', 'u2', 'owner', '2026-02-01 00:00:00')
-    // u1's pointer still names h2, a household they are no longer in.
-    sqlite
-      .prepare(
-        `INSERT INTO user_settings (id, user_id, active_household_id) VALUES ('s1', 'u1', 'h2')`
-      )
-      .run()
-    expect((await loadUserAiSettings(d1, 'u1'))?.household_id).toBe('h1')
-  })
-
-  it('returns null for a user with no settings row', async () => {
-    addUser('u1')
-    expect(await loadUserAiSettings(d1, 'u1')).toBeNull()
-  })
-
-  it('agrees with the middleware ACTIVE_HOUSEHOLD_SQL on every shape (thermos B2)', async () => {
-    // The bridge re-derives the household inside this projection instead of
-    // taking c.get('householdId') (plan §6 P1 keeps resolveAiAccess's shape).
-    // That is a third copy of the rule, so pin the two forms together: a
-    // future precedence change must not let the AI routes act in a different
-    // household than the rest of the same request.
-    const shapes: Array<{
-      user: string
-      memberships: Array<[string, string, string]>
-      active: string | null
-    }> = [
-      // oldest membership when no pointer is set
-      {
-        user: 'u1',
-        memberships: [
-          ['1', 'h2', '2026-02-01'],
-          ['2', 'h1', '2026-01-01'],
-        ],
-        active: null,
-      },
-      // an active pointer that is still a membership wins
-      {
-        user: 'u2',
-        memberships: [
-          ['3', 'h1', '2026-01-01'],
-          ['4', 'h2', '2026-02-01'],
-        ],
-        active: 'h2',
-      },
-      // a stale pointer (removed member) is ignored, oldest wins
-      { user: 'u3', memberships: [['5', 'h1', '2026-01-01']], active: 'h2' },
-      // equal joined_at falls back to household_id, deterministically
-      {
-        user: 'u4',
-        memberships: [
-          ['6', 'h2', '2026-01-01'],
-          ['7', 'h1', '2026-01-01'],
-        ],
-        active: null,
-      },
-      // no membership at all: both forms say NULL
-      { user: 'u5', memberships: [], active: 'h1' },
-    ]
-    addUser('root')
-    for (const household of ['h1', 'h2']) addHousehold(household, 'root')
-    for (const shape of shapes) {
-      addUser(shape.user, shape.user.toUpperCase())
-      for (const [id, household, joined] of shape.memberships) {
-        sqlite
-          .prepare(
-            `INSERT INTO household_members (id, household_id, user_id, role, joined_at)
-             VALUES (?, ?, ?, 'member', ?)`
-          )
-          .run(id, household, shape.user, joined)
-      }
-      sqlite
-        .prepare(`INSERT INTO user_settings (id, user_id, active_household_id) VALUES (?, ?, ?)`)
-        .run(`s-${shape.user}`, shape.user, shape.active)
-    }
-
-    for (const shape of shapes) {
-      const middleware = sqlite
-        .prepare(ACTIVE_HOUSEHOLD_SQL)
-        .get(shape.user, shape.user, shape.user) as { household_id: string | null }
-      const bridge = (await loadUserAiSettings(d1, shape.user))?.household_id ?? null
-      expect({ user: shape.user, household: bridge }).toEqual({
-        user: shape.user,
-        household: middleware.household_id,
-      })
-    }
   })
 })
 

@@ -62,26 +62,30 @@ endpoints (`shared.steps.js` `Before` hook), and scenarios run with
 Notes for writing new E2E scenarios:
 
 - `TEST_MODE` mocks all AI endpoints (chat, plan generate, receipt scan, the
-  vault's expiry-date read #433) — no
-  real AI key is needed; set one via `PATCH /api/settings` when a flow
-  requires `has_ai_key`, and drop the persisted query cache afterwards (the
-  app caches settings for 5 minutes in IndexedDB). The match-review evaluator
-  (#484) is the deliberate exception: under `TEST_MODE` it is NOT stubbed —
-  with no provider configured it returns the documented 200
-  `{ evaluated: 0, aiConfigured: false }` degrade, never a fabricated verdict.
-  When a scenario needs a cached verdict, seed one through the harness-only
-  `POST /api/__test/direct-sql` endpoint (the products-rename precedent) and
-  set the admin's BYOK key through the real `PATCH /api/settings` route so the
-  queue reports `aiConfigured: true` — the scenario then exercises the assist
-  decision (Agree → `ai_assist`), never a model call.
+  vault's expiry-date read #433) — no real AI key is reached. A flow that needs
+  a resolved provider turns AI on the way a household owner does (#523 P3):
+  `configureAi()` in `automation/tests/local/api/steps/helpers.js` (API) and
+  `configureAi()` in `automation/tests/local/e2e/steps/ai-setup.js` (E2E) POST a
+  provider to `/api/ai/providers` and assign the capabilities through
+  `/api/ai/capabilities/*`, then drop the persisted query cache — the app caches
+  settings for 5 minutes in IndexedDB, and a reload inside the persister's
+  throttle window would otherwise hydrate a pre-setup snapshot
+  (`clearPersistedQueryCache()` in `shared.steps.js`). There is no legacy
+  `PATCH /api/settings` AI write any more: those fields are rejected with 400
+  and the columns are gone (migration 0042).
+  The match-review evaluator (#484) is the deliberate exception: under
+  `TEST_MODE` it is NOT stubbed — with no provider configured it returns the
+  documented 200 `{ evaluated: 0, aiConfigured: false }` degrade, never a
+  fabricated verdict. When a scenario needs a cached verdict, seed one through
+  the harness-only `POST /api/__test/direct-sql` endpoint (the products-rename
+  precedent) and give the household a `decision` provider so the queue reports
+  `aiConfigured: true` — the scenario then exercises the assist decision
+  (Agree → `ai_assist`), never a model call.
 
-  **#523 P1 → P3:** the resolver reads the household's `ai_providers` /
-  `ai_capabilities` and the legacy `PATCH /api/settings` `ai_key` write is dead
-  until P3 ships the provider/capability endpoints (design §3.4, §4.3). The
-  scenarios that need a resolved provider (API: chat reply, plan generate,
-  receipt scan, both `ai_usage` ones; E2E: the receipt scan, the three plan
-  flows and the cached verdict assist — 5 + 5) are marked pending with a `#523`
-  reference — not deleted. P3 reactivates them against the public endpoints.
+  The ten scenarios that were pending from P1 to P3 (API: chat reply, plan
+  generate, receipt scan, both `ai_usage` ones; E2E: the receipt scan, the three
+  plan flows and the cached verdict assist) are live again against those public
+  endpoints — none were deleted.
 
 - Assert item names in the receipt review via input values (`getByRole
   'textbox'`), not text — review rows are editable inputs.

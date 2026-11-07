@@ -28,14 +28,13 @@ VALUES (
   'owner'
 );
 
--- User settings (with active household, no AI key configured)
-INSERT INTO user_settings (id, user_id, active_household_id, ai_provider, encrypted_ai_key)
+-- User settings (active household only — #523 P3 dropped the legacy AI columns,
+-- so a household starts with no provider and no capability assignment)
+INSERT INTO user_settings (id, user_id, active_household_id)
 VALUES (
   'ssssssss-0000-0000-0000-000000000001',
   'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-  '11111111-2222-3333-4444-555555555555',
-  NULL,
-  NULL
+  '11111111-2222-3333-4444-555555555555'
 );
 
 -- Locations

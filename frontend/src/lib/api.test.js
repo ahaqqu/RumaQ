@@ -18,7 +18,6 @@ import {
   createStore,
   deleteStore,
   getAiUsage,
-  testAiKey,
   patchStock,
   getHome,
   scanReceipt,
@@ -29,6 +28,8 @@ import {
   getPurchase,
   sendChatMessage,
   getPlans,
+  getAiProviders,
+  testAiProvider,
   generatePlan,
   savePlan,
   updatePlanItem,
@@ -351,13 +352,21 @@ describe('api', () => {
     expect(clientMock.GET).toHaveBeenCalledWith('/api/ai/usage', { signal: undefined })
   })
 
-  it('testAiKey posts provider and key', async () => {
-    clientMock.POST.mockResolvedValueOnce(ok({ ok: true }))
-    const result = await testAiKey('openai', 'sk-test')
-    expect(result).toEqual({ ok: true })
-    expect(clientMock.POST).toHaveBeenCalledWith('/api/ai-key/test', {
-      body: { provider: 'openai', key: 'sk-test' },
+  // #523 P3: `POST /api/ai-key/test` is retired with the legacy key test. The
+  // provider test is per row and its answer is a code, never a body.
+  it('testAiProvider posts to the provider row test endpoint', async () => {
+    clientMock.POST.mockResolvedValueOnce(ok({ ok: false, code: 'auth' }))
+    const result = await testAiProvider('p-1')
+    expect(result).toEqual({ ok: false, code: 'auth' })
+    expect(clientMock.POST).toHaveBeenCalledWith('/api/ai/providers/{id}/test', {
+      params: { path: { id: 'p-1' } },
     })
+  })
+
+  it('never sends the write-only key back to a read endpoint', async () => {
+    clientMock.GET.mockResolvedValueOnce(ok({ can_manage: true, managed_by: null, providers: [] }))
+    await getAiProviders()
+    expect(clientMock.GET).toHaveBeenCalledWith('/api/ai/providers')
   })
 
   it('patchStock calls PATCH endpoint', async () => {

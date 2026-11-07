@@ -38,10 +38,8 @@ describe('usageMeterModel', () => {
       input_tokens: 1200,
       output_tokens: 350,
       cached_tokens: 700,
-      key_source: 'user',
     })
     expect(meter).toEqual({
-      ownKey: true,
       used: 17,
       inputTokens: 1200,
       outputTokens: 350,
@@ -53,15 +51,17 @@ describe('usageMeterModel', () => {
     expect(meter.pct).toBeUndefined()
   })
 
-  it('treats server-key usage the same: recorded, uncapped', () => {
+  it('has no source dimension at all (the shared server key is retired, D8/D9)', () => {
+    // #523 P3 dropped `key_source` from the payload and the meter's `ownKey`
+    // flag with it: every call is funded by the household's own provider key, so
+    // there is nothing to distinguish and nothing to claim.
     const meter = usageMeterModel({
       used: 3,
       input_tokens: 500,
       output_tokens: 100,
       cached_tokens: null,
-      key_source: 'server',
     })
-    expect(meter.ownKey).toBe(false)
+    expect(meter).not.toHaveProperty('ownKey')
     expect(meter.used).toBe(3)
     expect(meter.cacheHitRate).toBeNull()
   })

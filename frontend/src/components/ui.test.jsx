@@ -215,7 +215,6 @@ describe('UsageMeter', () => {
           input_tokens: 1200,
           output_tokens: 350,
           cached_tokens: null,
-          key_source: 'server',
         },
       })
     )
@@ -223,7 +222,10 @@ describe('UsageMeter', () => {
     expect(container.textContent).not.toContain('/20')
     expect(container.textContent).not.toContain('Daily limit')
     expect(container.textContent).not.toContain('danger')
-    expect(container.textContent).toContain("RumaQ's shared server key")
+    // #523 P3: there is no shared server key to name any more — every call is
+    // household-funded (the copy says "your own API key").
+    expect(container.textContent).toContain('own API key')
+    expect(container.textContent).not.toContain('shared server key')
     // No cache data reported: no fabricated 0%, the rate block is absent.
     expect(container.textContent).not.toContain('0%')
     expect(container.textContent).not.toContain('cache hit rate')

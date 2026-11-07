@@ -13,11 +13,15 @@ import {
   type AiAdapter,
   type DecisionAdapterRequest,
   type DecisionAdapterResult,
+  type ProbeRequest,
 } from './types.js'
 import type { AiContentPart, AiMessage, Capability, ThinkingLevel, TokenUsage } from '../types.js'
 
 const LABEL = 'Anthropic'
 const ENDPOINT = 'https://api.anthropic.com/v1/messages'
+// The free listing endpoint (plan §4.6). The Messages endpoint is canonical, so
+// a row's base URL can never move this probe to another host.
+const MODELS_ENDPOINT = 'https://api.anthropic.com/v1/models'
 
 // Extended thinking requires budget_tokens >= 1024 and max_tokens > budget.
 const THINKING_BUDGET: Record<ThinkingLevel, number> = {
@@ -143,6 +147,17 @@ async function decide(req: DecisionAdapterRequest): Promise<DecisionAdapterResul
   return decideViaPrompt(LABEL, complete, req)
 }
 
+// Free authentication check (plan §4.6): the models listing authenticates with
+// the same x-api-key header and bills nothing.
+async function probe(req: ProbeRequest): Promise<void> {
+  const res = await providerFetch(LABEL, MODELS_ENDPOINT, {
+    method: 'GET',
+    headers: { 'x-api-key': req.apiKey, 'anthropic-version': '2023-06-01' },
+    signal: req.signal,
+  })
+  if (!res.ok) throw await responseError(LABEL, res)
+}
+
 export const anthropicAdapter: AiAdapter = {
   kind: 'anthropic',
   supports(_capability: Capability): boolean {
@@ -151,4 +166,5 @@ export const anthropicAdapter: AiAdapter = {
   complete,
   decide,
   structured,
+  probe,
 }

@@ -29,6 +29,7 @@ import {
   type AiAdapter,
   type DecisionAdapterRequest,
   type DecisionAdapterResult,
+  type ProbeRequest,
 } from './types.js'
 import type { AiContentPart, AiMessage, Capability, TokenUsage } from '../types.js'
 
@@ -159,6 +160,24 @@ async function decide(req: DecisionAdapterRequest): Promise<DecisionAdapterResul
   return decideViaPrompt(labelFor(req.baseUrl), complete, req)
 }
 
+// Free authentication check (plan §4.6): every OpenAI-compatible server
+// answers GET {base}/models with the same bearer auth as chat/completions, and
+// no inference is billed. A custom endpoint that does not implement the
+// listing fails as provider_error — the owner then learns the endpoint is
+// wrong, which is exactly the point of a test button.
+async function probe(req: ProbeRequest): Promise<void> {
+  if (!req.baseUrl) {
+    throw new AdapterError('provider_error', 'OpenAI-compatible provider requires a base URL')
+  }
+  const baseUrl = trimBaseUrl(req.baseUrl)
+  const res = await providerFetch(labelFor(baseUrl), `${baseUrl}/models`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${req.apiKey}` },
+    signal: req.signal,
+  })
+  if (!res.ok) throw await responseError(labelFor(baseUrl), res)
+}
+
 export const openaiAdapter: AiAdapter = {
   kind: 'openai-compatible',
   supports(_capability: Capability): boolean {
@@ -167,4 +186,5 @@ export const openaiAdapter: AiAdapter = {
   complete,
   decide,
   structured,
+  probe,
 }

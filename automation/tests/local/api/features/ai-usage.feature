@@ -19,17 +19,17 @@ Feature: AI Usage
   Scenario: A completed chat call is recorded exactly once
     Given the database has seed data
     And I am authenticated as a test user
-    And the user has an AI key configured
+    And the user has a provider configured
     When I send a chat message "What should I buy?"
     Then the response status should be 200
     And GET usage shows 1 recorded call today
 
   Scenario: Heavy recorded usage never blocks AI calls
-    # Cap-removal guard (issue #353): volume is recorded but must never gate
-    # a call, on the user key or the shared server key alike.
+    # Cap-removal guard (issue #353): volume is recorded but must never gate a
+    # call. Every call is funded by the household's own provider key (D9).
     Given the database has seed data
     And I am authenticated as a test user
-    And the user has an AI key configured
+    And the user has a provider configured
     And the user already has 5 usage events today
     When I send a chat message "What should I buy?"
     Then the response status should be 200

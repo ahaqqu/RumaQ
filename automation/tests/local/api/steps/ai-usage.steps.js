@@ -15,8 +15,10 @@ async function seedUsageEvents(ctx, n) {
   for (let i = 0; i < n; i += 1) {
     const id = `00000000-0000-0000-0001-${String(i).padStart(12, '0')}`
     // Single line: the test D1 shim's exec() splits statements on newlines.
+    // #523 P3: rows carry the capability + funding dimensions now; the retired
+    // `key_source` column is left NULL like the pre-0041 history.
     await ctx.sendRequestWithBody('POST', `/api/__test/direct-sql`, {
-      sql: `INSERT INTO ai_usage_events (id, user_id, ts, date, provider, model, input_tokens, output_tokens, cached_tokens, key_source) VALUES ('${id}', '${ctx.testUserId}', '${now}', '${today}', 'gemini', 'gemini-test', 1000, 300, 700, 'user')`,
+      sql: `INSERT INTO ai_usage_events (id, user_id, ts, date, provider, model, input_tokens, output_tokens, cached_tokens, capability, funding) VALUES ('${id}', '${ctx.testUserId}', '${now}', '${today}', 'gemini', 'test-model', 1000, 300, 700, 'reasoning', 'household')`,
     })
     if (ctx.response.status !== 200) {
       throw new Error(`seeding usage event ${i} failed: ${JSON.stringify(ctx.responseBody)}`)
@@ -61,23 +63,17 @@ defineFeature(feature, (test) => {
     })
   })
 
-  // #523 P1: the resolver now reads the household's ai_providers /
-  // ai_capabilities, and the legacy PATCH /api/settings ai_key write is DEAD
-  // until P3 ships the provider/capability endpoints (plan §3.4, §4.3). The
-  // scenario is pending, NOT deleted: P3 reactivates it against
-  // POST /api/ai/providers + PUT /api/ai/capabilities/*.
-  test.skip('A completed chat call is recorded exactly once', ({ given, when, then, and }) => {
+  test('A completed chat call is recorded exactly once', ({ given, when, then, and }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })
     and('I am authenticated as a test user', async () => {
       await ctx.authenticate()
     })
-    and('the user has an AI key configured', async () => {
-      await ctx.sendRequestWithBody('PATCH', '/api/settings', {
-        ai_key: 'sk-test-key-12345',
-        ai_provider: 'openai',
-      })
+    and('the user has a provider configured', async () => {
+      // #523 P3: the household's own provider row is what makes a call possible;
+      // the legacy settings ai_key write is retired with its columns.
+      await ctx.configureAi(['decision', 'reasoning', 'vision'])
     })
     when(/I send a chat message "([^"]+)"/, async (message) => {
       await ctx.sendRequestWithBody('POST', '/api/ai/chat', { message })
@@ -91,23 +87,17 @@ defineFeature(feature, (test) => {
     })
   })
 
-  // #523 P1: the resolver now reads the household's ai_providers /
-  // ai_capabilities, and the legacy PATCH /api/settings ai_key write is DEAD
-  // until P3 ships the provider/capability endpoints (plan §3.4, §4.3). The
-  // scenario is pending, NOT deleted: P3 reactivates it against
-  // POST /api/ai/providers + PUT /api/ai/capabilities/*.
-  test.skip('Heavy recorded usage never blocks AI calls', ({ given, when, then, and }) => {
+  test('Heavy recorded usage never blocks AI calls', ({ given, when, then, and }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })
     and('I am authenticated as a test user', async () => {
       await ctx.authenticate()
     })
-    and('the user has an AI key configured', async () => {
-      await ctx.sendRequestWithBody('PATCH', '/api/settings', {
-        ai_key: 'sk-test-key-12345',
-        ai_provider: 'openai',
-      })
+    and('the user has a provider configured', async () => {
+      // #523 P3: the household's own provider row is what makes a call possible;
+      // the legacy settings ai_key write is retired with its columns.
+      await ctx.configureAi(['decision', 'reasoning', 'vision'])
     })
     and('the user already has 5 usage events today', async () => {
       await seedUsageEvents(ctx, 5)

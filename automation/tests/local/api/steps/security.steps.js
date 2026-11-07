@@ -136,15 +136,17 @@ defineFeature(feature, (test) => {
     })
   })
 
-  test('Settings response never contains AI key material', ({ given, when, then, and }) => {
+  test('AI key material never leaves the provider store', ({ given, when, then, and }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })
     and('I am authenticated as a test user', async () => {
       await ctx.authenticate()
     })
-    and(/I send a (PATCH) request to (\S+) with body/, async (method, path, body) => {
-      await ctx.sendRequestWithBody(method, path, JSON.parse(body))
+    and('the user has a provider configured for "reasoning"', async () => {
+      // A real row with a real (encrypted) key is what makes the assertion
+      // meaningful: the payload must never carry it back.
+      await ctx.configureAi(['reasoning'])
     })
     when(/I send a (GET) request to (\S+)/, async (method, path) => {
       await ctx.sendRequest(method, path)
@@ -157,6 +159,16 @@ defineFeature(feature, (test) => {
     })
     and('the response should not contain ai_key', () => {
       expect(ctx.responseBody).not.toHaveProperty('ai_key')
+    })
+    and('the provider list reports a key without exposing it', async () => {
+      // The list is the other read a key could leak through, so the scenario
+      // follows the pointer to it: presence signalled, material never.
+      await ctx.sendRequest('GET', '/api/ai/providers')
+      ctx.expectStatus(200)
+      expect(ctx.responseBody.providers).toHaveLength(1)
+      expect(ctx.responseBody.providers[0].has_key).toBe(true)
+      ctx.expectNoKeyMaterialInResponse()
+      expect(JSON.stringify(ctx.responseBody)).not.toContain('sk-test-key-12345')
     })
   })
 

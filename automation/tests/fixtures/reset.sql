@@ -40,6 +40,11 @@ DELETE FROM user_settings;
 DELETE FROM stock;
 DELETE FROM items;
 DELETE FROM household_members;
+-- AI gateway (migration 0041): a capability assignment references its provider,
+-- so assignments go first. Deleting the household cascades both, but reset does
+-- not depend on FK enforcement being on in every harness.
+DELETE FROM ai_capabilities;
+DELETE FROM ai_providers;
 DELETE FROM stores;
 DELETE FROM locations;
 DELETE FROM households;

@@ -9,13 +9,21 @@
 // restricts its charset, and this keeps that true for hand-written rows too.
 
 import { decideViaPrompt } from './chat-decide.js'
-import { arrayBufferToBase64, providerFetch, readJson, requireText, responseError } from './wire.js'
+import {
+  arrayBufferToBase64,
+  providerFetch,
+  readJson,
+  requireText,
+  responseError,
+  trimBaseUrl,
+} from './wire.js'
 import {
   type AdapterRequest,
   type AdapterResult,
   type AiAdapter,
   type DecisionAdapterRequest,
   type DecisionAdapterResult,
+  type ProbeRequest,
 } from './types.js'
 import type { AiContentPart, AiMessage, Capability, ThinkingLevel, TokenUsage } from '../types.js'
 
@@ -142,6 +150,18 @@ async function decide(req: DecisionAdapterRequest): Promise<DecisionAdapterResul
   return decideViaPrompt(LABEL, complete, req)
 }
 
+// Free authentication check (plan §4.6): the models listing uses the same API
+// key as generateContent and bills nothing. The base URL is the row's, so a
+// hand-configured Gemini-compatible proxy is probed where it actually lives.
+async function probe(req: ProbeRequest): Promise<void> {
+  const base = trimBaseUrl(req.baseUrl ?? ENDPOINT)
+  const res = await providerFetch(LABEL, `${base}/models?key=${encodeURIComponent(req.apiKey)}`, {
+    method: 'GET',
+    signal: req.signal,
+  })
+  if (!res.ok) throw await responseError(LABEL, res)
+}
+
 export const geminiAdapter: AiAdapter = {
   kind: 'gemini',
   supports(_capability: Capability): boolean {
@@ -150,4 +170,5 @@ export const geminiAdapter: AiAdapter = {
   complete,
   decide,
   structured,
+  probe,
 }

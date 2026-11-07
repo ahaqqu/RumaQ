@@ -171,22 +171,76 @@ export class ApiContext {
     }
   }
 
+  // #523 P3: the settings read no longer carries `has_ai_key` (the column is
+  // dropped by migration 0042) — AI state is the provider list, the per-capability
+  // assignments, and the resolved status map.
   expectSettingsShape() {
     expect(this.responseBody).toHaveProperty('motion_preference')
-    expect(this.responseBody).toHaveProperty('has_ai_key')
+    expect(this.responseBody).toHaveProperty('ai_providers')
+    expect(this.responseBody).toHaveProperty('ai_capabilities')
+    expect(this.responseBody).toHaveProperty('ai_status')
+    expect(this.responseBody).not.toHaveProperty('has_ai_key')
+    expect(this.responseBody).not.toHaveProperty('server_ai_available')
   }
 
-  expectHasAiKey(value) {
-    expect(this.responseBody.has_ai_key).toBe(value)
+  expectAiStatus(capability, status) {
+    expect(this.responseBody.ai_status).toBeDefined()
+    expect(this.responseBody.ai_status[capability]).toBe(status)
+  }
+
+  /**
+   * The P3 setup step every AI-dependent scenario needs: create a provider
+   * through the PUBLIC endpoint, then assign it to all three capabilities. No
+   * direct SQL, no legacy PATCH — the same writes a household owner makes in
+   * Settings (plan §4.3).
+   *
+   * In TEST_MODE the provider transport is stubbed, so the key value and the
+   * endpoint never reach a vendor; the rows only have to resolve.
+   */
+  async configureAi(capabilities = ['decision', 'reasoning', 'vision']) {
+    await this.sendRequestWithBody('POST', '/api/ai/providers', {
+      label: 'Test provider',
+      kind: 'openai-compatible',
+      preset: 'openai',
+      api_key: 'sk-test-key-12345',
+    })
+    if (this.response.status !== 201) {
+      throw new Error(
+        `creating the test provider failed: ${this.response.status} ${JSON.stringify(this.responseBody)}`
+      )
+    }
+    const providerId = this.responseBody?.provider?.id
+    if (!providerId) {
+      throw new Error(`provider id missing from ${JSON.stringify(this.responseBody)}`)
+    }
+    for (const capability of capabilities) {
+      await this.sendRequestWithBody('PUT', `/api/ai/capabilities/${capability}`, {
+        provider_id: providerId,
+        // A capability with no model at all is "not configured", so each
+        // assignment pins one — the model is never sent to a vendor here.
+        model: 'test-model',
+      })
+      if (this.response.status !== 200) {
+        throw new Error(
+          `assigning ${capability} failed: ${this.response.status} ${JSON.stringify(this.responseBody)}`
+        )
+      }
+    }
+    return providerId
   }
 
   expectSetting(field, value) {
     expect(this.responseBody[field]).toBe(value)
   }
 
-  expectNoAiKeyInResponse() {
+  expectNoKeyMaterialInResponse() {
     expect(this.responseBody).not.toHaveProperty('encrypted_ai_key')
     expect(this.responseBody).not.toHaveProperty('ai_key')
+    expect(this.responseBody).not.toHaveProperty('api_key')
+    for (const provider of this.responseBody?.ai_providers ?? []) {
+      expect(provider).not.toHaveProperty('api_key')
+      expect(provider).not.toHaveProperty('encrypted_ai_key')
+    }
   }
 
   expectLocationsArray() {
@@ -224,7 +278,6 @@ export class ApiContext {
       output_tokens: 0,
       cached_tokens: null,
       provider: null,
-      key_source: 'user',
     })
   }
 

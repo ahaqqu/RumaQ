@@ -18,13 +18,15 @@ import { fileURLToPath } from 'node:url'
 // NOT import an adapter, import the key-material module, contain a provider
 // hostname, or read a provider key (`.apiKey`).
 //
-// Two PINNED legacy exemptions exist for P2 only, and the test asserts their
-// exact contents so a new violation cannot be added silently:
-//   - `apps/api.ts` still probes five vendor endpoints for the legacy
-//     `POST /api/ai-key/test`; P3 deletes that route and the hostnames with it.
+// ONE PINNED legacy exemption remains for P3, and the test asserts its exact
+// contents so a new violation cannot be added silently:
 //   - the P1 bridge (`lib/ai-access.ts`) and its three consumers forward
 //     `access.apiKey` to the deprecated shim; P4 deletes the shim and the
-//     bridge, so this list must become empty. Neither P2 nor P3 may grow it.
+//     bridge, so this list must become empty. P3/P4 may only shrink it.
+//
+// The HOSTNAME exemption is EMPTY as of P3: `POST /api/ai-key/test` (the last
+// transport outside the door) is deleted, and the provider test's probes live in
+// the adapters' `probe()` inside `lib/ai/**`.
 
 const BACKEND_SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -53,8 +55,9 @@ const KEY_MATERIAL_MODULES: readonly SourceFile[] = [
   `${DOOR_DIR}key-material.ts`,
 ]
 
-// P3 deletes `POST /api/ai-key/test`, the last transport outside the door.
-const LEGACY_HOSTNAME_EXEMPTIONS: readonly SourceFile[] = ['apps/api.ts']
+// Empty since P3 deleted `POST /api/ai-key/test`, the last transport outside the
+// door. Kept as a named list so the rule and its test stay symmetric.
+const LEGACY_HOSTNAME_EXEMPTIONS: readonly SourceFile[] = []
 
 // P4 deletes the shim + bridge; until then the legacy shape still carries a key.
 const LEGACY_KEY_EXEMPTIONS: readonly SourceFile[] = [
@@ -223,9 +226,9 @@ const FACADE_EXPORTS: readonly string[] = [
 ]
 
 describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
-  it('the exemptions are exactly the pinned legacy set (P3/P4 must shrink them to empty)', () => {
-    // The hostname exemption is the P3-doomed `/api/ai-key/test` probe.
-    expect([...LEGACY_HOSTNAME_EXEMPTIONS].sort()).toEqual(['apps/api.ts'])
+  it('the exemptions are exactly the pinned legacy set (P4 must shrink the rest to empty)', () => {
+    // P3 deleted the last hostname carrier (`/api/ai-key/test`).
+    expect([...LEGACY_HOSTNAME_EXEMPTIONS].sort()).toEqual([])
     // The key exemption is the P1 bridge plus the routes that forward its key
     // to the deprecated shim. Adding a file here is a boundary change.
     expect([...LEGACY_KEY_EXEMPTIONS].sort()).toEqual(
@@ -236,6 +239,8 @@ describe('AI boundary — the one door (#523 P2, plan §2.3)', () => {
   })
 
   it('every pinned exemption is still a REAL violation (a stale entry cannot linger)', () => {
+    // The hostname list is empty: the rule must hold over the WHOLE tree, which
+    // the walk below proves. The loop stays for the P4-doomed key exemptions.
     // The lists above only prove they cannot GROW. Without this test, P3 could
     // delete `/api/ai-key/test`'s hostnames, leave `apps/api.ts` exempt, and
     // stay green — so "P3/P4 must empty them" would not be enforced by the

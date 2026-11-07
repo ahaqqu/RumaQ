@@ -4,26 +4,20 @@ import { expect } from '@playwright/test'
 const { createBdd } = pkg
 const { Given, When, Then } = createBdd()
 
-// The Worker's PATCH /api/settings encrypts any provided key; in TEST_MODE
-// the generate endpoint never calls the real AI provider, so the key value
-// does not matter. page.request shares the browser session cookie.
-Given('the test user has an AI key configured', async ({ page }) => {
-  const res = await page.request.patch('/api/settings', {
-    data: { ai_provider: 'gemini', ai_key: 'sk-test-key-12345' },
-  })
-  expect(res.status()).toBe(200)
-  // The app persists its query cache in IndexedDB (idb-keyval) and settings
-  // have a 5-minute staleTime, so a page (re)load would otherwise restore the
-  // stale pre-PATCH "no key" state. Dropping the persisted cache forces a
-  // fresh settings fetch on the next load.
-  await page.evaluate(() => {
-    indexedDB.deleteDatabase('keyval-store')
-  })
+import { configureAi } from './ai-setup.js'
+import { clearPersistedQueryCache } from './shared.steps.js'
+
+// #523 P3: a household turns AI on by creating a provider and assigning
+// capabilities through the public endpoints (see ai-setup.js) — the legacy
+// settings ai_key write is retired. page.request shares the session cookie.
+Given('the test user has AI configured', async ({ page }) => {
+  await configureAi(page)
 })
 
-Given('the test user has no AI key configured', async () => {
-  // The seeded user has no AI key; the Before hook resets the database, so
-  // nothing to do. The step exists to make the scenario intent explicit.
+Given('the test user has no AI configured', async () => {
+  // The seeded household starts with no provider and no assignment — there is
+  // no server default to fall back to (D7/D8) — and the Before hook resets the
+  // database. The step exists to make the scenario intent explicit.
 })
 
 When('I generate a plan', async ({ page }) => {
@@ -53,8 +47,8 @@ When('I check off the item {string}', async ({ page }, name) => {
   await activePlanItem(page, name).locator('input[type=checkbox]').click()
 })
 
-Then('the plan page should ask to connect an API key', async ({ page }) => {
-  await expect(page.getByText('Connect API key')).toBeVisible()
+Then('the plan page should ask to set up AI', async ({ page }) => {
+  await expect(page.getByText('Set up AI first')).toBeVisible()
 })
 
 Then('the generated draft should list {string}', async ({ page }, name) => {
@@ -74,6 +68,8 @@ Then('the item {string} should still be marked bought', async ({ page }, name) =
 })
 
 When('I reload the page', async ({ page }) => {
+  // Server persistence is what this asserts (see clearPersistedQueryCache).
+  await clearPersistedQueryCache(page)
   await page.reload()
   await expect(page.locator('header').first()).toBeVisible({ timeout: 10_000 })
 })

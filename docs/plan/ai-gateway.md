@@ -1469,6 +1469,45 @@ ALTER TABLE user_settings DROP COLUMN ai_thinking_level;
   substitute. This is the single phase in the plan with that property, which is why it is called out
   here and in risk 5.
 
+**What P3 shipped, and where it deviated from this sketch.** The endpoints, the two-section screen,
+and the legacy removal all landed together, as designed. Deviations, all recorded inline above:
+
+- **The migration is `0042_drop_legacy_ai_settings.sql`, not `0040`.** P1 shipped as 0041 (the
+  numbering here was illustrative); 0042 is the next free number. The six `DROP COLUMN` statements
+  are unchanged.
+- **The provider test is per kind, not one shared request.** `POST /api/ai/providers/:id/test`
+  delegates to `probe()` on the resolved adapter — `GET {base}/models` for the chat wire kinds, and
+  the EMPTY-questions `POST` for `questions` (the only probe that can validate that wire). Keeping the
+  probe inside the adapter is what left `apps/api.ts` free of provider hostnames, so
+  `ai-boundary.test.ts`'s legacy-hostname exemption list is now **empty** (P4's job, done a phase
+  early). A provider failure answers **200 with `{ok:false, code}`**, not an error status: the
+  endpoint reports an outcome the UI renders, while 400 is reserved for "there is nothing to probe"
+  (no key, no endpoint) and 429 for the per-user rate limit.
+- **The household comes from the auth middleware, not a settings projection.**
+  `resolveAiAccess(env, householdId)` takes the `householdId` `propsAuthMiddleware` already resolved;
+  `USER_AI_SETTINGS_COLUMNS` and `loadUserAiSettings` are gone with the columns they projected. A
+  cross-household provider id is a 404, not a 403 — its existence is not disclosed.
+- **A key or endpoint cannot be cleared while a capability is assigned to it** (409): clearing one
+  first would leave an assignment that resolves to `not_configured` with no signal in the write that
+  caused it. The owner clears or reassigns the capability, then edits. Deleting a provider still
+  cascades and the delete response reports the cleared capabilities, which is what the UI's
+  confirmation names.
+- **`PATCH /api/ai/capabilities/:capability` is `PUT`, and a clear is a DELETE.** The assignment is a
+  singleton per (household, capability), so PUT is the honest verb; "choose the empty option and
+  save" in the UI is a DELETE.
+- **The automation reactivation was ten scenarios, not three.** Five API (chat, both usage, plans,
+  scan) and five E2E (three plan flows, the cached-verdict assist, the receipt scan) were marked
+  pending in P1; all ten now set up through `POST /api/ai/providers` + `PUT /api/ai/capabilities/*`
+  (`configureAi` in the API helpers, `ai-setup.js` in the E2E steps). The typed `questions` wire is
+  covered by backend tests only — a typed provider is a single-capability (decision) choice with no
+  chat surface to drive from the UI.
+- **The retired copy went with the fields.** `has_ai_key`/`server_ai_available` no longer exist, so
+  `/api/ai/usage` stopped returning `key_source`, the usage meter has no "shared server key" sentence,
+  and the Plan and Assistant empty states now say to set AI up in Settings instead of asking for a
+  key. `frontend/src/lib/aiStatus.js` holds the one predicate that maps `ai_status` to "AI is
+  configured", mirroring the P2 bridge's reasoning → decision → vision ladder until P4 routes each
+  call site.
+
 ### P4 — Call sites route by capability
 
 Chat/plans → `reasoning`; scan/expiry OCR → `vision`; review (route + cron) → `decision` via

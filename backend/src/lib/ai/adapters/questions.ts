@@ -20,6 +20,7 @@ import {
   type AiAdapter,
   type DecisionAdapterRequest,
   type DecisionAdapterResult,
+  type ProbeRequest,
 } from './types.js'
 import type { Capability, TokenUsage } from '../types.js'
 
@@ -96,6 +97,34 @@ async function decide(req: DecisionAdapterRequest): Promise<DecisionAdapterResul
   }
 }
 
+/**
+ * Free authentication check (plan §4.6): POST the endpoint with an EMPTY
+ * `questions` object. The expected 400/422 proves the bearer key authenticates
+ * while buying no answer; any 2xx is also proof. Only 401/403 (auth) and the
+ * rest of the failure vocabulary are a failed probe. This is deliberate — a
+ * well-formed micro-question would be billed on every "Test" click.
+ *
+ * PENDING (owner manual action, #523 §7.2 #6): confirm the endpoint 400s on an
+ * empty body rather than 500ing or billing; the documented fallback is the
+ * billed micro-question.
+ */
+async function probe(req: ProbeRequest): Promise<void> {
+  if (!req.baseUrl) {
+    throw new AdapterError('provider_error', `${LABEL} requires a base URL`)
+  }
+  const res = await providerFetch(LABEL, trimBaseUrl(req.baseUrl), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${req.apiKey}`,
+    },
+    body: JSON.stringify({ state: '', model: req.model ?? '', questions: {} }),
+    signal: req.signal,
+  })
+  if (res.ok || res.status === 400 || res.status === 422) return
+  throw await responseError(LABEL, res)
+}
+
 export const questionsAdapter: AiAdapter = {
   kind: 'questions',
   supports(capability: Capability): boolean {
@@ -103,4 +132,5 @@ export const questionsAdapter: AiAdapter = {
   },
   complete,
   decide,
+  probe,
 }

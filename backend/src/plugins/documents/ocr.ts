@@ -36,7 +36,7 @@ import {
   recordDocumentAccess,
 } from './lib.js'
 import { DocumentOcrError, isExpiryOcrSupported, runExpiryOcr } from '../../lib/document-ocr.js'
-import { loadUserAiSettings, resolveAiAccess } from '../../lib/ai-access.js'
+import { resolveAiAccess } from '../../lib/ai-access.js'
 
 // The expiry-OCR endpoint: no request body, but every accepted call is a
 // provider-billed vision request over up to 10 MB of image. The opt-in
@@ -115,8 +115,9 @@ export function registerExpiryOcrRoutes(documentsApp: Hono<Env>, storage: Storag
         )
       }
 
-      const settings = await loadUserAiSettings(c.env.DB, userId)
-      const access = await resolveAiAccess(c.env, settings)
+      // The household the request acts in is the whole AI configuration
+      // (#523 P3): no settings row is read to find it any more.
+      const access = await resolveAiAccess(c.env, householdId)
       if (!access) {
         return c.json(
           {

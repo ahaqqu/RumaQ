@@ -7,7 +7,9 @@ import { AppProvider } from '../context/AppContext.jsx'
 
 const mutateAsync = vi.fn()
 
-const mockUseSettings = vi.fn(() => ({ data: { has_ai_key: false } }))
+const mockUseSettings = vi.fn(() => ({
+  data: { ai_status: { decision: 'none', reasoning: 'none', vision: 'none' } },
+}))
 
 vi.mock('../lib/queries/index.js', () => ({
   useUsage: () => ({
@@ -76,8 +78,12 @@ describe('Assistant', () => {
     expect(container.querySelector('button[class*="border border-border bg-surface"]')).toBeTruthy()
   })
 
-  it('shows body when backend has_ai_key is true even without local aiKey', () => {
-    mockUseSettings.mockReturnValue({ data: { has_ai_key: true } })
+  it('shows body when the household has a configured capability, without a local key', () => {
+    // #523 P3: `has_ai_key` is gone with the column it described; the household's
+    // capability status is the honest signal.
+    mockUseSettings.mockReturnValue({
+      data: { ai_status: { decision: 'none', reasoning: 'household', vision: 'none' } },
+    })
     const { container } = renderWithProviders(
       React.createElement(Assistant, baseProps({ open: true }))
     )
@@ -85,12 +91,14 @@ describe('Assistant', () => {
     expect(container.querySelector('button[class*="border border-border bg-surface"]')).toBeTruthy()
   })
 
-  it('renders chat input when only the server key is available', () => {
-    mockUseSettings.mockReturnValue({ data: { has_ai_key: false, server_ai_available: true } })
+  it('renders the not-connected state when no capability is configured', () => {
+    mockUseSettings.mockReturnValue({
+      data: { ai_status: { decision: 'none', reasoning: 'none', vision: 'none' } },
+    })
     const { container } = renderWithProviders(
       React.createElement(Assistant, baseProps({ open: true }))
     )
-    expect(container.querySelector('input[type="text"]')).toBeTruthy()
+    expect(container.querySelector('input[type="text"]')).toBeNull()
   })
 
   it('renders chat input when aiKey present', () => {
@@ -102,7 +110,9 @@ describe('Assistant', () => {
   })
 
   it('calls onNavigate when add key button is clicked', () => {
-    mockUseSettings.mockReturnValue({ data: { has_ai_key: false } })
+    mockUseSettings.mockReturnValue({
+      data: { ai_status: { decision: 'none', reasoning: 'none', vision: 'none' } },
+    })
     const onClose = vi.fn()
     const onNavigate = vi.fn()
     const { container } = renderWithProviders(

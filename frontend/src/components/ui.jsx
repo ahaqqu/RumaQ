@@ -93,9 +93,7 @@ export function UsageMeter({ usage }) {
           </div>
         )}
       </div>
-      <div className="text-sm text-text-muted">
-        {meter.ownKey ? t('ui.ownKeyUnlimited') : t('ui.serverKeyRecorded')}
-      </div>
+      <div className="text-sm text-text-muted">{t('ui.ownKeyUnlimited')}</div>
     </div>
   )
 }
