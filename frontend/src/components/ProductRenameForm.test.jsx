@@ -315,6 +315,27 @@ describe('ProductRenameForm', () => {
     })
   })
 
+  it('disarms an armed reject when the form itself is cancelled', () => {
+    const { container, getByTestId } = renderForm()
+    const row = aliasRows(getByTestId)[0]
+    armRowReject(row)
+    expect(row.getAttribute('data-armed')).toBe('true')
+
+    // The form's cancel leaves (or resets) the surface, so an armed prompt must
+    // not outlive it. The row's Cancel shares the word, so the form's own
+    // button is the last one on the surface.
+    const formCancel = [...container.querySelectorAll('button')]
+      .filter((button) => button.textContent === 'rename.cancel')
+      .at(-1)
+    fireEvent.click(formCancel)
+
+    expect(aliasMutate).not.toHaveBeenCalled()
+    expect(rowButtonTexts(aliasRows(getByTestId)[0])).toEqual([
+      'rename.aliasApprove',
+      'rename.aliasReject',
+    ])
+  })
+
   it('sends the reject only on the confirm click, once, for the armed row', () => {
     const { getByTestId } = renderForm()
     const row = aliasRows(getByTestId)[0]
