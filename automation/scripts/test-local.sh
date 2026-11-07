@@ -7,7 +7,7 @@ set -euo pipefail
 # Builds and runs the full Docker test suite locally:
 #   - API via Miniflare (real D1/R2)
 #   - Web via nginx (production Vite build)
-#   - Reverse proxy on localhost:3000
+#   - Reverse proxy published on a per-run host port
 #   - API integration tests (Vitest + fetch)
 #   - E2E smoke test (Playwright)
 #
@@ -15,14 +15,19 @@ set -euo pipefail
 #   ./automation/scripts/test-local.sh              # run everything, build if needed
 #   ./automation/scripts/test-local.sh --build      # force rebuild images before running
 #   ./automation/scripts/test-local.sh --no-build   # never rebuild; fail if images missing
-#   ./automation/scripts/test-local.sh --down         # tear down containers
+#   ./automation/scripts/test-local.sh --down         # tear down this checkout's containers
 #   ./automation/scripts/test-local.sh --api          # run API tests only (needs stack)
 #   ./automation/scripts/test-local.sh --e2e          # run E2E tests only (needs stack)
 #
+# Every run is isolated (#511): the Compose project name is derived from this
+# checkout's path and the proxy's host port is chosen as a free port, so
+# parallel worktrees/sessions never share containers, networks, or ports.
+#   COMPOSE_PROJECT_NAME  explicit project name (repeat it for --down)
+#   RUMAQ_TEST_PORT       explicit host port (repeat it for --down)
+#
 # The runner tears the stack down whenever it exits - green, red, or interrupted
-# (#506). A stack started from a different checkout is never reused or torn down:
-# the compose project name is shared across worktrees, so a live stack from
-# another worktree aborts the run instead of being stomped.
+# (#506). A project whose containers were created by a different compose file
+# is never reused or torn down: the ownership guard aborts the run instead.
 #
 # Prerequisites:
 #   - Docker + Docker Compose
@@ -137,25 +142,121 @@ if ! docker info &> /dev/null; then
 fi
 
 # ------------------------------------------------------------------
+# Per-run identity (#511)
+# ------------------------------------------------------------------
+# Compose normally derives the project name from the compose file's directory -
+# `automation` in every checkout - so two worktrees share one project, one
+# network, and the published host port: concurrent runs kill each other. Derive
+# the project name from this checkout's absolute path instead:
+#   - deterministic: a re-run and `--down` in the same checkout address the
+#     same project without a state file;
+#   - collision-safe: the basename names the worktree, and the path checksum
+#     separates same-named checkouts.
+# COMPOSE_PROJECT_NAME (the Compose-standard override) wins when set.
+sanitize_compose_name() {
+  printf '%s' "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -e 's/[^a-z0-9_-]/-/g' -e 's/^[^a-z0-9]*//' -e 's/-\{2,\}/-/g' -e 's/-*$//'
+}
+
+CHECKOUT_HASH="$(printf '%s' "$ROOT_DIR" | cksum | cut -d' ' -f1)"
+
+derive_project_name() {
+  local base
+  base="$(sanitize_compose_name "$(basename "$ROOT_DIR")")"
+  # Docker network names are DNS labels; 24 chars of basename plus the prefix
+  # and hash stays well below the 63-character limit.
+  base="${base:0:24}"
+  base="${base%-}"
+  [[ -n "$base" ]] || base="checkout"
+  printf 'automation-%s-%08x\n' "$base" "$CHECKOUT_HASH"
+}
+
+if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
+  if [[ ! "${COMPOSE_PROJECT_NAME}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+    fail "COMPOSE_PROJECT_NAME must start with a lowercase letter or digit and use only lowercase letters, digits, '-' or '_' (got '${COMPOSE_PROJECT_NAME}')."
+    exit 1
+  fi
+  PROJECT_NAME="$COMPOSE_PROJECT_NAME"
+else
+  PROJECT_NAME="$(derive_project_name)"
+fi
+
+# Every compose call goes through here: the explicit file keeps build contexts
+# stable, and -p pins the per-run project - it also overrides any
+# COMPOSE_PROJECT_NAME a `.env` next to the compose file might set.
+compose() {
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" "$@"
+}
+
+# True when something already listens on 127.0.0.1:$1. A refused TCP connect
+# means the port is free; bash's /dev/tcp keeps this dependency-free (no
+# nc/lsof/python).
+port_in_use() {
+  (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null
+}
+
+# Pick the host port the proxy publishes. RUMAQ_TEST_PORT wins; otherwise start
+# at a path-derived offset and scan for a free port, so concurrent runs from the
+# same checkout land on different ports instead of racing for one. The 3100-3899
+# band stays clear of the legacy shared port 3000. Errors go to stderr: the
+# caller captures stdout as the port number.
+choose_test_port() {
+  local offset i candidate
+  if [[ -n "${RUMAQ_TEST_PORT:-}" ]]; then
+    if [[ ! "${RUMAQ_TEST_PORT}" =~ ^[0-9]+$ ]] || ((RUMAQ_TEST_PORT < 1 || RUMAQ_TEST_PORT > 65535)); then
+      fail "RUMAQ_TEST_PORT must be an integer between 1 and 65535 (got '${RUMAQ_TEST_PORT}')." >&2
+      return 1
+    fi
+    if port_in_use "$RUMAQ_TEST_PORT"; then
+      fail "RUMAQ_TEST_PORT=$RUMAQ_TEST_PORT is already in use; pick another port." >&2
+      return 1
+    fi
+    printf '%s\n' "$RUMAQ_TEST_PORT"
+    return 0
+  fi
+  offset=$((CHECKOUT_HASH % 800))
+  for i in $(seq 0 799); do
+    candidate=$((3100 + (offset + i) % 800))
+    if ! port_in_use "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  fail "No free host port in 3100-3899; set RUMAQ_TEST_PORT explicitly." >&2
+  return 1
+}
+
+# ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
-# Compose records the compose file that created each container, and the project
-# name ("automation") is shared by every worktree. That label is the ownership
-# check: a live stack whose compose file is not ours belongs to another
-# checkout, and neither ensure_stack nor cleanup may touch it.
+# Compose records the compose file that created each container. The project name
+# is per-checkout now, but an explicit COMPOSE_PROJECT_NAME can still point two
+# checkouts at one project, so that label stays the ownership check: a stack
+# under our project whose compose file is not ours belongs to another checkout,
+# and neither ensure_stack nor cleanup may touch it.
 running_stack_owners() {
   local cid
-  docker compose -f "$COMPOSE_FILE" ps -q 2> /dev/null | while read -r cid; do
+  compose ps -q 2> /dev/null | while read -r cid; do
     [[ -n "$cid" ]] || continue
     docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$cid" 2> /dev/null || true
   done | sed '/^$/d' | sort -u || true
+}
+
+# Print the foreign compose file path(s) when our project name is owned by
+# another checkout, and return non-zero when the project is ours (or empty).
+foreign_project_owner() {
+  local owners
+  owners="$(running_stack_owners)"
+  [[ -n "$owners" && "$owners" != "$COMPOSE_FILE" ]] || return 1
+  printf '%s\n' "$owners"
 }
 
 # Shared failure epilogue for stack start-up problems: dump logs and fail the
 # run loudly before any suite executes. The EXIT trap does the teardown.
 stack_failure() {
   fail "$1"
-  docker compose -f "$COMPOSE_FILE" logs proxy api || true
+  compose logs proxy api || true
   exit 1
 }
 
@@ -174,7 +275,7 @@ canary_first_request() {
   local body i code
   body="$(mktemp)"
   for i in 1 2 3 4 5; do
-    code="$(curl -s -o "$body" -w '%{http_code}' -X POST http://localhost:3000/api/purchases || true)"
+    code="$(curl -s -o "$body" -w '%{http_code}' -X POST "http://localhost:$TEST_PORT/api/purchases" || true)"
     if [[ "$code" == "401" ]]; then
       if [[ "$i" -gt 1 ]]; then
         ok "Canary recovered after cold start (attempt $i): unauthenticated POST /api/purchases -> 401."
@@ -202,20 +303,25 @@ canary_first_request() {
 
 ensure_stack() {
   local build_flag="" owners
-  # Refuse to stomp a stack owned by another worktree: `up -d` would adopt the
-  # shared project and later teardown would kill their run.
-  owners="$(running_stack_owners)"
-  if [[ -n "$owners" && "$owners" != "$COMPOSE_FILE" ]]; then
-    fail "The automation stack is already running from another worktree: ${owners//$'\n'/, }"
-    info "Refusing to reuse or tear it down. Finish that run, or stop it with"
-    info "./scripts/test.sh automation-local --down from that checkout."
+
+  # One free host port per run; exported so Compose's ${RUMAQ_TEST_PORT}
+  # interpolation publishes the proxy there for every call in this process.
+  TEST_PORT="$(choose_test_port)" || exit 1
+  export RUMAQ_TEST_PORT="$TEST_PORT"
+
+  # Refuse to stomp a project owned by another checkout: `up -d` would adopt it
+  # and later teardown would kill that run.
+  if owners="$(foreign_project_owner)"; then
+    fail "Compose project '$PROJECT_NAME' is already running from another checkout: ${owners//$'\n'/, }"
+    info "Refusing to reuse or tear it down. Finish that run, or stop it from"
+    info "that checkout with: COMPOSE_PROJECT_NAME='$PROJECT_NAME' ./scripts/test.sh automation-local --down"
     exit 1
   fi
 
   if [[ "$BUILD_MODE" == "force" ]]; then
     # `up --build` only covers services started by `up`; the test-runner runs
     # via `compose run`, so rebuild it explicitly.
-    docker compose -f "$COMPOSE_FILE" build test-runner
+    compose build test-runner
     build_flag="--build"
   elif [[ "$BUILD_MODE" == "never" ]]; then
     build_flag=""
@@ -228,16 +334,16 @@ ensure_stack() {
   # From here this run owns the stack; cleanup() tears it down on every exit.
   TEAR_DOWN="1"
 
-  info "Ensuring test stack is running..."
+  info "Compose project: $PROJECT_NAME (proxy: http://localhost:$TEST_PORT)"
   if [[ -n "$build_flag" ]]; then
-    docker compose -f "$COMPOSE_FILE" up -d --build api web proxy
+    compose up -d --build api web proxy
   else
-    docker compose -f "$COMPOSE_FILE" up -d api web proxy
+    compose up -d api web proxy
   fi
 
-  info "Waiting for http://localhost:3000/api/health to be ready..."
+  info "Waiting for http://localhost:$TEST_PORT/api/health to be ready..."
   for i in $(seq 1 30); do
-    if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+    if curl -sf "http://localhost:$TEST_PORT/api/health" > /dev/null 2>&1; then
       ok "API is ready."
       canary_first_request
       return 0
@@ -251,21 +357,18 @@ ensure_stack() {
 cleanup() {
   [[ -n "$TEAR_DOWN" ]] || return 0
 
-  # Re-check ownership at teardown time: a concurrent worktree may have taken
-  # the project over since ensure_stack ran, and its stack must survive.
+  # Re-check ownership at teardown time: an explicit COMPOSE_PROJECT_NAME may
+  # have pointed another checkout at this project since ensure_stack ran, and
+  # its stack must survive.
   local owners
-  owners="$(running_stack_owners)"
-  if [[ -z "$owners" ]]; then
-    return 0
-  fi
-  if [[ "$owners" != "$COMPOSE_FILE" ]]; then
-    info "Leaving the running test stack in place: it belongs to another worktree (${owners//$'\n'/, })."
+  if owners="$(foreign_project_owner)"; then
+    info "Leaving compose project '$PROJECT_NAME' in place: it belongs to another checkout (${owners//$'\n'/, })."
     return 0
   fi
 
-  info "Tearing down test containers..."
-  docker compose -f "$COMPOSE_FILE" down --volumes --remove-orphans \
-    || fail "Teardown failed. Run ./scripts/test.sh automation-local --down to clean up."
+  info "Tearing down compose project '$PROJECT_NAME'..."
+  compose down --volumes --remove-orphans \
+    || fail "Teardown failed. Run ./scripts/test.sh automation-local --down from this checkout to clean up."
 }
 
 # #506: a failing suite used to exit under `set -e` before the success-path
@@ -291,7 +394,7 @@ case "$MODE" in
     ensure_stack
 
     EXIT_CODE=0
-    docker compose -f "$COMPOSE_FILE" run --rm test-runner || EXIT_CODE=$?
+    compose run --rm test-runner || EXIT_CODE=$?
 
     # Generate HTML report from vitest JSON (mounted volume)
     if [ -f "$ROOT_DIR/automation/test-results/vitest/api-results.json" ]; then
@@ -311,14 +414,21 @@ case "$MODE" in
     ;;
 
   build)
-    info "Building Docker images..."
-    docker compose -f "$COMPOSE_FILE" build
+    info "Building Docker images for compose project '$PROJECT_NAME'..."
+    compose build
     ok "Images built. Run ./automation/scripts/test-local.sh to start tests."
     ;;
 
   down)
-    info "Tearing down test containers..."
-    docker compose -f "$COMPOSE_FILE" down --volumes --remove-orphans
+    # --down honours the same ownership guard as a run: it only ever removes
+    # this checkout's project, never a stack created by a foreign compose file.
+    if owners="$(foreign_project_owner)"; then
+      fail "Compose project '$PROJECT_NAME' is owned by another checkout: ${owners//$'\n'/, }"
+      info "Refusing to tear it down. Stop it from that checkout instead."
+      exit 1
+    fi
+    info "Tearing down compose project '$PROJECT_NAME'..."
+    compose down --volumes --remove-orphans
     ok "Containers removed."
     ;;
 
@@ -327,7 +437,7 @@ case "$MODE" in
     ensure_stack
 
     EXIT_CODE=0
-    docker compose -f "$COMPOSE_FILE" run --rm test-runner \
+    compose run --rm test-runner \
       sh -c "bunx vp test --project integration && sync" || EXIT_CODE=$?
     exit $EXIT_CODE
     ;;
@@ -337,7 +447,7 @@ case "$MODE" in
     ensure_stack
 
     EXIT_CODE=0
-    docker compose -f "$COMPOSE_FILE" run --rm test-runner \
+    compose run --rm test-runner \
       sh -c "bun x playwright test --config automation/playwright.config.js && sync" || EXIT_CODE=$?
     exit $EXIT_CODE
     ;;
@@ -348,9 +458,13 @@ case "$MODE" in
     echo "  (no flag)       Full Docker test suite; reuse existing images/containers"
     echo "  --build         Force rebuild images before running"
     echo "  --no-build      Never build; fail if images are missing"
-    echo "  --down          Tear down containers"
+    echo "  --down          Tear down this checkout's containers"
     echo "  --api           API integration tests only"
     echo "  --e2e           E2E tests only"
+    echo ""
+    echo "Each run uses its own compose project and host port (#511)."
+    echo "Override with COMPOSE_PROJECT_NAME=<name> RUMAQ_TEST_PORT=<port>"
+    echo "(repeat both values for --down)."
     exit 1
     ;;
 esac

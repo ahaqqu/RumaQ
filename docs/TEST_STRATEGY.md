@@ -26,7 +26,12 @@ pass via `scripts/github/ci.sh`.
 
 ## Local automation test
 
-All services behind `nginx` proxy at `localhost:3000`. Worker exposes `TEST_MODE`-guarded admin endpoints. Gherkin features + `jest-cucumber` for API, `playwright-bdd` for E2E. Run by Vitest + Playwright inside Docker.
+All services behind `nginx` proxy on a per-run host port: the runner picks a
+free port and prints it (`RUMAQ_TEST_PORT` overrides; `localhost:3000` when
+compose is used directly). Worker exposes `TEST_MODE`-guarded admin endpoints.
+Gherkin features + `jest-cucumber` for API, `playwright-bdd` for E2E. Run by
+Vitest + Playwright inside Docker. Each checkout uses its own Compose project,
+so parallel worktrees/sessions can run the suite concurrently.
 
 ```
 ./scripts/test.sh automation-local
