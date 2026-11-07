@@ -718,6 +718,11 @@ polices, or the move is reviewed by eye.
    own open question #6 defaults 30 days). Aligning both products on one answer is worth
    a decision now. Note the purge job makes either cheap: the state machine already has a
    `pending` state a grace timer can hold.
+   **RESOLVED 2026-11-07: the owner ratified grace=0** — the owner-initiated typed-confirm
+   purge starts draining on the next nightly tick (40 objects/tick, bytes-before-rows,
+   uploads paused mid-drain, cancel lever). Mirrors DokumenQ amendment 1 (§9.1.9): the
+   #388 hard-delete promise removes object AND metadata. The `pending` state keeps a
+   future grace window additive-only.
 5. **Audit retention at dissolution (new in rev2):** the core lifecycle table must drop the
    household FK to survive deletion (§3.4, §6). That means an opaque household handle is
    retained indefinitely unless a horizon is chosen. Is "purge record retained" satisfied by
