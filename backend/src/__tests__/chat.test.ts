@@ -47,7 +47,10 @@ describe('sendChatMessage', () => {
         recentPurchases: [],
       },
       'hi',
-      [{ role: 'user', content: 'previous' }]
+      [{ role: 'user', content: 'previous' }],
+      // The legacy shim no longer invents a vendor default (plan §5.1): the
+      // routes always pass the resolved assignment's model.
+      { model: 'gpt-4o-mini' }
     )
     expect(reply).toBe('Reply')
     const [, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]

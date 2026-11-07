@@ -55,7 +55,8 @@ describe('generateAiPlan', () => {
       [],
       [],
       [{ id: 's1', label: 'X' }],
-      'IDR'
+      'IDR',
+      { model: 'gpt-4o-mini' }
     )
     expect(items.length).toBe(50)
   })
@@ -65,7 +66,9 @@ describe('generateAiPlan', () => {
       ok: true,
       json: async () => ({ choices: [{ message: { content: 'not json' } }] }),
     })
-    const items = await generateAiPlan('openai', 'sk-test', [], [], [], [], 'IDR')
+    const items = await generateAiPlan('openai', 'sk-test', [], [], [], [], 'IDR', {
+      model: 'gpt-4o-mini',
+    })
     expect(items).toEqual([])
   })
 })

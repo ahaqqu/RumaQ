@@ -5,17 +5,24 @@
 // The ladder is TWO outcomes, by owner decision (D8): an assignment that
 // resolves to a usable provider, or null. There is no server branch, no env
 // key, no platform default. An unconfigured capability is unconfigured; the
-// routes map null to 402.
+// door maps null to `AiError('not_configured')` (402).
 //
 // The household is the lookup key, not the user: two members of the same
 // household resolve the SAME row (and therefore the same key), which is what
 // D1 asks for. The acting user id never enters these queries.
+//
+// KEY MATERIAL IS MODULE-PRIVATE (plan §2.2): `resolveAccess` returns
+// `{capability, call}` only, and the decrypted key + endpoint + thinking level
+// live in a WeakMap here. The door's facade (index.ts) is the only consumer of
+// `accessMaterial`; no route, feature, or response can reach a key. A handle
+// this module did not issue carries no material, so every call fails closed.
 
 import type { Env } from '../../types.js'
 import {
   CAPABILITIES,
   THINKING_LEVELS,
   type AiAccessHandle,
+  type AiCall,
   type AiCtx,
   type Capability,
   type ProviderKind,
@@ -34,6 +41,25 @@ type AccessRow = {
   base_url: string | null
   default_model: string | null
   encrypted_key: string | null
+}
+
+/**
+ * Everything a provider call needs that must never leave the door: the
+ * decrypted key, the resolved endpoint, the row's preset and the assignment's
+ * thinking level. Stored beside the public handle, never on it.
+ */
+export type AccessMaterial = {
+  apiKey: string
+  baseUrl: string | null
+  preset: string | null
+  thinkingLevel: ThinkingLevel | null
+}
+
+const ACCESS_MATERIAL = new WeakMap<AiAccessHandle, AccessMaterial>()
+
+/** The door-internal reader for a resolved handle. Null = not issued here. */
+export function accessMaterial(handle: AiAccessHandle): AccessMaterial | null {
+  return ACCESS_MATERIAL.get(handle) ?? null
 }
 
 // One subrequest, one join (plan §5.1). The PK (household_id, capability) makes
@@ -118,23 +144,27 @@ async function toAccessHandle(ctx: AiCtx, row: AccessRow): Promise<AiAccessHandl
     console.warn(`[ai] capability assignment has no usable provider ${where}`)
     return null
   }
-  return {
+
+  const call: AiCall = {
     capability: row.capability,
-    call: {
-      capability: row.capability,
-      householdId: ctx.householdId,
-      providerKind: row.kind,
-      providerId: row.provider_id,
-      model,
-      // D9: every handle v1 can return is household-funded. The day a platform
-      // provider exists, this is the ONLY place that decides it.
-      funding: 'household',
-    },
+    householdId: ctx.householdId,
+    providerKind: row.kind,
+    providerId: row.provider_id,
+    model,
+    // D9: every handle v1 can return is household-funded. The day a platform
+    // provider exists, this is the ONLY place that decides it, and the meter in
+    // the facade is the only place a limit is applied (plan §2.6). No env
+    // fallback, no second funding branch (D8).
+    funding: 'household',
+  }
+  const handle: AiAccessHandle = { capability: row.capability, call }
+  ACCESS_MATERIAL.set(handle, {
     apiKey,
     baseUrl: resolvedEndpoint(row),
     preset: row.preset,
     thinkingLevel: normalizeThinkingLevel(row.thinking_level),
-  }
+  })
+  return handle
 }
 
 /**
@@ -142,9 +172,9 @@ async function toAccessHandle(ctx: AiCtx, row: AccessRow): Promise<AiAccessHandl
  *
  * Two outcomes only:
  *   - the household's assignment points at a keyed, resolvable provider →
- *     a handle;
+ *     a handle (key material stays in this module);
  *   - anything else (no assignment, no key, unusable endpoint, undecryptable
- *     ciphertext) → null, which the routes map to the normal 402.
+ *     ciphertext) → null, which the door maps to the normal 402.
  *
  * Never throws, never 500s on a stored-key problem.
  */
@@ -245,6 +275,9 @@ function emptyCapability(): HouseholdCapabilityAssignment {
  * `GET /api/settings` (P1). Reads the household's rows once; `status` is
  * computed through the SAME usability rule as `resolveAccess` (endpoint +
  * decrypt), so the payload cannot claim a capability the resolver would refuse.
+ *
+ * The decrypt is a READ-ONLY one (`reseal: false`): a GET must not write, so a
+ * legacy `v1:` row is migrated by the next real provider call instead.
  */
 export async function loadHouseholdAiConfig(
   env: Env['Bindings'],
@@ -300,7 +333,11 @@ export async function loadHouseholdAiConfig(
     if (normalizeModel(row.model) == null && normalizeModel(row.default_model) == null) continue
     try {
       if (
-        (await decryptProviderKey(env, { id: row.id, encrypted_key: row.encrypted_key })) != null
+        (await decryptProviderKey(
+          env,
+          { id: row.id, encrypted_key: row.encrypted_key },
+          { reseal: false }
+        )) != null
       ) {
         status[row.capability] = 'household'
       }

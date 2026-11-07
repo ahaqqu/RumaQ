@@ -21,7 +21,9 @@ describe('completeText', () => {
         choices: [{ message: { content: 'Hello from OpenAI' } }],
       }),
     })
-    const result = await completeText('openai', 'sk-test', 'system', 'user')
+    const result = await completeText('openai', 'sk-test', 'system', 'user', {
+      model: 'gpt-4o-mini',
+    })
     expect(result).toBe('Hello from OpenAI')
     expect(globalThis.fetch).toHaveBeenCalledWith(
       'https://api.openai.com/v1/chat/completions',
@@ -36,7 +38,9 @@ describe('completeText', () => {
         candidates: [{ content: { parts: [{ text: 'Hello from Gemini' }] } }],
       }),
     })
-    const result = await completeText('gemini', 'sk-test', 'system', 'user')
+    const result = await completeText('gemini', 'sk-test', 'system', 'user', {
+      model: 'gemini-3.6-flash',
+    })
     expect(result).toBe('Hello from Gemini')
     expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringContaining('generativelanguage.googleapis.com'),
@@ -51,7 +55,9 @@ describe('completeText', () => {
         content: [{ text: 'Hello from Anthropic' }],
       }),
     })
-    const result = await completeText('anthropic', 'sk-test', 'system', 'user')
+    const result = await completeText('anthropic', 'sk-test', 'system', 'user', {
+      model: 'claude-3-haiku-20240307',
+    })
     expect(result).toBe('Hello from Anthropic')
     expect(globalThis.fetch).toHaveBeenCalledWith(
       'https://api.anthropic.com/v1/messages',
@@ -59,14 +65,16 @@ describe('completeText', () => {
     )
   })
 
-  it('calls OpenCode by default and returns content', async () => {
+  it('calls OpenCode and returns content', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         choices: [{ message: { content: 'Hello from OpenCode' } }],
       }),
     })
-    const result = await completeText('opencode', 'sk-test', 'system', 'user')
+    const result = await completeText('opencode', 'sk-test', 'system', 'user', {
+      model: 'opencode-vision',
+    })
     expect(result).toBe('Hello from OpenCode')
     expect(globalThis.fetch).toHaveBeenCalledWith(
       'https://api.opencode.ai/v1/chat/completions',
@@ -74,7 +82,7 @@ describe('completeText', () => {
     )
   })
 
-  it('calls Ollama Cloud with the default vision model', async () => {
+  it('calls Ollama Cloud with the assigned model', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -82,7 +90,9 @@ describe('completeText', () => {
       }),
     })
     globalThis.fetch = fetchMock
-    const result = await completeText('ollama', 'sk-test', 'system', 'user')
+    const result = await completeText('ollama', 'sk-test', 'system', 'user', {
+      model: 'glm-5.3-flash',
+    })
     expect(result).toBe('Hello from Ollama')
     expect(fetchMock).toHaveBeenCalledWith(
       'https://ollama.com/v1/chat/completions',
@@ -113,7 +123,7 @@ describe('completeText', () => {
       }),
     })
     globalThis.fetch = fetchMock
-    await completeText('ollama', 'sk-test', 'system', 'user')
+    await completeText('ollama', 'sk-test', 'system', 'user', { model: 'glm-5.3-flash' })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body.max_tokens).toBeUndefined()
   })
@@ -133,6 +143,7 @@ describe('completeText', () => {
       cached_tokens: number | null
     }> = []
     await completeText('ollama', 'sk-test', 'system', 'user', {
+      model: 'glm-5.3-flash',
       onUsage: (usage) => seen.push(usage),
     })
     expect(seen).toEqual([{ input_tokens: 1055, output_tokens: 5059, cached_tokens: null }])
@@ -156,6 +167,7 @@ describe('completeText', () => {
       cached_tokens: number | null
     }> = []
     await completeText('gemini', 'sk-test', 'system', 'user', {
+      model: 'gemini-3.6-flash',
       onUsage: (usage) => seen.push(usage),
     })
     expect(seen).toEqual([{ input_tokens: 1000, output_tokens: 200, cached_tokens: 700 }])
@@ -179,6 +191,7 @@ describe('completeText', () => {
       cached_tokens: number | null
     }> = []
     await completeText('openai', 'sk-test', 'system', 'user', {
+      model: 'gpt-4o-mini',
       onUsage: (usage) => seen.push(usage),
     })
     expect(seen).toEqual([{ input_tokens: 900, output_tokens: 100, cached_tokens: 640 }])
@@ -194,6 +207,7 @@ describe('completeText', () => {
     })
     const target = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
     await completeText('anthropic', 'sk-test', 'system', 'user', {
+      model: 'claude-3-haiku-20240307',
       onUsage: usageCollector(target),
     })
     expect(target).toEqual({ input_tokens: 300, output_tokens: 80, cached_tokens: null })
@@ -217,6 +231,7 @@ describe('completeText', () => {
     globalThis.fetch = fetchMock
     const seen: Array<{ input_tokens: number; output_tokens: number }> = []
     await completeText('openai', 'sk-test', 'system', 'user', {
+      model: 'gpt-4o-mini',
       onUsage: (usage) => seen.push(usage),
     })
     expect(seen).toEqual([])
@@ -230,7 +245,10 @@ describe('completeText', () => {
       }),
     })
     globalThis.fetch = fetchMock
-    await completeText('openai', 'sk-test', 'system', 'user', { thinkingLevel: 'high' })
+    await completeText('openai', 'sk-test', 'system', 'user', {
+      model: 'gpt-4o-mini',
+      thinkingLevel: 'high',
+    })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body.reasoning_effort).toBe('high')
   })
@@ -243,7 +261,10 @@ describe('completeText', () => {
       }),
     })
     globalThis.fetch = fetchMock
-    await completeText('openai', 'sk-test', 'system', 'user', { thinkingLevel: 'low' })
+    await completeText('openai', 'sk-test', 'system', 'user', {
+      model: 'gpt-4o-mini',
+      thinkingLevel: 'low',
+    })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body.max_completion_tokens).toBe(2000)
     expect(body.max_tokens).toBeUndefined()
@@ -257,7 +278,7 @@ describe('completeText', () => {
       }),
     })
     globalThis.fetch = fetchMock
-    await completeText('openai', 'sk-test', 'system', 'user')
+    await completeText('openai', 'sk-test', 'system', 'user', { model: 'gpt-4o-mini' })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body.reasoning_effort).toBeUndefined()
   })
@@ -270,7 +291,10 @@ describe('completeText', () => {
       }),
     })
     globalThis.fetch = fetchMock
-    await completeText('gemini', 'sk-test', 'system', 'user', { thinkingLevel: 'medium' })
+    await completeText('gemini', 'sk-test', 'system', 'user', {
+      model: 'gemini-3.6-flash',
+      thinkingLevel: 'medium',
+    })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body.generationConfig.thinkingConfig.thinkingBudget).toBe(8192)
   })
@@ -283,7 +307,10 @@ describe('completeText', () => {
       }),
     })
     globalThis.fetch = fetchMock
-    await completeText('anthropic', 'sk-test', 'system', 'user', { thinkingLevel: 'high' })
+    await completeText('anthropic', 'sk-test', 'system', 'user', {
+      model: 'claude-3-haiku-20240307',
+      thinkingLevel: 'high',
+    })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 16384 })
     expect(body.max_tokens).toBeGreaterThan(16384)
@@ -339,9 +366,9 @@ describe('completeText', () => {
       ok: true,
       json: async () => ({ choices: [{ message: { content: '' } }] }),
     })
-    await expect(completeText('openai', 'sk-test', 'system', 'user')).rejects.toThrow(
-      'OpenAI returned empty response'
-    )
+    await expect(
+      completeText('openai', 'sk-test', 'system', 'user', { model: 'gpt-4o-mini' })
+    ).rejects.toThrow('OpenAI returned empty response')
   })
 
   it('throws when provider request fails', async () => {
@@ -350,7 +377,9 @@ describe('completeText', () => {
       status: 401,
       text: async () => 'Unauthorized',
     })
-    await expect(completeText('openai', 'sk-test', 'system', 'user')).rejects.toThrow('401')
+    await expect(
+      completeText('openai', 'sk-test', 'system', 'user', { model: 'gpt-4o-mini' })
+    ).rejects.toThrow('401')
   })
 })
 
@@ -376,7 +405,15 @@ describe('extractReceiptItems', () => {
         ],
       }),
     })
-    const result = await extractReceiptItems(new ArrayBuffer(8), 'image/jpeg', 'gemini', 'sk-test')
+    const result = await extractReceiptItems(
+      new ArrayBuffer(8),
+      'image/jpeg',
+      'gemini',
+      'sk-test',
+      {
+        model: 'gemini-3.6-flash',
+      }
+    )
     expect(result.store_name).toBe('Indomaret')
     expect(result.items[0].name).toBe('Milk')
     expect(result.items[0].price).toBe(18500)
@@ -390,7 +427,9 @@ describe('extractReceiptItems', () => {
       }),
     })
     await expect(
-      extractReceiptItems(new ArrayBuffer(8), 'image/jpeg', 'gemini', 'sk-test')
+      extractReceiptItems(new ArrayBuffer(8), 'image/jpeg', 'gemini', 'sk-test', {
+        model: 'gemini-3.6-flash',
+      })
     ).rejects.toThrow('AI response did not contain valid JSON')
   })
 
@@ -401,7 +440,9 @@ describe('extractReceiptItems', () => {
       text: async () => 'Server error',
     })
     await expect(
-      extractReceiptItems(new ArrayBuffer(8), 'image/jpeg', 'gemini', 'sk-test')
+      extractReceiptItems(new ArrayBuffer(8), 'image/jpeg', 'gemini', 'sk-test', {
+        model: 'gemini-3.6-flash',
+      })
     ).rejects.toThrow()
   })
 })

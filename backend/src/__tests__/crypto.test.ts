@@ -52,8 +52,8 @@ describe('encryptAiKey / decryptAiKey', () => {
     await expect(decryptAiKey(tampered, TEST_KEY)).rejects.toThrow()
   })
 
-  it('throws on unsupported version prefix', async () => {
-    await expect(decryptAiKey('v2:abcdef', TEST_KEY)).rejects.toThrow(
+  it('throws on an unknown envelope prefix', async () => {
+    await expect(decryptAiKey('v3:abcdef', TEST_KEY)).rejects.toThrow(
       'Unsupported encryption version'
     )
   })
@@ -87,5 +87,43 @@ describe('encryptAiKey / decryptAiKey', () => {
     const encrypted = await encryptAiKey(plain, SHORT_KEY)
     const decrypted = await decryptAiKey(encrypted, SHORT_KEY)
     expect(decrypted).toBe(plain)
+  })
+})
+
+// D10 (ahaqqu/RumaQ#523 P2, plan §3.6): the v2: envelope authenticates the
+// provider row id as AES-GCM additional data.
+describe('encryptAiKey / decryptAiKey with additional data (D10)', () => {
+  const AAD = 'ai_provider:p-1'
+
+  it('writes a v2: envelope when additional data is supplied', async () => {
+    const encrypted = await encryptAiKey('sk-bound', TEST_KEY, AAD)
+    expect(encrypted).toMatch(/^v2:/)
+    await expect(decryptAiKey(encrypted, TEST_KEY, AAD)).resolves.toBe('sk-bound')
+  })
+
+  it("refuses the ciphertext under another row's additional data (the transplant case)", async () => {
+    const encrypted = await encryptAiKey('sk-bound', TEST_KEY, AAD)
+    await expect(decryptAiKey(encrypted, TEST_KEY, 'ai_provider:p-2')).rejects.toThrow()
+  })
+
+  it('refuses a v2: ciphertext opened without the context', async () => {
+    const encrypted = await encryptAiKey('sk-bound', TEST_KEY, AAD)
+    await expect(decryptAiKey(encrypted, TEST_KEY)).rejects.toThrow(
+      'v2: envelope requires additional data'
+    )
+  })
+
+  it('keeps v1: readable with no AAD and ignores an AAD passed to it', async () => {
+    // A v1 ciphertext could not have authenticated an AAD, so a v1 read never
+    // applies one — that is what makes the lazy v1→v2 rewrite possible.
+    const encrypted = await encryptAiKey('sk-legacy', TEST_KEY)
+    await expect(decryptAiKey(encrypted, TEST_KEY)).resolves.toBe('sk-legacy')
+    await expect(decryptAiKey(encrypted, TEST_KEY, AAD)).resolves.toBe('sk-legacy')
+  })
+
+  it('an empty-string AAD still selects the v2: envelope', async () => {
+    const encrypted = await encryptAiKey('sk-empty-aad', TEST_KEY, '')
+    expect(encrypted).toMatch(/^v2:/)
+    await expect(decryptAiKey(encrypted, TEST_KEY, '')).resolves.toBe('sk-empty-aad')
   })
 })

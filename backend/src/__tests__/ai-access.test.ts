@@ -3,7 +3,7 @@ import type { Env } from '../types.js'
 import { encryptAiKey } from '../lib/crypto.js'
 import { USER_AI_SETTINGS_COLUMNS, loadUserAiSettings, resolveAiAccess } from '../lib/ai-access.js'
 import { ACTIVE_HOUSEHOLD_SQL } from '../auth.js'
-import { loadHouseholdAiConfig, resolveAccess } from '../lib/ai/capabilities.js'
+import { accessMaterial, loadHouseholdAiConfig, resolveAccess } from '../lib/ai/capabilities.js'
 import { deleteExpiredAiUsageEvents, recordAiUsageEvent } from '../lib/ai/usage.js'
 import type { AiCtx } from '../lib/ai/types.js'
 import { createDb, type Db } from './support/d1-sqlite.js'
@@ -148,10 +148,6 @@ describe('resolveAccess (household capability ladder)', () => {
 
     expect(access).toMatchObject({
       capability: 'reasoning',
-      apiKey: 'sk-household',
-      baseUrl: 'https://api.openai.com/v1',
-      preset: 'openai',
-      thinkingLevel: 'low',
       call: {
         capability: 'reasoning',
         householdId: 'h1',
@@ -160,6 +156,15 @@ describe('resolveAccess (household capability ladder)', () => {
         model: 'gpt-4o-mini',
         funding: 'household',
       },
+    })
+    // The key material is NEVER on the handle (P2): it lives in the door's
+    // module-private WeakMap and no signature or response can reach it.
+    expect(access).not.toHaveProperty('apiKey')
+    expect(accessMaterial(access!)).toMatchObject({
+      apiKey: 'sk-household',
+      baseUrl: 'https://api.openai.com/v1',
+      preset: 'openai',
+      thinkingLevel: 'low',
     })
   })
 
@@ -212,17 +217,18 @@ describe('resolveAccess (household capability ladder)', () => {
     warn.mockRestore()
   })
 
-  it('treats a P2-only v2: envelope as not configured for now (the CHECK accepts it)', async () => {
+  it('accepts a v2: envelope bound to its own row (D10)', async () => {
     addUser('u1')
     addHousehold('h1')
     addMember('h1', 'u1')
     const providerId = await addProvider({ key: null })
-    sqlite
-      .prepare('UPDATE ai_providers SET encrypted_key = ? WHERE id = ?')
-      .run('v2:AAMANf8-AAAA', providerId)
+    // encryptAiKey with additionalData writes the v2 form (crypto.ts).
+    const sealed = await encryptAiKey('sk-bound', ENCRYPTION_KEY, `ai_provider:${providerId}`)
+    sqlite.prepare('UPDATE ai_providers SET encrypted_key = ? WHERE id = ?').run(sealed, providerId)
     addCapability('reasoning', providerId, { model: 'gpt-4o-mini' })
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
-    await expect(resolveAccess(ctx(), 'reasoning')).resolves.toBeNull()
+
+    const access = await resolveAccess(ctx(), 'reasoning')
+    expect(accessMaterial(access!)?.apiKey).toBe('sk-bound')
   })
 
   it('returns null for an openai-compatible row with neither base URL nor preset endpoint', async () => {
@@ -246,7 +252,7 @@ describe('resolveAccess (household capability ladder)', () => {
     })
     addCapability('reasoning', providerId, { model: 'gpt-4o-mini' })
     const access = await resolveAccess(ctx(), 'reasoning')
-    expect(access?.baseUrl).toBe('https://openrouter.example/v1')
+    expect(accessMaterial(access!)?.baseUrl).toBe('https://openrouter.example/v1')
   })
 
   it('resolves a typed questions provider (base URL is its endpoint)', async () => {
@@ -263,9 +269,9 @@ describe('resolveAccess (household capability ladder)', () => {
     const access = await resolveAccess(ctx(), 'decision')
     expect(access).toMatchObject({
       capability: 'decision',
-      apiKey: 'sk-typed',
       call: { providerKind: 'questions', model: 'jev-latest' },
     })
+    expect(accessMaterial(access!)?.apiKey).toBe('sk-typed')
   })
 
   it('keys on the household, never on the user (another household resolves nothing)', async () => {
@@ -334,7 +340,7 @@ describe('resolveAccess (household capability ladder)', () => {
     // Vision inherits the same default, and still carries no thinking level.
     const vision = await resolveAccess(ctx(), 'vision')
     expect(vision?.call.model).toBe('chatgpt-4o-latest')
-    expect(vision?.thinkingLevel).toBeNull()
+    expect(accessMaterial(vision!)?.thinkingLevel).toBeNull()
   })
 
   it('returns null when neither the capability nor the provider has a model (no adapter default)', async () => {
