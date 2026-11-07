@@ -101,14 +101,14 @@ defineFeature(feature, (test) => {
     }
   }
 
-  async function pushRunReport(bearer = INGEST_SECRET) {
+  async function pushRunReport(bearer = INGEST_SECRET, report = runReport()) {
     ctx.response = await fetch(`${ctx.baseUrl}/api/internal/ingest/runs`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${bearer}`,
       },
-      body: JSON.stringify(runReport()),
+      body: JSON.stringify(report),
     })
     try {
       ctx.responseBody = await ctx.response.json()
@@ -454,19 +454,7 @@ defineFeature(feature, (test) => {
     when(
       'the scraper pushes a run report with an index version and provisional counts',
       async () => {
-        ctx.response = await fetch(`${ctx.baseUrl}/api/internal/ingest/runs`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${INGEST_SECRET}`,
-          },
-          body: JSON.stringify(v2RunReport()),
-        })
-        try {
-          ctx.responseBody = await ctx.response.json()
-        } catch {
-          ctx.responseBody = null
-        }
+        await pushRunReport(INGEST_SECRET, v2RunReport())
       }
     )
 
