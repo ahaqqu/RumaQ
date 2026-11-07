@@ -943,5 +943,24 @@
     "noStores": "Belum ada toko yang mengamati",
     "updated": "diperbarui {{date}}",
     "truncated": "Sebagian grup atau produk duplikat tidak ditampilkan — laporan belum lengkap."
+  },
+  "aliasBulk": {
+    "title": "Alias kandidat",
+    "desc": "Kandidat yang namanya persis sama dengan nama kanonik produknya aman disetujui sekaligus. Varian spasi, ukuran, dan penulisan tetap untuk ditinjau manual.",
+    "candidateTotal": "Alias kandidat",
+    "exactTotal": "Cocok persis",
+    "approve": "Setujui yang cocok persis",
+    "confirm_one": "Setujui {{count}} alias kandidat yang cocok persis? Alias itu masuk ke indeks kanonik; kandidat lainnya tetap untuk ditinjau manual.",
+    "confirm_other": "Setujui {{count}} alias kandidat yang cocok persis? Alias itu masuk ke indeks kanonik; kandidat lainnya tetap untuk ditinjau manual.",
+    "approving": "Menyetujui…",
+    "success_one": "Menyetujui {{count}} alias yang cocok persis.",
+    "success_other": "Menyetujui {{count}} alias yang cocok persis.",
+    "nothingToApprove": "Tidak ada yang perlu disetujui — tidak ada kandidat yang persis sama dengan nama produknya.",
+    "indexVersion": "Versi indeks kanonik",
+    "loading": "Memuat jumlah alias…",
+    "error": "Jumlah alias kandidat gagal dimuat.",
+    "retry": "Coba lagi",
+    "approveError": "Persetujuan massal gagal diselesaikan.",
+    "approveErrorPartial": "{{approved}} alias sudah disetujui sebelum proses berhenti. Muat ulang untuk melihat jumlah terbaru."
   }
 }

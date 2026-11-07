@@ -9,6 +9,7 @@ import { Chip } from '../components/Chip.jsx'
 import { Badge } from '../components/Badge.jsx'
 import { Button } from '../components/Button.jsx'
 import { ProductRenameForm } from '../components/ProductRenameForm.jsx'
+import { AliasCandidatesPanel } from '../components/AliasCandidatesPanel.jsx'
 import { DuplicateNamesPanel } from '../components/DuplicateNamesPanel.jsx'
 import { IconSearch, IconWarning, IconClock } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
@@ -322,6 +323,11 @@ export function ProductsView({ search, setSearch, source, setSource, category, s
       next to the rename action that can surface a collision. Admin-only, and
       it fetches nothing until an admin opens it. */}
       {isAdmin && <DuplicateNamesPanel />}
+
+      {/* #515: the safe bulk action for candidate aliases — approve exactly the
+      ones that restate a product's canonical name, leave every variant for the
+      rename form's manual decision. Admin-only; read-only until clicked. */}
+      {isAdmin && <AliasCandidatesPanel />}
 
       <div className="relative mb-4">
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">

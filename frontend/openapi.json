@@ -2305,6 +2305,119 @@
         }
       }
     },
+    "/api/admin/products/aliases/candidates": {
+      "get": {
+        "operationId": "getApiAdminProductsAliasesCandidates",
+        "description": "Read-only candidate-alias counts: every candidate alias in the catalog and how many exactly match their own product’s canonical name case-insensitively (admin-only). Drives the bulk exact-name approval panel. Never writes and never bumps the canonical index version.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "candidates": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "exactCandidates": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
+      }
+    },
+    "/api/admin/products/aliases/bulk-approve": {
+      "post": {
+        "operationId": "postApiAdminProductsAliasesBulkApprove",
+        "description": "Approve every candidate alias whose name equals its own product’s canonical name case-insensitively (admin-only). No request body (an empty JSON object is accepted and ignored). Each approval takes the candidate -> approved CAS plus one audit receipt for the acting admin; the canonical index version advances exactly once per run with at least one approval. One run is bounded by the Worker invocation’s D1 query budget (1,125 exact matches today) and the response’s counts say what is left, so a larger catalogue is drained by running again. Idempotent: a second run approves nothing and does not bump. Variant spellings are never approved — they stay for manual review. A failed chunk answers 500 bulk_approve_failed with the count already committed.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "exactCandidates": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "approved": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "remainingCandidates": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "indexVersion": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "500": {
+            "description": "bulk_approve_failed: a chunk failed after `approved` aliases were committed; the index was bumped for those and a rerun continues",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "approved": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "indexVersion": {
+                      "type": ["integer", "null"],
+                      "minimum": 0
+                    },
+                    "remainingCandidates": {
+                      "type": ["integer", "null"],
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/products/{productKey}": {
       "get": {
         "operationId": "getApiAdminProductsByProductKey",

@@ -235,6 +235,69 @@ describe('locale files', () => {
     })
   })
 
+  // Bulk exact-name alias approval (ahaqqu/RumaQ#515, follow-up to #489). The
+  // duplicate-names section above proves the parity shape; this pins that the
+  // panel's copy exists in both locales with real Indonesian, that the confirm
+  // names the count, and that the safety framing (exact match only) is on the
+  // screen next to the button.
+  describe('aliasBulk namespace (#515)', () => {
+    const BULK_KEYS = [
+      'title',
+      'desc',
+      'candidateTotal',
+      'exactTotal',
+      'approve',
+      'confirm_one',
+      'confirm_other',
+      'approving',
+      'success_one',
+      'success_other',
+      'nothingToApprove',
+      'indexVersion',
+      'loading',
+      'error',
+      'retry',
+      'approveError',
+      'approveErrorPartial',
+    ]
+
+    it('exists in both locales with the same keys', () => {
+      expect(en.aliasBulk).toBeDefined()
+      expect(id.aliasBulk).toBeDefined()
+      expect(Object.keys(id.aliasBulk).sort()).toEqual(Object.keys(en.aliasBulk).sort())
+      for (const key of BULK_KEYS) {
+        expect(en.aliasBulk[key], `aliasBulk.${key} missing in en`).toBeTypeOf('string')
+        expect(id.aliasBulk[key], `aliasBulk.${key} missing in id`).toBeTypeOf('string')
+      }
+    })
+
+    it('has real Indonesian copy, not English copies', () => {
+      for (const [key, value] of Object.entries(en.aliasBulk)) {
+        expect(id.aliasBulk[key], `aliasBulk.${key} is untranslated`).not.toBe(value)
+      }
+    })
+
+    it('pins the safe-action framing and the counted confirm', () => {
+      expect(en.aliasBulk.title).toBe('Alias candidates')
+      expect(id.aliasBulk.title).toBe('Alias kandidat')
+      expect(en.aliasBulk.approve).toBe('Approve exact matches')
+      expect(id.aliasBulk.approve).toBe('Setujui yang cocok persis')
+      // Only exact-name candidates are safe to bulk-approve: the copy says so,
+      // and the confirm names the count it is about to move.
+      expect(en.aliasBulk.desc).toContain('exactly matches')
+      expect(id.aliasBulk.desc).toContain('persis sama')
+      expect(en.aliasBulk.confirm_other).toContain('{{count}}')
+      expect(id.aliasBulk.confirm_other).toContain('{{count}}')
+      expect(en.aliasBulk.confirm_other).toContain('manual review')
+      expect(id.aliasBulk.confirm_other).toContain('ditinjau manual')
+      // A partial failure is reported with the count reached, never as a
+      // silent success.
+      expect(en.aliasBulk.approveErrorPartial).toContain('{{approved}}')
+      expect(id.aliasBulk.approveErrorPartial).toContain('{{approved}}')
+      expect(en.aliasBulk.indexVersion).toBe('Canonical index version')
+    })
+  })
+
   it('en and id have the same top-level keys', () => {
     const enKeys = Object.keys(en).sort()
     const idKeys = Object.keys(id).sort()

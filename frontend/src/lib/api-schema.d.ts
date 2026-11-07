@@ -571,6 +571,40 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/admin/products/aliases/candidates': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description Read-only candidate-alias counts: every candidate alias in the catalog and how many exactly match their own product’s canonical name case-insensitively (admin-only). Drives the bulk exact-name approval panel. Never writes and never bumps the canonical index version. */
+    get: operations['getApiAdminProductsAliasesCandidates']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/admin/products/aliases/bulk-approve': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** @description Approve every candidate alias whose name equals its own product’s canonical name case-insensitively (admin-only). No request body (an empty JSON object is accepted and ignored). Each approval takes the candidate -> approved CAS plus one audit receipt for the acting admin; the canonical index version advances exactly once per run with at least one approval. One run is bounded by the Worker invocation’s D1 query budget (1,125 exact matches today) and the response’s counts say what is left, so a larger catalogue is drained by running again. Idempotent: a second run approves nothing and does not bump. Variant spellings are never approved — they stay for manual review. A failed chunk answers 500 bulk_approve_failed with the count already committed. */
+    post: operations['postApiAdminProductsAliasesBulkApprove']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/admin/products/{productKey}': {
     parameters: {
       query?: never
@@ -2970,6 +3004,96 @@ export interface operations {
           [name: string]: unknown
         }
         content?: never
+      }
+    }
+  }
+  getApiAdminProductsAliasesCandidates: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            candidates?: number
+            exactCandidates?: number
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  postApiAdminProductsAliasesBulkApprove: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            exactCandidates?: number
+            approved?: number
+            remainingCandidates?: number
+            indexVersion?: number
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description bulk_approve_failed: a chunk failed after `approved` aliases were committed; the index was bumped for those and a rerun continues */
+      500: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            error?: string
+            approved?: number
+            indexVersion?: number | null
+            remainingCandidates?: number | null
+          }
+        }
       }
     }
   }

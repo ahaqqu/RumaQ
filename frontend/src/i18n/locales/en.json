@@ -943,5 +943,24 @@
     "noStores": "No store observed yet",
     "updated": "updated {{date}}",
     "truncated": "Some duplicate groups or products are not listed — the report is not complete."
+  },
+  "aliasBulk": {
+    "title": "Alias candidates",
+    "desc": "Candidates whose name exactly matches their product's canonical name are safe to approve in bulk. Whitespace, size, and wording variants stay for manual review.",
+    "candidateTotal": "Candidate aliases",
+    "exactTotal": "Exact-name matches",
+    "approve": "Approve exact matches",
+    "confirm_one": "Approve {{count}} exact-name alias candidate? It enters the canonical index; every other candidate stays for manual review.",
+    "confirm_other": "Approve {{count}} exact-name alias candidates? They enter the canonical index; every other candidate stays for manual review.",
+    "approving": "Approving…",
+    "success_one": "Approved {{count}} exact-name alias.",
+    "success_other": "Approved {{count}} exact-name aliases.",
+    "nothingToApprove": "Nothing to approve — no candidate exactly matches its product name.",
+    "indexVersion": "Canonical index version",
+    "loading": "Loading alias counts…",
+    "error": "The alias candidate counts could not be loaded.",
+    "retry": "Retry",
+    "approveError": "The bulk approval could not be completed.",
+    "approveErrorPartial": "{{approved}} aliases were approved before the run stopped. Refresh to see the current counts."
   }
 }

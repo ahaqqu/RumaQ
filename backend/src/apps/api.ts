@@ -91,6 +91,7 @@ import {
   AliasNotFoundError,
   AliasStateError,
   AuditNotFoundError,
+  BulkAliasApproveError,
   DuplicateNameError,
   InvalidNameError,
   InvalidReasonError,
@@ -99,6 +100,8 @@ import {
   StaleProductError,
   StaleRevertError,
   approveAlias,
+  bulkApproveExactNameAliases,
+  countAliasCandidates,
   getDuplicateNameReport,
   getProductIdentity,
   rejectAlias,
@@ -681,6 +684,12 @@ apiApp.use('/api/admin/products/:productKey/rename', propsAuthMiddleware)
 apiApp.use('/api/admin/products/:productKey/audit/:auditId/revert', propsAuthMiddleware)
 apiApp.use('/api/admin/products/:productKey/aliases/:aliasId/approve', propsAuthMiddleware)
 apiApp.use('/api/admin/products/:productKey/aliases/:aliasId/reject', propsAuthMiddleware)
+// Bulk exact-name alias approval (#515): its paths are STATIC and sit two
+// segments below /api/admin/products, so none of the lines above match them
+// (the `:productKey` line is one segment; #292 — a use-line covers no
+// subpaths). Each route therefore gets its own gate.
+apiApp.use('/api/admin/products/aliases/candidates', propsAuthMiddleware)
+apiApp.use('/api/admin/products/aliases/bulk-approve', propsAuthMiddleware)
 apiApp.use('/api/ai-key/*', propsAuthMiddleware)
 
 apiApp.get(
@@ -3815,6 +3824,119 @@ apiApp.get(
     const res = c.json(report)
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
+  }
+)
+
+// ---------------------------------------------------------------------------
+// Bulk exact-name alias approval (#515, follow-up to #489). One safe action:
+// approve ONLY the candidate aliases whose name equals their own product's
+// canonical name case-insensitively; every other candidate stays for manual
+// review. Both paths are static and registered before the `:productKey`
+// identity route. The writes, chunking, single index bump, and idempotency
+// rules live in lib/canonical-products.ts — these handlers stay HTTP-only.
+// ---------------------------------------------------------------------------
+const ALIAS_CANDIDATE_COUNTS_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    candidates: { type: 'integer', minimum: 0 },
+    exactCandidates: { type: 'integer', minimum: 0 },
+  },
+}
+
+const ALIAS_BULK_APPROVE_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    exactCandidates: { type: 'integer', minimum: 0 },
+    approved: { type: 'integer', minimum: 0 },
+    remainingCandidates: { type: 'integer', minimum: 0 },
+    indexVersion: { type: 'integer', minimum: 0 },
+  },
+}
+
+// 500 body when a chunk failed mid-run: the aliases already committed stay
+// approved, so the count reached is part of the answer, not a hidden detail.
+const ALIAS_BULK_APPROVE_FAILURE_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    error: { type: 'string' },
+    approved: { type: 'integer', minimum: 0 },
+    indexVersion: { type: ['integer', 'null'], minimum: 0 },
+    remainingCandidates: { type: ['integer', 'null'], minimum: 0 },
+  },
+}
+
+// Read-only counts for the alias-candidates panel (#515). Registered before the
+// identity route: Hono matches in registration order, and `/api/admin/products/
+// aliases/candidates` must never be read as a product named 'aliases'.
+apiApp.get(
+  '/api/admin/products/aliases/candidates',
+  describeRoute({
+    description:
+      'Read-only candidate-alias counts: every candidate alias in the catalog and how many exactly match their own product’s canonical name case-insensitively (admin-only). Drives the bulk exact-name approval panel. Never writes and never bumps the canonical index version.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: { 'application/json': { schema: ALIAS_CANDIDATE_COUNTS_SCHEMA } },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  async (c) => {
+    const counts = await countAliasCandidates(c.env.DB)
+    const res = c.json(counts)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+apiApp.post(
+  '/api/admin/products/aliases/bulk-approve',
+  describeRoute({
+    description:
+      'Approve every candidate alias whose name equals its own product’s canonical name case-insensitively (admin-only). No request body (an empty JSON object is accepted and ignored). Each approval takes the candidate -> approved CAS plus one audit receipt for the acting admin; the canonical index version advances exactly once per run with at least one approval. One run is bounded by the Worker invocation’s D1 query budget (1,125 exact matches today) and the response’s counts say what is left, so a larger catalogue is drained by running again. Idempotent: a second run approves nothing and does not bump. Variant spellings are never approved — they stay for manual review. A failed chunk answers 500 bulk_approve_failed with the count already committed.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: { 'application/json': { schema: ALIAS_BULK_APPROVE_SCHEMA } },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      500: {
+        description:
+          'bulk_approve_failed: a chunk failed after `approved` aliases were committed; the index was bumped for those and a rerun continues',
+        content: { 'application/json': { schema: ALIAS_BULK_APPROVE_FAILURE_SCHEMA } },
+      },
+    },
+  }),
+  requireAdmin,
+  async (c) => {
+    try {
+      const result = await bulkApproveExactNameAliases(c.env.DB, c.get('userId'))
+      const res = c.json(result)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (error) {
+      if (error instanceof BulkAliasApproveError) {
+        // The catch converts the failure into an honest 500, which means the
+        // shared onError handler never sees it: log the cause here or a failed
+        // catalog-wide run leaves no server-side trace of why the chunk died.
+        console.error('[products] bulk alias approval failed', error.failure)
+        return c.json(
+          {
+            error: 'bulk_approve_failed',
+            approved: error.approved,
+            indexVersion: error.indexVersion,
+            remainingCandidates: error.remainingCandidates,
+          },
+          500
+        )
+      }
+      throw error
+    }
   }
 )
 
