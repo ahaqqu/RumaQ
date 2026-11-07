@@ -38,7 +38,8 @@ export function Plan({ askAssistant, setView }) {
   const updateItemMutation = useUpdatePlanItem()
 
   // #523 P3: the household's reasoning capability replaces `has_ai_key`.
-  const hasAiKey = isAiConfigured(settings?.ai_status)
+  // A generated plan is a reasoning call (#523 P4): gate on that capability.
+  const hasAiKey = isAiConfigured(settings?.ai_status, 'reasoning')
   const currency = settings?.currency || 'IDR'
 
   const activePlan = plansData?.plans?.[0] ?? null

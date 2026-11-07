@@ -270,14 +270,17 @@ export class ApiContext {
   }
 
   // Usage is recorded but never capped (issue #353): the response carries
-  // call/token totals only — there is no daily_limit field to assert.
+  // call/token totals only — there is no daily_limit field to assert. #523 P4
+  // added the per-capability breakdown and the household cut, and dropped the
+  // single `provider` (there is one provider per capability now).
   expectUsageDefaults() {
     expect(this.responseBody).toEqual({
       used: 0,
       input_tokens: 0,
       output_tokens: 0,
       cached_tokens: null,
-      provider: null,
+      capabilities: [],
+      household: { used: 0, input_tokens: 0, output_tokens: 0, cached_tokens: null },
     })
   }
 

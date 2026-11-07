@@ -236,7 +236,7 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description Returns today AI usage (UTC day) for the current user. Usage is recorded but never capped. */
+    /** @description Returns today's AI usage (UTC day) for the acting member, broken down by capability, with the household total beside it. Usage is recorded but never capped. */
     get: operations['getApiAiUsage']
     put?: never
     post?: never
@@ -253,7 +253,7 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description AI usage totals and per-user breakdown over a recent range (admin-only). */
+    /** @description AI usage totals with per-capability, per-user and per-household breakdowns over a recent range (admin-only). */
     get: operations['getApiAdminAiUsage']
     put?: never
     post?: never
@@ -2257,13 +2257,30 @@ export interface operations {
         }
         content: {
           'application/json': {
-            /** @description Completed AI calls today (UTC) */
+            /** @description Completed AI calls today (UTC) made by the acting member */
             used: number
             input_tokens: number
             output_tokens: number
             /** @description Provider-reported cached input tokens; null when the provider reports none */
             cached_tokens: number | null
-            provider: string | null
+            /** @description The acting member's calls today broken down by capability; a null capability is pre-gateway history whose capability was never recorded */
+            capabilities: {
+              /** @description The capability that was served: 'decision', 'reasoning', 'vision', or null for pre-gateway history */
+              capability: string | null
+              used: number
+              /** @description Calls answered by a typed (questions) provider — not token-billed */
+              typed_calls: number
+              input_tokens: number
+              output_tokens: number
+              cached_tokens: number | null
+            }[]
+            /** @description Today's calls by every member of the household the request acts in (the household cut; readable by every member) */
+            household: {
+              used: number
+              input_tokens: number
+              output_tokens: number
+              cached_tokens: number | null
+            }
           }
         }
       }
@@ -2305,10 +2322,31 @@ export interface operations {
               cached_tokens: number | null
               /** @description cached/input; null when input is 0 or cache unreported */
               cache_hit_rate: number | null
+              /** @description Totals broken down by capability; typed_calls are calls a typed (questions) provider answered, which report no tokens (not token-billed) */
+              capabilities: {
+                /** @description The capability that was served: 'decision', 'reasoning', 'vision', or null for pre-gateway history */
+                capability: string | null
+                calls: number
+                typed_calls: number
+                input_tokens: number
+                output_tokens: number
+                cached_tokens: number | null
+              }[]
             }
             users: {
               user_id: string
               email: string | null
+              calls: number
+              input_tokens: number
+              output_tokens: number
+              cached_tokens: number | null
+              cache_hit_rate: number | null
+              last_used: string
+            }[]
+            /** @description Totals broken down by the household that paid (the cross-household cut; D9 funding view) */
+            households: {
+              household_id: string | null
+              name: string | null
               calls: number
               input_tokens: number
               output_tokens: number

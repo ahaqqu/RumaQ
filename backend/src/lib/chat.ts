@@ -1,4 +1,4 @@
-import { completeText, type AiCallOpts } from './ai.js'
+import { completeText, type AiAccessHandle, type AiCtx, type AiResult } from './ai/index.js'
 import { buildSystemPrompt } from './persona.js'
 
 type LowStockItem = {
@@ -87,19 +87,32 @@ ${purchaseLines}
 Answer the user's message. Be concise, practical, and grounded in the household's data above. Do not hallucinate items that aren't listed.`
 }
 
+/**
+ * One chat turn through the door (#523 P4): the caller has already resolved the
+ * `reasoning` capability, and this builds the prompts (product policy, outside
+ * the door, plan §2.5) and hands the door messages — never a provider, an
+ * endpoint or a key.
+ */
 export async function sendChatMessage(
-  provider: string,
-  apiKey: string,
+  ai: AiCtx & { access: AiAccessHandle },
   ctx: ChatContext,
   message: string,
-  history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
-  opts?: AiCallOpts
-): Promise<string> {
+  history: Array<{ role: 'user' | 'assistant'; content: string }> = []
+): Promise<AiResult> {
   const systemPrompt = buildChatSystemPrompt(ctx)
   const conversation = history
     .slice(-10)
     .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
     .join('\n')
   const userPrompt = conversation ? `${conversation}\nUser: ${message}` : message
-  return completeText(provider, apiKey, systemPrompt, userPrompt, opts)
+  return completeText({
+    env: ai.env,
+    userId: ai.userId,
+    householdId: ai.householdId,
+    access: ai.access,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+  })
 }

@@ -300,16 +300,16 @@ Schema lives in numbered SQL files under [`backend/migrations/`](../backend/migr
 
 ## 7. AI integration
 
-Users supply their own API key in Settings. The frontend sends it to the Worker, where it is encrypted with `WORKER_ENCRYPTION_KEY` (AES-GCM via Web Crypto) before being stored in D1. The Worker decrypts it only when making an AI call on the user's behalf.
+Each household configures its own AI providers and assigns one provider + model to each of three capabilities: `decision`, `reasoning`, and `vision` (ahaqqu/RumaQ#523). A provider's key is sealed with `WORKER_ENCRYPTION_KEY` (AES-GCM via Web Crypto) before it is stored in D1; the Worker decrypts it only when making a call the household assigned. Every call site routes by the capability it needs, so a scan never reaches the text model (the P4 fix):
 
 AI lanes (MVP):
 
-1. **Receipt → stock.** Image uploaded to R2; Worker sends the image URL + prompt to the user's chosen LLM and returns parsed line items for confirmation.
-2. **Plan a trip.** Worker asks the LLM to build a shopping plan from low stock + expiry + history.
-3. **Chat assistant.** The Worker proxies a chat request; the system prompt includes the user's persona setting.
+1. **Receipt → stock.** Image uploaded to R2; Worker sends the image + prompt to the household's **vision** capability and returns parsed line items for confirmation.
+2. **Plan a trip.** Worker asks the **reasoning** capability to build a shopping plan from low stock + expiry + history.
+3. **Chat assistant.** The Worker proxies a chat request to the **reasoning** capability; the system prompt includes the user's persona setting.
    > **Tech debt:** Streaming is deferred. The current implementation returns the full response body. See `backend/src/lib/chat.ts` — `sendChatMessage` calls `completeText` (completion, not streaming). The persona system prompt is EN-only (single locale); see `backend/src/lib/persona.ts`.
-4. **Document expiry OCR (vault).** An explicit per-file action sends a document IMAGE to the household's own provider with the resolved vision model (the `vision` capability's model; migrated history keeps the `ai_vision_model` → `ai_model` precedence). The answer is a SUGGESTION that prefills the expiry editor — only the user-confirmed PATCH writes metadata. See `backend/src/lib/document-ocr.ts` and the `extract-expiry` route in the vault plugin (`backend/src/plugins/documents/ocr.ts`, issue #433).
-5. **Match-review verdicts.** Pending flagged pairs are judged by the SAME layer: a product-identity prompt (the pair's display fields + flag reason, with an explicit ignore-embedded-instructions boundary) returning strict JSON — `verdict` `same`/`different`, `confidence` 0..1, `reason`. `manual` never calls a provider; `assist` (default) caches a verdict the human agrees/disagrees with; `auto` applies a verdict at/above the 0.8 confidence floor. The provider/model come from the acting admin's household AI assignment (the stored admin's, for the cron); an unconfigured household evaluates nothing. See `backend/src/lib/review-ai.ts` and migration 0038.
+4. **Document expiry OCR (vault).** An explicit per-file action sends a document IMAGE to the household's **vision** capability. The answer is a SUGGESTION that prefills the expiry editor — only the user-confirmed PATCH writes metadata. See `backend/src/lib/document-ocr.ts` and the `extract-expiry` route in the vault plugin (`backend/src/plugins/documents/ocr.ts`, issue #433).
+5. **Match-review verdicts.** Pending flagged pairs are judged by the **decision** capability through the door's `decide()`: the pair's display fields + flag reason ride the ask's `state`, the rubric (identity rules + an explicit ignore-embedded-instructions boundary) rides its `criteria`, and the closed choice is `same`/`different` (ahaqqu/RumaQ#523 P4; the reviewer parses no JSON of its own any more). `manual` never calls a provider; `assist` (default) caches a verdict the human agrees/disagrees with; `auto` applies a verdict at/above the 0.8 confidence floor. The provider/model come from the acting admin's household `decision` assignment (the stored admin's, for the cron); an unconfigured household evaluates nothing. A typed (`questions`) decision provider answers choice + confidence only, so its cached `reason` is NULL. See `backend/src/lib/review-ai.ts` and migration 0038.
 
 ### The one door (ahaqqu/RumaQ#523)
 
@@ -337,10 +337,20 @@ module that returns the decrypted key for a handle), hold an API key, contain
 a provider hostname, or `fetch` a model endpoint — a single fetch outside the door silently ignores
 the household's capability assignment, and a second writer would break "what did this household
 spend". `backend/src/__tests__/ai-boundary.test.ts` enforces the rule over the tree and fails on any
-new violation (it follows the plugin-boundary test's design; its legacy exemption lists are now
-**empty**, since P3 deleted the last transport and hostname carrier outside the door). The frontend
-keeps the same boundary: it may call `/api/ai/*` and nothing else (the browser-side provider calls are
-removed in P5).
+new violation (it follows the plugin-boundary test's design; since P4 deleted the last shim it has
+**no exemption lists at all** — every rule holds over the whole tree, and the deleted `lib/ai.ts`,
+`lib/ai-access.ts` and `lib/ai/legacy.ts` must stay deleted). The frontend keeps the same boundary: it
+may call `/api/ai/*` and nothing else (the browser-side provider calls are removed in P5).
+
+**Call sites route by capability (P4).** `chat` and `plans/generate` resolve `reasoning`; the receipt
+scan and the vault's expiry OCR resolve `vision`; the review evaluate route and the review cron sweep
+resolve `decision` and pass the handle to every item (ONE capability read per run — the sweep's
+50-subrequest budget depends on it, and its per-attempt usage rows ride one `db.batch`). A route
+resolves its capability once, writes the call's own dimensions to `ai_usage_events` (`user_id` = the
+acting member, `household_id` = who pays, `capability`, `funding`), and answers 402 when it resolves
+nothing. Prompts and answer validation stay with the features: `lib/receipt-scan.ts` owns the receipt
+prompt + parser, `lib/document-ocr.ts` the expiry prompt + date gate, `lib/plans.ts` the plan prompt +
+schema, `lib/review-ai.ts` the review ask.
 
 **Keys are bound to their row (D10).** `ai_providers.encrypted_key` is AES-GCM sealed with the
 `ai_provider:<row id>` additional authenticated data (`v2:` envelope), so a ciphertext copied onto
@@ -352,12 +362,12 @@ read. `credentials.ts` is the only reader/writer of that column, and an undecryp
 configured" (402), never a 500. The ciphertext change is forward-only: reverted code decodes only
 `v1:`, so a full rollback would require re-entering keys for rows already rewritten.
 
-Until P4, `backend/src/lib/ai.ts` (the legacy AI surface) and `backend/src/lib/ai-access.ts` (the P1
-resolution bridge) remain as **deprecated thin shims** so no feature file changes while the adapters
-land; both are deleted in P4, when every call site resolves per capability and imports only
-`lib/ai/index.js`.
+`backend/src/lib/ai.ts` (the P2 legacy AI surface), `backend/src/lib/ai-access.ts` (the P1 resolution
+bridge) and `lib/ai/legacy.ts` (the P2 bridge inside the door) are **deleted** in P4: every feature
+imports `lib/ai/index.js` directly, and no module outside `lib/ai/**` holds a key, a provider hostname
+or an adapter import.
 
-Every completed AI call is recorded as one row in `ai_usage_events` (per-call granularity — what the 24h/7d/30d admin analytics and per-user cache hit rates need). Usage never caps a call: BYOK is the norm, and no rate limit is ever applied (issue #353; the owner reaffirmed this for the AI gateway, #523). Retention: a daily cron (`gateway.scheduled`, `cloudflare.config.ts`) deletes events older than 365 days. The effective model is the household's capability assignment — `ai_capabilities.model ?? ai_providers.default_model`, both owner-typed (#523); a capability with neither is not configured (402). The old per-user `ai_provider` / `encrypted_ai_key` / `ai_base_url` / `ai_model` / `ai_vision_model` / `ai_thinking_level` columns are **gone** (migration 0042, P3): the backfill carried their values into the capability rows once (`ai_vision_model ?? ai_model` for vision), and a household edits its providers and assignments through `GET/POST/PATCH/DELETE /api/ai/providers`, `POST /api/ai/providers/:id/test`, and `GET/PUT/DELETE /api/ai/capabilities[/:capability]`, all owner-only for writes and member-readable. `GET /api/settings` no longer carries AI fields beyond the additive `ai_providers` / `ai_capabilities` / `ai_status` block; `PATCH /api/settings` rejects the retired AI keys (400).
+Every completed AI call is recorded as one row in `ai_usage_events` (per-call granularity — what the 24h/7d/30d admin analytics and per-user cache hit rates need), stamped with the capability served, the household that paid and the funding source (#523 P4). `GET /api/ai/usage` reports the acting member's today totals broken down by capability plus the household total; `GET /api/admin/ai/usage` adds per-capability (with a typed-call count that is not token-billed) and per-household cuts over the range. Usage never caps a call: BYOK is the norm, and no rate limit is ever applied (issue #353; the owner reaffirmed this for the AI gateway, #523). Retention: a daily cron (`gateway.scheduled`, `cloudflare.config.ts`) deletes events older than 365 days. The effective model is the household's capability assignment — `ai_capabilities.model ?? ai_providers.default_model`, both owner-typed (#523); a capability with neither is not configured (402). The old per-user `ai_provider` / `encrypted_ai_key` / `ai_base_url` / `ai_model` / `ai_vision_model` / `ai_thinking_level` columns are **gone** (migration 0042, P3): the backfill carried their values into the capability rows once (`ai_vision_model ?? ai_model` for vision), and a household edits its providers and assignments through `GET/POST/PATCH/DELETE /api/ai/providers`, `POST /api/ai/providers/:id/test`, and `GET/PUT/DELETE /api/ai/capabilities[/:capability]`, all owner-only for writes and member-readable. `GET /api/settings` no longer carries AI fields beyond the additive `ai_providers` / `ai_capabilities` / `ai_status` block; `PATCH /api/settings` rejects the retired AI keys (400).
 
 ## 8. Deployment
 

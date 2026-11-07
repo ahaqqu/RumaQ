@@ -1541,6 +1541,43 @@ and pass the handle.
   `household_id`, the sweep still writes **one** batch and reads **one** capability row per run.
 - Rollback: revert; P3's UI edits and P1's data stay valid, chat/plans/scan revert to the shim.
 
+**What P4 shipped, and where it deviated from this sketch.** Every call site moved onto its
+capability, the three shims were deleted, and the boundary test's exemption lists were removed rather
+than left empty (a shim that came back would have to re-open the rule, not inherit an exemption).
+Deviations, recorded where they landed:
+
+- **The review's prompt became an ask, and its strict parse moved into the door.** The reviewer now
+  calls `decide()` with `state` = the pair's display fields + flag (JSON, no ids), `criteria` = the
+  identity rubric (including the ignore-embedded-instructions boundary) and `choices` =
+  `same`/`different`. The door guarantees the choice list and clamps confidence, so
+  `parseReviewVerdict`/`ReviewAiError` are gone; the feature keeps only its own policy
+  (`reviewVerdictFromDecision`: an unreported confidence is 0 and cannot clear the auto floor, the
+  reason is trimmed/capped, a typed provider's `reason: null` is stored as NULL). The cached verdict's
+  `provider` column now records the wire kind (`openai-compatible`, `questions`, …), which is what
+  every usage row has stored since 0041 — the legacy vendor id no longer exists to record.
+- **The scan/OCR prompts and parsers moved into their features.** `buildScanPrompt` +
+  `parseScanResult` live in `lib/receipt-scan.ts`; `buildExpiryExtractionPrompt` +
+  `parseExpiryExtraction` live in `lib/document-ocr.ts`. Plans now validate the answer with its own
+  `planGenerateResponseSchema` after the shared `parseJsonResponse` (the inline `content.match`
+  copy is gone; an unparseable answer is a 502, not a silently empty plan).
+- **`usageCollector` is deleted with the shims.** The door returns the call's usage on success and
+  `AiError.usage` on failure, so no call site accumulates tokens by hand; the scan/OCR failure path
+  still bills the attempt from `AiError`.
+- **`GET /api/ai/usage` loses `provider` and gains the cuts.** A household can point each capability
+  at a different provider, so a single `provider` field would name one of three rows; the response is
+  now the acting member's totals + a `capabilities` breakdown (with `typed_calls`, the not-token-billed
+  count) + the household total. The Settings usage meter renders that breakdown, and `isAiConfigured`
+  asks about the capability the feature calls (`reasoning` for chat/plans) instead of the retired
+  reasoning → decision → vision ladder. The admin endpoint adds `totals.capabilities` and a
+  `households` array; the admin page's rendering of the typed caption is left for P5.
+- **The sweep's one capability read is structural, not incidental.** `resolveReviewAiAccess` returns
+  `{ access, householdId }` for `decision`; the route and the cron both resolve once and pass the
+  handle + household down, and `evaluatePendingReviews` writes the run's usage rows in one batch. A
+  test counts the `ai_capabilities` JOIN (exactly one per run) and the `db.batch` calls (one for the
+  usage rows) to pin both.
+- **`aiConfigured` on the review mode/evaluate routes now means "the decision capability is usable"**,
+  which is exactly what those routes need; before P4 it meant "the bridge resolved something".
+
 ### P5 — Persona and key test behind the door; browser loses provider access
 
 `POST /api/ai/generate/persona` (reasoning) replaces `generatePersonaCopy` (`persona.js:121-186`);

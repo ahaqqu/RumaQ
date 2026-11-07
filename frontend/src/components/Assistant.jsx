@@ -65,7 +65,8 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
   // `has_ai_key` / `server_ai_available` fields (the columns are gone and the
   // platform key is retired — D8). A key held in the browser from before the
   // provider split still counts until P5 removes that path.
-  const hasBackendKey = isAiConfigured(settings?.ai_status)
+  // Chat is a reasoning call (#523 P4): gate on that capability alone.
+  const hasBackendKey = isAiConfigured(settings?.ai_status, 'reasoning')
   const isConnected = Boolean(aiKey) || hasBackendKey
 
   // Shared metering model; null while the usage query loads — the status dot

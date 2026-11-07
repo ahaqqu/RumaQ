@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { buildChatSystemPrompt, sendChatMessage } from '../lib/chat.js'
+import {
+  AI_TEST_HOUSEHOLD,
+  AI_TEST_USER,
+  fakeAiEnvWith,
+  openAiChatAnswer,
+  resolveTestAccess,
+} from './support/ai-door.js'
 
 describe('buildChatSystemPrompt', () => {
   it('includes household context and base prompt', () => {
@@ -31,30 +38,44 @@ describe('buildChatSystemPrompt', () => {
 })
 
 describe('sendChatMessage', () => {
-  it('calls completeText with conversation history', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ choices: [{ message: { content: 'Reply' } }] }),
-    })
-    const reply = await sendChatMessage(
-      'openai',
-      'sk-test',
-      {
-        persona: null,
-        lowStock: [],
-        expiring: [],
-        activePlan: [],
-        recentPurchases: [],
-      },
+  it('sends the conversation history through the resolved reasoning handle (#523 P4)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(openAiChatAnswer('Reply'))
+    const { env } = await fakeAiEnvWith({ reasoning: { model: 'gpt-4o-mini' } })
+    const access = await resolveTestAccess(env, 'reasoning')
+
+    const result = await sendChatMessage(
+      { env, userId: AI_TEST_USER, householdId: AI_TEST_HOUSEHOLD, access },
+      { persona: null, lowStock: [], expiring: [], activePlan: [], recentPurchases: [] },
       'hi',
-      [{ role: 'user', content: 'previous' }],
-      // The legacy shim no longer invents a vendor default (plan §5.1): the
-      // routes always pass the resolved assignment's model.
-      { model: 'gpt-4o-mini' }
+      [{ role: 'user', content: 'previous' }]
     )
-    expect(reply).toBe('Reply')
+
+    expect(result.text).toBe('Reply')
+    // The call dimensions name the capability the door dispatched for.
+    expect(result.call).toMatchObject({
+      capability: 'reasoning',
+      householdId: AI_TEST_HOUSEHOLD,
+      model: 'gpt-4o-mini',
+      funding: 'household',
+    })
     const [, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
     const body = JSON.parse(opts.body as string)
+    expect(body.model).toBe('gpt-4o-mini')
     expect(body.messages[body.messages.length - 1].content).toContain('hi')
+  })
+
+  it('refuses a handle resolved for another capability (fail closed, no provider call)', async () => {
+    const fetchMock = vi.fn()
+    globalThis.fetch = fetchMock
+    const { env } = await fakeAiEnvWith({ reasoning: {}, vision: {} })
+    const visionAccess = await resolveTestAccess(env, 'vision')
+    await expect(
+      sendChatMessage(
+        { env, userId: AI_TEST_USER, householdId: AI_TEST_HOUSEHOLD, access: visionAccess },
+        { persona: null, lowStock: [], expiring: [], activePlan: [], recentPurchases: [] },
+        'hi'
+      )
+    ).rejects.toThrow(/cannot serve|not 'reasoning'|not usable/i)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

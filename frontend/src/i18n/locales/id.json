@@ -727,7 +727,11 @@
     "from": "dari",
     "usageTokensToday": "{{used}} panggilan hari ini · {{input}} masuk · {{output}} keluar",
     "cacheHitRate": "tingkat cache hit",
-    "ownKeyUnlimited": "Tanpa batas — pemakaian ditanggung kunci API milikmu."
+    "ownKeyUnlimited": "Tanpa batas — pemakaian ditanggung kunci API milikmu.",
+    "usageTitle": "Penggunaan AI hari ini",
+    "usageUnknownCapability": "Lainnya",
+    "usageTypedCalls": "{{calls}} tertip — tidak ditagih token",
+    "usageHouseholdToday": "Rumah tangga hari ini: {{used}} panggilan · {{input}} masuk · {{output}} keluar"
   },
   "offline": {
     "banner": "Kamu sedang offline — perubahan akan disinkronkan saat kembali online",

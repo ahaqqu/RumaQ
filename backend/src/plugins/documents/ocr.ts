@@ -7,11 +7,9 @@
 // string (apiApp.use(path) does not cover subpaths — #292 — so the pattern
 // list entry is what makes the route protected).
 //
-// Reads one IMAGE file's validity date with the caller's OWN AI provider —
-// the same user-first / server-fallback resolution as every AI route
-// (lib/ai-access.ts), with the resolved VISION model (ai_vision_model →
-// ai_model → provider default; the server's model only on the server-fallback
-// branch). Opt-in per file ("Read date"), never automatic: the model's answer
+// Reads one IMAGE file's validity date with the household's OWN provider — the
+// `vision` capability through the AI door (#523 P4; the legacy single-provider
+// bridge is gone). Opt-in per file ("Read date"), never automatic: the model's answer
 // is a SUGGESTION that prefills the #426 expiry editor — only the
 // user-confirmed PATCH writes, with its own audit row. The attempt itself is
 // audited twice over, each row in its own ledger: ai_usage_events
@@ -36,7 +34,7 @@ import {
   recordDocumentAccess,
 } from './lib.js'
 import { DocumentOcrError, isExpiryOcrSupported, runExpiryOcr } from '../../lib/document-ocr.js'
-import { resolveAiAccess } from '../../lib/ai-access.js'
+import { resolveAccess } from '../../lib/ai/index.js'
 
 // The expiry-OCR endpoint: no request body, but every accepted call is a
 // provider-billed vision request over up to 10 MB of image. The opt-in
@@ -116,8 +114,10 @@ export function registerExpiryOcrRoutes(documentsApp: Hono<Env>, storage: Storag
       }
 
       // The household the request acts in is the whole AI configuration
-      // (#523 P3): no settings row is read to find it any more.
-      const access = await resolveAiAccess(c.env, householdId)
+      // (#523 P3), and reading a document's expiry is a VISION call (#523 P4):
+      // resolve that capability once for this request.
+      const aiCtx = { env: c.env, userId, householdId }
+      const access = await resolveAccess(aiCtx, 'vision')
       if (!access) {
         return c.json(
           {
@@ -153,7 +153,7 @@ export function registerExpiryOcrRoutes(documentsApp: Hono<Env>, storage: Storag
       // runExpiryOcr (usage event + outcome log, once); this handler only
       // maps the outcome to HTTP.
       try {
-        const { suggestion } = await runExpiryOcr(c.env, {
+        const { suggestion, model } = await runExpiryOcr(c.env, {
           access,
           imageBytes,
           contentType: file.content_type,
@@ -165,7 +165,7 @@ export function registerExpiryOcrRoutes(documentsApp: Hono<Env>, storage: Storag
 
         // Metadata (never bytes) rides the vault app's no-cache posture —
         // the answer is household-scoped and session-fresh.
-        const res = c.json({ expires_on: suggestion, model: access.visionModel })
+        const res = c.json({ expires_on: suggestion, model })
         res.headers.set('Cache-Control', 'private, no-cache')
         return res
       } catch (err) {

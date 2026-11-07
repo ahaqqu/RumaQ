@@ -123,10 +123,17 @@ import {
   getSignedUrl,
   extFromType,
 } from '../lib/receipts.js'
-import { extractReceiptItems, usageCollector, type TokenUsage } from '../lib/ai.js'
-import { resolveAiAccess, type AiAccess } from '../lib/ai-access.js'
+import {
+  AiError,
+  EMPTY_USAGE,
+  recordAiUsageEvent,
+  resolveAccess,
+  vision,
+  type AiCall,
+  type TokenUsage,
+} from '../lib/ai/index.js'
 import { loadHouseholdAiConfig } from '../lib/ai/capabilities.js'
-import { recordAiUsageEvent } from '../lib/ai/usage.js'
+import { buildScanPrompt, parseScanResult } from '../lib/receipt-scan.js'
 import {
   AiProviderSettingsError,
   assignCapability,
@@ -2011,20 +2018,61 @@ apiApp.delete(
 // and plan-generate routes; usage is analytics only and never gates a call.
 // The row carries the access's capability/household/funding dimensions (#523
 // P1) and no longer writes key_source (D9 replaced it).
+/** The member's today slice of `ai_usage_events` (and the household's total). */
+type UsageTotals = {
+  used: number
+  input_tokens: number
+  output_tokens: number
+  cached_tokens: number | null
+}
+
+/** One capability's today slice — `capability` is null on pre-gateway history. */
+type UsageCapabilityRow = UsageTotals & {
+  capability: string | null
+  typed_calls: number
+}
+
+/** The admin range's per-capability row (same cut, range-wide, `calls` wording). */
+type AdminUsageCapabilityRow = {
+  capability: string | null
+  calls: number
+  typed_calls: number
+  input_tokens: number
+  output_tokens: number
+  cached_tokens: number | null
+}
+
+/**
+ * One completed call's usage row: the ACTING member's `user_id` with the call's
+ * own dimensions — `household_id` (who owns the provider and pays), the
+ * capability that was served, and the funding source (#523 P4, plan §5.3).
+ */
 function recordAiCallUsage(
   env: Env['Bindings'],
   userId: string,
-  access: AiAccess,
+  call: AiCall,
   usage: TokenUsage
 ): Promise<void> {
-  return recordAiUsageEvent(env, { userId, call: access.call, usage })
+  return recordAiUsageEvent(env, { userId, call, usage })
+}
+
+/**
+ * The failed attempt's usage row ("failure carries the bill", plan §2.2): the
+ * provider read the inputs even when its answer was unusable. A
+ * `not_configured` failure has no call and no bill, so it writes nothing.
+ */
+function recordAiFailureUsage(env: Env['Bindings'], userId: string, err: unknown): Promise<void> {
+  if (err instanceof AiError && err.call) {
+    return recordAiUsageEvent(env, { userId, call: err.call, usage: err.usage })
+  }
+  return Promise.resolve()
 }
 
 apiApp.get(
   '/api/ai/usage',
   describeRoute({
     description:
-      'Returns today AI usage (UTC day) for the current user. Usage is recorded but never capped.',
+      "Returns today's AI usage (UTC day) for the acting member, broken down by capability, with the household total beside it. Usage is recorded but never capped.",
     security: [{ cookieAuth: [] }],
     responses: {
       200: {
@@ -2033,9 +2081,19 @@ apiApp.get(
           'application/json': {
             schema: {
               type: 'object',
-              required: ['used', 'input_tokens', 'output_tokens', 'cached_tokens', 'provider'],
+              required: [
+                'used',
+                'input_tokens',
+                'output_tokens',
+                'cached_tokens',
+                'capabilities',
+                'household',
+              ],
               properties: {
-                used: { type: 'integer', description: 'Completed AI calls today (UTC)' },
+                used: {
+                  type: 'integer',
+                  description: 'Completed AI calls today (UTC) made by the acting member',
+                },
                 input_tokens: { type: 'integer' },
                 output_tokens: { type: 'integer' },
                 cached_tokens: {
@@ -2043,7 +2101,50 @@ apiApp.get(
                   description:
                     'Provider-reported cached input tokens; null when the provider reports none',
                 },
-                provider: { type: ['string', 'null'] },
+                capabilities: {
+                  type: 'array',
+                  description:
+                    "The acting member's calls today broken down by capability; a null capability is pre-gateway history whose capability was never recorded",
+                  items: {
+                    type: 'object',
+                    required: [
+                      'capability',
+                      'used',
+                      'typed_calls',
+                      'input_tokens',
+                      'output_tokens',
+                      'cached_tokens',
+                    ],
+                    properties: {
+                      capability: {
+                        type: ['string', 'null'],
+                        description:
+                          "The capability that was served: 'decision', 'reasoning', 'vision', or null for pre-gateway history",
+                      },
+                      used: { type: 'integer' },
+                      typed_calls: {
+                        type: 'integer',
+                        description:
+                          'Calls answered by a typed (questions) provider — not token-billed',
+                      },
+                      input_tokens: { type: 'integer' },
+                      output_tokens: { type: 'integer' },
+                      cached_tokens: { type: ['integer', 'null'] },
+                    },
+                  },
+                },
+                household: {
+                  type: 'object',
+                  description:
+                    "Today's calls by every member of the household the request acts in (the household cut; readable by every member)",
+                  required: ['used', 'input_tokens', 'output_tokens', 'cached_tokens'],
+                  properties: {
+                    used: { type: 'integer' },
+                    input_tokens: { type: 'integer' },
+                    output_tokens: { type: 'integer' },
+                    cached_tokens: { type: ['integer', 'null'] },
+                  },
+                },
               },
             },
           },
@@ -2054,16 +2155,14 @@ apiApp.get(
   }),
   async (c) => {
     const userId = c.get('userId')
+    const householdId = c.get('householdId')
     const today = new Date().toISOString().slice(0, 10)
 
-    // Resolved fresh against the household the request acts in, so the provider
-    // always reflects the current configuration rather than the state when the
-    // events were recorded. `key_source` is gone with the legacy surface
-    // (#523 P3): every call is household-funded (D9), and the usage row carries
-    // `funding` instead.
-    const access = await resolveAiAccess(c.env, c.get('householdId'))
-    const provider = access?.provider ?? null
-
+    // "Your calls, not the household's" (plan §4.1) + the household total beside
+    // it (plan §4.4), both cut by capability (#523 P4). There is deliberately no
+    // `provider` field any more: a call's provider is a per-capability fact, so
+    // the breakdown says which capability spent what instead of naming one
+    // provider a household may not even use for that call.
     const totals = await c.env.DB.prepare(
       `SELECT COUNT(*) AS used,
               COALESCE(SUM(input_tokens), 0) AS input_tokens,
@@ -2073,12 +2172,34 @@ apiApp.get(
         WHERE user_id = ? AND date = ?`
     )
       .bind(userId, today)
-      .first<{
-        used: number
-        input_tokens: number
-        output_tokens: number
-        cached_tokens: number | null
-      }>()
+      .first<UsageTotals>()
+
+    const { results: capabilityRows } = await c.env.DB.prepare(
+      `SELECT capability,
+              COUNT(*) AS used,
+              SUM(CASE WHEN provider = 'questions' THEN 1 ELSE 0 END) AS typed_calls,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              SUM(cached_tokens) AS cached_tokens
+         FROM ai_usage_events
+        WHERE user_id = ? AND date = ?
+        GROUP BY capability
+        -- The enum's own order (decision, reasoning, vision); unknown/null last.
+        ORDER BY capability IS NULL, capability`
+    )
+      .bind(userId, today)
+      .all<UsageCapabilityRow>()
+
+    const householdTotals = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS used,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              SUM(cached_tokens) AS cached_tokens
+         FROM ai_usage_events
+        WHERE household_id = ? AND date = ?`
+    )
+      .bind(householdId, today)
+      .first<UsageTotals>()
 
     const res = c.json({
       used: totals?.used ?? 0,
@@ -2086,7 +2207,20 @@ apiApp.get(
       output_tokens: totals?.output_tokens ?? 0,
       // SUM over all-null cached figures is NULL: unreported, not zero.
       cached_tokens: totals?.cached_tokens ?? null,
-      provider,
+      capabilities: (capabilityRows ?? []).map((row) => ({
+        capability: row.capability,
+        used: row.used,
+        typed_calls: row.typed_calls,
+        input_tokens: row.input_tokens,
+        output_tokens: row.output_tokens,
+        cached_tokens: row.cached_tokens,
+      })),
+      household: {
+        used: householdTotals?.used ?? 0,
+        input_tokens: householdTotals?.input_tokens ?? 0,
+        output_tokens: householdTotals?.output_tokens ?? 0,
+        cached_tokens: householdTotals?.cached_tokens ?? null,
+      },
     })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
@@ -2098,7 +2232,8 @@ apiApp.get(
 apiApp.get(
   '/api/admin/ai/usage',
   describeRoute({
-    description: 'AI usage totals and per-user breakdown over a recent range (admin-only).',
+    description:
+      'AI usage totals with per-capability, per-user and per-household breakdowns over a recent range (admin-only).',
     security: [{ cookieAuth: [] }],
     parameters: [
       {
@@ -2115,7 +2250,7 @@ apiApp.get(
           'application/json': {
             schema: {
               type: 'object',
-              required: ['range', 'since', 'totals', 'users'],
+              required: ['range', 'since', 'totals', 'users', 'households'],
               properties: {
                 range: { type: 'string', enum: ['24h', '7d', '30d'] },
                 since: { type: 'string', description: 'ISO instant the range starts at' },
@@ -2127,6 +2262,7 @@ apiApp.get(
                     'output_tokens',
                     'cached_tokens',
                     'cache_hit_rate',
+                    'capabilities',
                   ],
                   properties: {
                     calls: { type: 'integer' },
@@ -2136,6 +2272,34 @@ apiApp.get(
                     cache_hit_rate: {
                       type: ['number', 'null'],
                       description: 'cached/input; null when input is 0 or cache unreported',
+                    },
+                    capabilities: {
+                      type: 'array',
+                      description:
+                        'Totals broken down by capability; typed_calls are calls a typed (questions) provider answered, which report no tokens (not token-billed)',
+                      items: {
+                        type: 'object',
+                        required: [
+                          'capability',
+                          'calls',
+                          'typed_calls',
+                          'input_tokens',
+                          'output_tokens',
+                          'cached_tokens',
+                        ],
+                        properties: {
+                          capability: {
+                            type: ['string', 'null'],
+                            description:
+                              "The capability that was served: 'decision', 'reasoning', 'vision', or null for pre-gateway history",
+                          },
+                          calls: { type: 'integer' },
+                          typed_calls: { type: 'integer' },
+                          input_tokens: { type: 'integer' },
+                          output_tokens: { type: 'integer' },
+                          cached_tokens: { type: ['integer', 'null'] },
+                        },
+                      },
                     },
                   },
                 },
@@ -2156,6 +2320,34 @@ apiApp.get(
                     properties: {
                       user_id: { type: 'string' },
                       email: { type: ['string', 'null'] },
+                      calls: { type: 'integer' },
+                      input_tokens: { type: 'integer' },
+                      output_tokens: { type: 'integer' },
+                      cached_tokens: { type: ['integer', 'null'] },
+                      cache_hit_rate: { type: ['number', 'null'] },
+                      last_used: { type: 'string' },
+                    },
+                  },
+                },
+                households: {
+                  type: 'array',
+                  description:
+                    'Totals broken down by the household that paid (the cross-household cut; D9 funding view)',
+                  items: {
+                    type: 'object',
+                    required: [
+                      'household_id',
+                      'name',
+                      'calls',
+                      'input_tokens',
+                      'output_tokens',
+                      'cached_tokens',
+                      'cache_hit_rate',
+                      'last_used',
+                    ],
+                    properties: {
+                      household_id: { type: ['string', 'null'] },
+                      name: { type: ['string', 'null'] },
                       calls: { type: 'integer' },
                       input_tokens: { type: 'integer' },
                       output_tokens: { type: 'integer' },
@@ -2197,6 +2389,24 @@ apiApp.get(
         cached_tokens: number | null
       }>()
 
+    // The cross-household cut (D1's funding view, plan §4.1): who paid, per
+    // capability, over the same range. One query each, grouped in SQL.
+    const { results: capabilityRows } = await c.env.DB.prepare(
+      `SELECT capability,
+              COUNT(*) AS calls,
+              SUM(CASE WHEN provider = 'questions' THEN 1 ELSE 0 END) AS typed_calls,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              SUM(cached_tokens) AS cached_tokens
+         FROM ai_usage_events
+        WHERE ts >= ?
+        GROUP BY capability
+        -- The enum's own order (decision, reasoning, vision); unknown/null last.
+        ORDER BY capability IS NULL, capability`
+    )
+      .bind(since)
+      .all<AdminUsageCapabilityRow>()
+
     const { results: userRows } = await c.env.DB.prepare(
       `SELECT e.user_id,
               u.email,
@@ -2223,6 +2433,34 @@ apiApp.get(
         last_used: string
       }>()
 
+    // Rows whose household was deleted keep their history with household_id
+    // SET NULL (0041): they group under a null household, name null.
+    const { results: householdRows } = await c.env.DB.prepare(
+      `SELECT e.household_id AS household_id,
+              h.name AS name,
+              COUNT(*) AS calls,
+              COALESCE(SUM(e.input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(e.output_tokens), 0) AS output_tokens,
+              SUM(e.cached_tokens) AS cached_tokens,
+              MAX(e.ts) AS last_used
+         FROM ai_usage_events e
+         LEFT JOIN households h ON h.id = e.household_id
+        WHERE e.ts >= ?
+        GROUP BY e.household_id
+        -- household_id tiebreaks equal last_used stamps so the order is stable.
+        ORDER BY last_used DESC, household_id ASC`
+    )
+      .bind(since)
+      .all<{
+        household_id: string | null
+        name: string | null
+        calls: number
+        input_tokens: number
+        output_tokens: number
+        cached_tokens: number | null
+        last_used: string
+      }>()
+
     const res = c.json({
       range,
       since,
@@ -2232,10 +2470,28 @@ apiApp.get(
         output_tokens: totals?.output_tokens ?? 0,
         cached_tokens: totals?.cached_tokens ?? null,
         cache_hit_rate: cacheHitRate(totals?.cached_tokens ?? null, totals?.input_tokens ?? 0),
+        capabilities: (capabilityRows ?? []).map((row) => ({
+          capability: row.capability,
+          calls: row.calls,
+          typed_calls: row.typed_calls,
+          input_tokens: row.input_tokens,
+          output_tokens: row.output_tokens,
+          cached_tokens: row.cached_tokens,
+        })),
       },
       users: userRows.map((row) => ({
         user_id: row.user_id,
         email: row.email ?? null,
+        calls: row.calls,
+        input_tokens: row.input_tokens,
+        output_tokens: row.output_tokens,
+        cached_tokens: row.cached_tokens,
+        cache_hit_rate: cacheHitRate(row.cached_tokens, row.input_tokens),
+        last_used: row.last_used,
+      })),
+      households: (householdRows ?? []).map((row) => ({
+        household_id: row.household_id,
+        name: row.name ?? null,
         calls: row.calls,
         input_tokens: row.input_tokens,
         output_tokens: row.output_tokens,
@@ -2308,7 +2564,10 @@ apiApp.post(
         persona_ai_role: string | null
       }>()
 
-    const access = await resolveAiAccess(c.env, householdId)
+    // Chat answers are a REASONING call (#523 P4, plan §5.5): the capability is
+    // resolved once for this request and the door dispatches on that handle.
+    const aiCtx = { env: c.env, userId, householdId }
+    const access = await resolveAccess(aiCtx, 'reasoning')
     if (!access) {
       return c.json(
         {
@@ -2322,7 +2581,10 @@ apiApp.post(
     // daily cap; BYOK is the norm and no rate limit is ever applied, #523).
 
     let reply: string
-    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
+    // The attempt's call dimensions + tokens: success overwrites them below,
+    // and the TEST_MODE stub records the resolved assignment with zero tokens.
+    let usedCall: AiCall = access.call
+    let tokenUsage: TokenUsage = EMPTY_USAGE
     if (c.env.TEST_MODE === 'true') {
       reply = `(test) You asked: "${message}". Based on your household stock, consider checking your low items soon.`
     } else {
@@ -2389,9 +2651,8 @@ apiApp.post(
         }>()
 
       try {
-        reply = await sendChatMessage(
-          access.provider,
-          access.apiKey,
+        const result = await sendChatMessage(
+          { ...aiCtx, access },
           {
             persona: settings
               ? {
@@ -2406,18 +2667,15 @@ apiApp.post(
             recentPurchases: recentPurchases.results || [],
           },
           message,
-          history || [],
-          {
-            baseUrl: access.baseUrl,
-            model: access.model,
-            thinkingLevel: access.thinkingLevel,
-            onUsage: usageCollector(tokenUsage),
-          }
+          history || []
         )
+        reply = result.text
+        usedCall = result.call
+        tokenUsage = result.usage
       } catch (err) {
         // The provider billed the failed attempt's input tokens; record them
         // as the call's event even though no reply came back.
-        await recordAiCallUsage(c.env, userId, access, tokenUsage)
+        await recordAiFailureUsage(c.env, userId, err)
         return c.json(
           {
             error: `AI chat failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -2427,7 +2685,7 @@ apiApp.post(
       }
     }
 
-    await recordAiCallUsage(c.env, userId, access, tokenUsage)
+    await recordAiCallUsage(c.env, userId, usedCall, tokenUsage)
 
     const res = c.json({ reply })
     res.headers.set('Cache-Control', 'private, no-cache')
@@ -2482,7 +2740,12 @@ apiApp.post(
       return c.json({ error: validationError }, 400)
     }
 
-    const access = await resolveAiAccess(c.env, householdId)
+    // THE SCAN-TO-VISION FIX (#523 P4, plan §5.5): a receipt is read by the
+    // VISION capability, not by the text/reasoning model the legacy shim
+    // dispatched every path to. A household that set a vision model expects it
+    // to read receipts — this is that expectation, made true.
+    const aiCtx = { env: c.env, userId, householdId }
+    const access = await resolveAccess(aiCtx, 'vision')
     if (!access) {
       return c.json(
         {
@@ -2502,7 +2765,9 @@ apiApp.post(
     }
 
     let scanResult
-    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
+    // The attempt's call dimensions + tokens (success overwrites them).
+    let usedCall: AiCall = access.call
+    let tokenUsage: TokenUsage = EMPTY_USAGE
     if (c.env.TEST_MODE === 'true') {
       scanResult = {
         store_name: 'Indomaret',
@@ -2515,22 +2780,22 @@ apiApp.post(
       }
     } else {
       try {
-        scanResult = await extractReceiptItems(
-          file.data,
-          file.type,
-          access.provider,
-          access.apiKey,
-          {
-            baseUrl: access.baseUrl,
-            model: access.model,
-            thinkingLevel: access.thinkingLevel,
-            onUsage: usageCollector(tokenUsage),
-          }
-        )
+        const result = await vision({
+          ...aiCtx,
+          access,
+          // The feature's prompt and the image, in one user turn.
+          parts: [
+            { type: 'text', text: buildScanPrompt() },
+            { type: 'image', bytes: file.data, mimeType: file.type },
+          ],
+        })
+        scanResult = parseScanResult(result.text)
+        usedCall = result.call
+        tokenUsage = result.usage
       } catch (err) {
         // The provider billed the failed attempt's input tokens; record them
         // as the call's event even though no scan came back.
-        await recordAiCallUsage(c.env, userId, access, tokenUsage)
+        await recordAiFailureUsage(c.env, userId, err)
         return c.json(
           {
             error: `AI scan failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -2541,7 +2806,7 @@ apiApp.post(
       }
     }
 
-    await recordAiCallUsage(c.env, userId, access, tokenUsage)
+    await recordAiCallUsage(c.env, userId, usedCall, tokenUsage)
 
     const imageUrl: string | null = getSignedUrl()
 
@@ -4003,9 +4268,11 @@ apiApp.post(
     const userId = c.get('userId')
     const limit = c.req.valid('json').limit ?? REVIEW_EVALUATE_MAX
     const mode = await getReviewMode(c.env.DB)
-    const access = await resolveReviewAiAccess(c.env, userId)
-    const aiConfigured = access !== null
-    if (mode === 'manual' || !access) {
+    // ONE decision-capability read for this request (#523 P4): the handle is
+    // reused for every item the probe evaluates.
+    const resolved = await resolveReviewAiAccess(c.env, userId)
+    const aiConfigured = resolved !== null
+    if (mode === 'manual' || !resolved) {
       const res = c.json({ evaluated: 0, applied: 0, mode, aiConfigured })
       res.headers.set('Cache-Control', 'private, no-cache')
       return res
@@ -4013,7 +4280,13 @@ apiApp.post(
     // Auto also applies verdicts the probe already cached (no re-billing):
     // switching assist → auto must act on them, not leave them stranded.
     const alreadyApplied = mode === 'auto' ? await applyCachedAutoVerdicts(c.env.DB, limit) : 0
-    const outcome = await evaluatePendingReviews(c.env, { mode, access, userId, limit })
+    const outcome = await evaluatePendingReviews(c.env, {
+      mode,
+      access: resolved.access,
+      userId,
+      householdId: resolved.householdId,
+      limit,
+    })
     const res = c.json({
       evaluated: outcome.evaluated,
       applied: outcome.applied + alreadyApplied,
@@ -5358,12 +5631,14 @@ apiApp.post(
     const householdId = c.get('householdId')
 
     // Currency is the only user preference this route needs; the AI access is
-    // the household's assignment through the door (#523 P3).
+    // the household's assignment through the door (#523 P3). A shopping plan is
+    // a REASONING call (#523 P4, plan §5.5), resolved once for this request.
     const settings = await c.env.DB.prepare('SELECT currency FROM user_settings WHERE user_id = ?')
       .bind(userId)
       .first<{ currency: string | null }>()
 
-    const access = await resolveAiAccess(c.env, householdId)
+    const aiCtx = { env: c.env, userId, householdId }
+    const access = await resolveAccess(aiCtx, 'reasoning')
     if (!access) {
       return c.json(
         {
@@ -5438,7 +5713,9 @@ apiApp.post(
       price_estimate: number | null
       why: string
     }>
-    const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
+    // The attempt's call dimensions + tokens (success overwrites them).
+    let usedCall: AiCall = access.call
+    let tokenUsage: TokenUsage = EMPTY_USAGE
 
     if (c.env.TEST_MODE === 'true') {
       generatedItems = [
@@ -5469,25 +5746,21 @@ apiApp.post(
       ]
     } else {
       try {
-        generatedItems = await generateAiPlan(
-          access.provider,
-          access.apiKey,
+        const plan = await generateAiPlan(
+          { ...aiCtx, access },
           lowStock.results || [],
           expiring.results || [],
           recentPurchases.results || [],
           stores || [],
-          settings?.currency || 'IDR',
-          {
-            baseUrl: access.baseUrl,
-            model: access.model,
-            thinkingLevel: access.thinkingLevel,
-            onUsage: usageCollector(tokenUsage),
-          }
+          settings?.currency || 'IDR'
         )
+        generatedItems = plan.items
+        usedCall = plan.call
+        tokenUsage = plan.usage
       } catch (err) {
         // The provider billed the failed attempt's input tokens; record them
         // as the call's event even though no plan came back.
-        await recordAiCallUsage(c.env, userId, access, tokenUsage)
+        await recordAiFailureUsage(c.env, userId, err)
         return c.json(
           {
             error: `AI plan generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -5497,7 +5770,7 @@ apiApp.post(
       }
     }
 
-    await recordAiCallUsage(c.env, userId, access, tokenUsage)
+    await recordAiCallUsage(c.env, userId, usedCall, tokenUsage)
 
     const storeLabels = new Map(stores.map((s) => [s.id, s.label]))
 

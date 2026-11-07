@@ -33,13 +33,12 @@ describe('usageMeterModel', () => {
 
   it('exposes calls and token counts with no limit, percent, warn or danger (#353)', () => {
     const meter = usageMeterModel({
-      provider: 'Gemini',
       used: 17,
       input_tokens: 1200,
       output_tokens: 350,
       cached_tokens: 700,
     })
-    expect(meter).toEqual({
+    expect(meter).toMatchObject({
       used: 17,
       inputTokens: 1200,
       outputTokens: 350,
@@ -49,6 +48,45 @@ describe('usageMeterModel', () => {
     expect(meter.warn).toBeUndefined()
     expect(meter.danger).toBeUndefined()
     expect(meter.pct).toBeUndefined()
+    // No single provider any more: the capability rows are the attribution.
+    expect(meter).not.toHaveProperty('provider')
+    expect(meter.capabilities).toEqual([])
+    expect(meter.household).toBeNull()
+  })
+
+  it('normalizes the per-capability breakdown and the household cut (#523 P4)', () => {
+    const meter = usageMeterModel({
+      used: 3,
+      input_tokens: 1500,
+      output_tokens: 180,
+      cached_tokens: null,
+      capabilities: [
+        {
+          capability: 'decision',
+          used: 1,
+          typed_calls: 1,
+          input_tokens: 0,
+          output_tokens: 0,
+          cached_tokens: null,
+        },
+        { capability: null, used: 2, typed_calls: 0, input_tokens: 1500, output_tokens: 180 },
+      ],
+      household: { used: 9, input_tokens: 3000, output_tokens: 900, cached_tokens: 1500 },
+    })
+    expect(meter.capabilities).toEqual([
+      {
+        capability: 'decision',
+        calls: 1,
+        typedCalls: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+      },
+      // A pre-gateway row keeps a null capability — "unknown", not a guess.
+      { capability: null, calls: 2, typedCalls: 0, inputTokens: 1500, outputTokens: 180 },
+    ])
+    expect(meter.household).toEqual({ used: 9, inputTokens: 3000, outputTokens: 900 })
+    // Unknown (provider reported no cache) stays unknown, never a 0%.
+    expect(meter.cacheHitRate).toBeNull()
   })
 
   it('has no source dimension at all (the shared server key is retired, D8/D9)', () => {

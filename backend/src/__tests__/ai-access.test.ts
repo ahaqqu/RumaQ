@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vite-plus/test'
 import type { Env } from '../types.js'
 import { encryptAiKey } from '../lib/crypto.js'
-import { resolveAiAccess } from '../lib/ai-access.js'
 import { loadHouseholdAiConfig, resolveAccess } from '../lib/ai/capabilities.js'
 import { accessMaterial } from '../lib/ai/key-material.js'
 import { deleteExpiredAiUsageEvents, recordAiUsageEvent } from '../lib/ai/usage.js'
@@ -356,6 +355,44 @@ describe('resolveAccess (household capability ladder)', () => {
     warn.mockRestore()
   })
 
+  it('resolves EACH capability to its own assignment, never a shared primary (#523 P4)', async () => {
+    // The legacy bridge picked reasoning → decision → vision once and served
+    // every route from it; the receipt scan therefore sent an image to the text
+    // model. After P4 each call site resolves its own capability, so three
+    // assignments on two providers must come back as three distinct calls.
+    await seedHousehold()
+    const visionProvider = await addProvider({
+      id: 'p-vision',
+      label: 'Vision',
+      kind: 'gemini',
+      preset: 'gemini',
+      key: 'sk-vision',
+    })
+    sqlite
+      .prepare(`UPDATE ai_capabilities SET provider_id = ?, model = ? WHERE capability = 'vision'`)
+      .run(visionProvider, 'gemini-3.6-flash')
+
+    const reasoning = await resolveAccess(ctx(), 'reasoning')
+    const decision = await resolveAccess(ctx(), 'decision')
+    const vision = await resolveAccess(ctx(), 'vision')
+
+    expect(reasoning?.call).toMatchObject({
+      capability: 'reasoning',
+      providerId: 'p-1',
+      providerKind: 'openai-compatible',
+      model: 'gpt-4o-mini',
+    })
+    expect(decision?.call).toMatchObject({ capability: 'decision', providerId: 'p-1' })
+    // The scan path's access is the vision ROW: another provider, its own model.
+    expect(vision?.call).toMatchObject({
+      capability: 'vision',
+      providerId: 'p-vision',
+      providerKind: 'gemini',
+      model: 'gemini-3.6-flash',
+    })
+    expect(accessMaterial(vision!)?.apiKey).toBe('sk-vision')
+  })
+
   it('ignores retired RUMAQ_SERVER_AI_* bindings entirely (env present but inert)', async () => {
     addUser('u1')
     addHousehold('h1')
@@ -378,121 +415,6 @@ describe('resolveAccess (household capability ladder)', () => {
     expect(
       await resolveAccess({ env: legacyEnv, userId: 'u1', householdId: 'h1' }, 'vision')
     ).toBeNull()
-  })
-})
-
-// --- the legacy bridge (household-scoped since P3) -------------------------
-
-describe('resolveAiAccess (legacy single-provider bridge)', () => {
-  it('maps the household assignment onto the legacy dispatcher shape', async () => {
-    await seedHousehold()
-
-    const access = await resolveAiAccess(env, 'h1')
-
-    expect(access).toMatchObject({
-      provider: 'openai',
-      apiKey: 'sk-household',
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini',
-      visionModel: 'gpt-4o-vision',
-      thinkingLevel: 'low',
-      call: { capability: 'reasoning', householdId: 'h1', funding: 'household' },
-    })
-    // P3 dropped `keySource`: every call is household-funded (D9).
-    expect(access).not.toHaveProperty('keySource')
-  })
-
-  it('falls back to the decision assignment when reasoning is unconfigured', async () => {
-    await seedHousehold()
-    sqlite.prepare(`DELETE FROM ai_capabilities WHERE capability = 'reasoning'`).run()
-
-    const access = await resolveAiAccess(env, 'h1')
-    expect(access?.call.capability).toBe('decision')
-    expect(access?.model).toBe('gpt-4o-mini')
-    // The vision assignment still supplies the vision model.
-    expect(access?.visionModel).toBe('gpt-4o-vision')
-  })
-
-  it('falls back to the primary model when vision points at another provider', async () => {
-    await seedHousehold()
-    const second = await addProvider({
-      id: 'p-2',
-      label: 'Gemini',
-      kind: 'gemini',
-      preset: 'gemini',
-      key: 'sk-gemini',
-    })
-    sqlite
-      .prepare(`UPDATE ai_capabilities SET provider_id = ? WHERE capability = 'vision'`)
-      .run(second)
-
-    const access = await resolveAiAccess(env, 'h1')
-    // The legacy access is one provider: it cannot borrow another row's model.
-    expect(access?.provider).toBe('openai')
-    expect(access?.visionModel).toBe('gpt-4o-mini')
-  })
-
-  it('returns null for an empty account and for a typed-only household (no chat wire)', async () => {
-    addUser('u1')
-    addHousehold('h1')
-    addMember('h1', 'u1')
-    addUser('u2')
-    addHousehold('h2', 'u2')
-    addMember('h2', 'u2')
-    const typed = await addProvider({
-      id: 'p-typed',
-      householdId: 'h2',
-      key: 'sk-typed',
-      kind: 'questions',
-      preset: null,
-      baseUrl: 'https://api.typesafe.ai/v1/systemone',
-    })
-    addCapability('decision', typed, { householdId: 'h2', model: 'jev-latest' })
-
-    expect(await resolveAiAccess(env, 'h1')).toBeNull()
-    expect(await resolveAiAccess(env, 'h2')).toBeNull()
-  })
-
-  it('resolves ONLY the household it is handed (no user_settings re-derivation)', async () => {
-    // P3 deleted the settings projection that used to carry the household
-    // (plan §4.3): the middleware's `c.get('householdId')` is the single source.
-    // Two households, both configured with different keys; the caller's
-    // user_settings row points at h2, yet passing h1 must resolve h1's rows.
-    await seedHousehold()
-    addUser('u2')
-    addHousehold('h2', 'u2')
-    addMember('h2', 'u2')
-    const second = await addProvider({
-      id: 'p-h2',
-      householdId: 'h2',
-      label: 'Gemini',
-      kind: 'gemini',
-      preset: 'gemini',
-      key: 'sk-h2',
-    })
-    addCapability('reasoning', second, { householdId: 'h2', model: 'gemini-3.6-flash' })
-    sqlite.prepare(`UPDATE user_settings SET active_household_id = 'h2' WHERE user_id = 'u1'`).run()
-    // No settings row for u1 would also do: resolution never reads one.
-    sqlite.prepare(`DELETE FROM user_settings WHERE user_id = 'u1'`).run()
-
-    expect((await resolveAiAccess(env, 'h1'))?.apiKey).toBe('sk-household')
-    expect((await resolveAiAccess(env, 'h2'))?.apiKey).toBe('sk-h2')
-    expect((await resolveAiAccess(env, null))?.apiKey).toBeUndefined()
-  })
-
-  it('ignores env-only server access (present but inert)', async () => {
-    // D8: there is no server ladder, no env key, no platform default.
-    await seedHousehold()
-    const legacyEnv = {
-      ...env,
-      RUMAQ_SERVER_AI_PROVIDER: 'gemini',
-      RUMAQ_SERVER_AI_KEY: 'sk-server',
-      RUMAQ_SERVER_AI_MODEL: 'gemini-3.6-pro',
-    } as unknown as Env['Bindings']
-    expect((await resolveAiAccess(legacyEnv, 'h1'))?.apiKey).toBe('sk-household')
-    // A household with no rows stays unconfigured even with every env var set.
-    expect(await resolveAiAccess(legacyEnv, 'h-empty')).toBeNull()
-    expect(await resolveAiAccess(legacyEnv, null)).toBeNull()
   })
 })
 

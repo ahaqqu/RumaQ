@@ -1,23 +1,76 @@
 // Vault expiry OCR (ahaqqu/RumaQ#433): the post-model validation and policy
 // layer for reading a document image's expiry date with the user's OWN AI
-// provider (resolved through lib/ai-access.ts — never the pipeline, never a
-// hardcoded provider). Split from the route so the rules are unit-testable
-// without HTTP, per the vault's page/lib split (lib/document-expiry.ts owns
-// the calendar rules, this owns the OCR round-trip rules; lib/ai.ts owns the
-// provider call itself). runExpiryOcr additionally OWNS the attempt's audit
-// pairing — the ai_usage_events row + the outcome log line, written once, on
-// every path that reaches the provider decision (review T4-B2: the invariant
-// lives here, not as two parallel copies in the route).
+// provider. Split from the route so the rules are unit-testable without HTTP,
+// per the vault's page/lib split (lib/document-expiry.ts owns the calendar
+// rules, this owns the OCR round-trip rules; the AI door owns the provider
+// call). runExpiryOcr additionally OWNS the attempt's audit pairing — the
+// ai_usage_events row + the outcome log line, written once, on every path that
+// reaches the provider decision (review T4-B2: the invariant lives here, not as
+// two parallel copies in the route).
+//
+// #523 P4: this is a VISION call, through the door's `vision()` on the
+// household's `vision` capability. Before P4 the shim dispatched it on the
+// legacy single-provider path with `ai_vision_model ?? ai_model`; the capability
+// assignment is now the only input, so the model, the provider row and the
+// usage row's dimensions all come from the resolved handle.
 //
 // The model NEVER writes: this module only produces a suggestion the expiry
 // editor prefills, and the user confirms through the existing #426 PATCH
 // (which keeps writing its own 'update' audit row).
 
 import type { Env } from '../types.js'
-import { extractExpiryDate, usageCollector, type TokenUsage } from './ai.js'
-import type { AiAccess } from './ai-access.js'
+import {
+  AiError,
+  EMPTY_USAGE,
+  parseJsonResponse,
+  vision,
+  type AiAccessHandle,
+  type AiCall,
+  type TokenUsage,
+} from './ai/index.js'
 import { recordAiUsageEvent } from './ai/usage.js'
 import { isValidExpiryDate } from './document-expiry.js'
+
+// The vault's expiry-date extraction prompt (issue #433). LOAD-BEARING and
+// owner-reviewed like the pipeline prompts: the model's answer feeds the
+// expiry editor, so the rules pin WHICH date counts (validity end — never an
+// issuance, registration, purchase, or effective-from date) and how the many
+// Indonesian/English document printings map to one ISO date. KTP has no
+// expiry — returning null there is correct, not a failure. Moved out of
+// lib/ai.ts when the P2 shim was deleted in P4 (#523): a prompt is product
+// policy and stays outside the door.
+export function buildExpiryExtractionPrompt(): string {
+  return `You are a document OCR assistant. Look at the scanned document image and find the date the document's VALIDITY ENDS (its expiry date).
+
+Return ONLY valid JSON in this exact format:
+{ "expires_on": "YYYY-MM-DD or null" }
+
+What counts as the expiry date:
+- The date the document STOPS being valid: "Berlaku s/d", "Masa Berlaku", "Berlaku Hingga", "Valid Until", "Valid Thru", "Date of Expiry", "Expiry Date", "Kedaluwarsa", "Sampai Dengan".
+- Examples by document type: passport → "Date of Expiry"/"Tanggal Kedaluwarsa"; SIM (driver licence) → "Berlaku Hingga"; STNK → "MASA BERLAKU S/D" (the LATER date shown, not "TGL JATUH TEMPO"); insurance policy → the period END date; warranty card → end of the warranty period.
+
+What does NOT count (never return these):
+- Issue, issuance, registration, purchase, or effective-from dates: "Tanggal Terbit", "Diterbitkan", "Issued on", "Tgl Pembelian", "Tanggal Effective", "Valid From".
+- Payment due dates, instalment schedules, or any other date on the page.
+
+Rules:
+- Convert whatever printed format you find (DD-MM-YYYY, DD/MM/YYYY, "DD MMM YYYY", Indonesian month names like MEI/AGT/DES) into YYYY-MM-DD.
+- Documents that never expire (for example a KTP/e-KTP marked "SEUMUR HIDUP") have no expiry: return null.
+- If the expiry date is absent, unreadable, or ambiguous, return null. Never guess.
+- Do NOT include any text outside the JSON.`
+}
+
+// The raw model answer: the date field is validated below (a real calendar
+// date or JSON null), never used as-is. The key must be PRESENT — a missing
+// `expires_on` is an off-schema answer, not "no date found".
+export type RawExpiryExtraction = {
+  expires_on?: string | null
+}
+
+/** The one extraction policy (the door's parseJsonResponse) + the feature's shape. */
+export function parseExpiryExtraction(content: string): RawExpiryExtraction {
+  return parseJsonResponse<RawExpiryExtraction>(content)
+}
 
 // Vision models read pixels, not PDFs: only the vault's image types can ride
 // the vision call. PDF is a legitimate vault type (sniff allowlist in
@@ -90,11 +143,17 @@ export function logExpiryOcrOutcome(args: {
  * provider decision, failures included — the audit pairing (usage event +
  * outcome log), written exactly once (review T4-B2). Throws on failure AFTER
  * auditing; the route owns mapping the rethrown error to the HTTP response.
+ *
+ * The usage row is the call's own dimensions (#523 P4): capability 'vision',
+ * the household that paid, the funding source, and the model actually sent —
+ * read from the call result, or from `AiError.call`/`usage` when the provider
+ * billed an attempt that produced no usable answer ("failure carries the
+ * bill", plan §2.2). A `not_configured` failure has no call and writes nothing.
  */
 export async function runExpiryOcr(
   env: Env['Bindings'],
   args: {
-    access: AiAccess
+    access: AiAccessHandle
     imageBytes: ArrayBuffer
     contentType: string
     userId: string
@@ -102,35 +161,24 @@ export async function runExpiryOcr(
     documentId: string
     fileId: string
   }
-): Promise<{ suggestion: string | null; outcome: ExpiryOcrOutcome }> {
-  // The model asked for IS the usage event's model — vision work records
-  // access.visionModel (null = the provider default applied). The capability is
-  // THIS feature's ('vision'), not whichever assignment the P1 bridge resolved
-  // first: a backfilled household has all three assigned, so the primary is
-  // 'reasoning' and would stamp a vision call as a reasoning one (#523 P1,
-  // thermos A5). providerKind/providerId/funding stay what was actually called.
-  const usageCall = {
-    ...args.access.call,
-    capability: 'vision' as const,
-    model: args.access.visionModel,
-  }
-  const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
-
+): Promise<{ suggestion: string | null; outcome: ExpiryOcrOutcome; model: string | null }> {
   // The audit pairing exists ONCE (T4-B2): every path that reaches the
   // provider decision funnels through here — success, TEST_MODE, provider
   // failure, validation rejection (the provider billed those inputs even
   // when the answer was unusable).
-  const finish = async (outcome: ExpiryOcrOutcome): Promise<void> => {
-    await recordAiUsageEvent(env, {
-      userId: args.userId,
-      call: usageCall,
-      usage: tokenUsage,
-    })
+  const finish = async (
+    call: AiCall | null,
+    usage: TokenUsage,
+    outcome: ExpiryOcrOutcome
+  ): Promise<void> => {
+    if (call) {
+      await recordAiUsageEvent(env, { userId: args.userId, call, usage })
+    }
     logExpiryOcrOutcome({
       householdId: args.householdId,
       documentId: args.documentId,
       fileId: args.fileId,
-      model: args.access.visionModel,
+      model: call?.model ?? null,
       outcome,
     })
   }
@@ -138,31 +186,42 @@ export async function runExpiryOcr(
   let suggestion: string | null
   if (env.TEST_MODE === 'true') {
     suggestion = '2027-06-05'
-  } else {
-    try {
-      const raw = await extractExpiryDate(
-        args.imageBytes,
-        args.contentType,
-        args.access.provider,
-        args.access.apiKey,
-        {
-          baseUrl: args.access.baseUrl,
-          model: args.access.visionModel,
-          // No thinkingLevel: extraction wants a cheap, deterministic read,
-          // and reasoning_effort on a vision-only model is a provider 400.
-          onUsage: usageCollector(tokenUsage),
-        }
-      )
-      // The post-model gate (issue #433): a real calendar date or null —
-      // anything else is a rejection the user sees, never a silent guess.
-      suggestion = normalizeExpirySuggestion(raw.expires_on)
-    } catch (err) {
-      await finish(err instanceof DocumentOcrError ? 'rejected' : 'failed')
-      throw err
-    }
+    await finish(args.access.call, EMPTY_USAGE, expiryOcrOutcome(suggestion))
+    return { suggestion, outcome: expiryOcrOutcome(suggestion), model: args.access.call.model }
+  }
+
+  // The attempt's bill, captured BEFORE validation: a rejected answer was still
+  // a provider call, and the provider billed those inputs.
+  let call: AiCall | null = null
+  let usage: TokenUsage = EMPTY_USAGE
+  try {
+    const result = await vision({
+      env,
+      userId: args.userId,
+      householdId: args.householdId,
+      access: args.access,
+      // One user turn: the feature's prompt text and the image it reads.
+      parts: [
+        { type: 'text', text: buildExpiryExtractionPrompt() },
+        { type: 'image', bytes: args.imageBytes, mimeType: args.contentType },
+      ],
+    })
+    call = result.call
+    usage = result.usage
+    // The post-model gate (issue #433): a real calendar date or null —
+    // anything else is a rejection the user sees, never a silent guess.
+    suggestion = normalizeExpirySuggestion(parseExpiryExtraction(result.text).expires_on)
+  } catch (err) {
+    const failure = err instanceof AiError ? err : null
+    await finish(
+      call ?? failure?.call ?? null,
+      call ? usage : (failure?.usage ?? EMPTY_USAGE),
+      err instanceof DocumentOcrError ? 'rejected' : 'failed'
+    )
+    throw err
   }
 
   const outcome = expiryOcrOutcome(suggestion)
-  await finish(outcome)
-  return { suggestion, outcome }
+  await finish(call, usage, outcome)
+  return { suggestion, outcome, model: call?.model ?? null }
 }

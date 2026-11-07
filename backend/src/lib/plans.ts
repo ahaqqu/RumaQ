@@ -1,7 +1,14 @@
-import type { PlanItem } from './ai.js'
-import { completeText, type AiCallOpts } from './ai.js'
+import {
+  completeText,
+  parseJsonResponse,
+  type AiAccessHandle,
+  type AiCall,
+  type AiCtx,
+  type TokenUsage,
+} from './ai/index.js'
 import {
   object,
+  parse,
   strictObject,
   string,
   number,
@@ -13,6 +20,16 @@ import {
   minValue,
   nullish,
 } from 'valibot'
+
+/** One generated plan line, as the save route consumes it. */
+export type PlanItem = {
+  name: string
+  qty: number
+  unit: string
+  store_id: string | null
+  price_estimate: number | null
+  why: string
+}
 
 export const planGenerateResponseSchema = object({
   items: array(
@@ -130,9 +147,22 @@ Rules:
 - Do NOT include any text outside the JSON.`
 }
 
+export type GeneratedPlan = {
+  items: PlanItem[]
+  call: AiCall
+  usage: TokenUsage
+}
+
+/**
+ * One plan generation through the door (#523 P4): the caller has resolved the
+ * `reasoning` capability. The prompt is product policy and stays here; the
+ * answer goes through the ONE JSON extraction policy (`parseJsonResponse`,
+ * plan §2.5 — the previous inline `content.match(/\{...\}/)` copy is gone) and
+ * then through this feature's own schema (planGenerateResponseSchema), which is
+ * the plan route's validation contract.
+ */
 export async function generateAiPlan(
-  provider: string,
-  apiKey: string,
+  ai: AiCtx & { access: AiAccessHandle },
   lowStock: Array<{
     name: string
     qty: number
@@ -148,26 +178,37 @@ export async function generateAiPlan(
   }>,
   recentPurchases: Array<{ name: string; store_label: string | null }>,
   stores: Array<{ id: string; label: string }>,
-  currency: string,
-  opts?: AiCallOpts
-): Promise<PlanItem[]> {
+  currency: string
+): Promise<GeneratedPlan> {
   const promptStores = stores.map((s) => ({ label: s.label }))
   const prompt = buildPlanPrompt(lowStock, expiring, recentPurchases, promptStores, currency)
   const systemPrompt = `You are a helpful shopping plan assistant. Generate concise, practical shopping plans in JSON format.`
 
-  const content = await completeText(provider, apiKey, systemPrompt, prompt, opts)
+  const result = await completeText({
+    env: ai.env,
+    userId: ai.userId,
+    householdId: ai.householdId,
+    access: ai.access,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt },
+    ],
+  })
 
-  const parsed = JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] || '{}') as Record<string, unknown>
-  const items = (parsed.items || []) as Record<string, unknown>[]
+  const raw = parseJsonResponse<unknown>(result.text)
+  const parsed = parse(planGenerateResponseSchema, raw)
 
-  return items.slice(0, 50).map((it) => ({
-    name: String(it.name || ''),
-    qty: Number(it.qty) || 1,
-    unit: String(it.unit || 'pcs'),
-    store_id: it.store_id ? String(it.store_id) : null,
-    price_estimate: it.price_estimate != null ? Math.round(Number(it.price_estimate)) : null,
-    why: String(it.why || ''),
+  // The prompt caps the list at 50; the slice is the belt, not the policy.
+  const items = parsed.items.slice(0, 50).map((it) => ({
+    name: it.name,
+    qty: it.qty,
+    unit: it.unit,
+    store_id: it.store_id ?? null,
+    price_estimate: it.price_estimate != null ? Math.round(it.price_estimate) : null,
+    why: it.why,
   }))
+
+  return { items, call: result.call, usage: result.usage }
 }
 
 export function normalizeItemName(name: string): string {

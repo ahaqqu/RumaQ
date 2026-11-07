@@ -428,7 +428,6 @@ export {
   buildAiUsageEventStatement,
   deleteExpiredAiUsageEvents,
   recordAiUsageEvent,
-  usageCollector,
 } from './usage.js'
 export type { AiUsageEvent } from './usage.js'
 

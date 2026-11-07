@@ -96,6 +96,10 @@ export function Setting({ title, desc, children, className, highlight, stack = f
   )
 }
 
+// The personal usage meter (#523 P4): the acting member's today totals, broken
+// down by capability, with the household total beside them. No provider title:
+// a household may point each capability at a different row, so the capability
+// IS the attribution.
 export function UsageMeter({ usage }) {
   const { t } = useTranslation()
   const meter = usageMeterModel(usage)
@@ -105,7 +109,7 @@ export function UsageMeter({ usage }) {
     <div className="flex flex-col gap-3 p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="font-semibold text-base">{usage.provider}</div>
+          <div className="font-semibold text-base">{t('ui.usageTitle')}</div>
           <div className="text-sm text-text-muted mt-0.5">
             {t('ui.usageTokensToday', {
               used: meter.used,
@@ -124,6 +128,49 @@ export function UsageMeter({ usage }) {
           </div>
         )}
       </div>
+
+      {meter.capabilities.length > 0 && (
+        <ul className="flex flex-col gap-1.5">
+          {meter.capabilities.map((row) => (
+            <li
+              key={row.capability ?? 'unknown'}
+              className="flex items-start justify-between gap-4 text-sm"
+            >
+              <span className="text-text-muted">
+                {row.capability
+                  ? t(`settings.ai.${row.capability}`)
+                  : t('ui.usageUnknownCapability')}
+              </span>
+              <span className="text-right">
+                <span className="tabular-nums">
+                  {t('ui.usageTokensToday', {
+                    used: row.calls,
+                    input: formatTokens(row.inputTokens),
+                    output: formatTokens(row.outputTokens),
+                  })}
+                </span>
+                {/* A typed provider reports no tokens: say so instead of a 0. */}
+                {row.typedCalls > 0 && (
+                  <span className="block text-xs text-text-muted">
+                    {t('ui.usageTypedCalls', { calls: row.typedCalls })}
+                  </span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {meter.household && (
+        <div className="text-sm text-text-muted">
+          {t('ui.usageHouseholdToday', {
+            used: meter.household.used,
+            input: formatTokens(meter.household.inputTokens),
+            output: formatTokens(meter.household.outputTokens),
+          })}
+        </div>
+      )}
+
       <div className="text-sm text-text-muted">{t('ui.ownKeyUnlimited')}</div>
     </div>
   )

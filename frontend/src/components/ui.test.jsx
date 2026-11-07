@@ -168,12 +168,10 @@ describe('UsageMeter', () => {
     const { container } = render(
       React.createElement(UsageMeter, {
         usage: {
-          provider: 'Gemini',
           used: 5,
           input_tokens: 1200,
           output_tokens: 350,
           cached_tokens: 700,
-          key_source: 'user',
         },
       })
     )
@@ -189,16 +187,14 @@ describe('UsageMeter', () => {
     const { container } = render(
       React.createElement(UsageMeter, {
         usage: {
-          provider: 'Gemini',
           used: 4,
           input_tokens: 1200,
           output_tokens: 350,
           cached_tokens: 700,
-          key_source: 'user',
         },
       })
     )
-    expect(container.textContent).toContain('Gemini')
+    expect(container.textContent).toContain('AI usage today')
     expect(container.textContent).toContain('4 calls today')
     expect(container.textContent).toContain('1.2k in')
     expect(container.textContent).toContain('350 out')
@@ -206,11 +202,51 @@ describe('UsageMeter', () => {
     expect(container.textContent).toContain('cache hit rate')
   })
 
+  it('breaks the meter down by capability with the household total beside it (#523 P4)', () => {
+    const { container } = render(
+      React.createElement(UsageMeter, {
+        usage: {
+          used: 3,
+          input_tokens: 1500,
+          output_tokens: 180,
+          cached_tokens: 700,
+          capabilities: [
+            {
+              capability: 'decision',
+              used: 1,
+              typed_calls: 1,
+              input_tokens: 0,
+              output_tokens: 0,
+              cached_tokens: null,
+            },
+            {
+              capability: 'reasoning',
+              used: 2,
+              typed_calls: 0,
+              input_tokens: 1500,
+              output_tokens: 180,
+              cached_tokens: 700,
+            },
+          ],
+          household: { used: 5, input_tokens: 3800, output_tokens: 380, cached_tokens: 700 },
+        },
+      })
+    )
+    // The capability is the attribution: Decision and Reasoning each get a row.
+    expect(container.textContent).toContain('Decision')
+    expect(container.textContent).toContain('Reasoning')
+    // A typed provider's calls are counted, and said to be not token-billed —
+    // never a misleading 0.
+    expect(container.textContent).toContain('1 typed — not token-billed')
+    // The household cut, readable by every member.
+    expect(container.textContent).toContain('Household today: 5 calls')
+    expect(container.textContent).toContain('3.8k in')
+  })
+
   it('never renders a cap meter, limit, warn or danger (#353)', () => {
     const { container } = render(
       React.createElement(UsageMeter, {
         usage: {
-          provider: 'Gemini',
           used: 999,
           input_tokens: 1200,
           output_tokens: 350,

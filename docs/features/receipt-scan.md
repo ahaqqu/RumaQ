@@ -12,7 +12,7 @@ The receipt-scan feature lets users take or upload a photo of a shopping receipt
 ## How it works
 
 1. User captures a receipt image on the **Add from Receipt** page
-2. Image is uploaded to R2 and sent to the configured AI provider (OpenCode, OpenAI, Anthropic, Gemini, Ollama Cloud, or a custom OpenAI-compatible endpoint) for OCR parsing
+2. Image is uploaded to R2 and sent to the household's own AI provider through the **vision** capability (whatever provider and model the household assigned to it — #523 P4; before P4 the image went to the reasoning/text model)
 3. The AI returns a structured list of items, a store guess, and a date guess
 4. Existing stores and items are fetched for the review form
 5. User reviews and edits parsed data, optionally matching items to existing catalog entries
@@ -31,7 +31,8 @@ The receipt-scan feature lets users take or upload a photo of a shopping receipt
 ## Source
 
 - `backend/src/apps/api.ts` — scan, purchase creation, items listing
-- `backend/src/lib/ai.ts` — AI provider abstraction and OCR prompt
+- `backend/src/lib/receipt-scan.ts` — the OCR prompt and the strict answer parser
+- `backend/src/lib/ai/index.ts` — the AI door: `resolveAccess(ctx, 'vision')` + `vision()`
 - `backend/src/lib/receipts.ts` — R2 upload helper
 - `frontend/src/pages/AddFromReceipt.jsx` — 4-phase scan UI
 - `frontend/src/lib/api.js` — `scanReceipt`, `createPurchase`, `getItems`, `getStores`

@@ -45,11 +45,12 @@ const ALLOWED_CORE_IMPORTS_BY_PLUGIN: Readonly<Record<string, readonly string[]>
     // Port #1 (§4.2): the StorageAdapter contract the registry injects.
     'ports/storage/index.ts',
     // The AI seam for the vault's expiry OCR (#433): the route resolves the
-    // caller's own provider through the one loader (user key → server
-    // fallback) and document-ocr owns the provider call plus the round-trip
-    // rules. Granted per-module on purpose — the vault gets exactly the AI
-    // surface its "Read date" action consumes, not all of lib/.
-    'lib/ai-access.ts',
+    // household's `vision` capability through the door and document-ocr owns
+    // the provider call plus the round-trip rules. Granted per-module on
+    // purpose — the vault gets exactly the AI surface its "Read date" action
+    // consumes, not all of lib/. #523 P4: the shim (`lib/ai-access.ts`) is
+    // gone; the door (`lib/ai/index.ts`) is the published API now.
+    'lib/ai/index.ts',
     'lib/document-ocr.ts',
   ],
 }
@@ -197,7 +198,7 @@ describe('plugin import boundary (#435)', () => {
         'lib/zip.ts',
         'lib/households.ts',
         'ports/storage/index.ts',
-        'lib/ai-access.ts',
+        'lib/ai/index.ts',
         'lib/document-ocr.ts',
       ].sort()
     )

@@ -16,8 +16,11 @@ personalisation, storage locations, recorded stores, and display preferences.
   Reasoning, a thinking level; Vision has no thinking knob.
 - **Test connection** — probes the provider row's stored key and endpoint and
   reports an outcome, never the provider's error body.
-- **Usage meter** — calls and tokens today plus the cache hit rate when the
-  provider reports one; usage is recorded, never capped.
+- **Usage meter** — the acting member's calls and tokens today broken down by
+  capability, the household's total beside it, and the cache hit rate when the
+  provider reports one; a typed (decision) provider's calls are counted as "not
+  token-billed" rather than shown as zero. Usage is recorded, never capped
+  (#523 P4).
 - **Persona** — define user role and AI role for personalised tone, with
   AI-generated copy
 - **Locations** — manage storage locations (Kulkas, Freezer, etc.) used in inventory
