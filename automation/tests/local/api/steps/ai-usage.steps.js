@@ -61,7 +61,12 @@ defineFeature(feature, (test) => {
     })
   })
 
-  test('A completed chat call is recorded exactly once', ({ given, when, then, and }) => {
+  // #523 P1: the resolver now reads the household's ai_providers /
+  // ai_capabilities, and the legacy PATCH /api/settings ai_key write is DEAD
+  // until P3 ships the provider/capability endpoints (plan §3.4, §4.3). The
+  // scenario is pending, NOT deleted: P3 reactivates it against
+  // POST /api/ai/providers + PUT /api/ai/capabilities/*.
+  test.skip('A completed chat call is recorded exactly once', ({ given, when, then, and }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })
@@ -86,7 +91,12 @@ defineFeature(feature, (test) => {
     })
   })
 
-  test('Heavy recorded usage never blocks AI calls', ({ given, when, then, and }) => {
+  // #523 P1: the resolver now reads the household's ai_providers /
+  // ai_capabilities, and the legacy PATCH /api/settings ai_key write is DEAD
+  // until P3 ships the provider/capability endpoints (plan §3.4, §4.3). The
+  // scenario is pending, NOT deleted: P3 reactivates it against
+  // POST /api/ai/providers + PUT /api/ai/capabilities/*.
+  test.skip('Heavy recorded usage never blocks AI calls', ({ given, when, then, and }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
     })

@@ -127,11 +127,12 @@ import { extractReceiptItems, usageCollector, type TokenUsage } from '../lib/ai.
 import {
   loadUserAiSettings,
   resolveAiAccess,
-  recordAiUsageEvent,
   USER_AI_SETTINGS_COLUMNS,
   type AiAccess,
   type UserAiSettings,
 } from '../lib/ai-access.js'
+import { loadHouseholdAiConfig } from '../lib/ai/capabilities.js'
+import { recordAiUsageEvent } from '../lib/ai/usage.js'
 import { sendChatMessage } from '../lib/chat.js'
 import {
   settingsPatchSchema,
@@ -1080,7 +1081,160 @@ apiApp.get(
     description: 'Returns the current authenticated user settings.',
     security: [{ cookieAuth: [] }],
     responses: {
-      200: { description: 'OK' },
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: [
+                'motion_preference',
+                'language',
+                'ai_provider',
+                'ai_base_url',
+                'ai_model',
+                'ai_vision_model',
+                'ai_thinking_level',
+                'persona_user_role',
+                'persona_ai_role',
+                'persona_enabled',
+                'theme_hue',
+                'active_household_id',
+                'active_household_name',
+                'has_ai_key',
+                'server_ai_available',
+                'ai_providers',
+                'ai_capabilities',
+                'ai_status',
+              ],
+              properties: {
+                motion_preference: { type: 'string' },
+                language: { type: ['string', 'null'] },
+                ai_provider: { type: ['string', 'null'] },
+                ai_base_url: { type: ['string', 'null'] },
+                ai_model: { type: ['string', 'null'] },
+                ai_vision_model: { type: ['string', 'null'] },
+                ai_thinking_level: { type: ['string', 'null'] },
+                persona_user_role: { type: ['string', 'null'] },
+                persona_ai_role: { type: ['string', 'null'] },
+                persona_enabled: { type: 'boolean' },
+                theme_hue: { type: ['integer', 'null'] },
+                active_household_id: { type: 'string' },
+                active_household_name: { type: ['string', 'null'] },
+                has_ai_key: { type: 'boolean' },
+                server_ai_available: {
+                  type: 'boolean',
+                  description:
+                    'Retired by D8 (#523 P1): always false; removed in P3 with the UI option that reads it.',
+                },
+                ai_providers: {
+                  type: 'array',
+                  description:
+                    "The household's provider rows (#523 P1). Never includes key material — has_key is the only signal.",
+                  items: {
+                    type: 'object',
+                    required: [
+                      'id',
+                      'label',
+                      'kind',
+                      'base_url',
+                      'default_model',
+                      'has_key',
+                      'created_at',
+                      'updated_at',
+                    ],
+                    properties: {
+                      id: { type: 'string' },
+                      label: { type: 'string' },
+                      kind: {
+                        type: 'string',
+                        enum: ['openai-compatible', 'anthropic', 'gemini', 'questions'],
+                      },
+                      base_url: { type: ['string', 'null'] },
+                      default_model: {
+                        type: ['string', 'null'],
+                        description:
+                          'Provider-level default model; a capability with no model inherits it (#523).',
+                      },
+                      has_key: { type: 'boolean' },
+                      created_at: { type: 'string' },
+                      updated_at: { type: 'string' },
+                    },
+                  },
+                },
+                ai_capabilities: {
+                  type: 'object',
+                  description:
+                    'One assignment per capability (null fields = not configured); source=household means the row exists.',
+                  required: ['decision', 'reasoning', 'vision'],
+                  properties: {
+                    decision: {
+                      type: 'object',
+                      required: [
+                        'provider_id',
+                        'provider_label',
+                        'model',
+                        'thinking_level',
+                        'source',
+                      ],
+                      properties: {
+                        provider_id: { type: ['string', 'null'] },
+                        provider_label: { type: ['string', 'null'] },
+                        model: { type: ['string', 'null'] },
+                        thinking_level: { type: ['string', 'null'] },
+                        source: { type: 'string', enum: ['household', 'none'] },
+                      },
+                    },
+                    reasoning: {
+                      type: 'object',
+                      required: [
+                        'provider_id',
+                        'provider_label',
+                        'model',
+                        'thinking_level',
+                        'source',
+                      ],
+                      properties: {
+                        provider_id: { type: ['string', 'null'] },
+                        provider_label: { type: ['string', 'null'] },
+                        model: { type: ['string', 'null'] },
+                        thinking_level: { type: ['string', 'null'] },
+                        source: { type: 'string', enum: ['household', 'none'] },
+                      },
+                    },
+                    vision: {
+                      type: 'object',
+                      required: [
+                        'provider_id',
+                        'provider_label',
+                        'model',
+                        'thinking_level',
+                        'source',
+                      ],
+                      properties: {
+                        provider_id: { type: ['string', 'null'] },
+                        provider_label: { type: ['string', 'null'] },
+                        model: { type: ['string', 'null'] },
+                        thinking_level: { type: ['string', 'null'] },
+                        source: { type: 'string', enum: ['household', 'none'] },
+                      },
+                    },
+                  },
+                },
+                ai_status: {
+                  type: 'object',
+                  required: ['decision', 'reasoning', 'vision'],
+                  properties: {
+                    decision: { type: 'string', enum: ['household', 'none'] },
+                    reasoning: { type: 'string', enum: ['household', 'none'] },
+                    vision: { type: 'string', enum: ['household', 'none'] },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
       401: { description: 'Unauthorized' },
     },
   }),
@@ -1119,6 +1273,11 @@ apiApp.get(
       .bind(resolvedHouseholdId)
       .first<{ name: string }>()
 
+    // The additive AI-gateway block (#523 P1): the household's providers, its
+    // three assignments, and the resolver's usable status per capability. One
+    // read; no key material leaves this module.
+    const aiConfig = await loadHouseholdAiConfig(c.env, resolvedHouseholdId)
+
     const res = c.json({
       motion_preference: settings?.motion_preference ?? 'standard',
       language: settings?.language ?? null,
@@ -1134,7 +1293,14 @@ apiApp.get(
       active_household_id: resolvedHouseholdId,
       active_household_name: household?.name ?? null,
       has_ai_key: settings?.encrypted_ai_key != null && settings.encrypted_ai_key !== '',
-      server_ai_available: Boolean(c.env.RUMAQ_SERVER_AI_PROVIDER && c.env.RUMAQ_SERVER_AI_KEY),
+      // D8 retired the shared server key (#523 P1): the platform cannot serve
+      // an AI call any more, so this is the truthful constant. The legacy AI
+      // settings fields above stay untouched (and dead) until P3 drops them
+      // with the screen and this field together with the UI option reading it.
+      server_ai_available: false,
+      ai_providers: aiConfig.providers,
+      ai_capabilities: aiConfig.capabilities,
+      ai_status: aiConfig.status,
     })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
@@ -1441,21 +1607,15 @@ apiApp.post(
 
 // One completed AI call → one ai_usage_events row. Shared by the chat, scan
 // and plan-generate routes; usage is analytics only and never gates a call.
+// The row carries the access's capability/household/funding dimensions (#523
+// P1) and no longer writes key_source (D9 replaced it).
 function recordAiCallUsage(
   env: Env['Bindings'],
   userId: string,
   access: AiAccess,
   usage: TokenUsage
 ): Promise<void> {
-  return recordAiUsageEvent(env, {
-    userId,
-    provider: access.provider,
-    model: access.model,
-    keySource: access.keySource,
-    inputTokens: usage.input_tokens,
-    outputTokens: usage.output_tokens,
-    cachedTokens: usage.cached_tokens,
-  })
+  return recordAiUsageEvent(env, { userId, call: access.call, usage })
 }
 
 apiApp.get(
@@ -1768,7 +1928,7 @@ apiApp.post(
     }
 
     // Usage is recorded per call but never gates it (issue #353 removed the
-    // daily cap; BYOK is the norm and the server key is uncapped too).
+    // daily cap; BYOK is the norm and no rate limit is ever applied, #523).
 
     let reply: string
     const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }

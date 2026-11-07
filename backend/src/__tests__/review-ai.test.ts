@@ -72,7 +72,69 @@ beforeEach(async () => {
   // the usage-event FK are the semantics under test, so opt in explicitly.
   sqlite.exec('PRAGMA foreign_keys = ON')
   sqlite.prepare('INSERT INTO users (id, email) VALUES (?, ?)').run(ADMIN, 'admin@rumaq.dev')
+  // Every review evaluation resolves the acting admin's household capability
+  // (#523 P1). Seed one configured household; the "not configured" tests call
+  // clearReviewAi() explicitly.
+  sqlite
+    .prepare('INSERT INTO households (id, name, created_by) VALUES (?, ?, ?)')
+    .run(HOUSEHOLD, 'Review household', ADMIN)
+  sqlite
+    .prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role, joined_at)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .run('m-review', HOUSEHOLD, ADMIN, 'owner', '2026-01-01 00:00:00')
+  sqlite
+    .prepare(`INSERT INTO user_settings (id, user_id, active_household_id) VALUES (?, ?, ?)`)
+    .run('s-review', ADMIN, HOUSEHOLD)
+  await seedReviewProvider()
 })
+
+const HOUSEHOLD = 'h-review'
+const PROVIDER = 'p-review'
+const REVIEW_MODEL = 'review-model'
+
+/** One keyed provider assigned to all three capabilities, as P1 backfills. */
+async function seedReviewProvider(
+  options: {
+    model?: string
+    key?: string
+    kind?: string
+    preset?: string | null
+    baseUrl?: string | null
+  } = {}
+): Promise<void> {
+  const encrypted = await encryptAiKey(options.key ?? 'sk-household', ENCRYPTION_KEY)
+  sqlite
+    .prepare(
+      `INSERT INTO ai_providers
+         (id, household_id, label, kind, preset, base_url, encrypted_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      PROVIDER,
+      HOUSEHOLD,
+      'OpenAI (imported)',
+      options.kind ?? 'openai-compatible',
+      options.preset === undefined ? 'openai' : options.preset,
+      options.baseUrl ?? null,
+      encrypted
+    )
+  for (const capability of ['decision', 'reasoning', 'vision']) {
+    sqlite
+      .prepare(
+        `INSERT INTO ai_capabilities (household_id, capability, provider_id, model)
+         VALUES (?, ?, ?, ?)`
+      )
+      .run(HOUSEHOLD, capability, PROVIDER, options.model ?? REVIEW_MODEL)
+  }
+}
+
+/** The "unconfigured household" state: no assignments, no providers. */
+function clearReviewAi(): void {
+  sqlite.prepare('DELETE FROM ai_capabilities').run()
+  sqlite.prepare('DELETE FROM ai_providers').run()
+}
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -83,10 +145,8 @@ afterEach(() => {
 function env(overrides: Record<string, unknown> = {}): Env['Bindings'] {
   return {
     DB: d1,
-    // The server-key fallback (no user settings row in most tests).
-    RUMAQ_SERVER_AI_PROVIDER: 'openai',
-    RUMAQ_SERVER_AI_KEY: 'sk-server',
-    RUMAQ_SERVER_AI_MODEL: 'server-review-model',
+    // #523 P1: there is no server-key fallback any more (D8). The reviewer
+    // resolves the acting admin's HOUSEHOLD providers, seeded per test below.
     WORKER_ENCRYPTION_KEY: ENCRYPTION_KEY,
     ...overrides,
   } as unknown as Env['Bindings']
@@ -209,7 +269,7 @@ describe('migration 0038 (review AI)', () => {
     const rows = sqlite.prepare('SELECT key, value FROM app_settings').all()
     expect(rows).toEqual([{ key: 'review_mode', value: 'assist' }])
     expect(await getReviewMode(d1)).toBe('assist')
-    // No seeded review_ai_user_id: the cron starts on the server fallback.
+    // No seeded review_ai_user_id: the cron has no acting admin to resolve.
     expect(await getReviewAiUserId(d1)).toBeNull()
   })
 
@@ -350,14 +410,11 @@ describe('parseReviewVerdict (strict post-model gate)', () => {
 
 describe('evaluatePendingReviews', () => {
   it('sends the resolved provider model and the pair through the shared AI layer', async () => {
-    // The user's OWN settings — changing ai_model here changes the reviewer
-    // with no code change (the issue's acceptance criterion).
+    // The household's own assignment — changing its reasoning model changes
+    // the reviewer with no code change (the issue's acceptance criterion).
     sqlite
-      .prepare(
-        `INSERT INTO user_settings (id, user_id, ai_provider, ai_model, encrypted_ai_key)
-         VALUES ('s1', ?, 'openai', 'gpt-reviewer-user-choice', ?)`
-      )
-      .run(ADMIN, await encryptAiKey('sk-user', ENCRYPTION_KEY))
+      .prepare(`UPDATE ai_capabilities SET model = ? WHERE capability = 'reasoning'`)
+      .run('gpt-reviewer-user-choice')
     insertItem('r1')
 
     const fetchMock = providerMock(() =>
@@ -398,20 +455,25 @@ describe('evaluatePendingReviews', () => {
     ])
     // Assist never decides: the item stays pending for the human.
     expect(itemRow('r1')).toMatchObject({ status: 'pending', decided_by: null })
-    // Usage is recorded exactly once, against the acting admin and model.
+    // Usage is recorded exactly once, against the acting admin and the
+    // household that paid (#523 P1: capability + household_id + funding).
     expect(usageRows()).toEqual([
       expect.objectContaining({
         user_id: ADMIN,
-        provider: 'openai',
+        provider: 'openai-compatible',
         model: 'gpt-reviewer-user-choice',
+        capability: 'reasoning',
+        household_id: HOUSEHOLD,
+        funding: 'household',
         input_tokens: 120,
         output_tokens: 12,
-        key_source: 'user',
+        // key_source is no longer written (D9 replaced it).
+        key_source: null,
       }),
     ])
   })
 
-  it('falls back to the server key and its model (the cron path)', async () => {
+  it('resolves the stored admin household for the cron path (no server fallback)', async () => {
     insertItem('r1')
     const fetchMock = providerMock(() =>
       answer('{"verdict":"different","confidence":0.3,"reason":"x"}')
@@ -421,9 +483,14 @@ describe('evaluatePendingReviews', () => {
     const body = JSON.parse(
       String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body)
     )
-    expect(body.model).toBe('server-review-model')
-    expect(verdictRows()[0]).toMatchObject({ provider: 'openai', model: 'server-review-model' })
-    expect(usageRows()[0]).toMatchObject({ key_source: 'server', user_id: ADMIN })
+    expect(body.model).toBe(REVIEW_MODEL)
+    expect(verdictRows()[0]).toMatchObject({ provider: 'openai', model: REVIEW_MODEL })
+    expect(usageRows()[0]).toMatchObject({
+      key_source: null,
+      user_id: ADMIN,
+      household_id: HOUSEHOLD,
+      funding: 'household',
+    })
   })
 
   it('degrades a malformed answer to no verdict and no decision', async () => {
@@ -616,7 +683,7 @@ describe('runReviewAiSweep (the cron tick)', () => {
   it('evaluates and applies in auto mode with the stored admin access', async () => {
     insertItem('r1')
     await setReviewMode(d1, 'auto', ADMIN)
-    // The stored admin has no user key -> the server fallback serves the sweep.
+    // The stored admin resolves through its household's seeded assignment.
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const fetchMock = providerMock(() =>
       answer('{"verdict":"same","confidence":0.9,"reason":"Same pack."}')
@@ -696,26 +763,24 @@ describe('runReviewAiSweep (the cron tick)', () => {
     expect(itemRow('r1').status).toBe('approved')
   })
 
-  it('evaluates without a stored admin, skipping the usage row (unattributed)', async () => {
+  it('makes no provider call without a stored admin (the server fallback is gone)', async () => {
     insertItem('r1')
-    // Auto enabled with no acting user and no stored admin: the sweep falls
-    // back to the server key, and there is no users row to attribute usage to.
+    // Auto enabled with no acting user and no stored admin: there is no access
+    // to resolve (D8 removed the server key), so the tick is a no-op.
     await setReviewMode(d1, 'auto')
     vi.spyOn(console, 'log').mockImplementation(() => {})
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const fetchMock = providerMock(() =>
       answer('{"verdict":"same","confidence":0.95,"reason":"Same."}')
     )
 
-    expect(await runReviewAiSweep(env())).toMatchObject({
+    expect(await runReviewAiSweep(env())).toEqual({
       mode: 'auto',
-      evaluated: 1,
-      applied: 1,
+      evaluated: 0,
+      applied: 0,
+      failed: 0,
     })
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalled()
     expect(usageRows()).toEqual([])
-    // Never silent: the cost visibility gap is logged with the model.
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ran unattributed'))
   })
 
   it('still applies the floor to a cached verdict below it', async () => {
@@ -990,14 +1055,8 @@ describe('review AI admin routes', () => {
     })
     expect(body.autoMinConfidence).toBe(0.8)
 
-    const notConfigured = await request(
-      '/api/admin/review/mode',
-      {},
-      {
-        RUMAQ_SERVER_AI_PROVIDER: undefined,
-        RUMAQ_SERVER_AI_KEY: undefined,
-      }
-    )
+    clearReviewAi()
+    const notConfigured = await request('/api/admin/review/mode', {})
     expect(await notConfigured.json()).toEqual({
       mode: 'assist',
       aiConfigured: false,
@@ -1017,10 +1076,8 @@ describe('review AI admin routes', () => {
 
     // No AI configured here: the auto switch's waitUntil sweep degrades to
     // zero calls, exactly like the cron would.
-    const auto = await request('/api/admin/review/mode', jsonRequest('PUT', { mode: 'auto' }), {
-      RUMAQ_SERVER_AI_PROVIDER: undefined,
-      RUMAQ_SERVER_AI_KEY: undefined,
-    })
+    clearReviewAi()
+    const auto = await request('/api/admin/review/mode', jsonRequest('PUT', { mode: 'auto' }))
     expect(auto.status).toBe(200)
     expect(await auto.json()).toEqual({
       mode: 'auto',
@@ -1037,10 +1094,8 @@ describe('review AI admin routes', () => {
 
   it('POST /api/admin/review/evaluate degrades to 200/aiConfigured:false without a provider', async () => {
     insertItem('r1')
-    const res = await request('/api/admin/review/evaluate', jsonRequest('POST', {}), {
-      RUMAQ_SERVER_AI_PROVIDER: undefined,
-      RUMAQ_SERVER_AI_KEY: undefined,
-    })
+    clearReviewAi()
+    const res = await request('/api/admin/review/evaluate', jsonRequest('POST', {}))
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({
       evaluated: 0,
@@ -1103,7 +1158,7 @@ describe('review AI admin routes', () => {
         verdict: 'same',
         confidence: 0.7,
         reason: 'Same brand and size.',
-        model: 'server-review-model',
+        model: REVIEW_MODEL,
         humanAgreement: null,
       },
     })

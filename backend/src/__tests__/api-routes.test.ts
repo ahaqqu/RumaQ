@@ -27,6 +27,51 @@ function createMockEnv(overrides = {}) {
   }
 }
 
+// The #523 P1 resolver reads two shapes through the same mocked D1: the
+// settings projection (household_id; the legacy columns are no longer read)
+// and the capability JOIN row. One fixture carries both halves so a single
+// `.mockResolvedValue` answers either read; `mockResolvedValueOnce` chains add
+// the extra capability read explicitly.
+function aiConfiguredRow(overrides: Record<string, unknown> = {}) {
+  return {
+    // settings-projection half
+    household_id: 'h1',
+    ai_provider: null,
+    encrypted_ai_key: null,
+    persona_enabled: 0,
+    persona_user_role: null,
+    persona_ai_role: null,
+    // capability-join half (what resolveAccess actually reads)
+    capability: 'reasoning',
+    model: null,
+    thinking_level: null,
+    provider_id: 'p-1',
+    kind: 'openai-compatible',
+    preset: 'openai',
+    base_url: null,
+    // The capability leaves its model blank, so the provider default serves it
+    // (#523 owner decision) — this is the common "one alias per key" shape.
+    default_model: 'gpt-4o-mini',
+    encrypted_key: ENCRYPTED_KEY,
+    ...overrides,
+  }
+}
+
+function aiCapabilityRow(overrides: Record<string, unknown> = {}) {
+  return {
+    capability: 'reasoning',
+    model: null,
+    thinking_level: null,
+    provider_id: 'p-1',
+    kind: 'openai-compatible',
+    preset: 'openai',
+    base_url: null,
+    default_model: 'gpt-4o-mini',
+    encrypted_key: ENCRYPTED_KEY,
+    ...overrides,
+  }
+}
+
 describe('api routes', () => {
   it('/api/health returns ok', async () => {
     const res = await apiApp.request('/api/health', {}, createMockEnv())
@@ -144,6 +189,221 @@ describe('api routes', () => {
       env
     )
     expect(res.status).toBe(200)
+  })
+
+  // #523 P1: the settings payload gains the household AI block. A fresh
+  // household is empty and honestly "none" per capability — no invented
+  // provider, no server-default affordance (D8).
+  it('/api/settings includes the AI gateway block, all none for a fresh household', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi.fn().mockResolvedValue({
+      motion_preference: 'standard',
+      encrypted_ai_key: null,
+      active_household_id: 'h1',
+    })
+    env.DB.all = vi.fn().mockResolvedValue({ results: [] })
+
+    const res = await apiApp.request('/api/settings', {}, env)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as any
+    expect(body.ai_providers).toEqual([])
+    expect(body.ai_capabilities).toEqual({
+      decision: {
+        provider_id: null,
+        provider_label: null,
+        model: null,
+        thinking_level: null,
+        source: 'none',
+      },
+      reasoning: {
+        provider_id: null,
+        provider_label: null,
+        model: null,
+        thinking_level: null,
+        source: 'none',
+      },
+      vision: {
+        provider_id: null,
+        provider_label: null,
+        model: null,
+        thinking_level: null,
+        source: 'none',
+      },
+    })
+    expect(body.ai_status).toEqual({ decision: 'none', reasoning: 'none', vision: 'none' })
+    // The retired shared key is reported truthfully as unavailable.
+    expect(body.server_ai_available).toBe(false)
+    // P1 is additive: the legacy AI fields (and has_ai_key) are still there —
+    // P3 removes them together with the columns and the Settings screen.
+    expect(body).toHaveProperty('ai_provider')
+    expect(body).toHaveProperty('ai_model')
+    expect(body).toHaveProperty('has_ai_key')
+  })
+
+  it('/api/settings serializes the household providers, assignments and resolver status', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi.fn().mockResolvedValue({
+      motion_preference: 'standard',
+      encrypted_ai_key: null,
+      active_household_id: 'h1',
+    })
+    // One assigned provider (reasoning + vision) and one unassigned provider:
+    // the payload must dedupe the provider and never leak the key.
+    env.DB.all = vi.fn().mockResolvedValue({
+      results: [
+        {
+          id: 'p-1',
+          label: 'OpenAI (imported)',
+          kind: 'openai-compatible',
+          preset: 'openai',
+          base_url: null,
+          default_model: 'gpt-4o-mini',
+          encrypted_key: ENCRYPTED_KEY,
+          created_at: '2026-10-01 00:00:00',
+          updated_at: '2026-10-01 00:00:00',
+          capability: 'reasoning',
+          model: 'gpt-4o-mini',
+          thinking_level: 'low',
+        },
+        {
+          id: 'p-1',
+          label: 'OpenAI (imported)',
+          kind: 'openai-compatible',
+          preset: 'openai',
+          base_url: null,
+          default_model: 'gpt-4o-mini',
+          encrypted_key: ENCRYPTED_KEY,
+          created_at: '2026-10-01 00:00:00',
+          updated_at: '2026-10-01 00:00:00',
+          capability: 'vision',
+          model: 'gpt-4o-vision',
+          thinking_level: null,
+        },
+        {
+          id: 'p-2',
+          label: 'Spare key',
+          kind: 'gemini',
+          preset: 'gemini',
+          base_url: null,
+          default_model: null,
+          encrypted_key: null,
+          created_at: '2026-10-02 00:00:00',
+          updated_at: '2026-10-02 00:00:00',
+          capability: null,
+          model: null,
+          thinking_level: null,
+        },
+      ],
+    })
+
+    const res = await apiApp.request('/api/settings', {}, env)
+    const body = (await res.json()) as any
+    expect(body.ai_providers).toEqual([
+      {
+        id: 'p-1',
+        label: 'OpenAI (imported)',
+        kind: 'openai-compatible',
+        base_url: null,
+        default_model: 'gpt-4o-mini',
+        has_key: true,
+        created_at: '2026-10-01 00:00:00',
+        updated_at: '2026-10-01 00:00:00',
+      },
+      {
+        id: 'p-2',
+        label: 'Spare key',
+        kind: 'gemini',
+        base_url: null,
+        default_model: null,
+        has_key: false,
+        created_at: '2026-10-02 00:00:00',
+        updated_at: '2026-10-02 00:00:00',
+      },
+    ])
+    expect(body.ai_capabilities.reasoning).toEqual({
+      provider_id: 'p-1',
+      provider_label: 'OpenAI (imported)',
+      model: 'gpt-4o-mini',
+      thinking_level: 'low',
+      source: 'household',
+    })
+    expect(body.ai_capabilities.vision).toMatchObject({
+      model: 'gpt-4o-vision',
+      thinking_level: null,
+      source: 'household',
+    })
+    expect(body.ai_capabilities.decision.source).toBe('none')
+    // The keyed rows are usable; the unassigned provider does not make decision
+    // configured.
+    expect(body.ai_status).toEqual({
+      decision: 'none',
+      reasoning: 'household',
+      vision: 'household',
+    })
+    expect(JSON.stringify(body)).not.toContain(ENCRYPTED_KEY)
+    expect(JSON.stringify(body.ai_providers)).not.toContain('sk-household')
+  })
+
+  // §4.3's documented dead write (#523 P1 → P3): the legacy PATCH still 200s
+  // and still writes its own columns, but the resolver reads none of them, and
+  // nothing is written through to the new tables.
+  it('/api/settings PATCH with ai_key is a dead write: 200, legacy write only, new tables untouched', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi.fn().mockResolvedValue({
+      motion_preference: 'standard',
+      encrypted_ai_key: 'v1:existing',
+      active_household_id: 'h1',
+    })
+    env.DB.all = vi.fn().mockResolvedValue({
+      results: [
+        {
+          id: 'p-1',
+          label: 'OpenAI (imported)',
+          kind: 'openai-compatible',
+          preset: 'openai',
+          base_url: null,
+          default_model: 'gpt-4o-mini',
+          encrypted_key: ENCRYPTED_KEY,
+          created_at: '2026-10-01 00:00:00',
+          updated_at: '2026-10-01 00:00:00',
+          capability: 'reasoning',
+          model: 'gpt-4o-mini',
+          thinking_level: 'low',
+        },
+      ],
+    })
+    env.DB.run = vi.fn().mockResolvedValue(undefined)
+
+    const before = (await (await apiApp.request('/api/settings', {}, env)).json()) as any
+    const patch = await apiApp.request(
+      '/api/settings',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ ai_key: 'sk-replacement', ai_provider: 'openai' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+    expect(patch.status).toBe(200)
+    expect(((await patch.json()) as any).has_ai_key).toBe(true)
+    const after = (await (await apiApp.request('/api/settings', {}, env)).json()) as any
+
+    expect(after.ai_providers).toEqual(before.ai_providers)
+    expect(after.ai_capabilities).toEqual(before.ai_capabilities)
+    expect(after.ai_status).toEqual(before.ai_status)
+    expect(after.ai_status).toEqual({
+      decision: 'none',
+      reasoning: 'household',
+      vision: 'none',
+    })
+
+    const sqls = env.DB.prepare.mock.calls.map(([sql]) => String(sql))
+    // The legacy write path still runs…
+    expect(sqls.some((sql) => sql.includes('UPDATE user_settings'))).toBe(true)
+    // …and NOTHING writes through to the gateway tables.
+    expect(
+      sqls.some((sql) => /(INSERT INTO|UPDATE|DELETE FROM) ai_(providers|capabilities)/.test(sql))
+    ).toBe(false)
   })
 
   it('/api/settings rejects a non-HTTPS custom base URL', async () => {
@@ -285,21 +545,12 @@ describe('api routes', () => {
     expect(((await res.json()) as any).has_ai_key).toBe(true)
   })
 
-  it('/api/ai/chat succeeds on the server key regardless of usage volume (cap removed, #353)', async () => {
-    // The daily cap was removed unconditionally: even the shared server key
-    // never gates a call. The call still records an ai_usage_events row.
-    const env = createMockEnv({
-      props: { userId: 'u1', householdId: 'h1' },
-      RUMAQ_SERVER_AI_PROVIDER: 'openai',
-      RUMAQ_SERVER_AI_KEY: 'sk-server',
-    })
-    env.DB.first = vi.fn().mockResolvedValueOnce({
-      ai_provider: null,
-      encrypted_ai_key: null,
-      persona_enabled: 0,
-      persona_user_role: null,
-      persona_ai_role: null,
-    })
+  it('/api/ai/chat succeeds on the household provider regardless of usage volume (cap removed, #353)', async () => {
+    // The daily cap was removed unconditionally: no AI call is ever gated by
+    // usage. The call still records an ai_usage_events row (#523 P1: no server
+    // key exists to fall back to any more).
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi.fn().mockResolvedValue(aiConfiguredRow())
     env.DB.run = vi.fn().mockResolvedValue(undefined)
     const res = await apiApp.request(
       '/api/ai/chat',
@@ -439,20 +690,19 @@ describe('api routes', () => {
     )
   })
 
-  it('/api/ai/usage reports server key source when user has no own key', async () => {
-    const env = createMockEnv({
-      props: { userId: 'u1', householdId: 'h1' },
-      RUMAQ_SERVER_AI_PROVIDER: 'gemini',
-      RUMAQ_SERVER_AI_KEY: 'sk-server',
-    })
+  it('/api/ai/usage reports the household provider and key_source=user (no server source left)', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.first = vi
       .fn()
-      .mockResolvedValueOnce({ ai_provider: null, encrypted_ai_key: null })
+      .mockResolvedValueOnce(aiConfiguredRow())
+      .mockResolvedValueOnce(aiCapabilityRow())
       .mockResolvedValueOnce(null)
     const res = await apiApp.request('/api/ai/usage', {}, env)
     const body = (await res.json()) as any
-    expect(body.key_source).toBe('server')
-    expect(body.provider).toBe('gemini')
+    // 'user' is the only source the resolver can produce after D8.
+    expect(body.key_source).toBe('user')
+    // The legacy dispatcher id, as before the swap (the preset, not the wire).
+    expect(body.provider).toBe('openai')
   })
 
   describe('/api/admin/ai/usage', () => {
@@ -588,13 +838,7 @@ describe('api routes', () => {
 
   it('/api/ai/chat returns TEST_MODE reply', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi.fn().mockResolvedValue({
-      ai_provider: 'gemini',
-      encrypted_ai_key: ENCRYPTED_KEY,
-      persona_enabled: 0,
-      persona_user_role: null,
-      persona_ai_role: null,
-    })
+    env.DB.first = vi.fn().mockResolvedValue(aiConfiguredRow())
     env.DB.all = vi.fn().mockResolvedValue({ results: [] })
     env.DB.run = vi.fn().mockResolvedValue(undefined)
     const res = await apiApp.request(
@@ -612,9 +856,8 @@ describe('api routes', () => {
 
   it('/api/ai/chat returns 402 when AI not configured', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi
-      .fn()
-      .mockResolvedValue({ ai_provider: null, encrypted_ai_key: null, persona_enabled: 0 })
+    // A settings row with a household but no assignment: empty means empty.
+    env.DB.first = vi.fn().mockResolvedValue({ household_id: 'h1' })
     const res = await apiApp.request(
       '/api/ai/chat',
       {
@@ -627,19 +870,9 @@ describe('api routes', () => {
     expect(res.status).toBe(402)
   })
 
-  it('/api/ai/chat never caps server-key users (no usage gate, #353)', async () => {
-    const env = createMockEnv({
-      props: { userId: 'u1', householdId: 'h1' },
-      RUMAQ_SERVER_AI_PROVIDER: 'gemini',
-      RUMAQ_SERVER_AI_KEY: 'sk-server',
-    })
-    env.DB.first = vi.fn().mockResolvedValueOnce({
-      ai_provider: null,
-      encrypted_ai_key: null,
-      persona_enabled: 0,
-      persona_user_role: null,
-      persona_ai_role: null,
-    })
+  it('/api/ai/chat never caps household users (no usage gate, #353)', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi.fn().mockResolvedValue(aiConfiguredRow())
     env.DB.run = vi.fn().mockResolvedValue(undefined)
     const res = await apiApp.request(
       '/api/ai/chat',
@@ -654,18 +887,9 @@ describe('api routes', () => {
     expect(((await res.json()) as any).reply).toContain('test')
   })
 
-  it('/api/ai/chat lets own-key users chat with usage recorded as an event', async () => {
+  it('/api/ai/chat lets household-key users chat with usage recorded as an event', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi.fn().mockResolvedValueOnce({
-      ai_provider: 'gemini',
-      ai_base_url: null,
-      ai_model: null,
-      ai_thinking_level: null,
-      encrypted_ai_key: ENCRYPTED_KEY,
-      persona_enabled: 0,
-      persona_user_role: null,
-      persona_ai_role: null,
-    })
+    env.DB.first = vi.fn().mockResolvedValue(aiConfiguredRow())
     env.DB.run = vi.fn().mockResolvedValue(undefined)
     const res = await apiApp.request(
       '/api/ai/chat',
@@ -685,9 +909,7 @@ describe('api routes', () => {
 
   it('/api/purchases/scan uses TEST_MODE fallback', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi
-      .fn()
-      .mockResolvedValue({ ai_provider: 'gemini', encrypted_ai_key: ENCRYPTED_KEY })
+    env.DB.first = vi.fn().mockResolvedValue(aiConfiguredRow())
     env.DB.run = vi.fn().mockResolvedValue(undefined)
     const file = new File(['x'], 'receipt.jpg', { type: 'image/jpeg' })
     const formData = new FormData()
@@ -704,7 +926,8 @@ describe('api routes', () => {
     })
     env.DB.first = vi
       .fn()
-      .mockResolvedValueOnce({ ai_provider: 'ollama', encrypted_ai_key: ENCRYPTED_KEY })
+      .mockResolvedValueOnce(aiConfiguredRow())
+      .mockResolvedValueOnce(aiCapabilityRow({ preset: 'ollama', provider_id: 'p-ollama' }))
     env.DB.run = vi.fn().mockResolvedValue(undefined)
     // Provider responds with usage but empty content: the key owner is billed
     // for the input tokens even though the scan fails.
@@ -739,7 +962,7 @@ describe('api routes', () => {
 
   it('/api/purchases/scan rejects missing AI config', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi.fn().mockResolvedValue({ ai_provider: null, encrypted_ai_key: null })
+    env.DB.first = vi.fn().mockResolvedValue({ household_id: 'h1' })
     const file = new File(['x'], 'receipt.jpg', { type: 'image/jpeg' })
     const formData = new FormData()
     formData.append('image', file)
@@ -891,11 +1114,7 @@ describe('api routes', () => {
 
   it('/api/plans/generate uses TEST_MODE fallback', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi.fn().mockResolvedValue({
-      ai_provider: 'gemini',
-      encrypted_ai_key: ENCRYPTED_KEY,
-      currency: 'IDR',
-    })
+    env.DB.first = vi.fn().mockResolvedValue(aiConfiguredRow({ currency: 'IDR' }))
     env.DB.all = vi.fn().mockResolvedValue({ results: [{ id: 's1', label: 'Indomaret' }] })
     const res = await apiApp.request('/api/plans/generate', { method: 'POST' }, env)
     expect(res.status).toBe(200)
@@ -904,9 +1123,7 @@ describe('api routes', () => {
 
   it('/api/plans/generate returns 402 when AI not configured', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi
-      .fn()
-      .mockResolvedValue({ ai_provider: null, encrypted_ai_key: null, currency: 'IDR' })
+    env.DB.first = vi.fn().mockResolvedValue({ household_id: 'h1', currency: 'IDR' })
     const res = await apiApp.request('/api/plans/generate', { method: 'POST' }, env)
     expect(res.status).toBe(402)
   })
@@ -1342,11 +1559,7 @@ describe('api routes more branches', () => {
 describe('api routes remaining branches', () => {
   it('/api/plans/generate matches existing items', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi.fn().mockResolvedValue({
-      ai_provider: 'gemini',
-      encrypted_ai_key: ENCRYPTED_KEY,
-      currency: 'IDR',
-    })
+    env.DB.first = vi.fn().mockResolvedValue(aiConfiguredRow({ currency: 'IDR' }))
     env.DB.all = vi.fn().mockResolvedValue({ results: [{ id: 's1', label: 'Indomaret' }] })
     const res = await apiApp.request('/api/plans/generate', { method: 'POST' }, env)
     expect(res.status).toBe(200)

@@ -15,7 +15,8 @@
 
 import type { Env } from '../types.js'
 import { extractExpiryDate, usageCollector, type TokenUsage } from './ai.js'
-import { recordAiUsageEvent, type AiAccess } from './ai-access.js'
+import type { AiAccess } from './ai-access.js'
+import { recordAiUsageEvent } from './ai/usage.js'
 import { isValidExpiryDate } from './document-expiry.js'
 
 // Vision models read pixels, not PDFs: only the vault's image types can ride
@@ -102,14 +103,16 @@ export async function runExpiryOcr(
     fileId: string
   }
 ): Promise<{ suggestion: string | null; outcome: ExpiryOcrOutcome }> {
-  // The model asked for IS the usage event's model — the receipt/chat paths
-  // record access.model, vision work records access.visionModel (null = the
-  // provider default applied).
-  const usageEvent = {
-    userId: args.userId,
-    provider: args.access.provider,
+  // The model asked for IS the usage event's model — vision work records
+  // access.visionModel (null = the provider default applied). The capability is
+  // THIS feature's ('vision'), not whichever assignment the P1 bridge resolved
+  // first: a backfilled household has all three assigned, so the primary is
+  // 'reasoning' and would stamp a vision call as a reasoning one (#523 P1,
+  // thermos A5). providerKind/providerId/funding stay what was actually called.
+  const usageCall = {
+    ...args.access.call,
+    capability: 'vision' as const,
     model: args.access.visionModel,
-    keySource: args.access.keySource,
   }
   const tokenUsage: TokenUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: null }
 
@@ -119,10 +122,9 @@ export async function runExpiryOcr(
   // when the answer was unusable).
   const finish = async (outcome: ExpiryOcrOutcome): Promise<void> => {
     await recordAiUsageEvent(env, {
-      ...usageEvent,
-      inputTokens: tokenUsage.input_tokens,
-      outputTokens: tokenUsage.output_tokens,
-      cachedTokens: tokenUsage.cached_tokens,
+      userId: args.userId,
+      call: usageCall,
+      usage: tokenUsage,
     })
     logExpiryOcrOutcome({
       householdId: args.householdId,

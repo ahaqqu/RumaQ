@@ -3028,7 +3028,8 @@ describe('migration 0038: review AI (#484)', () => {
     db.exec(readFileSync(join(MIGRATIONS_DIR, '0038_review_ai.sql'), 'utf8'))
 
     // Default mode is approve-with-AI; the AI-access owner is NOT seeded (the
-    // cron starts on the server-key fallback until an admin enables auto).
+    // cron has no acting admin until an admin enables auto; #523 P1 removed the
+    // server-key fallback that used to stand in for one).
     expect(db.prepare('SELECT key, value FROM app_settings').all()).toEqual([
       { key: 'review_mode', value: 'assist' },
     ])
@@ -3065,5 +3066,520 @@ describe('migration 0038: review AI (#484)', () => {
     expect(db.prepare('SELECT COUNT(*) AS count FROM review_ai_verdicts').get()).toMatchObject({
       count: 0,
     })
+  })
+})
+
+// The AI gateway (ahaqqu/RumaQ#523, plan §3.2–§3.3): two household-owned tables
+// (providers + one assignment per capability), three dimensions on usage rows,
+// and a backfill that must agree with the runtime's ACTIVE_HOUSEHOLD_SQL rule.
+// Real SQLite (node:sqlite) runs the whole chain, so the CTEs, the window
+// functions, the CHECKs, the expression index and the FK cascades are the
+// database's behaviour, not the test's description of it.
+describe('migration 0041: AI gateway (#523 P1)', () => {
+  const PRE_0041 = () => migrationFiles().filter((file: string) => file < '0041')
+
+  function apply0041(db: Db): void {
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0041_ai_gateway.sql'), 'utf8'))
+  }
+
+  // The legacy world: users, two households, one user in BOTH (active = h2),
+  // per-user AI settings (one keyed custom, one keyless, one non-envelope),
+  // and usage rows from the retired server-key era.
+  function seedLegacy(db: Db): void {
+    const user = db.prepare('INSERT INTO users (id, email, name) VALUES (?, ?, ?)')
+    for (const [id, name] of [
+      ['u1', 'Alice'],
+      ['u2', 'Bob'],
+      ['u3', 'Carol'],
+      ['u4', 'Dave'],
+      ['u5', 'Eve'],
+      ['u6', 'Frank'],
+      ['u7', 'Grace'],
+    ] as const) {
+      user.run(id, `${id}@x`, name)
+    }
+    db.prepare('INSERT INTO households (id, name, created_by) VALUES (?, ?, ?)').run(
+      'h1',
+      'H1',
+      'u1'
+    )
+    db.prepare('INSERT INTO households (id, name, created_by) VALUES (?, ?, ?)').run(
+      'h2',
+      'H2',
+      'u3'
+    )
+    const member = db.prepare(
+      `INSERT INTO household_members (id, household_id, user_id, role, joined_at)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    // u1 owns h1 but joined LAST; u2 is the earliest member. Owner precedence
+    // must still win the capability assignments.
+    member.run('m1', 'h1', 'u1', 'owner', '2026-03-01 00:00:00')
+    member.run('m2', 'h1', 'u2', 'member', '2026-01-01 00:00:00')
+    member.run('m3', 'h1', 'u3', 'member', '2026-02-01 00:00:00')
+    member.run('m4', 'h2', 'u3', 'owner', '2026-04-01 00:00:00')
+    member.run('m5', 'h1', 'u6', 'member', '2026-05-01 00:00:00')
+
+    const settings = db.prepare(
+      `INSERT INTO user_settings
+         (id, user_id, ai_provider, ai_model, ai_vision_model, ai_thinking_level,
+          encrypted_ai_key, active_household_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    settings.run('s1', 'u1', 'openai', 'u1-text', 'u1-vision', 'low', 'v1:U1KEY', 'h1')
+    settings.run('s2', 'u2', 'openai', 'u2-text', null, 'high', 'v1:U2KEY', 'h1')
+    settings.run('s3', 'u3', 'gemini', 'u3-text', null, null, 'v1:U3KEY', 'h2')
+    settings.run('s4', 'u4', 'openai', 'u4-text', null, null, 'v1:U4KEY', null)
+    settings.run('s5', 'u5', 'openai', 'u5-text', null, null, null, 'h1')
+    settings.run('s6', 'u6', 'openai', 'u6-text', null, null, 'plain-slip', 'h1')
+    // u7 has no settings row and no membership at all — skipped by both FKs.
+
+    const usage = db.prepare(
+      `INSERT INTO ai_usage_events
+         (id, user_id, ts, date, provider, model, input_tokens, output_tokens,
+          cached_tokens, key_source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    usage.run('e1', 'u1', '2026-11-01T00:00:00Z', '2026-11-01', 'gemini', 'old', 1, 2, null, 'user')
+    usage.run(
+      'e2',
+      'u2',
+      '2026-11-01T00:00:00Z',
+      '2026-11-01',
+      'gemini',
+      'old',
+      1,
+      2,
+      null,
+      'server'
+    )
+    usage.run('e3', 'u3', '2026-11-01T00:00:00Z', '2026-11-01', 'gemini', 'old', 1, 2, null, 'user')
+    usage.run('e4', 'u4', '2026-11-01T00:00:00Z', '2026-11-01', 'gemini', 'old', 1, 2, null, 'user')
+    usage.run('e5', 'u2', '2026-11-01T00:00:00Z', '2026-11-01', 'gemini', 'old', 1, 2, null, null)
+    usage.run('e6', 'u6', '2026-11-01T00:00:00Z', '2026-11-01', 'gemini', 'old', 1, 2, null, 'user')
+  }
+
+  function providerRows(db: Db): Array<Record<string, unknown>> {
+    return db
+      .prepare(
+        `SELECT id, household_id, label, kind, preset, base_url, default_model, encrypted_key
+           FROM ai_providers ORDER BY id`
+      )
+      .all()
+  }
+
+  function capabilityRows(db: Db): Array<Record<string, unknown>> {
+    return db
+      .prepare(
+        `SELECT household_id, capability, provider_id, model, thinking_level
+           FROM ai_capabilities ORDER BY household_id, capability`
+      )
+      .all()
+  }
+
+  it('backfills one provider per keyed user into their ACTIVE household, labels disambiguated', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, PRE_0041())
+    seedLegacy(db)
+    apply0041(db)
+
+    expect(providerRows(db)).toEqual([
+      {
+        id: 'legacy-u1',
+        household_id: 'h1',
+        label: 'OpenAI (imported)',
+        kind: 'openai-compatible',
+        preset: 'openai',
+        base_url: null,
+        // No owner-typed default yet (#523 owner decision): NULL, not a guess.
+        default_model: null,
+        // Copied VERBATIM: no re-encryption, no re-entry (plan §3.3).
+        encrypted_key: 'v1:U1KEY',
+      },
+      {
+        // Same household, same provider: the partition-unique sequence keeps
+        // the (household, lower(label)) index satisfiable.
+        id: 'legacy-u2',
+        household_id: 'h1',
+        label: 'OpenAI (imported) · Bob #2',
+        kind: 'openai-compatible',
+        preset: 'openai',
+        base_url: null,
+        default_model: null,
+        encrypted_key: 'v1:U2KEY',
+      },
+      {
+        // A user in two households lands in the ACTIVE one only (h2), never
+        // duplicated into h1.
+        id: 'legacy-u3',
+        household_id: 'h2',
+        label: 'Gemini (imported)',
+        kind: 'gemini',
+        preset: 'gemini',
+        base_url: null,
+        default_model: null,
+        encrypted_key: 'v1:U3KEY',
+      },
+    ])
+
+    // Keyless users, users with no household, and non-envelope ciphertext rows
+    // are skipped — they land in "not configured", they do not abort the deploy.
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS cnt FROM ai_providers
+            WHERE id IN ('legacy-u4', 'legacy-u5', 'legacy-u6', 'legacy-u7')`
+        )
+        .get()
+    ).toEqual({ cnt: 0 })
+  })
+
+  it('leaves the provider default_model NULL after backfill (no invented alias)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, PRE_0041())
+    seedLegacy(db)
+    apply0041(db)
+
+    // Legacy rows carry their per-capability models; the owner's optional
+    // "one alias per key" default starts empty (owner decision, #523).
+    expect(providerRows(db).map((row) => row.default_model)).toEqual([null, null, null])
+    // The column is writable and reads back, so the resolver's inheritance can
+    // be configured per provider without touching any capability row.
+    db.prepare(
+      `UPDATE ai_providers SET default_model = 'chatgpt-4o-latest' WHERE id = 'legacy-u1'`
+    ).run()
+    expect(providerRows(db).find((row) => row.id === 'legacy-u1')?.default_model).toBe(
+      'chatgpt-4o-latest'
+    )
+    expect(
+      capabilityRows(db).filter(
+        (row) => row.household_id === 'h1' && row.provider_id === 'legacy-u1'
+      )
+    ).toHaveLength(3)
+  })
+
+  it('inherits all three capabilities: owner precedence, vision model fallback, no vision thinking', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, PRE_0041())
+    seedLegacy(db)
+    apply0041(db)
+
+    expect(capabilityRows(db)).toEqual([
+      // h1: u1 (owner) wins over the earlier-joined u2, deterministically.
+      {
+        household_id: 'h1',
+        capability: 'decision',
+        provider_id: 'legacy-u1',
+        model: 'u1-text',
+        thinking_level: 'low',
+      },
+      {
+        household_id: 'h1',
+        capability: 'reasoning',
+        provider_id: 'legacy-u1',
+        model: 'u1-text',
+        thinking_level: 'low',
+      },
+      {
+        // Explicit ai_vision_model wins; the thinking level is forced NULL
+        // (the CHECK requires it).
+        household_id: 'h1',
+        capability: 'vision',
+        provider_id: 'legacy-u1',
+        model: 'u1-vision',
+        thinking_level: null,
+      },
+      // h2: u3's own values, vision falls back to the text model when unset.
+      {
+        household_id: 'h2',
+        capability: 'decision',
+        provider_id: 'legacy-u3',
+        model: 'u3-text',
+        thinking_level: null,
+      },
+      {
+        household_id: 'h2',
+        capability: 'reasoning',
+        provider_id: 'legacy-u3',
+        model: 'u3-text',
+        thinking_level: null,
+      },
+      {
+        household_id: 'h2',
+        capability: 'vision',
+        provider_id: 'legacy-u3',
+        model: 'u3-text',
+        thinking_level: null,
+      },
+    ])
+
+    // Every member's key survives as a provider row even when only the owner's
+    // values became assignments (no key is discarded).
+    expect(providerRows(db)).toHaveLength(3)
+    // A keyless / household-less legacy row produces ZERO rows on both tables.
+    expect(
+      db
+        .prepare(`SELECT COUNT(*) AS cnt FROM ai_capabilities WHERE provider_id LIKE 'legacy-u4%'`)
+        .get()
+    ).toEqual({ cnt: 0 })
+  })
+
+  it('backfills legacy usage rows with the household that paid and the funding source', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, PRE_0041())
+    seedLegacy(db)
+    apply0041(db)
+
+    const rows = db
+      .prepare('SELECT id, household_id, funding, capability FROM ai_usage_events ORDER BY id')
+      .all()
+    expect(rows).toEqual([
+      // user-funded BYOK → household
+      { id: 'e1', household_id: 'h1', funding: 'household', capability: null },
+      // the retired shared key → platform
+      { id: 'e2', household_id: 'h1', funding: 'platform', capability: null },
+      // two memberships → the active household
+      { id: 'e3', household_id: 'h2', funding: 'household', capability: null },
+      // no household membership: the row survives with household NULL
+      { id: 'e4', household_id: null, funding: 'household', capability: null },
+      // an unknown historical key_source keeps funding NULL ("unknown")
+      { id: 'e5', household_id: 'h1', funding: null, capability: null },
+      { id: 'e6', household_id: 'h1', funding: 'household', capability: null },
+    ])
+    // Pre-0041 history has no capability dimension — NULL, not a guess.
+    expect(rows.every((row) => row.capability === null)).toBe(true)
+  })
+
+  it('enforces case-insensitive label uniqueness per household (expression index)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare('INSERT INTO households (id, name, created_by) VALUES (?, ?, ?)').run(
+      'h1',
+      'H1',
+      'u1'
+    )
+    db.prepare('INSERT INTO households (id, name, created_by) VALUES (?, ?, ?)').run(
+      'h2',
+      'H2',
+      'u1'
+    )
+    const insert = db.prepare(
+      'INSERT INTO ai_providers (id, household_id, label, kind) VALUES (?, ?, ?, ?)'
+    )
+    const index = db
+      .prepare(
+        `SELECT sql FROM sqlite_master
+          WHERE type = 'index' AND name = 'idx_ai_providers_household_label'`
+      )
+      .get() as { sql: string }
+    expect(index.sql).toContain('lower(label)')
+
+    insert.run('p1', 'h1', 'Gemini', 'gemini')
+    expect(() => insert.run('p2', 'h1', 'gemini', 'gemini')).toThrow()
+    // Different households may reuse a label — the scope is the household.
+    insert.run('p3', 'h2', 'gemini', 'gemini')
+  })
+
+  it('enforces the kind, capability, vision-thinking, funding and key-envelope CHECKs', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'a@b.com')").run()
+    db.prepare('INSERT INTO households (id, name, created_by) VALUES (?, ?, ?)').run(
+      'h1',
+      'H1',
+      'u1'
+    )
+    const provider = db.prepare(
+      'INSERT INTO ai_providers (id, household_id, label, kind, encrypted_key) VALUES (?, ?, ?, ?, ?)'
+    )
+    // The wire kinds are closed; a vendor is a preset, never a kind.
+    expect(() => provider.run('p-bad', 'h1', 'X', 'gemini-pro', null)).toThrow()
+    // Both envelope versions are accepted from day one (D10's v2: arrives in P2)
+    // and a plaintext slip is refused.
+    provider.run('p-v1', 'h1', 'V1', 'openai-compatible', 'v1:AAAA')
+    provider.run('p-v2', 'h1', 'V2', 'openai-compatible', 'v2:AAAA')
+    expect(() => provider.run('p-plain', 'h1', 'Plain', 'openai-compatible', 'sk-plain')).toThrow()
+
+    const capability = db.prepare(
+      `INSERT INTO ai_capabilities (household_id, capability, provider_id, thinking_level)
+       VALUES ('h1', ?, ?, ?)`
+    )
+    expect(() => capability.run('embedding', 'p-v1', null)).toThrow()
+    expect(() => capability.run('vision', 'p-v1', 'low')).toThrow()
+    capability.run('reasoning', 'p-v1', 'high')
+
+    // funding is D9's reserved dimension: household | platform, nothing else.
+    const usage = db.prepare(
+      `INSERT INTO ai_usage_events (id, user_id, ts, date, funding) VALUES (?, 'u1', 'x', 'x', ?)`
+    )
+    usage.run('e-user', 'household')
+    usage.run('e-platform', 'platform')
+    expect(() => usage.run('e-premium', 'premium')).toThrow()
+  })
+
+  it('cascades provider→assignment and household→both, while usage keeps the record', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, PRE_0041())
+    seedLegacy(db)
+    apply0041(db)
+    db.exec('PRAGMA foreign_keys = ON')
+
+    // Deleting a provider clears the assignments that pointed at it.
+    db.prepare(`DELETE FROM ai_providers WHERE id = 'legacy-u1'`).run()
+    expect(
+      db.prepare(`SELECT COUNT(*) AS cnt FROM ai_capabilities WHERE household_id = 'h1'`).get()
+    ).toEqual({ cnt: 0 })
+    // h2 is untouched — the cascade is per provider, not per household.
+    expect(
+      db.prepare(`SELECT COUNT(*) AS cnt FROM ai_capabilities WHERE household_id = 'h2'`).get()
+    ).toEqual({ cnt: 3 })
+
+    // Deleting a household takes its providers and assignments; usage rows keep
+    // their history with household_id SET NULL (the tokens were still spent).
+    // The app re-baselines members' active pointer before deleting (0001's
+    // active_household_id FK has no ON DELETE action).
+    db.prepare(`UPDATE user_settings SET active_household_id = NULL WHERE user_id = 'u3'`).run()
+    db.prepare(`DELETE FROM households WHERE id = 'h2'`).run()
+    expect(
+      db.prepare(`SELECT COUNT(*) AS cnt FROM ai_providers WHERE household_id = 'h2'`).get()
+    ).toEqual({ cnt: 0 })
+    expect(
+      db.prepare(`SELECT COUNT(*) AS cnt FROM ai_capabilities WHERE household_id = 'h2'`).get()
+    ).toEqual({ cnt: 0 })
+    expect(db.prepare(`SELECT household_id FROM ai_usage_events WHERE id = 'e3'`).get()).toEqual({
+      household_id: null,
+    })
+  })
+
+  it('indexes the per-user capability and per-household usage reads (no scan)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const userPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM ai_usage_events
+          WHERE user_id = ? AND date = ? AND capability = ?`
+      )
+      .all('u1', '2026-11-01', 'reasoning')
+      .map((row: Record<string, unknown>) => String(row.detail))
+      .join(' | ')
+    expect(userPlan).toContain('idx_ai_usage_events_user_date_capability')
+    expect(userPlan).not.toMatch(/SCAN ai_usage_events|TEMP B-TREE/i)
+
+    const householdPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM ai_usage_events
+          WHERE household_id = ? AND date = ?`
+      )
+      .all('h1', '2026-11-01')
+      .map((row: Record<string, unknown>) => String(row.detail))
+      .join(' | ')
+    expect(householdPlan).toContain('idx_ai_usage_events_household_date')
+    expect(householdPlan).not.toMatch(/SCAN ai_usage_events|TEMP B-TREE/i)
+  })
+
+  it('keeps the full chain green on a fresh database (additive: no legacy column touched)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const providerColumns = db.prepare('PRAGMA table_info(ai_providers)').all()
+    expect(providerColumns.map((column: Record<string, unknown>) => column.name)).toEqual([
+      'id',
+      'household_id',
+      'label',
+      'kind',
+      'preset',
+      'base_url',
+      'default_model',
+      'encrypted_key',
+      'created_at',
+      'updated_at',
+    ])
+    const capabilityColumns = db.prepare('PRAGMA table_info(ai_capabilities)').all()
+    expect(capabilityColumns.map((column: Record<string, unknown>) => column.name)).toEqual([
+      'household_id',
+      'capability',
+      'provider_id',
+      'model',
+      'thinking_level',
+      'updated_at',
+    ])
+    const usageColumns = db.prepare('PRAGMA table_info(ai_usage_events)').all()
+    expect(usageColumns.map((column: Record<string, unknown>) => column.name)).toEqual(
+      expect.arrayContaining(['capability', 'household_id', 'funding'])
+    )
+    // P1 is additive: the legacy settings columns are still exactly as they were
+    // (P3 drops them with the Settings screen).
+    const settingColumns = db.prepare('PRAGMA table_info(user_settings)').all()
+    expect(settingColumns.map((column: Record<string, unknown>) => column.name)).toEqual(
+      expect.arrayContaining([
+        'ai_provider',
+        'encrypted_ai_key',
+        'ai_base_url',
+        'ai_model',
+        'ai_vision_model',
+        'ai_thinking_level',
+      ])
+    )
+    // Nothing is seeded: an empty account has zero providers and assignments.
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM ai_providers').get()).toEqual({ cnt: 0 })
+    expect(db.prepare('SELECT COUNT(*) AS cnt FROM ai_capabilities').get()).toEqual({ cnt: 0 })
+  })
+
+  it('drops a non-enum legacy thinking level instead of aborting the deploy (thermos A3)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, PRE_0041())
+    // 0009 added ai_thinking_level with no CHECK; only the settings schema
+    // constrains it. One hand-edited value must not fail the migration for
+    // everyone — the same rule the 'v1:' key filter enforces.
+    seedLegacy(db)
+    db.prepare(`UPDATE user_settings SET ai_thinking_level = 'max' WHERE user_id = 'u1'`).run()
+
+    expect(() => apply0041(db)).not.toThrow()
+    // The owner still wins the assignments; only the corrupt knob is dropped.
+    expect(
+      db
+        .prepare(
+          `SELECT capability, thinking_level FROM ai_capabilities
+            WHERE household_id = 'h1' ORDER BY capability`
+        )
+        .all()
+    ).toEqual([
+      { capability: 'decision', thinking_level: null },
+      { capability: 'reasoning', thinking_level: null },
+      { capability: 'vision', thinking_level: null },
+    ])
+    expect(providerRows(db)).toHaveLength(3)
+  })
+
+  it('numbers labels by the written label, so two unknown preset ids never collide (thermos A4)', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, PRE_0041())
+    // ai_provider is a bare TEXT column (0001): the six-value vocabulary lives
+    // only in Valibot. Two DIFFERENT unknown ids both render as
+    // 'Custom provider (imported)', so numbering by the id would hand each
+    // rn = 1 and abort on idx_ai_providers_household_label.
+    seedLegacy(db)
+    db.prepare(`UPDATE user_settings SET ai_provider = 'openrouter' WHERE user_id = 'u1'`).run()
+    db.prepare(`UPDATE user_settings SET ai_provider = 'together' WHERE user_id = 'u2'`).run()
+
+    expect(() => apply0041(db)).not.toThrow()
+    expect(
+      db
+        .prepare(`SELECT id, label, preset FROM ai_providers WHERE household_id = 'h1' ORDER BY id`)
+        .all()
+    ).toEqual([
+      {
+        id: 'legacy-u1',
+        label: 'Custom provider (imported)',
+        preset: 'openrouter',
+      },
+      {
+        id: 'legacy-u2',
+        label: 'Custom provider (imported) · Bob #2',
+        preset: 'together',
+      },
+    ])
   })
 })
