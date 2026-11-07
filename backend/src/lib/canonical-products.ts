@@ -605,7 +605,7 @@ async function findSimilarNames(
 export function indexBumpStatement(
   db: D1Database,
   auditId: string,
-  auditTable: 'price_product_audit' | 'price_product_alias_audit' = 'price_product_audit'
+  auditTable: 'price_product_audit' | 'price_product_alias_audit'
 ): D1PreparedStatement {
   return db
     .prepare(
@@ -805,7 +805,7 @@ export async function renameProduct(
         now
       ),
     // 4. Exactly one canonical-index bump per committed audit row.
-    indexBumpStatement(db, auditId),
+    indexBumpStatement(db, auditId, 'price_product_audit'),
   ])) as unknown as BatchResult[]
 
   if ((results[0]?.meta?.changes ?? 0) !== 1) {
@@ -900,7 +900,7 @@ export async function revertProductRename(
           now
         ),
       // 3. One bump, gated on the revert receipt existing.
-      indexBumpStatement(db, revertAuditId),
+      indexBumpStatement(db, revertAuditId, 'price_product_audit'),
     ])) as unknown as BatchResult[]
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
