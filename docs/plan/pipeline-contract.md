@@ -291,6 +291,35 @@ The `200` response is a receipt, not just counts:
 - A missing or stale canonical index is a **failed run**, not a reason to fall back to
   the local catalog.
 
+### 6.4 Lookup key
+
+The pipeline matches an observation using a **size-inclusive lookup key**: the normalized
+name plus the normalized size tuple. The index already carries that tuple (`quantity`,
+`unit`, `quantityMin`/`quantityMax`, `packCount`), so the key needs no schema or endpoint
+change; the pipeline implementation follows in a separate PR (RumaQ#465, option (a)).
+
+- Quantity is unit-normalized before comparison: mass in kg or g, volume in L or ml, so a
+  `2 L` item and a `2000 ml` product are the same size.
+- Ranges compare against `quantityMin`/`quantityMax`; a range is never collapsed to a
+  guessed midpoint.
+- `packCount` is part of the identity when present: a 6 × 200 ml pack is not a 200 ml
+  product.
+- Resolution order:
+  1. The exact size-inclusive key.
+  2. The size-stripped name key, only when it is unique across the index and the item's
+     size does not contradict the candidate. An item with no size cannot confirm a size
+     family, so it stays ambiguous.
+  3. Anything still ambiguous is dropped. The pipeline never guesses.
+- A size-mismatched candidate never resolves through the index. The pre-fix pre-pass
+  matched a 10 kg item to the 5 kg canonical product at confidence 1.0 (pipeline PR #28,
+  finding A2); the key compares size instead of stripping it.
+- Tradeoff: size families now resolve through the index, so coverage rises, while
+  unknown/missing sizes stay ambiguous and fall through to the local matcher. The local
+  matcher still handles everything the index drops.
+- Evidence: the live AI probe on 2026-11-07 found that 3 of 5 flagged pairs were pure size
+  mismatches (210 ml vs 30 ml; 70 ml vs a larger pack; a missing unit vs 1 kg). Dropping
+  size families sends those into the local matcher, and from there to the review queue.
+
 ## 7. Errors
 
 All internal-route errors use:
