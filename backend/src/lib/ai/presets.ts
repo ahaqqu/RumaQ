@@ -3,8 +3,10 @@
 //
 // Nothing in this list is a default provider: there is no seeded row, no
 // preselection, and `GET /api/ai/presets` (P3) merely publishes this catalog.
-// The only default the product offers is a MODEL default inside a provider the
-// household picked, which is why the model ids live here beside the wire.
+// No MODEL ids live here either (#523 owner decision): a model is either the
+// capability's own or the household's `ai_providers.default_model`, both
+// owner-typed data on a row the household chose, so no vendor alias ages in
+// code (plan §4.5). A preset is wire + label + canonical endpoint only.
 
 import type { ProviderKind } from './types.js'
 
@@ -15,8 +17,6 @@ export type Preset = {
   kind: ProviderKind
   /** Canonical base URL; null = the household must supply one ('custom'). */
   endpoint: string | null
-  /** The model the legacy dispatcher used when the household set none. */
-  defaultModel: string | null
 }
 
 export const PRESETS: readonly Preset[] = [
@@ -25,42 +25,36 @@ export const PRESETS: readonly Preset[] = [
     label: 'OpenAI',
     kind: 'openai-compatible',
     endpoint: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4o-mini',
   },
   {
     id: 'opencode',
     label: 'OpenCode',
     kind: 'openai-compatible',
     endpoint: 'https://api.opencode.ai/v1',
-    defaultModel: 'opencode-vision',
   },
   {
     id: 'anthropic',
     label: 'Anthropic',
     kind: 'anthropic',
     endpoint: 'https://api.anthropic.com/v1/messages',
-    defaultModel: 'claude-3-haiku-20240307',
   },
   {
     id: 'gemini',
     label: 'Gemini',
     kind: 'gemini',
     endpoint: 'https://generativelanguage.googleapis.com/v1beta',
-    defaultModel: 'gemini-3.6-flash',
   },
   {
     id: 'ollama',
     label: 'Ollama Cloud',
     kind: 'openai-compatible',
     endpoint: 'https://ollama.com/v1',
-    defaultModel: 'glm-5.3-flash',
   },
   {
     id: 'custom',
     label: 'Custom provider',
     kind: 'openai-compatible',
     endpoint: null,
-    defaultModel: null,
   },
 ]
 
