@@ -391,10 +391,16 @@ describe('decideReviewItem / undoReviewDecision', () => {
     const { db, statements } = createFakeDb({ firstRow: decidedRow })
     const item = await decideReviewItem(db, 'rev-1', 'rejected', 'admin-9')
     expect(item).toMatchObject({ id: 'rev-1', status: 'approved' }) // from the fake's row
-    const update = statements[0]!
-    expect(update.sql).toContain('SET status = ?, decided_at = ?, decided_by = ?')
+    // #484: the verdict-existence read decides the provenance BEFORE the
+    // write — no verdict + no agreement means plain human provenance.
+    expect(statements[0]!.sql).toContain('FROM review_ai_verdicts')
+    const update = statements.find((s) => s.sql.startsWith('UPDATE match_review_items'))!
+    expect(update.sql).toContain(
+      'SET status = ?, decided_at = ?, decided_by = ?, decided_source = ?'
+    )
     expect(update.params[0]).toBe('rejected')
     expect(update.params[2]).toBe('admin-9')
+    expect(update.params[3]).toBe('human')
   })
 
   it('overwrites a previous verdict — last verdict wins', async () => {
@@ -426,6 +432,10 @@ describe('decideReviewItem / undoReviewDecision', () => {
     expect(update.sql).toContain("status = 'pending'")
     expect(update.sql).toContain('decided_at = NULL')
     expect(update.sql).toContain('decided_by = NULL')
+    // #484: the provenance goes with the decision; the cached verdict stays
+    // but its agreement described the decision that was just undone.
+    expect(update.sql).toContain('decided_source = NULL')
+    expect(statements.some((s) => s.sql.startsWith('UPDATE review_ai_verdicts'))).toBe(true)
   })
 })
 
@@ -559,6 +569,9 @@ describe('review routes', () => {
     const paths: Array<[string, RequestInit]> = [
       ['/api/admin/review', {}],
       ['/api/admin/review/export', {}],
+      ['/api/admin/review/mode', {}],
+      ['/api/admin/review/mode', { method: 'PUT' }],
+      ['/api/admin/review/evaluate', { method: 'POST' }],
       ['/api/admin/review/rev-1/decision', { method: 'POST' }],
       ['/api/admin/review/rev-1/decision', { method: 'DELETE' }],
     ]
@@ -580,6 +593,9 @@ describe('review routes', () => {
     const paths: Array<[string, RequestInit]> = [
       ['/api/admin/review', {}],
       ['/api/admin/review/export', {}],
+      ['/api/admin/review/mode', {}],
+      ['/api/admin/review/mode', { method: 'PUT' }],
+      ['/api/admin/review/evaluate', { method: 'POST' }],
       ['/api/admin/review/rev-1/decision', { method: 'POST' }],
       ['/api/admin/review/rev-1/decision', { method: 'DELETE' }],
     ]

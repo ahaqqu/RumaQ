@@ -147,30 +147,42 @@ export type AiUsageEvent = {
 // Persist one completed AI call as its own event row. Usage is recorded for
 // analytics only — it never gates a call (the daily cap was removed #353).
 // `now` is injectable so tests can pin ts/date.
+/**
+ * The usage-event INSERT as a STATEMENT. One row per call is the rule, but a
+ * bounded fan-out (the review sweep) batches its attempts into ONE db.batch so
+ * the whole tick costs one subrequest instead of one per item — each statement
+ * counts against the free plan's 50-subrequest invocation cap.
+ */
+export function buildAiUsageEventStatement(
+  env: Env['Bindings'],
+  event: AiUsageEvent,
+  now: Date = new Date()
+): ReturnType<D1Database['prepare']> {
+  const ts = now.toISOString()
+  return env.DB.prepare(
+    `INSERT INTO ai_usage_events
+       (id, user_id, ts, date, provider, model, input_tokens, output_tokens, cached_tokens, key_source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    crypto.randomUUID(),
+    event.userId,
+    ts,
+    ts.slice(0, 10),
+    event.provider,
+    event.model,
+    event.inputTokens,
+    event.outputTokens,
+    event.cachedTokens,
+    event.keySource
+  )
+}
+
 export async function recordAiUsageEvent(
   env: Env['Bindings'],
   event: AiUsageEvent,
   now: Date = new Date()
 ): Promise<void> {
-  const ts = now.toISOString()
-  await env.DB.prepare(
-    `INSERT INTO ai_usage_events
-       (id, user_id, ts, date, provider, model, input_tokens, output_tokens, cached_tokens, key_source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-    .bind(
-      crypto.randomUUID(),
-      event.userId,
-      ts,
-      ts.slice(0, 10),
-      event.provider,
-      event.model,
-      event.inputTokens,
-      event.outputTokens,
-      event.cachedTokens,
-      event.keySource
-    )
-    .run()
+  await buildAiUsageEventStatement(env, event, now).run()
 }
 
 // Usage records are deleted after one year (issue #353). Invoked daily by the

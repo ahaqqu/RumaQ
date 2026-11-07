@@ -484,6 +484,41 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/admin/review/mode': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** @description AI review mode and whether the acting admin has a usable AI provider (admin-only). Modes: manual (no AI calls), assist (AI proposes, human decides — default), auto (AI decides at/above the confidence floor). */
+    get: operations['getApiAdminReviewMode']
+    /** @description Set the AI review mode (admin-only). Enabling auto records the acting admin as the AI-access owner for the cron and kicks a bounded background sweep (≤10 items). */
+    put: operations['putApiAdminReviewMode']
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/admin/review/evaluate': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** @description Evaluate up to 10 pending review items without a verdict using the acting admin’s AI access (admin-only, synchronous). Never runs in manual mode; returns 200 with evaluated:0 and aiConfigured:false when no provider is configured. Verdicts are cached forever; auto mode also applies verdicts at/above the confidence floor. */
+    post: operations['postApiAdminReviewEvaluate']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/admin/review/export': {
     parameters: {
       query?: never
@@ -510,7 +545,7 @@ export interface paths {
     }
     get?: never
     put?: never
-    /** @description Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins. */
+    /** @description Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins. Send agreement when the caller is accepting or rejecting the cached AI verdict (records ai_assist provenance). */
     post: operations['postApiAdminReviewByIdDecision']
     /** @description Undo a review verdict — the row returns to pending (admin-only). Idempotent on a pending row. */
     delete: operations['deleteApiAdminReviewByIdDecision']
@@ -2401,6 +2436,17 @@ export interface operations {
               status?: 'pending' | 'approved' | 'rejected'
               decidedAt?: string | null
               decidedBy?: string | null
+              /** @enum {string|null} */
+              decidedSource?: 'human' | 'ai_assist' | 'ai_auto' | null
+              aiVerdict?: {
+                /** @enum {string} */
+                verdict?: 'same' | 'different'
+                confidence?: number
+                reason?: string | null
+                model?: string | null
+                /** @enum {string|null} */
+                humanAgreement?: 'agreed' | 'disagreed' | null
+              } | null
               flagCount?: number
               firstFlaggedAt?: string
               lastFlaggedAt?: string
@@ -2415,6 +2461,149 @@ export interface operations {
             filteredTotal?: number
           }
         }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  getApiAdminReviewMode: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            /** @enum {string} */
+            mode?: 'manual' | 'assist' | 'auto'
+            aiConfigured?: boolean
+          }
+        }
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  putApiAdminReviewMode: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          /** @enum {string} */
+          mode: 'manual' | 'assist' | 'auto'
+        }
+      }
+    }
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            /** @enum {string} */
+            mode?: 'manual' | 'assist' | 'auto'
+            aiConfigured?: boolean
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Not an admin */
+      403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  postApiAdminReviewEvaluate: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: {
+      content: {
+        'application/json': {
+          limit?: number
+        }
+      }
+    }
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            evaluated?: number
+            applied?: number
+            /** @enum {string} */
+            mode?: 'manual' | 'assist' | 'auto'
+            aiConfigured?: boolean
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
       }
       /** @description Unauthorized */
       401: {
@@ -2480,6 +2669,8 @@ export interface operations {
         'application/json': {
           /** @enum {string} */
           decision: 'approved' | 'rejected'
+          /** @enum {string} */
+          agreement?: 'agreed' | 'disagreed'
         }
       }
     }
@@ -2521,6 +2712,17 @@ export interface operations {
               status?: 'pending' | 'approved' | 'rejected'
               decidedAt?: string | null
               decidedBy?: string | null
+              /** @enum {string|null} */
+              decidedSource?: 'human' | 'ai_assist' | 'ai_auto' | null
+              aiVerdict?: {
+                /** @enum {string} */
+                verdict?: 'same' | 'different'
+                confidence?: number
+                reason?: string | null
+                model?: string | null
+                /** @enum {string|null} */
+                humanAgreement?: 'agreed' | 'disagreed' | null
+              } | null
               flagCount?: number
               firstFlaggedAt?: string
               lastFlaggedAt?: string
@@ -2608,6 +2810,17 @@ export interface operations {
               status?: 'pending' | 'approved' | 'rejected'
               decidedAt?: string | null
               decidedBy?: string | null
+              /** @enum {string|null} */
+              decidedSource?: 'human' | 'ai_assist' | 'ai_auto' | null
+              aiVerdict?: {
+                /** @enum {string} */
+                verdict?: 'same' | 'different'
+                confidence?: number
+                reason?: string | null
+                model?: string | null
+                /** @enum {string|null} */
+                humanAgreement?: 'agreed' | 'disagreed' | null
+              } | null
               flagCount?: number
               firstFlaggedAt?: string
               lastFlaggedAt?: string

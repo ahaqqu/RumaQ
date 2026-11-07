@@ -235,6 +235,33 @@ describe('worker scheduled handler (1-year AI usage retention, #353)', () => {
     expect(env.DB.prepare).not.toHaveBeenCalled()
   })
 
+  // The AI review sweep (#484, backend PR 1) has its OWN invocation: the
+  // sweep's provider calls must never eat the core tick's 50-subrequest
+  // budget, and the core sweeps must never run on the review schedule.
+  it('dispatches only the AI review sweep on its own schedule (manual mode: zero provider calls)', async () => {
+    const { REVIEW_AI_CRON_SCHEDULE } = await import('../cron-schedules.js')
+    const env = createMockEnv()
+    const waitUntil = vi.fn()
+    const ctx = { waitUntil } as unknown as ExecutionContext
+
+    await gateway.scheduled(
+      { cron: REVIEW_AI_CRON_SCHEDULE } as ScheduledController,
+      env as unknown as Parameters<typeof gateway.scheduled>[1],
+      ctx
+    )
+
+    expect(waitUntil).toHaveBeenCalledTimes(1)
+    const tasks = waitUntil.mock.calls.map((call) => call[0]) as Promise<unknown>[]
+    await Promise.all(tasks)
+    // The sweep's first (and, on an absent app_settings row = assist, only)
+    // read is the mode gate — no user settings, no provider, no core sweep.
+    expect(env.DB.prepare).toHaveBeenCalledWith('SELECT value FROM app_settings WHERE key = ?')
+    expect(env.DB.prepare).not.toHaveBeenCalledWith('DELETE FROM ai_usage_events WHERE ts < ?')
+    expect(env.DB.prepare).not.toHaveBeenCalledWith(
+      expect.stringContaining('FROM user_settings WHERE user_id')
+    )
+  })
+
   it('keeps the core tick on the core schedule (both cron strings dispatch explicitly)', async () => {
     const { CORE_CRON_SCHEDULE } = await import('../cron-schedules.js')
     const env = createMockEnv()

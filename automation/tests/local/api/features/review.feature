@@ -30,6 +30,19 @@ Feature: Match review queue
     When I decide on an unknown review item
     Then the response status should be 404
 
+  Scenario: The AI review mode is a persisted admin switch that degrades without a provider
+    Given I am authenticated as an admin
+    When I read the AI review mode
+    Then the mode should be assist and AI should not be configured
+    When I evaluate the review queue with AI
+    Then the evaluation should report zero evaluated and no AI configured
+    When I switch the AI review mode to manual
+    Then the AI review mode should be manual
+    When I switch the AI review mode to auto
+    Then reading the AI review mode again should report auto
+    When I try to switch the AI review mode to an unknown value
+    Then the response status should be 400
+
   Scenario: Flagged pairs flow from the run report through decide, undo, and export
     Given I am authenticated as an admin
     And the agent posted a run report carrying two flagged pairs

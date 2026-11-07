@@ -40,6 +40,16 @@ export function createD1Adapter(sqlite: Db, guard?: (sql: string) => void): D1Da
     const info = sqlite.prepare(sql).run(...params)
     return { meta: { changes: info.changes } }
   }
+  // D1's batch() returns a D1Result per statement — SELECT rows included, not
+  // just write metadata (the review queue's list read is a batched SELECT).
+  // node:sqlite splits rows (all) from changes (run) and running BOTH would
+  // execute a write twice, so the shape is chosen by the statement's kind.
+  const batchResult = (sql: string, params: unknown[]) => {
+    if (/^\s*(select|with)\b/i.test(sql)) {
+      return { results: sqlite.prepare(sql).all(...params), meta: { changes: 0 } }
+    }
+    return { results: [], ...runBound(sql, params) }
+  }
   return {
     prepare: (sql: string) => {
       guard?.(sql)
@@ -48,15 +58,18 @@ export function createD1Adapter(sqlite: Db, guard?: (sql: string) => void): D1Da
           first: async <T>() => (sqlite.prepare(sql).get(...params) as T | undefined) ?? null,
           all: async <T>() => ({ results: sqlite.prepare(sql).all(...params) as T[] }),
           run: async () => runBound(sql, params),
+          // The batch() form of this bound statement — not part of the D1
+          // surface the production code touches.
+          batchResult: async () => batchResult(sql, params),
         }),
       }
     },
-    batch: async (stmts: Array<{ run: () => Promise<unknown> }>) => {
+    batch: async (stmts: Array<{ batchResult: () => Promise<unknown> }>) => {
       sqlite.exec('BEGIN')
       try {
         const results = []
         for (const stmt of stmts) {
-          results.push(await stmt.run())
+          results.push(await stmt.batchResult())
         }
         sqlite.exec('COMMIT')
         return results

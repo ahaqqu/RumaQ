@@ -73,6 +73,17 @@ import {
   exportReviewDecisions,
 } from '../lib/match-review.js'
 import {
+  REVIEW_EVALUATE_MAX,
+  REVIEW_MODES,
+  REVIEW_SWITCH_SWEEP_LIMIT,
+  applyCachedAutoVerdicts,
+  evaluatePendingReviews,
+  getReviewMode,
+  resolveReviewAiAccess,
+  runReviewAiSweep,
+  setReviewMode,
+} from '../lib/review-ai.js'
+import {
   AuditNotFoundError,
   DuplicateNameError,
   InvalidNameError,
@@ -199,8 +210,23 @@ function cacheHitRate(cachedTokens: number | null, inputTokens: number): number 
 // Admin review verdicts (issue #294): approve = "yes, same product, trust
 // this match"; reject = "no, split them". Recorded only — v1 decisions
 // change nothing downstream (docs/294-design-pm.md §4).
+//
+// Issue #484: `agreement` rides the same body. Present = the human is
+// accepting or rejecting the CACHED AI verdict (decided_source 'ai_assist',
+// human_agreement recorded); absent = a plain human decision.
 const reviewDecisionSchema = object({
   decision: picklist(['approved', 'rejected']),
+  agreement: optional(picklist(['agreed', 'disagreed'])),
+})
+
+// AI review mode (issue #484): the global admin switch — manual / approve-with-
+// AI (default) / full auto. The evaluate body is an optional per-request cap.
+const reviewModeSchema = object({
+  mode: picklist(REVIEW_MODES),
+})
+
+const reviewEvaluateSchema = object({
+  limit: optional(pipe(number(), integer(), minValue(1), maxValue(REVIEW_EVALUATE_MAX))),
 })
 
 // Admin canonical product rename (#423). The lib trims/collapses the name; the
@@ -631,6 +657,8 @@ apiApp.use('/api/admin/scrape/commands/:id/events', propsAuthMiddleware)
 // (#292 landmine) — every path gets its own line, statics before params.
 apiApp.use('/api/admin/review', propsAuthMiddleware)
 apiApp.use('/api/admin/review/export', propsAuthMiddleware)
+apiApp.use('/api/admin/review/mode', propsAuthMiddleware)
+apiApp.use('/api/admin/review/evaluate', propsAuthMiddleware)
 apiApp.use('/api/admin/review/:id/decision', propsAuthMiddleware)
 // Canonical product admin (#423): the same per-path discipline as the review
 // queue — the identity read, the rename, and the revert each get a line
@@ -3088,9 +3116,11 @@ apiApp.get(
 
 // Match review queue (issue #294, docs/294-design.md §4): the admin triage
 // surface for pairs the matcher flagged. Decisions are recorded and
-// displayed only — they never rewrite catalog or price data (v1 cut). All
-// four routes: requireAdmin after the shared propsAuthMiddleware use() lines
-// above; statics (/export) registered before the :id/decision params.
+// displayed only — they never rewrite catalog or price data (v1 cut). Every
+// route: requireAdmin after the shared propsAuthMiddleware use() lines above;
+// statics (/export, /mode, /evaluate) registered before the :id/decision
+// params. Issue #484 adds the AI mode/evaluate pair and the per-item cached
+// verdict + decided_source fields.
 const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
   type: 'object',
   properties: {
@@ -3124,6 +3154,26 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
     status: { type: 'string', enum: ['pending', 'approved', 'rejected'] },
     decidedAt: { type: ['string', 'null'] },
     decidedBy: { type: ['string', 'null'] },
+    // Issue #484: who produced the current decision ('human' | 'ai_assist' |
+    // 'ai_auto'), null while pending, and the cached AI verdict the assist UI
+    // renders (null = the item has not been evaluated yet).
+    decidedSource: {
+      type: ['string', 'null'],
+      enum: ['human', 'ai_assist', 'ai_auto', null],
+    },
+    aiVerdict: {
+      type: ['object', 'null'],
+      properties: {
+        verdict: { type: 'string', enum: ['same', 'different'] },
+        confidence: { type: 'number' },
+        reason: { type: ['string', 'null'] },
+        model: { type: ['string', 'null'] },
+        humanAgreement: {
+          type: ['string', 'null'],
+          enum: ['agreed', 'disagreed', null],
+        },
+      },
+    },
     flagCount: { type: 'integer' },
     firstFlaggedAt: { type: 'string' },
     lastFlaggedAt: { type: 'string' },
@@ -3199,6 +3249,183 @@ apiApp.get(
   }
 )
 
+// AI review (issue #484, backend PR 1): the global mode switch and the
+// on-demand evaluator. Both are admin-only, and neither ever runs AI on the
+// list path — the list JOINs cached verdicts only. Manual mode is a hard
+// ZERO-call gate; an unconfigured provider degrades to 200 with
+// aiConfigured:false (not an error), because "assist/auto without a key" is
+// the documented degrade-to-manual posture.
+apiApp.get(
+  '/api/admin/review/mode',
+  describeRoute({
+    description:
+      'AI review mode and whether the acting admin has a usable AI provider (admin-only). Modes: manual (no AI calls), assist (AI proposes, human decides — default), auto (AI decides at/above the confidence floor).',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                mode: { type: 'string', enum: [...REVIEW_MODES] },
+                aiConfigured: { type: 'boolean' },
+              },
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  async (c) => {
+    const mode = await getReviewMode(c.env.DB)
+    const aiConfigured = (await resolveReviewAiAccess(c.env, c.get('userId'))) !== null
+    const res = c.json({ mode, aiConfigured })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+apiApp.put(
+  '/api/admin/review/mode',
+  describeRoute({
+    description:
+      'Set the AI review mode (admin-only). Enabling auto records the acting admin as the AI-access owner for the cron and kicks a bounded background sweep (≤10 items).',
+    security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['mode'],
+            properties: { mode: { type: 'string', enum: [...REVIEW_MODES] } },
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                mode: { type: 'string', enum: [...REVIEW_MODES] },
+                aiConfigured: { type: 'boolean' },
+              },
+            },
+          },
+        },
+      },
+      400: { description: 'Validation error' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  sValidator('json', reviewModeSchema),
+  async (c) => {
+    const { mode } = c.req.valid('json')
+    const userId = c.get('userId')
+    await setReviewMode(c.env.DB, mode, userId)
+    const aiConfigured = (await resolveReviewAiAccess(c.env, userId)) !== null
+    if (mode === 'auto') {
+      // The switch's sweep rides waitUntil so the response stays immediate;
+      // runReviewAiSweep re-checks the mode and is bounded to ≤10 items.
+      // A runtime without an ExecutionContext (unit tests, local tooling)
+      // still runs it — the sweep's own catch keeps it from floating as an
+      // unhandled rejection.
+      const sweep = runReviewAiSweep(c.env, {
+        actingUserId: userId,
+        limit: REVIEW_SWITCH_SWEEP_LIMIT,
+      }).catch((err: unknown) => {
+        console.error('[review-ai] auto-enable sweep failed', err)
+      })
+      try {
+        c.executionCtx.waitUntil(sweep)
+      } catch {
+        // No ExecutionContext outside the Worker runtime — already running.
+      }
+    }
+    const res = c.json({ mode, aiConfigured })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+apiApp.post(
+  '/api/admin/review/evaluate',
+  describeRoute({
+    description:
+      'Evaluate up to 10 pending review items without a verdict using the acting admin’s AI access (admin-only, synchronous). Never runs in manual mode; returns 200 with evaluated:0 and aiConfigured:false when no provider is configured. Verdicts are cached forever; auto mode also applies verdicts at/above the confidence floor.',
+    security: [{ cookieAuth: [] }],
+    requestBody: {
+      required: false,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            properties: { limit: { type: 'integer', minimum: 1, maximum: REVIEW_EVALUATE_MAX } },
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                evaluated: { type: 'integer' },
+                applied: { type: 'integer' },
+                mode: { type: 'string', enum: [...REVIEW_MODES] },
+                aiConfigured: { type: 'boolean' },
+              },
+            },
+          },
+        },
+      },
+      400: { description: 'Validation error' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  sValidator('json', reviewEvaluateSchema),
+  async (c) => {
+    const userId = c.get('userId')
+    const limit = c.req.valid('json').limit ?? REVIEW_EVALUATE_MAX
+    const mode = await getReviewMode(c.env.DB)
+    const access = await resolveReviewAiAccess(c.env, userId)
+    const aiConfigured = access !== null
+    if (mode === 'manual' || !access) {
+      const res = c.json({ evaluated: 0, applied: 0, mode, aiConfigured })
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    }
+    // Auto also applies verdicts the probe already cached (no re-billing):
+    // switching assist → auto must act on them, not leave them stranded.
+    const alreadyApplied = mode === 'auto' ? await applyCachedAutoVerdicts(c.env.DB, limit) : 0
+    const outcome = await evaluatePendingReviews(c.env, { mode, access, userId, limit })
+    const res = c.json({
+      evaluated: outcome.evaluated,
+      applied: outcome.applied + alreadyApplied,
+      mode,
+      aiConfigured,
+    })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
 apiApp.get(
   '/api/admin/review/export',
   describeRoute({
@@ -3232,7 +3459,7 @@ apiApp.post(
   '/api/admin/review/:id/decision',
   describeRoute({
     description:
-      'Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins.',
+      'Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins. Send agreement when the caller is accepting or rejecting the cached AI verdict (records ai_assist provenance).',
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -3243,6 +3470,7 @@ apiApp.post(
             required: ['decision'],
             properties: {
               decision: { type: 'string', enum: ['approved', 'rejected'] },
+              agreement: { type: 'string', enum: ['agreed', 'disagreed'] },
             },
           },
         },
@@ -3266,11 +3494,13 @@ apiApp.post(
   requireAdmin,
   sValidator('json', reviewDecisionSchema),
   async (c) => {
+    const { decision, agreement } = c.req.valid('json')
     const item = await decideReviewItem(
       c.env.DB,
       c.req.param('id'),
-      c.req.valid('json').decision,
-      c.get('userId')
+      decision,
+      c.get('userId'),
+      agreement
     )
     if (!item) {
       return c.json({ error: 'Review item not found' }, 404)

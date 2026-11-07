@@ -6,7 +6,11 @@ import { bindings, defineConfig, triggers } from 'cf/config'
 // @cloudflare/vite-plugin — load it through Node's native ESM resolver
 // (registerConfigHooks: type-stripping, no .js → .ts extension rewriting), so
 // a .js specifier would fail in both; .ts is the only specifier both resolve.
-import { CORE_CRON_SCHEDULE, PLUGIN_TASKS_CRON_SCHEDULE } from './src/cron-schedules.ts'
+import {
+  CORE_CRON_SCHEDULE,
+  PLUGIN_TASKS_CRON_SCHEDULE,
+  REVIEW_AI_CRON_SCHEDULE,
+} from './src/cron-schedules.ts'
 
 /**
  * Single source of truth for the Worker configuration (replaces the four
@@ -64,11 +68,11 @@ export default defineConfig({
       notFoundHandling: 'single-page-application',
       runWorkerFirst: ['/api/*'],
     },
-    // TWO cron schedules (ticket 7, #441 — the strings live in
-    // src/cron-schedules.ts, shared with gateway.ts's dispatch, which reads
-    // ScheduledController.cron). Each trigger fires its OWN scheduled
-    // invocation with its OWN per-invocation subrequest cap (50 on the free
-    // plan; the free plan allows three triggers per Worker):
+    // THREE cron schedules (the strings live in src/cron-schedules.ts, shared
+    // with gateway.ts's dispatch, which reads ScheduledController.cron). Each
+    // trigger fires its OWN scheduled invocation with its OWN per-invocation
+    // subrequest cap (50 on the free plan; the free plan allows three
+    // triggers per Worker):
     //
     //   CORE_CRON_SCHEDULE — the original nightly tick, unchanged: #353 usage
     //   retention, #426 expiry sweep, #439 purge chunks (worst case 48/50
@@ -77,10 +81,17 @@ export default defineConfig({
     //   PLUGIN_TASKS_CRON_SCHEDULE — the generalized plugin-task handoff
     //   (#441, lib/plugin-cron.ts), isolated from the core tick's budget by
     //   being its own invocation; a no-op nightly until a plugin declares a
-    //   task. Both schedules stay off-peak UTC.
+    //   task.
+    //
+    //   REVIEW_AI_CRON_SCHEDULE — the AI match-review sweep (#484) every 30
+    //   minutes: ≤20 pending review items through the provider-agnostic AI
+    //   layer, applied only in auto mode at/above the confidence floor. A
+    //   no-op in manual/assist (lib/review-ai.ts is the gate). The two nightly
+    //   ticks stay off-peak UTC.
     triggers: [
       triggers.scheduled({ schedule: CORE_CRON_SCHEDULE }),
       triggers.scheduled({ schedule: PLUGIN_TASKS_CRON_SCHEDULE }),
+      triggers.scheduled({ schedule: REVIEW_AI_CRON_SCHEDULE }),
     ],
     // Workers Logs persistence (#451): keeps structured ingest-rejection lines
     // queryable in the dashboard instead of dying with the invocation logs.
