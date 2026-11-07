@@ -263,6 +263,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/ai/generate/persona': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** @description Rewrites the app's interface copy in the user's declared persona roles, behind the door (#523 P5). The browser sends the two role names and the interface strings it renders; the prompt, the provider row and the key stay server-side, and the call is a REASONING capability call recorded in ai_usage_events. Roles and copy are treated as DATA (JSON-quoted in the prompt), never as instructions. Answers 402 when the household has no usable reasoning assignment, in which case the UI simply keeps its built-in copy. */
+    post: operations['postApiAiGeneratePersona']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/ai/chat': {
     parameters: {
       query?: never
@@ -2373,6 +2390,86 @@ export interface operations {
       }
       /** @description Not an admin */
       403: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+    }
+  }
+  postApiAiGeneratePersona: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': {
+          user_role: string
+          ai_role: string
+          /** @enum {string} */
+          language?: 'en' | 'id'
+          /** @description The interface strings to rewrite, keyed by the persona.* slots the UI renders. At least one entry; unknown keys are rejected. */
+          copy: {
+            homeLead?: string
+            inventoryLead?: string
+            planLeadNoKey?: string
+            planLead?: string
+            historyLead?: string
+            receiptLead?: string
+            settingsLead?: string
+            assistantGreeting?: string
+            assistantQuestion?: string
+          }
+        }
+      }
+    }
+    responses: {
+      /** @description The rewritten copy, keyed exactly like the request. A slot the model omitted falls back to the string that was sent. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': {
+            copy: {
+              [key: string]: string
+            }
+          }
+        }
+      }
+      /** @description Validation error */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description AI provider not configured */
+      402: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Too many persona rewrites */
+      429: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description AI provider error, or an unusable rewrite answer */
+      502: {
         headers: {
           [name: string]: unknown
         }

@@ -253,6 +253,36 @@ describe('every call site routes by capability (#523 P4)', () => {
     ])
   })
 
+  it('the persona rewrite dispatches the REASONING capability (#523 P5)', async () => {
+    const fetchMock = providerMock(() =>
+      openAiAnswer(JSON.stringify({ homeLead: 'Sire, the kitchen is calm.' }))
+    )
+    const res = await request(
+      '/api/ai/generate/persona',
+      jsonRequest('POST', {
+        user_role: 'raja',
+        ai_role: 'prajurit',
+        language: 'en',
+        copy: { homeLead: 'A calmer kitchen starts with what you already have.' },
+      })
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ copy: { homeLead: 'Sire, the kitchen is calm.' } })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(calls[0].model).toBe(REASONING_MODEL)
+    expect(calls[0].url).toBe('https://api.openai.com/v1/chat/completions')
+    // The rewrite is billed like every other call: one row, reasoning, household.
+    expect(usageRows()).toEqual([
+      expect.objectContaining({
+        user_id: OWNER,
+        capability: 'reasoning',
+        household_id: HOUSEHOLD,
+        funding: 'household',
+      }),
+    ])
+  })
+
   it('a shopping plan dispatches the REASONING capability', async () => {
     const plan = {
       items: [

@@ -594,7 +594,7 @@
     "preview": "Preview",
     "previewPlaceholder": "Fill in roles and press Apply to see a preview.",
     "enablePersona": "Enable persona",
-    "personaInfo": "Apply saves the persona roles and colours. AI rewriting of the app text isn't available yet.",
+    "personaInfo": "Apply saves the persona roles and colours, then rewrites the app text with your household AI provider. Without AI set up, the built-in text stays.",
     "storageLocations": "Storage Locations",
     "addLocation": "Add location",
     "addLocationHint": "e.g. Small fridge, Pantry, Spice rack.",

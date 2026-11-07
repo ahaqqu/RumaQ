@@ -15,7 +15,10 @@ import {
   literal,
   array,
   integer,
+  check,
+  trim,
 } from 'valibot'
+import type { PersonaCopyKey } from './lib/persona.js'
 
 // Model names go into provider request bodies and (for Gemini) the URL path,
 // so restrict them to the characters real model ids use. Allowlist, not
@@ -118,3 +121,46 @@ export const chatSchema = object({
     )
   ),
 })
+
+// --- persona copy rewrite (#523 P5, plan §6 P5) ------------------------------
+//
+// The browser sends the two role names and the interface strings it wants
+// rewritten; the prompt, the provider row and the key all stay server-side.
+// Both halves are UNTRUSTED text (lib/persona.ts wraps them in JSON data blocks
+// and tells the model to treat them as content), so they are length-capped:
+// a role is a couple of words, and a copy line that outgrows this is not an
+// interface string any more. `copy` is a strict object of the nine
+// `persona.*` slots the UI renders — an unknown key is a 400, so a client
+// cannot widen the rewrite with slots of its own.
+const PERSONA_ROLE = pipe(string(), trim(), minLength(1), maxLength(200))
+const PERSONA_COPY_VALUE = pipe(string(), trim(), minLength(1), maxLength(400))
+
+// `satisfies Record<PersonaCopyKey, …>` ties this object to the canonical key
+// list in lib/persona.ts at COMPILE time: a slot added there (or renamed) fails
+// the type check here instead of being accepted and silently never rewritten.
+const personaCopyEntries = {
+  homeLead: optional(PERSONA_COPY_VALUE),
+  inventoryLead: optional(PERSONA_COPY_VALUE),
+  planLeadNoKey: optional(PERSONA_COPY_VALUE),
+  planLead: optional(PERSONA_COPY_VALUE),
+  historyLead: optional(PERSONA_COPY_VALUE),
+  receiptLead: optional(PERSONA_COPY_VALUE),
+  settingsLead: optional(PERSONA_COPY_VALUE),
+  assistantGreeting: optional(PERSONA_COPY_VALUE),
+  assistantQuestion: optional(PERSONA_COPY_VALUE),
+} satisfies Record<PersonaCopyKey, unknown>
+
+export const personaCopySchema = pipe(
+  strictObject({
+    user_role: PERSONA_ROLE,
+    ai_role: PERSONA_ROLE,
+    // The language the base copy is written in; it selects the prompt template
+    // too, so a rewrite in Indonesian is instructed in Indonesian.
+    language: optional(picklist(['en', 'id'])),
+    copy: strictObject(personaCopyEntries),
+  }),
+  check(
+    (input) => Object.values(input.copy).some((value) => value !== undefined),
+    'Send at least one copy entry to rewrite'
+  )
+)

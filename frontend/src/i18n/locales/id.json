@@ -594,7 +594,7 @@
     "preview": "Pratinjau",
     "previewPlaceholder": "Isi peran lalu tekan Terapkan untuk melihat pratinjau.",
     "enablePersona": "Aktifkan persona",
-    "personaInfo": "Terapkan menyimpan peran dan warna persona. Penulisan ulang teks aplikasi oleh AI belum tersedia.",
+    "personaInfo": "Terapkan menyimpan peran dan warna persona, lalu menulis ulang teks aplikasi dengan penyedia AI rumah tanggamu. Tanpa AI, teks bawaan tetap dipakai.",
     "storageLocations": "Lokasi penyimpanan",
     "addLocation": "Tambah lokasi",
     "addLocationHint": "Mis. Kulkas kecil, Gudang, Rak rempah.",

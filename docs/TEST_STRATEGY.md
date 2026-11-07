@@ -62,7 +62,8 @@ endpoints (`shared.steps.js` `Before` hook), and scenarios run with
 Notes for writing new E2E scenarios:
 
 - `TEST_MODE` mocks all AI endpoints (chat, plan generate, receipt scan, the
-  vault's expiry-date read #433) — no real AI key is reached. A flow that needs
+  vault's expiry-date read #433, and the persona copy rewrite #523 P5, which
+  echoes the strings it was sent) — no real AI key is reached. A flow that needs
   a resolved provider turns AI on the way a household owner does (#523 P3):
   `configureAi()` in `automation/tests/local/api/steps/helpers.js` (API) and
   `configureAi()` in `automation/tests/local/e2e/steps/ai-setup.js` (E2E) POST a

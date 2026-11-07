@@ -1,11 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
-import {
-  loadPersona,
-  savePersona,
-  deriveHue,
-  applyTheme,
-  generatePersonaCopy,
-} from '../lib/persona.js'
+import { loadPersona, savePersona, deriveHue, applyTheme } from '../lib/persona.js'
+import { useGeneratePersonaCopy } from '../lib/queries/ai-settings.js'
 
 const PersonaContext = createContext(null)
 
@@ -36,8 +31,13 @@ export function PersonaProvider({ children, initialPersona }) {
     })
   }
 
-  const regenerateCopy = async (aiKey, provider, draftPersona = persona, opts = {}) => {
-    const generated = await generatePersonaCopy(draftPersona, aiKey, provider, undefined, opts)
+  // One server call behind the door (#523 P5): the browser sends the roles and
+  // the built-in copy, the Worker owns the prompt, the provider and the key.
+  // Rejects on failure so Settings can surface it; a 402 is the caller's
+  // "no AI configured — keep the built-in copy" state, not an error here.
+  const generateCopy = useGeneratePersonaCopy()
+  const regenerateCopy = async (draftPersona = persona) => {
+    const generated = await generateCopy.mutateAsync(draftPersona)
     if (generated) {
       setPersona({ generatedCopy: generated })
     }

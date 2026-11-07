@@ -10,6 +10,7 @@ import {
   testAiProvider,
   updateAiProvider,
 } from '../api'
+import { generatePersonaCopy } from '../persona.js'
 
 // AI gateway settings (ahaqqu/RumaQ#523 P3, plan §4.4). Two server-state slices —
 // the household's providers and its capability assignments — plus the preset
@@ -101,5 +102,24 @@ export function useClearAiCapability() {
   return useMutation({
     mutationFn: clearAiCapability,
     onSuccess: invalidate,
+  })
+}
+
+/**
+ * The persona copy rewrite (#523 P5) is a MUTATION, not server state: its
+ * result belongs to the persona (localStorage), so there is no cache slice to
+ * refetch. It IS a billed reasoning call, though, so the day's usage meter —
+ * rendered right above the persona form in Settings — is invalidated instead of
+ * silently under-reporting the household's spend. That includes the FAILED
+ * rewrite: an unparseable answer is a 502 whose usage row was still written
+ * (the #523 P4 A1 rule), so the invalidation runs on settle, not on success.
+ */
+export function useGeneratePersonaCopy() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (persona) => generatePersonaCopy(persona),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-usage'] })
+    },
   })
 }
