@@ -220,6 +220,22 @@ describe('ProductRenameForm', () => {
   })
 
   it('keeps only the decided row busy and leaves the rename form usable', () => {
+    // Two candidates: the busy state is keyed by alias id, so the row nobody
+    // touched must stay decidable while the first decision is in flight.
+    const [candidate] = identity().aliases
+    mockIdentity(
+      identity({
+        aliases: [
+          candidate,
+          {
+            ...candidate,
+            id: 'alias-candidate-2',
+            name: 'Beras Ramos 5 KG',
+            storeSlug: 'alfamart',
+          },
+        ],
+      })
+    )
     const { container, getByTestId } = renderForm()
     const rows = aliasRows(getByTestId)
     clickRowButton(rows[0], 'rename.aliasApprove')
@@ -227,9 +243,22 @@ describe('ProductRenameForm', () => {
     // The active row swaps in the busy label and disables both of its actions.
     expect(rowButtonTexts(rows[0])).toEqual(['rename.aliasApproving', 'rename.aliasReject'])
     expect([...rows[0].querySelectorAll('button')].every((button) => button.disabled)).toBe(true)
+    // The other candidate is untouched — a list-wide busy flag would disable
+    // it, and that is exactly what this pins.
+    expect(rowButtonTexts(rows[1])).toEqual(['rename.aliasApprove', 'rename.aliasReject'])
+    expect([...rows[1].querySelectorAll('button')].some((button) => button.disabled)).toBe(false)
     // A second click cannot queue a second decision for the same alias.
     fireEvent.click(rows[0].querySelector('button'))
     expect(aliasMutate).toHaveBeenCalledTimes(1)
+
+    // The untouched row still decides on its own id while row one is in flight.
+    clickRowButton(rows[1], 'rename.aliasApprove')
+    expect(lastAliasVariables()).toEqual({
+      productKey: PRODUCT_KEY,
+      aliasId: 'alias-candidate-2',
+      action: 'approve',
+    })
+    expect(aliasMutate).toHaveBeenCalledTimes(2)
 
     // The rename fields are untouched by a decision in flight: the draft still
     // submits (the backend keeps alias decisions off metadata_version).
@@ -305,6 +334,13 @@ describe('ProductRenameForm', () => {
         key: 'rename.aliasErrorGeneric',
         refreshes: false,
       },
+      // Only the documented CAS code is a lost decision: any other 409 keeps
+      // the generic copy and leaves the list alone.
+      {
+        error: new ApiError('RAW_409_OTHER', 409, null, { error: 'stale_product' }),
+        key: 'rename.aliasErrorGeneric',
+        refreshes: false,
+      },
     ]
     for (const { error, key, refreshes } of cases) {
       refetch.mockClear()
@@ -327,6 +363,18 @@ describe('ProductRenameForm', () => {
     expect(container.textContent).not.toContain('rename.aliasApprove')
     expect(container.textContent).not.toContain('rename.aliasReject')
     expect(container.textContent).not.toContain('rename.aliasDecisionHint')
+  })
+
+  it('defaults to no decision actions when the isAdmin prop is missing', () => {
+    // A surface that forgets the prop must fail closed: the action gates an
+    // admin-only route, and the default is the safe one.
+    const { container } = render(<ProductRenameForm productKey={PRODUCT_KEY} />)
+    const labels = [...container.querySelectorAll('button')].map((button) => button.textContent)
+    expect(labels).not.toContain('rename.aliasApprove')
+    expect(labels).not.toContain('rename.aliasReject')
+    expect(container.textContent).not.toContain('rename.aliasDecisionHint')
+    // The evidence is still read-only visible.
+    expect(container.textContent).toContain('rename.aliasStatusCandidate')
   })
 
   it('previews old → new live and submits the optimistic metadata version', () => {

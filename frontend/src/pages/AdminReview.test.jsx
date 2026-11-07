@@ -158,7 +158,19 @@ describe('AdminReview', () => {
           status: 'provisional',
           metadataVersion: 3,
         },
-        aliases: [],
+        // A candidate alias makes the shared form's admin-only decision
+        // actions observable here (#489): the page's isAdmin must reach them.
+        aliases: [
+          {
+            id: 'alias-candidate',
+            name: 'Beras Ramos 5 kg',
+            storeSlug: 'lotte-mart',
+            status: 'candidate',
+            source: 'ocr',
+            firstSeenAt: '2026-10-25T00:00:00Z',
+            lastSeenAt: '2026-10-28T00:00:00Z',
+          },
+        ],
         stats: { observations: 7, stores: 2 },
         audit: [],
       },
@@ -571,6 +583,11 @@ describe('AdminReview', () => {
       expect(container.querySelector('[data-testid="rename-current-name"]').textContent).toBe(
         reviewItem.entryName
       )
+      // #489: the page's admin flag reaches the shared form; without it the
+      // candidate row would stay read-only for an admin.
+      expect(
+        [...container.querySelectorAll('button')].map((button) => button.textContent)
+      ).toContain('rename.aliasApprove')
     })
 
     it('collapses the form again from the row action', () => {

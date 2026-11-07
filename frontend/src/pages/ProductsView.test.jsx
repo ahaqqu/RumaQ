@@ -139,7 +139,19 @@ describe('ProductsView admin rename action (#423)', () => {
           status: 'provisional',
           metadataVersion: 2,
         },
-        aliases: [],
+        // A candidate alias makes the shared form's admin-only decision
+        // actions observable here (#489): the page's isAdmin must reach them.
+        aliases: [
+          {
+            id: 'alias-candidate',
+            name: 'Minyak Goreng Bimoli 1 L',
+            storeSlug: 'lotte-mart',
+            status: 'candidate',
+            source: 'ocr',
+            firstSeenAt: '2026-10-25T00:00:00Z',
+            lastSeenAt: '2026-10-28T00:00:00Z',
+          },
+        ],
         stats: { observations: 4, stores: 2 },
         audit: [],
       },
@@ -173,6 +185,11 @@ describe('ProductsView admin rename action (#423)', () => {
     expect(form).not.toBeNull()
     expect(container.querySelector('[data-testid="rename-current-name"]').textContent).toBe(
       'Minyak Goreng Bimoli'
+    )
+    // #489: the page's admin flag reaches the shared form; without it the
+    // candidate row would stay read-only for an admin.
+    expect([...form.querySelectorAll('button')].map((button) => button.textContent)).toContain(
+      'rename.aliasApprove'
     )
     // The price detail stays usable underneath the open form.
     expect(container.textContent).toContain('prices.currentPrices')
