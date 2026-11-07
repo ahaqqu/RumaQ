@@ -1497,6 +1497,10 @@ describe('/api/admin/products', () => {
   const REVERT_PATH = `${PRODUCT_PATH}/audit/audit-1/revert`
   const APPROVE_PATH = `${PRODUCT_PATH}/aliases/alias-1/approve`
   const REJECT_PATH = `${PRODUCT_PATH}/aliases/alias-1/reject`
+  // The bulk exact-name approval (#515) is a static catalog-wide path, not a
+  // product leaf — but it must ride the same admin chain.
+  const ALIAS_CANDIDATES_PATH = '/api/admin/products/aliases/candidates'
+  const ALIAS_BULK_APPROVE_PATH = '/api/admin/products/aliases/bulk-approve'
 
   it('returns 401 without a session on every product admin route', async () => {
     const env = productEnv({ props: undefined })
@@ -1507,6 +1511,8 @@ describe('/api/admin/products', () => {
       ['POST', REVERT_PATH, revertRequest()],
       ['POST', APPROVE_PATH, {}],
       ['POST', REJECT_PATH, {}],
+      ['GET', ALIAS_CANDIDATES_PATH, {}],
+      ['POST', ALIAS_BULK_APPROVE_PATH, {}],
     ]
     for (const [method, path, init] of calls) {
       const res = await apiApp.request(path, { method, ...init }, env)
@@ -1524,6 +1530,8 @@ describe('/api/admin/products', () => {
       ['POST', REVERT_PATH, revertRequest()],
       ['POST', APPROVE_PATH, {}],
       ['POST', REJECT_PATH, {}],
+      ['GET', ALIAS_CANDIDATES_PATH, {}],
+      ['POST', ALIAS_BULK_APPROVE_PATH, {}],
     ]
     for (const [method, path, init] of calls) {
       const res = await apiApp.request(path, { method, ...init }, env)
@@ -2113,5 +2121,132 @@ describe('/api/admin/products/:productKey/aliases/:aliasId/approve|reject', () =
         expect(env.DB.batch).not.toHaveBeenCalled()
       }
     }
+  })
+})
+
+// Bulk exact-name alias approval (#515, follow-up to #489). The write semantics
+// (exact-match-only, receipt per approval, one bump, idempotency, chunking) are
+// pinned on real SQLite in canonical-products.test.ts; these tests pin the HTTP
+// surface — the counts read, the bodyless receipt, the 500 that keeps a partial
+// run honest, and the cache header. 401/403 ride the product block's matrix.
+describe('/api/admin/products/aliases/candidates|bulk-approve', () => {
+  const COUNTS_PATH = '/api/admin/products/aliases/candidates'
+  const BULK_PATH = '/api/admin/products/aliases/bulk-approve'
+
+  function bulkEnv() {
+    return createMockEnv({
+      props: { userId: 'u1', householdId: 'h1' },
+      RATE_LIMIT_MAX_REQUESTS: '10000',
+    })
+  }
+
+  function candidateRow(id: string) {
+    return { id, productKey: 'beras--ramos--5-kg' }
+  }
+
+  it('serves the candidate counts with private no-cache headers and writes nothing', async () => {
+    const env = bulkEnv()
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValueOnce({ is_admin: 1 })
+      .mockResolvedValueOnce({ candidates: 1973, exactCandidates: 42 })
+
+    const res = await apiApp.request(COUNTS_PATH, {}, env)
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toMatch(/private, no-cache/)
+    expect(await res.json()).toEqual({ candidates: 1973, exactCandidates: 42 })
+    // Read-only: the panel's counts never write or bump.
+    expect(env.DB.batch).not.toHaveBeenCalled()
+  })
+
+  it('approves exact-name aliases and returns the run receipt', async () => {
+    const env = bulkEnv()
+    env.DB.first = vi.fn().mockResolvedValue({ is_admin: 1 })
+    env.DB.all = vi
+      .fn()
+      .mockResolvedValue({ results: [candidateRow('alias-1'), candidateRow('alias-2')] })
+    env.DB.batch = vi
+      .fn()
+      // One chunk: two aliases x (CAS + receipt).
+      .mockResolvedValueOnce([
+        { meta: { changes: 1 } },
+        { meta: { changes: 1 } },
+        { meta: { changes: 1 } },
+        { meta: { changes: 1 } },
+      ])
+      // Tail: one bump, the version read, the remaining-candidate count.
+      .mockResolvedValueOnce([
+        { meta: { changes: 1 } },
+        { results: [{ version: 9 }] },
+        { results: [{ candidates: 4 }] },
+      ])
+
+    const res = await apiApp.request(BULK_PATH, { method: 'POST' }, env)
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toMatch(/private, no-cache/)
+    expect(await res.json()).toEqual({
+      exactCandidates: 2,
+      approved: 2,
+      remainingCandidates: 4,
+      indexVersion: 9,
+    })
+    expect(env.DB.batch).toHaveBeenCalledTimes(2)
+    const writeStatements = (env.DB.batch as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(writeStatements).toHaveLength(4)
+    const tailStatements = (env.DB.batch as ReturnType<typeof vi.fn>).mock.calls[1][0]
+    // The single bump is in the tail, not per alias — that is the "bump once"
+    // rule at the SQL boundary.
+    expect(tailStatements).toHaveLength(3)
+  })
+
+  it('accepts an empty JSON body as well as no body', async () => {
+    const env = bulkEnv()
+    env.DB.first = vi.fn().mockResolvedValue({ is_admin: 1 })
+    env.DB.all = vi.fn().mockResolvedValue({ results: [] })
+    env.DB.batch = vi
+      .fn()
+      .mockResolvedValueOnce([{ results: [{ version: 3 }] }, { results: [{ candidates: 0 }] }])
+
+    const res = await apiApp.request(
+      BULK_PATH,
+      {
+        method: 'POST',
+        body: '{}',
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+
+    expect(res.status).toBe(200)
+    // Nothing to approve: no bump statement, so the tail is just the two reads.
+    expect(await res.json()).toEqual({
+      exactCandidates: 0,
+      approved: 0,
+      remainingCandidates: 0,
+      indexVersion: 3,
+    })
+  })
+
+  it('answers 500 bulk_approve_failed with the count reached when a chunk fails', async () => {
+    const env = bulkEnv()
+    env.DB.first = vi.fn().mockResolvedValue({ is_admin: 1 })
+    env.DB.all = vi.fn().mockResolvedValue({ results: [candidateRow('alias-1')] })
+    env.DB.batch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('D1 unavailable'))
+      // The failure path still reads the version + remaining count.
+      .mockResolvedValueOnce([{ results: [{ version: 4 }] }, { results: [{ candidates: 1 }] }])
+
+    const res = await apiApp.request(BULK_PATH, { method: 'POST' }, env)
+
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({
+      error: 'bulk_approve_failed',
+      approved: 0,
+      indexVersion: 4,
+      remainingCandidates: 1,
+    })
   })
 })

@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vite-plus/test'
+import { describe, it, expect, vi } from 'vite-plus/test'
 import {
   AliasNotFoundError,
   AliasStateError,
   AuditNotFoundError,
+  BulkAliasApproveError,
   DuplicateNameError,
   InvalidNameError,
   InvalidReasonError,
@@ -10,6 +11,8 @@ import {
   StaleProductError,
   StaleRevertError,
   approveAlias,
+  bulkApproveExactNameAliases,
+  countAliasCandidates,
   getDuplicateNameReport,
   getProductIdentity,
   rejectAlias,
@@ -1532,5 +1535,277 @@ describe('getDuplicateNameReport — real-SQLite semantics', () => {
     // Two fixed statements plus one chunked store lookup per SELECT_IN_CHUNK
     // (90) product keys: the ceiling is what keeps this at 12, not 13+.
     expect(queryLog).toHaveLength(12)
+  })
+})
+
+// Bulk exact-name alias approval (ahaqqu/RumaQ#515, follow-up to #489). Pinned
+// on real SQLite because the whole guarantee is the SQL equality: NOCASE — the
+// same collation the rename guard and the duplicate report use — and nothing
+// else. A whitespace variant, a size variant, or another product's spelling
+// must stay a manual decision; the run must write one receipt per approval, one
+// index bump, and nothing at all on a second run.
+describe('countAliasCandidates / bulkApproveExactNameAliases — real-SQLite semantics', () => {
+  function seedBulkCatalog(sqlite: SqliteDb): void {
+    // prod-1: the canonical name is 'Beras Ramos 5 kg'.
+    insertProduct(sqlite)
+    // Exactly the canonical name, only the ASCII case differs -> approvable.
+    insertAlias(sqlite, {
+      id: 'alias-exact-lower',
+      productId: 'prod-1',
+      storeSlug: 'superindo',
+      name: 'beras ramos 5 kg',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-exact-upper',
+      productId: 'prod-1',
+      storeSlug: 'lotte-mart',
+      name: 'BERAS RAMOS 5 KG',
+    })
+    // Variants: a size spelled without the space, a short wording, and a
+    // trailing space. None of them is the canonical name, so all stay manual.
+    insertAlias(sqlite, {
+      id: 'alias-variant-no-space',
+      productId: 'prod-1',
+      storeSlug: 'alfamart',
+      name: 'Beras Ramos 5kg',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-variant-short',
+      productId: 'prod-1',
+      storeSlug: 'indomaret',
+      name: 'Beras Ramos',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-variant-space',
+      productId: 'prod-1',
+      storeSlug: 'hypermart',
+      name: 'Beras Ramos 5 kg ',
+    })
+    // Already decided: not a candidate, so the run must not touch it.
+    insertAlias(sqlite, {
+      id: 'alias-decided',
+      productId: 'prod-1',
+      storeSlug: 'transmart',
+      name: 'Beras Ramos 5 Kg',
+      status: 'approved',
+    })
+
+    // prod-2: one candidate exactly matching its OWN name (approvable), and
+    // one carrying prod-1's name (must stay candidate — the action is scoped
+    // to each alias's own product).
+    insertProduct(sqlite, {
+      id: 'prod-2',
+      productKey: 'gula--gulaku--1-kg',
+      name: 'Gula Pasir Gulaku 1 kg',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-cross-product',
+      productId: 'prod-2',
+      storeSlug: 'superindo',
+      name: 'Beras Ramos 5 kg',
+    })
+    insertAlias(sqlite, {
+      id: 'alias-other-exact',
+      productId: 'prod-2',
+      storeSlug: 'lotte-mart',
+      name: 'gula pasir gulaku 1 kg',
+    })
+
+    // prod-3: no aliases at all — the run must leave it (and its receipts) alone.
+    insertProduct(sqlite, { id: 'prod-3', productKey: 'susu--ultra--1-l', name: 'Susu Ultra 1 L' })
+  }
+
+  function seedExactAliases(sqlite: SqliteDb, count: number): void {
+    insertProduct(sqlite)
+    for (let i = 0; i < count; i += 1) {
+      insertAlias(sqlite, {
+        id: `alias-bulk-${i}`,
+        productId: 'prod-1',
+        storeSlug: `store-${i}`,
+        name: 'Beras Ramos 5 kg',
+      })
+    }
+  }
+
+  it('counts the candidates and how many exactly match their product name', async () => {
+    const sqlite = freshDb()
+    seedBulkCatalog(sqlite)
+    expect(await countAliasCandidates(sqliteD1(sqlite))).toEqual({
+      candidates: 7,
+      exactCandidates: 3,
+    })
+    // Read-only: no write, no index bump.
+    expect(aliasAuditRows(sqlite)).toEqual([])
+    expect(indexVersion(sqlite)).toBe(0)
+  })
+
+  it('approves ONLY exact-name candidates, one receipt each, and bumps the index once', async () => {
+    const sqlite = freshDb()
+    seedBulkCatalog(sqlite)
+    sqlite.prepare('UPDATE canonical_index_state SET version = 7 WHERE id = 1').run()
+
+    const result = await bulkApproveExactNameAliases(sqliteD1(sqlite), 'admin-1')
+
+    expect(result).toEqual({
+      exactCandidates: 3,
+      approved: 3,
+      // 7 candidates - 3 approved.
+      remainingCandidates: 4,
+      indexVersion: 8,
+    })
+
+    // Case-insensitive exact matches approved; every variant untouched.
+    for (const id of ['alias-exact-lower', 'alias-exact-upper', 'alias-other-exact']) {
+      expect(
+        sqlite.prepare('SELECT status FROM price_product_aliases WHERE id = ?').get(id)?.status,
+        id
+      ).toBe('approved')
+    }
+    for (const id of [
+      'alias-variant-no-space',
+      'alias-variant-short',
+      'alias-variant-space',
+      'alias-cross-product',
+    ]) {
+      expect(
+        sqlite.prepare('SELECT status FROM price_product_aliases WHERE id = ?').get(id)?.status,
+        id
+      ).toBe('candidate')
+    }
+    expect(
+      sqlite.prepare("SELECT status FROM price_product_aliases WHERE id = 'alias-decided'").get()
+        ?.status
+    ).toBe('approved')
+
+    // One receipt per approval, with the acting admin frozen on it.
+    const receipts = aliasAuditRows(sqlite)
+    expect(receipts).toHaveLength(3)
+    expect(receipts.map((row) => row.alias_name).sort()).toEqual([
+      'BERAS RAMOS 5 KG',
+      'beras ramos 5 kg',
+      'gula pasir gulaku 1 kg',
+    ])
+    for (const row of receipts) {
+      expect(row).toMatchObject({
+        action: 'approve',
+        actor_user_id: 'admin-1',
+        product_id: row.product_id,
+      })
+    }
+    expect(receipts.map((row) => row.product_key).sort()).toEqual([
+      'beras--ramos--5-kg',
+      'beras--ramos--5-kg',
+      'gula--gulaku--1-kg',
+    ])
+
+    // Exactly one bump for the whole run, not one per alias.
+    expect(indexVersion(sqlite)).toBe(8)
+    // No canonical metadata move: this is not a rename.
+    for (const id of ['prod-1', 'prod-2']) {
+      expect(productById(sqlite, id)?.metadata_version, id).toBe(1)
+    }
+    // A product with no aliases is untouched: no receipt, no metadata write.
+    expect(receipts.some((row) => row.product_key === 'susu--ultra--1-l')).toBe(false)
+    expect(productById(sqlite, 'prod-3')?.metadata_version).toBe(1)
+  })
+
+  it('is idempotent: a second run approves nothing, writes no receipt, and does not bump', async () => {
+    const sqlite = freshDb()
+    seedBulkCatalog(sqlite)
+    const db = sqliteD1(sqlite)
+    await bulkApproveExactNameAliases(db, 'admin-1')
+    const receiptsAfterFirst = aliasAuditRows(sqlite)
+    const versionAfterFirst = indexVersion(sqlite)
+
+    const second = await bulkApproveExactNameAliases(db, 'admin-2')
+
+    expect(second).toEqual({
+      exactCandidates: 0,
+      approved: 0,
+      remainingCandidates: 4,
+      indexVersion: versionAfterFirst,
+    })
+    expect(aliasAuditRows(sqlite)).toEqual(receiptsAfterFirst)
+    expect(indexVersion(sqlite)).toBe(versionAfterFirst)
+  })
+
+  it('chunks past 100 aliases: 50-statement batches carry 25 aliases each', async () => {
+    const sqlite = freshDb()
+    seedExactAliases(sqlite, 101)
+    sqlite.prepare('UPDATE canonical_index_state SET version = 3 WHERE id = 1').run()
+
+    const db = sqliteD1(sqlite)
+    const batch = vi.fn(db.batch)
+    db.batch = batch as unknown as typeof db.batch
+
+    const result = await bulkApproveExactNameAliases(db, 'admin-1')
+
+    expect(result).toEqual({
+      exactCandidates: 101,
+      approved: 101,
+      remainingCandidates: 0,
+      indexVersion: 4,
+    })
+    // 101 aliases x 2 statements = 202 statements over 50-statement batches:
+    // ceil(101 / 25) = 5 write batches (one per chunk), then the tail batch.
+    expect(batch).toHaveBeenCalledTimes(6)
+    const callSizes = batch.mock.calls.slice(0, 5).map((call) => (call[0] as unknown[]).length)
+    expect(callSizes).toEqual([50, 50, 50, 50, 2])
+    expect((batch.mock.calls[5][0] as unknown[]).length).toBe(3)
+    expect(aliasAuditRows(sqlite)).toHaveLength(101)
+    expect(indexVersion(sqlite)).toBe(4)
+  })
+
+  it('stops at a failed chunk, keeps the committed approvals, and reports the count reached', async () => {
+    const sqlite = freshDb()
+    // 26 exact aliases: the first chunk (25) commits, the second fails.
+    seedExactAliases(sqlite, 26)
+    sqlite.prepare('UPDATE canonical_index_state SET version = 7 WHERE id = 1').run()
+
+    const db = sqliteD1(sqlite)
+    const batch = vi.fn(db.batch)
+    batch.mockImplementationOnce(db.batch)
+    batch.mockImplementationOnce(() => Promise.reject(new Error('D1 unavailable')))
+    db.batch = batch as unknown as typeof db.batch
+
+    const error = await bulkApproveExactNameAliases(db, 'admin-1').catch((caught) => caught)
+
+    expect(error).toBeInstanceOf(BulkAliasApproveError)
+    expect((error as BulkAliasApproveError).approved).toBe(25)
+    // The committed chunk is real data: it is receipted, approved, and bumped.
+    expect((error as BulkAliasApproveError).indexVersion).toBe(8)
+    expect((error as BulkAliasApproveError).remainingCandidates).toBe(1)
+    expect(aliasAuditRows(sqlite)).toHaveLength(25)
+    expect(indexVersion(sqlite)).toBe(8)
+    // The failing chunk is all-or-nothing: exactly the first chunk's 25
+    // aliases moved, and the second chunk's one alias stayed a candidate.
+    const statuses = sqlite
+      .prepare('SELECT status FROM price_product_aliases')
+      .all()
+      .map((row) => row.status)
+    expect(statuses.filter((status) => status === 'approved')).toHaveLength(25)
+    expect(statuses.filter((status) => status === 'candidate')).toHaveLength(1)
+  })
+
+  it('answers a failed first chunk with approved 0 and no index bump', async () => {
+    const sqlite = freshDb()
+    seedExactAliases(sqlite, 3)
+
+    const db = sqliteD1(sqlite)
+    const batch = vi.fn(db.batch)
+    batch.mockImplementationOnce(() => Promise.reject(new Error('D1 unavailable')))
+    db.batch = batch as unknown as typeof db.batch
+
+    const error = await bulkApproveExactNameAliases(db, 'admin-1').catch((caught) => caught)
+
+    expect(error).toBeInstanceOf(BulkAliasApproveError)
+    expect((error as BulkAliasApproveError).approved).toBe(0)
+    expect((error as BulkAliasApproveError).indexVersion).toBe(0)
+    expect(aliasAuditRows(sqlite)).toEqual([])
+    expect(indexVersion(sqlite)).toBe(0)
+    expect(
+      sqlite.prepare("SELECT status FROM price_product_aliases WHERE id = 'alias-bulk-0'").get()
+        ?.status
+    ).toBe('candidate')
   })
 })

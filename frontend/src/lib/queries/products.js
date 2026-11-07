@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   approveProductAlias,
+  bulkApproveExactAliases,
   getAdminProduct,
+  getAliasCandidateCounts,
   getDuplicateProductNames,
   rejectProductAlias,
   renameProduct,
@@ -137,5 +139,40 @@ export function useDuplicateProductNames({ enabled = true } = {}) {
     queryKey: DUPLICATE_PRODUCT_NAMES_QUERY_KEY,
     queryFn: ({ signal }) => getDuplicateProductNames(signal),
     enabled,
+  })
+}
+
+// Bulk exact-name alias approval (ahaqqu/RumaQ#515). The counts are a
+// catalog-wide admin read of their own (the duplicate report's precedent) and
+// the panel renders them before the action; no staleTime, because the whole
+// point of the button is the count it is about to move.
+export const ALIAS_CANDIDATE_COUNTS_QUERY_KEY = ['alias-candidates']
+
+export function useAliasCandidateCounts({ enabled = true } = {}) {
+  return useQuery({
+    queryKey: ALIAS_CANDIDATE_COUNTS_QUERY_KEY,
+    queryFn: ({ signal }) => getAliasCandidateCounts(signal),
+    enabled,
+  })
+}
+
+// One catalog-wide mutation. On success the response's remaining count is
+// seeded into the counts cache (the exact-match count is spent: the run just
+// approved all of them) and then invalidated, so the panel never shows the
+// pre-run numbers behind a success notice. Every open product identity can
+// carry aliases whose status just flipped, so those are invalidated too; the
+// duplicate report and price lists do not show alias status and stay put.
+export function useBulkApproveExactAliases() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => bulkApproveExactAliases(),
+    onSuccess: (result) => {
+      queryClient.setQueryData(ALIAS_CANDIDATE_COUNTS_QUERY_KEY, {
+        candidates: result.remainingCandidates,
+        exactCandidates: 0,
+      })
+      queryClient.invalidateQueries({ queryKey: ALIAS_CANDIDATE_COUNTS_QUERY_KEY })
+      queryClient.invalidateQueries({ queryKey: PRODUCT_IDENTITY_BASE_KEY })
+    },
   })
 }

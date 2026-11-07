@@ -641,6 +641,36 @@ export function rejectProductAlias(
   )
 }
 
+// Bulk exact-name alias approval (#515, follow-up to #489). One safe
+// catalog-wide action: approve only the candidate aliases whose name exactly
+// equals their OWN product's canonical name (case-insensitive, the backend's
+// NOCASE equality); every whitespace/wording variant stays a manual decision.
+// The counts read drives the panel before the action; the mutation returns the
+// run receipt. Shapes mirror ALIAS_CANDIDATE_COUNTS_SCHEMA and
+// ALIAS_BULK_APPROVE_SCHEMA in backend/src/apps/api.ts.
+export type AliasCandidateCounts = {
+  candidates: number
+  exactCandidates: number
+}
+
+export type AliasBulkApproveResult = {
+  exactCandidates: number
+  approved: number
+  remainingCandidates: number
+  indexVersion: number
+}
+
+export function getAliasCandidateCounts(signal?: AbortSignal): Promise<AliasCandidateCounts> {
+  return unwrap(client.GET('/api/admin/products/aliases/candidates', { signal }))
+}
+
+// No body: the action is catalog-wide and has nothing to parameterize. The
+// route accepts an absent body (or an empty one) and is idempotent, so a retry
+// after a partial 500 continues instead of double-writing.
+export function bulkApproveExactAliases(): Promise<AliasBulkApproveResult> {
+  return unwrap(client.POST('/api/admin/products/aliases/bulk-approve'))
+}
+
 // ---------------------------------------------------------------------------
 // Households (issue #331) — member management, invites, active-household
 // switching. Shapes mirror the backend's households app; member profile

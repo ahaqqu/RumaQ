@@ -28,6 +28,8 @@ vi.mock('../lib/queries/products.js', () => ({
   useRevertRename: vi.fn(),
   useDecideAlias: vi.fn(),
   useDuplicateProductNames: vi.fn(),
+  useAliasCandidateCounts: vi.fn(),
+  useBulkApproveExactAliases: vi.fn(),
 }))
 
 import { usePrices, usePriceSources, usePriceMeta, usePriceDetail } from '../lib/queries/index.js'
@@ -38,6 +40,8 @@ import {
   useRevertRename,
   useDecideAlias,
   useDuplicateProductNames,
+  useAliasCandidateCounts,
+  useBulkApproveExactAliases,
 } from '../lib/queries/products.js'
 
 const PRODUCT_KEY = 'minyak-goreng--bimoli--1-l'
@@ -170,6 +174,13 @@ describe('ProductsView admin rename action (#423)', () => {
       isError: false,
       refetch: vi.fn(),
     })
+    vi.mocked(useAliasCandidateCounts).mockReturnValue({
+      data: { candidates: 12, exactCandidates: 3 },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
+    vi.mocked(useBulkApproveExactAliases).mockReturnValue({ mutate: vi.fn(), isPending: false })
     vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
   })
 
@@ -213,6 +224,22 @@ describe('ProductsView admin rename action (#423)', () => {
     expect(container.textContent).toContain('prices.currentPrices')
     expect(renameToggle(container)).toBeUndefined()
     expect(useProductIdentity).not.toHaveBeenCalled()
+  })
+
+  it('mounts the alias-candidates bulk action for admins only (#515)', () => {
+    const admin = renderProducts()
+    const panel = admin.container.querySelector('[data-testid="alias-candidates-panel"]')
+    expect(panel).not.toBeNull()
+    // The counts the confirm names are on screen before anything is clicked.
+    expect(panel.querySelector('[data-testid="alias-candidate-exact"]').textContent).toBe('3')
+    expect(useAliasCandidateCounts).toHaveBeenCalledTimes(1)
+    admin.unmount()
+
+    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
+    const shopper = renderProducts()
+    expect(shopper.container.querySelector('[data-testid="alias-candidates-panel"]')).toBeNull()
+    // A shopper's page never asks for the catalog-wide counts.
+    expect(useAliasCandidateCounts).toHaveBeenCalledTimes(1)
   })
 
   it('mounts the read-only duplicate-name report for admins only (#485)', () => {

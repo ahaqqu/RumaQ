@@ -66,7 +66,7 @@
 // Reject ships no bump statement at all, so a rejected alias never invalidates
 // the pipeline's cached index.
 
-import { selectIn } from './d1.js'
+import { BATCH_CHUNK, selectIn } from './d1.js'
 
 const PRODUCT_NAME_MAX = 500
 const REASON_MAX = 200
@@ -90,6 +90,13 @@ const DUPLICATE_GROUPS_DEFAULT = 200
 const DUPLICATE_GROUPS_MAX = 500
 const DUPLICATE_PRODUCTS_PER_GROUP = 25
 const DUPLICATE_PRODUCTS_CEILING = 900
+
+// Bulk exact-name alias approval (#515). Each alias costs two statements — the
+// `candidate -> approved` CAS and the receipt gated on it (the per-alias
+// decision pair, minus its per-decision bump) — so a 50-statement batch
+// (BATCH_CHUNK, lib/d1.ts) carries 25 aliases. A batch is atomic, so a chunk
+// either approves all of its aliases or none of them.
+const BULK_APPROVE_ALIASES_PER_BATCH = Math.floor(BATCH_CHUNK / 2)
 
 // Unicode control characters (the Cc category: C0, DEL, C1). Newlines and tabs
 // are rejected on purpose: the canonical index schema's rawText(500) rejects
@@ -231,6 +238,31 @@ type AliasDecisionResult = {
 
 type AliasDecision = 'approve' | 'reject'
 
+/** Counts the alias-candidates panel renders before the bulk action (#515). */
+type AliasCandidateCounts = {
+  candidates: number
+  exactCandidates: number
+}
+
+/** A candidate alias that restates its own product's canonical name. */
+type ExactAliasCandidate = {
+  id: string
+  productKey: string
+}
+
+/**
+ * The bulk approval's receipt (#515). `exactCandidates` is the set the run
+ * targeted (0 on an idempotent second run), `approved` the rows this run
+ * actually flipped, `remainingCandidates` the catalog-wide candidate count
+ * afterwards, and `indexVersion` the version the run's single bump left behind.
+ */
+type BulkAliasApproveResult = {
+  exactCandidates: number
+  approved: number
+  remainingCandidates: number
+  indexVersion: number
+}
+
 export class ProductNotFoundError extends Error {
   constructor(readonly productKey: string) {
     super(`Product '${productKey}' not found`)
@@ -308,6 +340,26 @@ export class AliasStateError extends Error {
   constructor(readonly currentStatus: AliasStatus) {
     super(`Alias is already '${currentStatus}'`)
     this.name = 'AliasStateError'
+  }
+}
+
+/**
+ * A bulk exact-name approval stopped mid-run (#515). Each chunk is
+ * all-or-nothing, but the run is not one transaction: earlier chunks stay
+ * committed, so the error carries how many aliases this run approved and the
+ * index state those approvals left behind. The route answers 500 with that
+ * count instead of pretending nothing happened (and a rerun continues, because
+ * the action is idempotent).
+ */
+export class BulkAliasApproveError extends Error {
+  constructor(
+    readonly approved: number,
+    readonly indexVersion: number | null,
+    readonly remainingCandidates: number | null,
+    readonly failure: unknown
+  ) {
+    super('Bulk alias approval failed')
+    this.name = 'BulkAliasApproveError'
   }
 }
 
@@ -1240,4 +1292,209 @@ export async function rejectAlias(
   input: AliasDecisionInput
 ): Promise<AliasDecisionResult> {
   return decideAlias(db, input, 'reject')
+}
+
+// ---------------------------------------------------------------------------
+// Bulk exact-name alias approval (#515, follow-up to #489). The per-alias
+// decision is right for ambiguous spellings, but the catalog carries ~1,973
+// candidates and the majority are just the canonical wording in another case.
+// Owner decision (2026-11-07): ONE safe action approves exactly those, and
+// nothing else — a whitespace variant, a size variant, or a different wording
+// stays a manual decision. Equality is SQLite's NOCASE, the same collation the
+// rename guard and the duplicate report use; it folds ASCII case only, so a
+// non-ASCII difference is a difference and stays manual.
+//
+// The write path reuses the per-alias decision's shape (CAS + gated receipt),
+// chunked because a run can touch far more rows than one batch may hold:
+//   chunk: [CAS, receipt] * 25 aliases, one db.batch = one transaction
+//   end:   one index bump gated on a receipt THIS run inserted
+// The bump is deliberately NOT one per alias: it is a catalog-wide version and
+// N increments would wake the pipeline N times for one logical change. It is
+// also gated on a receipt rather than the requested count, so a run that lost
+// every CAS to a concurrent admin bumps nothing.
+// ---------------------------------------------------------------------------
+
+/**
+ * The alias-candidates panel's counts (#515): every candidate alias in the
+ * catalog, and how many of them restate their own product's canonical name
+ * case-insensitively — exactly the set the bulk action would approve. Read-only,
+ * and no canonical-index bump: opening the panel must never wake the pipeline.
+ */
+export async function countAliasCandidates(db: D1Database): Promise<AliasCandidateCounts> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS candidates,
+              COALESCE(SUM(CASE WHEN a.name = p.name COLLATE NOCASE THEN 1 ELSE 0 END), 0)
+                AS exactCandidates
+       FROM price_product_aliases a
+       JOIN price_products p ON p.id = a.product_id
+       WHERE a.status = 'candidate'`
+    )
+    .first<{ candidates?: number; exactCandidates?: number }>()
+  // COUNT always returns a row; SUM needs COALESCE for the empty catalog.
+  return {
+    candidates: Number(row?.candidates ?? 0),
+    exactCandidates: Number(row?.exactCandidates ?? 0),
+  }
+}
+
+/** Reads back the version + candidate count a bulk run leaves behind. */
+async function finalizeBulkApprove(
+  db: D1Database,
+  lastReceiptId: string | null
+): Promise<{ indexVersion: number; remainingCandidates: number }> {
+  const statements: D1PreparedStatement[] = []
+  // Exactly one bump, gated on a receipt this run inserted. `lastReceiptId` is
+  // the newest committed approval's receipt: the bump and the counts then ride
+  // the same batch, so the response pairs them consistently. No receipt means
+  // the run approved nothing (an idempotent second run) and the version stays.
+  if (lastReceiptId) {
+    statements.push(indexBumpStatement(db, lastReceiptId, 'price_product_alias_audit'))
+  }
+  statements.push(
+    db.prepare('SELECT version FROM canonical_index_state WHERE id = 1'),
+    db.prepare(
+      `SELECT COUNT(*) AS candidates FROM price_product_aliases WHERE status = 'candidate'`
+    )
+  )
+  const results = (await db.batch(statements)) as unknown as BatchResult[]
+  const offset = lastReceiptId ? 1 : 0
+  const state = results[offset]?.results?.[0] as { version?: number } | undefined
+  const remaining = results[offset + 1]?.results?.[0] as { candidates?: number } | undefined
+  return {
+    indexVersion: Number(state?.version ?? 0),
+    remainingCandidates: Number(remaining?.candidates ?? 0),
+  }
+}
+
+/**
+ * Approve every candidate alias whose name equals its product's canonical name
+ * case-insensitively (#515). Never touches `price_products.metadata_version`
+ * (an alias decision is not a canonical metadata edit — the #489 rule) and
+ * never approves a whitespace/variant spelling.
+ *
+ * Idempotent: a second run finds no exact candidates, writes no receipt, and
+ * does not bump the index version. A product with no aliases is simply never
+ * in the candidate read.
+ *
+ * Failure: chunks are atomic, the run is not. If a chunk (or the tail batch)
+ * fails, the approvals already committed are real, so the failing path bumps
+ * the index for them and throws BulkAliasApproveError carrying the count
+ * reached — the route turns that into an honest 500, and a rerun continues
+ * where this one stopped. A run larger than the D1 query budget therefore
+ * still makes progress instead of losing everything.
+ */
+export async function bulkApproveExactNameAliases(
+  db: D1Database,
+  actorUserId: string
+): Promise<BulkAliasApproveResult> {
+  const candidates =
+    (
+      await db
+        .prepare(
+          // `a.name = p.name COLLATE NOCASE` is the owner's exact-match rule:
+          // case-insensitive, but a whitespace or wording variant is a
+          // different name and stays a manual decision. Ordered so a chunked
+          // run is deterministic.
+          `SELECT a.id AS id, p.product_key AS productKey
+           FROM price_product_aliases a
+           JOIN price_products p ON p.id = a.product_id
+           WHERE a.status = 'candidate' AND a.name = p.name COLLATE NOCASE
+           ORDER BY p.product_key, a.id`
+        )
+        .all<ExactAliasCandidate>()
+    ).results ?? []
+
+  const now = new Date().toISOString()
+  let approved = 0
+  let lastReceiptId: string | null = null
+
+  try {
+    for (let i = 0; i < candidates.length; i += BULK_APPROVE_ALIASES_PER_BATCH) {
+      const chunk = candidates.slice(i, i + BULK_APPROVE_ALIASES_PER_BATCH)
+      const statements: D1PreparedStatement[] = []
+      const receiptIds: string[] = []
+
+      for (const candidate of chunk) {
+        const receiptId = crypto.randomUUID()
+        receiptIds.push(receiptId)
+        // 1. The CAS: candidate-only and product-scoped, with the exact-name
+        // rule re-checked at write time — a rename that landed after the read
+        // must not let a now-variant spelling through.
+        statements.push(
+          db
+            .prepare(
+              `UPDATE price_product_aliases
+               SET status = 'approved'
+               WHERE id = ?
+                 AND product_id = (SELECT id FROM price_products WHERE product_key = ?)
+                 AND status = 'candidate'
+                 AND name = (
+                   SELECT p.name FROM price_products p
+                   WHERE p.id = price_product_aliases.product_id
+                 ) COLLATE NOCASE`
+            )
+            .bind(candidate.id, candidate.productKey)
+        )
+        // 2. The receipt, gated on THIS update (`changes() = 1`), exactly like
+        // the per-alias decision: the status alone cannot tell this batch's
+        // write apart from a concurrent admin's, and a receipt for a write we
+        // did not make would be a lie.
+        statements.push(
+          db
+            .prepare(
+              `INSERT INTO price_product_alias_audit
+                 (id, alias_id, product_id, product_key, store_slug, alias_name, action,
+                  actor_user_id, created_at)
+               SELECT ?, a.id, a.product_id, p.product_key, a.store_slug, a.name,
+                      'approve', ?, ?
+               FROM price_product_aliases a
+               JOIN price_products p ON p.id = a.product_id
+               WHERE a.id = ? AND a.status = 'approved' AND changes() = 1
+                 AND a.name = p.name COLLATE NOCASE`
+            )
+            .bind(receiptId, actorUserId, now, candidate.id)
+        )
+      }
+
+      const results = (await db.batch(statements)) as unknown as BatchResult[]
+      for (let j = 0; j < chunk.length; j += 1) {
+        const updated = results[j * 2]?.meta?.changes ?? 0
+        const receipted = results[j * 2 + 1]?.meta?.changes ?? 0
+        if (updated === 0) continue
+        // The pair runs in one transaction, so a CAS without its receipt is a
+        // broken batch, not a race: refuse to report an approval the catalog
+        // cannot explain (the failure path below keeps the count honest).
+        if (updated !== 1 || receipted !== 1) {
+          throw new Error(
+            `Bulk approval committed alias '${chunk[j].id}' without exactly one audit receipt`
+          )
+        }
+        approved += 1
+        lastReceiptId = receiptIds[j]
+      }
+    }
+
+    const tail = await finalizeBulkApprove(db, lastReceiptId)
+    return {
+      exactCandidates: candidates.length,
+      approved,
+      remainingCandidates: tail.remainingCandidates,
+      indexVersion: tail.indexVersion,
+    }
+  } catch (failure) {
+    // Committed approvals are real: bump for them before failing, so the
+    // pipeline sees what landed. If even that read fails, report the count
+    // reached with nulls rather than masking the original failure.
+    let indexVersion: number | null = null
+    let remainingCandidates: number | null = null
+    try {
+      const tail = await finalizeBulkApprove(db, lastReceiptId)
+      indexVersion = tail.indexVersion
+      remainingCandidates = tail.remainingCandidates
+    } catch {
+      // Reported as nulls below.
+    }
+    throw new BulkAliasApproveError(approved, indexVersion, remainingCandidates, failure)
+  }
 }
