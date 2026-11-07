@@ -18,3 +18,15 @@ export const CORE_GATEWAY_PREFIXES = [
   '/api/calendar',
   '/api/plugins',
 ] as const
+
+/**
+ * The API namespace proper (QF-B1, PR #486 review): the gateway dispatches
+ * apiApp under this predicate and apiApp.notFound answers typed JSON 404s
+ * with the SAME predicate — hand-rolling it in two places is how bare `/api`
+ * drifted to the SPA shell (QA-F1). True for `/api` itself and anything
+ * under it. Pure function — no imports — so the manifest module graph stays
+ * frontend-loadable.
+ */
+export function isApiPath(path: string): boolean {
+  return path === '/api' || path.startsWith('/api/')
+}
