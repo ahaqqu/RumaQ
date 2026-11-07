@@ -29,7 +29,7 @@ import {
   resolveAiAccess,
   type AiAccess,
 } from './ai-access.js'
-import type { ReviewVerdictName } from './match-review.js'
+import { verdictDecision, type ReviewVerdictName } from './match-review.js'
 
 // ---------------------------------------------------------------------------
 // Modes and limits (exported: the routes, the cron, and the tests share them).
@@ -241,11 +241,6 @@ export function parseReviewVerdict(content: string): ReviewVerdict {
     confidence: Math.min(1, Math.max(0, confidence)),
     reason: reason.trim().slice(0, REVIEW_REASON_MAX_CHARS),
   }
-}
-
-/** The review decision a verdict implies (approve = "yes, same product"). */
-export function verdictDecision(verdict: ReviewVerdictName): 'approved' | 'rejected' {
-  return verdict === 'same' ? 'approved' : 'rejected'
 }
 
 // ---------------------------------------------------------------------------

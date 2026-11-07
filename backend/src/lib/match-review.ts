@@ -22,6 +22,15 @@ export type HumanAgreement = 'agreed' | 'disagreed'
 export type ReviewDecisionSource = 'human' | 'ai_assist' | 'ai_auto'
 
 /**
+ * The queue decision a cached verdict implies (approve = "yes, same product").
+ * It lives with the verdict vocabulary — this module owns the table — so the
+ * decide route and lib/review-ai.ts's apply path cannot disagree on it.
+ */
+export function verdictDecision(verdict: ReviewVerdictName): ReviewDecision {
+  return verdict === 'same' ? 'approved' : 'rejected'
+}
+
+/**
  * One cached AI verdict as the queue carries it (issue #484): the model's
  * answer plus the provenance that makes a verdict comparable across a
  * settings-driven model change. Null on the item = not evaluated (yet).
@@ -431,10 +440,21 @@ export async function decideReviewItem(
   agreement?: HumanAgreement
 ): Promise<ReviewItem | null> {
   const verdict = await db
-    .prepare('SELECT id FROM review_ai_verdicts WHERE review_item_id = ?')
+    .prepare('SELECT verdict FROM review_ai_verdicts WHERE review_item_id = ?')
     .bind(id)
-    .first<{ id: string }>()
+    .first<{ verdict: ReviewVerdictName }>()
   const decidedSource: ReviewDecisionSource = agreement && verdict ? 'ai_assist' : 'human'
+  // Thermos A4: the agreement is DERIVED from what the human actually did
+  // against the cached verdict, never trusted from the request. A client that
+  // sends "agreed" while reversing the AI's answer would otherwise record
+  // provenance that contradicts the decision itself — and the agreement
+  // history is the signal the whole assist mode is meant to build.
+  const humanAgreement: HumanAgreement | null =
+    agreement && verdict
+      ? verdictDecision(verdict.verdict) === decision
+        ? 'agreed'
+        : 'disagreed'
+      : null
   const statements = [
     db
       .prepare(
@@ -451,7 +471,7 @@ export async function decideReviewItem(
     statements.push(
       db
         .prepare('UPDATE review_ai_verdicts SET human_agreement = ? WHERE review_item_id = ?')
-        .bind(agreement ?? null, id)
+        .bind(humanAgreement, id)
     )
   }
   await db.batch(statements)

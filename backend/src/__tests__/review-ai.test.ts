@@ -15,9 +15,13 @@ import {
   resolveReviewAiAccess,
   runReviewAiSweep,
   setReviewMode,
-  verdictDecision,
 } from '../lib/review-ai.js'
-import { decideReviewItem, listReviewItems, undoReviewDecision } from '../lib/match-review.js'
+import {
+  decideReviewItem,
+  listReviewItems,
+  undoReviewDecision,
+  verdictDecision,
+} from '../lib/match-review.js'
 import { encryptAiKey } from '../lib/crypto.js'
 import { apiApp } from '../apps/api.js'
 import { createDb, migrationFiles, type Db } from './support/d1-sqlite.js'
@@ -734,6 +738,23 @@ describe('decision provenance (agree / disagree)', () => {
     const item = await decideReviewItem(d1, 'r1', 'approved', ADMIN)
     expect(item?.decidedSource).toBe('human')
     expect(item?.aiVerdict?.humanAgreement).toBeNull()
+  })
+
+  it('derives the agreement from the decision instead of trusting the request', async () => {
+    insertItem('r1')
+    // The cached verdict says the pair is DIFFERENT; the human approves it
+    // (reversing the AI) but the client claims "agreed". The recorded
+    // provenance must describe what actually happened.
+    sqlite
+      .prepare(
+        `INSERT INTO review_ai_verdicts (id, review_item_id, verdict, confidence, mode)
+         VALUES ('v1', 'r1', 'different', 0.9, 'assist')`
+      )
+      .run()
+    const item = await decideReviewItem(d1, 'r1', 'approved', ADMIN, 'agreed')
+    expect(item?.decidedSource).toBe('ai_assist')
+    expect(item?.aiVerdict?.humanAgreement).toBe('disagreed')
+    expect(verdictRows()[0]).toMatchObject({ human_agreement: 'disagreed' })
   })
 
   it('clears an earlier agreement when the item is re-decided without one', async () => {
