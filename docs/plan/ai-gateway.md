@@ -844,8 +844,9 @@ database through Settings, like anyone else:
 **Automation seeds the same rows.** The harness setup step creates a provider and the three
 assignments through the public endpoints the UI uses (`POST /api/ai/providers`, then
 `PUT /api/ai/capabilities/{decision,reasoning,vision}`). Those endpoints only exist from **P3**, so P1
-marks the three AI automation scenarios pending (with a #523 reference) and P3 reactivates them against
-the new endpoints — there is no write-through to keep the old `PATCH /api/settings` step meaningful,
+marks the AI automation scenarios that need a resolved provider pending (five API, five E2E; each with
+a #523 reference) and P3 reactivates them against the new endpoints — there is no write-through to keep
+the old `PATCH /api/settings` step meaningful,
 because §4.3 removes the compatibility window on purpose. `TEST_MODE` still stubs the transport, so
 seeded rows exercise the **resolver** without a real provider call — which is exactly why the rows must
 exist. The "no AI key returns 402" scenarios stay honest by seeding nothing.
@@ -1328,9 +1329,10 @@ when routes change — `./scripts/docs.sh` and `bunx vp run api:codegen` (CI dif
    the four suites that constructed the fallback (`documents-ocr`, `api-routes`, `review-ai`, plus
    `__tests__/support/env.ts`) seed provider + capability rows instead; `api-routes.test.ts` asserts
    the settings payload with `ai_status` all `none` for a fresh household, that a legacy `PATCH /api/settings` with `ai_key` still returns 200 while leaving
-   `ai_providers` and `ai_capabilities` **unchanged** — the documented dead write of §4.3. The three AI
-   automation scenarios are marked pending in this PR (they need the P3 endpoints) with a #523
-   reference.
+   `ai_providers` and `ai_capabilities` **unchanged** — the documented dead write of §4.3. The AI
+   automation scenarios that need a resolved provider (five API, five E2E — their setup is that same
+   legacy `PATCH ... ai_key` dead write) are marked pending in this PR with a `#523` reference; P3
+   reactivates them against the provider/capability endpoints.
 
 **Not in P1:** no new endpoints, no new UI, no call-site edits, no adapter extraction, no column drop,
 and **no legacy write-through**.
