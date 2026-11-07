@@ -19,8 +19,10 @@ set -euo pipefail
 #   ./automation/scripts/test-local.sh --api          # run API tests only (needs stack)
 #   ./automation/scripts/test-local.sh --e2e          # run E2E tests only (needs stack)
 #
-# The runner keeps containers up between runs by default so iteration is fast.
-# Use --down when you are done, or when you want a completely clean state.
+# The runner tears the stack down whenever it exits - green, red, or interrupted
+# (#506). A stack started from a different checkout is never reused or torn down:
+# the compose project name is shared across worktrees, so a live stack from
+# another worktree aborts the run instead of being stomped.
 #
 # Prerequisites:
 #   - Docker + Docker Compose
@@ -137,12 +139,23 @@ fi
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
-# Shared failure epilogue for stack start-up problems: dump logs, tear the
-# stack down, and fail the run loudly before any suite executes.
+# Compose records the compose file that created each container, and the project
+# name ("automation") is shared by every worktree. That label is the ownership
+# check: a live stack whose compose file is not ours belongs to another
+# checkout, and neither ensure_stack nor cleanup may touch it.
+running_stack_owners() {
+  local cid
+  docker compose -f "$COMPOSE_FILE" ps -q 2> /dev/null | while read -r cid; do
+    [[ -n "$cid" ]] || continue
+    docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$cid" 2> /dev/null || true
+  done | sed '/^$/d' | sort -u || true
+}
+
+# Shared failure epilogue for stack start-up problems: dump logs and fail the
+# run loudly before any suite executes. The EXIT trap does the teardown.
 stack_failure() {
   fail "$1"
-  docker compose -f "$COMPOSE_FILE" logs proxy api
-  docker compose -f "$COMPOSE_FILE" down --volumes
+  docker compose -f "$COMPOSE_FILE" logs proxy api || true
   exit 1
 }
 
@@ -188,7 +201,17 @@ canary_first_request() {
 }
 
 ensure_stack() {
-  local build_flag=""
+  local build_flag="" owners
+  # Refuse to stomp a stack owned by another worktree: `up -d` would adopt the
+  # shared project and later teardown would kill their run.
+  owners="$(running_stack_owners)"
+  if [[ -n "$owners" && "$owners" != "$COMPOSE_FILE" ]]; then
+    fail "The automation stack is already running from another worktree: ${owners//$'\n'/, }"
+    info "Refusing to reuse or tear it down. Finish that run, or stop it with"
+    info "./scripts/test.sh automation-local --down from that checkout."
+    exit 1
+  fi
+
   if [[ "$BUILD_MODE" == "force" ]]; then
     # `up --build` only covers services started by `up`; the test-runner runs
     # via `compose run`, so rebuild it explicitly.
@@ -201,6 +224,9 @@ ensure_stack() {
     # build missing images automatically.
     build_flag=""
   fi
+
+  # From here this run owns the stack; cleanup() tears it down on every exit.
+  TEAR_DOWN="1"
 
   info "Ensuring test stack is running..."
   if [[ -n "$build_flag" ]]; then
@@ -223,11 +249,38 @@ ensure_stack() {
 }
 
 cleanup() {
-  if [[ -n "$TEAR_DOWN" ]]; then
-    info "Tearing down test containers..."
-    docker compose -f "$COMPOSE_FILE" down --volumes --remove-orphans
+  [[ -n "$TEAR_DOWN" ]] || return 0
+
+  # Re-check ownership at teardown time: a concurrent worktree may have taken
+  # the project over since ensure_stack ran, and its stack must survive.
+  local owners
+  owners="$(running_stack_owners)"
+  if [[ -z "$owners" ]]; then
+    return 0
   fi
+  if [[ "$owners" != "$COMPOSE_FILE" ]]; then
+    info "Leaving the running test stack in place: it belongs to another worktree (${owners//$'\n'/, })."
+    return 0
+  fi
+
+  info "Tearing down test containers..."
+  docker compose -f "$COMPOSE_FILE" down --volumes --remove-orphans \
+    || fail "Teardown failed. Run ./scripts/test.sh automation-local --down to clean up."
 }
+
+# #506: a failing suite used to exit under `set -e` before the success-path
+# teardown ran, leaking the stack. Run cleanup from an EXIT trap so every exit
+# path (pass, fail, Ctrl-C, TERM) tears down the stack this run owns.
+on_exit() {
+  local status=$?
+  trap - EXIT
+  cleanup
+  exit "$status"
+}
+
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ------------------------------------------------------------------
 # Dispatch
@@ -237,10 +290,8 @@ case "$MODE" in
     info "Running full test suite (API integration + E2E) via Docker..."
     ensure_stack
 
-    docker compose -f "$COMPOSE_FILE" run --rm test-runner
-    EXIT_CODE=$?
-
-    TEAR_DOWN="1" cleanup
+    EXIT_CODE=0
+    docker compose -f "$COMPOSE_FILE" run --rm test-runner || EXIT_CODE=$?
 
     # Generate HTML report from vitest JSON (mounted volume)
     if [ -f "$ROOT_DIR/automation/test-results/vitest/api-results.json" ]; then
@@ -275,10 +326,9 @@ case "$MODE" in
     info "Running API integration tests..."
     ensure_stack
 
+    EXIT_CODE=0
     docker compose -f "$COMPOSE_FILE" run --rm test-runner \
-      sh -c "bunx vp test --project integration && sync"
-    EXIT_CODE=$?
-    TEAR_DOWN="1" cleanup
+      sh -c "bunx vp test --project integration && sync" || EXIT_CODE=$?
     exit $EXIT_CODE
     ;;
 
@@ -286,10 +336,9 @@ case "$MODE" in
     info "Running E2E tests..."
     ensure_stack
 
+    EXIT_CODE=0
     docker compose -f "$COMPOSE_FILE" run --rm test-runner \
-      sh -c "bun x playwright test --config automation/playwright.config.js && sync"
-    EXIT_CODE=$?
-    TEAR_DOWN="1" cleanup
+      sh -c "bun x playwright test --config automation/playwright.config.js && sync" || EXIT_CODE=$?
     exit $EXIT_CODE
     ;;
 
