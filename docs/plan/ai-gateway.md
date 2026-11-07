@@ -1754,6 +1754,15 @@ appended by the adapter); `openrouter-decisions` serves the `decision` capabilit
 `questions` wire (D3, amended below). `presetEndpoint()` still refuses a row whose `kind` disagrees
 with the preset, so neither vendor can be half-configured.
 
+**Suggested model for the decisions preset — still not preset data.** A household types the model on
+its `openrouter-decisions` row. The measured suggestion is `perplexity/pplx-decider-v1.2`: the
+`RumaQ-pipeline#48` benchmark (200 real catalogue names, 3 arms, 600 calls, $0.033) found it **2.9×
+cheaper** than `~typesafe/jev-latest` ($0.0371 vs $0.1085 per 1,000 decisions) at similar quality
+(mean confidence 0.838 vs 0.867; 89.5% raw agreement, **97.5%** when both confidence ≥ 0.60), while
+the `pplx-decider-flash-v1.2` arm was confidently wrong on clear names and is **not adopted**. The
+pipeline's own default is the same model (`DECISION_MODEL` switches it); RumaQ ships no default, so
+the suggestion lives here and in the pipeline docs, never as a preset field.
+
 ### 9.2 What a live probe pinned about the decisions wire
 
 A live probe against the alpha endpoint (key `OPEN_ROUTER_KEY`, sourced — never printed) pinned the
@@ -1785,21 +1794,22 @@ accepted limitation (`usageReported: false`, `provider = 'questions'`, rendered 
 token-billed", §5.3). Folding the reported usage into metering is a separate decision (§7.2 #2), not a
 silent change.
 
-**Model alias.** The pipeline pins `~typesafe/jev-latest`; the probe's response resolved it to
-`typesafe/jev-1.14-20261014` in the `model` field. That is exactly the pinned-vs-latest trade this
-document already made for owner-typed models (§3.6): the alias lives in pipeline code, and RumaQ names
-no model at all.
+**Model choice.** The probe ran with `~typesafe/jev-latest` and its response resolved the alias to
+`typesafe/jev-1.14-20261014` in the `model` field — the pinned-vs-latest trade this document already
+made for owner-typed models (§3.6). The later #48 benchmark (above) switched the pipeline's default
+to the cheaper, similarly-agreeing `perplexity/pplx-decider-v1.2`, with the alias kept as the
+documented alternative via `DECISION_MODEL`. RumaQ names no model at all.
 
 ### 9.3 Probe evidence
 
 Five calls total on 2026-11-07 — one `400`, four `200`s, combined reported cost ≈ **$0.00025**:
 
-| #   | request                                                          | result                                                                                                                                                                                                                                                                                         |
-| --- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | documented shape, `criteria` as a rubric **string**              | `400` — `questions.kategori.criteria: expected record, received string`                                                                                                                                                                                                                        |
-| 2   | 2-choice record (`teh-kopi`/`minuman-lain`)                      | `200` — `choice: "teh-kopi"`, `confidence: 1`, `probabilities` over both keys; `usage` = 348 in / 40 out / $0.000014616                                                                                                                                                                        |
-| 3   | 2-choice record with non-slug keys (`deskripsi_a`/`deskripsi_b`) | `200` — `choice: "deskripsi_a"`, proving the record keys are the answer vocabulary                                                                                                                                                                                                             |
-| 4–5 | the pipeline's real client + 48-bucket taxonomy, end to end      | `200` — `state: ["Kopi Kapal Api Special Mix 165g"]`, `model: "~typesafe/jev-latest"` resolved to `typesafe/jev-1.14-20261014`, `provider: "TypeSafe"`, `answers.kategori.choice: "teh-kopi"`, `confidence: 1`, `probabilities` over all 48 buckets; `usage` = 2580 in / 523 out / $0.00010836 |
+| #   | request                                                                                                     | result                                                                                                                                                                                                                                                                                         |
+| --- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | documented shape, `criteria` as a rubric **string**                                                         | `400` — `questions.kategori.criteria: expected record, received string`                                                                                                                                                                                                                        |
+| 2   | 2-choice record (`teh-kopi`/`minuman-lain`)                                                                 | `200` — `choice: "teh-kopi"`, `confidence: 1`, `probabilities` over both keys; `usage` = 348 in / 40 out / $0.000014616                                                                                                                                                                        |
+| 3   | 2-choice record with non-slug keys (`deskripsi_a`/`deskripsi_b`)                                            | `200` — `choice: "deskripsi_a"`, proving the record keys are the answer vocabulary                                                                                                                                                                                                             |
+| 4–5 | the pipeline's real client + 48-bucket taxonomy, end to end (then-default jev alias, before the #48 switch) | `200` — `state: ["Kopi Kapal Api Special Mix 165g"]`, `model: "~typesafe/jev-latest"` resolved to `typesafe/jev-1.14-20261014`, `provider: "TypeSafe"`, `answers.kategori.choice: "teh-kopi"`, `confidence: 1`, `probabilities` over all 48 buckets; `usage` = 2580 in / 523 out / $0.00010836 |
 
 No key material appears in any response or in this document. The `400` also proved the envelope
 validator runs before inference (the billing line is absent).
