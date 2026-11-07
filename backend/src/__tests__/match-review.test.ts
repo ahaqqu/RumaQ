@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
-import type { ReviewItemPair } from '@rumaq/contract'
+import { reviewItemPairSchema, type ReviewItemPair } from '@rumaq/contract'
+import { generateSpecs } from 'hono-openapi'
 import { apiApp } from '../apps/api.js'
 import {
   recordReviewItems,
@@ -548,6 +549,24 @@ describe('exportReviewDecisions', () => {
       entrySourceUrl: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
       entryObservedAt: '2026-10-28',
     })
+  })
+})
+
+// Issue #493: the review-list `reason` enum reads REVIEW_REASONS, which is a
+// HAND-KEPT mirror of the contract's picklist — so pin the schema the API
+// actually publishes to the contract options. A reason added to the contract
+// (or a drift back to two values in the route schema) must fail here, not
+// reach the triage queue as a mislabelled flag.
+describe('review reason vocabulary (issue #493)', () => {
+  it('publishes exactly the contract reason picklist in the review-list schema', async () => {
+    const specs = (await generateSpecs(apiApp, {
+      documentation: { info: { title: 'RumaQ API', version: '0.1.0' } },
+    })) as Record<string, any>
+    const listSchema =
+      specs.paths['/api/admin/review'].get.responses['200'].content['application/json'].schema
+    const published = [...(listSchema.properties.items.items.properties.reason.enum as string[])]
+    const contractReasons = [...reviewItemPairSchema.entries.reason.options]
+    expect(published.sort()).toEqual(contractReasons.sort())
   })
 })
 
