@@ -62,3 +62,41 @@ Feature: Cross-household security
     Then the response status should be 200
     And the response should not contain encrypted_ai_key
     And the response should not contain ai_key
+
+  # ahaqqu/RumaQ#528: the CSRF Origin guard runs in the gateway before any
+  # handler, against the real proxy path the browser uses.
+  Scenario: A cross-origin cookie write is rejected
+    Given the database has seed data
+    And I am authenticated as a test user
+    And the request Origin is "https://evil.example"
+    When I send a POST request to /api/locations with body
+      """
+      {"label": "Forged"}
+      """
+    Then the response status should be 403
+    And the response body should match
+      """
+      {"error": "csrf_origin_mismatch"}
+      """
+    When I send a GET request to /api/locations
+    Then the response status should be 200
+    And the locations list should not contain "Forged"
+
+  Scenario: A cookie write from the app's own origin still works
+    Given the database has seed data
+    And I am authenticated as a test user
+    And the request Origin is "http://localhost:3000"
+    When I send a POST request to /api/locations with body
+      """
+      {"label": "Rak Atas"}
+      """
+    Then the response status should be 201
+
+  Scenario: A cookie write with no Origin (scripted admin) still works
+    Given the database has seed data
+    And I am authenticated as a test user
+    When I send a POST request to /api/locations with body
+      """
+      {"label": "Rak Bawah"}
+      """
+    Then the response status should be 201

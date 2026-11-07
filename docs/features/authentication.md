@@ -20,7 +20,7 @@ RumaQ uses **session-based authentication** with signed JWTs stored in an `httpO
 4. The user is upserted into the `users` table (keyed on `google_id`)
 5. If the user has no household, one is created with default locations (Kulkas, Freezer, Lemari, Rak) and stores (Indomaret, Alfamart, Pasar)
 6. A `rumaq_session` JWT is signed with `sub` (user ID), `email`, `iat`, and `exp` (30 days)
-7. The cookie is set (`httpOnly`, `secure`, `sameSite: None`) and the browser redirects to the app
+7. The cookie is set (`httpOnly`, `secure` on HTTPS, `sameSite: Lax` — never `None`; see `docs/SECURITY.md` §CSRF, #528) and the browser redirects to the app
 
 ### Email login flow
 
@@ -45,13 +45,13 @@ Attempts are rate limited per client IP — 10 per 60 s in production (QA-F4, #4
 
 ## API endpoints
 
-| Method | Path                    | Auth | Description                                      |
-| ------ | ----------------------- | ---- | ------------------------------------------------ |
-| GET    | `/api/auth/login`       | —    | Redirects to Google OAuth consent screen         |
-| GET    | `/api/auth/callback`    | —    | Google OAuth callback, sets session cookie       |
-| POST   | `/api/auth/email-login` | —    | Email/password login, sets session cookie        |
-| GET    | `/api/auth/logout`      | —    | Clears session cookie and redirects              |
-| POST   | `/api/auth/logout`      | —    | Clears session cookie and returns `{ ok: true }` |
+| Method | Path                    | Auth | Description                                           |
+| ------ | ----------------------- | ---- | ----------------------------------------------------- |
+| GET    | `/api/auth/login`       | —    | Redirects to Google OAuth consent screen              |
+| GET    | `/api/auth/callback`    | —    | Google OAuth callback, sets session cookie            |
+| POST   | `/api/auth/email-login` | —    | Email/password login, sets session cookie             |
+| GET    | `/api/auth/logout`      | —    | Clears session cookie, redirects (no epoch bump)      |
+| POST   | `/api/auth/logout`      | —    | Clears cookie + session epoch, returns `{ ok: true }` |
 
 ## Configuration
 

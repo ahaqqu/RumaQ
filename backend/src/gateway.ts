@@ -12,6 +12,7 @@ import { logDueDocumentReminders } from './lib/document-expiry.js'
 import { PURGE_TICK_OBJECT_BUDGET, runPluginPurgeTick } from './lib/plugin-purge.js'
 import { runPluginCronTasks } from './lib/plugin-cron.js'
 import { runReviewAiSweep } from './lib/review-ai.js'
+import { csrfOriginGuard } from './lib/csrf.js'
 import { PLUGIN_TASKS_CRON_SCHEDULE, REVIEW_AI_CRON_SCHEDULE } from './cron-schedules.js'
 
 const AUTH_ROUTES = new Set([
@@ -61,6 +62,14 @@ export const gateway = {
     const path = url.pathname
 
     if (isApiPath(path)) {
+      // CSRF (ahaqqu/RumaQ#528): reject a cross-origin state-changing browser
+      // request before ANY app handler runs. This is the single choke point —
+      // every domain app and plugin dispatched below (and CachedApi) is behind
+      // it, so a new app cannot ship an unguarded write. Policy and
+      // exemptions live in lib/csrf.ts.
+      const csrfRejection = csrfOriginGuard(request, env)
+      if (csrfRejection) return csrfRejection
+
       if (AUTH_ROUTES.has(path)) {
         const adjustedUrl = new URL(request.url)
         adjustedUrl.pathname = path.replace(/^\/api\/auth/, '')

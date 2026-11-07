@@ -38,7 +38,7 @@ export function useLogout() {
   return useMutation({
     mutationFn: async () => {
       queryClient.clear()
-      apiLogout()
+      await apiLogout()
     },
   })
 }

@@ -14,6 +14,16 @@ const COOKIE_NAME = 'rumaq_session'
 const OAUTH_STATE_COOKIE = 'rumaq_oauth_state'
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000
 
+// CSRF (ahaqqu/RumaQ#528): the session cookie is `SameSite=Lax` — no longer
+// `None` on HTTPS. Nothing legitimately needs a cross-site cookie any more:
+// one Worker serves the SPA and the API from the same origin in production,
+// branch previews do the same, and local dev is same-SITE even though the SPA
+// (:5173) and API (:8787) are different origins (cookies ignore ports).
+// `Lax` is what stops a cross-site form/fetch POST from carrying the session
+// at all; `lib/csrf.ts`'s Origin guard is the server-side second layer (it
+// also covers sessions still holding a pre-fix `None` cookie until re-login).
+const SESSION_COOKIE_SAME_SITE = 'Lax' as const
+
 // QA-F4 (ahaqqu/RumaQ#402): /email-login gets its own, much tighter limiter
 // than the general per-IP window (which the auth app does not run at all —
 // only api/households/documents do). Credential probing is the cheapest
@@ -31,7 +41,7 @@ const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000
 // rejects the exchange otherwise — so both routes build it here, derived from the
 // request origin: Google returns the browser to the authorize-time redirect_uri,
 // so the callback's own origin is always the value Google validated.
-const oauthRedirectUri = (c: Context<Env>) => `${getRequestOrigin(c)}/api/auth/callback`
+const oauthRedirectUri = (c: Context<Env>) => `${getRequestOrigin(c.req)}/api/auth/callback`
 
 const authApp = new Hono<Env>()
 
@@ -239,7 +249,7 @@ authApp.get(
       path: '/',
       httpOnly: true,
       secure: isHttps,
-      sameSite: isHttps ? 'None' : 'Lax',
+      sameSite: SESSION_COOKIE_SAME_SITE,
       maxAge: 60 * 60 * 24 * 30,
     })
 
@@ -251,7 +261,7 @@ authApp.all(
   '/logout',
   describeRoute({
     description:
-      'Revokes the session server-side by bumping the user’s session epoch (ahaqqu/RumaQ#405) — every token issued before the bump stops working, on all devices — then clears the cookie. POST returns { ok: true }; GET redirects to /. Without a valid session cookie it is a no-op that only clears the cookie.',
+      'Clears the session cookie. POST (the SPA’s logout) additionally revokes the session server-side by bumping the user’s session epoch (ahaqqu/RumaQ#405) — every token issued before the bump stops working, on all devices — and returns { ok: true }. GET is a navigation (legacy links, the e2e smoke flow) and is limited to clearing the cookie before redirecting to /, because a top-level cross-site GET still carries a sameSite=Lax cookie and must not be able to revoke every session (#528 review A1). Without a valid session cookie it is a no-op that only clears the cookie.',
     responses: {
       200: {
         description: 'OK',
@@ -269,13 +279,21 @@ authApp.all(
     // the sub of an unverified token would let anyone revoke a victim's
     // sessions by crafting a cookie. No/expired/forged cookie: clear the
     // cookie and move on (logout stays idempotent and leak-free).
+    //
+    // Only a non-GET (the SPA POSTs) may touch the epoch: revoking every
+    // session on the user's account is a state change, and `lib/csrf.ts`
+    // deliberately leaves GET alone — a top-level cross-site GET navigation
+    // still carries the sameSite=Lax cookie, so a link, redirect or
+    // `location.href` to this URL would otherwise force-log-out every device
+    // (#528 review A1). GET keeps the cookie clear it has always done.
+    const revokeAllSessions = c.req.method !== 'GET'
     let token: string | undefined
     try {
       token = getCookie(c, COOKIE_NAME)
     } catch {
       // c.req.raw not available (test mock)
     }
-    if (token) {
+    if (token && revokeAllSessions) {
       const payload = await verifyJwt(token, c.env.WORKER_JWT_SECRET)
       if (payload && typeof payload.sub === 'string') {
         // Monotonic bump, never a reset: setting the epoch back to 0 would
@@ -297,7 +315,7 @@ authApp.all(
       path: '/',
       httpOnly: true,
       secure: isHttps,
-      sameSite: isHttps ? 'None' : 'Lax',
+      sameSite: SESSION_COOKIE_SAME_SITE,
       maxAge: 0,
     })
     if (c.req.method === 'GET') {
@@ -471,7 +489,7 @@ authApp.post(
       path: '/',
       httpOnly: true,
       secure: isHttps,
-      sameSite: isHttps ? 'None' : 'Lax',
+      sameSite: SESSION_COOKIE_SAME_SITE,
       maxAge: 60 * 60 * 24 * 30,
     })
 
