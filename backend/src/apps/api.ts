@@ -856,12 +856,15 @@ apiApp.get(
   async (c) => {
     const { location, q } = c.req.valid('query')
 
+    // #524 (security): a pre-fix poisoned row (this household's stock pointing
+    // at another household's item) must not echo the foreign name here — the
+    // item side of the join resolves only inside the household.
     let sql = `SELECT s.id, i.name, s.qty, s.unit, s.expiry_date, s.run_out_days, s.basis, l.label AS location
        FROM stock s
-       JOIN items i ON i.id = s.item_id
+       JOIN items i ON i.id = s.item_id AND i.household_id = ?
        LEFT JOIN locations l ON l.id = s.location_id
        WHERE s.household_id = ?`
-    const params: unknown[] = [c.get('householdId')]
+    const params: unknown[] = [c.get('householdId'), c.get('householdId')]
 
     if (location) {
       sql += ' AND l.id = ?'
@@ -1064,7 +1067,7 @@ apiApp.get(
     const lowStock = await c.env.DB.prepare(
       `SELECT s.id, i.name, s.qty, s.unit, s.expiry_date, s.run_out_days, s.basis, l.label AS location
        FROM stock s
-       JOIN items i ON i.id = s.item_id
+       JOIN items i ON i.id = s.item_id AND i.household_id = ?
        LEFT JOIN locations l ON l.id = s.location_id
        WHERE s.household_id = ? AND s.qty > 0
        AND (COALESCE(s.run_out_days, 999) <= 7
@@ -1072,7 +1075,7 @@ apiApp.get(
        ORDER BY COALESCE(s.run_out_days, 999), s.expiry_date
        LIMIT 20`
     )
-      .bind(householdId, today)
+      .bind(householdId, householdId, today)
       .all()
 
     const attentionResult = await c.env.DB.prepare(
@@ -3369,9 +3372,12 @@ apiApp.get(
       params.push(to)
     }
     if (q) {
+      // #524 (security): the name search resolves only inside the household —
+      // a foreign item's name must not match (and surface) this household's
+      // purchase through the items join.
       sql +=
-        ' AND p.id IN (SELECT pi.purchase_id FROM purchase_items pi JOIN items i ON i.id = pi.item_id WHERE i.name LIKE ?)'
-      params.push(`%${q}%`)
+        ' AND p.id IN (SELECT pi.purchase_id FROM purchase_items pi JOIN items i ON i.id = pi.item_id AND i.household_id = ? WHERE i.name LIKE ?)'
+      params.push(householdId, `%${q}%`)
     }
     if (cursor) {
       const sep = cursor.indexOf('|')
@@ -3416,13 +3422,16 @@ apiApp.get(
     if (purchases.length > 0) {
       const placeholders = purchases.map(() => '?').join(',')
       const purchaseIds = purchases.map((p) => p.id)
+      // #524 (security): the household predicate lives in the ON clause — a
+      // NULL item_id still renders (name null, as before), a foreign one
+      // de-references instead of leaking its name.
       const { results: items } = await c.env.DB.prepare(
         `SELECT pi.id, pi.purchase_id, pi.item_id, i.name, pi.qty, pi.unit, pi.price
            FROM purchase_items pi
-           LEFT JOIN items i ON i.id = pi.item_id
+           LEFT JOIN items i ON i.id = pi.item_id AND i.household_id = ?
           WHERE pi.purchase_id IN (${placeholders})`
       )
-        .bind(...purchaseIds)
+        .bind(householdId, ...purchaseIds)
         .all<{
           purchase_id: string
           id: string
@@ -3475,8 +3484,8 @@ apiApp.get(
     }
     if (q) {
       monthSql +=
-        ' AND p.id IN (SELECT pi.purchase_id FROM purchase_items pi JOIN items i ON i.id = pi.item_id WHERE i.name LIKE ?)'
-      monthParams.push(`%${q}%`)
+        ' AND p.id IN (SELECT pi.purchase_id FROM purchase_items pi JOIN items i ON i.id = pi.item_id AND i.household_id = ? WHERE i.name LIKE ?)'
+      monthParams.push(householdId, `%${q}%`)
     }
     monthSql += ' GROUP BY month ORDER BY month DESC'
     const { results: monthTotals } = await c.env.DB.prepare(monthSql)
@@ -3535,14 +3544,17 @@ apiApp.get(
       return c.json({ error: 'Purchase not found' }, 404)
     }
 
+    // #524 (security): same ON-clause scoping as the list route — the purchase
+    // header is already household-checked, but its lines must not resolve a
+    // foreign item's name.
     const { results: items } = await c.env.DB.prepare(
       `SELECT pi.id, pi.item_id, i.name, pi.qty, pi.unit, pi.price
          FROM purchase_items pi
-         LEFT JOIN items i ON i.id = pi.item_id
+         LEFT JOIN items i ON i.id = pi.item_id AND i.household_id = ?
         WHERE pi.purchase_id = ?
         ORDER BY pi.created_at`
     )
-      .bind(purchaseId)
+      .bind(householdId, purchaseId)
       .all<{
         id: string
         item_id: string | null
@@ -5772,19 +5784,23 @@ apiApp.get(
     const planIds = plans.map((p) => p.id)
     const placeholders = planIds.map(() => '?').join(',')
 
+    // #524 (security): this payload IS the plan detail read (there is no
+    // separate /api/plans/:id route) — the item side of the join resolves only
+    // inside the household, so a poisoned plan line cannot echo a foreign
+    // name. ON-clause placement: a NULL item_id still renders.
     const { results: items } = await c.env.DB.prepare(
       `SELECT pi.id, pi.plan_id, pi.item_id, pi.store_id, i.name AS item_name,
               s.label AS store_label, pi.qty, pi.unit, pi.price_estimate, pi.why, pi.status, pi.created_at,
               ps.name AS price_source_name, po.valid_until AS price_valid_until
        FROM plan_items pi
-       LEFT JOIN items i ON i.id = pi.item_id
+       LEFT JOIN items i ON i.id = pi.item_id AND i.household_id = ?
        LEFT JOIN stores s ON s.id = pi.store_id
        LEFT JOIN price_observations po ON po.id = pi.price_observation_id
        LEFT JOIN price_sources ps ON ps.id = po.source_id
        WHERE pi.plan_id IN (${placeholders})
        ORDER BY pi.created_at`
     )
-      .bind(...planIds)
+      .bind(householdId, ...planIds)
       .all<{
         id: string
         plan_id: string
@@ -5852,14 +5868,16 @@ apiApp.post(
       )
     }
 
+    // #524 (security): these three reads are the plan prompt's inputs — a
+    // poisoned row must not feed another household's item name to the model.
     const lowStock = await c.env.DB.prepare(
       `SELECT i.name, s.qty, s.unit, s.run_out_days, s.expiry_date
        FROM stock s
-       JOIN items i ON i.id = s.item_id
+       JOIN items i ON i.id = s.item_id AND i.household_id = ?
        WHERE s.household_id = ? AND s.qty > 0
        AND (COALESCE(s.run_out_days, 999) <= 7 OR s.run_out_days IS NULL)`
     )
-      .bind(householdId)
+      .bind(householdId, householdId)
       .all<{
         name: string
         qty: number
@@ -5875,11 +5893,11 @@ apiApp.post(
     const expiring = await c.env.DB.prepare(
       `SELECT i.name, s.qty, s.unit, s.expiry_date
        FROM stock s
-       JOIN items i ON i.id = s.item_id
+       JOIN items i ON i.id = s.item_id AND i.household_id = ?
        WHERE s.household_id = ? AND s.qty > 0
        AND s.expiry_date IS NOT NULL AND s.expiry_date <= ?`
     )
-      .bind(householdId, expiryCutoff)
+      .bind(householdId, householdId, expiryCutoff)
       .all<{
         name: string
         qty: number
@@ -5895,12 +5913,12 @@ apiApp.post(
       `SELECT DISTINCT i.name, s.label AS store_label
        FROM purchase_items pi
        JOIN purchases p ON p.id = pi.purchase_id
-       JOIN items i ON i.id = pi.item_id
+       JOIN items i ON i.id = pi.item_id AND i.household_id = ?
        LEFT JOIN stores s ON s.id = p.store_id
        WHERE p.household_id = ? AND p.date >= ?
        ORDER BY i.name`
     )
-      .bind(householdId, sinceDate)
+      .bind(householdId, householdId, sinceDate)
       .all<{ name: string; store_label: string | null }>()
 
     const { results: stores } = await c.env.DB.prepare(
