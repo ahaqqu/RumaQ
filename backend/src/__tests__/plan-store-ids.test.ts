@@ -265,7 +265,12 @@ describe('POST /api/plans/generate — the prompt carries store id+label pairs (
     )
 
     expect(saved.status).toBe(201)
-    expect(planItemRows().map((row) => row.store_id)).toEqual([OWN_STORE_A, null])
+    // Order-insensitive (R552-A1): the save route stamps every line with ONE
+    // shared `now`, so the rows' created_at ties and their random UUID ids
+    // decide any ORDER BY — assert the multiset, never the sequence.
+    const rows = planItemRows()
+    expect(rows).toHaveLength(2)
+    expect(new Set(rows.map((row) => row.store_id))).toEqual(new Set([OWN_STORE_A, null]))
   })
 })
 
