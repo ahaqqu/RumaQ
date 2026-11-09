@@ -1872,7 +1872,7 @@
     "/api/purchases": {
       "post": {
         "operationId": "postApiPurchases",
-        "description": "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing.",
+        "description": "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. Lines naming the same item share one items row per receipt.",
         "security": [
           {
             "cookieAuth": []
