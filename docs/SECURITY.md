@@ -72,7 +72,7 @@ Setup steps and the full variable table: [`docs/ARCHITECTURE.md` §8](ARCHITECTU
 
 ## Dependency & vulnerability management
 
-- Dependabot (daily) and the audit workflow (`bun audit`, daily) open PRs for fixes; unfixable/breaking vulnerabilities become `security`-labelled issues that auto-close when a later audit passes.
+- Dependabot (daily) opens Bun version-update PRs, grouped minor/patch; the audit workflow (`bun audit`, daily) opens security-fix PRs. Unfixable/breaking vulnerabilities become `security`-labelled issues that auto-close when a later audit passes.
 - Transitive pins live in the root `package.json` `overrides`.
 
 ## Reporting
