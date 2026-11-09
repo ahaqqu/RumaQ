@@ -458,11 +458,181 @@ export const runProductsSummarySchema = strictObject({
 
 export type RunProductsSummary = InferOutput<typeof runProductsSummarySchema>
 
+// Issue #537: run cost and per-store failure as FIRST-CLASS TYPED fields.
+//
+// Before this block the report carried no AI spend at all and a store failure
+// only as free text inside `error` ("Store failure(s): lotte-mart:
+// BrowserTierRequired: …"), so a consumer had to grep a human sentence. The
+// two consumers that motivated the change: RumaQ #542 (the admin run-view chip
+// keys off a typed field) and RumaQ-pipeline #75 (a blocked store must not fail
+// a night where the other seven published).
+//
+// Every block below is ADDITIVE: reports posted before the fields existed
+// still validate (their absence is `null`/`undefined`), a NEW report hitting an
+// OLD Worker fails loudly (strictObject — the Worker-first deploy order exists
+// for exactly this), and the run report's `schemaVersion` stays 1 because the
+// change is additive (see the versioning note above `runReportSchema`).
+
+/**
+ * One AI stage's metered spend for a run (issue #537). The provider's own
+ * numbers: `tokensIn`/`tokensOut` from the reply's usage block and `cost` from
+ * the provider-computed USD figure (the producer rounds to 6 dp — OpenRouter
+ * prices are fractions of a cent, so a sub-cent night must not round to 0).
+ *
+ * `calls` counts BILLABLE replies (a call the provider answered and charged
+ * for), not attempts: an attempt that never reached a billable response
+ * (429/5xx/transport) costs nothing and is counted only in that stage's own
+ * telemetry. `costMissing` counts the billable replies whose response carried
+ * no `cost`, so a reported total is never silently incomplete — `cost` and
+ * `costMissing` together are the honest spend, never a fabricated 0.
+ */
+export const runAiUsageStageSchema = strictObject({
+  calls: pipe(number(), integer(), minValue(0)),
+  tokensIn: pipe(number(), integer(), minValue(0)),
+  tokensOut: pipe(number(), integer(), minValue(0)),
+  cost: pipe(number(), minValue(0)),
+  costMissing: pipe(number(), integer(), minValue(0)),
+})
+
+export type RunAiUsageStage = InferOutput<typeof runAiUsageStageSchema>
+
+/**
+ * The run's per-stage AI spend (issue #537). Three stages were metered into
+ * the pipeline's private status.json all along (`ocr`, `verifier`,
+ * `embedding`); `decision` is the taxonomy classifier, which records every
+ * product name in every run and whose spend was invisible until now (a
+ * ~1,412-call / ~$0.06 night had no surface anywhere).
+ *
+ * All four stages are REQUIRED inside a present `ai.usage` — the pipeline
+ * builds them from one accumulator (`emptyAiUsage()`), so a report can never
+ * legitimately carry three. `decision` is additive at the block level: an old
+ * report simply has no `ai` object at all, which is why `ai` itself is
+ * nullish.
+ */
+export const runAiUsageSchema = strictObject({
+  ocr: runAiUsageStageSchema,
+  verifier: runAiUsageStageSchema,
+  embedding: runAiUsageStageSchema,
+  decision: runAiUsageStageSchema,
+})
+
+export type RunAiUsage = InferOutput<typeof runAiUsageSchema>
+
+/**
+ * The report's AI block (issue #537): one question, "what did this run's AI
+ * cost", answerable from the report alone. Only `usage` rides the contract —
+ * the effective generation config (models, temperature, seed, prompt id/hash)
+ * and the credential preflight stay pipeline-private in status.json; a
+ * contract field cannot grow inside a strict object, so the block starts with
+ * the metering half the monitor actually needs.
+ */
+export const runAiSchema = strictObject({
+  usage: runAiUsageSchema,
+})
+
+export type RunAi = InferOutput<typeof runAiSchema>
+
+/**
+ * The closed vocabulary of per-store run outcomes (issue #537), named after
+ * what production actually emits — not a general taxonomy:
+ *
+ * - `fetch_timed_out` — the store's whole scrape leg exceeded
+ *   `STORE_FETCH_TIMEOUT_MS`; it was aborted and skipped (pipeline #54). The
+ *   producer's status.json calls this class `fetch timed out`; the report's
+ *   code is the snake_case form.
+ * - `deadline` — `RUN_DEADLINE_MS` was reached before the store started, or
+ *   while its leg was in flight; fetching stopped, matching/publishing ran on
+ *   what was staged (pipeline #54).
+ * - `blocked` — the store answered a bot challenge (Imperva Incapsula on
+ *   lotte-mart, a Trend Micro/F5 interstitial on the plain tier) that the
+ *   fetch ladder could not clear, with or without the per-store Tier-3 proxy
+ *   (pipeline #75). A blocked store is a REPORTED outcome, not a run failure;
+ *   `blocked: true` marks it.
+ * - `ocr_failed` — the store's OCR leg raised: a page failed to OCR or the
+ *   whole vision chain died under it.
+ * - `embedding_unavailable` — the match stage aborted because embeddings were
+ *   unavailable (a spent quota carries `exitCode: 2` and an `embedding_quota:`
+ *   message prefix; the enum has no separate quota code).
+ * - `publish_failed` — the run died in the publish stage (payload build,
+ *   producer-side contract check, or the ingest POST), so nothing was
+ *   published.
+ * - `other` — a store/run failure outside the classes above; the human
+ *   `message` is the discriminator until a class is worth naming.
+ */
+export const RUN_FAILURE_CODES = [
+  'fetch_timed_out',
+  'deadline',
+  'blocked',
+  'ocr_failed',
+  'embedding_unavailable',
+  'publish_failed',
+  'other',
+] as const
+
+export type RunFailureCode = (typeof RUN_FAILURE_CODES)[number]
+
+/**
+ * Caps the producer truncates its report copy to (the REJECTED_ITEM_LIMITS
+ * precedent: one definition, no drift). `message` is producer-controlled and
+ * unbounded upstream (a nested error string), so an untruncated copy would
+ * 400 the WHOLE report at the strict ingest — the monitor would then see
+ * nothing. `store` mirrors the ingest item's storeSlug cap; there is no
+ * minLength on `message` for the same reason (an empty human string must
+ * never cost the run's report).
+ */
+export const RUN_FAILURE_LIMITS = {
+  store: 100,
+  message: 500,
+} as const
+
+/**
+ * Max entries in the report's run-level `failures` summary: one per store in
+ * the 9-store universe plus one run-level entry (a store-less embedding or
+ * publish abort). A checked boundary, not just a convention — the Worker
+ * rejects an over-cap array rather than spending D1 batches on one request.
+ */
+export const RUN_FAILURES_LIMIT = 16
+
+/**
+ * One typed failure on the run report (issue #537) — the machine-readable
+ * counterpart of the free-text `error`, which stays (the journal and the
+ * monitor's human line still read it).
+ *
+ * `store` is always set on a per-store failure (and repeats the `perStore`
+ * key, so a mirrored entry stays self-describing); it is `null` only on the
+ * run-level summary's store-less entry — an `embedding_unavailable` abort
+ * happens in one global match sweep and a `publish_failed` in one global
+ * POST, so no single store owns either.
+ *
+ * `blocked` is the run's verdict, not a second spelling of the code: `true`
+ * means the outcome is an expected external block that must NOT fail the run
+ * (it is reported as a per-store outcome instead, pipeline #75). A consumer
+ * may render "skipped, blocked" from this flag without re-deriving the
+ * policy from the code list — and a future code that is non-fatal can set it
+ * without changing every consumer.
+ */
+export const runFailureSchema = strictObject({
+  store: nullish(pipe(string(), minLength(1), maxLength(RUN_FAILURE_LIMITS.store))),
+  code: picklist(RUN_FAILURE_CODES),
+  message: pipe(string(), maxLength(RUN_FAILURE_LIMITS.message)),
+  blocked: nullish(boolean()),
+})
+
+export type RunFailure = InferOutput<typeof runFailureSchema>
+
 // Run report (haqita-integration.md §7.1): the scraper reports each live run
 // to the backend so the admin scraping monitor can show run history without
 // reading journald. One POST per finished run — including failed runs, which
 // are exactly the ones the monitor exists to surface. Reporting failures are
 // swallowed by the scraper; this schema must therefore stay additive.
+//
+// Versioning (docs/plan/pipeline-contract.md §8.4): `schemaVersion` stays 1
+// for additive fields — an old scraper's report must keep validating while the
+// Worker deploys first, and bumping the literal would reject every report from
+// a box that has not re-synced yet. Only a change that RENAMES or REMOVES
+// something bumps it to 2. The contract PACKAGE version marks the additive
+// revision instead (0.2.0 for pipeline contract v2, 0.3.0 for issue #537); the
+// pipeline pins the exact bytes by SHA (CONTRACT_SOURCE_SHA).
 export const runReportStoreSchema = strictObject({
   pagesFound: pipe(number(), integer(), minValue(0)),
   newImages: pipe(number(), integer(), minValue(0)),
@@ -513,6 +683,14 @@ export const runReportStoreSchema = strictObject({
   // identities. Additive-nullish like the blocks above: absent on reports from
   // before the field existed.
   provisionalMatches: nullish(pipe(number(), integer(), minValue(0))),
+  // Issue #537: this store's typed failure — the machine-readable form of the
+  // `error` sentence above (which stays: humans and journald read it). Absent
+  // when the store rode the run clean. `store` repeats this map key. A blocked
+  // store carries `{ code: 'blocked', blocked: true }` and does NOT fail the
+  // run when other stores published (pipeline #75). Additive-nullish (#294
+  // pattern): old scrapers' reports still validate; a new scraper's report on
+  // an OLD Worker fails loudly (Worker-first).
+  failure: nullish(runFailureSchema),
 })
 
 // One flagged candidate pair the matcher reports for the admin review queue
@@ -650,6 +828,22 @@ export const runReportSchema = strictObject({
   // persistence beyond the validated payload is the AdminScrape display
   // ticket's concern.
   timing: nullish(runTimingSchema),
+  // Issue #537: what this run's AI cost, per stage — the same numbers the
+  // pipeline has always written to its private status.json, now on the report
+  // the backend stores. `ai.usage.decision` is the taxonomy classifier's
+  // spend, the stage that had no metering at all. Additive-nullish (#294
+  // pattern): old scrapers post no `ai` block and still validate; a new
+  // scraper's report on an OLD Worker fails loudly (Worker-first).
+  ai: nullish(runAiSchema),
+  // Issue #537: the run-level failure summary — every per-store `failure`
+  // mirrored here (so "which stores failed, and how" is one array walk, not a
+  // perStore sweep) PLUS the store-less entries a run-level abort owns
+  // (`embedding_unavailable`, `publish_failed`; `store: null`). Empty/absent
+  // on a clean run. The per-store copy stays authoritative for that store;
+  // this is the summary a monitor banner reads. Cap: RUN_FAILURES_LIMIT —
+  // 9 stores max + 1 run-level entry fits with room, and the Worker rejects
+  // an over-cap array instead of spending D1 budget on one request.
+  failures: nullish(pipe(array(runFailureSchema), maxLength(RUN_FAILURES_LIMIT))),
   error: nullish(pipe(string(), maxLength(2000))),
 })
 

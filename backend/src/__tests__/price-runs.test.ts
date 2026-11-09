@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vite-plus/test'
 import { parse, safeParse } from 'valibot'
-import { runReportSchema } from '@rumaq/contract'
+import { runReportSchema, RUN_FAILURES_LIMIT } from '@rumaq/contract'
 import { recordRunReport, listPriceRuns } from '../lib/price-runs.js'
 import { apiApp } from '../apps/api.js'
 import { createDb } from './support/d1-sqlite.js'
@@ -509,5 +509,140 @@ describe('runs ingest stores the v2 receipt fields (issue #463)', () => {
     expect(after.runs).toHaveLength(1)
     expect(after.runs[0]!.indexVersion).toBe(42)
     expect(after.runs[0]!.products).toEqual({ created: 5, existing: 2 })
+  })
+})
+
+// Issue #537: run cost and per-store failure as first-class typed fields.
+// The proof has two halves: the contract validates the new shapes (and the
+// closed failure-code enum, which is the whole point of a typed field), and a
+// report that carries them survives the real route into D1 — the per-store
+// failure rides the `per_store` JSON blob the monitor already reads back.
+describe('run report cost and typed failures (issue #537)', () => {
+  const usage = {
+    ocr: { calls: 2, tokensIn: 2400, tokensOut: 600, cost: 0.00084, costMissing: 0 },
+    verifier: { calls: 0, tokensIn: 0, tokensOut: 0, cost: 0, costMissing: 0 },
+    embedding: { calls: 1, tokensIn: 90, tokensOut: 0, cost: 0.000002, costMissing: 0 },
+    // The stage that had no metering before: a ~1,412-call night.
+    decision: { calls: 1412, tokensIn: 491_376, tokensOut: 56_480, cost: 0.060014, costMissing: 3 },
+  }
+
+  const blockedFailure = {
+    store: 'lotte-mart',
+    code: 'blocked' as const,
+    message: 'blocked: BrowserTierRequired — Incapsula challenge not cleared; reported per-store',
+    blocked: true,
+  }
+
+  const runLevelFailure = {
+    store: null,
+    code: 'publish_failed' as const,
+    message: 'publish_failed: ingest POST returned HTTP 500',
+  }
+
+  function costReport(over: Record<string, unknown> = {}) {
+    return {
+      ...sampleReport(),
+      ai: { usage },
+      failures: [blockedFailure, runLevelFailure],
+      perStore: {
+        ...sampleReport().perStore,
+        'lotte-mart': { ...sampleReport().perStore['lotte-mart'], failure: blockedFailure },
+      },
+      ...over,
+    }
+  }
+
+  it('accepts the AI spend block and the typed failures', () => {
+    const parsed = safeParse(runReportSchema, costReport())
+    expect(parsed.success).toBe(true)
+    const report = parse(runReportSchema, costReport())
+    expect(report.ai!.usage.decision).toEqual(usage.decision)
+    expect(report.perStore['lotte-mart']!.failure).toEqual(blockedFailure)
+    expect(report.failures).toEqual([blockedFailure, runLevelFailure])
+    // The free-text error stays for humans, next to the typed object.
+    expect(report.perStore['lotte-mart']!.error).toContain('LOTTE_PROXY_URL')
+  })
+
+  it('still accepts an old report without the fields — additive, schemaVersion stays 1', () => {
+    const legacy = sampleReport()
+    const parsed = parse(runReportSchema, legacy)
+    expect(parsed.schemaVersion).toBe(1)
+    expect(parsed).not.toHaveProperty('ai')
+    expect(parsed).not.toHaveProperty('failures')
+    expect(parsed.perStore['superindo']).not.toHaveProperty('failure')
+  })
+
+  it('rejects an unknown failure code — the enum is closed', () => {
+    const badCode = { ...blockedFailure, code: 'browser_blocked' }
+    expect(
+      safeParse(runReportSchema, {
+        ...costReport(),
+        failures: [badCode],
+      }).success
+    ).toBe(false)
+    expect(
+      safeParse(runReportSchema, {
+        ...costReport(),
+        perStore: {
+          ...sampleReport().perStore,
+          'lotte-mart': { ...sampleReport().perStore['lotte-mart'], failure: badCode },
+        },
+      }).success
+    ).toBe(false)
+  })
+
+  it('rejects an over-cap failure message, an over-cap failures array, and unknown fields', () => {
+    const longMessage = { ...blockedFailure, message: 'x'.repeat(501) }
+    expect(safeParse(runReportSchema, { ...costReport(), failures: [longMessage] }).success).toBe(
+      false
+    )
+    expect(
+      safeParse(runReportSchema, {
+        ...costReport(),
+        failures: Array.from({ length: RUN_FAILURES_LIMIT + 1 }, () => blockedFailure),
+      }).success
+    ).toBe(false)
+    // strictObject: a field the contract does not define is drift.
+    expect(
+      safeParse(runReportSchema, {
+        ...costReport(),
+        failures: [{ ...blockedFailure, stack: 'trace' }],
+      }).success
+    ).toBe(false)
+    // A negative or fractional cost/missing count is not a spend.
+    expect(
+      safeParse(runReportSchema, {
+        ...costReport(),
+        ai: { usage: { ...usage, decision: { ...usage.decision, cost: -1 } } },
+      }).success
+    ).toBe(false)
+    expect(
+      safeParse(runReportSchema, {
+        ...costReport(),
+        ai: { usage: { ...usage, decision: { ...usage.decision, costMissing: 1.5 } } },
+      }).success
+    ).toBe(false)
+  })
+
+  it('persists the per-store failure through the real route and reads it back', async () => {
+    const { d1 } = createDb()
+    const res = await apiApp.request(
+      '/api/internal/ingest/runs',
+      {
+        method: 'POST',
+        body: JSON.stringify(costReport()),
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer s3cret' },
+      },
+      { HAQITA_INGEST_SECRET: 's3cret', DB: d1 } as never
+    )
+    expect(res.status).toBe(200)
+
+    const feed = await listPriceRuns(d1)
+    expect(feed.runs).toHaveLength(1)
+    expect(feed.runs[0]!.perStore['lotte-mart']!.failure).toEqual(blockedFailure)
+    // A blocked store is a reported outcome, not a red run.
+    expect(feed.runs[0]!.status).toBe('success')
+    expect(feed.runs[0]!.exitCode).toBe(0)
+    expect(feed.runs[0]!.perStore['superindo']!.failure).toBeUndefined()
   })
 })

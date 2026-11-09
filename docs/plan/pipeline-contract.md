@@ -354,6 +354,8 @@ All internal-route errors use:
   - `canonicalIndexSchema`;
   - `canonicalProductSchema`, `productSizeSchema`, `approvedAliasSchema`;
   - `apiErrorSchema`;
+  - `runReportSchema` and its blocks (`runReportStoreSchema`, the match/publish
+    summaries, timing, the AI spend block and the typed failure object — §8.5);
   - shared constants (store slugs, limits). The 48-bucket category taxonomy and its
     criteria remain pipeline-owned until a separate taxonomy contract moves them.
 - The pipeline vendors `contract/` at `CONTRACT_SOURCE_SHA` via
@@ -406,9 +408,70 @@ ensures both run the same vendored bytes.
 - A breaking change bumps `schemaVersion` to `3` (and/or adds a new endpoint). The
   backend deploys first, then the pipeline syncs and deploys. There is no silent
   in-place type change.
-- The contract package version is bumped (`0.2.0` for v2); the pinned SHA identifies the
-  exact schema in the pipeline.
+- The run report has its own `runReportSchema.schemaVersion` (still `1`). Additive
+  report fields keep it at `1`: an old scraper's report must keep validating while the
+  Worker deploys first, so bumping the literal would reject every report from a box
+  that has not re-synced yet. Only a rename/removal bumps the report version.
+- The contract package version is bumped for every contract revision (`0.2.0` for
+  pipeline contract v2, `0.3.0` for the issue #537 run-report additions); the pinned
+  SHA identifies the exact schema in the pipeline.
 - The backend returns `400` for an unsupported `schemaVersion`; it never guesses.
+
+### 8.5 Run report: AI spend and typed failures (issue #537)
+
+The run report (`runReportSchema`) is the scraper's per-run POST to
+`/api/internal/ingest/runs`, the monitor's data source. Issue #537 made two facts
+first-class typed fields instead of free text; both are additive.
+
+**AI spend — `ai.usage`.** One stage entry per AI stage the pipeline meters —
+`ocr`, `verifier`, `embedding`, `decision` — each `{ calls, tokensIn, tokensOut, cost,
+costMissing }`:
+
+| field         | meaning                                                                              |
+| ------------- | ------------------------------------------------------------------------------------ |
+| `calls`       | billable replies (a 2xx that produced a usage block), never attempts                 |
+| `tokensIn`    | provider-reported prompt/input tokens, summed                                        |
+| `tokensOut`   | provider-reported completion/output tokens, summed                                   |
+| `cost`        | provider-computed USD, 6-dp rounded by the producer                                  |
+| `costMissing` | billable replies whose response carried no `cost`, so `cost` is never silently short |
+
+`decision` is the taxonomy classifier (one call per unique product name per taxonomy
+version). Before #537 its spend was metered nowhere — a ~1,412-call night cost about
+$0.06 with no surface recording it. The effective generation config and the credential
+preflight stay pipeline-private in `status.json`; only metering rides the contract.
+
+**Per-store failure — `stores[].failure` and the run-level `failures`.** A typed
+failure is `{ store, code, message, blocked? }`:
+
+| field     | meaning                                                                                  |
+| --------- | ---------------------------------------------------------------------------------------- |
+| `store`   | the store slug (always set per store; `null` on a store-less run-level entry)            |
+| `code`    | closed enum, below                                                                       |
+| `message` | human sentence, capped at `RUN_FAILURE_LIMITS.message` (the producer truncates its copy) |
+| `blocked` | `true` when the outcome is an expected external block that must not fail the run         |
+
+The closed code enum, named after what production emits:
+
+| code                    | outcome                                                                                      |
+| ----------------------- | -------------------------------------------------------------------------------------------- |
+| `fetch_timed_out`       | the store's scrape leg exceeded `STORE_FETCH_TIMEOUT_MS` (pipeline #54)                      |
+| `deadline`              | `RUN_DEADLINE_MS` reached before/while the store ran (pipeline #54)                          |
+| `blocked`               | a bot challenge the fetch ladder could not clear (Incapsula on lotte-mart, TSP/F5 elsewhere) |
+| `ocr_failed`            | the store's OCR leg raised (a page failed, or the vision chain died)                         |
+| `embedding_unavailable` | the match stage aborted before publish (a spent quota also carries `exitCode: 2`)            |
+| `publish_failed`        | the run died in the publish stage, so nothing was published                                  |
+| `other`                 | anything outside the classes above; `message` discriminates                                  |
+
+A `blocked` store is a reported per-store outcome, not a run failure: a night where the
+other stores published exits 0 with `status: 'success'` and the blocked store's entry
+carrying `{ code: 'blocked', blocked: true }`. Every other store failure keeps its
+fail-the-run behaviour (exit 1 after publishing what it could). The report's run-level
+`failures` array mirrors every per-store failure and adds the store-less entries a
+run-level abort owns (`embedding_unavailable`, `publish_failed`); `RUN_FAILURES_LIMIT`
+bounds it.
+
+The existing free-text `error` (per store and run-level) stays: the monitor's human
+line and the journal read it.
 
 ## 9. Reset and rollout
 
