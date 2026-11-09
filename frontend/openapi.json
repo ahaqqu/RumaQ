@@ -2025,7 +2025,7 @@
     "/api/purchases/{id}/receipt": {
       "get": {
         "operationId": "getApiPurchasesByIdReceipt",
-        "description": "Stream a receipt image from R2.",
+        "description": "Stream a receipt image from storage.",
         "security": [
           {
             "cookieAuth": []

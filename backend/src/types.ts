@@ -11,6 +11,15 @@ export type RateLimitConfig = {
 export type Env = {
   Bindings: {
     DB: D1Database
+    /**
+     * Receipt image bytes (grocery receipts) — the same PRIVATE bucket as
+     * DOCUMENTS, objects under the receipts/<household_id>/<yyyy>/<mm>/ key
+     * prefix (lib/receipts.ts buildKey). Since #503 no route touches this
+     * binding directly: lib/receipts.ts receiptsStorage() is the one place
+     * that reads it (building the StorageAdapter for the purchase routes, the
+     * vault-registry pattern), so the #442 adapter swap covers receipts too —
+     * a binding + adapter change, no route edits.
+     */
     RECEIPTS: R2Bucket
     /** Brochure images (issue #293) — private, served only via the Worker proxy. */
     BROCHURES: R2Bucket

@@ -302,9 +302,10 @@ cadence is the human backstop.
    purchase history). The dump lives only in the private `rumaq-receipts`
    bucket — same bucket the vault already treats as private, but a keyspace
    the Worker never reads: `RECEIPTS`/`DOCUMENTS` bindings are reached only
-   through `lib/storage.ts` prefixes (`documents/`, receipt keys); no route
-   can address `backups/`. No `r2.dev` public access on the bucket; none
-   added.
+   through the `StorageAdapter` composition roots (`lib/receipts.ts` for the
+   `receipts/` keys since #503, `plugins/registry.ts` for the vault's
+   `documents/` keys); no route can address `backups/`. No `r2.dev` public
+   access on the bucket; none added.
 2. **No dump leaves the Cloudflare perimeter except through the owner's
    authenticated drill.** The workflow downloads the dump from the one-hour
    signed URL straight into the upload step — never to Actions artifacts,

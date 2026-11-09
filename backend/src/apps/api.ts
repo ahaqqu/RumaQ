@@ -119,7 +119,7 @@ import { computePatterns } from '../lib/patterns.js'
 import {
   validateImage,
   buildKey,
-  uploadReceipt,
+  receiptsStorage,
   getSignedUrl,
   extFromType,
 } from '../lib/receipts.js'
@@ -2929,8 +2929,13 @@ apiApp.post(
     const ext = extFromType(file.type)
     const key = buildKey(householdId, userId, ext)
 
+    // Receipt bytes ride the StorageAdapter port (#503) — the same put/get
+    // contract the vault's document IO uses, so the #442 adapter swap covers
+    // both consumers with zero route edits. The port's put takes bytes as
+    // Uint8Array; file.data stays an ArrayBuffer view for the vision call
+    // below, and the wrap shares its buffer (no copy).
     try {
-      await uploadReceipt(c.env.RECEIPTS, file.data, key, file.type)
+      await receiptsStorage(c.env).put(key, new Uint8Array(file.data), file.type)
     } catch {
       return c.json({ error: 'Failed to upload receipt image' }, 500)
     }
@@ -3223,7 +3228,7 @@ apiApp.post(
 apiApp.get(
   '/api/purchases/:id/receipt',
   describeRoute({
-    description: 'Stream a receipt image from R2.',
+    description: 'Stream a receipt image from storage.',
     security: [{ cookieAuth: [] }],
     responses: {
       200: { description: 'Image stream' },
@@ -3245,17 +3250,20 @@ apiApp.get(
       return c.json({ error: 'Receipt not found' }, 404)
     }
 
-    const object = await c.env.RECEIPTS.get(purchase.receipt_image_key)
-    if (!object) {
+    // Through the StorageAdapter port (#503), same as the vault's file
+    // content route: the adapter's stream goes straight into the Response
+    // (receipt-proxy pattern, docs/ARCHITECTURE.md §10) with the stored
+    // content type and the same image/jpeg fallback for pre-port objects.
+    const stored = await receiptsStorage(c.env).get(purchase.receipt_image_key)
+    if (!stored) {
       return c.json({ error: 'Receipt image not found in storage' }, 404)
     }
 
     const headers = new Headers()
-    headers.set('Content-Type', object.httpMetadata?.contentType || 'image/jpeg')
+    headers.set('Content-Type', stored.contentType || 'image/jpeg')
     headers.set('Cache-Control', 'private, no-cache')
 
-    const body = await object.blob()
-    return new Response(body, { headers })
+    return new Response(stored.stream, { headers })
   }
 )
 
