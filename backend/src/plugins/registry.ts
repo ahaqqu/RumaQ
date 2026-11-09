@@ -13,52 +13,16 @@
 // precedent) — one factory call per isolate, never per request.
 import { createDocumentsPlugin } from './documents/app.js'
 import { createR2StorageAdapter } from '../ports/storage/r2.js'
-import type { StorageAdapter } from '../ports/storage/index.js'
+import { missingBindingAdapter, PluginBindingMissingError } from '../ports/storage/missing.js'
 import type { Env } from '../types.js'
 import type { PluginRegistration } from './types.js'
 
-/**
- * Raised by the missing-binding adapter below — the compose-time wiring
- * mistake surfacing at call time (V1-A1, PR #473 review).
- */
-export class PluginBindingMissingError extends Error {
-  constructor(binding: string) {
-    super(
-      `plugin port is unwired: the '${binding}' binding is missing from this deployment's env — declare it in wrangler.toml (or .dev.vars locally) and redeploy`
-    )
-    this.name = 'PluginBindingMissingError'
-  }
-}
-
-/**
- * A missing port binding is DETECTED at compose time but does NOT throw
- * there (V1-A1, PR #473 review): matchPlugin runs BEFORE the apiApp
- * fallthrough on every request, so a compose-time throw would take down
- * every route in the Worker — core domains included — the moment one
- * binding is mis-wired. That blast radius buys the call-time tradeoff
- * instead: an adapter whose EVERY method throws the typed error above,
- * naming the binding. The failure surfaces at the first call that would
- * have touched the binding — loud, actionable, scoped to the mis-wired
- * plugin's own routes — never as a silently-broken adapter dying with an
- * opaque "cannot read properties of undefined" one level deep in the R2
- * SDK. (The plugin factory's own absent-port guard keeps covering the
- * OTHER failure shape: a factory called with no adapter at all.) Exported
- * so tests pin every method's refusal against the exact adapter, not a
- * transcription.
- */
-export function missingBindingAdapter(binding: string): StorageAdapter {
-  const refuse = (): never => {
-    throw new PluginBindingMissingError(binding)
-  }
-  // Async wrappers — the port's contract is promise-based ("errors propagate
-  // as rejections", ports/storage/index.ts), so the refusal surfaces as a
-  // rejected promise, the shape every `await` caller already handles.
-  return {
-    put: async () => refuse(),
-    get: async () => refuse(),
-    delete: async () => refuse(),
-  }
-}
+// The missing-binding adapter lives beside the port now (ports/storage/
+// missing.ts, #503) so a second port consumer — the receipts composition —
+// can share it without importing the plugin registry. Re-exported here to
+// keep the registry's composition surface (and the plugin-registry tests)
+// unchanged.
+export { missingBindingAdapter, PluginBindingMissingError }
 
 function composeRegistrations(env: Env['Bindings']): readonly PluginRegistration[] {
   return [

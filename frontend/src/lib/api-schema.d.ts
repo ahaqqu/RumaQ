@@ -339,7 +339,7 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** @description Stream a receipt image from R2. */
+    /** @description Stream a receipt image from storage. */
     get: operations['getApiPurchasesByIdReceipt']
     put?: never
     post?: never

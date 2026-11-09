@@ -271,3 +271,55 @@ describe('plugin import boundary (#435)', () => {
     expect(violations.some((v) => v.startsWith('plugins/documents/clean.ts'))).toBe(false)
   })
 })
+
+// The receipts storage boundary (#503): the same discipline the vault's
+// allow-list enforces, extended to the core receipts domain. Before #503,
+// apps/api.ts consumed the raw RECEIPTS R2 binding for object IO (lib/
+// receipts.ts's uploadReceipt took an R2Bucket; the GET route read
+// c.env.RECEIPTS.get directly) — the last direct R2 touch on a route. Now the
+// receipt routes consume the StorageAdapter port and the binding is read only
+// where the adapter is constructed (lib/receipts.ts receiptsStorage, the
+// receipts analog of the registry's vault wiring). The vault's shape of the
+// rule — ports/storage/index.ts granted, ports/storage/r2.ts NOT — is the
+// template: consumers see the contract, the construction site sees the
+// adapter.
+describe('receipts storage boundary (#503)', () => {
+  it('apps/api.ts never touches the RECEIPTS binding and never imports the R2 adapter', () => {
+    const source = realRead('apps/api.ts')
+    // Zero references — stricter than "no object IO", and deliberate: the
+    // route layer has no reason to name the binding at all now that the port
+    // carries every byte.
+    expect(source).not.toMatch(/\bRECEIPTS\b/)
+    // Adapter construction stays out of the app — same shape as the vault's
+    // allow-list refusing ports/storage/r2.ts to plugins.
+    expect(importSpecifiers(source)).not.toContain('../ports/storage/r2.js')
+    expect(importSpecifiers(source)).not.toContain('../ports/storage/missing.js')
+  })
+
+  it('the binding is touched in exactly two source files: the Env declaration and the construction site', () => {
+    // Code-level touches only: a runtime read (env.RECEIPTS — the shape both
+    // the old c.env.RECEIPTS route code and the new composition use) or the
+    // Env field declaration. Prose comments that merely name the bucket
+    // (plugins/documents/keys.ts documents the shared-bucket fact) are not
+    // touches.
+    const bindingTouch = /\benv\.RECEIPTS\b|\bRECEIPTS\s*:/
+    const touching = listSourceFiles(BACKEND_SRC).filter((file) =>
+      bindingTouch.test(realRead(file))
+    )
+    // types.ts declares the Env field (type-only, erased at transform);
+    // lib/receipts.ts receiptsStorage() is the ONE runtime reader — the
+    // receipts composition root. Anything else touching the binding (a
+    // route, a lib helper) is a boundary regression and fails here first.
+    expect(touching.sort()).toEqual(['lib/receipts.ts', 'types.ts'])
+  })
+
+  it('lib/receipts.ts composes through the port modules (contract + adapter + failover)', () => {
+    const specifiers = importSpecifiers(realRead('lib/receipts.ts'))
+    // The port contract the route consumes…
+    expect(specifiers).toContain('../ports/storage/index.js')
+    // …the R2 adapter ONLY receiptsStorage() may build…
+    expect(specifiers).toContain('../ports/storage/r2.js')
+    // …and the missing-binding failover, shared with the vault's registry.
+    expect(specifiers).toContain('../ports/storage/missing.js')
+  })
+})
