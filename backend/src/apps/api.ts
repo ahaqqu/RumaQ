@@ -119,6 +119,7 @@ import { computePatterns } from '../lib/patterns.js'
 import {
   validateImage,
   buildKey,
+  isOwnReceiptKey,
   receiptsStorage,
   getSignedUrl,
   extFromType,
@@ -3020,7 +3021,7 @@ apiApp.post(
   '/api/purchases',
   describeRoute({
     description:
-      "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing.",
+      "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing.",
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -3064,6 +3065,21 @@ apiApp.post(
   async (c) => {
     const householdId = c.get('householdId')
     const body = c.req.valid('json')
+
+    // #525 (security): receipt_image_key is a client-supplied object key, and
+    // GET /api/purchases/:id/receipt resolves it through the storage adapter
+    // with no household re-check — a key under another household's prefix
+    // (with a guessed uuid) would hand over that household's receipt. The
+    // scan flow only ever hands back buildKey's output for the caller's own
+    // household, so anything else is malformed and rejected before any write.
+    // Uniform 400 with no DB lookup: no existence oracle either way. An
+    // omitted key stays null (unchanged) — a supplied one must prove shape.
+    if (
+      body.receipt_image_key !== undefined &&
+      !isOwnReceiptKey(body.receipt_image_key, householdId)
+    ) {
+      return c.json({ error: 'Invalid receipt image key' }, 400)
+    }
 
     if (body.store_id) {
       const store = await c.env.DB.prepare(
