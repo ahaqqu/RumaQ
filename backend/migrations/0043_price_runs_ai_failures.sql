@@ -1,0 +1,24 @@
+-- Issue #537: the run report's AI spend and its run-level typed failures.
+--
+-- Before this the report's `ai.usage` block and its run-level `failures`
+-- summary were validated by `runReportSchema` and then DROPPED: the per-store
+-- failure rides `per_store` (a JSON blob that already existed), but nothing
+-- stored the run's cost or the store-less failure entries. The monitor could
+-- not total a night's spend, which is the whole point of the ticket
+-- (`ai.usage.decision` alone was ~$0.06 / ~1,412 calls on one 2026-11-09
+-- night).
+--
+-- Both columns mirror the shapes the contract owns (`runAiUsageSchema`,
+-- `runFailureSchema`) and follow the 0040 precedent: the validated report
+-- slice, stringified verbatim, so the read type is derived from @rumaq/contract
+-- instead of mirrored by hand. Nullable on purpose — rows recorded before the
+-- pipeline sends the fields keep NULL, and the monitor reads NULL as "absent"
+-- (historical runs must keep rendering).
+--
+-- NUMBERING NOTE: 0042 is applied; this file takes the next free number, 0043.
+-- NEVER rename an applied migration: wrangler keys its d1_migrations table by
+-- filename, so a rename re-runs the file.
+ALTER TABLE price_runs ADD COLUMN ai_usage TEXT;
+-- JSON: the run-level `failures` summary — every per-store failure mirrored
+-- plus the store-less entries a run-level abort owns (`store: null`).
+ALTER TABLE price_runs ADD COLUMN failures TEXT;
