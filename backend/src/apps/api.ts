@@ -3021,7 +3021,7 @@ apiApp.post(
   '/api/purchases',
   describeRoute({
     description:
-      "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing.",
+      "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt.",
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -3117,6 +3117,12 @@ apiApp.post(
     )
 
     const itemIds: string[] = []
+    // #526: normalized name → resolved items.id for THIS receipt's lines. The
+    // batch has not run while the loop resolves, so the SELECT below cannot see
+    // INSERTs the same receipt already pushed — without the map, two lines of
+    // one new name each pushed an INSERT and created duplicate items rows.
+    // Plan-save keeps the same map over the same normalization.
+    const itemIdsByName = new Map<string, string>()
 
     for (const item of body.items) {
       let itemId: string
@@ -3139,22 +3145,35 @@ apiApp.post(
         }
         itemId = owned.id
       } else {
-        const trimmed = item.name.trim().toLowerCase()
-        const existing = await c.env.DB.prepare(
-          'SELECT id FROM items WHERE household_id = ? AND LOWER(name) = LOWER(?)'
-        )
-          .bind(householdId, trimmed)
-          .first<{ id: string }>()
+        // #526: mirror plan-save's resolve-or-create exactly — same
+        // normalizeItemName (trim, lowercase, collapse internal whitespace),
+        // same LOWER(name) lookup, first line's unit wins — so a name dedupes
+        // to the same items row whichever feature saved it. Explicit item_id
+        // lines are authoritative and never create rows, so the map only
+        // gates this name-resolved branch.
+        const normalizedName = normalizeItemName(item.name)
+        const seenItemId = itemIdsByName.get(normalizedName)
 
-        if (existing) {
-          itemId = existing.id
+        if (seenItemId) {
+          itemId = seenItemId
         } else {
-          itemId = crypto.randomUUID()
-          statements.push(
-            c.env.DB.prepare(
-              'INSERT INTO items (id, household_id, name, default_unit) VALUES (?, ?, ?, ?)'
-            ).bind(itemId, householdId, item.name.trim(), item.unit)
+          const existing = await c.env.DB.prepare(
+            'SELECT id FROM items WHERE household_id = ? AND LOWER(name) = LOWER(?)'
           )
+            .bind(householdId, normalizedName)
+            .first<{ id: string }>()
+
+          if (existing) {
+            itemId = existing.id
+          } else {
+            itemId = crypto.randomUUID()
+            statements.push(
+              c.env.DB.prepare(
+                'INSERT INTO items (id, household_id, name, default_unit) VALUES (?, ?, ?, ?)'
+              ).bind(itemId, householdId, item.name.trim(), item.unit)
+            )
+          }
+          itemIdsByName.set(normalizedName, itemId)
         }
       }
 

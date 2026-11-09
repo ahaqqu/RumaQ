@@ -324,7 +324,7 @@ export interface paths {
     /** @description List purchase history for the active household with filters and pagination. */
     get: operations['getApiPurchases']
     put?: never
-    /** @description Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. */
+    /** @description Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt. */
     post: operations['postApiPurchases']
     delete?: never
     options?: never
