@@ -443,7 +443,16 @@ export function createPurchase(payload: {
   date: string
   store_id?: string
   receipt_image_key?: string
-  items: { name: string; qty: number; unit: string; price: number; item_id?: string }[]
+  items: {
+    name: string
+    qty: number
+    unit: string
+    price: number
+    // The receipt's printed line total (#518) — persisted as given; absent →
+    // the server computes qty × price.
+    line_total?: number | null
+    item_id?: string
+  }[]
 }): Promise<unknown> {
   return unwrap(postApiPurchases({ body: payload }))
 }

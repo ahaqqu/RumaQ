@@ -114,6 +114,7 @@ import { escapeLike } from '../lib/sql.js'
 import { ipRateLimitMiddleware } from '../lib/rate-limit.js'
 import { resolveEnabledPluginIds } from '../plugins/enablement.js'
 import { PLUGIN_MANIFESTS } from '../plugins/manifests.js'
+import { lineTotalOf, purchaseTotalOf } from '../lib/purchases.js'
 import { computeRunOutDays } from '../lib/stock.js'
 import { computePatterns } from '../lib/patterns.js'
 import {
@@ -3040,7 +3041,7 @@ apiApp.post(
   '/api/purchases',
   describeRoute({
     description:
-      "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt.",
+      "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt. Item price is the unit price; an optional per-line line_total (the receipt's printed line total) is persisted as given, otherwise the server computes qty × price. purchases.total is always computed server-side as Σ COALESCE(line_total, price × qty) and never read from the client.",
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -3064,6 +3065,7 @@ apiApp.post(
                     qty: { type: 'number', minimum: 0 },
                     unit: { type: 'string' },
                     price: { type: 'integer', minimum: 0 },
+                    line_total: { type: ['integer', 'null'], minimum: 0 },
                     item_id: { type: 'string' },
                   },
                 },
@@ -3120,16 +3122,24 @@ apiApp.post(
     const purchaseId = crypto.randomUUID()
     const now = new Date().toISOString()
 
+    // #518 (Q3): the grand total is computed HERE from the validated per-line
+    // data — Σ COALESCE(line_total, price × qty) — never read from the client.
+    // Each line's amount (the receipt's printed line total when the scan saw
+    // one, else qty × unit price) is the same value persisted into
+    // purchase_items.line_total below.
+    const purchaseTotal = purchaseTotalOf(body.items)
+
     const statements: D1PreparedStatement[] = []
 
     statements.push(
       c.env.DB.prepare(
-        'INSERT INTO purchases (id, household_id, store_id, date, receipt_image_key, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO purchases (id, household_id, store_id, date, total, receipt_image_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
       ).bind(
         purchaseId,
         householdId,
         body.store_id || null,
         body.date,
+        purchaseTotal,
         body.receipt_image_key || null,
         now
       )
@@ -3201,8 +3211,20 @@ apiApp.post(
       const purchaseItemId = crypto.randomUUID()
       statements.push(
         c.env.DB.prepare(
-          'INSERT INTO purchase_items (id, purchase_id, item_id, qty, unit, price, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        ).bind(purchaseItemId, purchaseId, itemId, item.qty, item.unit, item.price, now)
+          'INSERT INTO purchase_items (id, purchase_id, item_id, qty, unit, price, line_total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(
+          purchaseItemId,
+          purchaseId,
+          itemId,
+          item.qty,
+          item.unit,
+          item.price,
+          // #518 (Q1/Q2): the printed line total when the client saw one, else
+          // the server-computed qty × unit price — the review screen's number,
+          // persisted instead of dropped.
+          lineTotalOf(item),
+          now
+        )
       )
 
       const existingStock = await c.env.DB.prepare(
@@ -3251,7 +3273,7 @@ apiApp.post(
       .first()
 
     const purchaseItems = await c.env.DB.prepare(
-      `SELECT pi.id, pi.item_id, i.name, pi.qty, pi.unit, pi.price
+      `SELECT pi.id, pi.item_id, i.name, pi.qty, pi.unit, pi.price, pi.line_total
        FROM purchase_items pi
        JOIN items i ON i.id = pi.item_id
        WHERE pi.purchase_id = ?`
@@ -3487,6 +3509,7 @@ apiApp.get(
         qty: number
         unit: string | null
         price: number | null
+        line_total: number | null
       }>
     >()
     if (purchases.length > 0) {
@@ -3496,7 +3519,7 @@ apiApp.get(
       // NULL item_id still renders (name null, as before), a foreign one
       // de-references instead of leaking its name.
       const { results: items } = await c.env.DB.prepare(
-        `SELECT pi.id, pi.purchase_id, pi.item_id, i.name, pi.qty, pi.unit, pi.price
+        `SELECT pi.id, pi.purchase_id, pi.item_id, i.name, pi.qty, pi.unit, pi.price, pi.line_total
            FROM purchase_items pi
            LEFT JOIN items i ON i.id = pi.item_id AND i.household_id = ?
           WHERE pi.purchase_id IN (${placeholders})`
@@ -3510,6 +3533,7 @@ apiApp.get(
           qty: number
           unit: string | null
           price: number | null
+          line_total: number | null
         }>()
       for (const it of items) {
         const list = itemsByPurchase.get(it.purchase_id) || []
@@ -3520,6 +3544,7 @@ apiApp.get(
           qty: it.qty,
           unit: it.unit,
           price: it.price,
+          line_total: it.line_total,
         })
         itemsByPurchase.set(it.purchase_id, list)
       }
@@ -3618,7 +3643,7 @@ apiApp.get(
     // header is already household-checked, but its lines must not resolve a
     // foreign item's name.
     const { results: items } = await c.env.DB.prepare(
-      `SELECT pi.id, pi.item_id, i.name, pi.qty, pi.unit, pi.price
+      `SELECT pi.id, pi.item_id, i.name, pi.qty, pi.unit, pi.price, pi.line_total
          FROM purchase_items pi
          LEFT JOIN items i ON i.id = pi.item_id AND i.household_id = ?
         WHERE pi.purchase_id = ?
@@ -3632,6 +3657,7 @@ apiApp.get(
         qty: number
         unit: string | null
         price: number | null
+        line_total: number | null
       }>()
 
     const res = c.json({
@@ -5858,9 +5884,14 @@ apiApp.get(
     // separate /api/plans/:id route) — the item side of the join resolves only
     // inside the household, so a poisoned plan line cannot echo a foreign
     // name. ON-clause placement: a NULL item_id still renders.
+    // #518 (Q5): the grounded observation price rides its own price_grounded
+    // field (COALESCE = the same effective-pack-price basis groundPlanItem
+    // returned at generate time) so saved plans keep estimate and observation
+    // distinguishable too.
     const { results: items } = await c.env.DB.prepare(
       `SELECT pi.id, pi.plan_id, pi.item_id, pi.store_id, i.name AS item_name,
               s.label AS store_label, pi.qty, pi.unit, pi.price_estimate, pi.why, pi.status, pi.created_at,
+              COALESCE(po.effective_unit_price, po.price) AS price_grounded,
               ps.name AS price_source_name, po.valid_until AS price_valid_until
        FROM plan_items pi
        LEFT JOIN items i ON i.id = pi.item_id AND i.household_id = ?
@@ -5884,6 +5915,7 @@ apiApp.get(
         why: string | null
         status: string
         created_at: string
+        price_grounded: number | null
         price_source_name: string | null
         price_valid_until: string | null
       }>()
@@ -6010,6 +6042,9 @@ apiApp.post(
     let tokenUsage: TokenUsage = EMPTY_USAGE
 
     if (c.env.TEST_MODE === 'true') {
+      // #518: price_estimate is a per-unit figure — the stub's Telur line was
+      // re-based from a line-level 28000 to a per-piece 2800 so the draft's
+      // Σ estimate × qty total stays realistic in preview.
       generatedItems = [
         {
           name: 'Susu cair 1L',
@@ -6032,7 +6067,7 @@ apiApp.post(
           qty: 10,
           unit: 'pcs',
           store_id: stores[1]?.id || null,
-          price_estimate: 28000,
+          price_estimate: 2800,
           why: 'running out in 3 days',
         },
       ]
@@ -6075,8 +6110,12 @@ apiApp.post(
           .first<{ id: string; name: string }>()
 
         // Price grounding (§5.4): a confident deterministic match against the
-        // observed catalog overrides the LLM's price guess and links the
-        // observation so the frontend can badge the estimate.
+        // observed catalog links the observation so the frontend can badge the
+        // line. #518 (Q5): the observation price travels as its OWN field
+        // (price_grounded) — the LLM's estimate is no longer overwritten, so
+        // the draft can show both and the totals below stay on the estimate
+        // basis. Check-off stores estimate × qty (the estimate is the storage
+        // basis per Q5); the observation is display/provenance only.
         const grounding = await groundPlanItem(c.env.DB, item.name)
 
         return {
@@ -6085,7 +6124,8 @@ apiApp.post(
           unit: item.unit,
           store_id: item.store_id,
           store_label: item.store_id ? storeLabels.get(item.store_id) || null : null,
-          price_estimate: grounding ? grounding.observation.price : item.price_estimate,
+          price_estimate: item.price_estimate,
+          price_grounded: grounding?.observation.price ?? null,
           why: item.why,
           item_id: existingItem?.id || null,
           matched_item_name: existingItem?.name || null,
@@ -6096,7 +6136,12 @@ apiApp.post(
       })
     )
 
-    const total_estimate = items.reduce((sum, it) => sum + (it.price_estimate || 0), 0)
+    // #518: the estimate is a PER-UNIT figure — totals multiply by qty. This
+    // also fixes "Telur ×10 @ Rp 28.000" totalling Rp 28.000 without the qty.
+    const total_estimate = items.reduce(
+      (sum, it) => sum + Math.round((it.price_estimate ?? 0) * (it.qty || 0)),
+      0
+    )
 
     const res = c.json({
       items,
@@ -6175,7 +6220,13 @@ apiApp.post(
     const planId = crypto.randomUUID()
     const now = new Date().toISOString()
 
-    const totalEstimate = body.items.reduce((sum, it) => sum + (it.price_estimate || 0), 0)
+    // #518: price_estimate is a per-unit figure — the plan's saved total
+    // estimate multiplies by qty (same basis as the generate draft and the
+    // check-off writes).
+    const totalEstimate = body.items.reduce(
+      (sum, it) => sum + Math.round((it.price_estimate ?? 0) * (it.qty || 0)),
+      0
+    )
 
     statements.push(
       c.env.DB.prepare(
@@ -6282,6 +6333,7 @@ apiApp.post(
     const { results: planItems } = await c.env.DB.prepare(
       `SELECT pi.id, pi.item_id, pi.store_id, i.name AS item_name,
               s.label AS store_label, pi.qty, pi.unit, pi.price_estimate, pi.why, pi.status,
+              COALESCE(po.effective_unit_price, po.price) AS price_grounded,
               ps.name AS price_source_name, po.valid_until AS price_valid_until
        FROM plan_items pi
        JOIN plans p ON p.id = pi.plan_id
@@ -6304,6 +6356,7 @@ apiApp.post(
         price_estimate: number | null
         why: string | null
         status: string
+        price_grounded: number | null
         price_source_name: string | null
         price_valid_until: string | null
       }>()
@@ -6404,25 +6457,43 @@ apiApp.patch(
         .first<{ id: string }>()
 
       const purchaseId = crypto.randomUUID()
+      // #518 (Q5/Q6): the LLM estimate is the check-off price basis — a
+      // per-unit figure, so the line's amount is estimate × qty. With no
+      // estimate the line carries NULL price/line_total — never the old
+      // `?? 0` 0-rupiah row — and the trip's total is NULL (unknown), not 0.
+      // Both purchase fields are computed server-side (Q3).
+      const checkoffLineTotal = lineTotalOf({
+        qty: planItem.qty,
+        price: planItem.price_estimate,
+        line_total: null,
+      })
       statements.push(
         c.env.DB.prepare(
-          `INSERT INTO purchases (id, household_id, store_id, date, created_at)
-           VALUES (?, ?, ?, ?, ?)`
-        ).bind(purchaseId, householdId, planItem.store_id || null, now.slice(0, 10), now)
+          `INSERT INTO purchases (id, household_id, store_id, date, total, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).bind(
+          purchaseId,
+          householdId,
+          planItem.store_id || null,
+          now.slice(0, 10),
+          checkoffLineTotal,
+          now
+        )
       )
 
       const purchaseItemId = crypto.randomUUID()
       statements.push(
         c.env.DB.prepare(
-          `INSERT INTO purchase_items (id, purchase_id, item_id, qty, unit, price, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO purchase_items (id, purchase_id, item_id, qty, unit, price, line_total, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           purchaseItemId,
           purchaseId,
           planItem.item_id,
           planItem.qty,
           planItem.unit,
-          planItem.price_estimate ?? 0,
+          planItem.price_estimate,
+          checkoffLineTotal,
           now
         )
       )

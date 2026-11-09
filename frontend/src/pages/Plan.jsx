@@ -27,6 +27,31 @@ function formatPrice(amount, currency) {
   }).format(amount)
 }
 
+// #518: price_estimate is a per-unit figure — line and plan totals multiply by
+// qty ("Telur ×10 @ Rp 28.000" is Rp 280.000, not Rp 28.000).
+function lineEstimateTotal(it) {
+  return Math.round((it.price_estimate || 0) * (it.qty || 0))
+}
+
+function sumEstimates(items) {
+  return items.reduce((s, it) => s + lineEstimateTotal(it), 0)
+}
+
+// #518: the grounded store observation rides its own field — labeled
+// separately from the estimate the row's figure and the totals use, so the
+// two price bases never blur again ("harga dari brosur" no longer badges the
+// estimate itself).
+function GroundedPriceLine({ it, t, formatPrice, currency }) {
+  if (it.price_grounded == null) return null
+  return (
+    <div className="text-xs text-accent-hover mt-0.5">
+      {t('plan.observedPrice', { price: formatPrice(it.price_grounded, currency) })}
+      {it.price_source_name && ` · ${t('plan.groundedFrom', { source: it.price_source_name })}`}
+      {it.price_valid_until && ` · ${t('plan.groundedUntil', { date: it.price_valid_until })}`}
+    </div>
+  )
+}
+
 export function Plan({ askAssistant, setView }) {
   const { t } = useTranslation()
   const { persona } = usePersona()
@@ -160,7 +185,7 @@ export function Plan({ askAssistant, setView }) {
 
   if (generatedItems) {
     const stores = itemsByStore(generatedItems)
-    const grandTotal = generatedItems.reduce((s, it) => s + (it.price_estimate || 0), 0)
+    const grandTotal = sumEstimates(generatedItems)
 
     return (
       <>
@@ -200,10 +225,7 @@ export function Plan({ askAssistant, setView }) {
               </div>
               <div className="text-text-muted text-sm">
                 {t('home.itemCount', { count: store.items.length })} ·{' '}
-                {formatPrice(
-                  store.items.reduce((s, it) => s + (it.price_estimate || 0), 0),
-                  currency
-                )}
+                {formatPrice(sumEstimates(store.items), currency)}
               </div>
             </PanelHead>
             <PanelBody className="!py-0 !px-0">
@@ -219,13 +241,12 @@ export function Plan({ askAssistant, setView }) {
                         {it.unit ? ` ${it.unit}` : ''}
                       </div>
                       <div className="text-xs text-text-muted mt-0.5">{it.why}</div>
-                      {it.price_source_name && it.price_estimate != null && (
-                        <div className="text-xs text-accent-hover mt-0.5">
-                          {t('plan.groundedFrom', { source: it.price_source_name })}
-                          {it.price_valid_until &&
-                            ` · ${t('plan.groundedUntil', { date: it.price_valid_until })}`}
-                        </div>
-                      )}
+                      <GroundedPriceLine
+                        it={it}
+                        t={t}
+                        formatPrice={formatPrice}
+                        currency={currency}
+                      />
                     </div>
                     {it.price_estimate != null && (
                       <div className="text-sm font-semibold">
@@ -271,7 +292,7 @@ export function Plan({ askAssistant, setView }) {
   }
 
   const stores = itemsByStore(activePlan.items)
-  const grandTotal = activePlan.items.reduce((s, it) => s + (it.price_estimate || 0), 0)
+  const grandTotal = sumEstimates(activePlan.items)
 
   return (
     <>
@@ -306,10 +327,7 @@ export function Plan({ askAssistant, setView }) {
             </div>
             <div className="text-text-muted text-sm">
               {t('home.itemCount', { count: store.items.length })} ·{' '}
-              {formatPrice(
-                store.items.reduce((s, it) => s + (it.price_estimate || 0), 0),
-                currency
-              )}
+              {formatPrice(sumEstimates(store.items), currency)}
             </div>
           </PanelHead>
           <PanelBody className="!py-0 !px-0">
@@ -339,13 +357,12 @@ export function Plan({ askAssistant, setView }) {
                         {it.unit ? ` ${it.unit}` : ''}
                       </div>
                       {it.why && <div className="text-xs text-text-muted mt-0.5">{it.why}</div>}
-                      {it.price_source_name && it.price_estimate != null && (
-                        <div className="text-xs text-accent-hover mt-0.5">
-                          {t('plan.groundedFrom', { source: it.price_source_name })}
-                          {it.price_valid_until &&
-                            ` · ${t('plan.groundedUntil', { date: it.price_valid_until })}`}
-                        </div>
-                      )}
+                      <GroundedPriceLine
+                        it={it}
+                        t={t}
+                        formatPrice={formatPrice}
+                        currency={currency}
+                      />
                     </div>
                     {it.price_estimate != null && (
                       <div className="text-sm font-semibold">

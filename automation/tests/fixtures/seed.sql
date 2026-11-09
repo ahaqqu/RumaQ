@@ -89,17 +89,20 @@ INSERT INTO stock (id, household_id, item_id, location_id, qty, unit, run_out_da
   ('stock-oil',   '11111111-2222-3333-4444-555555555555', 'item-oil',   'loc-kitchen', 0.5,  'L',    3,   'default', datetime('now')),
   ('stock-egg',   '11111111-2222-3333-4444-555555555555', 'item-egg',   'loc-fridge',  10,   'pcs',  7,   'default', datetime('now'));
 
--- Purchase history (for run-out computation)
+-- Purchase history (for run-out computation). #518 Option B: purchase_items.price
+-- is the UNIT price (the old fixture wrote line totals), line_total carries the
+-- line amount (the old price value), purchases.total = Σ line_total — unchanged
+-- from the old hand-written totals.
 INSERT INTO purchases (id, household_id, store_id, date, total, created_at) VALUES
   ('purch-1', '11111111-2222-3333-4444-555555555555', 'store-indo', '2026-06-01', 85000, datetime('now')),
   ('purch-2', '11111111-2222-3333-4444-555555555555', 'store-super', '2026-06-15', 120000, datetime('now')),
   ('purch-3', '11111111-2222-3333-4444-555555555555', 'store-indo', '2026-06-28', 45000, datetime('now'));
 
-INSERT INTO purchase_items (id, purchase_id, item_id, qty, unit, price, created_at) VALUES
-  ('pi-1', 'purch-1', 'item-rice', 5.0, 'kg', 65000, datetime('now')),
-  ('pi-2', 'purch-1', 'item-oil', 2.0, 'L', 20000, datetime('now')),
-  ('pi-3', 'purch-2', 'item-egg', 12.0, 'pcs', 36000, datetime('now')),
-  ('pi-4', 'purch-2', 'item-rice', 3.0, 'kg', 39000, datetime('now')),
-  ('pi-5', 'purch-2', 'item-milk', 2.0, 'L', 45000, datetime('now')),
-  ('pi-6', 'purch-3', 'item-oil', 1.0, 'L', 10000, datetime('now')),
-  ('pi-7', 'purch-3', 'item-egg', 10.0, 'pcs', 35000, datetime('now'));
+INSERT INTO purchase_items (id, purchase_id, item_id, qty, unit, price, line_total, created_at) VALUES
+  ('pi-1', 'purch-1', 'item-rice', 5.0, 'kg', 13000, 65000, datetime('now')),
+  ('pi-2', 'purch-1', 'item-oil', 2.0, 'L', 10000, 20000, datetime('now')),
+  ('pi-3', 'purch-2', 'item-egg', 12.0, 'pcs', 3000, 36000, datetime('now')),
+  ('pi-4', 'purch-2', 'item-rice', 3.0, 'kg', 13000, 39000, datetime('now')),
+  ('pi-5', 'purch-2', 'item-milk', 2.0, 'L', 22500, 45000, datetime('now')),
+  ('pi-6', 'purch-3', 'item-oil', 1.0, 'L', 10000, 10000, datetime('now')),
+  ('pi-7', 'purch-3', 'item-egg', 10.0, 'pcs', 3500, 35000, datetime('now'));

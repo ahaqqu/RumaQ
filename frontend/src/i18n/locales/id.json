@@ -374,6 +374,7 @@
     "basedOnItems_other": "Rencana ini disusun dari {{count}} item yang menipis. Minta asisten menggabungkan agar cukup satu perjalanan per toko.",
     "groundedFrom": "harga dari brosur {{source}}",
     "groundedUntil": "berlaku s/d {{date}}",
+    "observedPrice": "Harga teramati {{price}}",
     "planLeadNoKey": "Atur AI dulu, lalu AI menyusun rencana belanja dari stok yang menipis."
   },
   "prices": {

@@ -374,6 +374,7 @@
     "basedOnItems_other": "This plan was created from {{count}} items running low. Ask the assistant to combine into one trip per store.",
     "groundedFrom": "price from {{source}} brochure",
     "groundedUntil": "valid until {{date}}",
+    "observedPrice": "Observed price {{price}}",
     "planLeadNoKey": "Set up AI first, then it will create a shopping plan from items running low."
   },
   "prices": {

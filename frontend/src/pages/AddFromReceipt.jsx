@@ -157,6 +157,10 @@ export function AddFromReceipt({ onDone }) {
           qty: Number(it.qty) || 1,
           unit: it.unit || 'pcs',
           price: Math.round(Number(it.price)) || 0,
+          // #518: persist the review screen's number — the receipt's printed
+          // line total when the scan read one (editing qty or price clears
+          // it, and the server then computes qty × price).
+          ...(it.total != null ? { line_total: Math.round(Number(it.total)) } : {}),
           item_id: selectedItemIds[it._id] || undefined,
         })),
       }

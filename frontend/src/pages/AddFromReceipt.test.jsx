@@ -205,6 +205,59 @@ describe('AddFromReceipt', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('addReceipt.stockAdded')
     })
+
+    // #518: no printed line total on this scan — the payload carries none and
+    // the server computes qty × price.
+    expect(api.createPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [expect.objectContaining({ name: 'Milk', qty: 1, price: 20000 })],
+      })
+    )
+    expect(api.createPurchase.mock.calls[0][0].items[0].line_total).toBeUndefined()
+  })
+
+  it('sends the printed line total as line_total so it is persisted (#518)', async () => {
+    const { container } = renderComponent()
+
+    // The discounted line from the scan: printed 30.000 against unit 20.000 ×2.
+    api.scanReceipt.mockResolvedValueOnce({
+      items: [{ name: 'Milk', qty: 2, unit: 'L', price: 20000, total: 30000 }],
+      imageKey: 'key-123',
+      imageUrl: null,
+      storeGuess: null,
+      dateGuess: null,
+    })
+    api.createPurchase.mockResolvedValueOnce({
+      purchase: { id: 'p1' },
+      items: [],
+      stock: [],
+    })
+    api.getStores.mockResolvedValueOnce(MOCK_STORES)
+    api.getItems.mockResolvedValueOnce(MOCK_ITEMS)
+
+    selectFile(container, createFile('test.jpg', 'image/jpeg', 1000))
+
+    await waitFor(() => {
+      expect(
+        container.querySelector('[class*="grid-cols-1 sm:grid-cols-[1fr_90px_110px]"]')
+      ).toBeTruthy()
+    })
+
+    fireEvent.click(
+      Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('addReceipt.confirmAdd')
+      )
+    )
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('addReceipt.stockAdded')
+    })
+
+    expect(api.createPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [expect.objectContaining({ name: 'Milk', line_total: 30000 })],
+      })
+    )
   })
 
   it('shows error when scan fails', async () => {
