@@ -22,12 +22,15 @@ describe('buildPlanPrompt', () => {
     { id: 'store-2', label: 'Pasar' },
   ]
 
-  it('includes store list in prompt', () => {
+  it('includes store id+label pairs in prompt (#519)', () => {
     const prompt = buildPlanPrompt(lowStock, expiring, recentPurchases, stores, 'IDR')
     expect(prompt).toContain('Indomaret')
     expect(prompt).toContain('Pasar')
-    expect(prompt).not.toContain('store-1')
-    expect(prompt).not.toContain('store-2')
+    // The model is asked for a store_id, so the ids must be ON the list —
+    // labels alone made it invent one and POST /api/plans 400 on it.
+    expect(prompt).toContain('store-1')
+    expect(prompt).toContain('store-2')
+    expect(prompt).toContain('exactly one of the listed ids')
   })
 
   it('includes low-stock items', () => {

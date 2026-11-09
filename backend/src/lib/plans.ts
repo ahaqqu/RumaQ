@@ -63,8 +63,15 @@ export const planCreateSchema = strictObject({
         name: pipe(string(), minLength(1)),
         qty: pipe(number(), minValue(0)),
         unit: string(),
-        store_id: optional(string()),
-        price_estimate: optional(number()),
+        // The browser client forwards the generate response's fields verbatim
+        // (Plan.jsx), and that response carries explicit nulls — for "no
+        // store" (#519) and for an estimate the model omitted (the prompt
+        // marks price_estimate optional). JSON has no undefined, so `optional`
+        // alone 400ed the whole save on either; plan_items.store_id is a
+        // nullable column and the UI groups null stores under "Other stores",
+        // so null IS the established no-store value.
+        store_id: nullish(string()),
+        price_estimate: nullish(number()),
         why: optional(string()),
         // Set when the estimate was grounded on a real price observation
         // (§5.4). The browser client sends an explicit null for ungrounded
@@ -99,10 +106,12 @@ export function buildPlanPrompt(
     expiry_date: string | null
   }>,
   recentPurchases: Array<{ name: string; store_label: string | null }>,
-  stores: Array<{ label: string }>,
+  stores: Array<{ id: string; label: string }>,
   currency: string
 ): string {
-  const storeLines = stores.map((s) => `- ${s.label}`).join('\n')
+  // #519: the model is asked for a store_id, so it must SEE the ids — labels
+  // alone forced it to invent one, and POST /api/plans 400s on an unknown id.
+  const storeLines = stores.map((s) => `- ${s.id} — ${s.label}`).join('\n')
   const lowStockLines = lowStock
     .map(
       (s) =>
@@ -118,7 +127,7 @@ export function buildPlanPrompt(
 
   return `You are a shopping plan assistant. Based on the household's current inventory and purchase history, generate a shopping plan.
 
-Available stores:
+Available stores (store_id — label):
 ${storeLines || 'No stores configured'}
 
 Low-stock items (running out within 7 days):
@@ -137,7 +146,7 @@ Return ONLY valid JSON in this exact format:
       "name": "Item name",
       "qty": 1,
       "unit": "pcs",
-      "store_id": "store id from the list above (or null if unknown)",
+      "store_id": "the exact store_id from the list above (or null if no store fits)",
       "price_estimate": 10000,
       "why": "Reason for suggesting (e.g. 'running out in 3 days', 'expires in 2 days', 'not bought in 30 days')"
     }
@@ -147,7 +156,7 @@ Return ONLY valid JSON in this exact format:
 Rules:
 - Suggest items that are running low or expiring soon.
 - Include items from purchase history that may need restocking.
-- Group items by store where possible using the store labels above. If a store is unknown, set store_id to null.
+- Group items by store where possible using the store ids above. store_id must be exactly one of the listed ids — never invent one; if no store fits or none are listed, set store_id to null.
 - Cap at 50 items maximum.
 - price_estimate is optional — provide a rough estimate in ${currency} if possible.
 - The "why" field explains why the item is suggested.
@@ -192,8 +201,13 @@ export async function generateAiPlan(
   stores: Array<{ id: string; label: string }>,
   currency: string
 ): Promise<GeneratedPlan> {
-  const promptStores = stores.map((s) => ({ label: s.label }))
-  const prompt = buildPlanPrompt(lowStock, expiring, recentPurchases, promptStores, currency)
+  // #519: the ids the prompt lists are the caller's household-scoped stores
+  // query, so membership in this set IS the household-scope check — a
+  // hallucinated id and another household's id both miss it and fall back to
+  // the same null a "no store" line already carries (nullable column, the
+  // save route binds null, the UI groups null under "Other stores").
+  const householdStoreIds = new Set(stores.map((s) => s.id))
+  const prompt = buildPlanPrompt(lowStock, expiring, recentPurchases, stores, currency)
   const systemPrompt = `You are a helpful shopping plan assistant. Generate concise, practical shopping plans in JSON format.`
 
   const result = await completeText({
@@ -222,7 +236,10 @@ export async function generateAiPlan(
     name: it.name,
     qty: it.qty,
     unit: it.unit,
-    store_id: it.store_id ?? null,
+    // Unknown store_id → null: the plan must stay generatable (and savable)
+    // when the model misbehaves; the save route's own household-scoped 400
+    // then never fires for an AI answer (#519).
+    store_id: it.store_id != null && householdStoreIds.has(it.store_id) ? it.store_id : null,
     price_estimate: it.price_estimate != null ? Math.round(it.price_estimate) : null,
     // `why` is optional in the answer (it is optional in the save contract
     // too); an item without one still belongs in the plan.
