@@ -2,7 +2,7 @@ name: Dependabot auto-merge
 
 on:
   pull_request_target:
-    branches: [dependabot/**]
+    branches: [main]
 
 permissions:
   pull-requests: write
@@ -11,6 +11,7 @@ permissions:
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'ahaqqu/RumaQ'
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
@@ -18,13 +19,8 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Approve PR
-        if: steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor'
-        run: gh pr review --approve "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+      # The main ruleset requires the `ci` check and zero approvals, so auto-merge
+      # queues the squash merge and waits for CI without approving the PR.
       - name: Enable auto-merge
         if: steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor'
         run: gh pr merge --auto --squash "$PR_URL"
