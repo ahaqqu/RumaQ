@@ -93,7 +93,8 @@ function TriggerPanel({ activeCommand }) {
   const stores = data?.stores ?? []
   const blocked = trigger.isPending || Boolean(activeCommand)
   // The inline reason must not fire while the first POST is merely in flight —
-  // only a live command or the server's own 409 means "one run at a time".
+  // only a live command or the server's own 409 means the queue is blocked
+  // (the server reaps stale commands before that check).
   const alreadyRunning = Boolean(activeCommand) || trigger.error?.status === 409
 
   const toggleStore = (slug, checked) => {

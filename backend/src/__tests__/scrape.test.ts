@@ -5,6 +5,8 @@ import {
   claimNextScrapeCommand,
   createScrapeCommand,
   finishScrapeCommand,
+  STALE_PENDING_AFTER_MS,
+  STALE_RUNNING_AFTER_MS,
 } from '../lib/scrape.js'
 
 // Stateful in-memory D1 fake covering exactly the SQL shapes the scrape lib
@@ -49,12 +51,38 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
       return viewerEmail === null ? [] : [{ is_admin: viewerIsAdmin }]
     }
     // --- createScrapeCommand ---
-    if (sql.includes("SELECT id FROM scrape_commands WHERE status IN ('pending', 'running')")) {
-      const active = commands.find((row) => row.status === 'pending' || row.status === 'running')
-      return active ? [active] : []
+    if (
+      sql.includes('SELECT id, status, created_at, picked_up_at') &&
+      sql.includes("WHERE status IN ('pending', 'running')")
+    ) {
+      const active = [...commands]
+        .filter((row) => row.status === 'pending' || row.status === 'running')
+        .sort((a, b) =>
+          a.created_at === b.created_at
+            ? a.id.localeCompare(b.id)
+            : a.created_at.localeCompare(b.created_at)
+        )[0]
+      return active
+        ? [
+            {
+              id: active.id,
+              status: active.status,
+              created_at: active.created_at,
+              picked_up_at: active.picked_up_at,
+            },
+          ]
+        : []
     }
     if (sql.includes('INSERT INTO scrape_commands')) {
       const [id, stores, createdBy, createdAt] = params as [string, string, string, string]
+      // The guarded INSERT…SELECT: no row is written while a live one exists —
+      // the same condition the real SQL evaluates inside the batch transaction.
+      if (
+        sql.includes('WHERE NOT EXISTS') &&
+        commands.some((row) => row.status === 'pending' || row.status === 'running')
+      ) {
+        return []
+      }
       commands.push({
         id,
         stores,
@@ -96,18 +124,33 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
       }
       return []
     }
-    // --- claimNextScrapeCommand ---
-    if (sql.includes("SET status = 'failed'")) {
-      const [finishedAt, staleBefore] = params as [string, string]
+    // --- stale reaper (create batch + claim sweep) ---
+    if (sql.includes("SET status = 'failed'") && sql.includes("WHERE status = 'running'")) {
+      const [error, finishedAt, staleBefore] = params as [string, string, string]
       for (const row of commands) {
-        if (row.status === 'running' && row.picked_up_at && row.picked_up_at < staleBefore) {
+        const since = row.picked_up_at ?? row.created_at
+        if (row.status === 'running' && since < staleBefore) {
           row.status = 'failed'
           row.finished_at = finishedAt
-          row.error = 'agent lost — no terminal report'
+          row.exit_code = 1
+          row.error = error
         }
       }
       return []
     }
+    if (sql.includes("SET status = 'failed'") && sql.includes("WHERE status = 'pending'")) {
+      const [error, finishedAt, staleBefore] = params as [string, string, string]
+      for (const row of commands) {
+        if (row.status === 'pending' && row.created_at < staleBefore) {
+          row.status = 'failed'
+          row.finished_at = finishedAt
+          row.exit_code = 1
+          row.error = error
+        }
+      }
+      return []
+    }
+    // --- claimNextScrapeCommand ---
     if (sql.includes("WHERE status = 'pending' ORDER BY created_at LIMIT 1")) {
       const oldest = commands
         .filter((row) => row.status === 'pending')
@@ -208,8 +251,25 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
       return stmt
     },
     async batch(statements: Array<{ sql: string; params: unknown[] }>) {
-      for (const statement of statements) handle(statement.sql, statement.params)
-      return statements.map(() => ({ success: true }))
+      // Yield first so two concurrent create requests both reach their batch
+      // before either commits — the race the guarded INSERT must survive.
+      await Promise.resolve()
+      return statements.map((statement) => {
+        const before = commands.length
+        const results = handle(statement.sql, statement.params) as unknown[]
+        return {
+          success: true,
+          results,
+          // Real D1 reports per-statement changes; the guarded INSERT is the
+          // one write whose count the lib reads (0 = conflict).
+          meta: {
+            changes:
+              statement.sql.includes('INSERT INTO scrape_commands') && commands.length > before
+                ? 1
+                : 0,
+          },
+        }
+      })
     },
   }
 
@@ -236,6 +296,39 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
       }
     },
   }
+}
+
+/** Seeds a row directly — the fake is the storage, so tests can fabricate age. */
+function seedCommand(
+  fake: ReturnType<typeof createScrapeDb>,
+  row: Pick<CommandRow, 'id' | 'status'> & Partial<CommandRow>
+) {
+  fake.commands.push({
+    stores: '["superindo"]',
+    created_by: 'user-1',
+    created_at: new Date().toISOString(),
+    picked_up_at: null,
+    finished_at: null,
+    exit_code: null,
+    error: null,
+    log_truncated: 0,
+    ...row,
+  })
+}
+
+function postScrape(
+  env: ReturnType<ReturnType<typeof createScrapeDb>['env']>,
+  body = '{"stores":["superindo"]}'
+) {
+  return apiApp.request(
+    '/api/admin/scrape',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    },
+    env
+  )
 }
 
 describe('POST /api/admin/scrape (admin command queue)', () => {
@@ -339,6 +432,158 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
       env
     )
     expect(second.status).toBe(201)
+  })
+
+  it('reaps a stale running command (no finish report) and creates the new one', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const now = new Date('2026-11-09T12:00:00.000Z')
+      vi.setSystemTime(now)
+      const fake = createScrapeDb()
+      const pickedUpAt = new Date(now.getTime() - STALE_RUNNING_AFTER_MS - 60_000).toISOString()
+      seedCommand(fake, {
+        id: 'stale-running',
+        status: 'running',
+        created_at: new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString(),
+        picked_up_at: pickedUpAt,
+      })
+
+      const res = await postScrape(fake.env())
+      expect(res.status).toBe(201)
+
+      const reaped = fake.commands.find((row) => row.id === 'stale-running')!
+      expect(reaped).toMatchObject({
+        status: 'failed',
+        exit_code: 1,
+        // Exact audit string the admin history renders.
+        error: 'reaped: no finish report after 150 min (run deadline exceeded)',
+        finished_at: now.toISOString(),
+        // Preserved: it still records when the agent claimed the run.
+        picked_up_at: pickedUpAt,
+      })
+      expect(fake.commands).toHaveLength(2)
+      const created = fake.commands.find((row) => row.id !== 'stale-running')!
+      expect(created.status).toBe('pending')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('409s on a fresh running command, names it, and leaves it untouched', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const now = new Date('2026-11-09T12:00:00.000Z')
+      vi.setSystemTime(now)
+      const fake = createScrapeDb()
+      const createdAt = new Date(now.getTime() - 8 * 60 * 1000).toISOString()
+      const pickedUpAt = new Date(now.getTime() - 5 * 60 * 1000).toISOString()
+      seedCommand(fake, {
+        id: 'live-running',
+        status: 'running',
+        created_at: createdAt,
+        picked_up_at: pickedUpAt,
+      })
+
+      const res = await postScrape(fake.env())
+      expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({
+        error: 'A scrape is already pending or running',
+        activeCommand: {
+          id: 'live-running',
+          status: 'running',
+          createdAt,
+          pickedUpAt,
+        },
+      })
+
+      expect(fake.commands).toHaveLength(1)
+      expect(fake.commands[0]).toMatchObject({
+        status: 'running',
+        finished_at: null,
+        exit_code: null,
+        error: null,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reaps a stale pending command (never picked up)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const now = new Date('2026-11-09T12:00:00.000Z')
+      vi.setSystemTime(now)
+      const fake = createScrapeDb()
+      seedCommand(fake, {
+        id: 'stale-pending',
+        status: 'pending',
+        created_at: new Date(now.getTime() - STALE_PENDING_AFTER_MS - 60_000).toISOString(),
+      })
+
+      const res = await postScrape(fake.env())
+      expect(res.status).toBe(201)
+
+      const reaped = fake.commands.find((row) => row.id === 'stale-pending')!
+      expect(reaped).toMatchObject({
+        status: 'failed',
+        exit_code: 1,
+        error: 'reaped: never picked up after 60 min',
+        finished_at: now.toISOString(),
+      })
+      expect(fake.commands).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not reap a live command that is just under its ceiling', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const now = new Date('2026-11-09T12:00:00.000Z')
+      vi.setSystemTime(now)
+
+      const runningFake = createScrapeDb()
+      seedCommand(runningFake, {
+        id: 'recent-running',
+        status: 'running',
+        created_at: new Date(now.getTime() - STALE_RUNNING_AFTER_MS + 60_000).toISOString(),
+        picked_up_at: new Date(now.getTime() - STALE_RUNNING_AFTER_MS + 60_000).toISOString(),
+      })
+      expect((await postScrape(runningFake.env())).status).toBe(409)
+      expect(runningFake.commands[0]!.status).toBe('running')
+
+      const pendingFake = createScrapeDb()
+      seedCommand(pendingFake, {
+        id: 'recent-pending',
+        status: 'pending',
+        created_at: new Date(now.getTime() - STALE_PENDING_AFTER_MS + 60_000).toISOString(),
+      })
+      expect((await postScrape(pendingFake.env())).status).toBe(409)
+      expect(pendingFake.commands[0]!.status).toBe('pending')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('creates exactly one command when two trigger requests race', async () => {
+    const fake = createScrapeDb()
+    const env = fake.env()
+
+    // Both requests enter createScrapeCommand before either commits — the
+    // guarded INSERT + batch is what must serialise them into one row.
+    const [first, second] = await Promise.all([
+      postScrape(env),
+      postScrape(env, '{"stores":["astro"]}'),
+    ])
+    expect([first.status, second.status].sort()).toEqual([201, 409])
+    expect(fake.commands).toHaveLength(1)
+    expect(fake.commands[0]!.status).toBe('pending')
+
+    const created = [first, second].find((res) => res.status === 201)!
+    const conflict = [first, second].find((res) => res.status === 409)!
+    const { id } = (await created.json()) as { id: string }
+    const body = (await conflict.json()) as { activeCommand: { id: string } }
+    expect(body.activeCommand.id).toBe(id)
   })
 })
 
@@ -557,7 +802,7 @@ describe('internal scrape routes (bearer channel)', () => {
       },
       env
     )
-    // Claim, then age the command past the 2h stale window.
+    // Claim, then age the command past the running ceiling (150 min).
     await claimNextScrapeCommand(fake.db)
     const stale = fake.commands[0]!
     stale.picked_up_at = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
@@ -565,7 +810,8 @@ describe('internal scrape routes (bearer channel)', () => {
     const headers = { Authorization: 'Bearer ingest-secret' }
     await apiApp.request('/api/internal/scrape/next', { headers }, env)
     expect(stale.status).toBe('failed')
-    expect(stale.error).toBe('agent lost — no terminal report')
+    expect(stale.error).toBe('reaped: no finish report after 150 min (run deadline exceeded)')
+    expect(stale.exit_code).toBe(1)
     expect(stale.finished_at).not.toBeNull()
     // Queue is open again — a fresh command can now be created and claimed.
     const next = await apiApp.request(

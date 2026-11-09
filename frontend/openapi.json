@@ -2412,7 +2412,7 @@
     "/api/admin/scrape": {
       "post": {
         "operationId": "postApiAdminScrape",
-        "description": "Queue an on-demand scrape of the given stores (admin-only). 409 when a scrape is already pending or running — one run at a time.",
+        "description": "Queue an on-demand scrape of the given stores (admin-only). Stale commands are reaped first; 409 only when a fresh scrape is still pending or running — one run at a time.",
         "security": [
           {
             "cookieAuth": []
@@ -2475,7 +2475,38 @@
             "description": "Not an admin"
           },
           "409": {
-            "description": "A scrape is already pending or running"
+            "description": "A fresh scrape is already pending or running; activeCommand identifies the live command.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "activeCommand": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["pending", "running"]
+                        },
+                        "createdAt": {
+                          "type": "string"
+                        },
+                        "pickedUpAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

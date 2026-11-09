@@ -530,7 +530,7 @@ export interface paths {
     }
     get?: never
     put?: never
-    /** @description Queue an on-demand scrape of the given stores (admin-only). 409 when a scrape is already pending or running — one run at a time. */
+    /** @description Queue an on-demand scrape of the given stores (admin-only). Stale commands are reaped first; 409 only when a fresh scrape is still pending or running — one run at a time. */
     post: operations['postApiAdminScrape']
     delete?: never
     options?: never
@@ -3140,12 +3140,23 @@ export interface operations {
         }
         content?: never
       }
-      /** @description A scrape is already pending or running */
+      /** @description A fresh scrape is already pending or running; activeCommand identifies the live command. */
       409: {
         headers: {
           [name: string]: unknown
         }
-        content?: never
+        content: {
+          'application/json': {
+            error?: string
+            activeCommand?: {
+              id?: string
+              /** @enum {string} */
+              status?: 'pending' | 'running'
+              createdAt?: string
+              pickedUpAt?: string | null
+            }
+          }
+        }
       }
     }
   }

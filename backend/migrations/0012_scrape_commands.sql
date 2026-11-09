@@ -2,7 +2,9 @@
 -- queues a command in D1; the VPS agent claims it over the bearer-secret
 -- channel, streams the run's output lines back as events, and posts a
 -- terminal finish. Global (non-household) table, like price_runs. One run at
--- a time — createScrapeCommand 409s while a pending/running command exists.
+-- a time — createScrapeCommand 409s while a FRESH pending/running command
+-- exists; stale rows are reaped to failed first (the ceilings live next to
+-- the statements in backend/src/lib/scrape.ts).
 
 CREATE TABLE IF NOT EXISTS scrape_commands (
   id TEXT PRIMARY KEY,

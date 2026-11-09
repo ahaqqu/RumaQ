@@ -2,8 +2,9 @@ import { useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getScrapeStores, createScrape, getScrapeCommands, getScrapeEvents } from '../api'
 
-// One run at a time — a pending/running command blocks new ones (and flips
-// every consumer into its fast polling cadence).
+// One run at a time — a fresh pending/running command blocks new ones (the
+// server reaps stale rows before checking) and flips every consumer into its
+// fast polling cadence.
 export const ACTIVE_STATUSES = new Set(['pending', 'running'])
 
 export function useScrapeStores() {
