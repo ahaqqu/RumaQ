@@ -37,12 +37,6 @@ function ageHours(iso) {
   return (Date.now() - new Date(iso).getTime()) / 3_600_000
 }
 
-// Issue #357: the degradation chain line reads as a story, not a model
-// catalog — the gemini- prefix is dead weight at this width.
-function shortModel(model) {
-  return model.replace(/^gemini-/, '')
-}
-
 function LastSuccessCard({ lastSuccessAt }) {
   const { t, i18n } = useTranslation()
   if (!lastSuccessAt) {
@@ -112,18 +106,6 @@ function RunDetail({ run }) {
                         {stats.provisionalMatches > 0 &&
                           `, ${t('monitor.provisionalMatches', { count: stats.provisionalMatches })}`}
                       </span>
-                      {/* Issue #357: a store that rode more than one OCR
-                      rung rode a degraded chain — the compact chain (final
-                      rung last) sits next to the counts so "N rejected ·
-                      OCR degraded: …" reads as one story. Raw data outside
-                      t(), like the store error above. */}
-                      {stats.modelsUsed?.length > 1 && (
-                        <span className="text-warn">
-                          {' '}
-                          · {t('monitor.ocrDegraded')}:{' '}
-                          {stats.modelsUsed.map(shortModel).join(' → ')}
-                        </span>
-                      )}
                     </>
                   )}
                   {/* Issue #362: the first rejects ride the report with
