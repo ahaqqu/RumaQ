@@ -44,7 +44,7 @@
     "openapi-typescript": "^7.13.0",
     "playwright-bdd": "^9.2.1",
     "tsx": "^4.23.15",
-    "typescript": "5.9.3",
+    "typescript": "7.0.2",
     "vite-plus": "^1.4.0"
   },
   "overrides": {
