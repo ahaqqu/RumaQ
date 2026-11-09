@@ -50,6 +50,47 @@ export function buildKey(householdId: string, userId: string, ext: string): stri
   return `receipts/${householdId}/${yyyy}/${mm}/${uuid}.${ext}`
 }
 
+// --- receipt key ownership (#525) --------------------------------------------
+//
+// purchases.receipt_image_key is a client-supplied object key: the scan route
+// hands back buildKey's output and the client posts it back when creating the
+// purchase. GET /api/purchases/:id/receipt resolves the stored key through the
+// storage adapter with no household re-check, so a key under another
+// household's prefix (with a guessed uuid) would read that household's
+// receipt. The write path therefore demands that a supplied key IS this
+// module's layout for the caller's household — nothing else is ever
+// legitimate, because buildKey is the only producer of receipt keys.
+
+// One layout, stated once: buildKey assembles it, isOwnReceiptKey enforces it.
+// They sit in the same file so a layout change cannot update one without
+// touching the other, and the #525 tests pin buildKey's live output through
+// isOwnReceiptKey — any drift between the two fails CI instead of stranding
+// legit uploads.
+const RECEIPT_KEY_ROOT = 'receipts'
+// receipts/<householdId>/<yyyy>/<mm>/<uuid>.<ext> — five segments.
+const RECEIPT_KEY_SEGMENT_COUNT = 5
+// crypto.randomUUID() output: lowercase hex in 8-4-4-4-12.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+// buildKey's date segments: a 4-digit UTC year and a zero-padded month.
+const YEAR_RE = /^\d{4}$/
+const MONTH_RE = /^(?:0[1-9]|1[0-2])$/
+// Every extension buildKey can end with: extFromType's output domain is
+// EXT_MAP's values, and its 'jpg' fallback is already one of them.
+const RECEIPT_EXTS = new Set(Object.values(EXT_MAP))
+
+export function isOwnReceiptKey(key: string, householdId: string): boolean {
+  const parts = key.split('/')
+  if (parts.length !== RECEIPT_KEY_SEGMENT_COUNT) return false
+  const [root, hh, yyyy, mm, file] = parts
+  // Plain string equality on the household segment — no regex interpolation,
+  // so the id can never be misread as pattern syntax.
+  if (root !== RECEIPT_KEY_ROOT || hh !== householdId) return false
+  if (!YEAR_RE.test(yyyy) || !MONTH_RE.test(mm)) return false
+  const dot = file.lastIndexOf('.')
+  if (dot === -1) return false
+  return UUID_RE.test(file.slice(0, dot)) && RECEIPT_EXTS.has(file.slice(dot + 1))
+}
+
 /**
  * The receipts StorageAdapter, built from the RECEIPTS binding wiring — the
  * receipts domain's composition root, mirroring the vault's
