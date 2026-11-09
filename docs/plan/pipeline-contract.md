@@ -473,6 +473,16 @@ bounds it.
 The existing free-text `error` (per store and run-level) stays: the monitor's human
 line and the journal read it.
 
+**Where it is stored.** `recordRunReport` writes the per-store failure inside the
+existing `per_store` JSON blob (the store entry keeps its `failure` object) and the
+spend block and run-level summary into two columns added by migration 0043 —
+`price_runs.ai_usage` and `price_runs.failures` (the validated report slices,
+stringified verbatim, the #463 precedent). `listPriceRuns` reads both back, so
+`GET /api/admin/price-runs` carries `ai` and `failures` per run. Both columns are
+NULL on rows recorded before #537 (and for any producer that sends neither), which
+the monitor renders as "absent" — a validated field the read path then drops is not
+a surface, so the persistence is part of the contract change, not a follow-up.
+
 ## 9. Reset and rollout
 
 There is **no data migration**. Existing price data is test data and is discarded.

@@ -271,7 +271,11 @@ describe('recordRunReport', () => {
     // Issue #463: an old report's absent receipt fields store as NULL.
     expect(params[9]).toBeNull()
     expect(params[10]).toBeNull()
+    // Issue #537: an old report carries no spend and no typed failures — both
+    // store as NULL, never as a fabricated zero block or empty array.
     expect(params[11]).toBeNull()
+    expect(params[12]).toBeNull()
+    expect(params[13]).toBeNull()
   })
 
   it('stores the v2 receipt fields (issue #463)', async () => {
@@ -309,7 +313,28 @@ describe('recordRunReport', () => {
     await recordRunReport(db, failed)
     expect(statements[0]!.params[7]).toBeNull()
     expect(statements[0]!.params[8]).toBeNull()
-    expect(statements[0]!.params[11]).toBe('store superindo failed')
+    expect(statements[0]!.params[13]).toBe('store superindo failed')
+  })
+
+  it('stores the AI spend and the run-level failures (issue #537)', async () => {
+    const { db, statements } = createFakeDb()
+    await recordRunReport(db, {
+      ...sampleReport(),
+      ai: { usage: usage },
+      failures: [blockedFailure],
+    })
+    const { sql, params } = statements[0]!
+    expect(sql).toContain('ai_usage = excluded.ai_usage')
+    expect(sql).toContain('failures = excluded.failures')
+    // `ai.usage` only — the rest of the `ai` block is pipeline-private.
+    expect(JSON.parse(params[11] as string)).toEqual(usage)
+    expect(JSON.parse(params[12] as string)).toEqual([blockedFailure])
+  })
+
+  it('stores an empty failures array as NULL — one "no failures" state, not two', async () => {
+    const { db, statements } = createFakeDb()
+    await recordRunReport(db, { ...sampleReport(), ai: { usage: usage }, failures: [] })
+    expect(statements[0]!.params[12]).toBeNull()
   })
 })
 
@@ -513,42 +538,70 @@ describe('runs ingest stores the v2 receipt fields (issue #463)', () => {
 })
 
 // Issue #537: run cost and per-store failure as first-class typed fields.
-// The proof has two halves: the contract validates the new shapes (and the
-// closed failure-code enum, which is the whole point of a typed field), and a
-// report that carries them survives the real route into D1 — the per-store
-// failure rides the `per_store` JSON blob the monitor already reads back.
+// The proof has three halves: the contract validates the new shapes (and the
+// closed failure-code enum, which is the whole point of a typed field), a
+// report that carries them survives the real route into D1, and the monitor's
+// read path gives them back — a validated field that is then dropped is not a
+// surface, it is dead data.
+
+/** The spend block a real night reports (issue #537). */
+const usage = {
+  ocr: { calls: 2, tokensIn: 2400, tokensOut: 600, cost: 0.00084, costMissing: 0 },
+  verifier: { calls: 0, tokensIn: 0, tokensOut: 0, cost: 0, costMissing: 0 },
+  embedding: { calls: 1, tokensIn: 90, tokensOut: 0, cost: 0.000002, costMissing: 0 },
+  // The stage that had no metering before: a ~1,412-call night.
+  decision: { calls: 1412, tokensIn: 491_376, tokensOut: 56_480, cost: 0.060014, costMissing: 3 },
+}
+
+/** A proxy-configured store blocked by a bot challenge — green, but reported. */
+const blockedFailure = {
+  store: 'lotte-mart',
+  code: 'blocked' as const,
+  message: 'blocked: BrowserTierRequired — Incapsula challenge not cleared; reported per-store',
+  blocked: true,
+}
+
+/** A run-level abort no single store owns. */
+const runLevelFailure = {
+  store: null,
+  code: 'publish_failed' as const,
+  message: 'publish_failed: ingest POST returned HTTP 500',
+}
+
 describe('run report cost and typed failures (issue #537)', () => {
-  const usage = {
-    ocr: { calls: 2, tokensIn: 2400, tokensOut: 600, cost: 0.00084, costMissing: 0 },
-    verifier: { calls: 0, tokensIn: 0, tokensOut: 0, cost: 0, costMissing: 0 },
-    embedding: { calls: 1, tokensIn: 90, tokensOut: 0, cost: 0.000002, costMissing: 0 },
-    // The stage that had no metering before: a ~1,412-call night.
-    decision: { calls: 1412, tokensIn: 491_376, tokensOut: 56_480, cost: 0.060014, costMissing: 3 },
-  }
-
-  const blockedFailure = {
-    store: 'lotte-mart',
-    code: 'blocked' as const,
-    message: 'blocked: BrowserTierRequired — Incapsula challenge not cleared; reported per-store',
-    blocked: true,
-  }
-
-  const runLevelFailure = {
-    store: null,
-    code: 'publish_failed' as const,
-    message: 'publish_failed: ingest POST returned HTTP 500',
-  }
-
+  /**
+   * A real GREEN night that carries a blocked store: the proxy is configured,
+   * the challenge persisted, the other stores published. `needsProxy` is
+   * dropped (this store had a proxy) and the free text is the block sentence —
+   * so the fixture is a report the pipeline can actually produce.
+   */
   function costReport(over: Record<string, unknown> = {}) {
     return {
       ...sampleReport(),
       ai: { usage },
-      failures: [blockedFailure, runLevelFailure],
+      failures: [blockedFailure],
       perStore: {
         ...sampleReport().perStore,
-        'lotte-mart': { ...sampleReport().perStore['lotte-mart'], failure: blockedFailure },
+        'lotte-mart': {
+          ...sampleReport().perStore['lotte-mart'],
+          needsProxy: undefined,
+          error: blockedFailure.message,
+          failure: blockedFailure,
+        },
       },
       ...over,
+    }
+  }
+
+  /** The same night with the run-level abort a failed publish adds. */
+  function failedCostReport() {
+    return {
+      ...costReport(),
+      exitCode: 1,
+      status: 'failed',
+      stage: 'publish',
+      error: runLevelFailure.message,
+      failures: [blockedFailure, runLevelFailure],
     }
   }
 
@@ -558,9 +611,11 @@ describe('run report cost and typed failures (issue #537)', () => {
     const report = parse(runReportSchema, costReport())
     expect(report.ai!.usage.decision).toEqual(usage.decision)
     expect(report.perStore['lotte-mart']!.failure).toEqual(blockedFailure)
-    expect(report.failures).toEqual([blockedFailure, runLevelFailure])
+    expect(report.failures).toEqual([blockedFailure])
     // The free-text error stays for humans, next to the typed object.
-    expect(report.perStore['lotte-mart']!.error).toContain('LOTTE_PROXY_URL')
+    expect(report.perStore['lotte-mart']!.error).toContain('blocked')
+    // The store-less run-level entry is representable too.
+    expect(safeParse(runReportSchema, failedCostReport()).success).toBe(true)
   })
 
   it('still accepts an old report without the fields — additive, schemaVersion stays 1', () => {
@@ -624,7 +679,7 @@ describe('run report cost and typed failures (issue #537)', () => {
     ).toBe(false)
   })
 
-  it('persists the per-store failure through the real route and reads it back', async () => {
+  it('persists cost and typed failures through the real route and reads them back', async () => {
     const { d1 } = createDb()
     const res = await apiApp.request(
       '/api/internal/ingest/runs',
@@ -640,9 +695,76 @@ describe('run report cost and typed failures (issue #537)', () => {
     const feed = await listPriceRuns(d1)
     expect(feed.runs).toHaveLength(1)
     expect(feed.runs[0]!.perStore['lotte-mart']!.failure).toEqual(blockedFailure)
+    // Issue #537: the monitor's read path returns the spend as typed data —
+    // this is the surface the ticket exists for ("total a night's spend").
+    expect(feed.runs[0]!.ai).toEqual(usage)
+    expect(feed.runs[0]!.failures).toEqual([blockedFailure])
     // A blocked store is a reported outcome, not a red run.
     expect(feed.runs[0]!.status).toBe('success')
     expect(feed.runs[0]!.exitCode).toBe(0)
     expect(feed.runs[0]!.perStore['superindo']!.failure).toBeUndefined()
+  })
+
+  it('reads back the store-less run-level failure of a failed night', async () => {
+    const { d1 } = createDb()
+    // Two nights: a green one (so the feed's last-success lookup has a row)
+    // and the failed one under test.
+    const post = (report: unknown) =>
+      apiApp.request(
+        '/api/internal/ingest/runs',
+        {
+          method: 'POST',
+          body: JSON.stringify(report),
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer s3cret' },
+        },
+        { HAQITA_INGEST_SECRET: 's3cret', DB: d1 } as never
+      )
+    expect((await post(costReport())).status).toBe(200)
+    const failed = {
+      ...failedCostReport(),
+      runStartedAt: '2026-10-27T23:00:05Z',
+      finishedAt: '2026-10-27T23:04:11Z',
+    }
+    expect((await post(failed)).status).toBe(200)
+
+    const feed = await listPriceRuns(d1)
+    expect(feed.runs).toHaveLength(2)
+    // runs are newest-first: the failed night under test is the head.
+    expect(feed.runs[0]!.status).toBe('failed')
+    expect(feed.runs[0]!.ai).toEqual(usage)
+    // Both the mirror and the store-less entry survive the round trip, in
+    // order — the monitor reads "which stores failed, and how" off one walk.
+    expect(feed.runs[0]!.failures).toEqual([blockedFailure, runLevelFailure])
+  })
+
+  it('reads NULL ai/failures columns of a pre-#537 row as absent', async () => {
+    // A row recorded before the 0043 columns existed has NULL there; the
+    // monitor must render it instead of breaking the whole feed.
+    const { db } = createFakeDb([
+      {
+        match: /FROM price_runs/,
+        rows: [
+          {
+            id: 'run-legacy',
+            run_started_at: '2026-10-20T23:00:05Z',
+            finished_at: '2026-10-20T23:04:11Z',
+            exit_code: 0,
+            status: 'success',
+            stage: 'done',
+            per_store: JSON.stringify(sampleReport().perStore),
+            match_stats: null,
+            publish_result: null,
+            index_version: null,
+            products_summary: null,
+            ai_usage: null,
+            failures: null,
+            error: null,
+          },
+        ],
+      },
+    ])
+    const feed = await listPriceRuns(db)
+    expect(feed.runs[0]!.ai).toBeNull()
+    expect(feed.runs[0]!.failures).toBeNull()
   })
 })

@@ -1,4 +1,10 @@
-import type { RunProductsSummary, RunReport, RunReportStore } from '@rumaq/contract'
+import type {
+  RunAiUsage,
+  RunFailure,
+  RunProductsSummary,
+  RunReport,
+  RunReportStore,
+} from '@rumaq/contract'
 
 // Storage for scraper run reports (haqita-integration.md §7.1). One row per
 // finished live run; the monitor reads these instead of journald. Detail
@@ -14,8 +20,8 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
   await db
     .prepare(
       `INSERT INTO price_runs
-         (id, run_started_at, finished_at, exit_code, status, stage, per_store, match_stats, publish_result, index_version, products_summary, error)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (id, run_started_at, finished_at, exit_code, status, stage, per_store, match_stats, publish_result, index_version, products_summary, ai_usage, failures, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(run_started_at) DO UPDATE SET
          finished_at = excluded.finished_at,
          exit_code = excluded.exit_code,
@@ -26,6 +32,8 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
          publish_result = excluded.publish_result,
          index_version = excluded.index_version,
          products_summary = excluded.products_summary,
+         ai_usage = excluded.ai_usage,
+         failures = excluded.failures,
          error = excluded.error`
     )
     .bind(
@@ -43,6 +51,14 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
       // the monitor renders as absent.
       report.indexVersion ?? null,
       report.products ? JSON.stringify(report.products) : null,
+      // Issue #537: the run's AI spend and its run-level typed failures. Both
+      // were validated and DROPPED before the 0043 columns existed, so the
+      // monitor could not total a night's spend or read a store-less failure.
+      // `usage` only — the rest of the `ai` block stays pipeline-private (see
+      // the contract's runAiSchema comment). An empty `failures` array is
+      // stored as NULL: "no failure entries" is one state, not two.
+      report.ai ? JSON.stringify(report.ai.usage) : null,
+      report.failures?.length ? JSON.stringify(report.failures) : null,
       report.error ?? null
     )
     .run()
@@ -74,6 +90,13 @@ export type PriceRun = {
   /** Issue #463: the v2 receipt's bounded product summary (created/existing
    * counts), null for pre-#463 rows and dry-runs. */
   products: RunProductsSummary | null
+  /** Issue #537: the run's per-stage AI spend, null for runs recorded before
+   * the pipeline sent `ai.usage` (and any producer that never metered). */
+  ai: RunAiUsage | null
+  /** Issue #537: the run-level typed failure summary — every per-store failure
+   * mirrored plus the store-less entries a run-level abort owns. Null when the
+   * run had none (and on rows recorded before the field existed). */
+  failures: RunFailure[] | null
   error: string | null
 }
 
@@ -89,6 +112,8 @@ type PriceRunRow = {
   publish_result: string | null
   index_version: number | null
   products_summary: string | null
+  ai_usage: string | null
+  failures: string | null
   error: string | null
 }
 
@@ -111,7 +136,8 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
   const { results } = await db
     .prepare(
       `SELECT id, run_started_at, finished_at, exit_code, status, stage,
-              per_store, match_stats, publish_result, index_version, products_summary, error
+              per_store, match_stats, publish_result, index_version, products_summary,
+              ai_usage, failures, error
        FROM price_runs
        ORDER BY run_started_at DESC
        LIMIT ?`
@@ -133,6 +159,10 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
     // as "absent" and must keep rendering them.
     indexVersion: row.index_version ?? null,
     products: parseJson<RunProductsSummary>(row.products_summary),
+    // Issue #537: NULL on runs recorded before 0043 (and any producer that
+    // sends no `ai`/`failures`) — the monitor reads that as "absent".
+    ai: parseJson<RunAiUsage>(row.ai_usage),
+    failures: parseJson<RunFailure[]>(row.failures),
     error: row.error,
   }))
 
