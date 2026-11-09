@@ -93,6 +93,15 @@ Background subagents can die mid-task (quota exhaustion, provider error, harness
 3. **Push-after-every-commit is the recovery guarantee** — it bounds any termination's loss to uncommitted work only. Never relax it, and never batch pushes "to save time".
 4. Record the termination + recovery path in the state file and report log. If terminations recur or cluster (e.g. repeated quota exhaustion at the same phase), apply the Workflow monitoring duty.
 
+### A workflow child is terminal when its workflow returns
+
+Resume above is **crash recovery** — the agent died inside an unfinished task, so there is arrival state to reconcile. Reviving a child of a completed workflow is a different act, and the default is no:
+
+- **Follow-up work** (a re-pin after a merge, a PR-body correction, a review finding the author owns) gets a **fresh agent with a complete brief**: PR number, head, the finding, the acceptance. Do not rationalise reuse as "the author already has the context" — the follow-up has to carry the new state anyway (merged SHA, review verdicts, board changes), and a revived child sits outside the structure that reported its work.
+- **A stage that must be redone** is a new workflow invocation, or a plain subagent when it is a single stage — never a revived child of the returned workflow.
+- **If it is genuinely cheaper to revive one** (a sub-ten-minute follow-up, where re-briefing would cost more than the task), record in the state file: the child id, its branch, what it is now changing, and which workflow it belonged to — so the work stays trackable after the workflow that owned it closed.
+- Never revive a workflow child to change a file a later workflow stage or another live agent is already editing.
+
 ## AFK protocol
 
 Before writing any plan, ask whether the user will be AFK and under which autonomy level:
