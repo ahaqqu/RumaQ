@@ -90,6 +90,8 @@ describe('computePatterns', () => {
     const { db, bindMock } = mockDb(rows)
     const result = await computePatterns('h1', db)
     expect(result).toHaveLength(1)
-    expect(bindMock).toHaveBeenCalledWith('h1')
+    // #548 (R547-A1): the items join carries the household predicate too —
+    // one bind for the ON clause, one for the WHERE clause.
+    expect(bindMock).toHaveBeenCalledWith('h1', 'h1')
   })
 })

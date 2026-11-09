@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { apiApp } from '../apps/api.js'
+import { buildKey } from '../lib/receipts.js'
 
 const ENCRYPTED_KEY = 'v1:KIPkC6p1Fvnv4KoVsu-dx-GNoEqmm2kStaExhNbptUJ3lrE'
 
@@ -681,7 +682,9 @@ describe('api routes', () => {
 
   it('/api/purchases/:id/receipt streams image', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    env.DB.first = vi.fn().mockResolvedValue({ receipt_image_key: 'receipts/h1/u1/key.jpg' })
+    // The read route re-checks the stored key's shape (#548, R549-B1), so the
+    // fixture key must be the builder's own-household layout to reach storage.
+    env.DB.first = vi.fn().mockResolvedValue({ receipt_image_key: buildKey('h1', 'u1', 'jpg') })
     env.RECEIPTS.get = vi.fn().mockResolvedValue({
       blob: async () => new Blob(['x'], { type: 'image/jpeg' }),
       httpMetadata: { contentType: 'image/jpeg' },

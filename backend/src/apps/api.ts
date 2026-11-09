@@ -923,10 +923,15 @@ apiApp.patch(
     const householdId = c.get('householdId')
     const body = c.req.valid('json')
 
+    // #548 (security): both items joins in this handler resolve the item side
+    // only inside the household — the 200 echo returns i.name to the client,
+    // and the existence read's item_name stays internal. A poisoned stock row
+    // (this household's row pointing at another household's item) answers 404
+    // instead of leaking.
     const stockRow = await c.env.DB.prepare(
-      'SELECT s.*, i.name AS item_name FROM stock s JOIN items i ON i.id = s.item_id WHERE s.id = ? AND s.household_id = ?'
+      'SELECT s.*, i.name AS item_name FROM stock s JOIN items i ON i.id = s.item_id AND i.household_id = ? WHERE s.id = ? AND s.household_id = ?'
     )
-      .bind(stockId, householdId)
+      .bind(householdId, stockId, householdId)
       .first<{
         id: string
         item_id: string
@@ -1012,11 +1017,11 @@ apiApp.patch(
     const updated = await c.env.DB.prepare(
       `SELECT s.id, i.name, s.qty, s.unit, s.expiry_date, s.run_out_days, s.basis, l.label AS location
        FROM stock s
-       JOIN items i ON i.id = s.item_id
+       JOIN items i ON i.id = s.item_id AND i.household_id = ?
        LEFT JOIN locations l ON l.id = s.location_id
        WHERE s.id = ? AND s.household_id = ?`
     )
-      .bind(stockId, householdId)
+      .bind(householdId, stockId, householdId)
       .first()
 
     const res = c.json({ stock: updated })
@@ -2763,13 +2768,16 @@ apiApp.post(
     if (c.env.TEST_MODE === 'true') {
       reply = `(test) You asked: "${message}". Based on your household stock, consider checking your low items soon.`
     } else {
+      // #548 (security): these four reads feed the chat prompt — a poisoned row
+      // must not carry another household's item name to the model. The item
+      // side of every join resolves only inside the household.
       const lowStock = await c.env.DB.prepare(
         `SELECT i.name, s.qty, s.unit, s.run_out_days, s.expiry_date
-           FROM stock s JOIN items i ON i.id = s.item_id
+           FROM stock s JOIN items i ON i.id = s.item_id AND i.household_id = ?
           WHERE s.household_id = ? AND s.qty > 0
             AND (COALESCE(s.run_out_days, 999) <= 7 OR s.run_out_days IS NULL)`
       )
-        .bind(householdId)
+        .bind(householdId, householdId)
         .all<{
           name: string
           qty: number
@@ -2784,11 +2792,11 @@ apiApp.post(
 
       const expiring = await c.env.DB.prepare(
         `SELECT i.name, s.qty, s.unit, s.expiry_date
-           FROM stock s JOIN items i ON i.id = s.item_id
+           FROM stock s JOIN items i ON i.id = s.item_id AND i.household_id = ?
           WHERE s.household_id = ? AND s.qty > 0
             AND s.expiry_date IS NOT NULL AND s.expiry_date <= ?`
       )
-        .bind(householdId, expiryCutoff)
+        .bind(householdId, householdId, expiryCutoff)
         .all<{
           name: string
           qty: number
@@ -2800,24 +2808,24 @@ apiApp.post(
         `SELECT DISTINCT i.name, s.label AS store_label
            FROM purchase_items pi
            JOIN purchases p ON p.id = pi.purchase_id
-           JOIN items i ON i.id = pi.item_id
+           JOIN items i ON i.id = pi.item_id AND i.household_id = ?
            LEFT JOIN stores s ON s.id = p.store_id
           WHERE p.household_id = ? AND p.date >= ?
           ORDER BY i.name`
       )
-        .bind(householdId, expiryCutoff)
+        .bind(householdId, householdId, expiryCutoff)
         .all<{ name: string; store_label: string | null }>()
 
       const activePlan = await c.env.DB.prepare(
         `SELECT pi.qty, pi.unit, i.name, s.label AS store_label
            FROM plan_items pi
            JOIN plans p ON p.id = pi.plan_id
-           JOIN items i ON i.id = pi.item_id
+           JOIN items i ON i.id = pi.item_id AND i.household_id = ?
            LEFT JOIN stores s ON s.id = pi.store_id
           WHERE p.household_id = ? AND p.status = 'active' AND pi.status = 'pending'
           ORDER BY pi.created_at`
       )
-        .bind(householdId)
+        .bind(householdId, householdId)
         .all<{
           name: string
           qty: number
@@ -3285,6 +3293,14 @@ apiApp.get(
       .first<{ receipt_image_key: string | null }>()
 
     if (!purchase || !purchase.receipt_image_key) {
+      return c.json({ error: 'Receipt not found' }, 404)
+    }
+
+    // #548 (R549-B1, defense in depth): re-check the stored key's shape before
+    // touching storage — a key planted before the write-path validation (#549)
+    // must not resolve, whatever household prefix it names. Same uniform 404
+    // as a missing row: no oracle for which check failed.
+    if (!isOwnReceiptKey(purchase.receipt_image_key, householdId)) {
       return c.json({ error: 'Receipt not found' }, 404)
     }
 

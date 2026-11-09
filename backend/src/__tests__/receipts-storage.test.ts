@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { apiApp } from '../apps/api.js'
-import { receiptsStorage } from '../lib/receipts.js'
+import { receiptsStorage, buildKey } from '../lib/receipts.js'
 import { PluginBindingMissingError } from '../ports/storage/missing.js'
 import { createDocumentsStub } from './support/env.js'
 
@@ -119,8 +119,10 @@ describe('receipts storage port (#503)', () => {
 
   it('GET answers the same 404 when the row points at bytes storage does not have', async () => {
     const { env } = createEnv()
+    // A well-shaped own-household key (the read route re-checks the stored
+    // key's shape, #548 R549-B1) that storage does not hold.
     env.DB.first = vi.fn().mockResolvedValue({
-      receipt_image_key: 'receipts/h1/2026/11/gone.jpg',
+      receipt_image_key: buildKey('h1', 'u1', 'jpg'),
     })
     const res = await apiApp.request('/api/purchases/p1/receipt', {}, env)
     expect(res.status).toBe(404)
@@ -161,8 +163,10 @@ describe('receipts missing-binding failover (vault port-contract parity, V1-A1)'
     // first call that would have touched the binding, through the same
     // onError contract every api route answers with.
     const { env } = createEnv({ RECEIPTS: undefined })
+    // Well-shaped own-household key so the route reaches the adapter and its
+    // typed refusal (the key-shape re-check, #548 R549-B1, must pass first).
     env.DB.first = vi.fn().mockResolvedValue({
-      receipt_image_key: 'receipts/h1/2026/11/k.jpg',
+      receipt_image_key: buildKey('h1', 'u1', 'jpg'),
     })
     const res = await apiApp.request('/api/purchases/p1/receipt', {}, env)
     expect(res.status).toBe(500)
