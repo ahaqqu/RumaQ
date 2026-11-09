@@ -120,7 +120,7 @@ Use whenever a PR needs review. It sets the review depth — normal for docs/ski
 
 ### `/manager`
 
-Use when managing workstreams or implementations via subagents, when asked to "run as manager", or when orchestrating the issue → research → design → plan → implement → review → verify loop. It drives GitHub-issue-driven backlogs through a GitHub Projects kanban board, coordinates research/design/implementation/review/verification subagents in the background, maintains a durable state file, and raises workflow problems as `[workflow]` GitHub issues — never editing product code itself. See [`.agents/skills/manager/SKILL.md`](.agents/skills/manager/SKILL.md).
+Use when managing workstreams or implementations via subagents, when asked to "run as manager", or when orchestrating the issue → research → design → plan → implement → review → verify loop. It drives GitHub-issue-driven backlogs through a GitHub Projects kanban board, coordinates research/design/implementation/review/verification subagents in the background, maintains a durable per-session state directory, and raises workflow problems as `[workflow]` GitHub issues — never editing product code itself. See [`.agents/skills/manager/SKILL.md`](.agents/skills/manager/SKILL.md).
 
 ### `/security-audit`
 

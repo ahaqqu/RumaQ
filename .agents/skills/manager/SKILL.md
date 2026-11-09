@@ -12,7 +12,7 @@ Use this skill to run a session as the manager/orchestrator: drive every work un
 The manager is an orchestrator. It NEVER modifies product code; it may read code, and it writes only:
 
 - research, design, and plan docs,
-- its state file,
+- its state directory (state file and those docs),
 - chat reports,
 - GitHub issues,
 - GitHub Project (kanban) board updates.
@@ -27,7 +27,7 @@ All code changes are done by subagents.
 - File scraper-specific technique issues in the pipeline repo, not RumaQ.
 - One owner-level Delivery Kanban may hold issues from any repo in the portfolio; record the board/field/option IDs once in the state file.
 - When a change touches both sides (contract/ in RumaQ + pipeline consumption), ship the RumaQ PR first, then `./scripts/sync-contract.sh <sha>` in a pipeline PR.
-- Keep one state file per conversation-home project at `~/.zcode/manager/<Project>/state.md`; list them in `~/.zcode/manager/INDEX.md` so a fresh session can find its project.
+- Keep each manager session's state under `~/.agents/manager/<Project>/<manager-id>/` and list conversation-home projects in `~/.agents/manager/INDEX.md`.
 - Keep the canonical skills copy in `ahaqqu/RumaQ/.agents/skills/`; other repos reference it (absolute local path + GitHub link), never copy it.
 
 ## Backlog: GitHub issues + kanban board
@@ -70,7 +70,7 @@ Run each work unit through these 9 steps; skip only phases recorded as pre-compl
 8. **Verify** — spawn a verification subagent: deploy via the repo's deploy entrypoints (`scripts/deploy.sh`) and verify on the LIVE URL (browser automation where possible; note evidence in the issue). Limits: admin-only surfaces need the user's admin login → verify via automation/e2e and flag for user spot-check; operator/root steps are surfaced as blocked items, never skipped silently.
 9. **Complete** — anything discovered that needs implementing becomes a new GitHub issue (entry phase judged per Entry-point judgment) and the loop runs on it. Then `gh issue close` the original with a completion comment.
 
-Research/design/plan docs live in the manager workspace, or under `docs/plan/` when they belong in-repo; always link them from the issue.
+Research/design/plan docs live in the manager's state directory, or under `docs/plan/` when they belong in-repo; always link or inline them from the issue.
 
 ## Async discipline
 
@@ -124,7 +124,14 @@ For each real problem: gather concrete evidence (agent reports, CI logs, PR/issu
 
 ## State file
 
-Maintain a durable state file (default `<home>/.zcode/manager/<project>/state.md`) holding: standing user directives, autonomy level, decisions, workstream/issue table with current phase, agents in flight, board + field/option IDs, blocked-on-user queue, `[workflow]` issues, report log. Update it at EVERY milestone. After any context compaction, re-orient from the state file first, then the board, then open issues.
+Keep one state directory per manager session at `~/.agents/manager/<Project>/<manager-id>/` with `state.md` plus that manager's research/design/plan docs.
+
+- `<manager-id>` is the harness session id (e.g. `$DSH_SESSION_ID`); when the harness exposes none, use `m-<UTC timestamp>-<4 random hex>`. A manager working on several projects reuses the same id under each project.
+- `~/.agents/manager/INDEX.md` lists conversation-home projects, not manager states; add a missing project row and leave the rest untouched.
+- On session start, read `INDEX.md`, list the project directory, and resume the directory named by your manager id; create a new directory when none matches.
+- Read and write only your own state directory. Adopt another manager's state only when the owner hands it over; record the handover in the file and use it exclusively from then on. Cross-manager coordination goes through the board, issues, and chat, never through state files.
+- Hold in `state.md`: manager id + session id, standing user directives, autonomy level, decisions, workstream/issue table with current phase, agents in flight, board + field/option IDs, blocked-on-user queue, `[workflow]` issues, report log.
+- Update it at EVERY milestone. After any context compaction, re-orient from your state file first, then the board, then open issues.
 
 ## Context discipline
 
