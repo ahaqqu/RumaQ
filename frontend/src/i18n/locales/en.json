@@ -486,7 +486,7 @@
   },
   "scrape": {
     "activeRun": "Active run",
-    "alreadyRunning": "A scrape is already pending or running — one run at a time.",
+    "alreadyRunning": "A scrape is already queued or running. Stale runs are cleared automatically.",
     "createdBy": "Requested by",
     "elapsed": "Elapsed",
     "exitCode": "Exit code",

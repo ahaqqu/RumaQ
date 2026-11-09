@@ -3967,7 +3967,7 @@ apiApp.post(
   '/api/admin/scrape',
   describeRoute({
     description:
-      'Queue an on-demand scrape of the given stores (admin-only). 409 when a scrape is already pending or running — one run at a time.',
+      'Queue an on-demand scrape of the given stores (admin-only). Stale commands are reaped first; 409 only when a fresh scrape is still pending or running — one run at a time.',
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -4002,7 +4002,29 @@ apiApp.post(
       400: { description: 'Validation error (unknown store slug)' },
       401: { description: 'Unauthorized' },
       403: { description: 'Not an admin' },
-      409: { description: 'A scrape is already pending or running' },
+      409: {
+        description:
+          'A fresh scrape is already pending or running; activeCommand identifies the live command.',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                error: { type: 'string' },
+                activeCommand: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    status: { type: 'string', enum: ['pending', 'running'] },
+                    createdAt: { type: 'string' },
+                    pickedUpAt: { type: 'string', nullable: true } as any,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     },
   }),
   requireAdmin,
@@ -4017,7 +4039,15 @@ apiApp.post(
       res.headers.set('Cache-Control', 'private, no-cache')
       return res
     } catch (error) {
-      if (error instanceof ScrapeConflictError) return c.json({ error: error.message }, 409)
+      if (error instanceof ScrapeConflictError) {
+        return c.json(
+          {
+            error: error.message,
+            ...(error.activeCommand ? { activeCommand: error.activeCommand } : {}),
+          },
+          409
+        )
+      }
       throw error
     }
   }

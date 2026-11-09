@@ -2,14 +2,29 @@ import type { ScrapeEvent } from '@rumaq/contract'
 
 // Admin-triggered scrape commands (docs/plan/scrape-now.md §3): a D1-backed
 // command queue between the admin UI and the VPS polling agent. One run at a
-// time (a pending/running command blocks new ones); the agent claims, streams
-// events, and posts a terminal finish. Timestamps are ISO strings so they
-// sort lexically — the same convention as price_runs.
+// time (a FRESH pending/running command blocks new ones); the agent claims,
+// streams events, and posts a terminal finish. Timestamps are ISO strings so
+// they sort lexically — the same convention as price_runs.
+
+/** The live command the queue is currently blocked by. */
+export type ActiveScrapeCommand = {
+  id: string
+  status: 'pending' | 'running'
+  createdAt: string
+  pickedUpAt: string | null
+}
 
 export class ScrapeConflictError extends Error {
-  constructor(message = 'A scrape is already pending or running') {
+  /** The live command that blocked the call, when known (create path). */
+  readonly activeCommand: ActiveScrapeCommand | null
+
+  constructor(
+    activeCommand: ActiveScrapeCommand | null = null,
+    message = 'A scrape is already pending or running'
+  ) {
     super(message)
     this.name = 'ScrapeConflictError'
+    this.activeCommand = activeCommand
   }
 }
 
@@ -20,8 +35,30 @@ export class ScrapeNotFoundError extends Error {
   }
 }
 
-/** Commands stuck in 'running' for longer than this are swept to 'failed'. */
-const STALE_RUNNING_AFTER_MS = 2 * 60 * 60 * 1000
+/**
+ * Stale ceilings — the one place both reapers (create and claim) read.
+ *
+ * The VPS agent hard-kills a scrape child after the pipeline's
+ * `RUN_DEADLINE_MS` (90 min default, `groceries/scraper/src/deadlines.ts` in
+ * RumaQ-pipeline) plus its 30 min post-deadline match/publish headroom
+ * (`groceries/scraper/src/agent.ts` childTimeoutMs) — 120 min in the worst
+ * case — then POSTs the terminal finish. 150 min is that ceiling plus 30 min
+ * of slack for a slow finish POST, so a row still 'running' at 150 min cannot
+ * belong to a live run.
+ *
+ * A healthy agent polls every 15 s; an hour without a claim means the agent
+ * (or the box) is down and the row will never be picked up.
+ */
+const RUNNING_REAP_AFTER_MINUTES = 150
+const PENDING_REAP_AFTER_MINUTES = 60
+
+/** Exported for tests: the exact ceilings the reaper applies. */
+export const STALE_RUNNING_AFTER_MS = RUNNING_REAP_AFTER_MINUTES * 60 * 1000
+export const STALE_PENDING_AFTER_MS = PENDING_REAP_AFTER_MINUTES * 60 * 1000
+
+const RUNNING_REAP_ERROR = `reaped: no finish report after ${RUNNING_REAP_AFTER_MINUTES} min (run deadline exceeded)`
+const PENDING_REAP_ERROR = `reaped: never picked up after ${PENDING_REAP_AFTER_MINUTES} min`
+
 /** History cap — older commands (and their events) are pruned on create. */
 const HISTORY_LIMIT = 50
 
@@ -79,26 +116,109 @@ function toCommand(row: ScrapeCommandSqlRow): ScrapeCommandRow {
   }
 }
 
+type ActiveScrapeCommandSqlRow = {
+  id: string
+  status: string
+  created_at: string
+  picked_up_at: string | null
+}
+
+function toActiveCommand(row: ActiveScrapeCommandSqlRow): ActiveScrapeCommand {
+  return {
+    id: row.id,
+    status: row.status === 'running' ? 'running' : 'pending',
+    createdAt: row.created_at,
+    pickedUpAt: row.picked_up_at,
+  }
+}
+
+/** D1 reports per-statement `meta.changes`; a batch SELECT reports 0. */
+function changesOf(result: unknown): number {
+  const meta = (result as { meta?: { changes?: number } } | undefined)?.meta
+  return meta?.changes ?? 0
+}
+
+/**
+ * The two stale flips as prepared statements, so the create path can run them
+ * in the SAME batch as its guarded INSERT. Age comparisons are lexical (ISO
+ * timestamps sort chronologically), the same convention as the rest of the
+ * table.
+ */
+function staleReapStatements(db: D1Database, now: string): D1PreparedStatement[] {
+  const nowMs = Date.parse(now)
+  const runningBefore = new Date(nowMs - STALE_RUNNING_AFTER_MS).toISOString()
+  const pendingBefore = new Date(nowMs - STALE_PENDING_AFTER_MS).toISOString()
+  return [
+    // COALESCE covers a hand-written 'running' row with no picked_up_at: the
+    // claim always sets it, but a bad row must not wedge the queue forever.
+    db
+      .prepare(
+        `UPDATE scrape_commands
+         SET status = 'failed', exit_code = 1, error = ?, finished_at = ?
+         WHERE status = 'running' AND COALESCE(picked_up_at, created_at) < ?`
+      )
+      .bind(RUNNING_REAP_ERROR, now, runningBefore),
+    db
+      .prepare(
+        `UPDATE scrape_commands
+         SET status = 'failed', exit_code = 1, error = ?, finished_at = ?
+         WHERE status = 'pending' AND created_at < ?`
+      )
+      .bind(PENDING_REAP_ERROR, now, pendingBefore),
+  ]
+}
+
 export async function createScrapeCommand(
   db: D1Database,
   { stores, createdBy }: { stores: string[]; createdBy: string }
 ): Promise<{ id: string }> {
-  // One run at a time: the scraper's lock file serialises processes on the
-  // VPS, but a queued backlog would surprise the admin — refuse instead.
-  const active = await db
-    .prepare(`SELECT id FROM scrape_commands WHERE status IN ('pending', 'running') LIMIT 1`)
-    .first<{ id: string }>()
-  if (active) throw new ScrapeConflictError()
-
   const id = crypto.randomUUID()
   const createdAt = new Date().toISOString()
-  await db
-    .prepare(
-      `INSERT INTO scrape_commands (id, stores, status, created_by, created_at)
-       VALUES (?, ?, 'pending', ?, ?)`
-    )
-    .bind(id, JSON.stringify(stores), createdBy, createdAt)
-    .run()
+
+  // One run at a time, without a SELECT-then-INSERT race:
+  //
+  // - Cloudflare runs db.batch() as ONE SQL transaction, with the statements
+  //   executed sequentially and non-concurrently (D1 worker API docs), against
+  //   the database's single SQLite writer. Two concurrent creates therefore
+  //   cannot interleave their reaper/INSERT statements (D1 has no interactive
+  //   BEGIN/COMMIT for Workers; a batch is the transaction primitive).
+  // - The two reaper UPDATEs run first INSIDE that transaction, so the
+  //   conflict check can only see rows that survived the stale ceilings.
+  // - The INSERT is also the check: `WHERE NOT EXISTS (…pending/running…)`
+  //   makes two concurrent creates unable to both write — the loser selects
+  //   no row, so its statement reports meta.changes = 0. The SELECT after it,
+  //   in the same transaction, names the live command for the 409 body.
+  //
+  // Net effect: exactly one pending row can exist, and a 409 is only raised
+  // for a command that was fresh when this transaction ran.
+  const reap = staleReapStatements(db, createdAt)
+  const results = await db.batch([
+    ...reap,
+    db
+      .prepare(
+        `INSERT INTO scrape_commands (id, stores, status, created_by, created_at)
+         SELECT ?, ?, 'pending', ?, ?
+         WHERE NOT EXISTS (
+           SELECT 1 FROM scrape_commands WHERE status IN ('pending', 'running')
+         )`
+      )
+      .bind(id, JSON.stringify(stores), createdBy, createdAt),
+    db
+      .prepare(
+        `SELECT id, status, created_at, picked_up_at
+         FROM scrape_commands
+         WHERE status IN ('pending', 'running')
+         ORDER BY created_at, id
+         LIMIT 1`
+      )
+      .bind(),
+  ])
+
+  if (changesOf(results[reap.length]) === 0) {
+    const active = (results[reap.length + 1]?.results?.[0] ??
+      null) as ActiveScrapeCommandSqlRow | null
+    throw new ScrapeConflictError(active ? toActiveCommand(active) : null)
+  }
 
   // History cap: drop everything beyond the newest 50 (events explicitly —
   // the FK cascade is a no-op if the box runs with foreign_keys off).
@@ -131,18 +251,11 @@ export type ClaimedCommand = {
 }
 
 export async function claimNextScrapeCommand(db: D1Database): Promise<ClaimedCommand | null> {
-  // Lazy stale sweep first: an agent that died mid-run (VPS reboot, OOM) must
-  // not wedge the queue forever — after 2h without a terminal report the run
-  // is marked failed and the queue opens up again.
-  const staleBefore = new Date(Date.now() - STALE_RUNNING_AFTER_MS).toISOString()
-  await db
-    .prepare(
-      `UPDATE scrape_commands
-       SET status = 'failed', finished_at = ?, error = 'agent lost — no terminal report'
-       WHERE status = 'running' AND picked_up_at < ?`
-    )
-    .bind(staleBefore, staleBefore)
-    .run()
+  // Lazy stale sweep first: an agent that died mid-run (VPS reboot, OOM), or
+  // a command the box never picked up, must not wedge the queue forever. It
+  // uses the exact same ceilings and error strings as the create path, so the
+  // two reapers cannot drift.
+  await db.batch(staleReapStatements(db, new Date().toISOString()))
 
   // Two-step claim: pick the oldest pending, then flip it conditionally —
   // the `AND status = 'pending'` guard makes a double-claim return nothing.
@@ -180,7 +293,7 @@ export async function appendScrapeEvents(
     .first<{ status: string }>()
   if (!command) throw new ScrapeNotFoundError()
   if (command.status === 'success' || command.status === 'failed') {
-    throw new ScrapeConflictError('Command already finished')
+    throw new ScrapeConflictError(null, 'Command already finished')
   }
 
   // Idempotent by (command_id, seq): agent retries after a network error are
