@@ -184,6 +184,11 @@ describe('GET /api/purchases — list never resolves a foreign name (#524)', () 
     // its foreign name is unrecoverable.
     expect(names).not.toContain('Foreign Coffee')
     expect(JSON.stringify(body)).not.toContain('Foreign Coffee')
+    // [R547-B1] The de-reference contract pinned: the poisoned line renders
+    // with a null name, not dropped — a refactor that moves the predicate from
+    // the ON clause into the WHERE clause (dropping the line) fails here.
+    expect(names).toHaveLength(2)
+    expect(names).toContain(null)
   })
 
   it('matches the name search only against household items', async () => {
@@ -222,6 +227,10 @@ describe('GET /api/purchases/:id — detail never resolves a foreign name (#524)
     expect(names).toContain('Milk')
     expect(names).not.toContain('Foreign Coffee')
     expect(JSON.stringify(body)).not.toContain('Foreign Coffee')
+    // [R547-B1] Same pin as the list test: the poisoned line renders with a
+    // null name (ON clause), it is not dropped (WHERE clause).
+    expect(names).toHaveLength(2)
+    expect(names).toContain(null)
   })
 })
 
@@ -243,6 +252,10 @@ describe('GET /api/plans — the plan payload never resolves a foreign name (#52
     expect(names).toContain('Milk')
     expect(names).not.toContain('Foreign Coffee')
     expect(JSON.stringify(body)).not.toContain('Foreign Coffee')
+    // [R547-B1] Same pin as the purchases tests: the poisoned plan line
+    // renders with a null item_name (ON clause), it is not dropped (WHERE).
+    expect(names).toHaveLength(2)
+    expect(names).toContain(null)
   })
 })
 

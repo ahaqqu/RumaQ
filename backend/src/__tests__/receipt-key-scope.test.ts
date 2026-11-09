@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vite-plus/test'
 import { apiApp } from '../apps/api.js'
 import { buildKey } from '../lib/receipts.js'
 import { createDb } from './support/d1-sqlite.js'
+import { createBrochuresStub } from './support/env.js'
 import type { Env } from '../types.js'
 
 // #525: POST /api/purchases accepted `receipt_image_key` as a client-supplied
@@ -157,5 +158,61 @@ describe('POST /api/purchases — receipt_image_key must be buildKey output for 
 
     expect(res.status).toBe(201)
     expect(storedReceiptKeys()).toEqual([null])
+  })
+})
+
+describe('GET /api/purchases/:id/receipt — the read path re-checks the stored key (#548, R549-B1)', () => {
+  function spyBucket() {
+    const bucket = createBrochuresStub()
+    const gets: string[] = []
+    const innerGet = bucket.get.bind(bucket)
+    bucket.get = async (key: string) => {
+      gets.push(key)
+      return innerGet(key)
+    }
+    return { bucket, gets }
+  }
+
+  function receiptEnv(bucket: ReturnType<typeof createBrochuresStub>): Env {
+    return { DB: d1, RECEIPTS: bucket, props: OWNER } as unknown as Env
+  }
+
+  function seedPurchaseKey(id: string, householdId: string, key: string): void {
+    sqlite
+      .prepare(
+        `INSERT INTO purchases (id, household_id, date, total, receipt_image_key)
+         VALUES (?, ?, '2026-11-08', 1000, ?)`
+      )
+      .run(id, householdId, key)
+  }
+
+  it('refuses a pre-fix planted foreign key with 404 before touching storage', async () => {
+    // A row planted before the #549 write-path validation: an h1 purchase
+    // holding an h2-prefixed key. The household-scoped SELECT resolves the
+    // row, so the key-shape re-check is the only thing between the caller and
+    // h2's object.
+    const { bucket, gets } = spyBucket()
+    seedPurchaseKey('p-plant', 'h1', buildKey('h2', 'u2', 'jpg'))
+
+    const res = await apiApp.request('/api/purchases/p-plant/receipt', {}, receiptEnv(bucket))
+
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'Receipt not found' })
+    // The uniform 404 came before any storage access — no oracle, no get.
+    expect(gets).toEqual([])
+  })
+
+  it('still streams a legit own-household key (parity)', async () => {
+    const key = buildKey('h1', 'u1', 'jpg')
+    seedPurchaseKey('p-own', 'h1', key)
+    const bucket = createBrochuresStub()
+    await bucket.put(key, new Uint8Array([1, 2, 3]), {
+      httpMetadata: { contentType: 'image/jpeg' },
+    })
+
+    const res = await apiApp.request('/api/purchases/p-own/receipt', {}, receiptEnv(bucket))
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toBe('image/jpeg')
   })
 })

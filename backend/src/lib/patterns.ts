@@ -14,6 +14,11 @@ export async function computePatterns(
   householdId: string,
   db: D1Database
 ): Promise<PurchasePattern[]> {
+  // #548 (security, R547-A1): a poisoned purchase line (this household's row
+  // pointing at another household's item) must not surface the foreign name as
+  // a pattern. ON-clause placement de-references it: the line still aggregates
+  // and its name falls back to 'Unknown' — a WHERE-clause predicate would drop
+  // the line instead.
   const rows = await db
     .prepare(
       `SELECT pi.item_id,
@@ -22,12 +27,12 @@ export async function computePatterns(
               p.date
        FROM purchase_items pi
        JOIN purchases p ON p.id = pi.purchase_id
-       LEFT JOIN items i ON i.id = pi.item_id
+       LEFT JOIN items i ON i.id = pi.item_id AND i.household_id = ?
        WHERE p.household_id = ?
        ORDER BY p.date DESC
        LIMIT 1000`
     )
-    .bind(householdId)
+    .bind(householdId, householdId)
     .all<{
       item_id: string
       item_name: string | null
