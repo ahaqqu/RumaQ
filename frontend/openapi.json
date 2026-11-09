@@ -4871,16 +4871,16 @@
                           "type": "string"
                         },
                         "store_id": {
-                          "type": "string"
+                          "type": ["string", "null"]
                         },
                         "price_estimate": {
-                          "type": "number"
+                          "type": ["number", "null"]
                         },
                         "why": {
                           "type": "string"
                         },
                         "price_observation_id": {
-                          "type": "string"
+                          "type": ["string", "null"]
                         }
                       }
                     }

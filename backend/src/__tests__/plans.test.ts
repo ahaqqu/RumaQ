@@ -22,7 +22,10 @@ describe('buildPlanPrompt', () => {
       [{ name: 'Milk', qty: 0.5, unit: 'L', run_out_days: 2, expiry_date: null }],
       [{ name: 'Bread', qty: 1, unit: 'pack', expiry_date: '2026-07-27' }],
       [{ name: 'Eggs', store_label: 'Pasar' }],
-      [{ label: 'Indomaret' }, { label: 'Alfamart' }],
+      [
+        { id: '11111111-1111-4111-8111-111111111111', label: 'Indomaret' },
+        { id: '22222222-2222-4222-8222-222222222222', label: 'Alfamart' },
+      ],
       'IDR'
     )
     expect(prompt).toContain('Indomaret')
@@ -73,6 +76,13 @@ describe('generateAiPlan', () => {
     expect(plan.usage.output_tokens).toBe(10)
     const [, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(JSON.parse(opts.body as string).model).toBe('gpt-4o-mini')
+    // #519: the prompt hands the model the store ids it is asked to answer with.
+    const userMessage = (
+      JSON.parse(opts.body as string).messages as Array<{ role: string; content: string }>
+    )[1]
+    expect(userMessage.role).toBe('user')
+    expect(userMessage.content).toContain('s1')
+    expect(userMessage.content).toContain('X')
   })
 
   it('rejects an answer with no JSON instead of silently returning an empty plan', async () => {
@@ -108,11 +118,86 @@ describe('generateAiPlan', () => {
         })
       )
     )
-    const plan = await generateAiPlan(await reasoningCall(), [], [], [], [], 'IDR')
+    const plan = await generateAiPlan(
+      await reasoningCall(),
+      [],
+      [],
+      [],
+      [{ id: 's1', label: 'X' }],
+      'IDR'
+    )
     expect(plan.items).toEqual([
       { name: 'Susu', qty: 1, unit: 'L', store_id: null, price_estimate: 18000, why: '' },
       { name: 'Roti', qty: 2, unit: 'pack', store_id: 's1', price_estimate: null, why: 'Habis' },
     ])
+  })
+
+  it('remaps an unknown store_id to null instead of passing it to the save route (#519)', async () => {
+    // The prompt lists only the household's own store ids; an answer that
+    // invents one must not poison the payload POST /api/plans would 400 on.
+    // The fallback is null — the same "no store" a nullable column and the
+    // UI's "Other stores" group already carry.
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      openAiChatAnswer(
+        JSON.stringify({
+          items: [
+            { name: 'Susu', qty: 1, unit: 'L', store_id: '99999999-9999-4999-8999-999999999999' },
+            { name: 'Roti', qty: 2, unit: 'pack', store_id: 's1' },
+          ],
+        })
+      )
+    )
+    const plan = await generateAiPlan(
+      await reasoningCall(),
+      [],
+      [],
+      [],
+      [{ id: 's1', label: 'X' }],
+      'IDR'
+    )
+    expect(plan.items.map((it) => it.store_id)).toEqual([null, 's1'])
+  })
+
+  it("treats another household's store id as unknown — same null as a random one (#519)", async () => {
+    // The valid set is the caller's household-scoped stores query; a foreign
+    // household's id misses it exactly like a hallucinated one. No existence
+    // oracle: both fall back to null with the same response shape.
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      openAiChatAnswer(
+        JSON.stringify({
+          items: [
+            { name: 'Susu', qty: 1, unit: 'L', store_id: 'foreign-store-id' },
+            {
+              name: 'Roti',
+              qty: 2,
+              unit: 'pack',
+              store_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            },
+          ],
+        })
+      )
+    )
+    const plan = await generateAiPlan(
+      await reasoningCall(),
+      [],
+      [],
+      [],
+      [{ id: 's1', label: 'X' }],
+      'IDR'
+    )
+    expect(plan.items.map((it) => it.store_id)).toEqual([null, null])
+  })
+
+  it('falls back to null for every store_id when the household has no stores (#519)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      openAiChatAnswer(
+        JSON.stringify({
+          items: [{ name: 'Susu', qty: 1, unit: 'L', store_id: 's1' }],
+        })
+      )
+    )
+    const plan = await generateAiPlan(await reasoningCall(), [], [], [], [], 'IDR')
+    expect(plan.items[0].store_id).toBeNull()
   })
 
   it('rejects an off-schema answer through the plan schema', async () => {

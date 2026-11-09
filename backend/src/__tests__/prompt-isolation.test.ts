@@ -9,8 +9,14 @@ import { buildScanPrompt } from '../lib/receipt-scan.js'
 // the API. The scan prompt is static and contains no household data.
 
 describe('buildPlanPrompt prompt isolation', () => {
-  const householdAStores = [{ label: 'Indomaret' }, { label: 'Alfamart' }]
-  const householdBStores = [{ label: 'Superindo' }, { label: 'Lottemart' }]
+  const householdAStores = [
+    { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', label: 'Indomaret' },
+    { id: 'b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a22', label: 'Alfamart' },
+  ]
+  const householdBStores = [
+    { id: 'c2eebc99-9c0b-4ef8-bb6d-6bb9bd380a33', label: 'Superindo' },
+    { id: 'd3eebc99-9c0b-4ef8-bb6d-6bb9bd380a44', label: 'Lottemart' },
+  ]
 
   const householdALowStock = [
     { name: 'Milk', qty: 1, unit: 'L', run_out_days: 2, expiry_date: null },
@@ -38,12 +44,30 @@ describe('buildPlanPrompt prompt isolation', () => {
     expect(promptB).not.toContain('Milk')
   })
 
-  it('does not leak internal DB identifiers', () => {
-    const stores = [{ label: 'Indomaret' }]
-    const prompt = buildPlanPrompt([], [], [], stores, 'IDR')
-    expect(prompt).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
-    expect(prompt).not.toContain('store-')
-    expect(prompt).not.toContain('uuid:')
+  it('leaks no identifiers beyond the store ids it was handed (#519)', () => {
+    // Since #519 the prompt lists each store as `id — label`: the model must
+    // echo an id back, so the household's OWN store ids are on the list by
+    // design. They are still the only identifiers allowed in the prompt — no
+    // household, user or other DB row ids may ride along.
+    const storeA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+    const storeB = 'b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a22'
+    const prompt = buildPlanPrompt(
+      [],
+      [],
+      [],
+      [
+        { id: storeA, label: 'Indomaret' },
+        { id: storeB, label: 'Alfamart' },
+      ],
+      'IDR'
+    )
+    expect(prompt).toContain(storeA)
+    expect(prompt).toContain(storeB)
+    const uuids =
+      prompt.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? []
+    expect([...uuids].sort()).toEqual([storeA, storeB].sort())
+    expect(prompt).not.toContain('household_id')
+    expect(prompt).not.toContain('user_id')
   })
 })
 

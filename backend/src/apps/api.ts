@@ -6103,10 +6103,13 @@ apiApp.post(
                     name: { type: 'string', minLength: 1 },
                     qty: { type: 'number', minimum: 0 },
                     unit: { type: 'string' },
-                    store_id: { type: 'string' },
-                    price_estimate: { type: 'number' },
+                    // Explicit null is accepted (planCreateSchema is nullish):
+                    // the browser client forwards the generate response's
+                    // nulls verbatim (R552-C1).
+                    store_id: { type: ['string', 'null'] },
+                    price_estimate: { type: ['number', 'null'] },
                     why: { type: 'string' },
-                    price_observation_id: { type: 'string' },
+                    price_observation_id: { type: ['string', 'null'] },
                   },
                 },
               },

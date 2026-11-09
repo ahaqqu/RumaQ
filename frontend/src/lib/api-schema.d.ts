@@ -4592,10 +4592,10 @@ export interface operations {
             name: string
             qty: number
             unit: string
-            store_id?: string
-            price_estimate?: number
+            store_id?: string | null
+            price_estimate?: number | null
             why?: string
-            price_observation_id?: string
+            price_observation_id?: string | null
           }[]
         }
       }
