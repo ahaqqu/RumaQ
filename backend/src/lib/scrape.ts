@@ -43,8 +43,9 @@ export class ScrapeNotFoundError extends Error {
  * RumaQ-pipeline) plus its 30 min post-deadline match/publish headroom
  * (`groceries/scraper/src/agent.ts` childTimeoutMs) — 120 min in the worst
  * case — then POSTs the terminal finish. 150 min is that ceiling plus 30 min
- * of slack for a slow finish POST, so a row still 'running' at 150 min cannot
- * belong to a live run.
+ * of slack for a slow finish POST, so a row running for MORE than 150 min
+ * cannot belong to a live run. The comparison is strict (`age > ceiling`): a
+ * row exactly at its ceiling is still live.
  *
  * A healthy agent polls every 15 s; an hour without a claim means the agent
  * (or the box) is down and the row will never be picked up.
