@@ -117,7 +117,7 @@ rumaq/
 │   ├── dependabot.yml                # Daily dependency version bumps
 │   └── workflows/
 │       ├── audit.yml                 # Daily vulnerability scan + auto PR
-│       ├── auto-merge-dependabot.yml  # Auto-merge safe dependabot PRs
+│       ├── auto-merge-dependabot.yml  # Auto-merge patch/minor Dependabot PRs after CI
 │       ├── ci.yml                    # Unit tests + lint + audit
 │       ├── cleanup-branch.yml        # Deletes branch Worker on PR close
 │       ├── smoke.yml                 # Scheduled production smoke
