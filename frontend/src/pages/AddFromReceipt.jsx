@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from '@tanstack/react-router'
-import { formatRp } from '../data/mock.js'
+import { formatHouseholdMoney as formatRp } from '../lib/household-money.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { personaText } from '../lib/persona.js'
 import { todayISO } from '../lib/household-date.js'

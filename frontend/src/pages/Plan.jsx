@@ -5,6 +5,7 @@ import { useSettings } from '../lib/queries/index.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { useApp } from '../context/AppContext.jsx'
 import { personaText } from '../lib/persona.js'
+import { formatHouseholdMoney as formatPrice } from '../lib/household-money.js'
 import { SkeletonRows, EmptyState } from '../components/ui.jsx'
 import {
   IconSpark,
@@ -18,14 +19,6 @@ import { cn } from '../lib/cn.js'
 import { Button } from '../components/Button.jsx'
 import { Chip } from '../components/Chip.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
-
-function formatPrice(amount, currency) {
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: currency || 'IDR',
-    minimumFractionDigits: 0,
-  }).format(amount)
-}
 
 // #518: price_estimate is a per-unit figure — line and plan totals multiply by
 // qty ("Telur ×10 @ Rp 28.000" is Rp 280.000, not Rp 28.000).
