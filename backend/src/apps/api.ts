@@ -1074,6 +1074,12 @@ apiApp.patch(
             return res
           }
         }
+      } else {
+        // #607: a blank (whitespace-only) name is invalid input, not a silent
+        // no-op. The pre-fix handler skipped the rename here — the tail UPDATE
+        // then re-set item_id to its own value and answered 200, hiding the
+        // client bug the OpenAPI contract already answers with 400.
+        return c.json({ error: 'Stock item name cannot be blank' }, 400)
       }
     }
 
