@@ -255,6 +255,30 @@ describe('POST /api/purchases — totals written, server-computed (#518 Q1/Q2/Q3
     expect(res.status).toBe(400)
     expect(count('purchases')).toBe(0)
   })
+
+  it('rejects a computed line total above the money bound (R587-A1)', async () => {
+    // The reviewer's finite repro: both fields inside their per-field caps,
+    // but with no printed line_total the server would persist Math.round
+    // (price × qty) = 1e15 against the 1e12 bound the explicit line_total
+    // path already obeys. The cross-field check refuses the save — no
+    // persisted line amount above MONEY_MAX, whichever path produced it.
+    const res = await postPurchase([
+      { name: 'Telur', qty: 1_000_000, unit: 'pcs', price: 1_000_000_000 },
+    ])
+    expect(res.status).toBe(400)
+    expect(count('purchases')).toBe(0)
+    expect(count('purchase_items')).toBe(0)
+  })
+
+  it('accepts a computed line total exactly at the money bound (R587-A1 boundary)', async () => {
+    const res = await postPurchase([
+      { name: 'Telur', qty: 1_000_000, unit: 'pcs', price: 1_000_000 },
+    ])
+    expect(res.status).toBe(201)
+    expect(one<{ total: number | null }>('SELECT total FROM purchases').total).toBe(
+      1_000_000_000_000
+    )
+  })
 })
 
 describe('GET /api/home — current_month_spend reads written totals', () => {

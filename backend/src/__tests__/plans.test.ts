@@ -34,6 +34,18 @@ describe('buildPlanPrompt', () => {
     expect(prompt).toContain('Eggs')
     expect(prompt).toContain('IDR')
   })
+
+  it('states the price_estimate basis: per-item unit price multiplied by qty (#585)', () => {
+    // Mirrors the receipt-scan rule (lib/receipt-scan.ts): the estimate is
+    // what ONE unit costs — never the line total — and the server multiplies
+    // it by qty. The example line carries qty > 1, where the two bases
+    // differ, so the rule is demonstrated rather than just stated.
+    const prompt = buildPlanPrompt([], [], [], [], 'IDR')
+    expect(prompt).toContain('per-item unit price')
+    expect(prompt).toContain('not the line total')
+    expect(prompt).toContain('multiplies it by qty')
+    expect(prompt).toContain('"qty": 12')
+  })
 })
 
 async function reasoningCall() {

@@ -70,6 +70,48 @@ describe('planCreateSchema', () => {
     expect(result.success).toBe(false)
   })
 
+  it('rejects an absurd qty (#586)', () => {
+    // The cap mirrors the purchase line's qty: the value is multiplied into
+    // plans.total_estimate, so the wire shape is bounded.
+    const result = safeParse(planCreateSchema, {
+      items: [{ name: 'Susu', qty: 1_000_001, unit: 'L' }],
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects an absurd price_estimate (#586)', () => {
+    const result = safeParse(planCreateSchema, {
+      items: [{ name: 'Susu', qty: 1, unit: 'L', price_estimate: 1_000_000_000_001 }],
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects a negative price_estimate (R587-A2)', () => {
+    // Purchase-side money fields both carry minValue(0); the estimate feeds
+    // Σ estimate × qty, so a negative one would SUBTRACT from the total.
+    const result = safeParse(planCreateSchema, {
+      items: [{ name: 'Susu', qty: 1, unit: 'L', price_estimate: -500 }],
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects a line whose check-off amount (estimate × qty) exceeds the money bound (R587-A1)', () => {
+    // Both fields inside their per-field caps, but the check-off INSERT
+    // persists estimate × qty as the line amount — 1e15 against the 1e12
+    // bound the purchase line's computed fallback obeys.
+    const result = safeParse(planCreateSchema, {
+      items: [{ name: 'Susu', qty: 1_000_000, unit: 'L', price_estimate: 1_000_000_000 }],
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it('accepts estimate × qty exactly at the money bound (R587-A1 boundary)', () => {
+    const result = safeParse(planCreateSchema, {
+      items: [{ name: 'Susu', qty: 1_000_000, unit: 'L', price_estimate: 1_000_000 }],
+    })
+    expect(result.success).toBe(true)
+  })
+
   it('rejects empty items array', () => {
     const result = safeParse(planCreateSchema, { items: [] })
     expect(result.success).toBe(false)

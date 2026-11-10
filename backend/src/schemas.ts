@@ -10,6 +10,7 @@ import {
   minLength,
   maxLength,
   minValue,
+  maxValue,
   nullable,
   regex,
   union,
@@ -20,6 +21,7 @@ import {
   trim,
 } from 'valibot'
 import type { PersonaCopyKey } from './lib/persona.js'
+import { MONEY_MAX, QTY_MAX } from './lib/money-bounds.js'
 
 // Model names go into provider request bodies and (for Gemini) the URL path,
 // so restrict them to the characters real model ids use. Allowlist, not
@@ -93,18 +95,38 @@ export const stockPatchSchema = strictObject({
   name: optional(string()),
 })
 
-export const purchaseItemSchema = object({
-  name: pipe(string(), minLength(1)),
-  qty: pipe(number(), minValue(0)),
-  unit: string(),
-  // Unit price (per-piece HARGA), canonical under #518 Option B.
-  price: pipe(number(), integer(), minValue(0)),
-  // The receipt's printed line total, when it shows one (#518 Q2). Absent or
-  // null → the server computes qty × price and persists that; the client's
-  // grand total is never trusted (Q3).
-  line_total: optional(nullable(pipe(number(), integer(), minValue(0)))),
-  item_id: optional(string()),
-})
+export const purchaseItemSchema = pipe(
+  object({
+    name: pipe(string(), minLength(1)),
+    // #586: every field here feeds server-side arithmetic (qty × price per
+    // line, Σ COALESCE(line_total, price × qty) as the persisted grand total),
+    // so an unbounded wire value would propagate straight into the total. The
+    // caps sit far above any real receipt line — a million units, a trillion
+    // rupiah — while bounding the request shape (shared constants,
+    // lib/money-bounds.ts).
+    qty: pipe(number(), minValue(0), maxValue(QTY_MAX)),
+    unit: string(),
+    // Unit price (per-piece HARGA), canonical under #518 Option B. R587-A1:
+    // the unit price is the other factor of the persisted total, so it carries
+    // the same money bound as the line amount — the plan side's per-unit
+    // price_estimate convention.
+    price: pipe(number(), integer(), minValue(0), maxValue(MONEY_MAX)),
+    // The receipt's printed line total, when it shows one (#518 Q2). Absent or
+    // null → the server computes qty × price and persists that; the client's
+    // grand total is never trusted (Q3).
+    line_total: optional(nullable(pipe(number(), integer(), minValue(0), maxValue(MONEY_MAX)))),
+    item_id: optional(string()),
+  }),
+  // R587-A1: the explicit line_total path is capped above; the COMPUTED
+  // fallback (line_total absent or null → Math.round(price × qty) is persisted)
+  // must obey the same bound. Invariant: no persisted line amount above
+  // MONEY_MAX, whichever path produced it — the reviewer's finite repro
+  // (price 1e9 × qty 1e6 = 1e15 against the explicit 1e12 cap) is a 400 here.
+  check(
+    (line) => (line.line_total != null ? true : line.price * line.qty <= MONEY_MAX),
+    'The computed line total (price × qty) exceeds the money bound'
+  )
+)
 
 export const purchaseCreateSchema = strictObject({
   store_id: optional(string()),

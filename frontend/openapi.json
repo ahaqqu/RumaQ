@@ -1909,18 +1909,21 @@
                         },
                         "qty": {
                           "type": "number",
-                          "minimum": 0
+                          "minimum": 0,
+                          "maximum": 1000000
                         },
                         "unit": {
                           "type": "string"
                         },
                         "price": {
                           "type": "integer",
-                          "minimum": 0
+                          "minimum": 0,
+                          "maximum": 1000000000000
                         },
                         "line_total": {
                           "type": ["integer", "null"],
-                          "minimum": 0
+                          "minimum": 0,
+                          "maximum": 1000000000000
                         },
                         "item_id": {
                           "type": "string"
@@ -4869,7 +4872,8 @@
                         },
                         "qty": {
                           "type": "number",
-                          "minimum": 0
+                          "minimum": 0,
+                          "maximum": 1000000
                         },
                         "unit": {
                           "type": "string"
@@ -4878,7 +4882,9 @@
                           "type": ["string", "null"]
                         },
                         "price_estimate": {
-                          "type": ["number", "null"]
+                          "type": ["number", "null"],
+                          "minimum": 0,
+                          "maximum": 1000000000000
                         },
                         "why": {
                           "type": "string"
