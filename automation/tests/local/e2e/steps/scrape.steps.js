@@ -34,8 +34,10 @@ Then('the queued scrape should show as the active run', async ({ page }) => {
   // Pending in the active-run card — the local stack has no agent to claim it.
   await expect(page.getByText('Waiting for the VPS agent to pick up the command…')).toBeVisible()
   await expect(page.getByText('No output yet')).toBeVisible()
-  // One run at a time: the trigger is blocked with an inline reason.
+  // One run at a time: the trigger is blocked with an inline reason. Copy
+  // follows #541's rewording of scrape.alreadyRunning (en.json) — the old
+  // "pending or running — one run at a time." text no longer ships.
   await expect(
-    page.getByText('A scrape is already pending or running — one run at a time.')
+    page.getByText('A scrape is already queued or running. Stale runs are cleared automatically.')
   ).toBeVisible()
 })
