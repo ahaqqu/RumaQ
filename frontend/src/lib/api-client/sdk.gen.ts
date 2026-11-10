@@ -140,7 +140,7 @@ export const putApiAiCapabilitiesByCapability = <ThrowOnError extends boolean = 
 });
 
 /**
- * Returns today's AI usage (UTC day) for the acting member, broken down by capability, with the household total beside it. Usage is recorded but never capped.
+ * Returns today's AI usage (the household day, WIB) for the acting member, broken down by capability, with the household total beside it. Usage is recorded but never capped.
  */
 export const getApiAiUsage = <ThrowOnError extends boolean = false>(options?: Options<GetApiAiUsageData, ThrowOnError>): RequestResult<GetApiAiUsageResponses, GetApiAiUsageErrors, ThrowOnError> => (options?.client ?? client).get<GetApiAiUsageResponses, GetApiAiUsageErrors, ThrowOnError>({ url: '/api/ai/usage', ...options });
 
@@ -184,7 +184,7 @@ export const postApiPurchasesScan = <ThrowOnError extends boolean = false>(optio
 export const getApiPurchases = <ThrowOnError extends boolean = false>(options?: Options<GetApiPurchasesData, ThrowOnError>): RequestResult<GetApiPurchasesResponses, GetApiPurchasesErrors, ThrowOnError> => (options?.client ?? client).get<GetApiPurchasesResponses, GetApiPurchasesErrors, ThrowOnError>({ url: '/api/purchases', ...options });
 
 /**
- * Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt. Item price is the unit price; an optional per-line line_total (the receipt's printed line total) is persisted as given, otherwise the server computes qty × price. purchases.total is always computed server-side as Σ COALESCE(line_total, price × qty) and never read from the client.
+ * Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt. Item price is the unit price; an optional per-line line_total (the receipt's printed line total) is persisted as given, otherwise the server computes qty × price. purchases.total is always computed server-side as Σ COALESCE(line_total, price × qty) and never read from the client. date is a household calendar day (WIB, UTC+7) as YYYY-MM-DD — the scan route's dateGuess prefills it from that same calendar.
  */
 export const postApiPurchases = <ThrowOnError extends boolean = false>(options: Options<PostApiPurchasesData, ThrowOnError>): RequestResult<PostApiPurchasesResponses, PostApiPurchasesErrors, ThrowOnError> => (options.client ?? client).post<PostApiPurchasesResponses, PostApiPurchasesErrors, ThrowOnError>({
     url: '/api/purchases',
