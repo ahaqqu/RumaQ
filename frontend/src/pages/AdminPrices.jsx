@@ -221,6 +221,22 @@ function RunDetail({ run }) {
           ) : (
             <div className="text-text-muted text-xs">—</div>
           )}
+          {/* Pipeline #83: which verifier prompt produced this run's decisions
+          — the version + template sha256 the pipeline reports, so a prompt
+          edit (v1 → v2) is attributable from the run history alone. Absent on
+          every report before the pipeline starts sending it (Worker-first),
+          so nothing renders for those runs. The full hash rides the tooltip. */}
+          {run.aiPromptIdentity && (
+            <div
+              className="text-xs text-text-muted mt-1 break-all"
+              title={`sha256:${run.aiPromptIdentity.sha256}`}
+            >
+              {t('monitor.verifierPrompt', {
+                version: run.aiPromptIdentity.version,
+                sha: run.aiPromptIdentity.sha256.slice(0, 12),
+              })}
+            </div>
+          )}
         </div>
         <div>
           <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">

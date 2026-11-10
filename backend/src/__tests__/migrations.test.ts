@@ -3745,3 +3745,45 @@ describe('migration 0042: legacy AI settings dropped (#523 P3)', () => {
     )
   })
 })
+
+describe('migration 0044: price_runs.ai_prompt_identity (pipeline #83)', () => {
+  it('adds the nullable identity column on top of the pre-0044 schema; old rows stay null', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0044')
+    )
+
+    db.prepare(
+      `INSERT INTO price_runs (id, run_started_at, finished_at, exit_code, status)
+       VALUES ('run-1', '2026-11-10T23:00:05Z', '2026-11-10T23:04:11Z', 0, 'success')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0044_price_runs_ai_prompt_identity.sql'), 'utf8'))
+
+    // The pre-existing row survives with the identity NULL — no backfill (the
+    // prompt that answered it is unknowable, so it must not be invented).
+    const old = db.prepare('SELECT * FROM price_runs WHERE id = ?').get('run-1')
+    expect(old).toMatchObject({ id: 'run-1', ai_prompt_identity: null })
+
+    // New rows carry the report's verifier prompt identity as a JSON slice.
+    const identity = JSON.stringify({
+      version: 2,
+      id: 'ocr.verifier.ai_prompt_template',
+      sha256: '01274416be4f0f03241df30a4cec72290297750f34c1001d5c691e908fb5baae',
+    })
+    db.prepare(
+      `INSERT INTO price_runs (id, run_started_at, finished_at, exit_code, status, ai_prompt_identity)
+       VALUES ('run-2', '2026-11-11T23:00:05Z', '2026-11-11T23:04:11Z', 0, 'success', ?)`
+    ).run(identity)
+    const fresh = db.prepare('SELECT * FROM price_runs WHERE id = ?').get('run-2')
+    expect(fresh).toMatchObject({ ai_prompt_identity: identity })
+  })
+
+  it('keeps the full chain green on a fresh database', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(price_runs)').all()
+    expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('ai_prompt_identity')
+  })
+})

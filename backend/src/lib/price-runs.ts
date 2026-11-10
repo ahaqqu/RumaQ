@@ -4,6 +4,7 @@ import type {
   RunProductsSummary,
   RunReport,
   RunReportStore,
+  RunVerifierPrompt,
 } from '@rumaq/contract'
 
 // Storage for scraper run reports (haqita-integration.md §7.1). One row per
@@ -20,8 +21,8 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
   await db
     .prepare(
       `INSERT INTO price_runs
-         (id, run_started_at, finished_at, exit_code, status, stage, per_store, match_stats, publish_result, index_version, products_summary, ai_usage, failures, error)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (id, run_started_at, finished_at, exit_code, status, stage, per_store, match_stats, publish_result, index_version, products_summary, ai_usage, failures, error, ai_prompt_identity)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(run_started_at) DO UPDATE SET
          finished_at = excluded.finished_at,
          exit_code = excluded.exit_code,
@@ -34,7 +35,8 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
          products_summary = excluded.products_summary,
          ai_usage = excluded.ai_usage,
          failures = excluded.failures,
-         error = excluded.error`
+         error = excluded.error,
+         ai_prompt_identity = excluded.ai_prompt_identity`
     )
     .bind(
       crypto.randomUUID(),
@@ -54,12 +56,19 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
       // Issue #537: the run's AI spend and its run-level typed failures. Both
       // were validated and DROPPED before the 0043 columns existed, so the
       // monitor could not total a night's spend or read a store-less failure.
-      // `usage` only — the rest of the `ai` block stays pipeline-private (see
-      // the contract's runAiSchema comment). An empty `failures` array is
-      // stored as NULL: "no failure entries" is one state, not two.
+      // `usage` only in this column — the prompt identity gets its own column
+      // below, and the generation config stays pipeline-private (see the
+      // contract's runAiSchema comment). An empty `failures` array is stored
+      // as NULL: "no failure entries" is one state, not two.
       report.ai ? JSON.stringify(report.ai.usage) : null,
       report.failures?.length ? JSON.stringify(report.failures) : null,
-      report.error ?? null
+      report.error ?? null,
+      // Pipeline #83: the verifier prompt identity that produced this run's
+      // decisions. Every scraper today sends no `ai.verifierPrompt` (the
+      // pipeline phase is a follow-up), so absence is written as the JSON
+      // literal `null` — `parseJson` reads that back as null, exactly like the
+      // SQL NULL on rows recorded before migration 0044.
+      JSON.stringify(report.ai?.verifierPrompt ?? null)
     )
     .run()
 }
@@ -93,6 +102,11 @@ export type PriceRun = {
   /** Issue #537: the run's per-stage AI spend, null for runs recorded before
    * the pipeline sent `ai.usage` (and any producer that never metered). */
   ai: RunAiUsage | null
+  /** Pipeline #83: the verifier prompt that produced this run's decisions
+   * (`{ version, id, sha256 }`) — the answer to "v1 or v2 answered?", which
+   * the run history could not name before. Null for rows recorded before the
+   * field existed and for every producer that does not send it yet. */
+  aiPromptIdentity: RunVerifierPrompt | null
   /** Issue #537: the run-level typed failure summary — every per-store failure
    * mirrored plus the store-less entries a run-level abort owns. Null when the
    * run had none (and on rows recorded before the field existed). */
@@ -113,6 +127,7 @@ type PriceRunRow = {
   index_version: number | null
   products_summary: string | null
   ai_usage: string | null
+  ai_prompt_identity: string | null
   failures: string | null
   error: string | null
 }
@@ -137,7 +152,7 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
     .prepare(
       `SELECT id, run_started_at, finished_at, exit_code, status, stage,
               per_store, match_stats, publish_result, index_version, products_summary,
-              ai_usage, failures, error
+              ai_usage, ai_prompt_identity, failures, error
        FROM price_runs
        ORDER BY run_started_at DESC
        LIMIT ?`
@@ -162,6 +177,9 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
     // Issue #537: NULL on runs recorded before 0043 (and any producer that
     // sends no `ai`/`failures`) — the monitor reads that as "absent".
     ai: parseJson<RunAiUsage>(row.ai_usage),
+    // Pipeline #83: JSON null for a report without `ai.verifierPrompt` (every
+    // scraper today), SQL NULL on pre-0044 rows; both read back as absent.
+    aiPromptIdentity: parseJson<RunVerifierPrompt>(row.ai_prompt_identity),
     failures: parseJson<RunFailure[]>(row.failures),
     error: row.error,
   }))

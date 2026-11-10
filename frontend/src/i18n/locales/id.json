@@ -467,6 +467,7 @@
     "matchSolo": "{{count}} baru",
     "matchReview": "{{count}} ditandai",
     "matchDegraded": "embeddings terdegradasi",
+    "verifierPrompt": "Prompt verifier v{{version}} · {{sha}}…",
     "publishedAccepted": "{{count}} item diterima",
     "dryRun": "dry-run",
     "indexVersion": "Indeks v{{version}}",

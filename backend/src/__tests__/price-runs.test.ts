@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vite-plus/test'
 import { parse, safeParse } from 'valibot'
-import { runReportSchema, RUN_FAILURES_LIMIT } from '@rumaq/contract'
+import { runReportSchema, runVerifierPromptSchema, RUN_FAILURES_LIMIT } from '@rumaq/contract'
 import { recordRunReport, listPriceRuns } from '../lib/price-runs.js'
 import { apiApp } from '../apps/api.js'
 import { createDb } from './support/d1-sqlite.js'
+import promptReport from '../../../contract/fixtures/valid/run-report-ai-prompt.json'
+import promptVersionZero from '../../../contract/fixtures/invalid/run-report-prompt-version-zero.json'
+import promptBadHash from '../../../contract/fixtures/invalid/run-report-prompt-bad-hash.json'
+import promptUnknownKey from '../../../contract/fixtures/invalid/run-report-prompt-unknown-key.json'
 
 type FakeRow = Record<string, unknown>
 type FakeStatement = { sql: string; params: unknown[] }
@@ -276,6 +280,29 @@ describe('recordRunReport', () => {
     expect(params[11]).toBeNull()
     expect(params[12]).toBeNull()
     expect(params[13]).toBeNull()
+    // Pipeline #83: a producer that sends no verifier prompt stores the JSON
+    // literal null — one "absent" spelling for every writer, parsed back to
+    // null by the read path.
+    expect(params[14]).toBe('null')
+  })
+
+  it('stores the verifier prompt identity (pipeline #83)', async () => {
+    const { db, statements } = createFakeDb()
+    const verifierPrompt = {
+      version: 2,
+      id: 'ocr.verifier.ai_prompt_template',
+      sha256: '01274416be4f0f03241df30a4cec72290297750f34c1001d5c691e908fb5baae',
+    }
+    await recordRunReport(db, {
+      ...sampleReport(),
+      ai: { usage, verifierPrompt },
+    })
+    const { sql, params } = statements[0]!
+    expect(sql).toContain('ai_prompt_identity')
+    // The identity rides its own column — `ai_usage` stays usage-only.
+    expect(sql).toContain('ai_prompt_identity = excluded.ai_prompt_identity')
+    expect(JSON.parse(params[14] as string)).toEqual(verifierPrompt)
+    expect(JSON.parse(params[11] as string)).toEqual(usage)
   })
 
   it('stores the v2 receipt fields (issue #463)', async () => {
@@ -766,5 +793,114 @@ describe('run report cost and typed failures (issue #537)', () => {
     const feed = await listPriceRuns(db)
     expect(feed.runs[0]!.ai).toBeNull()
     expect(feed.runs[0]!.failures).toBeNull()
+  })
+})
+
+// Pipeline #83: the verifier prompt that produced a run's decisions. Before
+// this field the report named nothing, so a prompt edit (v1 → v2, the
+// over-merge fix from pipeline #80) was invisible in production data — the
+// falsifier could not be evaluated across a deploy.
+describe('verifier prompt identity (pipeline #83)', () => {
+  const verifierPrompt = {
+    version: 2,
+    id: 'ocr.verifier.ai_prompt_template',
+    // The bench's literal v2 hash with its `sha256:` display prefix stripped.
+    sha256: '01274416be4f0f03241df30a4cec72290297750f34c1001d5c691e908fb5baae',
+  }
+
+  it('accepts the fixture report carrying the identity', () => {
+    const parsed = parse(runReportSchema, promptReport)
+    expect(parsed.ai!.verifierPrompt).toEqual(verifierPrompt)
+    // The identity rides next to the spend; both survive validation.
+    expect(parsed.ai!.usage.verifier.calls).toBe(3)
+  })
+
+  it('still accepts a report without the identity — additive, schemaVersion stays 1', () => {
+    // sampleReport() predates the field entirely (no `ai` block), and an `ai`
+    // block without verifierPrompt is the shape every current scraper posts
+    // (the pipeline phase is a separate follow-up). Both stay valid.
+    expect(safeParse(runReportSchema, sampleReport()).success).toBe(true)
+    const parsed = parse(runReportSchema, { ...sampleReport(), ai: { usage } })
+    expect(parsed.ai!.verifierPrompt).toBeUndefined()
+    expect(parsed.schemaVersion).toBe(1)
+  })
+
+  it('rejects version 0, a malformed hash, and unknown keys', () => {
+    expect(safeParse(runReportSchema, promptVersionZero).success).toBe(false)
+    expect(safeParse(runReportSchema, promptBadHash).success).toBe(false)
+    expect(safeParse(runReportSchema, promptUnknownKey).success).toBe(false)
+
+    // The shape is pinned, not merely present: version is an integer >= 1
+    // (0 can never mean "absent" — absence is the field being absent), the id
+    // is non-empty, the hash is exactly 64 LOWERCASE hex (the pipeline strips
+    // its `sha256:` prefix; a re-prefixed or uppercase digest is drift).
+    expect(safeParse(runVerifierPromptSchema, verifierPrompt).success).toBe(true)
+    for (const bad of [
+      { ...verifierPrompt, version: 0 },
+      { ...verifierPrompt, version: 1.5 },
+      { ...verifierPrompt, id: '' },
+      { ...verifierPrompt, sha256: verifierPrompt.sha256.toUpperCase() },
+      { ...verifierPrompt, sha256: `sha256:${verifierPrompt.sha256}` },
+      { ...verifierPrompt, model: 'gemini-3.8-flash' },
+    ]) {
+      expect(safeParse(runVerifierPromptSchema, bad).success).toBe(false)
+    }
+  })
+
+  /** POST a report through the real route into a real SQLite chain. */
+  function postReport(d1: D1Database, report: unknown) {
+    return apiApp.request(
+      '/api/internal/ingest/runs',
+      {
+        method: 'POST',
+        body: JSON.stringify(report),
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer s3cret' },
+      },
+      { HAQITA_INGEST_SECRET: 's3cret', DB: d1 } as never
+    )
+  }
+
+  it('records the identity and reads it back through the monitor feed', async () => {
+    const { d1 } = createDb()
+    const res = await postReport(d1, { ...sampleReport(), ai: { usage, verifierPrompt } })
+    expect(res.status).toBe(200)
+
+    const feed = await listPriceRuns(d1)
+    expect(feed.runs[0]!.aiPromptIdentity).toEqual(verifierPrompt)
+    // The spend column is untouched — identity is not usage.
+    expect(feed.runs[0]!.ai).toEqual(usage)
+  })
+
+  it('reads absence as null for current scrapers and pre-#83 rows', async () => {
+    const { d1 } = createDb()
+    // The shape every scraper posts today: an `ai` block with usage only.
+    const res = await postReport(d1, { ...sampleReport(), ai: { usage } })
+    expect(res.status).toBe(200)
+
+    const feed = await listPriceRuns(d1)
+    expect(feed.runs[0]!.ai).toEqual(usage)
+    expect(feed.runs[0]!.aiPromptIdentity).toBeNull()
+  })
+
+  it('refreshes the identity on a replayed report (idempotent upsert)', async () => {
+    const { d1 } = createDb()
+    const v1 = {
+      version: 1,
+      id: 'ocr.verifier.ai_prompt_template',
+      sha256: '9ce5ddc4242fc941185c2e4dbe262d5d0ee69d7b5e94f19bd52b7f711b17f235',
+    }
+    // Same runStartedAt → the ON CONFLICT path, not a second row. Dropping
+    // ai_prompt_identity from the DO UPDATE set must fail here: the column
+    // would keep the first write and silently mis-label the run.
+    expect(
+      (await postReport(d1, { ...sampleReport(), ai: { usage, verifierPrompt } })).status
+    ).toBe(200)
+    expect(
+      (await postReport(d1, { ...sampleReport(), ai: { usage, verifierPrompt: v1 } })).status
+    ).toBe(200)
+
+    const feed = await listPriceRuns(d1)
+    expect(feed.runs).toHaveLength(1)
+    expect(feed.runs[0]!.aiPromptIdentity).toEqual(v1)
   })
 })

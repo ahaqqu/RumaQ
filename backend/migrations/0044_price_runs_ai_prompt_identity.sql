@@ -1,0 +1,23 @@
+-- Pipeline #83: the verifier prompt identity that produced a run's decisions.
+--
+-- The verifier prompt now has materially different versions — v1 split
+-- objectively-identical products on large price gaps, v2 carries the
+-- instruction that stops it — and until this column the run report recorded
+-- nothing about which prompt answered. A prompt edit was invisible in the
+-- data: the only trace was the commit, and commits are not joined to rows.
+--
+-- The column stores the report's validated `ai.verifierPrompt` slice
+-- (`{ version, id, sha256 }`) as JSON, stringified verbatim — the 0040/0043
+-- precedent, so the read type is derived from @rumaq/contract instead of
+-- mirrored by hand. `ai_usage` stays usage-only on purpose: this column is
+-- identity, not spend.
+--
+-- Nullable on purpose: every current scraper sends no `verifierPrompt` yet
+-- (Worker-first deploy order), and rows recorded before the field keep NULL,
+-- which the monitor reads as "absent" (historical runs must keep rendering).
+--
+-- NUMBERING NOTE: 0043 is applied; this file takes the next free number,
+-- 0044. NEVER rename an applied migration: wrangler keys its d1_migrations
+-- table by filename, so a rename re-runs the file.
+-- JSON: { version, id, sha256 } — the verifier prompt that answered.
+ALTER TABLE price_runs ADD COLUMN ai_prompt_identity TEXT;

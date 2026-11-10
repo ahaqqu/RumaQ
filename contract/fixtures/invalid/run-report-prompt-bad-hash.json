@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "runStartedAt": "2026-11-10T23:00:05Z",
+  "finishedAt": "2026-11-10T23:04:11Z",
+  "exitCode": 0,
+  "status": "success",
+  "stage": "done",
+  "perStore": {
+    "superindo": {
+      "pagesFound": 2,
+      "newImages": 1,
+      "existingImages": 1,
+      "skipped": 0,
+      "itemsExtracted": 7,
+      "itemsRejected": 0
+    }
+  },
+  "ai": {
+    "usage": {
+      "ocr": { "calls": 2, "tokensIn": 2400, "tokensOut": 600, "cost": 0.00084, "costMissing": 0 },
+      "verifier": {
+        "calls": 1,
+        "tokensIn": 600,
+        "tokensOut": 80,
+        "cost": 0.00014,
+        "costMissing": 0
+      },
+      "embedding": {
+        "calls": 1,
+        "tokensIn": 90,
+        "tokensOut": 0,
+        "cost": 0.000002,
+        "costMissing": 0
+      },
+      "decision": {
+        "calls": 7,
+        "tokensIn": 2800,
+        "tokensOut": 350,
+        "cost": 0.00035,
+        "costMissing": 0
+      }
+    },
+    "verifierPrompt": {
+      "version": 2,
+      "id": "ocr.verifier.ai_prompt_template",
+      "sha256": "01274416be4f0f03241df30a4cec72290297750f34c1001d5c691e908fb5baa"
+    }
+  }
+}
