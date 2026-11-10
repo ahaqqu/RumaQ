@@ -3,7 +3,7 @@ import { generateSpecs } from 'hono-openapi'
 import { API_APPS } from './app-registry.js'
 
 // Generates the OpenAPI contract consumed by the typed API client
-// (`bun run api:codegen` → openapi.json → openapi-typescript). CI regenerates
+// (`bun run api:codegen` → openapi.json → hey-api/openapi-ts). CI regenerates
 // this file and fails on diff so backend route drift breaks the build.
 //
 // The app list lives in scripts/api/app-registry.ts — both this generator and

@@ -45,15 +45,16 @@ Default seed data (locations + stores) is created with the first household on si
 
 ## 5. Where things live
 
-| Path                  | What                                                      |
-| --------------------- | --------------------------------------------------------- |
-| `frontend/src/`       | React SPA (routes, pages, queries, i18n)                  |
-| `backend/src/`        | Hono Worker (apps per domain in `apps/`, logic in `lib/`) |
-| `backend/migrations/` | D1 migrations, applied by deploy / setup-db               |
-| `automation/`         | Docker-based API/E2E test harness                         |
-| `scripts/`            | `deploy.sh`, `test.sh`, `docs.sh`, `style.sh` entrypoints |
-| `tools/codegen/`      | typed API client codegen, pinned to the TS 5 compiler API |
-| `docs/plan/`          | Phase plans; GitHub Issues + Delivery Kanban for status   |
+| Path                           | What                                                                                   |
+| ------------------------------ | -------------------------------------------------------------------------------------- |
+| `frontend/src/`                | React SPA (routes, pages, queries, i18n)                                               |
+| `backend/src/`                 | Hono Worker (apps per domain in `apps/`, logic in `lib/`)                              |
+| `backend/migrations/`          | D1 migrations, applied by deploy / setup-db                                            |
+| `automation/`                  | Docker-based API/E2E test harness                                                      |
+| `scripts/`                     | `deploy.sh`, `test.sh`, `docs.sh`, `style.sh` entrypoints                              |
+| `tools/codegen/`               | hey-api typed API client codegen, pinned to the TS 5 compiler API                      |
+| `frontend/src/lib/api-client/` | generated typed client — never hand-edit; change `src/lib/api.ts` or the backend route |
+| `docs/plan/`                   | Phase plans; GitHub Issues + Delivery Kanban for status                                |
 
 ## Common issues
 

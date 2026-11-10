@@ -13,9 +13,10 @@ export default defineConfig({
     lint: true,
   },
   fmt: {
-    // Vendored verbatim from cloudflare/security-audit-skill — keep upstream
-    // formatting so re-syncing the skill stays a clean copy.
-    ignorePatterns: ['.agents/skills/security-audit/**'],
+    // Vendored/generated code, kept byte-for-byte as its tool emitted it:
+    // · security-audit skill is vendored verbatim from cloudflare
+    // · api-client is emitted by hey-api (`bun run api:codegen`); CI diffs it
+    ignorePatterns: ['.agents/skills/security-audit/**', 'frontend/src/lib/api-client/**'],
     semi: false,
     singleQuote: true,
     trailingComma: 'es5',
@@ -27,8 +28,10 @@ export default defineConfig({
     ],
   },
   lint: {
-    // Vendored verbatim from cloudflare/security-audit-skill (see fmt above).
-    ignorePatterns: ['.agents/skills/security-audit/**'],
+    // Vendored/generated code excluded here too (see fmt above). The generated
+    // client is still type-checked where it matters: its types flow into
+    // src/lib/api.ts, which is linted.
+    ignorePatterns: ['.agents/skills/security-audit/**', 'frontend/src/lib/api-client/**'],
     options: {
       // typeAware + typeCheck make `vp check` the single static-check pass:
       // format + lint + full type-check (tsgolint / TypeScript Go).
@@ -72,19 +75,17 @@ export default defineConfig({
       // Regenerates the typed API client inputs. Never cached: CI diffs the
       // committed artifacts to fail on backend route drift.
       //
-      // openapi-typescript prints its output through the TypeScript compiler
-      // API (`ts.factory`, `ts.createPrinter`), which the native compiler
-      // (typescript@7) no longer ships — it peer-depends on `typescript@^5.x`
-      // and fails at import with "Cannot read properties of undefined (reading
-      // 'createKeywordTypeNode')" (openapi-ts/openapi-typescript#2841). No
-      // published version supports 7 yet; the proposed fix gives the generator
-      // its own compiler (#2867), which is what this workspace does. Revisit
-      // when that lands. It therefore lives in tools/codegen with its own
-      // pinned 5.9.3 compiler, so the root tree can move to 7 without the
-      // generator losing its JS API.
+      // The generator (hey-api/openapi-ts) builds its output through the
+      // TypeScript compiler API (`ts.factory`, `ts.SyntaxKind`), which the
+      // native compiler (typescript@7) no longer ships — it resolves the app's
+      // `typescript` and dies on TS 7 even though its peer range admits 7. So
+      // it lives in tools/codegen, which pins its own 5.9.3 compiler: the root
+      // tree stays on 7 and the generator keeps its JS API. The emitted
+      // frontend/src/lib/api-client is committed (and lint/fmt-ignored) so CI's
+      // drift check can fail on backend route drift.
       'api:codegen': {
         command:
-          'bunx tsx scripts/api/generate-openapi-spec.ts && bun run --cwd tools/codegen generate && bunx vp fmt --write frontend/openapi.json frontend/src/lib/api-schema.d.ts',
+          'bunx tsx scripts/api/generate-openapi-spec.ts && bun run --cwd tools/codegen generate && bunx vp fmt --write frontend/openapi.json',
         cache: false,
       },
     },

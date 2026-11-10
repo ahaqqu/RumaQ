@@ -3,14 +3,109 @@
  * All protected endpoints use the rumaq_session cookie (HttpOnly).
  *
  * Built on the typed contract generated from the backend's OpenAPI spec
- * (`bun run api:codegen` → openapi.json → api-schema.d.ts). Route paths and
+ * (`bun run api:codegen` → openapi.json → api-client/). Route paths and
  * query parameters are type-checked against the backend; drift between the
  * backend and this client fails `vp check` / CI.
  */
-import createClient from 'openapi-fetch'
-import type { operations, paths } from './api-schema.js'
+import { client } from './api-client/client.gen.js'
+import type { PostApiAdminScrapeData } from './api-client/types.gen.js'
+import {
+  deleteApiAdminReviewByIdDecision,
+  deleteApiAiCapabilitiesByCapability,
+  deleteApiAiProvidersById,
+  deleteApiCalendarEventsById,
+  deleteApiDocumentsById,
+  deleteApiDocumentsByIdFilesByFileId,
+  deleteApiHouseholdsByIdMembersByMemberId,
+  deleteApiLocationsById,
+  deleteApiPluginsByPluginIdPurge,
+  deleteApiStoresById,
+  deleteApiTasksById,
+  getApiAdminAiUsage,
+  getApiAdminPriceRuns,
+  getApiAdminProductsAliasesCandidates,
+  getApiAdminProductsByProductKey,
+  getApiAdminProductsDuplicates,
+  getApiAdminReview,
+  getApiAdminReviewMode,
+  getApiAdminScrapeCommands,
+  getApiAdminScrapeCommandsByIdEvents,
+  getApiAdminScrapeStores,
+  getApiAiCapabilities,
+  getApiAiPresets,
+  getApiAiProviders,
+  getApiAiUsage,
+  getApiAuthEmailStatus,
+  getApiCalendar,
+  getApiDocuments,
+  getApiDocumentsById,
+  getApiHealth,
+  getApiHome,
+  getApiHouseholds,
+  getApiHouseholdsByIdInvite,
+  getApiHouseholdsByIdMembers,
+  getApiItems,
+  getApiLocations,
+  getApiMe,
+  getApiPlans,
+  getApiPlugins,
+  getApiPrices,
+  getApiPricesBrochures,
+  getApiPricesByProductKey,
+  getApiPricesMeta,
+  getApiPricesPromos,
+  getApiPurchases,
+  getApiPurchasesById,
+  getApiPurchasesPatterns,
+  getApiSettings,
+  getApiStock,
+  getApiStores,
+  getApiTasks,
+  patchApiAiProvidersById,
+  patchApiCalendarEventsById,
+  patchApiDocumentsById,
+  patchApiHouseholdsById,
+  patchApiHouseholdsByIdMembersByMemberId,
+  patchApiPlansByIdItemsByItemId,
+  patchApiSettings,
+  patchApiStockById,
+  patchApiTasksById,
+  postApiAdminProductsAliasesBulkApprove,
+  postApiAdminProductsByProductKeyAliasesByAliasIdApprove,
+  postApiAdminProductsByProductKeyAliasesByAliasIdReject,
+  postApiAdminProductsByProductKeyAuditByAuditIdRevert,
+  postApiAdminProductsByProductKeyRename,
+  postApiAdminReviewByIdDecision,
+  postApiAdminReviewEvaluate,
+  postApiAdminScrape,
+  postApiAiChat,
+  postApiAiGeneratePersona,
+  postApiAiProviders,
+  postApiAiProvidersByIdTest,
+  postApiCalendarEvents,
+  postApiDocuments,
+  postApiDocumentsByIdFiles,
+  postApiDocumentsByIdFilesByFileIdExtractExpiry,
+  postApiHouseholds,
+  postApiHouseholdsByIdActivate,
+  postApiHouseholdsByIdInvite,
+  postApiHouseholdsByIdLeave,
+  postApiHouseholdsByIdMembers,
+  postApiHouseholdsJoin,
+  postApiLocations,
+  postApiPlans,
+  postApiPlansGenerate,
+  postApiPluginsByPluginIdPurge,
+  postApiPurchases,
+  postApiStores,
+  postApiTasks,
+  postEmailLogin,
+  putApiAdminReviewMode,
+  putApiAiCapabilitiesByCapability,
+  putApiPluginsByPluginIdEnablement,
+} from './api-client/index.js'
 
-const client = createClient<paths>({ credentials: 'include' })
+client.setConfig({ credentials: 'include' })
 
 export class ApiError extends Error {
   readonly status: number
@@ -53,7 +148,12 @@ async function unwrap<T>(resultPromise: Promise<unknown>): Promise<T> {
   const result = (await resultPromise) as {
     data?: T
     error?: unknown
-    response: Response
+    // Optional: the generated client leaves it out when the request could not
+    // be built at all (invalid body/headers), so there is no response to read.
+    response?: Response
+  }
+  if (!result.response) {
+    throw new ApiError('Request failed: could not build request', 0, null, result.error)
   }
   if (result.error !== undefined || !result.response.ok) {
     const body = result.error as { error?: string } | undefined
@@ -64,22 +164,25 @@ async function unwrap<T>(resultPromise: Promise<unknown>): Promise<T> {
       result.error
     )
   }
+  // 204 / empty bodies resolve to `{}` in the generated client; callers of the
+  // wrapper have always seen `null` there, so keep that contract explicit.
+  if (result.response.status === 204) return null as T
   return (result.data ?? null) as T
 }
 
 export function getMe(): Promise<unknown> {
-  return unwrap(client.GET('/api/me'))
+  return unwrap(getApiMe())
 }
 
 export function getStock(
   { location, q }: { location?: string; q?: string } = {},
   signal?: AbortSignal
 ): Promise<unknown> {
-  return unwrap(client.GET('/api/stock', { params: { query: { location, q } }, signal }))
+  return unwrap(getApiStock({ query: { location, q }, signal }))
 }
 
 export function getHealth(): Promise<unknown> {
-  return unwrap(client.GET('/api/health'))
+  return unwrap(getApiHealth())
 }
 
 export function login() {
@@ -93,7 +196,7 @@ export async function logout() {
   // to /api/auth/logout would be forgeable from any site (a top-level GET still
   // carries the SameSite=Lax cookie) and is limited to clearing the cookie.
   // The typed client has no logout path (the backend registers it with `all`,
-  // which api-schema.d.ts does not emit), so this is a plain fetch.
+  // which the generated client does not emit), so this is a plain fetch.
   try {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
     window.location.href = '/'
@@ -108,14 +211,14 @@ export async function logout() {
 
 export async function emailAuthStatus(): Promise<{ enabled: boolean }> {
   try {
-    return await unwrap<{ enabled: boolean }>(client.GET('/api/auth/email-status'))
+    return await unwrap<{ enabled: boolean }>(getApiAuthEmailStatus())
   } catch {
     return { enabled: false }
   }
 }
 
 export async function emailLogin(email: string, password: string): Promise<unknown> {
-  return unwrap(client.POST('/api/auth/email-login', { body: { email, password } }))
+  return unwrap(postEmailLogin({ body: { email, password } }))
 }
 
 export async function isAuthenticated(): Promise<boolean> {
@@ -128,49 +231,49 @@ export async function isAuthenticated(): Promise<boolean> {
 }
 
 export function getSettings(): Promise<unknown> {
-  return unwrap(client.GET('/api/settings'))
+  return unwrap(getApiSettings())
 }
 
 export function patchSettings(payload: object): Promise<unknown> {
-  return unwrap(client.PATCH('/api/settings', { body: payload }))
+  return unwrap(patchApiSettings({ body: payload }))
 }
 
 export function getLocations(): Promise<unknown> {
-  return unwrap(client.GET('/api/locations'))
+  return unwrap(getApiLocations())
 }
 
 export function createLocation(label: string): Promise<unknown> {
-  return unwrap(client.POST('/api/locations', { body: { label } }))
+  return unwrap(postApiLocations({ body: { label } }))
 }
 
 export function deleteLocation(id: string): Promise<unknown> {
-  return unwrap(client.DELETE('/api/locations/{id}', { params: { path: { id } } }))
+  return unwrap(deleteApiLocationsById({ path: { id } }))
 }
 
 export function getItems(): Promise<unknown> {
-  return unwrap(client.GET('/api/items'))
+  return unwrap(getApiItems())
 }
 
 export function getStores(): Promise<unknown> {
-  return unwrap(client.GET('/api/stores'))
+  return unwrap(getApiStores())
 }
 
 export function createStore(label: string): Promise<unknown> {
-  return unwrap(client.POST('/api/stores', { body: { label } }))
+  return unwrap(postApiStores({ body: { label } }))
 }
 
 export function deleteStore(id: string): Promise<unknown> {
-  return unwrap(client.DELETE('/api/stores/{id}', { params: { path: { id } } }))
+  return unwrap(deleteApiStoresById({ path: { id } }))
 }
 
 export function getAiUsage(signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/ai/usage', { signal }))
+  return unwrap(getApiAiUsage({ signal }))
 }
 
 export type AiUsageRange = '24h' | '7d' | '30d'
 
 export function getAdminAiUsage(range: AiUsageRange, signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/admin/ai/usage', { params: { query: { range } }, signal }))
+  return unwrap(getApiAdminAiUsage({ query: { range }, signal }))
 }
 
 // ─── AI gateway settings (ahaqqu/RumaQ#523 P3, plan §4) ─────────────────────
@@ -228,11 +331,11 @@ export type AiCapabilityConfig = {
 export type AiProviderTestResult = { ok: boolean; code?: string }
 
 export function getAiPresets(): Promise<{ presets: AiProviderPreset[] }> {
-  return unwrap(client.GET('/api/ai/presets'))
+  return unwrap(getApiAiPresets())
 }
 
 export function getAiProviders(): Promise<AiProviderList> {
-  return unwrap(client.GET('/api/ai/providers'))
+  return unwrap(getApiAiProviders())
 }
 
 export function createAiProvider(payload: {
@@ -243,7 +346,7 @@ export function createAiProvider(payload: {
   default_model?: string
   api_key: string
 }): Promise<{ provider: AiProvider }> {
-  return unwrap(client.POST('/api/ai/providers', { body: payload }))
+  return unwrap(postApiAiProviders({ body: payload }))
 }
 
 export function updateAiProvider(
@@ -256,15 +359,15 @@ export function updateAiProvider(
     api_key?: string
   }
 ): Promise<{ provider: AiProvider }> {
-  return unwrap(client.PATCH('/api/ai/providers/{id}', { params: { path: { id } }, body: payload }))
+  return unwrap(patchApiAiProvidersById({ path: { id }, body: payload }))
 }
 
 export function deleteAiProvider(id: string): Promise<{ cleared: AiCapability[] }> {
-  return unwrap(client.DELETE('/api/ai/providers/{id}', { params: { path: { id } } }))
+  return unwrap(deleteApiAiProvidersById({ path: { id } }))
 }
 
 export function testAiProvider(id: string): Promise<AiProviderTestResult> {
-  return unwrap(client.POST('/api/ai/providers/{id}/test', { params: { path: { id } } }))
+  return unwrap(postApiAiProvidersByIdTest({ path: { id } }))
 }
 
 /**
@@ -283,31 +386,24 @@ export function generateAiPersonaCopy(payload: {
   language: 'en' | 'id'
   copy: Partial<Record<string, string>>
 }): Promise<{ copy: Record<string, string> }> {
-  return unwrap(client.POST('/api/ai/generate/persona', { body: payload }))
+  return unwrap(postApiAiGeneratePersona({ body: payload }))
 }
 
 export function getAiCapabilities(): Promise<AiCapabilityConfig> {
-  return unwrap(client.GET('/api/ai/capabilities'))
+  return unwrap(getApiAiCapabilities())
 }
 
 export function assignAiCapability(
   capability: AiCapability,
   payload: { provider_id: string; model?: string; thinking_level?: AiThinkingLevel | '' }
 ): Promise<{ capability: AiCapabilityAssignment; status: 'household' | 'none' }> {
-  return unwrap(
-    client.PUT('/api/ai/capabilities/{capability}', {
-      params: { path: { capability } },
-      body: payload,
-    })
-  )
+  return unwrap(putApiAiCapabilitiesByCapability({ path: { capability }, body: payload }))
 }
 
 export function clearAiCapability(
   capability: AiCapability
 ): Promise<{ capability: AiCapabilityAssignment; status: 'household' | 'none' }> {
-  return unwrap(
-    client.DELETE('/api/ai/capabilities/{capability}', { params: { path: { capability } } })
-  )
+  return unwrap(deleteApiAiCapabilitiesByCapability({ path: { capability } }))
 }
 
 export function patchStock(
@@ -320,11 +416,11 @@ export function patchStock(
     name?: string
   }
 ): Promise<unknown> {
-  return unwrap(client.PATCH('/api/stock/{id}', { params: { path: { id } }, body: payload }))
+  return unwrap(patchApiStockById({ path: { id }, body: payload }))
 }
 
 export function getHome(signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/home', { signal }))
+  return unwrap(getApiHome({ signal }))
 }
 
 export function scanReceipt(file: File): Promise<unknown> {
@@ -349,7 +445,7 @@ export function createPurchase(payload: {
   receipt_image_key?: string
   items: { name: string; qty: number; unit: string; price: number; item_id?: string }[]
 }): Promise<unknown> {
-  return unwrap(client.POST('/api/purchases', { body: payload }))
+  return unwrap(postApiPurchases({ body: payload }))
 }
 
 export function getReceiptUrl(purchaseId: string): string {
@@ -377,17 +473,15 @@ export function getPurchases(
   signal?: AbortSignal
 ): Promise<unknown> {
   return unwrap(
-    client.GET('/api/purchases', {
-      params: {
-        query: {
-          store,
-          from,
-          to,
-          q,
-          group_by: groupBy as 'month' | 'store' | undefined,
-          limit,
-          cursor,
-        },
+    getApiPurchases({
+      query: {
+        store,
+        from,
+        to,
+        q,
+        group_by: groupBy as 'month' | 'store' | undefined,
+        limit,
+        cursor,
       },
       signal,
     })
@@ -395,11 +489,11 @@ export function getPurchases(
 }
 
 export function getPurchasePatterns(): Promise<unknown> {
-  return unwrap(client.GET('/api/purchases/patterns'))
+  return unwrap(getApiPurchasesPatterns())
 }
 
 export function getPurchase(id: string): Promise<unknown> {
-  return unwrap(client.GET('/api/purchases/{id}', { params: { path: { id } } }))
+  return unwrap(getApiPurchasesById({ path: { id } }))
 }
 
 export function sendChatMessage(
@@ -407,18 +501,18 @@ export function sendChatMessage(
   history: { role: 'user' | 'assistant'; content: string }[] = []
 ): Promise<unknown> {
   const body = Array.isArray(history) && history.length > 0 ? { message, history } : { message }
-  return unwrap(client.POST('/api/ai/chat', { body }))
+  return unwrap(postApiAiChat({ body }))
 }
 
 export function getPlans(
   status: 'active' | 'archived' | 'completed' | 'all' = 'active',
   signal?: AbortSignal
 ): Promise<unknown> {
-  return unwrap(client.GET('/api/plans', { params: { query: { status } }, signal }))
+  return unwrap(getApiPlans({ query: { status }, signal }))
 }
 
 export function generatePlan(): Promise<unknown> {
-  return unwrap(client.POST('/api/plans/generate', {}))
+  return unwrap(postApiPlansGenerate())
 }
 
 export function savePlan(
@@ -431,7 +525,7 @@ export function savePlan(
     why?: string
   }[]
 ): Promise<unknown> {
-  return unwrap(client.POST('/api/plans', { body: { items } }))
+  return unwrap(postApiPlans({ body: { items } }))
 }
 
 export function updatePlanItem(
@@ -439,12 +533,7 @@ export function updatePlanItem(
   itemId: string,
   status: 'bought' | 'skipped'
 ): Promise<unknown> {
-  return unwrap(
-    client.PATCH('/api/plans/{id}/items/{itemId}', {
-      params: { path: { id: planId, itemId } },
-      body: { status },
-    })
-  )
+  return unwrap(patchApiPlansByIdItemsByItemId({ path: { id: planId, itemId }, body: { status } }))
 }
 
 export type PriceSort = 'name' | 'cheapest' | 'savings' | 'expiry'
@@ -458,63 +547,58 @@ export function getPrices(
   }: { q?: string; source?: string; category?: string; sort?: PriceSort } = {},
   signal?: AbortSignal
 ): Promise<unknown> {
-  return unwrap(
-    client.GET('/api/prices', { params: { query: { q, source, category, sort } }, signal })
-  )
+  return unwrap(getApiPrices({ query: { q, source, category, sort }, signal }))
 }
 
 // Sorted lists are product-level pages with a `truncated` flag (issue #291);
 // the no-sort legacy response (used by usePriceSources) is unchanged.
 export function getPricesMeta(signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/prices/meta', { signal }))
+  return unwrap(getApiPricesMeta({ signal }))
 }
 
 // Promo catalog (issue #292) — first prices endpoint with a real generated
 // response type, so the promos view reads it fully typed.
 export function getPromos(signal?: AbortSignal) {
-  return unwrap(client.GET('/api/prices/promos', { signal }))
+  return unwrap(getApiPricesPromos({ signal }))
 }
 
 // Brochure catalog (issue #293) — grouped brochure images with ≤5 example
 // products each; images themselves load via plain <img src> against the
 // authenticated /api/brochures proxy, not the typed client.
 export function getBrochures(signal?: AbortSignal) {
-  return unwrap(client.GET('/api/prices/brochures', { signal }))
+  return unwrap(getApiPricesBrochures({ signal }))
 }
 
 export function getPriceDetail(productKey: string, signal?: AbortSignal): Promise<unknown> {
-  return unwrap(
-    client.GET('/api/prices/{productKey}', { params: { path: { productKey } }, signal })
-  )
+  return unwrap(getApiPricesByProductKey({ path: { productKey }, signal }))
 }
 
 export function getPriceRuns(signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/admin/price-runs', { signal }))
+  return unwrap(getApiAdminPriceRuns({ signal }))
 }
 
 // Scrape Now (docs/plan/scrape-now.md §4): admin-triggered, store-selectable
 // scraping. The POST queues a command the VPS agent claims; commands/events
 // feed the live log and the failure-log history. The slug union is DERIVED
 // from the codegen'd scrape-command body rather than hand-copied (review
-// B3): a new store lands in api-schema.d.ts via `bun run api:codegen`, and
-// the existing codegen drift check in ci.sh then fails `vp check` here until
-// this type follows — the mirror is CI-guarded for free.
-export type ScrapeStoreSlug =
-  operations['postApiAdminScrape']['requestBody']['content']['application/json']['stores'][number]
+// B3): a new store lands in api-client/types.gen.ts via `bun run api:codegen`,
+// and the existing codegen drift check in ci.sh then fails `vp check` here
+// until this type follows — the mirror is CI-guarded for free.
+export type ScrapeStoreSlug = PostApiAdminScrapeData['body']['stores'][number]
 
 export function getScrapeStores(signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/admin/scrape/stores', { signal }))
+  return unwrap(getApiAdminScrapeStores({ signal }))
 }
 
 export function createScrape(stores: ScrapeStoreSlug[]): Promise<unknown> {
-  return unwrap(client.POST('/api/admin/scrape', { body: { stores } }))
+  return unwrap(postApiAdminScrape({ body: { stores } }))
 }
 
 export function getScrapeCommands(
   { limit }: { limit?: number } = {},
   signal?: AbortSignal
 ): Promise<unknown> {
-  return unwrap(client.GET('/api/admin/scrape/commands', { params: { query: { limit } }, signal }))
+  return unwrap(getApiAdminScrapeCommands({ query: { limit }, signal }))
 }
 
 export function getScrapeEvents(
@@ -523,12 +607,10 @@ export function getScrapeEvents(
   signal?: AbortSignal
 ): Promise<unknown> {
   return unwrap(
-    client.GET('/api/admin/scrape/commands/{id}/events', {
-      params: {
-        path: { id: commandId },
-        // The wire type is a digit string; undefined omits it (full log).
-        query: { afterSeq: afterSeq === undefined ? undefined : String(afterSeq) },
-      },
+    getApiAdminScrapeCommandsByIdEvents({
+      path: { id: commandId },
+      // The wire type is a digit string; undefined omits it (full log).
+      query: { afterSeq: afterSeq === undefined ? undefined : String(afterSeq) },
       signal,
     })
   )
@@ -548,9 +630,7 @@ export function getReviewItems(
   { status, limit, offset }: { status?: ReviewStatusFilter; limit?: number; offset?: number } = {},
   signal?: AbortSignal
 ): Promise<unknown> {
-  return unwrap(
-    client.GET('/api/admin/review', { params: { query: { status, limit, offset } }, signal })
-  )
+  return unwrap(getApiAdminReview({ query: { status, limit, offset }, signal }))
 }
 
 export function decideReviewItem(
@@ -559,11 +639,8 @@ export function decideReviewItem(
   agreement?: ReviewAgreement
 ): Promise<unknown> {
   return unwrap(
-    client.POST('/api/admin/review/{id}/decision', {
-      params: { path: { id } },
-      // The field is optional on the wire: a plain decision carries no
-      // agreement, and an absent key is what the backend treats as plain
-      // human provenance (never an empty-string agreement).
+    postApiAdminReviewByIdDecision({
+      path: { id },
       body: agreement ? { decision, agreement } : { decision },
     })
   )
@@ -574,19 +651,19 @@ export function decideReviewItem(
 // the queue renders cached verdicts only. Manual mode is the zero-call gate
 // (the evaluate route also refuses it server-side).
 export function getReviewMode(signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/admin/review/mode', { signal }))
+  return unwrap(getApiAdminReviewMode({ signal }))
 }
 
 export function setReviewMode(mode: ReviewMode): Promise<unknown> {
-  return unwrap(client.PUT('/api/admin/review/mode', { body: { mode } }))
+  return unwrap(putApiAdminReviewMode({ body: { mode } }))
 }
 
 export function evaluateReviewItems(limit: number): Promise<unknown> {
-  return unwrap(client.POST('/api/admin/review/evaluate', { body: { limit } }))
+  return unwrap(postApiAdminReviewEvaluate({ body: { limit } }))
 }
 
 export function undoReviewDecision(id: string): Promise<unknown> {
-  return unwrap(client.DELETE('/api/admin/review/{id}/decision', { params: { path: { id } } }))
+  return unwrap(deleteApiAdminReviewByIdDecision({ path: { id } }))
 }
 
 // The export must bypass the typed client: it downloads a JSON attachment
@@ -688,21 +765,14 @@ export function getAdminProduct(
   productKey: string,
   signal?: AbortSignal
 ): Promise<ProductIdentity> {
-  return unwrap(
-    client.GET('/api/admin/products/{productKey}', { params: { path: { productKey } }, signal })
-  )
+  return unwrap(getApiAdminProductsByProductKey({ path: { productKey }, signal }))
 }
 
 export function renameProduct(
   productKey: string,
   body: RenameProductBody
 ): Promise<ProductMutationResult> {
-  return unwrap(
-    client.POST('/api/admin/products/{productKey}/rename', {
-      params: { path: { productKey } },
-      body,
-    })
-  )
+  return unwrap(postApiAdminProductsByProductKeyRename({ path: { productKey }, body }))
 }
 
 // Reverts the LATEST rename only (linear history): the backend 409s with
@@ -713,10 +783,7 @@ export function revertProductRename(
   body: { reason?: string } = {}
 ): Promise<ProductMutationResult> {
   return unwrap(
-    client.POST('/api/admin/products/{productKey}/audit/{auditId}/revert', {
-      params: { path: { productKey, auditId } },
-      body,
-    })
+    postApiAdminProductsByProductKeyAuditByAuditIdRevert({ path: { productKey, auditId }, body })
   )
 }
 
@@ -750,7 +817,7 @@ export type DuplicateNameReport = {
 }
 
 export function getDuplicateProductNames(signal?: AbortSignal): Promise<DuplicateNameReport> {
-  return unwrap(client.GET('/api/admin/products/duplicates', { signal }))
+  return unwrap(getApiAdminProductsDuplicates({ signal }))
 }
 
 // Candidate-alias decisions (#489). The alias id the identity payload carries
@@ -769,9 +836,7 @@ export function approveProductAlias(
   aliasId: string
 ): Promise<AliasDecisionResult> {
   return unwrap(
-    client.POST('/api/admin/products/{productKey}/aliases/{aliasId}/approve', {
-      params: { path: { productKey, aliasId } },
-    })
+    postApiAdminProductsByProductKeyAliasesByAliasIdApprove({ path: { productKey, aliasId } })
   )
 }
 
@@ -780,9 +845,7 @@ export function rejectProductAlias(
   aliasId: string
 ): Promise<AliasDecisionResult> {
   return unwrap(
-    client.POST('/api/admin/products/{productKey}/aliases/{aliasId}/reject', {
-      params: { path: { productKey, aliasId } },
-    })
+    postApiAdminProductsByProductKeyAliasesByAliasIdReject({ path: { productKey, aliasId } })
   )
 }
 
@@ -806,14 +869,14 @@ export type AliasBulkApproveResult = {
 }
 
 export function getAliasCandidateCounts(signal?: AbortSignal): Promise<AliasCandidateCounts> {
-  return unwrap(client.GET('/api/admin/products/aliases/candidates', { signal }))
+  return unwrap(getApiAdminProductsAliasesCandidates({ signal }))
 }
 
 // No body: the action is catalog-wide and has nothing to parameterize. The
 // route accepts an absent body (or an empty one) and is idempotent, so a retry
 // after a partial 500 continues instead of double-writing.
 export function bulkApproveExactAliases(): Promise<AliasBulkApproveResult> {
-  return unwrap(client.POST('/api/admin/products/aliases/bulk-approve'))
+  return unwrap(postApiAdminProductsAliasesBulkApprove())
 }
 
 // ---------------------------------------------------------------------------
@@ -823,23 +886,23 @@ export function bulkApproveExactAliases(): Promise<AliasBulkApproveResult> {
 // ---------------------------------------------------------------------------
 
 export function getHouseholds(signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/households', { signal }))
+  return unwrap(getApiHouseholds({ signal }))
 }
 
 export function createHousehold(name: string): Promise<unknown> {
-  return unwrap(client.POST('/api/households', { body: { name } }))
+  return unwrap(postApiHouseholds({ body: { name } }))
 }
 
 export function renameHousehold(id: string, name: string): Promise<unknown> {
-  return unwrap(client.PATCH('/api/households/{id}', { params: { path: { id } }, body: { name } }))
+  return unwrap(patchApiHouseholdsById({ path: { id }, body: { name } }))
 }
 
 export function activateHousehold(id: string): Promise<unknown> {
-  return unwrap(client.POST('/api/households/{id}/activate', { params: { path: { id } } }))
+  return unwrap(postApiHouseholdsByIdActivate({ path: { id } }))
 }
 
 export function getHouseholdMembers(id: string, signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/households/{id}/members', { params: { path: { id } }, signal }))
+  return unwrap(getApiHouseholdsByIdMembers({ path: { id }, signal }))
 }
 
 // Profile-only member creation (ahaqqu/RumaQ#388): a person with no account —
@@ -848,9 +911,7 @@ export function createHouseholdMember(
   id: string,
   payload: { display_name: string; birth_date?: string | null }
 ): Promise<unknown> {
-  return unwrap(
-    client.POST('/api/households/{id}/members', { params: { path: { id } }, body: payload })
-  )
+  return unwrap(postApiHouseholdsByIdMembers({ path: { id }, body: payload }))
 }
 
 // Member-addressed surfaces take the surrogate member id (0021) — profile-only
@@ -860,28 +921,19 @@ export function updateHouseholdMember(
   memberId: string,
   payload: { display_name?: string | null; birth_date?: string | null }
 ): Promise<unknown> {
-  return unwrap(
-    client.PATCH('/api/households/{id}/members/{memberId}', {
-      params: { path: { id, memberId } },
-      body: payload,
-    })
-  )
+  return unwrap(patchApiHouseholdsByIdMembersByMemberId({ path: { id, memberId }, body: payload }))
 }
 
 export function removeHouseholdMember(id: string, memberId: string): Promise<unknown> {
-  return unwrap(
-    client.DELETE('/api/households/{id}/members/{memberId}', {
-      params: { path: { id, memberId } },
-    })
-  )
+  return unwrap(deleteApiHouseholdsByIdMembersByMemberId({ path: { id, memberId } }))
 }
 
 export function leaveHousehold(id: string): Promise<unknown> {
-  return unwrap(client.POST('/api/households/{id}/leave', { params: { path: { id } } }))
+  return unwrap(postApiHouseholdsByIdLeave({ path: { id } }))
 }
 
 export function getHouseholdInvite(id: string, signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/households/{id}/invite', { params: { path: { id } }, signal }))
+  return unwrap(getApiHouseholdsByIdInvite({ path: { id }, signal }))
 }
 
 // The optional payload marks the invite for one profile-only member
@@ -891,15 +943,12 @@ export function createHouseholdInvite(
   payload?: { target_member_id?: string | null }
 ): Promise<unknown> {
   return unwrap(
-    client.POST('/api/households/{id}/invite', {
-      params: { path: { id } },
-      ...(payload ? { body: payload } : {}),
-    })
+    postApiHouseholdsByIdInvite({ path: { id }, ...(payload ? { body: payload } : {}) })
   )
 }
 
 export function joinHousehold(code: string): Promise<unknown> {
-  return unwrap(client.POST('/api/households/join', { body: { code } }))
+  return unwrap(postApiHouseholdsJoin({ body: { code } }))
 }
 
 // ---------------------------------------------------------------------------
@@ -910,19 +959,14 @@ export function joinHousehold(code: string): Promise<unknown> {
 // ---------------------------------------------------------------------------
 
 export function getPluginCatalog(signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/plugins', { signal }))
+  return unwrap(getApiPlugins({ signal }))
 }
 
 export function setPluginEnablement(
   pluginId: string,
   status: 'enabled' | 'disabled'
 ): Promise<unknown> {
-  return unwrap(
-    client.PUT('/api/plugins/{pluginId}/enablement', {
-      params: { path: { pluginId } },
-      body: { status },
-    })
-  )
+  return unwrap(putApiPluginsByPluginIdEnablement({ path: { pluginId }, body: { status } }))
 }
 
 // The purge initiation (ticket 5, #439): the typed confirmation rides the
@@ -930,23 +974,14 @@ export function setPluginEnablement(
 // client). Nothing is deleted by this call — it marks the drain 'pending';
 // the nightly chunk driver does the bytes-before-rows work.
 export function requestPluginPurge(pluginId: string, confirm: string): Promise<unknown> {
-  return unwrap(
-    client.POST('/api/plugins/{pluginId}/purge', {
-      params: { path: { pluginId } },
-      body: { confirm },
-    })
-  )
+  return unwrap(postApiPluginsByPluginIdPurge({ path: { pluginId }, body: { confirm } }))
 }
 
 // The purge cancel (P1-A3 fix round, PR #474 review): the owner's release
 // lever for a drain that can never complete. Nothing is deleted or restored
 // by this call — the drain stops where it is and the write gate releases.
 export function cancelPluginPurge(pluginId: string): Promise<unknown> {
-  return unwrap(
-    client.DELETE('/api/plugins/{pluginId}/purge', {
-      params: { path: { pluginId } },
-    })
-  )
+  return unwrap(deleteApiPluginsByPluginIdPurge({ path: { pluginId } }))
 }
 
 // The per-plugin archive export (ticket 6, #440): an owner-only ZIP download
@@ -1048,10 +1083,7 @@ export function getDocuments(
   signal?: AbortSignal
 ): Promise<unknown> {
   return unwrap(
-    client.GET('/api/documents', {
-      params: { query: { q, memberId, expiring_within: expiringWithin } },
-      signal,
-    })
+    getApiDocuments({ query: { q, memberId, expiring_within: expiringWithin }, signal })
   )
 }
 
@@ -1069,35 +1101,19 @@ export function createDocument({
   label?: string
   memberId?: string
 }): Promise<unknown> {
-  const form = new FormData()
-  form.append('name', name)
-  form.append('file', file, file.name)
-  if (label) form.append('label', label)
-  if (memberId) form.append('memberId', memberId)
-  // openapi-typescript types format:'binary' as `string`; FormData is what
-  // fetch actually sends (multipart boundary included) — one cast at the
-  // boundary, typed to the generated body shape.
-  return unwrap(
-    client.POST('/api/documents', {
-      body: form as unknown as { name: string; file: string; label?: string; memberId?: string },
-    })
-  )
+  // The body is a plain object: the generated client's multipart serializer
+  // builds the FormData (and the boundary header) from it. Passing a
+  // pre-built FormData would serialise to an EMPTY body — FormData has no own
+  // enumerable entries.
+  return unwrap(postApiDocuments({ body: { name, file, label, memberId } }))
 }
 
 export function addDocumentFile(documentId: string, file: File, label?: string): Promise<unknown> {
-  const form = new FormData()
-  form.append('file', file, file.name)
-  if (label) form.append('label', label)
-  return unwrap(
-    client.POST('/api/documents/{id}/files', {
-      params: { path: { id: documentId } },
-      body: form as unknown as { file: string; label?: string },
-    })
-  )
+  return unwrap(postApiDocumentsByIdFiles({ path: { id: documentId }, body: { file, label } }))
 }
 
 export function deleteDocument(id: string): Promise<unknown> {
-  return unwrap(client.DELETE('/api/documents/{id}', { params: { path: { id } } }))
+  return unwrap(deleteApiDocumentsById({ path: { id } }))
 }
 
 // Expiry metadata update (#426): expires_on as an ISO date or null to clear
@@ -1108,15 +1124,11 @@ export function updateDocumentExpiry(
   id: string,
   payload: { expires_on?: string | null; remind_days_before?: number }
 ): Promise<unknown> {
-  return unwrap(client.PATCH('/api/documents/{id}', { params: { path: { id } }, body: payload }))
+  return unwrap(patchApiDocumentsById({ path: { id }, body: payload }))
 }
 
 export function deleteDocumentFile(documentId: string, fileId: string): Promise<unknown> {
-  return unwrap(
-    client.DELETE('/api/documents/{id}/files/{fileId}', {
-      params: { path: { id: documentId, fileId } },
-    })
-  )
+  return unwrap(deleteApiDocumentsByIdFilesByFileId({ path: { id: documentId, fileId } }))
 }
 
 // Expiry-date OCR (issue #433): the backend reads the file with the USER'S
@@ -1128,14 +1140,12 @@ export function extractDocumentExpiry(
   fileId: string
 ): Promise<{ expires_on: string | null; model: string | null }> {
   return unwrap(
-    client.POST('/api/documents/{id}/files/{fileId}/extract-expiry', {
-      params: { path: { id: documentId, fileId } },
-    })
+    postApiDocumentsByIdFilesByFileIdExtractExpiry({ path: { id: documentId, fileId } })
   )
 }
 
 export function getDocumentMeta(id: string, signal?: AbortSignal): Promise<unknown> {
-  return unwrap(client.GET('/api/documents/{id}', { params: { path: { id } }, signal }))
+  return unwrap(getApiDocumentsById({ path: { id }, signal }))
 }
 
 // The binary content endpoint, PER FILE — hand-written (see the section note
@@ -1177,8 +1187,8 @@ export type TaskListFilters = {
 
 export function getTasks(filters: TaskListFilters = {}, signal?: AbortSignal): Promise<unknown> {
   return unwrap(
-    client.GET('/api/tasks', {
-      params: { query: { assignee: filters.assignee, status: filters.status, mine: filters.mine } },
+    getApiTasks({
+      query: { assignee: filters.assignee, status: filters.status, mine: filters.mine },
       signal,
     })
   )
@@ -1190,7 +1200,7 @@ export function createTask(payload: {
   due_date?: string | null
   recurrence?: TaskRecurrence | null
 }): Promise<unknown> {
-  return unwrap(client.POST('/api/tasks', { body: payload }))
+  return unwrap(postApiTasks({ body: payload }))
 }
 
 // One PATCH endpoint, three actions (the backend contract): edit fields;
@@ -1207,11 +1217,11 @@ export function patchTask(
     approve?: true
   }
 ): Promise<unknown> {
-  return unwrap(client.PATCH('/api/tasks/{id}', { params: { path: { id } }, body: payload }))
+  return unwrap(patchApiTasksById({ path: { id }, body: payload }))
 }
 
 export function deleteTask(id: string): Promise<unknown> {
-  return unwrap(client.DELETE('/api/tasks/{id}', { params: { path: { id } } }))
+  return unwrap(deleteApiTasksById({ path: { id } }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1236,12 +1246,7 @@ export function getCalendar(
   filters: CalendarListFilters = {},
   signal?: AbortSignal
 ): Promise<unknown> {
-  return unwrap(
-    client.GET('/api/calendar', {
-      params: { query: { from: filters.from, to: filters.to } },
-      signal,
-    })
-  )
+  return unwrap(getApiCalendar({ query: { from: filters.from, to: filters.to }, signal }))
 }
 
 export function createCalendarEvent(payload: {
@@ -1251,7 +1256,7 @@ export function createCalendarEvent(payload: {
   visibility?: CalendarVisibility
   member_ids?: string[]
 }): Promise<unknown> {
-  return unwrap(client.POST('/api/calendar/events', { body: payload }))
+  return unwrap(postApiCalendarEvents({ body: payload }))
 }
 
 export function patchCalendarEvent(
@@ -1264,11 +1269,9 @@ export function patchCalendarEvent(
     member_ids?: string[]
   }
 ): Promise<unknown> {
-  return unwrap(
-    client.PATCH('/api/calendar/events/{id}', { params: { path: { id } }, body: payload })
-  )
+  return unwrap(patchApiCalendarEventsById({ path: { id }, body: payload }))
 }
 
 export function deleteCalendarEvent(id: string): Promise<unknown> {
-  return unwrap(client.DELETE('/api/calendar/events/{id}', { params: { path: { id } } }))
+  return unwrap(deleteApiCalendarEventsById({ path: { id } }))
 }
