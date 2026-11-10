@@ -3787,3 +3787,56 @@ describe('migration 0044: price_runs.ai_prompt_identity (pipeline #83)', () => {
     expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('ai_prompt_identity')
   })
 })
+
+describe('migration 0045: purchase_items.line_total (#518)', () => {
+  // 0044 is merged and applied in production (price_runs.ai_prompt_identity,
+  // #572), so the purchase line-total migration was renumbered to 0045 after
+  // the rebase. It must apply ON TOP of the pre-0045 chain — the production
+  // shape — and leave legacy rows untouched (Q4: no backfill).
+  function preLineTotalDb(): Db {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    // D1 enforces foreign keys; node:sqlite defaults them OFF.
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0045')
+    )
+    return db
+  }
+
+  it('adds the nullable column on top of the 0044 chain; legacy rows keep NULL — no backfill', () => {
+    const db = preLineTotalDb()
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'u1@example.test')").run()
+    db.prepare("INSERT INTO households (id, name, created_by) VALUES ('h1', 'Home', 'u1')").run()
+    db.prepare(
+      `INSERT INTO purchases (id, household_id, date, total)
+       VALUES ('p-legacy', 'h1', '2026-11-01', NULL)`
+    ).run()
+    db.prepare(
+      `INSERT INTO purchase_items (id, purchase_id, qty, unit, price)
+       VALUES ('pi-legacy', 'p-legacy', 2, 'L', 30000)`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0045_purchase_line_total.sql'), 'utf8'))
+
+    // The pre-fix row survives with its ambiguous price and a NULL line_total:
+    // the price basis is unknowable, so no guessed line amount is invented.
+    const legacy = db.prepare("SELECT * FROM purchase_items WHERE id = 'pi-legacy'").get()
+    expect(legacy).toMatchObject({ qty: 2, price: 30000, line_total: null })
+  })
+
+  it('lands at the end of the filename-sorted chain on a fresh database', () => {
+    const files = migrationFiles()
+    // The chain applies in filename order, so "after 0044" is what production
+    // (which already holds 0044) will run next.
+    expect(files.indexOf('0044_price_runs_ai_prompt_identity.sql')).toBeLessThan(
+      files.indexOf('0045_purchase_line_total.sql')
+    )
+    expect(files[files.length - 1]).toBe('0045_purchase_line_total.sql')
+
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, files)
+    const columns = db.prepare('PRAGMA table_info(purchase_items)').all()
+    expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('line_total')
+  })
+})

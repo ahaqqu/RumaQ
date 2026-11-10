@@ -13,7 +13,13 @@
 -- history; nobody has ever seen a correct spend total. Correct totals start
 -- at deploy.
 --
--- NUMBERING NOTE: 0043 is applied; this file takes the next free number, 0044.
--- NEVER rename an applied migration: wrangler keys its d1_migrations table by
--- filename, so a rename re-runs the file.
+-- NUMBERING NOTE: 0044 is taken by price_runs.ai_prompt_identity (merged and
+-- applied in production via #572), so this file takes the next free number,
+-- 0045. This file itself has never been applied anywhere (the PR is unmerged),
+-- which is why the 0044 → 0045 rename was safe. NEVER rename an APPLIED
+-- migration: wrangler keys its d1_migrations table by filename, so a rename
+-- re-runs the file.
+--
+-- 0001_schema.sql still describes purchase_items.price as "line total"; that
+-- comment is superseded here and left untouched on purpose — 0001 is applied.
 ALTER TABLE purchase_items ADD COLUMN line_total INTEGER;
