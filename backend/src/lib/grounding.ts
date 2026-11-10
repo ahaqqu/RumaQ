@@ -7,8 +7,8 @@ import { escapeLike } from './sql.js'
 // estimate is never overwritten; the observation rides its own price_grounded
 // field (#518 Q5), so the two price bases stay distinguishable. No AI here on
 // purpose — a deterministic rule the tests can pin down. Precision over
-// recall: a wrong match shows a wrong observation with a confident-looking
-// badge.
+// recall: a wrong match shows a wrong observation beside the estimate, never
+// in place of it.
 
 const GROUND_MIN_CONFIDENCE = 0.8
 // Containment of a full normalized name is a strong signal even when the
