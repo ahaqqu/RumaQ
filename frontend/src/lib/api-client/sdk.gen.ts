@@ -40,7 +40,7 @@ export const getApiMe = <ThrowOnError extends boolean = false>(options?: Options
 export const getApiStock = <ThrowOnError extends boolean = false>(options?: Options<GetApiStockData, ThrowOnError>): RequestResult<GetApiStockResponses, GetApiStockErrors, ThrowOnError> => (options?.client ?? client).get<GetApiStockResponses, GetApiStockErrors, ThrowOnError>({ url: '/api/stock', ...options });
 
 /**
- * Updates a stock item.
+ * Updates a stock item. Renaming onto an item that already has its own stock entry folds the two entries into one: quantities sum (an explicit qty replaces the renamed entry’s own contribution), every other field keeps the later-updated row’s value (exact updated_at ties break on the larger id) unless set explicitly, and the renamed entry’s row is deleted — the response echoes the surviving entry, whose id replaces the requested one.
  */
 export const patchApiStockById = <ThrowOnError extends boolean = false>(options: Options<PatchApiStockByIdData, ThrowOnError>): RequestResult<PatchApiStockByIdResponses, PatchApiStockByIdErrors, ThrowOnError> => (options.client ?? client).patch<PatchApiStockByIdResponses, PatchApiStockByIdErrors, ThrowOnError>({
     url: '/api/stock/{id}',

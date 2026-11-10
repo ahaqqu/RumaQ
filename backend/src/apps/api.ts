@@ -905,7 +905,8 @@ apiApp.get(
 apiApp.patch(
   '/api/stock/:id',
   describeRoute({
-    description: 'Updates a stock item.',
+    description:
+      'Updates a stock item. Renaming onto an item that already has its own stock entry folds the two entries into one: quantities sum (an explicit qty replaces the renamed entry\u2019s own contribution), every other field keeps the later-updated row\u2019s value (exact updated_at ties break on the larger id) unless set explicitly, and the renamed entry\u2019s row is deleted — the response echoes the surviving entry, whose id replaces the requested one.',
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: false,
@@ -954,6 +955,7 @@ apiApp.patch(
         unit: string | null
         location_id: string | null
         expiry_date: string | null
+        updated_at: string
         item_name: string
       }>()
 
@@ -978,11 +980,13 @@ apiApp.patch(
       if (trimmed.length > 0) {
         // #551 (d): the lookup key is the shared normalizeItemName — the same
         // trim/lowercase/collapse key both save paths resolve names by. The
-        // old trim-only key was the last normalization divergence: renaming to
-        // a spelling that equals an existing item only after collapsing inner
-        // whitespace forked a second items row instead of merging. A created
-        // row still stores the trimmed spelling — first-line-wins display
-        // name, as both save paths keep it.
+        // old trim-only key diverged from it: renaming to a spelling that
+        // equals an existing item only after collapsing inner whitespace
+        // forked a second items row instead of merging. A created row still
+        // stores the trimmed spelling — first-line-wins display name, as both
+        // save paths keep it — so a stored name with raw inner whitespace
+        // stays invisible to a later collapsed spelling (pre-existing fork
+        // class; (d) closes the lookup-key divergence only).
         const existing = await c.env.DB.prepare(
           'SELECT id FROM items WHERE household_id = ? AND LOWER(name) = LOWER(?)'
         )
@@ -996,6 +1000,79 @@ apiApp.patch(
           await c.env.DB.prepare('INSERT INTO items (id, household_id, name) VALUES (?, ?, ?)')
             .bind(itemId, householdId, trimmed)
             .run()
+        }
+
+        // #551 (R588-1): renaming onto a DIFFERENT item that already holds its
+        // own stock row cannot re-point in place — 0046's UNIQUE
+        // (household_id, item_id) would reject the UPDATE with a raw constraint
+        // error, and pre-fix the same flow silently duplicated the stock row
+        // (the exact class this ticket closes). Fold instead, with 0046's own
+        // merge rule so a rename fold and a 0046 collapse agree on the same
+        // pair: quantities SUM (an explicit body.qty replaces the renamed
+        // entry's own contribution before summing), every other field keeps
+        // the (updated_at, id)-max row's value unless the body sets it
+        // explicitly, and the renamed entry's row is deleted — merging into
+        // the occupied row. One batched transaction, household-scoped; the
+        // response echoes the surviving row (the requested stock id no longer
+        // exists).
+        if (existing && existing.id !== stockRow.item_id) {
+          const occupied = await c.env.DB.prepare(
+            'SELECT id, qty, unit, location_id, expiry_date, updated_at FROM stock WHERE household_id = ? AND item_id = ? AND id != ?'
+          )
+            .bind(householdId, existing.id, stockId)
+            .first<{
+              id: string
+              qty: number
+              unit: string | null
+              location_id: string | null
+              expiry_date: string | null
+              updated_at: string
+            }>()
+
+          if (occupied) {
+            // 0046's survivor rule: latest updated_at wins, exact ties break
+            // on the larger id. The donor lends the fields the body leaves
+            // unset; the occupied row itself always survives.
+            const donor =
+              stockRow.updated_at > occupied.updated_at ||
+              (stockRow.updated_at === occupied.updated_at && stockRow.id > occupied.id)
+                ? stockRow
+                : occupied
+            const mergedQty = (body.qty ?? stockRow.qty) + occupied.qty
+            const runOut = await computeRunOutDays(householdId, existing.id, mergedQty, c.env.DB)
+            await c.env.DB.batch([
+              c.env.DB.prepare(
+                `UPDATE stock SET qty = ?, unit = ?, location_id = ?, expiry_date = ?, run_out_days = ?, basis = ?, updated_at = datetime('now') WHERE id = ? AND household_id = ?`
+              ).bind(
+                mergedQty,
+                body.unit ?? donor.unit,
+                body.location_id ?? donor.location_id,
+                body.expiry_date ?? donor.expiry_date,
+                runOut.run_out_days,
+                runOut.basis,
+                occupied.id,
+                householdId
+              ),
+              c.env.DB.prepare('DELETE FROM stock WHERE id = ? AND household_id = ?').bind(
+                stockId,
+                householdId
+              ),
+            ])
+
+            const merged = await c.env.DB.prepare(
+              `SELECT s.id, i.name, s.qty, s.unit, s.expiry_date, s.run_out_days, s.basis, l.label AS location
+               FROM stock s
+               JOIN items i ON i.id = s.item_id AND i.household_id = ?
+               LEFT JOIN locations l ON l.id = s.location_id
+               WHERE s.id = ? AND s.household_id = ?`
+            )
+              .bind(householdId, occupied.id, householdId)
+              .first()
+
+            const res = c.json({ stock: merged })
+            res.headers.set('Cache-Control', 'private, no-cache')
+            return res
+          }
         }
       }
     }
@@ -3264,6 +3341,8 @@ apiApp.post(
         stockByItemId.set(itemId, {
           stockId: existingStock?.id ?? null,
           qty: (existingStock?.qty ?? 0) + item.qty,
+          // INSERT-only: the UPDATE branch never rewrites a pre-existing
+          // row's unit, so it never reads this field.
           unit: item.unit,
         })
       }

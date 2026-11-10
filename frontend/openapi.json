@@ -163,7 +163,7 @@
     "/api/stock/{id}": {
       "patch": {
         "operationId": "patchApiStockById",
-        "description": "Updates a stock item.",
+        "description": "Updates a stock item. Renaming onto an item that already has its own stock entry folds the two entries into one: quantities sum (an explicit qty replaces the renamed entry’s own contribution), every other field keeps the later-updated row’s value (exact updated_at ties break on the larger id) unless set explicitly, and the renamed entry’s row is deleted — the response echoes the surviving entry, whose id replaces the requested one.",
         "security": [
           {
             "cookieAuth": []
