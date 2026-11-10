@@ -6,6 +6,18 @@ setJestCucumberConfiguration({ runner: { describe, test: it } })
 
 const feature = loadFeature('automation/tests/local/api/features/plans.feature')
 
+// #602: plan items come back ordered by (created_at, id) — #555's tiebreaker —
+// and the id is a random UUID, so which item is items[0] varies per run.
+// Target a known item by name (the prices/brochures steps convention) instead
+// of by position.
+async function markPlanItem(ctx, name, status) {
+  const item = ctx.__planItems.find((i) => i.item_name === name)
+  expect(item, `plan item "${name}" is not in the saved plan`).toBeDefined()
+  await ctx.sendRequestWithBody('PATCH', `/api/plans/${ctx.__planId}/items/${item.id}`, {
+    status,
+  })
+}
+
 defineFeature(feature, (test) => {
   let ctx
 
@@ -177,13 +189,11 @@ defineFeature(feature, (test) => {
       })
       expect(ctx.responseBody?.plan?.status).toBe('active')
       ctx.__planId = ctx.responseBody.plan.id
-      ctx.__itemId = ctx.responseBody.plan.items[0].id
+      ctx.__planItems = ctx.responseBody.plan.items
     })
 
-    when(/I mark the first plan item as "([^"]+)"/, async (status) => {
-      await ctx.sendRequestWithBody('PATCH', `/api/plans/${ctx.__planId}/items/${ctx.__itemId}`, {
-        status,
-      })
+    when(/I mark the "([^"]+)" plan item as "([^"]+)"/, async (name, status) => {
+      await markPlanItem(ctx, name, status)
     })
 
     then('the response status should be 200', () => {
@@ -219,13 +229,11 @@ defineFeature(feature, (test) => {
       })
       expect(ctx.responseBody?.plan?.status).toBe('active')
       ctx.__planId = ctx.responseBody.plan.id
-      ctx.__itemId = ctx.responseBody.plan.items[0].id
+      ctx.__planItems = ctx.responseBody.plan.items
     })
 
-    when(/I mark the first plan item as "([^"]+)"/, async (status) => {
-      await ctx.sendRequestWithBody('PATCH', `/api/plans/${ctx.__planId}/items/${ctx.__itemId}`, {
-        status,
-      })
+    when(/I mark the "([^"]+)" plan item as "([^"]+)"/, async (name, status) => {
+      await markPlanItem(ctx, name, status)
     })
 
     then('the response status should be 200', () => {
@@ -322,7 +330,7 @@ defineFeature(feature, (test) => {
       })
       expect(ctx.responseBody?.plan?.status).toBe('active')
       ctx.__planId = ctx.responseBody.plan.id
-      ctx.__itemId = ctx.responseBody.plan.items[0].id
+      ctx.__planItems = ctx.responseBody.plan.items
     })
 
     when(/I create a new plan with items/, async (itemsTable) => {
@@ -335,10 +343,8 @@ defineFeature(feature, (test) => {
       await ctx.sendRequestWithBody('POST', '/api/plans', { items })
     })
 
-    and(/I mark the first plan item as "([^"]+)"/, async (status) => {
-      await ctx.sendRequestWithBody('PATCH', `/api/plans/${ctx.__planId}/items/${ctx.__itemId}`, {
-        status,
-      })
+    and(/I mark the "([^"]+)" plan item as "([^"]+)"/, async (name, status) => {
+      await markPlanItem(ctx, name, status)
     })
 
     then('the response status should be 400', () => {
@@ -482,19 +488,15 @@ defineFeature(feature, (test) => {
       })
       expect(ctx.responseBody?.plan?.status).toBe('active')
       ctx.__planId = ctx.responseBody.plan.id
-      ctx.__itemId = ctx.responseBody.plan.items[0].id
+      ctx.__planItems = ctx.responseBody.plan.items
     })
 
-    when(/I mark the first plan item as "([^"]+)"/, async (status) => {
-      await ctx.sendRequestWithBody('PATCH', `/api/plans/${ctx.__planId}/items/${ctx.__itemId}`, {
-        status,
-      })
+    when(/I mark the "([^"]+)" plan item as "([^"]+)"/, async (name, status) => {
+      await markPlanItem(ctx, name, status)
     })
 
-    and(/I mark the first plan item as "([^"]+)"/, async (status) => {
-      await ctx.sendRequestWithBody('PATCH', `/api/plans/${ctx.__planId}/items/${ctx.__itemId}`, {
-        status,
-      })
+    and(/I mark the "([^"]+)" plan item as "([^"]+)"/, async (name, status) => {
+      await markPlanItem(ctx, name, status)
     })
 
     then('the response status should be 200', () => {
