@@ -174,10 +174,10 @@ export const FAILED_RUN_STREAK_THRESHOLD = 3
  * is only the banner's label (run-level entry preferred), never the trigger.
  */
 export type FailedRunStreak = {
-  /** Dry failures at the head of the feed. 0 means the newest run published
-   * or succeeded. Bounded by the feed window (`listPriceRuns`' limit): a
-   * longer streak is counted as the window size, which is far past the
-   * threshold either way. */
+  /** Dry failures at the head of the feed. 0 means the feed is empty or its
+   * newest run published prices / succeeded. Bounded by the feed window
+   * (`listPriceRuns`' limit): a longer streak is counted as the window size,
+   * which is far past the threshold either way. */
   count: number
   /** The alarm threshold this count is judged against (issue #536). */
   threshold: number
