@@ -188,7 +188,7 @@ export async function logout() {
   // to /api/auth/logout would be forgeable from any site (a top-level GET still
   // carries the SameSite=Lax cookie) and is limited to clearing the cookie.
   // The typed client has no logout path (the backend registers it with `all`,
-  // which api-schema.d.ts does not emit), so this is a plain fetch.
+  // which the generated client does not emit), so this is a plain fetch.
   try {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
     window.location.href = '/'

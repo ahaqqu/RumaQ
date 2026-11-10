@@ -72,7 +72,7 @@ describe('PluginCatalogProvider', () => {
   })
 
   it('drops malformed array ELEMENTS so a corrupt payload still fails open', async () => {
-    // A typed backend never sends these (api-schema: string[]), but the
+    // A typed backend never sends these (generated types: string[]), but the
     // fail-open contract (plan §4.5) governs the payload, not the sender: a
     // Set built from [123] would miss every string id and silently hide all
     // plugin surfaces — the fail-closed posture the plan reserves for the
