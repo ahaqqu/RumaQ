@@ -151,10 +151,10 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
       return []
     }
     // --- claimNextScrapeCommand ---
-    if (sql.includes("WHERE status = 'pending' ORDER BY created_at LIMIT 1")) {
+    if (sql.includes("WHERE status = 'pending' ORDER BY created_at, id LIMIT 1")) {
       const oldest = commands
         .filter((row) => row.status === 'pending')
-        .sort((a, b) => a.created_at.localeCompare(b.created_at))[0]
+        .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))[0]
       return oldest ? [oldest] : []
     }
     if (sql.includes('SET status = ') && sql.includes("WHERE id = ? AND status = 'pending'")) {
@@ -788,6 +788,29 @@ describe('internal scrape routes (bearer channel)', () => {
     const second = await apiApp.request('/api/internal/scrape/next', { headers }, env)
     const secondBody = (await second.json()) as { command: unknown }
     expect(secondBody.command).toBeNull()
+  })
+
+  it('breaks a same-second claim tie by id (#596 — the #555 sweep missed this site)', async () => {
+    const fake = createScrapeDb()
+    const now = new Date().toISOString()
+    const row = (id: string): CommandRow => ({
+      id,
+      stores: JSON.stringify(['astro']),
+      status: 'pending',
+      created_by: 'user-1',
+      created_at: now, // datetime('now') resolution — two rows in one second are legal
+      picked_up_at: null,
+      finished_at: null,
+      exit_code: null,
+      error: null,
+      log_truncated: 0,
+    })
+    // Insertion order is the pre-#596 nondeterminism: the bare
+    // `ORDER BY created_at` sort could hand either row to the agent; the id
+    // tiebreaker pins the smaller id first (created_at, id ASC).
+    fake.commands.push(row('cmd-b'), row('cmd-a'))
+    const claimed = await claimNextScrapeCommand(fake.db)
+    expect(claimed!.id).toBe('cmd-a')
   })
 
   it('sweeps a stale running command to failed and reopens the queue', async () => {

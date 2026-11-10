@@ -260,8 +260,13 @@ export async function claimNextScrapeCommand(db: D1Database): Promise<ClaimedCom
 
   // Two-step claim: pick the oldest pending, then flip it conditionally —
   // the `AND status = 'pending'` guard makes a double-claim return nothing.
+  // The id tiebreaker (#596, the #555 sweep's missed site): two commands
+  // stamped in the same second (datetime('now') resolution) made the pick
+  // nondeterministic.
   const oldest = await db
-    .prepare(`SELECT id FROM scrape_commands WHERE status = 'pending' ORDER BY created_at LIMIT 1`)
+    .prepare(
+      `SELECT id FROM scrape_commands WHERE status = 'pending' ORDER BY created_at, id LIMIT 1`
+    )
     .first<{ id: string }>()
   if (!oldest) return null
 

@@ -3492,11 +3492,24 @@ apiApp.get(
       params.push(householdId, `%${q}%`)
     }
     if (cursor) {
-      const sep = cursor.indexOf('|')
-      const cursorDate = sep >= 0 ? cursor.slice(0, sep) : cursor
-      const cursorCreated = sep >= 0 ? cursor.slice(sep + 1) : ''
-      sql += ' AND (p.date < ? OR (p.date = ? AND p.created_at < ?))'
-      params.push(cursorDate, cursorDate, cursorCreated)
+      // #596: the cursor key must match the sort's full order key — the sort
+      // ties on (date, created_at) and breaks them with id DESC (#555), so a
+      // keyset on (date, created_at) alone deterministically skips the
+      // smaller-id row when two same-second purchases straddle a page
+      // boundary. The chained clause form is the purge driver's
+      // documentPageSql convention (plugins/documents/purge.ts).
+      const [cursorDate, cursorCreated, cursorId] = cursor.split('|')
+      if (cursorId) {
+        sql +=
+          ' AND (p.date < ? OR (p.date = ? AND p.created_at < ?) OR (p.date = ? AND p.created_at = ? AND p.id < ?))'
+        params.push(cursorDate, cursorDate, cursorCreated, cursorDate, cursorCreated, cursorId)
+      } else {
+        // A pre-#596 two-part cursor carries no id; its owner is mid-session
+        // across a deploy, so it keeps the legacy (date, created_at) keyset —
+        // the old same-second window applies to that one page, no harder.
+        sql += ' AND (p.date < ? OR (p.date = ? AND p.created_at < ?))'
+        params.push(cursorDate, cursorDate, cursorCreated)
+      }
     }
     sql += ' ORDER BY p.date DESC, p.created_at DESC, p.id DESC LIMIT ?'
     params.push(pageSize + 1)
@@ -3517,7 +3530,7 @@ apiApp.get(
     const purchases = hasMore ? results.slice(0, pageSize) : results
     const nextCursor =
       hasMore && purchases.length > 0
-        ? `${purchases[purchases.length - 1].date}|${purchases[purchases.length - 1].created_at}`
+        ? `${purchases[purchases.length - 1].date}|${purchases[purchases.length - 1].created_at}|${purchases[purchases.length - 1].id}`
         : null
 
     const itemsByPurchase = new Map<
