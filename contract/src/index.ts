@@ -519,15 +519,48 @@ export const runAiUsageSchema = strictObject({
 export type RunAiUsage = InferOutput<typeof runAiUsageSchema>
 
 /**
- * The report's AI block (issue #537): one question, "what did this run's AI
- * cost", answerable from the report alone. Only `usage` rides the contract —
- * the effective generation config (models, temperature, seed, prompt id/hash)
- * and the credential preflight stay pipeline-private in status.json; a
- * contract field cannot grow inside a strict object, so the block starts with
- * the metering half the monitor actually needs.
+ * The verifier prompt that produced a run's decisions (pipeline #83). The
+ * verifier prompt now has materially different versions — v1 split
+ * objectively-identical products on large price gaps, v2 carries the
+ * instruction that stops it — and before this field the run report recorded
+ * nothing about which prompt answered, so a prompt edit was invisible in the
+ * data (the only trace was the commit, and commits are not joined to rows).
+ *
+ * - `id` mirrors the pipeline bench's prompt identity
+ *   (`ocr.verifier.ai_prompt_template`). It is producer-controlled on the
+ *   ingest endpoint, so it is capped like the other report strings.
+ * - `version` is the integer the ticket asks for. `>= 1`, so 0 can never be
+ *   mistaken for "absent" (absence is the whole field being absent/null).
+ * - `sha256` is the template's digest as 64 LOWERCASE hex characters — the
+ *   pipeline strips its `sha256:` display prefix and sends bare hex.
+ *
+ * `strictObject` makes a typo'd key fail at ingest instead of silently
+ * dropping the identity (the run report is strict all the way down).
+ */
+export const runVerifierPromptSchema = strictObject({
+  version: pipe(number(), integer(), minValue(1)),
+  id: pipe(string(), minLength(1), maxLength(200)),
+  sha256: pipe(string(), regex(/^[0-9a-f]{64}$/, 'Expected 64 lowercase hex characters.')),
+})
+
+export type RunVerifierPrompt = InferOutput<typeof runVerifierPromptSchema>
+
+/**
+ * The report's AI block (issue #537, extended by pipeline #83): `usage` is the
+ * per-stage metering, and `verifierPrompt` is the identity of the prompt that
+ * produced the run's verifier decisions. The effective generation config
+ * (models, temperature, seed) and the credential preflight stay
+ * pipeline-private in status.json — only the two facts the monitor needs ride
+ * the contract.
+ *
+ * `verifierPrompt` is ADDITIVE-NULLISH (#294 pattern): old scrapers post an
+ * `ai` block without it (and the current producer does not send it yet), so
+ * its absence stays valid; a NEW report hitting an OLD Worker fails loudly
+ * (strictObject — the Worker-first deploy order exists for exactly this).
  */
 export const runAiSchema = strictObject({
   usage: runAiUsageSchema,
+  verifierPrompt: nullish(runVerifierPromptSchema),
 })
 
 export type RunAi = InferOutput<typeof runAiSchema>
@@ -631,8 +664,9 @@ export type RunFailure = InferOutput<typeof runFailureSchema>
 // Worker deploys first, and bumping the literal would reject every report from
 // a box that has not re-synced yet. Only a change that RENAMES or REMOVES
 // something bumps it to 2. The contract PACKAGE version marks the additive
-// revision instead (0.2.0 for pipeline contract v2, 0.3.0 for issue #537); the
-// pipeline pins the exact bytes by SHA (CONTRACT_SOURCE_SHA).
+// revision instead (0.2.0 for pipeline contract v2, 0.3.0 for issue #537,
+// 0.4.0 for pipeline #83); the pipeline pins the exact bytes by SHA
+// (CONTRACT_SOURCE_SHA).
 export const runReportStoreSchema = strictObject({
   pagesFound: pipe(number(), integer(), minValue(0)),
   newImages: pipe(number(), integer(), minValue(0)),
@@ -834,6 +868,10 @@ export const runReportSchema = strictObject({
   // spend, the stage that had no metering at all. Additive-nullish (#294
   // pattern): old scrapers post no `ai` block and still validate; a new
   // scraper's report on an OLD Worker fails loudly (Worker-first).
+  // Pipeline #83: `ai.verifierPrompt` (also nullish) names the verifier
+  // prompt that produced the run's decisions — the version + sha256 the bench
+  // already computes, so a prompt edit is visible in run history instead of
+  // only in git.
   ai: nullish(runAiSchema),
   // Issue #537: the run-level failure summary — every per-store `failure`
   // mirrored here (so "which stores failed, and how" is one array walk, not a

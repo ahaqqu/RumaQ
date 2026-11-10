@@ -83,6 +83,11 @@ const v2Run = {
   publish: { mode: 'published', accepted: 7, skipped: 0 },
   indexVersion: 42,
   products: { created: 5, existing: 2 },
+  aiPromptIdentity: {
+    version: 2,
+    id: 'ocr.verifier.ai_prompt_template',
+    sha256: '01274416be4f0f03241df30a4cec72290297750f34c1001d5c691e908fb5baae',
+  },
   error: null,
 }
 
@@ -109,6 +114,20 @@ describe('AdminPrices i18n (issue #463)', () => {
     fireEvent.click(container.querySelector('button'))
     expect(container.textContent).toContain('Index v42')
     expect(container.textContent).toContain('5 new products, 2 existing')
+  })
+
+  // Pipeline #83: the run detail names the verifier prompt that answered. The
+  // rendered line carries the version + a 12-char hash prefix (the full
+  // sha256 rides the tooltip), so a v1→v2 prompt edit is attributable from
+  // the run history alone.
+  it('renders the verifier prompt version and hash prefix in real copy', () => {
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    expect(container.textContent).toContain('Verifier prompt v2')
+    expect(container.textContent).toContain('01274416be4')
+    // The full digest is the tooltip's payload — the only place it is exposed.
+    const tooltip = container.querySelector('[title^="sha256:"]')
+    expect(tooltip?.getAttribute('title')).toBe(`sha256:${v2Run.aiPromptIdentity.sha256}`)
   })
 
   it('renders the provisional count on the store row in real copy', () => {
@@ -145,5 +164,12 @@ describe('AdminPrices i18n (issue #463)', () => {
     for (const key of ['provisionalMatches', 'indexVersion', 'productsSummary']) {
       expect(id.monitor[key], `monitor.${key} is untranslated`).not.toBe(en.monitor[key])
     }
+  })
+
+  // Pipeline #83: the prompt-identity line is an operator surface too — pin
+  // its Indonesian copy (the #463 thermos C2 rule, applied to the new line).
+  it('carries the Indonesian verifier prompt copy, not an English copy', () => {
+    expect(id.monitor.verifierPrompt).toBe('Prompt verifier v{{version}} · {{sha}}…')
+    expect(id.monitor.verifierPrompt).not.toBe(en.monitor.verifierPrompt)
   })
 })

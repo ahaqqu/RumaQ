@@ -486,6 +486,49 @@ describe('AdminPrices', () => {
     expect(container.textContent).not.toContain('monitor.provisionalMatches')
   })
 
+  // Pipeline #83: the verifier prompt identity is additive-optional — the run
+  // detail names the prompt (version + template hash prefix) that produced the
+  // run's decisions when the pipeline reports it. Absent on every report
+  // before the pipeline starts sending it, so historical runs render as before.
+  it('renders the verifier prompt identity (pipeline #83)', () => {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [
+          {
+            ...mockFeed.runs[0],
+            aiPromptIdentity: {
+              version: 2,
+              id: 'ocr.verifier.ai_prompt_template',
+              sha256: '01274416be4f0f03241df30a4cec72290297750f34c1001d5c691e908fb5baae',
+            },
+          },
+        ],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    expect(container.textContent).toContain('monitor.verifierPrompt')
+  })
+
+  it('renders no prompt identity for a report that does not carry one (pipeline #83)', () => {
+    // The API always serializes the key (SQL NULL → JSON null); this is the
+    // shape a pre-#83 / current-scraper row has, not a missing property.
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [{ ...mockFeed.runs[0], aiPromptIdentity: null }],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('button'))
+    expect(container.textContent).not.toContain('monitor.verifierPrompt')
+  })
+
   it('keeps a zero provisional count out of the store row (issue #463)', () => {
     vi.mocked(usePriceRuns).mockReturnValue({
       data: {

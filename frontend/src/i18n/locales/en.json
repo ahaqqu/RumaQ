@@ -467,6 +467,7 @@
     "matchSolo": "{{count}} new",
     "matchReview": "{{count}} flagged",
     "matchDegraded": "embeddings degraded",
+    "verifierPrompt": "Verifier prompt v{{version}} · {{sha}}…",
     "publishedAccepted": "{{count}} items accepted",
     "dryRun": "dry-run",
     "indexVersion": "Index v{{version}}",
