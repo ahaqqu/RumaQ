@@ -1,15 +1,5 @@
 import { describe, it, expect } from 'vite-plus/test'
-import {
-  STORES,
-  STOCK,
-  PLAN,
-  HISTORY,
-  PARSED_RECEIPT,
-  formatRp,
-  storeLabel,
-  relUpdated,
-} from './mock.js'
-import { i18n } from '../i18n/index.js'
+import { STORES, STOCK, PLAN, HISTORY, PARSED_RECEIPT, storeLabel, relUpdated } from './mock.js'
 
 describe('static data', () => {
   it('exports STORES array', () => {
@@ -26,27 +16,6 @@ describe('static data', () => {
   })
   it('exports PARSED_RECEIPT', () => {
     expect(PARSED_RECEIPT.store).toBe('indomaret')
-  })
-})
-
-describe('formatRp', () => {
-  it('formats number as IDR currency', () => {
-    const result = formatRp(18500)
-    expect(result).toContain('IDR')
-    expect(result).toContain('18')
-    expect(result).toContain('500')
-  })
-
-  it('handles zero', () => {
-    expect(formatRp(0)).toContain('0')
-  })
-
-  it('formats with id-ID locale', () => {
-    const origLang = i18n.language
-    i18n.language = 'id'
-    const result = formatRp(18500)
-    expect(result).toBeTruthy()
-    i18n.language = origLang
   })
 })
 

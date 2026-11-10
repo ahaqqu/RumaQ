@@ -363,16 +363,6 @@ export const PARSED_RECEIPT = {
   ],
 }
 
-export const formatRp = (n) => {
-  const locale = i18n.language === 'id' ? 'id-ID' : 'en-US'
-  const currency = i18n.language === 'id' ? 'IDR' : 'IDR'
-  return new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 0,
-  }).format(n)
-}
-
 export const storeLabel = (id) => {
   const store = STORES.find((s) => s.id === id)
   return store ? i18n.t(store.labelKey) : id

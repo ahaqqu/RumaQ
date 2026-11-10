@@ -137,7 +137,7 @@ describe('AddFromReceipt', () => {
     selectFile(container, file)
 
     await waitFor(() => {
-      expect(container.textContent).toContain('55,000')
+      expect(container.textContent).toContain('55.000')
     })
   })
 
@@ -146,7 +146,7 @@ describe('AddFromReceipt', () => {
 
     api.scanReceipt.mockResolvedValueOnce({
       items: [
-        // Line total printed on the receipt (discounted): 30,000, not 2 × 20,000.
+        // Line total printed on the receipt (discounted): 30.000, not 2 × 20.000.
         { name: 'Milk', qty: 2, unit: 'L', price: 20000, total: 30000 },
         { name: 'Bread', qty: 1, unit: 'pack', price: 15000 },
       ],
@@ -162,7 +162,7 @@ describe('AddFromReceipt', () => {
     selectFile(container, file)
 
     await waitFor(() => {
-      expect(container.textContent).toContain('45,000')
+      expect(container.textContent).toContain('45.000')
     })
   })
 

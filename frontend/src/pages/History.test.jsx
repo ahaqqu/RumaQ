@@ -143,9 +143,9 @@ describe('History', () => {
   it('shows the line contribution in the price cell so qty>1 rows reconcile with the month header (#583)', () => {
     // Mixed cart: 5 × Rp 13.000 + 1 × Rp 500 = Rp 65.500 month total. The
     // Gula row must show the Rp 65.000 it contributed (not the Rp 13.000
-    // unit price), with the unit figure labeled beneath (formatRp follows
-    // the test setup's i18n language 'en' → 'IDR 65,000' (a no-break
-    // space after IDR; the i18n mock returns raw keys).
+    // unit price), with the unit figure labeled beneath it (#597: the shared
+    // household money formatter renders id-ID on every page — a no-break
+    // space after Rp; the i18n mock returns raw keys).
     vi.mocked(useHistory).mockReturnValue({
       data: {
         purchases: [
@@ -191,12 +191,12 @@ describe('History', () => {
     const { container } = renderWithProviders(
       React.createElement(History, { askAssistant: vi.fn() })
     )
-    expect(container.textContent).toContain('IDR\u00A065,000')
+    expect(container.textContent).toContain('Rp\u00A065.000')
     // The per-unit figure rides the labeled secondary line; the i18n mock
     // returns the raw key, so the key is the pin.
     expect(container.textContent).toContain('history.perUnit')
     // qty=1 line: the contribution equals the unit price — no per-unit label.
-    expect(container.textContent).toContain('IDR\u00A0500')
+    expect(container.textContent).toContain('Rp\u00A0500')
   })
 
   it('falls back to price × qty for rows without line_total, matching the server total formula (#583)', () => {
@@ -205,7 +205,7 @@ describe('History', () => {
     const { container } = renderWithProviders(
       React.createElement(History, { askAssistant: vi.fn() })
     )
-    expect(container.textContent).toContain('IDR\u00A037,000')
+    expect(container.textContent).toContain('Rp\u00A037.000')
     expect(container.textContent).toContain('history.perUnit')
   })
 
@@ -214,7 +214,43 @@ describe('History', () => {
       React.createElement(History, { askAssistant: vi.fn() })
     )
     // Bread is qty 1 @ Rp 20.000 with no line_total — contribution == price.
-    expect(container.textContent).toContain('IDR\u00A020,000')
+    expect(container.textContent).toContain('Rp\u00A020.000')
+  })
+
+  it('counts a legacy qty=0 line as the server does: 0 contribution (#597)', () => {
+    // A legacy row with qty 0 @ Rp 20.000 and no line_total: the server's
+    // COALESCE(line_total, price × qty) counts 0 for that line — the cell
+    // must show the 0 contribution with the per-unit basis labeled beneath
+    // (the figures differ), NOT the unit price. Pre-fix `it.qty || 1` showed
+    // Rp 20.000 (the unit price) and hid the label as "equal" figures.
+    vi.mocked(useHistory).mockReturnValue({
+      data: {
+        purchases: [
+          {
+            id: 'p1',
+            store_id: null,
+            store_label: null,
+            date: '2026-07-15',
+            total: 0,
+            receipt_image_key: null,
+            has_receipt: false,
+            created_at: '2026-07-15T00:00:00Z',
+            items: [{ id: 'pi1', item_id: null, name: 'Legacy', qty: 0, unit: null, price: 20000 }],
+          },
+        ],
+        next_cursor: null,
+        month_totals: [{ month: '2026-07', count: 1, total: 0 }],
+        avg_per_month: 0,
+      },
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+    })
+    const { container } = renderWithProviders(
+      React.createElement(History, { askAssistant: vi.fn() })
+    )
+    expect(container.textContent).toContain('history.perUnit')
+    expect(container.textContent).not.toContain('Rp\u00A020.000')
   })
 
   it('keeps the legacy last-line total rendering on no-estimate lines (#518/#583)', () => {
@@ -246,7 +282,7 @@ describe('History', () => {
     )
     // No price, no line_total: the single (last) line renders the purchase
     // total, never a fake "Rp 0".
-    expect(container.textContent).toContain('IDR\u00A025,000')
+    expect(container.textContent).toContain('Rp\u00A025.000')
     expect(container.textContent).not.toContain('history.perUnit')
   })
 
