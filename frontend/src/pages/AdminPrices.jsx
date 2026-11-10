@@ -49,8 +49,16 @@ function ageHours(iso) {
 // again — the count resets to 0, so there is no "clear" button to get wrong.
 function FailedRunStreakBanner({ streak }) {
   const { t, i18n } = useTranslation()
-  // An older Worker omits the field entirely; a live pipeline reports 0.
-  if (!streak || streak.count === 0 || streak.count < streak.threshold) return null
+  // An older Worker omits the field entirely; a live pipeline reports 0. Both
+  // numbers are required before rendering — a payload with a missing or renamed
+  // `threshold` must render NOTHING, never fall through to "any count trips":
+  // that would put the banner on a single blocked store, the one state the
+  // issue forbids. (The freshness probe fails loudly on the same payload; this
+  // page fails closed.)
+  const count = streak?.count
+  const threshold = streak?.threshold
+  if (typeof count !== 'number' || typeof threshold !== 'number') return null
+  if (count < 1 || count < threshold) return null
   return (
     <Panel
       className="p-4 flex gap-4 items-start mb-4 bg-danger-soft border-danger-border"
@@ -62,7 +70,7 @@ function FailedRunStreakBanner({ streak }) {
       <div className="flex-1 text-sm">
         <strong>
           {t('monitor.failedStreak', {
-            count: streak.count,
+            count,
             since: streak.since ? formatClock(streak.since, i18n.language) : '—',
           })}
         </strong>

@@ -675,4 +675,36 @@ describe('AdminPrices — consecutive failed runs (issue #536)', () => {
     expect(container.textContent).toContain('monitor.runHistory')
     expect(container.textContent).not.toContain('monitor.failedStreak')
   })
+
+  // A threshold the page cannot read is NOT "any count trips": the banner
+  // decides at >= threshold, so a payload without one renders nothing (the
+  // freshness probe fails loudly on the same payload — fail closed here, fail
+  // loud there, never a banner on a healthy pipeline).
+  it('stays absent when the payload carries a count but no threshold', () => {
+    const feed = quotaStreakFeed()
+    feedWith({
+      runs: feed.runs,
+      lastSuccessAt: recentSuccess,
+      failedStreak: { count: 3, since: feed.failedStreak.since, code: 'embedding_unavailable' },
+    })
+    const { container } = renderAdmin()
+    expect(container.textContent).toContain('monitor.runHistory')
+    expect(container.textContent).not.toContain('monitor.failedStreak')
+  })
+
+  // Rows recorded before #537 carry no typed failure: the streak still alarms,
+  // it just cannot name the class — no second line, never a crash.
+  it('banners a streak whose runs predate the typed failure field', () => {
+    const feed = quotaStreakFeed()
+    feedWith({
+      runs: feed.runs,
+      lastSuccessAt: recentSuccess,
+      failedStreak: { count: 3, threshold: 3, since: feed.failedStreak.since, code: null },
+    })
+    const { container } = renderAdmin()
+    expect(container.querySelector('[role="status"]')).toBeTruthy()
+    expect(container.textContent).toContain('monitor.failedStreak')
+    expect(container.textContent).toContain('monitor.failedStreakHint')
+    expect(container.textContent).not.toContain('monitor.failedStreakCode')
+  })
 })

@@ -65,7 +65,7 @@ import {
   ScrapeConflictError,
   ScrapeNotFoundError,
 } from '../lib/scrape.js'
-import { recordRunReport, listPriceRuns } from '../lib/price-runs.js'
+import { recordRunReport, listPriceRuns, readFailedRunStreak } from '../lib/price-runs.js'
 import {
   REVIEW_REASONS,
   recordReviewItems,
@@ -546,13 +546,17 @@ apiApp.post(
 //
 // Issue #536: the same probe also carries the consecutive failed-run read,
 // because the observation-anchored branches cannot see a pipeline that never
-// publishes (zero observations reads as "go-live pending"). The derivation is
-// the admin monitor's (`listPriceRuns` → `failedStreak`), not a second
-// implementation — one definition of "the pipeline is dead" for the banner,
-// the probe, and whatever reads either of them.
+// publishes (zero observations reads as "go-live pending"). It is the admin
+// monitor's derivation (`summarizeFailedRunStreak`, over the same newest-first
+// page), not a second implementation — one definition of "the pipeline is dead"
+// for the banner, the probe, and whatever reads either of them. This route
+// reads only the four columns the walk needs, not the monitor's detail blobs.
 apiApp.get('/api/internal/prices/status', requireIngestSecret, async (c) => {
-  const [status, feed] = await Promise.all([getPricesStatus(c.env.DB), listPriceRuns(c.env.DB)])
-  const res = c.json({ ...status, failedStreak: feed.failedStreak })
+  const [status, failedStreak] = await Promise.all([
+    getPricesStatus(c.env.DB),
+    readFailedRunStreak(c.env.DB),
+  ])
+  const res = c.json({ ...status, failedStreak })
   res.headers.set('Cache-Control', 'private, no-cache')
   return res
 })

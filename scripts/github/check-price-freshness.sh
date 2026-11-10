@@ -33,7 +33,10 @@ set -euo pipefail
 #     not happened yet.
 # Everything else that cannot be interpreted — a missing/renamed field,
 # an inconsistent shape, transport or auth failure — fails the step: the
-# alert must never be silently disarmed.
+# alert must never be silently disarmed. That includes a Worker that predates
+# this branch: the merge→deploy window can therefore trip the probe once (and
+# open a smoke-failure issue the workflow closes on the next green pulse),
+# which is the price of not treating "no field" as "nothing wrong".
 #
 # Env:
 #   HAQITA_INGEST_SECRET  bearer secret (same value the box uses)

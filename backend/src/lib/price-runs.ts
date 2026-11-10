@@ -144,6 +144,13 @@ function parseJson<T>(value: string | null): T | null {
   }
 }
 
+/** The stored status as the monitor's two-value read: anything the ingest did
+ * not record as `success` is a failure (the contract's picklist keeps the
+ * column to exactly those two, so this is a narrowing, not a guess). */
+function runStatus(stored: string): PriceRun['status'] {
+  return stored === 'success' ? 'success' : 'failed'
+}
+
 /**
  * Issue #536: how many consecutive DRY failures it takes to call the pipeline
  * dead. One dry run is a transient (a quota night, a box network blip — the
@@ -193,13 +200,22 @@ export type FailedRunStreak = {
 }
 
 /**
+ * The four stored fields the streak walk reads (issue #536). The admin feed
+ * already holds whole rows; the freshness probe's narrow read returns exactly
+ * these, so both consumers run ONE derivation without the probe paying for the
+ * feed's detail blobs. `Pick`, not a hand-written shape: a rename here is a
+ * compile error, not a silent drift.
+ */
+export type RunStreakFields = Pick<PriceRun, 'runStartedAt' | 'status' | 'publish' | 'failures'>
+
+/**
  * Did this run land any prices? The publish receipt is the only stored proof:
  * `accepted > 0` on a `published` receipt. The pipeline omits the whole
  * `publish` block when nothing was posted (`mode: 'dry-run'` never reports),
  * and a `published` receipt with `accepted: 0` is an empty payload — the
  * all-stores-blocked night that published nothing.
  */
-function publishedAnything(run: PriceRun): boolean {
+function publishedAnything(run: RunStreakFields): boolean {
   return run.publish?.mode === 'published' && (run.publish.accepted ?? 0) > 0
 }
 
@@ -208,7 +224,7 @@ function publishedAnything(run: PriceRun): boolean {
  * nothing. A failed run that still published prices breaks the streak instead
  * of extending it — it is a store-level red, not a dead pipeline.
  */
-export function isFailedWithoutPublish(run: PriceRun): boolean {
+export function isFailedWithoutPublish(run: RunStreakFields): boolean {
   return run.status === 'failed' && !publishedAnything(run)
 }
 
@@ -218,29 +234,40 @@ export function isFailedWithoutPublish(run: PriceRun): boolean {
  * succeeded — "consecutive" is over the runs as stored, so a replay (same
  * `runStartedAt`) cannot double-count: the upsert keeps one row per run.
  *
- * Every stored live run counts, including a queue-driven `Scrape Now` run —
- * the report schema has no origin field, and a manual scrape that fails
- * without publishing anything is the same pipeline failure. Those runs are
- * rare and each one is real, so the threshold absorbs them.
+ * Every stored live run counts, including a queue-driven `Scrape Now` run: the
+ * report schema has no origin field, and a manual scrape that fails without
+ * publishing anything is the same failure. Consequence, not an accident: an
+ * operator retrying a blocked store three times in one session reaches the
+ * threshold with the nightly pipeline healthy (and the freshness probe then
+ * opens its smoke-failure issue). Filtering those needs an origin marker the
+ * report does not carry, so the surfaces say "runs" and name the first dry run
+ * instead of pretending they are nights; the streak clears on the next run
+ * that publishes.
  */
 export function summarizeFailedRunStreak(
-  runs: PriceRun[],
+  runs: RunStreakFields[],
   threshold = FAILED_RUN_STREAK_THRESHOLD
 ): FailedRunStreak {
   let count = 0
-  while (count < runs.length && isFailedWithoutPublish(runs[count]!)) count += 1
+  let since: string | null = null
+  for (const run of runs) {
+    if (!isFailedWithoutPublish(run)) break
+    count += 1
+    since = run.runStartedAt
+  }
+  const newest = count > 0 ? runs[0] : undefined
   return {
     count,
     threshold,
-    since: count > 0 ? runs[count - 1]!.runStartedAt : null,
-    code: count > 0 ? runFailureCode(runs[0]!) : null,
+    since,
+    code: newest ? runFailureCode(newest) : null,
   }
 }
 
 /** The typed class to put on the banner: the run-level entry wins, because a
  * store-less code (`embedding_unavailable` / `publish_failed`) names what
  * killed the whole run; otherwise the first entry is the closest thing. */
-function runFailureCode(run: PriceRun): RunFailure['code'] | null {
+function runFailureCode(run: RunStreakFields): RunFailure['code'] | null {
   const failures = run.failures ?? []
   return (failures.find((failure) => failure.store == null) ?? failures[0])?.code ?? null
 }
@@ -252,15 +279,28 @@ export type PriceRunsFeed = {
   failedStreak: FailedRunStreak
 }
 
-export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRunsFeed> {
+/**
+ * The newest-first page both readers walk (issue #536): the admin feed renders
+ * it, the freshness probe only counts its head. ONE fragment, so the two reads
+ * cannot window the same table differently — a divergence there would let the
+ * banner and the alert disagree about one set of runs, which is the thing
+ * sharing the derivation exists to prevent.
+ */
+const NEWEST_RUNS_PAGE = `FROM price_runs ORDER BY run_started_at DESC LIMIT ?`
+
+/** Page size of the run history read — one default for both readers. */
+const PRICE_RUNS_PAGE_LIMIT = 50
+
+export async function listPriceRuns(
+  db: D1Database,
+  limit = PRICE_RUNS_PAGE_LIMIT
+): Promise<PriceRunsFeed> {
   const { results } = await db
     .prepare(
       `SELECT id, run_started_at, finished_at, exit_code, status, stage,
               per_store, match_stats, publish_result, index_version, products_summary,
               ai_usage, ai_prompt_identity, failures, error
-       FROM price_runs
-       ORDER BY run_started_at DESC
-       LIMIT ?`
+       ${NEWEST_RUNS_PAGE}`
     )
     .bind(limit)
     .all<PriceRunRow>()
@@ -270,7 +310,7 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
     runStartedAt: row.run_started_at,
     finishedAt: row.finished_at,
     exitCode: row.exit_code,
-    status: row.status === 'success' ? ('success' as const) : ('failed' as const),
+    status: runStatus(row.status),
     stage: row.stage,
     perStore: parseJson<Record<string, RunStoreSummary>>(row.per_store) ?? {},
     match: parseJson<RunMatchSummary>(row.match_stats),
@@ -298,6 +338,10 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
     (
       await db
         .prepare(`SELECT MAX(run_started_at) AS last FROM price_runs WHERE status = 'success'`)
+        // `.bind()` with no params: every statement in this module executes
+        // only after bind(), which is also what the real-SQL harness enforces —
+        // an unbound execute would silently bind NULLs instead of failing.
+        .bind()
         .first<{ last: string | null }>()
     )?.last ??
     null
@@ -306,4 +350,34 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
   // and the freshness probe (which cannot read this feed itself: it holds the
   // ingest secret, not an admin session).
   return { runs, lastSuccessAt, failedStreak: summarizeFailedRunStreak(runs) }
+}
+
+/**
+ * The consecutive-failure read on its own (issue #536): the freshness probe
+ * needs the count, not the feed. Four columns per row is all the walk reads, so
+ * the probe does not pay for the `per_store`/`match_stats` blobs the feed
+ * parses — and it does not inherit the feed's `lastSuccessAt` fallback query
+ * either. Same derivation (`summarizeFailedRunStreak`), same page, same
+ * threshold: the banner and the alert can only disagree if this query stops
+ * matching `NEWEST_RUNS_PAGE`.
+ */
+export async function readFailedRunStreak(
+  db: D1Database,
+  limit = PRICE_RUNS_PAGE_LIMIT
+): Promise<FailedRunStreak> {
+  const { results } = await db
+    .prepare(
+      `SELECT run_started_at, status, publish_result, failures
+       ${NEWEST_RUNS_PAGE}`
+    )
+    .bind(limit)
+    .all<Pick<PriceRunRow, 'run_started_at' | 'status' | 'publish_result' | 'failures'>>()
+
+  const runs: RunStreakFields[] = (results ?? []).map((row) => ({
+    runStartedAt: row.run_started_at,
+    status: runStatus(row.status),
+    publish: parseJson<RunPublishSummary>(row.publish_result),
+    failures: parseJson<RunFailure[]>(row.failures),
+  }))
+  return summarizeFailedRunStreak(runs)
 }

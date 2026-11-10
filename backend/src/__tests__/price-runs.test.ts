@@ -4,6 +4,7 @@ import { runReportSchema, runVerifierPromptSchema, RUN_FAILURES_LIMIT } from '@r
 import {
   recordRunReport,
   listPriceRuns,
+  readFailedRunStreak,
   summarizeFailedRunStreak,
   isFailedWithoutPublish,
   FAILED_RUN_STREAK_THRESHOLD,
@@ -1137,6 +1138,9 @@ describe('consecutive failed runs (issue #536)', () => {
     // The threshold the alarm fires at is reached — this is the state the
     // banner renders and the freshness probe fails on.
     expect(feed.failedStreak.count).toBeGreaterThanOrEqual(feed.failedStreak.threshold)
+    // The probe's narrow read is the same derivation over the same page, so the
+    // payload it ships and the banner's feed cannot disagree about one streak.
+    expect(await readFailedRunStreak(d1)).toEqual(feed.failedStreak)
 
     // Then a night where one store failed but the rest published: the
     // pipeline is alive again, so the streak is gone (not merely shorter).
