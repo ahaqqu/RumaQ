@@ -1,8 +1,18 @@
 services:
+  # Resource bounds (#589): with no caps, one run measured 4.8 core-min of CPU
+  # and ~2 GB of memory across 5 containers — enough to pin 4-5 of 8 cores and
+  # starve everything else on the machine (same contention class as #304).
+  # Every service is sized from the kernel-measured per-container peaks with
+  # headroom, so a run throttles instead of taking the host. Bounds also cover
+  # the ephemeral `compose run --rm test-runner` containers, which inherit this
+  # service definition.
   api:
     build:
       context: ..
       dockerfile: automation/docker/Dockerfile.api
+    # Measured: ~1.1 cores sustained, ~0.9 GB memory peak (Miniflare workerd).
+    cpus: 1.0
+    mem_limit: 768m
     environment:
       - TEST_MODE=true
       - RATE_LIMIT_WINDOW_MS=60000
@@ -30,8 +40,14 @@ services:
     build:
       context: ..
       dockerfile: automation/docker/Dockerfile.web
+    # Static nginx over a prebuilt bundle — a fraction of the api budget.
+    cpus: 1.0
+    mem_limit: 768m
 
   proxy:
+    # Static reverse proxy: ~0.01 cores and ~10-20 MB measured.
+    cpus: 0.25
+    mem_limit: 128m
     image: nginx:alpine
     ports:
       # Per-run host port (#511): test-local.sh exports RUMAQ_TEST_PORT before
@@ -51,6 +67,14 @@ services:
     build:
       context: ..
       dockerfile: automation/docker/Dockerfile.test-runner
+    # Measured: ~1.25 cores sustained, ~700 MB peak per runner. 2.0 cpus gives
+    # the suite the biggest share so caps do not slow it much; 2g mem covers
+    # Playwright + Chromium. shm_size replaces the default 64 MB /dev/shm,
+    # which Chromium falls back or crashes on once several contexts open —
+    # a failure mode that looks like a flaky test.
+    cpus: 2.0
+    mem_limit: 2g
+    shm_size: 1g
     environment:
       - TEST_BASE_URL=http://proxy:3000
     depends_on:
