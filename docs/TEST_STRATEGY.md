@@ -185,7 +185,9 @@ Runs every 6 hours via `.github/workflows/smoke.yml`. Base URL: `rumaq.ahaqqu.co
 Enforced in CI (`.github/workflows/ci.yml`, on every PR):
 
 - **Bundle size** — `scripts/ci/bundle-budget.mjs` fails when the total JS in
-  `frontend/dist/assets` exceeds **250 KB gzipped** (2026-10 baseline ≈ 185 KB).
+  `frontend/dist/assets` exceeds **350 KB gzipped** (2026-10 baseline ≈ 185 KB;
+  raised from 250 KB on 2026-11-11 for the #518 purchase flows + hey-api
+  generated client — revisit after codegen slimming, #580).
 - **Lighthouse CI** — `treosh/lighthouse-ci-action` against the built
   `frontend/dist` (desktop preset, static run; measures the public login
   page). Assertions: Performance ≥ 0.7 (error), Accessibility ≥ 0.9 (error),
