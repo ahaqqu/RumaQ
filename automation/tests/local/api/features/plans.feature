@@ -39,7 +39,7 @@ Feature: Shopping Plans
     Given the database has seed data
     And I am authenticated as a test user
     And there is an active plan with items
-    When I mark the first plan item as "bought"
+    When I mark the "Milk" plan item as "bought"
     Then the response status should be 200
     And the plan item status should be "bought"
 
@@ -47,7 +47,7 @@ Feature: Shopping Plans
     Given the database has seed data
     And I am authenticated as a test user
     And there is an active plan with items
-    When I mark the first plan item as "skipped"
+    When I mark the "Milk" plan item as "skipped"
     Then the response status should be 200
     And the plan item status should be "skipped"
 
@@ -78,7 +78,7 @@ Feature: Shopping Plans
     When I create a new plan with items
       | name | qty | unit | why   |
       | Rice | 1   | kg   | empty |
-    And I mark the first plan item as "bought"
+    And I mark the "Milk" plan item as "bought"
     Then the response status should be 400
 
   Scenario: Invalid status query returns 400
@@ -112,7 +112,7 @@ Feature: Shopping Plans
     Given the database has seed data
     And I am authenticated as a test user
     And there is an active plan with items
-    When I mark the first plan item as "bought"
-    And I mark the first plan item as "bought"
+    When I mark the "Milk" plan item as "bought"
+    And I mark the "Milk" plan item as "bought"
     Then the response status should be 200
     And GET /api/stock shows "Milk" with qty 2
