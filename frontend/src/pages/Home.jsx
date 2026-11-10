@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { useHome, usePlans } from '../lib/queries/index.js'
 import { useMe } from '../lib/queries/me.js'
 import { getGreetingKey } from '../lib/greeting.js'
+import { parseISO, todayISO } from '../lib/household-date.js'
 import { personaText } from '../lib/persona.js'
 import { formatPrice } from '../lib/pricesHelpers.js'
 import { usePersona } from '../context/PersonaContext.jsx'
@@ -20,9 +21,11 @@ const RECIPE_SEED_PROMPT =
 
 function getDaysUntil(expiryDate) {
   if (!expiryDate) return null
-  const now = new Date()
-  const expiry = new Date(expiryDate + 'T00:00:00')
-  return Math.round((expiry - now) / 86400000)
+  // #554: calendar days on the household grid (WIB day vs stored day), the
+  // same convention as the backend's daysUntil — not device-local midnights,
+  // which skew the chip on any device set outside WIB.
+  const expiry = parseISO(expiryDate)
+  return Math.round((expiry - parseISO(todayISO())) / 86400000)
 }
 
 // Effective urgency in days for a low-stock row: whichever of expiry and
@@ -120,7 +123,13 @@ export function Home({ setView, askAssistant }) {
   const greeting = firstName
     ? `${t(getGreetingKey(new Date(), i18n.language))}, ${firstName}`
     : t(getGreetingKey(new Date(), i18n.language))
-  const monthName = new Intl.DateTimeFormat(i18n.language, { month: 'long' }).format(new Date())
+  // The spend card's month label is the household month (the window the
+  // /api/home query cuts on, #554) — read off the WIB day grid, UTC-pinned so
+  // the label cannot drift a month on a non-WIB device near month edges.
+  const monthName = new Intl.DateTimeFormat(i18n.language, {
+    month: 'long',
+    timeZone: 'UTC',
+  }).format(parseISO(todayISO()))
 
   const openRecipeAssistant = () => {
     setAssistantSeed(RECIPE_SEED_PROMPT)

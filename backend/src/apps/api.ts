@@ -117,6 +117,7 @@ import { PLUGIN_MANIFESTS } from '../plugins/manifests.js'
 import { lineTotalOf, purchaseTotalOf } from '../lib/purchases.js'
 import { MONEY_MAX, QTY_MAX } from '../lib/money-bounds.js'
 import { computeRunOutDays } from '../lib/stock.js'
+import { householdDayFrom, householdIsoDate, householdMonth } from '../lib/household-day.js'
 import { computePatterns } from '../lib/patterns.js'
 import {
   validateImage,
@@ -1063,7 +1064,12 @@ apiApp.get(
       .first<{ cnt: number }>()
     const totalItems = totalResult?.cnt ?? 0
 
-    const today = new Date().toISOString().slice(0, 10)
+    // #554: the household day (WIB), not the Worker's UTC day — between
+    // 00:00 and 07:00 WIB the UTC calendar is still yesterday, which put the
+    // expiry/attention windows and the month-spend window one day behind the
+    // household (and across the month boundary a week early).
+    const now = new Date()
+    const today = householdIsoDate(now)
 
     const expiringResult = await c.env.DB.prepare(
       `SELECT COUNT(*) AS cnt FROM stock
@@ -1112,7 +1118,7 @@ apiApp.get(
        FROM purchases
        WHERE household_id = ? AND substr(date, 1, 7) = substr(?, 1, 7)`
     )
-      .bind(householdId, today)
+      .bind(householdId, householdMonth(now))
       .first<{ spend: number; receipts: number }>()
     const currentMonthSpend = spendResult?.spend ?? 0
     const currentMonthReceipts = spendResult?.receipts ?? 0
@@ -2124,7 +2130,7 @@ apiApp.get(
   '/api/ai/usage',
   describeRoute({
     description:
-      "Returns today's AI usage (UTC day) for the acting member, broken down by capability, with the household total beside it. Usage is recorded but never capped.",
+      "Returns today's AI usage (the household day, WIB) for the acting member, broken down by capability, with the household total beside it. Usage is recorded but never capped.",
     security: [{ cookieAuth: [] }],
     responses: {
       200: {
@@ -2144,7 +2150,8 @@ apiApp.get(
               properties: {
                 used: {
                   type: 'integer',
-                  description: 'Completed AI calls today (UTC) made by the acting member',
+                  description:
+                    'Completed AI calls today (the household day, WIB) made by the acting member',
                 },
                 input_tokens: { type: 'integer' },
                 output_tokens: { type: 'integer' },
@@ -2208,7 +2215,10 @@ apiApp.get(
   async (c) => {
     const userId = c.get('userId')
     const householdId = c.get('householdId')
-    const today = new Date().toISOString().slice(0, 10)
+    // #554: the usage "day" is the household day (WIB) — the same day the
+    // event writer stamps (lib/ai/usage.ts), so a call made at 00:30 WIB is
+    // counted under the household's today, not the UTC yesterday.
+    const today = householdIsoDate(new Date())
 
     // "Your calls, not the household's" (plan §4.1) + the household total beside
     // it (plan §4.4), both cut by capability (#523 P4). There is deliberately no
@@ -2799,9 +2809,9 @@ apiApp.post(
           expiry_date: string | null
         }>()
 
-      const sevenDaysFromNow = new Date()
-      sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7)
-      const expiryCutoff = sevenDaysFromNow.toISOString().slice(0, 10)
+      // #554: household-day cutoffs (WIB) — seven days ahead on the household
+      // calendar, not the UTC calendar.
+      const expiryCutoff = householdDayFrom(new Date(), 7)
 
       const expiring = await c.env.DB.prepare(
         `SELECT i.name, s.qty, s.unit, s.expiry_date
@@ -2973,7 +2983,9 @@ apiApp.post(
     if (c.env.TEST_MODE === 'true') {
       scanResult = {
         store_name: 'Indomaret',
-        date: new Date().toISOString().slice(0, 10),
+        // #554: the suggested purchase date is the household day (WIB) — a
+        // scan at 00:30 WIB must not prefill yesterday.
+        date: householdIsoDate(new Date()),
         items: [
           { name: 'Susu cair 1L', qty: 1, unit: 'L', price: 18500 },
           { name: 'Roti tawar', qty: 1, unit: 'pack', price: 15000 },
@@ -3043,7 +3055,7 @@ apiApp.post(
   '/api/purchases',
   describeRoute({
     description:
-      "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt. Item price is the unit price; an optional per-line line_total (the receipt's printed line total) is persisted as given, otherwise the server computes qty × price. purchases.total is always computed server-side as Σ COALESCE(line_total, price × qty) and never read from the client.",
+      "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt. Item price is the unit price; an optional per-line line_total (the receipt's printed line total) is persisted as given, otherwise the server computes qty × price. purchases.total is always computed server-side as Σ COALESCE(line_total, price × qty) and never read from the client. date is a household calendar day (WIB, UTC+7) as YYYY-MM-DD — the scan route's dateGuess prefills it from that same calendar.",
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -6001,9 +6013,9 @@ apiApp.post(
         expiry_date: string | null
       }>()
 
-    const sevenDaysFromNow = new Date()
-    sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7)
-    const expiryCutoff = sevenDaysFromNow.toISOString().slice(0, 10)
+    // #554: household-day cutoffs (WIB) — the expiry horizon and the 30-day
+    // purchase window both cut on the household calendar, not UTC's.
+    const expiryCutoff = householdDayFrom(new Date(), 7)
 
     const expiring = await c.env.DB.prepare(
       `SELECT i.name, s.qty, s.unit, s.expiry_date
@@ -6020,9 +6032,7 @@ apiApp.post(
         expiry_date: string | null
       }>()
 
-    const thirtyDaysAgo = new Date()
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-    const sinceDate = thirtyDaysAgo.toISOString().slice(0, 10)
+    const sinceDate = householdDayFrom(new Date(), -30)
 
     const recentPurchases = await c.env.DB.prepare(
       `SELECT DISTINCT i.name, s.label AS store_label
@@ -6459,7 +6469,8 @@ apiApp.patch(
       return c.json({ error: 'Plan is not active' }, 400)
     }
 
-    const now = new Date().toISOString()
+    const now = new Date()
+    const nowIso = now.toISOString()
     const statements: D1PreparedStatement[] = []
 
     statements.push(
@@ -6494,9 +6505,12 @@ apiApp.patch(
           purchaseId,
           householdId,
           planItem.store_id || null,
-          now.slice(0, 10),
+          // #554: the check-off purchase is stamped with the household day
+          // (WIB) — a trip checked off at 00:30 WIB lands on today, not the
+          // UTC yesterday.
+          householdIsoDate(now),
           checkoffLineTotal,
-          now
+          nowIso
         )
       )
 
@@ -6513,7 +6527,7 @@ apiApp.patch(
           planItem.unit,
           planItem.price_estimate,
           checkoffLineTotal,
-          now
+          nowIso
         )
       )
 
@@ -6545,7 +6559,7 @@ apiApp.patch(
             locationId,
             planItem.qty,
             planItem.unit,
-            now
+            nowIso
           )
         )
       }

@@ -751,7 +751,7 @@ export type GetApiAiUsageResponses = {
      */
     200: {
         /**
-         * Completed AI calls today (UTC) made by the acting member
+         * Completed AI calls today (the household day, WIB) made by the acting member
          */
         used: number;
         input_tokens: number;

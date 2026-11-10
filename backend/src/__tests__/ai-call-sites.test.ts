@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test'
 import type { Env } from '../types.js'
 import { apiApp } from '../apps/api.js'
 import { encryptAiKey } from '../lib/crypto.js'
+import { householdIsoDate } from '../lib/household-day.js'
 import type { Capability } from '../lib/ai/types.js'
 import { createDb, type Db } from './support/d1-sqlite.js'
 
@@ -622,7 +623,10 @@ describe('/api/ai/usage — the per-capability breakdown and the household cut',
         args.id,
         args.userId,
         ts,
-        args.date ?? ts.slice(0, 10),
+        // #554: the usage reader cuts "today" on the household day (WIB), the
+        // same day the event writer stamps — so this fixture (which stands in
+        // for events recorded "today") must stamp that day, not the UTC one.
+        args.date ?? householdIsoDate(now),
         args.provider ?? 'openai-compatible',
         args.model ?? 'm',
         args.capability,
