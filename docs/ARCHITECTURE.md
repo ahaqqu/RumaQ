@@ -93,7 +93,7 @@ rumaq/
 │   │   ├── smoke.sh
 │   │   ├── check-price-freshness.sh  # Smoke staleness gate for the nightly scrape
 │   │   ├── test-automation.sh
-│   │   ├── worker-boot-smoke.sh  # Boots the built Worker in workerd + /api/health (PR gate)
+│   │   ├── worker-boot-smoke.sh  # Boots the built Worker in workerd + /api/health (CI gate)
 │   │   └── trigger-smoke.sh
 │   ├── style.sh            # Code formatting
 │   ├── test/               # Test runner scripts
