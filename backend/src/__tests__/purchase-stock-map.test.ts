@@ -364,6 +364,52 @@ describe('PATCH /api/stock/:id — rename resolves through the shared normalizat
   })
 })
 
+// #607: a blank (whitespace-only) PATCH name used to be a silent 200 no-op —
+// the handler skipped the rename and the tail UPDATE re-set item_id to its own
+// value — while the OpenAPI contract declares 400 for an invalid body. Silent
+// no-ops hide client bugs: the handler now rejects, in this route's error
+// shape ({ error: string }, what the frontend surfaces).
+describe('PATCH /api/stock/:id — blank name is invalid input, not a no-op (#607)', () => {
+  it('answers 400 for a whitespace-only name and writes nothing', async () => {
+    seedItem('i-old', 'h1', 'Tea Old')
+    seedStock('s1', 'h1', 'i-old', 2)
+
+    const res = await patchStockName('s1', '   ')
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: string }
+    expect(typeof body.error).toBe('string')
+    expect(body.error.length).toBeGreaterThan(0)
+
+    // Nothing renamed, nothing forked, nothing touched: still exactly the
+    // seeded rows.
+    expect(itemNames()).toEqual(['Tea Old'])
+    expect(count('items', 'household_id = ?', 'h1')).toBe(1)
+    expect(count('stock')).toBe(1)
+    expect(sqlite.prepare('SELECT item_id FROM stock WHERE id = ?').get('s1')).toMatchObject({
+      item_id: 'i-old',
+    })
+  })
+
+  it('answers 400 for an empty-string name', async () => {
+    seedItem('i-old', 'h1', 'Tea Old')
+    seedStock('s1', 'h1', 'i-old', 2)
+
+    const res = await patchStockName('s1', '')
+    expect(res.status).toBe(400)
+    expect(count('items', 'household_id = ?', 'h1')).toBe(1)
+  })
+
+  it('a valid rename still works (regression pin)', async () => {
+    seedItem('i-old', 'h1', 'Tea Old')
+    seedStock('s1', 'h1', 'i-old', 2)
+
+    const res = await patchStockName('s1', '  Green  Tea  ')
+    expect(res.status).toBe(200)
+    expect(itemNames().sort()).toEqual(['Green  Tea', 'Tea Old'])
+    expect(count('items', 'household_id = ?', 'h1')).toBe(2)
+  })
+})
+
 describe('PATCH /api/stock/:id — rename onto an occupied item folds (#551, R588-1)', () => {
   // With 0046's UNIQUE (household_id, item_id) live, the rename's plain
   // item_id re-point onto an item that already holds its own stock row threw
