@@ -38,6 +38,12 @@ bash "$ROOT_DIR/scripts/build.sh"
 echo "=== CI: bundle size budget ==="
 node "$ROOT_DIR/scripts/ci/bundle-budget.mjs"
 
+echo "=== CI: worker boot smoke (workerd) ==="
+# Boots the real bundle in workerd and asserts /api/health (#534). This lives
+# in ci.sh, not in ci.yml, so the main-push ci job in deploy.yml runs the same
+# gate before deploy — PR checks and main CI stay one contract.
+bash "$ROOT_DIR/scripts/github/worker-boot-smoke.sh"
+
 echo "=== CI: validate Worker config ==="
 if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
   # Builds the Worker with backend/cloudflare.config.ts and runs cf's checks

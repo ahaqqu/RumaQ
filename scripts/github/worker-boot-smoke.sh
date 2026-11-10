@@ -13,12 +13,13 @@ set -euo pipefail
 # only job that boots the real Worker is the Docker/automation stack in
 # test-automation.yml, and that runs on a nightly schedule.
 #
-# This gate uses the same build path as dev and deploy: @cloudflare/vite-plugin's
-# `vp build backend` (Workers Build Output Specification) produces the bundle.
-# That ONE bundle is then booted twice in workerd:
+# This gate builds the bundle through Cloudflare's Vite plugin (`vp build
+# backend`, Workers Build Output Specification) — the same artifact the
+# plugin's dev/preview server consumes and `cf deploy` builds for deploy. That
+# ONE bundle is then booted twice in workerd:
 #
-#   1. `vp preview backend` — the plugin's own preview runtime (the one dev,
-#      previews and deploys use). It serves the bundle over HTTP; a
+#   1. `vp preview backend` — the plugin's own preview runtime (what dev and
+#      previews serve through). It serves the bundle over HTTP; a
 #      module-scope forbidden call fails startup and /api/health never answers.
 #   2. scripts/ci/worker-boot-harness.mjs — the repo's pinned `miniflare`
 #      dev dependency, which is the runtime the nightly Docker/automation
@@ -31,8 +32,9 @@ set -euo pipefail
 # that line pass PRs and fail the nightly again — exactly #534's failure mode.
 #
 # No secrets, no D1 migrations, no Docker: /api/health is a static JSON handler,
-# and `RUN_SECRETS_CHECK` resolves to false while CLOUDFLARE_ACCOUNT_ID is unset
-# (cloudflare.config.ts treats that as the LOCAL environment). The full
+# and the script clears CLOUDFLARE_ACCOUNT_ID before building, so
+# `RUN_SECRETS_CHECK` resolves to false (cloudflare.config.ts treats an unset
+# account id as the LOCAL environment). The full
 # 150/53 automation matrix stays nightly — keep this under a minute once
 # dependencies are installed.
 
@@ -69,19 +71,30 @@ dump_log() {
 }
 
 cleanup() {
-  if [[ -n "$PREVIEW_PID" ]] && kill -0 "$PREVIEW_PID" 2>/dev/null; then
-    kill "$PREVIEW_PID" 2>/dev/null || true
+  if [[ -n "$PREVIEW_PID" ]]; then
+    # Kill the whole preview process group, not just the `vp` wrapper:
+    # `vp` spawns `vite preview`, which spawns workerd, so signalling only
+    # $PREVIEW_PID leaves a live server (and its port) behind.
+    kill -TERM -- "-$PREVIEW_PID" 2>/dev/null || kill -TERM "$PREVIEW_PID" 2>/dev/null || true
     # Give the preview server a moment to shut workerd down cleanly; a hung
     # process must not hang the CI job.
     for _ in $(seq 1 10); do
-      kill -0 "$PREVIEW_PID" 2>/dev/null || break
+      # Check the group, not just the wrapper: the wrapper can exit while a
+      # child remains in the group.
+      kill -0 -- "-$PREVIEW_PID" 2>/dev/null || break
       sleep 0.2
     done
-    kill -9 "$PREVIEW_PID" 2>/dev/null || true
+    kill -KILL -- "-$PREVIEW_PID" 2>/dev/null || true
     wait "$PREVIEW_PID" 2>/dev/null || true
   fi
   rm -f "$BODY_FILE" "$LOG_FILE"
 }
+
+# EXIT covers success/failure; INT/TERM force an exit so the EXIT trap still
+# runs (and reaps the preview group) when CI cancels the job.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fail() {
   echo -e "  ✗  $1" >&2
@@ -89,9 +102,14 @@ fail() {
   exit 1
 }
 
-trap cleanup EXIT
-
 cd "$ROOT_DIR"
+
+# LOCAL environment on purpose: cloudflare.config.ts reads the account id at
+# BUILD time (it sets RUN_SECRETS_CHECK), so these must be cleared before the
+# build, not after — an inherited account id bakes RUN_SECRETS_CHECK=true into
+# the output and every health request answers the missing-secrets 500. The API
+# token is cleared too: this gate must make no remote calls.
+unset CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_DATABASE_ID CLOUDFLARE_API_TOKEN
 
 # The Worker build packs frontend/dist into its static assets and the preview
 # server needs that directory to exist (the ASSETS binding). CI's earlier
@@ -105,12 +123,11 @@ fi
 info "Building the Worker bundle (vp build backend)"
 node node_modules/.bin/vp build backend
 
-# LOCAL environment on purpose: an inherited account id would flip
-# RUN_SECRETS_CHECK to true and make every request answer the startup
-# missing-secrets 500 instead of reaching the routes under test.
-unset CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_DATABASE_ID
-
 info "Boot 1/2: plugin preview serving the bundle in workerd (${BASE_URL})"
+# Job control gives this background job its own process group. `vp` is only a
+# wrapper: it spawns the real `vite preview` (which spawns workerd), so killing
+# $PREVIEW_PID alone would orphan a live server on every exit path.
+set -m
 # --host 127.0.0.1: Vite's preview server otherwise binds only ::1 (IPv6
 # localhost), so a curl to 127.0.0.1 never connects.
 node node_modules/.bin/vp preview backend --port "$PORT" --strictPort --host 127.0.0.1 >"$LOG_FILE" 2>&1 &

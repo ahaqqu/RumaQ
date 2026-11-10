@@ -28,17 +28,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
 
-      # Boots the REAL bundled Worker in workerd and asserts GET /api/health
-      # (ahaqqu/RumaQ#534). Unit tests call `app.request()` on the Hono app in
-      # Node, and the Docker automation stack that does boot the Worker runs
-      # nightly — so a module-scope call workerd forbids during bundle
-      # evaluation (#533's `new AbortController()`) made the Worker unstartable
-      # and still merged green. The script boots the bundle in both the plugin
-      # preview runtime and the pinned nightly-harness runtime; no secrets
-      # needed. Reuses the frontend build ci.sh left in frontend/dist.
-      - name: Worker boot smoke (workerd)
-        run: bash ./scripts/github/worker-boot-smoke.sh
-
       # ci.sh leaves frontend/dist behind; audit it against the phase-09
       # performance (>= 0.7) and accessibility (>= 0.9) budgets.
       - name: Lighthouse CI (performance + accessibility budgets)
