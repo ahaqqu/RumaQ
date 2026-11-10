@@ -2835,7 +2835,7 @@ apiApp.post(
            JOIN items i ON i.id = pi.item_id AND i.household_id = ?
            LEFT JOIN stores s ON s.id = pi.store_id
           WHERE p.household_id = ? AND p.status = 'active' AND pi.status = 'pending'
-          ORDER BY pi.created_at`
+          ORDER BY pi.created_at, pi.id -- #555: deterministic tiebreaker`
       )
         .bind(householdId, householdId)
         .all<{
@@ -3479,7 +3479,7 @@ apiApp.get(
       sql += ' AND (p.date < ? OR (p.date = ? AND p.created_at < ?))'
       params.push(cursorDate, cursorDate, cursorCreated)
     }
-    sql += ' ORDER BY p.date DESC, p.created_at DESC LIMIT ?'
+    sql += ' ORDER BY p.date DESC, p.created_at DESC, p.id DESC LIMIT ?'
     params.push(pageSize + 1)
 
     const { results } = await c.env.DB.prepare(sql)
@@ -3648,7 +3648,7 @@ apiApp.get(
          FROM purchase_items pi
          LEFT JOIN items i ON i.id = pi.item_id AND i.household_id = ?
         WHERE pi.purchase_id = ?
-        ORDER BY pi.created_at`
+        ORDER BY pi.created_at, pi.id -- #555: deterministic tiebreaker`
     )
       .bind(householdId, purchaseId)
       .all<{
@@ -5859,7 +5859,7 @@ apiApp.get(
       planSql += ' AND status = ?'
       planParams.push(status)
     }
-    planSql += ' ORDER BY created_at DESC'
+    planSql += ' ORDER BY created_at DESC, id DESC'
 
     const { results: plans } = await c.env.DB.prepare(planSql)
       .bind(...planParams)
@@ -5900,7 +5900,12 @@ apiApp.get(
        LEFT JOIN price_observations po ON po.id = pi.price_observation_id
        LEFT JOIN price_sources ps ON ps.id = po.source_id
        WHERE pi.plan_id IN (${placeholders})
-       ORDER BY pi.created_at`
+       -- #555: every plan_item in one save is stamped with the same shared
+       -- batch timestamp, so bare created_at order is nondeterministic and
+       -- order-sensitive tests flaked (observed 4/9 runs in #552). pi.id is
+       -- the stable tiebreaker, matching the created_at+id convention used
+       -- by lib/scrape.ts and lib/households.ts.
+       ORDER BY pi.created_at, pi.id`
     )
       .bind(householdId, ...planIds)
       .all<{
@@ -6344,7 +6349,7 @@ apiApp.post(
        LEFT JOIN price_observations po ON po.id = pi.price_observation_id
        LEFT JOIN price_sources ps ON ps.id = po.source_id
        WHERE pi.plan_id = ? AND p.household_id = ?
-       ORDER BY pi.created_at`
+       ORDER BY pi.created_at, pi.id -- #555: deterministic tiebreaker`
     )
       .bind(planId, householdId)
       .all<{
