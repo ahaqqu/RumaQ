@@ -4,6 +4,14 @@ import { buildKey } from '../lib/receipts.js'
 
 const ENCRYPTED_KEY = 'v1:KIPkC6p1Fvnv4KoVsu-dx-GNoEqmm2kStaExhNbptUJ3lrE'
 
+// #606: the scan route byte-sniffs uploads, so multipart fixtures carry real
+// JPEG leading bytes (JPEG_BYTES) while the QA-F1 repro stays text (TXT_BYTES
+// renamed .png).
+const JPEG_BYTES = new Uint8Array([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+])
+const TXT_BYTES = new TextEncoder().encode('this is not an image, just a text file\n')
+
 function createMockEnv(overrides = {}) {
   return {
     DB: {
@@ -572,7 +580,7 @@ describe('api routes', () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.first = vi.fn().mockResolvedValue(aiConfiguredRow())
     env.DB.run = vi.fn().mockResolvedValue(undefined)
-    const file = new File(['x'], 'receipt.jpg', { type: 'image/jpeg' })
+    const file = new File([JPEG_BYTES], 'receipt.jpg', { type: 'image/jpeg' })
     const formData = new FormData()
     formData.append('image', file)
     const res = await apiApp.request('/api/purchases/scan', { method: 'POST', body: formData }, env)
@@ -593,7 +601,7 @@ describe('api routes', () => {
   it('/api/purchases/scan rejects missing AI config', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.first = vi.fn().mockResolvedValue({ household_id: 'h1' })
-    const file = new File(['x'], 'receipt.jpg', { type: 'image/jpeg' })
+    const file = new File([JPEG_BYTES], 'receipt.jpg', { type: 'image/jpeg' })
     const formData = new FormData()
     formData.append('image', file)
     const res = await apiApp.request('/api/purchases/scan', { method: 'POST', body: formData }, env)
@@ -1262,6 +1270,42 @@ describe('api routes more branches', () => {
     formData.append('image', file)
     const res = await apiApp.request('/api/purchases/scan', { method: 'POST', body: formData }, env)
     expect(res.status).toBe(400)
+  })
+
+  it('/api/purchases/scan rejects text bytes named .png with a friendly 400 and stores nothing (#606)', async () => {
+    // The QA-F1 repro: plain-text bytes renamed reject.png, declared image/png.
+    // The sniff must 400 BEFORE the storage put (no persisted imageKey) and
+    // before any provider call.
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi
+      .fn()
+      .mockResolvedValue({ ai_provider: 'gemini', encrypted_ai_key: ENCRYPTED_KEY })
+    const file = new File([TXT_BYTES], 'reject.png', { type: 'image/png' })
+    const formData = new FormData()
+    formData.append('image', file)
+    const res = await apiApp.request('/api/purchases/scan', { method: 'POST', body: formData }, env)
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toContain('does not look like a valid image')
+    expect(env.RECEIPTS.put).not.toHaveBeenCalled()
+    // No provider resolution either: the read that resolveAccess would make
+    // never happens for a rejected file.
+    expect(env.DB.first).not.toHaveBeenCalled()
+  })
+
+  it('/api/purchases/scan still stores and scans a real png (#606 sniff happy path)', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi.fn().mockResolvedValue(aiConfiguredRow({ capability: 'vision' }))
+    env.DB.run = vi.fn().mockResolvedValue(undefined)
+    const png = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    ])
+    const file = new File([png], 'receipt.png', { type: 'image/png' })
+    const formData = new FormData()
+    formData.append('image', file)
+    const res = await apiApp.request('/api/purchases/scan', { method: 'POST', body: formData }, env)
+    expect(res.status).toBe(200)
+    expect(env.RECEIPTS.put).toHaveBeenCalledTimes(1)
   })
 })
 

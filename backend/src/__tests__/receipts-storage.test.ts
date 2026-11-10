@@ -66,7 +66,12 @@ function createEnv(overrides = {}) {
 }
 
 function scanRequest() {
-  const file = new File(['x'], 'receipt.jpg', { type: 'image/jpeg' })
+  // #606: the route byte-sniffs uploads, so the fixture carries real JPEG
+  // leading bytes instead of ASCII that would be rejected as non-image.
+  const jpegBytes = new Uint8Array([
+    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+  ])
+  const file = new File([jpegBytes], 'receipt.jpg', { type: 'image/jpeg' })
   const formData = new FormData()
   formData.append('image', file)
   return { method: 'POST', body: formData }
@@ -97,7 +102,9 @@ describe('receipts storage port (#503)', () => {
     const stored = bucket.objects.get(body.imageKey)
     expect(stored).toBeDefined()
     expect(stored?.httpMetadata?.contentType).toBe('image/jpeg')
-    expect([...(stored?.bytes ?? [])]).toEqual([0x78])
+    expect([...(stored?.bytes ?? [])]).toEqual([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+    ])
   })
 
   it('GET streams the stored bytes back with the stored content type', async () => {

@@ -222,8 +222,13 @@ function receiptBucket() {
 }
 
 function scanRequest(): RequestInit {
+  // #606: the route byte-sniffs uploads, so the fixture carries real JPEG
+  // leading bytes instead of ASCII that would be rejected as non-image.
+  const jpegBytes = new Uint8Array([
+    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+  ])
   const formData = new FormData()
-  formData.append('image', new File(['fake-jpeg-bytes'], 'receipt.jpg', { type: 'image/jpeg' }))
+  formData.append('image', new File([jpegBytes], 'receipt.jpg', { type: 'image/jpeg' }))
   return { method: 'POST', body: formData }
 }
 
@@ -462,6 +467,23 @@ describe('usage attribution (#523 P4)', () => {
         output_tokens: 50,
       }),
     ])
+  })
+
+  it('a failed scan answers a friendly 502 without the provider payload (#606)', async () => {
+    // wire.ts embeds the provider's response body in the adapter error (the
+    // QA finding: that JSON reached the client verbatim). The route must log
+    // it server-side and hand the client a generic actionable message.
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    providerMock(() => failedAnswer(500))
+    const res = await request('/api/purchases/scan', scanRequest(), OWNER)
+    expect(res.status).toBe(502)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toContain('AI scan failed')
+    // The raw upstream text and the adapter's message shape stay server-side.
+    expect(body.error).not.toContain('upstream is down')
+    expect(body.error).not.toContain('request failed')
+    expect(consoleSpy).toHaveBeenCalledTimes(1)
+    consoleSpy.mockRestore()
   })
 
   it('the failed chat records the REASONING attempt (failure carries the bill)', async () => {

@@ -248,7 +248,12 @@ describe('/api/purchases/scan dateGuess prefills the household day (#554)', () =
 
     // TEST_MODE scan: the stub answer's date IS the dateGuess the review form
     // prefills — the purchase-date stamp source when the receipt shows none.
-    const file = new File(['x'], 'receipt.jpg', { type: 'image/jpeg' })
+    // #606: the route byte-sniffs uploads, so the fixture carries real JPEG
+    // leading bytes instead of ASCII that would be rejected as non-image.
+    const jpegBytes = new Uint8Array([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+    ])
+    const file = new File([jpegBytes], 'receipt.jpg', { type: 'image/jpeg' })
     const formData = new FormData()
     formData.append('image', file)
     const res = await apiApp.request(
