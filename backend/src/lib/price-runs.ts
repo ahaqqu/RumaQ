@@ -199,7 +199,7 @@ export type FailedRunStreak = {
  * and a `published` receipt with `accepted: 0` is an empty payload — the
  * all-stores-blocked night that published nothing.
  */
-export function publishedAnything(run: PriceRun): boolean {
+function publishedAnything(run: PriceRun): boolean {
   return run.publish?.mode === 'published' && (run.publish.accepted ?? 0) > 0
 }
 
