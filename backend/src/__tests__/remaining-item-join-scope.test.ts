@@ -182,12 +182,13 @@ describe('POST /api/ai/chat — the prompt inputs exclude foreign items (#548)',
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
     seedStock('s-own', 'h1', 'i-h1', { qty: 2, runOutDays: 2, expiryDate: tomorrow })
     seedStock('s-foreign', 'h1', 'i-h2', { qty: 1, runOutDays: 3, expiryDate: tomorrow })
-    // A purchase with one legit and one poisoned line, dated past the route's
-    // recent-purchases cutoff (as written, that read filters `p.date >=` seven
-    // days AHEAD — its cutoff, not this test's subject; the seed only makes
-    // the read return rows so the join's scoping is exercised).
-    const future = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-    seedPurchase('p-h1', 'h1', future, [
+    // A purchase with one legit and one poisoned line, dated inside the route's
+    // recent-purchases window (the last 30 household days, #560 — the seed
+    // date is not this test's subject; it only makes the read return rows so
+    // the join's scoping is exercised). The UTC today is never ahead of the
+    // WIB household today, so it always lands inside the window.
+    const today = new Date().toISOString().slice(0, 10)
+    seedPurchase('p-h1', 'h1', today, [
       { id: 'pi-own', itemId: 'i-h1' },
       { id: 'pi-foreign', itemId: 'i-h2' },
     ])

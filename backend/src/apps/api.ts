@@ -2904,6 +2904,15 @@ apiApp.post(
       // calendar, not the UTC calendar.
       const expiryCutoff = householdDayFrom(new Date(), 7)
 
+      // #560: the chat's "Recent purchases (last 30 days)" window is its own
+      // pair of household-day cutoffs — back 30 days (the plan-generate
+      // sinceDate idiom) through today. It once bound expiryCutoff (now + 7d):
+      // a forward window no purchase date could fall in, so the model never
+      // saw any recent purchase. The upper bound keeps future-dated rows out —
+      // a purchase dated ahead of today is not in the last 30 days either.
+      const recentCutoff = householdDayFrom(new Date(), -30)
+      const todayCutoff = householdDayFrom(new Date(), 0)
+
       const expiring = await c.env.DB.prepare(
         `SELECT i.name, s.qty, s.unit, s.expiry_date
            FROM stock s JOIN items i ON i.id = s.item_id AND i.household_id = ?
@@ -2924,10 +2933,10 @@ apiApp.post(
            JOIN purchases p ON p.id = pi.purchase_id
            JOIN items i ON i.id = pi.item_id AND i.household_id = ?
            LEFT JOIN stores s ON s.id = p.store_id
-          WHERE p.household_id = ? AND p.date >= ?
+          WHERE p.household_id = ? AND p.date >= ? AND p.date <= ?
           ORDER BY i.name`
       )
-        .bind(householdId, householdId, expiryCutoff)
+        .bind(householdId, householdId, recentCutoff, todayCutoff)
         .all<{ name: string; store_label: string | null }>()
 
       const activePlan = await c.env.DB.prepare(
