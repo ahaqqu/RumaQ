@@ -379,6 +379,8 @@
     "groundedFrom": "price from {{source}} brochure",
     "groundedUntil": "valid until {{date}}",
     "observedPrice": "Observed price {{price}}",
+    "perUnitEstimate": "{{price}}/{{unit}}",
+    "perUnitEstimateNoUnit": "{{price}} per unit",
     "planLeadNoKey": "Set up AI first, then it will create a shopping plan from items running low."
   },
   "prices": {

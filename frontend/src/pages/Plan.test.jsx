@@ -177,6 +177,61 @@ describe('Plan', () => {
     expect(container.textContent).not.toContain('plan.groundedFrom')
   })
 
+  it('shows the line estimate in the row cell so qty>1 rows reconcile with their header (#568)', () => {
+    const qtyTwoPlan = {
+      plans: [
+        {
+          ...mockActivePlan.plans[0],
+          items: [
+            {
+              ...mockActivePlan.plans[0].items[0],
+              item_name: 'Telur',
+              qty: 2,
+              unit: 'pcs',
+              price_estimate: 28000,
+            },
+          ],
+        },
+      ],
+    }
+    vi.mocked(usePlans).mockReturnValue({ data: qtyTwoPlan, isLoading: false })
+    const { container } = renderWithQuery(
+      React.createElement(Plan, { askAssistant: vi.fn(), setView: vi.fn() })
+    )
+    // #568: the row cell is the line estimate (estimate × qty = 56.000) — the
+    // same figure sumEstimates puts on the store header — with the per-unit
+    // basis labeled beneath it (Intl formats with a no-break space after Rp;
+    // the i18n mock returns raw keys).
+    expect(container.textContent).toContain('Rp\u00A056.000')
+    expect(container.textContent).toContain('plan.perUnitEstimate')
+  })
+
+  it('keeps qty=1 rows on the bare estimate with no per-unit label (#568)', () => {
+    const { container } = renderWithQuery(
+      React.createElement(Plan, { askAssistant: vi.fn(), setView: vi.fn() })
+    )
+    // qty 1: line estimate == per-unit estimate, so the secondary label would
+    // only duplicate the cell figure.
+    expect(container.textContent).toContain('Rp\u00A018.500')
+    expect(container.textContent).not.toContain('plan.perUnitEstimate')
+  })
+
+  it('labels the per-unit basis without a unit suffix on unitless rows (#568)', () => {
+    const noUnitPlan = {
+      plans: [
+        {
+          ...mockActivePlan.plans[0],
+          items: [{ ...mockActivePlan.plans[0].items[0], qty: 2, unit: null }],
+        },
+      ],
+    }
+    vi.mocked(usePlans).mockReturnValue({ data: noUnitPlan, isLoading: false })
+    const { container } = renderWithQuery(
+      React.createElement(Plan, { askAssistant: vi.fn(), setView: vi.fn() })
+    )
+    expect(container.textContent).toContain('plan.perUnitEstimateNoUnit')
+  })
+
   it('toggles checkbox on plan items', () => {
     const mutate = vi.fn()
     vi.mocked(useUpdatePlanItem).mockReturnValue({
@@ -307,6 +362,9 @@ describe('Plan', () => {
     // "Telur ×10 @ Rp 28.000" is Rp 280.000, not Rp 28.000 (Intl formats
     // with a no-break space after Rp).
     expect(container.textContent).toContain('Rp\u00A0280.000')
+    // #568: the draft row cell shows the same line estimate, with the
+    // per-unit basis labeled beneath it.
+    expect(container.textContent).toContain('plan.perUnitEstimate')
   })
 
   it('saves the viewed draft without regenerating', async () => {
