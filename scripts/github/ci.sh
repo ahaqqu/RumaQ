@@ -21,7 +21,7 @@ echo "=== CI: API client codegen check ==="
 # Regenerate the OpenAPI spec + typed client schema and fail on drift between
 # the backend routes and the committed frontend artifacts.
 bunx vp run api:codegen
-git diff --exit-code frontend/openapi.json frontend/src/lib/api-schema.d.ts
+git diff --exit-code frontend/openapi.json frontend/src/lib/api-client
 
 echo "=== CI: frontend tests ==="
 "$ROOT_DIR/scripts/test.sh" unit frontend --coverage

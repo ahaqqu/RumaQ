@@ -3,12 +3,13 @@ import { useMeQueryOptions } from './me'
 
 const { clientMock } = vi.hoisted(() => ({
   clientMock: {
-    GET: vi.fn(),
+    get: vi.fn(),
+    setConfig: vi.fn(),
   },
 }))
 
-vi.mock('openapi-fetch', () => ({
-  default: () => clientMock,
+vi.mock('../api-client/client.gen.js', () => ({
+  client: clientMock,
 }))
 
 // The response stub models the real fetch Response surface unwrap() reads —
@@ -25,7 +26,7 @@ const fail = (error, status = 500) => ({
 })
 
 beforeEach(() => {
-  clientMock.GET.mockReset()
+  clientMock.get.mockReset()
 })
 
 describe('me query', () => {
@@ -34,18 +35,18 @@ describe('me query', () => {
   })
 
   it('resolves to null on 401 so the logged-out state overwrites persisted cache', async () => {
-    clientMock.GET.mockResolvedValueOnce(fail({ error: 'Unauthorized' }, 401))
+    clientMock.get.mockResolvedValueOnce(fail({ error: 'Unauthorized' }, 401))
     await expect(useMeQueryOptions().queryFn()).resolves.toBeNull()
   })
 
   it('still throws on non-401 errors', async () => {
-    clientMock.GET.mockResolvedValueOnce(fail({ error: 'Server error' }, 500))
+    clientMock.get.mockResolvedValueOnce(fail({ error: 'Server error' }, 500))
     await expect(useMeQueryOptions().queryFn()).rejects.toThrow('Server error')
   })
 
   it('returns the user on success', async () => {
     const user = { user: { id: '1', email: 'a@b.com' } }
-    clientMock.GET.mockResolvedValueOnce(ok(user))
+    clientMock.get.mockResolvedValueOnce(ok(user))
     await expect(useMeQueryOptions().queryFn()).resolves.toEqual(user)
   })
 })
