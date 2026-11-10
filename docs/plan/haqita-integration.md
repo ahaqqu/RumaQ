@@ -262,6 +262,16 @@ Planned, in two parts:
   timer retries the next night (the systemd unit exits 0 and stays green);
   only a week of consecutive failures means the pipeline is actually broken. Catches
   every failure mode end-to-end (box down, timer off, scrape error, publish error).
+- **Consecutive failed-run signal (issue #536)**: the observation anchor above
+  cannot see a pipeline that _never_ publishes — `observationCount == 0` was a
+  deliberate skip ("go-live pending"), so a week of failed nights published
+  nothing and read as "no new prices yet". Both surfaces now read the same
+  backend derivation over `price_runs` (a run that failed AND published
+  nothing; a store-level red that still published is not counted) with one
+  threshold (3 consecutive runs): an advisory banner on the admin scraping
+  monitor (no action, no auto-disable) and a `check-price-freshness` branch
+  that runs **before** the zero-observation skip. Advisory only — nothing
+  changes pipeline state.
 - **Scraping monitor screen (milestone 5, folded into the frontend PR)**:
   the pipeline reports each run to the backend (`price_runs` table via an
   internal ingest endpoint: started/finished, exit code, per-store pages/items/errors,

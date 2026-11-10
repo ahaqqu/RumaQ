@@ -673,6 +673,68 @@ describe('GET /api/internal/prices/status', () => {
       latestObservedDate: '2026-10-25',
       latestScrapedAt: '2026-10-25T23:00:05Z',
       observationCount: 42,
+      // Issue #536: the probe also carries the consecutive failed-run read —
+      // no price_runs rows in this fixture, so nothing is failing.
+      failedStreak: { count: 0, threshold: 3, since: null, code: null },
+    })
+  })
+
+  // Issue #536: the failed-run branch of the freshness probe must work with
+  // ZERO observations (a pipeline that never publishes is exactly the case the
+  // observation-anchored branches cannot see). The read is the admin feed's
+  // derivation, so this pins the wiring, not the derivation.
+  it('carries the consecutive failed-run streak next to the zero-observation summary (#536)', async () => {
+    const failedRow = (startedAt: string) => ({
+      id: `run-${startedAt}`,
+      run_started_at: startedAt,
+      finished_at: startedAt,
+      exit_code: 2,
+      status: 'failed',
+      stage: 'match',
+      per_store: '{}',
+      match_stats: null,
+      publish_result: null,
+      index_version: null,
+      products_summary: null,
+      ai_usage: null,
+      ai_prompt_identity: null,
+      failures: JSON.stringify([
+        {
+          store: null,
+          code: 'embedding_unavailable',
+          message: 'embedding_quota: daily quota exhausted',
+        },
+      ]),
+      error: 'embedding_quota: daily quota exhausted',
+    })
+    const { db } = createFakeDb([
+      {
+        match: /FROM price_runs/,
+        rows: [
+          failedRow('2026-10-28T23:00:05Z'),
+          failedRow('2026-10-27T23:00:05Z'),
+          failedRow('2026-10-26T23:00:05Z'),
+        ],
+      },
+    ])
+
+    const res = await apiApp.request(
+      '/api/internal/prices/status',
+      { headers: { Authorization: 'Bearer secret-123' } },
+      createEnv(db, 'secret-123')
+    )
+
+    expect(res.status).toBe(200)
+    // No observations at all — the branch the script must reach anyway.
+    expect(await res.json()).toMatchObject({
+      observationCount: 0,
+      latestObservedDate: null,
+      failedStreak: {
+        count: 3,
+        threshold: 3,
+        since: '2026-10-26T23:00:05Z',
+        code: 'embedding_unavailable',
+      },
     })
   })
 })
