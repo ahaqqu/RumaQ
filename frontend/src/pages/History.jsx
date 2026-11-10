@@ -281,47 +281,70 @@ function Group({ g, monthLabel, fmtDate, t, formatRp, onReceiptClick }) {
         </td>
       </tr>
       {g.rows.map((p, _i) =>
-        p.items.map((it, j) => (
-          <tr key={p.id + it.id + j}>
-            {j === 0 ? (
-              <td
-                className="px-4 py-3 border-b border-border whitespace-nowrap"
-                rowSpan={p.items.length}
-              >
-                {fmtDate(p.date)}
-              </td>
-            ) : null}
-            <td className="px-4 py-3 border-b border-border">
-              {it.name || '—'}{' '}
-              <span className="text-text-muted">
-                · {it.qty}
-                {it.unit ? ` ${it.unit}` : ''}
-              </span>
-            </td>
-            <td className="px-4 py-3 border-b border-border">{p.store_label || '—'}</td>
-            <td className="px-4 py-3 border-b border-border text-right tabular-nums">
-              {it.price != null
-                ? formatRp(it.price)
-                : j === p.items.length - 1 && p.total != null
-                  ? formatRp(p.total)
-                  : // #518: a no-estimate check-off line (and any legacy row's
-                    // unknown total) renders blank, never a fake "Rp 0".
-                    ''}
-            </td>
-            <td className="px-4 py-3 border-b border-border">
-              {j === 0 && p.has_receipt ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onReceiptClick(p.id)}
-                  aria-label={t('history.receipt')}
+        p.items.map((it, j) => {
+          // #583: price is the UNIT price (#518) while the month header counts
+          // purchases.total = Σ COALESCE(line_total, price × qty) — so the cell
+          // shows the line's contribution to that total (line_total, or the
+          // same price × qty fallback the server formula uses) and keeps the
+          // per-unit figure labeled beneath it when the two differ. Mirrors
+          // the Plan row shape (#568). qty=1 rows are unchanged (the figures
+          // are equal).
+          const lineTotal =
+            it.line_total ?? (it.price != null ? Math.round(it.price * (it.qty || 1)) : null)
+          const showUnitPrice = lineTotal != null && it.price != null && lineTotal !== it.price
+          return (
+            <tr key={p.id + it.id + j}>
+              {j === 0 ? (
+                <td
+                  className="px-4 py-3 border-b border-border whitespace-nowrap"
+                  rowSpan={p.items.length}
                 >
-                  {t('history.receipt')}
-                </Button>
+                  {fmtDate(p.date)}
+                </td>
               ) : null}
-            </td>
-          </tr>
-        ))
+              <td className="px-4 py-3 border-b border-border">
+                {it.name || '—'}{' '}
+                <span className="text-text-muted">
+                  · {it.qty}
+                  {it.unit ? ` ${it.unit}` : ''}
+                </span>
+              </td>
+              <td className="px-4 py-3 border-b border-border">{p.store_label || '—'}</td>
+              <td className="px-4 py-3 border-b border-border text-right tabular-nums">
+                {lineTotal != null ? (
+                  <div className="flex flex-col items-end">
+                    <span>{formatRp(lineTotal)}</span>
+                    {showUnitPrice && (
+                      <span className="text-xs text-text-muted">
+                        {it.unit
+                          ? t('history.perUnit', { price: formatRp(it.price), unit: it.unit })
+                          : t('history.perUnitNoUnit', { price: formatRp(it.price) })}
+                      </span>
+                    )}
+                  </div>
+                ) : j === p.items.length - 1 && p.total != null ? (
+                  formatRp(p.total)
+                ) : (
+                  // #518: a no-estimate check-off line (and any legacy row's
+                  // unknown total) renders blank, never a fake "Rp 0".
+                  ''
+                )}
+              </td>
+              <td className="px-4 py-3 border-b border-border">
+                {j === 0 && p.has_receipt ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onReceiptClick(p.id)}
+                    aria-label={t('history.receipt')}
+                  >
+                    {t('history.receipt')}
+                  </Button>
+                ) : null}
+              </td>
+            </tr>
+          )
+        })
       )}
     </>
   )

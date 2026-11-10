@@ -140,6 +140,116 @@ describe('History', () => {
     expect(container.textContent).toContain('Milk')
   })
 
+  it('shows the line contribution in the price cell so qty>1 rows reconcile with the month header (#583)', () => {
+    // Mixed cart: 5 × Rp 13.000 + 1 × Rp 500 = Rp 65.500 month total. The
+    // Gula row must show the Rp 65.000 it contributed (not the Rp 13.000
+    // unit price), with the unit figure labeled beneath (formatRp follows
+    // the test setup's i18n language 'en' → 'IDR 65,000' (a no-break
+    // space after IDR; the i18n mock returns raw keys).
+    vi.mocked(useHistory).mockReturnValue({
+      data: {
+        purchases: [
+          {
+            id: 'p1',
+            store_id: 's1',
+            store_label: 'Indomaret',
+            date: '2026-07-15',
+            total: 65500,
+            receipt_image_key: null,
+            has_receipt: false,
+            created_at: '2026-07-15T00:00:00Z',
+            items: [
+              {
+                id: 'pi1',
+                item_id: 'i1',
+                name: 'Gula',
+                qty: 5,
+                unit: 'kg',
+                price: 13000,
+                line_total: 65000,
+              },
+              {
+                id: 'pi2',
+                item_id: 'i2',
+                name: 'Kantong',
+                qty: 1,
+                unit: null,
+                price: 500,
+                line_total: 500,
+              },
+            ],
+          },
+        ],
+        next_cursor: null,
+        month_totals: [{ month: '2026-07', count: 1, total: 65500 }],
+        avg_per_month: 65500,
+      },
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+    })
+    const { container } = renderWithProviders(
+      React.createElement(History, { askAssistant: vi.fn() })
+    )
+    expect(container.textContent).toContain('IDR\u00A065,000')
+    // The per-unit figure rides the labeled secondary line; the i18n mock
+    // returns the raw key, so the key is the pin.
+    expect(container.textContent).toContain('history.perUnit')
+    // qty=1 line: the contribution equals the unit price — no per-unit label.
+    expect(container.textContent).toContain('IDR\u00A0500')
+  })
+
+  it('falls back to price × qty for rows without line_total, matching the server total formula (#583)', () => {
+    // basePurchases carry no line_total: Milk is qty 2 @ Rp 18.500, so the
+    // cell shows the Rp 37.000 the month header counted for that line.
+    const { container } = renderWithProviders(
+      React.createElement(History, { askAssistant: vi.fn() })
+    )
+    expect(container.textContent).toContain('IDR\u00A037,000')
+    expect(container.textContent).toContain('history.perUnit')
+  })
+
+  it('keeps qty=1 rows on the bare price with no per-unit label (#583)', () => {
+    const { container } = renderWithProviders(
+      React.createElement(History, { askAssistant: vi.fn() })
+    )
+    // Bread is qty 1 @ Rp 20.000 with no line_total — contribution == price.
+    expect(container.textContent).toContain('IDR\u00A020,000')
+  })
+
+  it('keeps the legacy last-line total rendering on no-estimate lines (#518/#583)', () => {
+    vi.mocked(useHistory).mockReturnValue({
+      data: {
+        purchases: [
+          {
+            id: 'p1',
+            store_id: null,
+            store_label: null,
+            date: '2026-07-15',
+            total: 25000,
+            receipt_image_key: null,
+            has_receipt: false,
+            created_at: '2026-07-15T00:00:00Z',
+            items: [{ id: 'pi1', item_id: null, name: null, qty: 1, unit: null, price: null }],
+          },
+        ],
+        next_cursor: null,
+        month_totals: [{ month: '2026-07', count: 1, total: 25000 }],
+        avg_per_month: 25000,
+      },
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+    })
+    const { container } = renderWithProviders(
+      React.createElement(History, { askAssistant: vi.fn() })
+    )
+    // No price, no line_total: the single (last) line renders the purchase
+    // total, never a fake "Rp 0".
+    expect(container.textContent).toContain('IDR\u00A025,000')
+    expect(container.textContent).not.toContain('history.perUnit')
+  })
+
   it('renders make plan button that calls askAssistant', () => {
     const askAssistant = vi.fn()
     const { container } = renderWithProviders(React.createElement(History, { askAssistant }))

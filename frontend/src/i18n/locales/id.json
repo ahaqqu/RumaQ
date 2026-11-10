@@ -561,6 +561,8 @@
       "Nov",
       "Des"
     ],
+    "perUnit": "{{price}}/{{unit}}",
+    "perUnitNoUnit": "{{price}} per satuan",
     "patternDetected": "Pola terdeteksi:",
     "patternText": "Susu cair dan roti dibeli tiap 7 hari dari Indomaret. Asisten bisa mengingatkan sebelum habis.",
     "makePlan": "Buat rencana",
