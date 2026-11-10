@@ -172,4 +172,56 @@ describe('AdminPrices i18n (issue #463)', () => {
     expect(id.monitor.verifierPrompt).toBe('Prompt verifier v{{version}} · {{sha}}…')
     expect(id.monitor.verifierPrompt).not.toBe(en.monitor.verifierPrompt)
   })
+
+  // Issue #536: the consecutive-failed-run banner is the one surface that says
+  // "the pipeline is dead, not quiet" — it must render real copy (count, first
+  // dry night, typed class) and real Indonesian, not fall back to a raw key.
+  it('renders the failed-run streak banner in real copy', () => {
+    const since = new Date(Date.now() - 73 * 3_600_000).toISOString()
+    const failedNight = (startedAt) => ({
+      ...v2Run,
+      status: 'failed',
+      exitCode: 2,
+      stage: 'match',
+      match: null,
+      publish: null,
+      failures: [
+        {
+          store: null,
+          code: 'embedding_unavailable',
+          message: 'embedding_quota: daily quota exhausted',
+        },
+      ],
+      error: 'embedding_quota: daily quota exhausted',
+      runStartedAt: startedAt,
+      finishedAt: startedAt,
+    })
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [failedNight(since), failedNight(since), failedNight(since)],
+        lastSuccessAt: recentSuccess,
+        failedStreak: { count: 3, threshold: 3, since, code: 'embedding_unavailable' },
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    const banner = container.querySelector('[role="status"]')
+    expect(banner).toBeTruthy()
+    expect(banner.textContent).toContain('3 consecutive failed runs — nothing published since')
+    expect(banner.textContent).toContain('Last failure: embedding_unavailable')
+    expect(banner.textContent).toContain('Advisory only')
+    // Advisory means advisory: the banner has no control.
+    expect(banner.querySelector('button')).toBeNull()
+  })
+
+  it('carries the Indonesian failed-run streak copy, not an English copy', () => {
+    expect(id.monitor.failedStreak).toBe(
+      '{{count}} run gagal beruntun — tidak ada harga terbit sejak {{since}}'
+    )
+    expect(id.monitor.failedStreakCode).toBe('Kegagalan terakhir: {{code}}')
+    for (const key of ['failedStreak', 'failedStreakCode', 'failedStreakHint']) {
+      expect(id.monitor[key], `monitor.${key} is untranslated`).not.toBe(en.monitor[key])
+    }
+  })
 })

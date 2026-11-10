@@ -37,6 +37,49 @@ function ageHours(iso) {
   return (Date.now() - new Date(iso).getTime()) / 3_600_000
 }
 
+// Issue #536: a pipeline that fails every night and publishes nothing used to
+// look exactly like "no new prices yet" — the nightly unit stays green by
+// design and the freshness gate is anchored to the latest observation, which
+// never moves. The backend derives the streak from the stored run reports and
+// ships the threshold with it, so this renders that decision instead of
+// re-deciding it (a JS constant here would drift from the probe's).
+//
+// Advisory only: no action, no mutation, nothing that disables a pipeline.
+// It appears at >= threshold and disappears as soon as a run publishes prices
+// again — the count resets to 0, so there is no "clear" button to get wrong.
+function FailedRunStreakBanner({ streak }) {
+  const { t, i18n } = useTranslation()
+  // An older Worker omits the field entirely; a live pipeline reports 0.
+  if (!streak || streak.count === 0 || streak.count < streak.threshold) return null
+  return (
+    <Panel
+      className="p-4 flex gap-4 items-start mb-4 bg-danger-soft border-danger-border"
+      role="status"
+    >
+      <div className="text-danger mt-0.5">
+        <IconWarning size={22} />
+      </div>
+      <div className="flex-1 text-sm">
+        <strong>
+          {t('monitor.failedStreak', {
+            count: streak.count,
+            since: streak.since ? formatClock(streak.since, i18n.language) : '—',
+          })}
+        </strong>
+        {/* The typed class (#537) names WHY the run died — a quota outage
+            reads `embedding_unavailable` here instead of "unknown". Rows
+            recorded before the field existed render no second line. */}
+        {streak.code && (
+          <div className="text-danger text-xs mt-0.5">
+            {t('monitor.failedStreakCode', { code: streak.code })}
+          </div>
+        )}
+        <div className="text-text-muted text-xs mt-0.5">{t('monitor.failedStreakHint')}</div>
+      </div>
+    </Panel>
+  )
+}
+
 function LastSuccessCard({ lastSuccessAt }) {
   const { t, i18n } = useTranslation()
   if (!lastSuccessAt) {
@@ -364,6 +407,7 @@ export function AdminPrices() {
         </Panel>
       ) : (
         <>
+          <FailedRunStreakBanner streak={data.failedStreak} />
           <LastSuccessCard lastSuccessAt={data.lastSuccessAt} />
           <Panel>
             <PanelHead className="!py-4">

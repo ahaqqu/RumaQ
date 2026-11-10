@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vite-plus/test'
 import { parse, safeParse } from 'valibot'
 import { runReportSchema, runVerifierPromptSchema, RUN_FAILURES_LIMIT } from '@rumaq/contract'
-import { recordRunReport, listPriceRuns } from '../lib/price-runs.js'
+import {
+  recordRunReport,
+  listPriceRuns,
+  summarizeFailedRunStreak,
+  isFailedWithoutPublish,
+  FAILED_RUN_STREAK_THRESHOLD,
+  type PriceRun,
+} from '../lib/price-runs.js'
 import { apiApp } from '../apps/api.js'
 import { createDb } from './support/d1-sqlite.js'
 import promptReport from '../../../contract/fixtures/valid/run-report-ai-prompt.json'
@@ -912,5 +919,250 @@ describe('verifier prompt identity (pipeline #83)', () => {
     const feed = await listPriceRuns(d1)
     expect(feed.runs).toHaveLength(1)
     expect(feed.runs[0]!.aiPromptIdentity).toEqual(v1)
+  })
+})
+
+// Issue #536: a pipeline that fails every night and publishes nothing used to
+// look exactly like "no new prices yet" — the reports carried status:'failed'
+// plus a typed failure, the nightly unit stayed green by design, and the
+// freshness gate is anchored to the latest observation (which never moves when
+// nothing is published). The alarm shape is "failed AND published nothing":
+// the receipt is the stored proof of landing, so a store-level red that still
+// published prices is never a dead pipeline.
+describe('consecutive failed runs (issue #536)', () => {
+  /** The run-level abort a quota outage produces (contract #537). */
+  const quotaFailure = {
+    store: null,
+    code: 'embedding_unavailable' as const,
+    message: 'embedding_quota: daily quota exhausted for the embedding model chain',
+  }
+
+  /** A single store's red — the run published the other stores' prices. */
+  const storeFailure = {
+    store: 'superindo',
+    code: 'ocr_failed' as const,
+    message: 'ocr_failed: page 2 did not OCR',
+  }
+
+  const published = { mode: 'published' as const, accepted: 12, skipped: 0 }
+
+  function priceRun(over: Partial<PriceRun> = {}): PriceRun {
+    return {
+      id: 'run-1',
+      runStartedAt: '2026-10-26T23:00:05Z',
+      finishedAt: '2026-10-26T23:04:11Z',
+      exitCode: 2,
+      status: 'failed',
+      stage: 'match',
+      perStore: {},
+      match: null,
+      publish: null,
+      indexVersion: null,
+      products: null,
+      ai: null,
+      aiPromptIdentity: null,
+      failures: [quotaFailure],
+      error: quotaFailure.message,
+      ...over,
+    }
+  }
+
+  it('reads zero on an empty feed and on a newest run that published or succeeded', () => {
+    expect(summarizeFailedRunStreak([])).toEqual({
+      count: 0,
+      threshold: FAILED_RUN_STREAK_THRESHOLD,
+      since: null,
+      code: null,
+    })
+    // A success at the head ends the walk.
+    expect(
+      summarizeFailedRunStreak([priceRun({ status: 'success', exitCode: 0, error: null })])
+    ).toMatchObject({ count: 0, since: null, code: null })
+    // So does a FAILED run that still published prices (a store-level red).
+    expect(
+      summarizeFailedRunStreak([
+        priceRun({ publish: published, failures: [storeFailure], error: storeFailure.message }),
+      ])
+    ).toMatchObject({ count: 0, since: null, code: null })
+  })
+
+  it('counts a single dry night as a streak of one', () => {
+    expect(summarizeFailedRunStreak([priceRun({ runStartedAt: '2026-10-26T23:00:05Z' })])).toEqual({
+      count: 1,
+      threshold: FAILED_RUN_STREAK_THRESHOLD,
+      since: '2026-10-26T23:00:05Z',
+      code: 'embedding_unavailable',
+    })
+  })
+
+  it('counts N consecutive dry nights, oldest first for `since`', () => {
+    const runs = [
+      priceRun({ runStartedAt: '2026-10-28T23:00:05Z' }),
+      priceRun({ runStartedAt: '2026-10-27T23:00:05Z' }),
+      priceRun({ runStartedAt: '2026-10-26T23:00:05Z' }),
+      priceRun({ runStartedAt: '2026-10-25T23:00:05Z', status: 'success', exitCode: 0 }),
+    ]
+    expect(summarizeFailedRunStreak(runs)).toMatchObject({
+      count: 3,
+      // The first night nothing landed — not the newest failure.
+      since: '2026-10-26T23:00:05Z',
+      code: 'embedding_unavailable',
+    })
+    // A custom threshold travels with the read so consumers cannot disagree.
+    expect(summarizeFailedRunStreak(runs, 7).threshold).toBe(7)
+  })
+
+  it('stops at a published-but-failed night instead of extending the streak', () => {
+    // Newest two are dry, the third published prices, the fourth is dry —
+    // the streak is 2: landing prices at all breaks it.
+    const runs = [
+      priceRun({ runStartedAt: '2026-10-29T23:00:05Z' }),
+      priceRun({ runStartedAt: '2026-10-28T23:00:05Z' }),
+      priceRun({
+        runStartedAt: '2026-10-27T23:00:05Z',
+        publish: published,
+        failures: [storeFailure],
+        error: storeFailure.message,
+      }),
+      priceRun({ runStartedAt: '2026-10-26T23:00:05Z' }),
+    ]
+    expect(summarizeFailedRunStreak(runs)).toMatchObject({
+      count: 2,
+      since: '2026-10-28T23:00:05Z',
+    })
+  })
+
+  it('treats a published receipt with zero accepted as a dry night (all stores blocked)', () => {
+    // The pipeline POSTs an empty payload when every store was blocked — the
+    // receipt says `published`, but nothing landed.
+    const emptyPublish = priceRun({
+      publish: { mode: 'published', accepted: 0, skipped: 0 },
+      failures: null,
+      error: 'every store was blocked by a bot challenge — nothing published',
+    })
+    expect(isFailedWithoutPublish(emptyPublish)).toBe(true)
+    expect(summarizeFailedRunStreak([emptyPublish]).count).toBe(1)
+  })
+
+  it('prefers the run-level code and falls back to the per-store one', () => {
+    const mixed = priceRun({ failures: [storeFailure, quotaFailure] })
+    expect(summarizeFailedRunStreak([mixed]).code).toBe('embedding_unavailable')
+    const storeOnly = priceRun({
+      failures: [storeFailure],
+      error: 'Store failure(s): superindo: page 2 did not OCR',
+    })
+    expect(summarizeFailedRunStreak([storeOnly]).code).toBe('ocr_failed')
+    // Rows recorded before #537 carry no typed failure — the count still works
+    // and the banner falls back to the free-text error.
+    expect(summarizeFailedRunStreak([priceRun({ failures: null })]).code).toBeNull()
+  })
+
+  it('reads the streak off listPriceRuns, the admin feed the monitor renders', async () => {
+    const row = (startedAt: string, status: string, publish: unknown, failures: unknown) => ({
+      id: `run-${startedAt}`,
+      run_started_at: startedAt,
+      finished_at: startedAt,
+      exit_code: status === 'success' ? 0 : 1,
+      status,
+      stage: 'done',
+      per_store: JSON.stringify({}),
+      match_stats: null,
+      publish_result: publish === null ? null : JSON.stringify(publish),
+      index_version: null,
+      products_summary: null,
+      ai_usage: null,
+      ai_prompt_identity: null,
+      failures: failures === null ? null : JSON.stringify(failures),
+      error: null,
+    })
+    const { db } = createFakeDb([
+      {
+        match: /FROM price_runs/,
+        rows: [
+          row('2026-10-28T23:00:05Z', 'failed', null, [quotaFailure]),
+          row('2026-10-27T23:00:05Z', 'failed', null, [quotaFailure]),
+          // Published, so the streak ends here.
+          row('2026-10-26T23:00:05Z', 'failed', published, [storeFailure]),
+        ],
+      },
+    ])
+    const feed = await listPriceRuns(db)
+    expect(feed.failedStreak).toEqual({
+      count: 2,
+      threshold: FAILED_RUN_STREAK_THRESHOLD,
+      since: '2026-10-27T23:00:05Z',
+      code: 'embedding_unavailable',
+    })
+  })
+
+  it('derives a quota streak end-to-end from stored reports (the real route)', async () => {
+    const { d1 } = createDb()
+    const post = (report: unknown) =>
+      apiApp.request(
+        '/api/internal/ingest/runs',
+        {
+          method: 'POST',
+          body: JSON.stringify(report),
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer s3cret' },
+        },
+        { HAQITA_INGEST_SECRET: 's3cret', DB: d1 } as never
+      )
+
+    // Three failed nights that published nothing: the exact shape a quota
+    // outage leaves in price_runs (status, error, typed failures).
+    for (const day of ['2026-10-28', '2026-10-27', '2026-10-26']) {
+      const res = await post({
+        ...sampleReport(),
+        runStartedAt: `${day}T23:00:05Z`,
+        finishedAt: `${day}T23:04:11Z`,
+        exitCode: 2,
+        status: 'failed',
+        stage: 'match',
+        match: null,
+        publish: null,
+        perStore: {},
+        failures: [quotaFailure],
+        error: quotaFailure.message,
+      })
+      expect(res.status).toBe(200)
+    }
+
+    const feed = await listPriceRuns(d1)
+    expect(feed.failedStreak).toMatchObject({
+      count: 3,
+      threshold: FAILED_RUN_STREAK_THRESHOLD,
+      since: '2026-10-26T23:00:05Z',
+      code: 'embedding_unavailable',
+    })
+    // The threshold the alarm fires at is reached — this is the state the
+    // banner renders and the freshness probe fails on.
+    expect(feed.failedStreak.count).toBeGreaterThanOrEqual(feed.failedStreak.threshold)
+
+    // Then a night where one store failed but the rest published: the
+    // pipeline is alive again, so the streak is gone (not merely shorter).
+    const publishedNight = {
+      ...sampleReport(),
+      runStartedAt: '2026-10-29T23:00:05Z',
+      finishedAt: '2026-10-29T23:04:11Z',
+      exitCode: 1,
+      status: 'failed',
+      perStore: {
+        superindo: {
+          ...sampleReport().perStore['superindo'],
+          error: storeFailure.message,
+          failure: storeFailure,
+        },
+      },
+      publish: { mode: 'published', accepted: 12, skipped: 0 },
+      failures: [storeFailure],
+      error: 'Store failure(s): superindo: page 2 did not OCR',
+    }
+    expect((await post(publishedNight)).status).toBe(200)
+    expect((await listPriceRuns(d1)).failedStreak).toEqual({
+      count: 0,
+      threshold: FAILED_RUN_STREAK_THRESHOLD,
+      since: null,
+      code: null,
+    })
   })
 })

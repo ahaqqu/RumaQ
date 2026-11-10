@@ -11,11 +11,26 @@ set -euo pipefail
 # issue then covers scraping outages end-to-end (box down, timer off,
 # scrape error, publish error).
 #
-# Two deliberate no-op exits so the check only alerts once it can
-# mean something:
-#   - HAQITA_INGEST_SECRET unset → the GitHub secret is not
-#     configured yet (post-merge, pre-go-live window).
-#   - zero observations → the first live ingest has not happened yet.
+# Two branches, because "no new prices" has two shapes:
+#   1. STALE — the latest observation is older than MAX_AGE_HOURS
+#      (default 7 days). A single failed nightly run is NOT down: the
+#      scraper logs it (journal + status.json) and the timer retries the
+#      next night (the systemd unit stays green). Only a week of no data at
+#      all means the pipeline is broken.
+#   2. CONSECUTIVE FAILED RUNS (issue #536) — the runs themselves report
+#      failure and published nothing, N times in a row. This branch runs
+#      BEFORE the zero-observation skip below, because a pipeline that never
+#      publishes has no observation to age out: branch 1 is silently disarmed
+#      exactly when the pipeline is dead. The Worker derives the streak from
+#      the stored run reports (a run that failed but still published prices is
+#      not a failure here — one blocked store is not a dead pipeline) and
+#      ships its threshold with the read; PRICE_FAILED_RUNS overrides it.
+#
+# Deliberate no-op exits so the check only alerts once it can mean something:
+#   - HAQITA_INGEST_SECRET unset → the GitHub secret is not configured yet
+#     (post-merge, pre-go-live window).
+#   - zero observations AND no failed-run streak → the first live ingest has
+#     not happened yet.
 # Everything else that cannot be interpreted — a missing/renamed field,
 # an inconsistent shape, transport or auth failure — fails the step: the
 # alert must never be silently disarmed.
@@ -25,11 +40,12 @@ set -euo pipefail
 #   RUMAQ_PROD_URL        default https://rumaq.ahaqqu.com
 #   PRICE_STALE_HOURS     default 168 (7 days) — the service-down threshold,
 #                         measured from the end of the latest observation's
-#                         date. A single failed nightly run is NOT down: the
-#                         scraper logs it (journal + status.json) and the
-#                         timer retries the next night (the systemd unit
-#                         stays green). Only 7 consecutive failed nights — a
-#                         week of no data — means the pipeline is broken.
+#                         date (branch 1).
+#   PRICE_FAILED_RUNS     default: the Worker's failedStreak.threshold
+#                         (currently 3) — the consecutive failed-run threshold
+#                         (branch 2). The default follows the backend so the
+#                         admin banner and this alert cannot disagree about
+#                         what "dead" means.
 # ============================================================
 
 BASE_URL="${RUMAQ_PROD_URL:-https://rumaq.ahaqqu.com}"
@@ -53,6 +69,49 @@ fi
 
 count="$(printf '%s' "$status" | jq -r '.observationCount')"
 latest="$(printf '%s' "$status" | jq -r '.latestObservedDate')"
+
+# ---- Branch 2 (issue #536): consecutive failed runs ---------------------
+# BEFORE the zero-observation skip: a dead pipeline that never published has
+# observationCount 0, which must not read as "go-live pending". Shape-checked
+# like every other field — a renamed/absent streak is a disarm, not a zero.
+if ! printf '%s' "$status" | jq -e '.failedStreak | objects' >/dev/null 2>&1; then
+  echo "price-freshness: unexpected status response (no failedStreak object) — failing" >&2
+  exit 1
+fi
+if ! printf '%s' "$status" | jq -e '.failedStreak.count | numbers' >/dev/null 2>&1; then
+  echo "price-freshness: unexpected status response (failedStreak.count is not a number) — failing" >&2
+  exit 1
+fi
+if ! printf '%s' "$status" | jq -e '.failedStreak.threshold | numbers' >/dev/null 2>&1; then
+  echo "price-freshness: unexpected status response (failedStreak.threshold is not a number) — failing" >&2
+  exit 1
+fi
+
+failed_count="$(printf '%s' "$status" | jq -r '.failedStreak.count')"
+failed_max="${PRICE_FAILED_RUNS:-$(printf '%s' "$status" | jq -r '.failedStreak.threshold')}"
+
+# An uninterpretable number must fail, never fall through to "ok": inside an
+# `if`, a non-numeric `[ -ge ]` is a test error (non-zero), which would read
+# as "no streak" and disarm the alert.
+case "$failed_count" in
+  '' | *[!0-9]*)
+    echo "price-freshness: cannot interpret failedStreak.count '${failed_count}' — failing" >&2
+    exit 1
+    ;;
+esac
+case "$failed_max" in
+  '' | *[!0-9]*)
+    echo "price-freshness: cannot interpret the failed-run threshold '${failed_max}' (PRICE_FAILED_RUNS) — failing" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$failed_count" -ge "$failed_max" ]; then
+  since="$(printf '%s' "$status" | jq -r '.failedStreak.since // "unknown"')"
+  code="$(printf '%s' "$status" | jq -r '.failedStreak.code // "unclassified"')"
+  echo "price-freshness: FAILING — ${failed_count} consecutive failed runs (nothing published since ${since}; last failure: ${code}; alert at ${failed_max})" >&2
+  exit 1
+fi
 
 # Empty table: exactly what the backend returns before the first live ingest.
 if [ "$count" -eq 0 ] && [ "$latest" = "null" ]; then

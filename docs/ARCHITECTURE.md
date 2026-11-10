@@ -88,13 +88,15 @@ rumaq/
 │   │   ├── ci.sh
 │   │   ├── cleanup-branch.sh
 │   │   ├── smoke.sh
-│   │   ├── check-price-freshness.sh  # Smoke staleness gate for the nightly scrape
+│   │   ├── check-price-freshness.sh  # Smoke gate: stale prices + consecutive failed runs
 │   │   ├── test-automation.sh
 │   │   └── trigger-smoke.sh
 │   ├── style.sh            # Code formatting
 │   ├── test/               # Test runner scripts
 │   │   ├── automation-live.sh
 │   │   ├── automation-local.sh
+│   │   ├── deploy-secrets.sh
+│   │   ├── price-freshness.sh  # Offline guard for the freshness probe (#536)
 │   │   └── unit.sh
 │   └── test.sh             # Single entrypoint for all tests
 ├── automation/             # All test automation
@@ -382,7 +384,7 @@ Every completed AI call is recorded as one row in `ai_usage_events` (per-call gr
 
 Grocery scraping moved to the private [RumaQ-pipeline](https://github.com/ahaqqu/RumaQ-pipeline) repo (moved from this repo 2026-11-03, ahaqqu/RumaQ#376): per-store plugins scrape brochure pages and catalogs on the VPS, OCR/match them, and publish here on the nightly timer (23:00 UTC = 06:00 WIB).
 
-RumaQ exposes only the authenticated ingest surface — `/api/internal/*` (`backend/src/lib/ingest.ts`, bearer `HAQITA_INGEST_SECRET`): price ingest, run reports, the Scrape Now command queue, and `GET /api/internal/prices/status` (the freshness gate reads it). The publish contract is the shared Valibot schema in the `@rumaq/contract` workspace (`contract/src/index.ts`); the pipeline repo vendors a pinned copy and syncs it via `./scripts/sync-contract.sh <sha>` there. The product-level explanation is [PRODUCT_METADATA.md](PRODUCT_METADATA.md); the implementation plan is [pipeline-contract.md](plan/pipeline-contract.md). No source-specific techniques, URLs or proxies are documented here.
+RumaQ exposes only the authenticated ingest surface — `/api/internal/*` (`backend/src/lib/ingest.ts`, bearer `HAQITA_INGEST_SECRET`): price ingest, run reports, the Scrape Now command queue, and `GET /api/internal/prices/status` (the freshness gate reads it: latest observation age plus the consecutive failed-run streak from `price_runs`, issue #536). The publish contract is the shared Valibot schema in the `@rumaq/contract` workspace (`contract/src/index.ts`); the pipeline repo vendors a pinned copy and syncs it via `./scripts/sync-contract.sh <sha>` there. The product-level explanation is [PRODUCT_METADATA.md](PRODUCT_METADATA.md); the implementation plan is [pipeline-contract.md](plan/pipeline-contract.md). No source-specific techniques, URLs or proxies are documented here.
 
 Host configuration (units, timer, deploy contract, root-only env file) lives in [`ahaqqu/vps`](https://github.com/ahaqqu/vps) `rumaq/`; the pipeline repo builds and ships the box artifact (`./scripts/deploy.sh groceries vps` there). The monitor, Scrape Now queue, price explorer and smoke/freshness checks are app-side in this repo and unchanged.
 

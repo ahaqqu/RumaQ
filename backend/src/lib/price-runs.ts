@@ -144,9 +144,112 @@ function parseJson<T>(value: string | null): T | null {
   }
 }
 
+/**
+ * Issue #536: how many consecutive DRY failures it takes to call the pipeline
+ * dead. One dry run is a transient (a quota night, a box network blip — the
+ * timer retries tomorrow); two is suspicious but still within what a single
+ * bad upstream day explains. Three consecutive runs that published nothing
+ * (~72h without a new price) is the smallest streak no single transient can
+ * explain, and it is ~4 nights before the 7-day (168h) staleness gate whose
+ * anchor — the latest observation — is exactly what a never-publishing
+ * pipeline does not have.
+ *
+ * Advisory only: it decides when a banner and the freshness probe fire, never
+ * whether the pipeline runs.
+ */
+export const FAILED_RUN_STREAK_THRESHOLD = 3
+
+/**
+ * The consecutive-failure read the monitor banner and the freshness probe
+ * share (issue #536). Derived from stored run reports only — no new column,
+ * no new ingest field.
+ *
+ * The alarm shape is "a run that failed and published nothing" (see
+ * `isFailedWithoutPublish`), not "a run that carried a run-level
+ * `failure.code`". The receipt is the stored proof of landing: a night where
+ * one store failed but the rest published prices is NOT a dead pipeline
+ * (that is a single blocked/failed store, and the freshness probe must not
+ * page for it), while an all-stores-failed or all-stores-blocked night has
+ * only per-store entries and is just as dead as a quota abort. The typed code
+ * is only the banner's label (run-level entry preferred), never the trigger.
+ */
+export type FailedRunStreak = {
+  /** Dry failures at the head of the feed. 0 means the newest run published
+   * or succeeded. Bounded by the feed window (`listPriceRuns`' limit): a
+   * longer streak is counted as the window size, which is far past the
+   * threshold either way. */
+  count: number
+  /** The alarm threshold this count is judged against (issue #536). */
+  threshold: number
+  /** `runStartedAt` of the OLDEST dry run in the streak — the first run that
+   * published nothing; null at count 0. */
+  since: string | null
+  /** Typed code of the NEWEST dry run's failure: a run-level entry
+   * (`store: null` — the quota/publish abort classes) when it has one, else
+   * the first entry. Null on rows recorded before #537 and on runs whose
+   * failure was never typed (the free-text `error` is the monitor's fallback,
+   * as it always was). */
+  code: RunFailure['code'] | null
+}
+
+/**
+ * Did this run land any prices? The publish receipt is the only stored proof:
+ * `accepted > 0` on a `published` receipt. The pipeline omits the whole
+ * `publish` block when nothing was posted (`mode: 'dry-run'` never reports),
+ * and a `published` receipt with `accepted: 0` is an empty payload — the
+ * all-stores-blocked night that published nothing.
+ */
+export function publishedAnything(run: PriceRun): boolean {
+  return run.publish?.mode === 'published' && (run.publish.accepted ?? 0) > 0
+}
+
+/**
+ * One night towards the streak (issue #536): the run failed AND published
+ * nothing. A failed run that still published prices breaks the streak instead
+ * of extending it — it is a store-level red, not a dead pipeline.
+ */
+export function isFailedWithoutPublish(run: PriceRun): boolean {
+  return run.status === 'failed' && !publishedAnything(run)
+}
+
+/**
+ * Walk the feed newest-first and count the dry failures at its head
+ * (issue #536). The walk stops at the first run that published anything or
+ * succeeded — "consecutive" is over the runs as stored, so a replay (same
+ * `runStartedAt`) cannot double-count: the upsert keeps one row per run.
+ *
+ * Every stored live run counts, including a queue-driven `Scrape Now` run —
+ * the report schema has no origin field, and a manual scrape that fails
+ * without publishing anything is the same pipeline failure. Those runs are
+ * rare and each one is real, so the threshold absorbs them.
+ */
+export function summarizeFailedRunStreak(
+  runs: PriceRun[],
+  threshold = FAILED_RUN_STREAK_THRESHOLD
+): FailedRunStreak {
+  let count = 0
+  while (count < runs.length && isFailedWithoutPublish(runs[count]!)) count += 1
+  return {
+    count,
+    threshold,
+    since: count > 0 ? runs[count - 1]!.runStartedAt : null,
+    code: count > 0 ? runFailureCode(runs[0]!) : null,
+  }
+}
+
+/** The typed class to put on the banner: the run-level entry wins, because a
+ * store-less code (`embedding_unavailable` / `publish_failed`) names what
+ * killed the whole run; otherwise the first entry is the closest thing. */
+function runFailureCode(run: PriceRun): RunFailure['code'] | null {
+  const failures = run.failures ?? []
+  return (failures.find((failure) => failure.store == null) ?? failures[0])?.code ?? null
+}
+
 export type PriceRunsFeed = {
   runs: PriceRun[]
   lastSuccessAt: string | null
+  /** Issue #536: the consecutive dry-failure read over `runs`. */
+  failedStreak: FailedRunStreak
 }
 
 export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRunsFeed> {
@@ -199,5 +302,8 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
     )?.last ??
     null
 
-  return { runs, lastSuccessAt }
+  // Issue #536: one derivation for both consumers — the admin monitor's banner
+  // and the freshness probe (which cannot read this feed itself: it holds the
+  // ingest secret, not an admin session).
+  return { runs, lastSuccessAt, failedStreak: summarizeFailedRunStreak(runs) }
 }

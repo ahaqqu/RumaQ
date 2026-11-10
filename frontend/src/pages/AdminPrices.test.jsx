@@ -71,6 +71,10 @@ const mockFeed = {
     },
   ],
   lastSuccessAt: recentSuccess,
+  // Issue #536: the backend ships the consecutive-failed-run read with the
+  // feed. A healthy pipeline (this fixture) reports 0 — below the threshold,
+  // so the banner renders nothing.
+  failedStreak: { count: 0, threshold: 3, since: null, code: null },
 }
 
 function createQueryClient() {
@@ -557,5 +561,118 @@ describe('AdminPrices', () => {
     // Version 0 is a real index version (the initial index), never "absent".
     expect(container.textContent).toContain('monitor.indexVersion')
     expect(container.textContent).toContain('monitor.productsSummary')
+  })
+})
+
+// Issue #536: a dead pipeline must not look quiet. The backend derives the
+// streak from the stored run reports (status + publish receipt + typed
+// failure) and ships the threshold with it; this page only decides whether to
+// render. The fixtures below are the state the backend actually returns for
+// each case, so a signal that cannot fire fails here.
+describe('AdminPrices — consecutive failed runs (issue #536)', () => {
+  /** The run-level abort a quota outage produces (contract #537). */
+  const quotaFailure = {
+    store: null,
+    code: 'embedding_unavailable',
+    message: 'embedding_quota: daily quota exhausted for the embedding model chain',
+  }
+
+  /** A failed night that published nothing — one night of the streak. */
+  function dryRun(id, startedAt) {
+    return {
+      id,
+      runStartedAt: startedAt,
+      finishedAt: startedAt,
+      exitCode: 2,
+      status: 'failed',
+      stage: 'match',
+      perStore: {},
+      match: null,
+      publish: null,
+      failures: [quotaFailure],
+      error: quotaFailure.message,
+    }
+  }
+
+  /** The three dry nights a quota outage leaves behind. */
+  function quotaStreakFeed() {
+    return {
+      runs: [
+        dryRun('run-536-3', new Date(Date.now() - 25 * 3_600_000).toISOString()),
+        dryRun('run-536-2', new Date(Date.now() - 49 * 3_600_000).toISOString()),
+        dryRun('run-536-1', new Date(Date.now() - 73 * 3_600_000).toISOString()),
+      ],
+      lastSuccessAt: new Date(Date.now() - 97 * 3_600_000).toISOString(),
+      failedStreak: {
+        count: 3,
+        threshold: 3,
+        since: new Date(Date.now() - 73 * 3_600_000).toISOString(),
+        code: 'embedding_unavailable',
+      },
+    }
+  }
+
+  function feedWith(over) {
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: over,
+      isLoading: false,
+      isError: false,
+    })
+  }
+
+  it('banners a streak at the threshold, with the typed code and no action', () => {
+    feedWith(quotaStreakFeed())
+    const { container } = renderAdmin()
+    // The suite's i18n mock returns raw keys, so the sentence is the key.
+    expect(container.textContent).toContain('monitor.failedStreak')
+    // The quota class names WHY — the whole point of #537 riding this banner.
+    // (This suite's mock renders keys without interpolation; the rendered
+    // code itself is pinned in AdminPrices.i18n.test.jsx.)
+    expect(container.textContent).toContain('monitor.failedStreakCode')
+    // Advisory: it explains itself and offers nothing to click.
+    expect(container.textContent).toContain('monitor.failedStreakHint')
+    expect(container.querySelector('[role="status"]')).toBeTruthy()
+    // The only buttons on the page are the run rows (expand) — no action that
+    // could change pipeline state.
+    const labels = [...container.querySelectorAll('button')].map((b) => b.textContent)
+    expect(labels.every((label) => !label.includes('monitor.failedStreak'))).toBe(true)
+  })
+
+  it('stays absent below the threshold', () => {
+    const feed = quotaStreakFeed()
+    feedWith({ ...feed, failedStreak: { ...feed.failedStreak, count: 2 } })
+    const { container } = renderAdmin()
+    expect(container.textContent).not.toContain('monitor.failedStreak')
+  })
+
+  // The failure mode the issue warns about: a store-level red that still
+  // published prices is NOT a dead pipeline, and the backend reports it as a
+  // streak of zero. A single blocked store must never become a banner.
+  it('stays absent for a failed night that published prices', () => {
+    const publishedNight = {
+      ...quotaStreakFeed().runs[0],
+      publish: { mode: 'published', accepted: 12, skipped: 0 },
+      failures: [{ store: 'superindo', code: 'ocr_failed', message: 'page 2 did not OCR' }],
+      error: 'Store failure(s): superindo: page 2 did not OCR',
+    }
+    feedWith({
+      runs: [publishedNight, mockFeed.runs[0]],
+      lastSuccessAt: recentSuccess,
+      failedStreak: { count: 0, threshold: 3, since: null, code: null },
+    })
+    const { container } = renderAdmin()
+    expect(container.textContent).not.toContain('monitor.failedStreak')
+    // The failed night is still visible as a row — the banner is the new
+    // signal, not a replacement for the history.
+    expect(container.textContent).toContain('monitor.failed')
+  })
+
+  // Deploy order (the Worker ships first), and the page must not crash on a
+  // payload from before the field existed.
+  it('stays absent when the payload carries no streak read at all', () => {
+    feedWith({ runs: mockFeed.runs, lastSuccessAt: recentSuccess })
+    const { container } = renderAdmin()
+    expect(container.textContent).toContain('monitor.runHistory')
+    expect(container.textContent).not.toContain('monitor.failedStreak')
   })
 })

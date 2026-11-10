@@ -53,16 +53,20 @@ export function createD1Adapter(sqlite: Db, guard?: (sql: string) => void): D1Da
   return {
     prepare: (sql: string) => {
       guard?.(sql)
-      return {
-        bind: (...params: unknown[]) => ({
-          first: async <T>() => (sqlite.prepare(sql).get(...params) as T | undefined) ?? null,
-          all: async <T>() => ({ results: sqlite.prepare(sql).all(...params) as T[] }),
-          run: async () => runBound(sql, params),
-          // The batch() form of this bound statement — not part of the D1
-          // surface the production code touches.
-          batchResult: async () => batchResult(sql, params),
-        }),
-      }
+      const bound = (params: unknown[]) => ({
+        first: async <T>() => (sqlite.prepare(sql).get(...params) as T | undefined) ?? null,
+        all: async <T>() => ({ results: sqlite.prepare(sql).all(...params) as T[] }),
+        run: async () => runBound(sql, params),
+        // The batch() form of this bound statement — not part of the D1
+        // surface the production code touches.
+        batchResult: async () => batchResult(sql, params),
+      })
+      // D1 prepared statements are executable before bind(), and bind()
+      // returns the same shape with params attached. A caller that runs an
+      // unbound statement (listPriceRuns' last-success fallback does) is
+      // ordinary production code, so the adapter must carry both.
+      const statement = bound([])
+      return { ...statement, bind: (...params: unknown[]) => bound(params) }
     },
     batch: async (stmts: Array<{ batchResult: () => Promise<unknown> }>) => {
       sqlite.exec('BEGIN')

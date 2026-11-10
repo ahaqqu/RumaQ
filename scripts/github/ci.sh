@@ -10,6 +10,13 @@ echo "=== CI: deploy secret guard (#456) ==="
 # every internal endpoint (ahaqqu/RumaQ#456).
 "$ROOT_DIR/scripts/test.sh" deploy
 
+echo "=== CI: price-freshness probe guard (#536) ==="
+# Offline: runs the real probe script against canned responses. The
+# consecutive-failed-run branch must fire with zero observations (a dead
+# pipeline must not read as "go-live pending") and the staleness branch must
+# keep its behaviour.
+"$ROOT_DIR/scripts/test.sh" freshness
+
 echo "=== CI: style check ==="
 bash "$ROOT_DIR/scripts/style.sh" --check
 

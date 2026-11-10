@@ -24,6 +24,20 @@ pass via `scripts/github/ci.sh`.
 ./scripts/test.sh deploy
 ```
 
+## Price-freshness probe test (offline)
+
+`scripts/test/price-freshness.sh` runs the real
+`scripts/github/check-price-freshness.sh` against canned probe responses
+(issue #536): the consecutive-failed-run branch must fire with **zero
+observations** (a pipeline that never publishes must not read as "go-live
+pending"), the staleness branch keeps its behaviour, and a missing or renamed
+field fails instead of disarming the alert. A `curl` shim first in `PATH`
+serves the responses — no network, no secret.
+
+```
+./scripts/test.sh freshness
+```
+
 ## Local automation test
 
 All services behind `nginx` proxy on a per-run host port: the runner picks a
