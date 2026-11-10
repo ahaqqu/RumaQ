@@ -115,6 +115,7 @@ import { ipRateLimitMiddleware } from '../lib/rate-limit.js'
 import { resolveEnabledPluginIds } from '../plugins/enablement.js'
 import { PLUGIN_MANIFESTS } from '../plugins/manifests.js'
 import { lineTotalOf, purchaseTotalOf } from '../lib/purchases.js'
+import { MONEY_MAX, QTY_MAX } from '../lib/money-bounds.js'
 import { computeRunOutDays } from '../lib/stock.js'
 import { computePatterns } from '../lib/patterns.js'
 import {
@@ -3063,12 +3064,16 @@ apiApp.post(
                   required: ['name', 'qty', 'unit', 'price'],
                   properties: {
                     name: { type: 'string', minLength: 1 },
-                    // Caps mirror purchaseItemSchema (#586): both fields feed
-                    // server-side total arithmetic, so the wire is bounded.
-                    qty: { type: 'number', minimum: 0, maximum: 1000000 },
+                    // Caps mirror purchaseItemSchema (#586/R587-A1), from the
+                    // shared constants (R587-B1) — the OpenAPI maximums ARE
+                    // the validators', not hand-copied literals. The unit
+                    // price is the other factor of the persisted total, and
+                    // the computed fallback (price × qty) is bounded by the
+                    // schema's cross-field check.
+                    qty: { type: 'number', minimum: 0, maximum: QTY_MAX },
                     unit: { type: 'string' },
-                    price: { type: 'integer', minimum: 0 },
-                    line_total: { type: ['integer', 'null'], minimum: 0, maximum: 1000000000000 },
+                    price: { type: 'integer', minimum: 0, maximum: MONEY_MAX },
+                    line_total: { type: ['integer', 'null'], minimum: 0, maximum: MONEY_MAX },
                     item_id: { type: 'string' },
                   },
                 },
@@ -6177,15 +6182,18 @@ apiApp.post(
                   required: ['name', 'qty', 'unit'],
                   properties: {
                     name: { type: 'string', minLength: 1 },
-                    // Caps mirror planCreateSchema (#586): the two fields the
-                    // server multiplies into plans.total_estimate.
-                    qty: { type: 'number', minimum: 0, maximum: 1000000 },
+                    // Caps mirror planCreateSchema (#586/R587-A2), from the
+                    // shared constants (R587-B1) — the OpenAPI maximums ARE
+                    // the validators', not hand-copied literals. The saved
+                    // line's estimate × qty is the check-off line amount,
+                    // bounded by the schema's cross-field check.
+                    qty: { type: 'number', minimum: 0, maximum: QTY_MAX },
                     unit: { type: 'string' },
                     // Explicit null is accepted (planCreateSchema is nullish):
                     // the browser client forwards the generate response's
                     // nulls verbatim (R552-C1).
                     store_id: { type: ['string', 'null'] },
-                    price_estimate: { type: ['number', 'null'], maximum: 1000000000000 },
+                    price_estimate: { type: ['number', 'null'], minimum: 0, maximum: MONEY_MAX },
                     why: { type: 'string' },
                     price_observation_id: { type: ['string', 'null'] },
                   },

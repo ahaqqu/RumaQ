@@ -643,13 +643,18 @@ describe('api routes', () => {
     expect(res.status).toBe(400)
   })
 
-  it('/api/purchases returns 400 for an absurd qty or line_total (#586)', async () => {
+  it('/api/purchases returns 400 for an absurd qty, price, or line_total (#586, R587-A1)', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
-    // Each payload sits one step past its cap (qty 1e6, line_total 1e12);
-    // the strict schema must refuse before anything reaches the database.
+    // Each payload sits one step past a bound (qty 1e6, line_total/price 1e12)
+    // or, for the two computed-fallback cases, inside every per-field cap while
+    // the product the server would persist blows the money bound (Infinity for
+    // the reviewer's 1e303 repro, 1e15 for the finite one). The strict schema
+    // must refuse before anything reaches the database.
     for (const items of [
       [{ name: 'Milk', qty: 1_000_001, unit: 'L', price: 18500 }],
       [{ name: 'Milk', qty: 1, unit: 'L', price: 18500, line_total: 1_000_000_000_001 }],
+      [{ name: 'Milk', qty: 1_000_000, unit: 'L', price: 1e303 }],
+      [{ name: 'Milk', qty: 1_000_000, unit: 'L', price: 1_000_000_000 }],
     ]) {
       const res = await apiApp.request(
         '/api/purchases',
@@ -807,14 +812,18 @@ describe('api routes', () => {
     expect(res.status).toBe(201)
   })
 
-  it('/api/plans returns 400 for an absurd qty or price_estimate (#586)', async () => {
+  it('/api/plans returns 400 for an absurd qty or price_estimate (#586, R587-A2)', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     // The two fields the server multiplies into plans.total_estimate carry
     // the same caps as the purchase line; the strict schema must refuse the
-    // save before anything reaches the database.
+    // save before anything reaches the database. The last case sits inside
+    // every per-field cap — the check-off amount estimate × qty would be 1e15
+    // against the 1e12 bound (R587-A1).
     for (const items of [
       [{ name: 'Milk', qty: 1_000_001, unit: 'L' }],
       [{ name: 'Milk', qty: 1, unit: 'L', price_estimate: 1_000_000_000_001 }],
+      [{ name: 'Milk', qty: 1, unit: 'L', price_estimate: -500 }],
+      [{ name: 'Milk', qty: 1_000_000, unit: 'L', price_estimate: 1_000_000_000 }],
     ]) {
       const res = await apiApp.request(
         '/api/plans',

@@ -21,8 +21,10 @@ import {
   minValue,
   maxValue,
   nullish,
+  check,
   type InferOutput,
 } from 'valibot'
+import { MONEY_MAX, QTY_MAX } from './money-bounds.js'
 
 /** One generated plan line, as the save route consumes it. */
 export type PlanItem = {
@@ -60,32 +62,49 @@ export const planItemPatchSchema = strictObject({
 export const planCreateSchema = strictObject({
   items: pipe(
     array(
-      object({
-        name: pipe(string(), minLength(1)),
-        // #586: qty and price_estimate are the two fields the server multiplies
-        // into plans.total_estimate (Σ estimate × qty), so they carry the same
-        // caps as the purchase line's qty/line_total. The generate ANSWER
-        // schema above stays uncapped on purpose: one absurd model line must
-        // not sink the whole plan (502) — the draft is reviewable, and the
-        // save is where the persisted contract is enforced.
-        qty: pipe(number(), minValue(0), maxValue(1_000_000)),
-        unit: string(),
-        // The browser client forwards the generate response's fields verbatim
-        // (Plan.jsx), and that response carries explicit nulls — for "no
-        // store" (#519) and for an estimate the model omitted (the prompt
-        // marks price_estimate optional). JSON has no undefined, so `optional`
-        // alone 400ed the whole save on either; plan_items.store_id is a
-        // nullable column and the UI groups null stores under "Other stores",
-        // so null IS the established no-store value.
-        store_id: nullish(string()),
-        // #586: same money cap as the purchase line's line_total.
-        price_estimate: nullish(pipe(number(), maxValue(1_000_000_000_000))),
-        why: optional(string()),
-        // Set when the estimate was grounded on a real price observation
-        // (§5.4). The browser client sends an explicit null for ungrounded
-        // items, so this is nullish rather than merely optional.
-        price_observation_id: nullish(string()),
-      })
+      pipe(
+        object({
+          name: pipe(string(), minLength(1)),
+          // #586: qty and price_estimate are the two fields the server
+          // multiplies into plans.total_estimate (Σ estimate × qty) — and
+          // into the check-off purchase's line amount — so they carry the
+          // same caps as the purchase line's qty/price (shared constants,
+          // lib/money-bounds.ts). The generate ANSWER schema above stays
+          // uncapped on purpose: one absurd model line must not sink the
+          // whole plan (502) — the draft is reviewable, and the save is
+          // where the persisted contract is enforced.
+          qty: pipe(number(), minValue(0), maxValue(QTY_MAX)),
+          unit: string(),
+          // The browser client forwards the generate response's fields verbatim
+          // (Plan.jsx), and that response carries explicit nulls — for "no
+          // store" (#519) and for an estimate the model omitted (the prompt
+          // marks price_estimate optional). JSON has no undefined, so `optional`
+          // alone 400ed the whole save on either; plan_items.store_id is a
+          // nullable column and the UI groups null stores under "Other stores",
+          // so null IS the established no-store value.
+          store_id: nullish(string()),
+          // #586: same money cap as the purchase line's line_total/price.
+          // R587-A2: minValue(0) — a negative estimate would SUBTRACT from
+          // plans.total_estimate; purchase-side money fields both carry it.
+          price_estimate: nullish(pipe(number(), minValue(0), maxValue(MONEY_MAX))),
+          why: optional(string()),
+          // Set when the estimate was grounded on a real price observation
+          // (§5.4). The browser client sends an explicit null for ungrounded
+          // items, so this is nullish rather than merely optional.
+          price_observation_id: nullish(string()),
+        }),
+        // R587-A1: the check-off INSERT (PATCH …/items/:id → bought) persists
+        // price_estimate × qty as the line amount (lineTotalOf with
+        // line_total: null), so a saved plan line must obey the same money
+        // bound as the purchase line's computed fallback. The plan save is
+        // the only wire a check-off-able row can be born through — one check
+        // here keeps the invariant on both INSERT paths, receipt + check-off.
+        check(
+          (line) =>
+            line.price_estimate == null ? true : line.price_estimate * line.qty <= MONEY_MAX,
+          'The computed check-off line total (price_estimate × qty) exceeds the money bound'
+        )
+      )
     ),
     minLength(1)
   ),

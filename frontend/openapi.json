@@ -1917,7 +1917,8 @@
                         },
                         "price": {
                           "type": "integer",
-                          "minimum": 0
+                          "minimum": 0,
+                          "maximum": 1000000000000
                         },
                         "line_total": {
                           "type": ["integer", "null"],
@@ -4882,6 +4883,7 @@
                         },
                         "price_estimate": {
                           "type": ["number", "null"],
+                          "minimum": 0,
                           "maximum": 1000000000000
                         },
                         "why": {
