@@ -206,6 +206,35 @@ describe('Plan', () => {
     expect(container.textContent).toContain('plan.perUnitEstimate')
   })
 
+  it('labels the per-unit basis for fractional qty (#597 — qty>1 hid it)', () => {
+    const fractionalPlan = {
+      plans: [
+        {
+          ...mockActivePlan.plans[0],
+          items: [
+            {
+              ...mockActivePlan.plans[0].items[0],
+              item_name: 'Apel',
+              qty: 0.5,
+              unit: 'kg',
+              price_estimate: 28000,
+            },
+          ],
+        },
+      ],
+    }
+    vi.mocked(usePlans).mockReturnValue({ data: fractionalPlan, isLoading: false })
+    const { container } = renderWithQuery(
+      React.createElement(Plan, { askAssistant: vi.fn(), setView: vi.fn() })
+    )
+    // The line figure is estimate × qty (0.5 × 28.000 = 14.000) — a figure no
+    // store header could reconcile — so the per-unit basis must be labeled
+    // beneath it (History's contribution ≠ unit-price shape). Pre-fix the
+    // `qty > 1` condition hid the label for every fractional quantity.
+    expect(container.textContent).toContain('Rp\u00A014.000')
+    expect(container.textContent).toContain('plan.perUnitEstimate')
+  })
+
   it('keeps qty=1 rows on the bare estimate with no per-unit label (#568)', () => {
     const { container } = renderWithQuery(
       React.createElement(Plan, { askAssistant: vi.fn(), setView: vi.fn() })

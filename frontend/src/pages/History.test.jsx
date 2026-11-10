@@ -217,6 +217,42 @@ describe('History', () => {
     expect(container.textContent).toContain('Rp\u00A020.000')
   })
 
+  it('counts a legacy qty=0 line as the server does: 0 contribution (#597)', () => {
+    // A legacy row with qty 0 @ Rp 20.000 and no line_total: the server's
+    // COALESCE(line_total, price × qty) counts 0 for that line — the cell
+    // must show the 0 contribution with the per-unit basis labeled beneath
+    // (the figures differ), NOT the unit price. Pre-fix `it.qty || 1` showed
+    // Rp 20.000 (the unit price) and hid the label as "equal" figures.
+    vi.mocked(useHistory).mockReturnValue({
+      data: {
+        purchases: [
+          {
+            id: 'p1',
+            store_id: null,
+            store_label: null,
+            date: '2026-07-15',
+            total: 0,
+            receipt_image_key: null,
+            has_receipt: false,
+            created_at: '2026-07-15T00:00:00Z',
+            items: [{ id: 'pi1', item_id: null, name: 'Legacy', qty: 0, unit: null, price: 20000 }],
+          },
+        ],
+        next_cursor: null,
+        month_totals: [{ month: '2026-07', count: 1, total: 0 }],
+        avg_per_month: 0,
+      },
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+    })
+    const { container } = renderWithProviders(
+      React.createElement(History, { askAssistant: vi.fn() })
+    )
+    expect(container.textContent).toContain('history.perUnit')
+    expect(container.textContent).not.toContain('Rp\u00A020.000')
+  })
+
   it('keeps the legacy last-line total rendering on no-estimate lines (#518/#583)', () => {
     vi.mocked(useHistory).mockReturnValue({
       data: {

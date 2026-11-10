@@ -48,15 +48,18 @@ function GroundedPriceLine({ it, t, formatPrice, currency }) {
 // #568: price_estimate is per-unit, and the store headers / grand total sum
 // estimate × qty — so the row's money cell shows the line estimate (estimate
 // × qty) and rows reconcile with their headers by eye. The per-unit basis
-// stays visible beneath it when it differs from the line figure (qty > 1),
-// labeled the same "price/unit" way the prices surfaces render per-unit
-// figures; qty = 1 shows the estimate alone.
+// stays visible beneath it whenever it differs from the line figure —
+// History's contribution ≠ unit-price shape (#597; `qty > 1` hid it for
+// fractional quantities like 0.5, whose line figure no header could
+// reconcile) — labeled the same "price/unit" way the prices surfaces render
+// per-unit figures; qty = 1 (figure == basis) shows the estimate alone.
 function EstimateCell({ it, t, formatPrice, currency }) {
   if (it.price_estimate == null) return null
+  const lineEstimate = lineEstimateTotal(it)
   return (
     <div className="flex flex-col items-end">
-      <div className="text-sm font-semibold">{formatPrice(lineEstimateTotal(it), currency)}</div>
-      {it.qty > 1 && (
+      <div className="text-sm font-semibold">{formatPrice(lineEstimate, currency)}</div>
+      {lineEstimate !== it.price_estimate && (
         <div className="text-xs text-text-muted">
           {it.unit
             ? t('plan.perUnitEstimate', {

@@ -285,12 +285,13 @@ function Group({ g, monthLabel, fmtDate, t, formatRp, onReceiptClick }) {
           // #583: price is the UNIT price (#518) while the month header counts
           // purchases.total = Σ COALESCE(line_total, price × qty) — so the cell
           // shows the line's contribution to that total (line_total, or the
-          // same price × qty fallback the server formula uses) and keeps the
-          // per-unit figure labeled beneath it when the two differ. Mirrors
-          // the Plan row shape (#568). qty=1 rows are unchanged (the figures
-          // are equal).
+          // same price × qty fallback the server formula uses — qty exactly as
+          // stored, so a legacy qty=0 row contributes 0 like the server counts
+          // it, not the unit price (#597)) and keeps the per-unit figure
+          // labeled beneath it when the two differ. Mirrors the Plan row shape
+          // (#568). qty=1 rows are unchanged (the figures are equal).
           const lineTotal =
-            it.line_total ?? (it.price != null ? Math.round(it.price * (it.qty || 1)) : null)
+            it.line_total ?? (it.price != null ? Math.round(it.price * it.qty) : null)
           const showUnitPrice = lineTotal != null && it.price != null && lineTotal !== it.price
           return (
             <tr key={p.id + it.id + j}>
