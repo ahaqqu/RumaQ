@@ -3825,14 +3825,15 @@ describe('migration 0045: purchase_items.line_total (#518)', () => {
     expect(legacy).toMatchObject({ qty: 2, price: 30000, line_total: null })
   })
 
-  it('lands at the end of the filename-sorted chain on a fresh database', () => {
+  it('sorts after the 0044 chain on a fresh database', () => {
     const files = migrationFiles()
-    // The chain applies in filename order, so "after 0044" is what production
-    // (which already holds 0044) will run next.
+    // The chain applies in filename order, so "sorts after 0044" is exactly what
+    // production (which already holds 0044) will run next. Deliberately NOT
+    // "is the last file" — that pin would fail the next migration PR, which has
+    // no reason to know this test exists.
     expect(files.indexOf('0044_price_runs_ai_prompt_identity.sql')).toBeLessThan(
       files.indexOf('0045_purchase_line_total.sql')
     )
-    expect(files[files.length - 1]).toBe('0045_purchase_line_total.sql')
 
     const db = new DatabaseSync(':memory:') as unknown as Db
     applyMigrations(db, files)

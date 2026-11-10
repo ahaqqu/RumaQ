@@ -362,6 +362,68 @@ describe('AddFromReceipt', () => {
     expect(api.createPurchase).not.toHaveBeenCalled()
   })
 
+  it('re-arms the hold when a qty edit drops a printed line total (#567-B1)', async () => {
+    // The prompt's fallback rule now ALWAYS rides the printed total, so the
+    // ambiguous line arrives ANCHORED and unflagged: qty 10, price 28.000 (the
+    // line amount) and total 28.000 carrying it. Submitting that as-is is
+    // correct — the printed total wins.
+    const container = await scanAndReview([
+      { name: 'Telur', qty: 10, unit: 'pcs', price: 28000, total: 28000 },
+    ])
+    expect(container.textContent).not.toContain('addReceipt.checkUnitPrice')
+    expect(submitButton(container).disabled).toBe(false)
+
+    // Correcting the qty (the scan read 10 BUTIR for 2) drops the printed total
+    // — the anchor — while the surviving price is STILL the line amount. If the
+    // hold does not come back with the anchor, 2 × 28.000 is multiplied into the
+    // permanent grand total.
+    fireEvent.change(container.querySelector('input[aria-label="common.from"]'), {
+      target: { value: '2' },
+    })
+    expect(container.textContent).toContain('addReceipt.checkUnitPrice')
+    expect(submitButton(container).disabled).toBe(true)
+    expect(api.createPurchase).not.toHaveBeenCalled()
+  })
+
+  it('does not re-hold after a qty edit once the user asserted the unit price (#567-B1)', async () => {
+    const container = await scanAndReview([
+      { name: 'Telur', qty: 10, unit: 'pcs', price: 28000, total: 28000 },
+    ])
+
+    // Editing the price is the user asserting a per-unit figure…
+    fireEvent.change(container.querySelector('input[aria-label="history.price"]'), {
+      target: { value: '2800' },
+    })
+    // …so a later qty edit multiplies the asserted price, not a fallback guess.
+    fireEvent.change(container.querySelector('input[aria-label="common.from"]'), {
+      target: { value: '2' },
+    })
+    expect(container.textContent).not.toContain('addReceipt.checkUnitPrice')
+    expect(submitButton(container).disabled).toBe(false)
+
+    fireEvent.click(submitButton(container))
+    await waitFor(() => {
+      expect(container.textContent).toContain('addReceipt.stockAdded')
+    })
+    const sent = api.createPurchase.mock.calls[0][0].items[0]
+    expect(sent).toMatchObject({ qty: 2, price: 2800 })
+    expect(sent).not.toHaveProperty('line_total')
+  })
+
+  it('a line read at qty 1 stays unheld when its qty is corrected upwards (#567-B1)', async () => {
+    // At qty 1 the fallback and the unit price are the same number, so the
+    // scanned price IS a per-unit price; raising the qty multiplies it
+    // correctly and must not raise a false hold.
+    const container = await scanAndReview([{ name: 'Roti', qty: 1, unit: 'pack', price: 15000 }])
+    expect(submitButton(container).disabled).toBe(false)
+
+    fireEvent.change(container.querySelector('input[aria-label="common.from"]'), {
+      target: { value: '3' },
+    })
+    expect(container.textContent).not.toContain('addReceipt.checkUnitPrice')
+    expect(submitButton(container).disabled).toBe(false)
+  })
+
   it('holds until EVERY flagged row is confirmed, then submits all rows (#567-B1)', async () => {
     const container = await scanAndReview([
       { name: 'Telur', qty: 10, unit: 'pcs', price: 28000, needsPriceReview: true },

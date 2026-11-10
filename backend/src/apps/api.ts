@@ -6111,12 +6111,13 @@ apiApp.post(
           .first<{ id: string; name: string }>()
 
         // Price grounding (§5.4): a confident deterministic match against the
-        // observed catalog links the observation so the frontend can badge the
-        // line. #518 (Q5): the observation price travels as its OWN field
-        // (price_grounded) — the LLM's estimate is no longer overwritten, so
-        // the draft can show both and the totals below stay on the estimate
-        // basis. Check-off stores estimate × qty (the estimate is the storage
-        // basis per Q5); the observation is display/provenance only.
+        // observed catalog links the observation so the draft can show that
+        // store's observation next to the estimate. #518 (Q5): the observation
+        // price travels as its OWN field (price_grounded) — the LLM's estimate
+        // is no longer overwritten, so the draft can show both and the totals
+        // below stay on the estimate basis. Check-off stores estimate × qty
+        // (the estimate is the storage basis per Q5); the observation is
+        // display/provenance only.
         const grounding = await groundPlanItem(c.env.DB, item.name)
 
         return {

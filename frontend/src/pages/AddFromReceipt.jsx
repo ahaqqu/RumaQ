@@ -25,6 +25,25 @@ import { SkeletonLines } from '../components/Skeleton.jsx'
 const MAX_SIZE = 5 * 1024 * 1024
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/heic', 'image/webp']
 
+/** The qty the payload will send: an empty input means one. */
+function lineQty(it) {
+  return Number(it.qty) || 1
+}
+
+// #567-B1: a line whose qty is not exactly 1 and that shows no printed total is
+// where the scan's line-total fallback (price := the line amount, when the
+// receipt shows no unit price) would be multiplied by qty into the PERMANENT
+// grand total. It is only safe once the user asserts the price is a unit price
+// — by editing it or via the row's confirm control (`_priceConfirmed`).
+//
+// Derived from the row on every render, never stored: a qty edit drops the
+// printed total (the anchor), and the hold has to come back with it. The scan
+// route's `needsPriceReview` states the same rule for the rows a scan can flag;
+// the screen recomputes it because every one of these inputs is editable.
+function needsPriceConfirm(it) {
+  return !it._priceConfirmed && lineQty(it) !== 1 && it.total == null
+}
+
 export function AddFromReceipt({ onDone }) {
   const { t } = useTranslation()
   const { persona } = usePersona()
@@ -88,7 +107,17 @@ export function AddFromReceipt({ onDone }) {
 
     try {
       const result = await scanReceipt(file)
-      setItems(result.items.map((it, i) => ({ ...it, _id: `item-${i}` })))
+      setItems(
+        result.items.map((it, i) => ({
+          ...it,
+          _id: `item-${i}`,
+          // #567-B1: at qty 1 the scan's line-total fallback and a unit price are
+          // the same number, so a single-qty line's price IS a per-unit price on
+          // arrival. A multi-qty line's price stays unconfirmed until the user
+          // asserts it.
+          _priceConfirmed: lineQty(it) === 1,
+        }))
+      )
       setImageKey(result.imageKey)
       setImageUrl(result.imageUrl)
       if (result.storeGuess) {
@@ -115,9 +144,10 @@ export function AddFromReceipt({ onDone }) {
   }
 
   function updateItem(id, field, value) {
-    // Editing qty or price invalidates the scanned line total, if any. Only a
-    // PRICE edit clears the #567-B1 hold: the hazard is the unit price being
-    // the line-total fallback, and changing the qty never confirms it.
+    // Editing qty or price invalidates the scanned line total, if any. A PRICE
+    // edit is the user asserting a unit price, so it confirms it; a QTY edit
+    // only drops the printed total, and #567-B1's hold re-derives from the row's
+    // numbers instead of being released.
     setItems((prev) =>
       prev.map((it) =>
         it._id === id
@@ -125,7 +155,7 @@ export function AddFromReceipt({ onDone }) {
               ...it,
               [field]: value,
               ...(field === 'qty' || field === 'price' ? { total: undefined } : {}),
-              ...(field === 'price' ? { needsPriceReview: false } : {}),
+              ...(field === 'price' ? { _priceConfirmed: true } : {}),
             }
           : it
       )
@@ -137,7 +167,7 @@ export function AddFromReceipt({ onDone }) {
   // same number to unlock submit would be busywork (and a trap: an unchanged
   // controlled input fires no change event).
   function confirmPrice(id) {
-    setItems((prev) => prev.map((it) => (it._id === id ? { ...it, needsPriceReview: false } : it)))
+    setItems((prev) => prev.map((it) => (it._id === id ? { ...it, _priceConfirmed: true } : it)))
   }
 
   function selectItemMatch(id, catalogItemId) {
@@ -154,12 +184,10 @@ export function AddFromReceipt({ onDone }) {
     }
   }
 
-  // #567-B1: a line whose qty is not exactly 1 and that has no printed total
-  // is where the scan's line-total fallback (price := the line amount) would be
-  // multiplied by qty into the persisted grand total. Hold submit until the
-  // user has confirmed each flagged row's unit price — never silently
-  // multiplied.
-  const hasUnreviewedPrices = items.some((it) => it.needsPriceReview)
+  // #567-B1: hold submit until every row whose unit price is unconfirmed has
+  // had it confirmed — a fallback price must never be multiplied by qty into
+  // the persisted grand total.
+  const hasUnreviewedPrices = items.some(needsPriceConfirm)
 
   async function handleConfirm() {
     // #567-B1: the disabled button is the visible guard; this is the real one —
@@ -179,7 +207,7 @@ export function AddFromReceipt({ onDone }) {
         receipt_image_key: imageKey || undefined,
         items: items.map((it) => ({
           name: it.name,
-          qty: Number(it.qty) || 1,
+          qty: lineQty(it),
           unit: it.unit || 'pcs',
           price: Math.round(Number(it.price)) || 0,
           // #518: persist the review screen's number — the receipt's printed
@@ -398,7 +426,7 @@ export function AddFromReceipt({ onDone }) {
                       className="min-w-0"
                       placeholder={t('addReceipt.itemName') || 'Item name'}
                     />
-                    {it.needsPriceReview && (
+                    {needsPriceConfirm(it) && (
                       <div className="basis-full flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
                         <p className="text-xs text-warn">{t('addReceipt.checkUnitPrice')}</p>
                         <Button
