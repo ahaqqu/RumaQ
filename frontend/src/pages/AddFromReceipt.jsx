@@ -4,6 +4,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { formatRp } from '../data/mock.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { personaText } from '../lib/persona.js'
+import { todayISO } from '../lib/household-date.js'
 import { scanReceipt, createPurchase, getStores, getItems } from '../lib/api'
 import {
   IconCamera,
@@ -55,7 +56,10 @@ export function AddFromReceipt({ onDone }) {
   const [items, setItems] = useState([])
   const [selectedStore, setSelectedStore] = useState(null)
   const [stores, setStores] = useState([])
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  // #554: the purchase date prefills with the household day (WIB) — the same
+  // day the backend stamps plan check-offs with — not the device/UTC day,
+  // which is still yesterday between 00:00 and 07:00 WIB.
+  const [date, setDate] = useState(todayISO())
   const [itemCatalog, setItemCatalog] = useState([])
   const [selectedItemIds, setSelectedItemIds] = useState({})
   const [imageKey, setImageKey] = useState(null)

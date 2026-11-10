@@ -12,6 +12,7 @@
 // door, never here.
 
 import type { Env } from '../../types.js'
+import { householdIsoDate } from '../household-day.js'
 import type { AiCall, TokenUsage } from './types.js'
 
 export type AiUsageEvent = {
@@ -43,7 +44,10 @@ export function buildAiUsageEventStatement(
     crypto.randomUUID(),
     event.userId,
     ts,
-    ts.slice(0, 10),
+    // #554: the usage day is the household day (WIB) — the same day the
+    // /api/ai/usage "today" queries cut on, so a 00:30 WIB call counts under
+    // the household's today rather than the UTC yesterday.
+    householdIsoDate(now),
     // The provider column keeps today's meaning: the WIRE KIND, not the vendor.
     event.call.providerKind,
     // The model actually sent; null = the adapter default applied.

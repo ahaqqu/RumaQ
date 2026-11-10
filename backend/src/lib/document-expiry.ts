@@ -10,6 +10,8 @@
 // machinery (audit statements, read-backs, error classes) stays there, so
 // there is no import cycle in either direction.
 
+import { householdIsoDate } from './household-day.js'
+
 /** The app-level remind window (see the migration 0026 header for why this
  * default lives in the app and not as a column DEFAULT), and the PATCH
  * validation bounds: integer days. */
@@ -33,14 +35,12 @@ export const REMIND_DAYS_MAX = 365
 // settings) can ride on later; every call site takes `now` as an injectable
 // parameter, which is what keeps the fixed-clock tests exact.
 
-/**
- * The household calendar day as ISO YYYY-MM-DD, pinned at UTC+7 (WIB).
- * Shift the instant, then read the UTC date of the shifted instant — exact
- * because the shift is a constant offset (no DST in the target zone).
- */
-export function householdIsoDate(now: Date): string {
-  return new Date(now.getTime() + 7 * 3_600_000).toISOString().slice(0, 10)
-}
+// The WIB household-day helper lives in lib/household-day.ts (#554) — its
+// consumer set outgrew the documents domain (home windows, purchase stamps,
+// plan check-off stamps, AI-usage day buckets all decide household days now).
+// Re-exported here so the #426 surfaces keep their import path and the ONE
+// definition stays the one definition.
+export { householdIsoDate } from './household-day.js'
 
 /**
  * A REAL calendar date in YYYY-MM-DD form — the regex alone accepts
