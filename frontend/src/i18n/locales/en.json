@@ -559,6 +559,8 @@
       "Nov",
       "Dec"
     ],
+    "perUnit": "{{price}}/{{unit}}",
+    "perUnitNoUnit": "{{price}} per unit",
     "patternDetected": "Pattern detected:",
     "patternText": "Milk and bread are bought every 7 days from Indomaret. The assistant can remind you before they run out.",
     "makePlan": "Make plan",
