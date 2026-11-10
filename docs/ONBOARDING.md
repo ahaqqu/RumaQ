@@ -52,6 +52,7 @@ Default seed data (locations + stores) is created with the first household on si
 | `backend/migrations/` | D1 migrations, applied by deploy / setup-db               |
 | `automation/`         | Docker-based API/E2E test harness                         |
 | `scripts/`            | `deploy.sh`, `test.sh`, `docs.sh`, `style.sh` entrypoints |
+| `tools/codegen/`      | typed API client codegen, pinned to the TS 5 compiler API |
 | `docs/plan/`          | Phase plans; GitHub Issues + Delivery Kanban for status   |
 
 ## Common issues
