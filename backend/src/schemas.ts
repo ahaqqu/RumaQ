@@ -19,6 +19,7 @@ import {
   integer,
   check,
   trim,
+  isoDate,
 } from 'valibot'
 import type { PersonaCopyKey } from './lib/persona.js'
 import { MONEY_MAX, QTY_MAX } from './lib/money-bounds.js'
@@ -130,7 +131,10 @@ export const purchaseItemSchema = pipe(
 
 export const purchaseCreateSchema = strictObject({
   store_id: optional(string()),
-  date: pipe(string(), minLength(1)),
+  // R595-2 (#599): the API doc promises "a household calendar day (WIB) as
+  // YYYY-MM-DD" — minLength(1) accepted any string; valibot's isoDate makes
+  // the documented shape true (400 before the route touches the DB).
+  date: pipe(string(), isoDate()),
   receipt_image_key: optional(string()),
   items: pipe(array(purchaseItemSchema), minLength(1)),
 })

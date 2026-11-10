@@ -496,7 +496,7 @@
   },
   "scrape": {
     "activeRun": "Run aktif",
-    "alreadyRunning": "Scrape masih menunggu atau berjalan. Run basi dibersihkan otomatis.",
+    "alreadyRunning": "Scrape masih dalam antrean atau berjalan. Run basi dibersihkan otomatis.",
     "createdBy": "Diminta oleh",
     "elapsed": "Berjalan selama",
     "exitCode": "Kode keluar",

@@ -4,7 +4,7 @@
 // each (ahaqqu/RumaQ#468 review C1-B4).
 
 // The household calendar day as ISO YYYY-MM-DD, pinned at UTC+7 (WIB) — the
-// frontend MIRROR of the backend's householdIsoDate (lib/document-expiry.ts,
+// frontend MIRROR of the backend's householdIsoDate (lib/household-day.ts,
 // #426; the frontend cannot import backend lib code, so the constant offset
 // is duplicated with this comment tying the two together — thermos A3
 // decision). A plain-UTC "today" left the overdue highlight ~7 hours late
@@ -14,7 +14,7 @@ export function todayISO() {
 }
 
 // ISO date text as a UTC-midnight Date — the household day convention never
-// localizes (the backend mirrors this in lib/document-expiry.ts).
+// localizes (the backend mirrors this in lib/household-day.ts).
 export function parseISO(iso) {
   return new Date(`${iso}T00:00:00Z`)
 }

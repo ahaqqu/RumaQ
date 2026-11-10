@@ -643,6 +643,29 @@ describe('api routes', () => {
     expect(res.status).toBe(400)
   })
 
+  it('/api/purchases returns 400 for a non-YYYY-MM-DD date (R595-2, #599)', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    // The API doc promises "a household calendar day (WIB, UTC+7) as
+    // YYYY-MM-DD" — anything else must 400 at the schema before the route
+    // touches the database.
+    for (const date of ['not-a-date', '2026-07-26T03:00:00Z', '2026/07/26', '']) {
+      const res = await apiApp.request(
+        '/api/purchases',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            date,
+            items: [{ name: 'Milk', qty: 1, unit: 'L', price: 18500 }],
+          }),
+          headers: { 'Content-Type': 'application/json' },
+        },
+        env
+      )
+      expect(res.status, JSON.stringify(date)).toBe(400)
+    }
+    expect(env.DB.prepare).not.toHaveBeenCalled()
+  })
+
   it('/api/purchases returns 400 for an absurd qty, price, or line_total (#586, R587-A1)', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     // Each payload sits one step past a bound (qty 1e6, line_total/price 1e12)
