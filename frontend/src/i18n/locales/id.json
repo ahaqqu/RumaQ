@@ -379,6 +379,8 @@
     "groundedFrom": "harga dari brosur {{source}}",
     "groundedUntil": "berlaku s/d {{date}}",
     "observedPrice": "Harga teramati {{price}}",
+    "perUnitEstimate": "{{price}}/{{unit}}",
+    "perUnitEstimateNoUnit": "{{price}} per satuan",
     "planLeadNoKey": "Atur AI dulu, lalu AI menyusun rencana belanja dari stok yang menipis."
   },
   "prices": {
