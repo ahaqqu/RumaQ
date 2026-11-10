@@ -116,6 +116,7 @@ import { resolveEnabledPluginIds } from '../plugins/enablement.js'
 import { PLUGIN_MANIFESTS } from '../plugins/manifests.js'
 import { lineTotalOf, purchaseTotalOf } from '../lib/purchases.js'
 import { MONEY_MAX, QTY_MAX } from '../lib/money-bounds.js'
+import { resolveOrCreateItemId } from '../lib/items.js'
 import { computeRunOutDays } from '../lib/stock.js'
 import { householdDayFrom, householdIsoDate, householdMonth } from '../lib/household-day.js'
 import { computePatterns } from '../lib/patterns.js'
@@ -975,10 +976,17 @@ apiApp.patch(
     if (body.name !== undefined) {
       const trimmed = body.name.trim()
       if (trimmed.length > 0) {
+        // #551 (d): the lookup key is the shared normalizeItemName — the same
+        // trim/lowercase/collapse key both save paths resolve names by. The
+        // old trim-only key was the last normalization divergence: renaming to
+        // a spelling that equals an existing item only after collapsing inner
+        // whitespace forked a second items row instead of merging. A created
+        // row still stores the trimmed spelling — first-line-wins display
+        // name, as both save paths keep it.
         const existing = await c.env.DB.prepare(
           'SELECT id FROM items WHERE household_id = ? AND LOWER(name) = LOWER(?)'
         )
-          .bind(householdId, trimmed)
+          .bind(householdId, normalizeItemName(trimmed))
           .first<{ id: string }>()
 
         if (existing) {
@@ -3055,7 +3063,7 @@ apiApp.post(
   '/api/purchases',
   describeRoute({
     description:
-      "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt. Item price is the unit price; an optional per-line line_total (the receipt's printed line total) is persisted as given, otherwise the server computes qty × price. purchases.total is always computed server-side as Σ COALESCE(line_total, price × qty) and never read from the client. date is a household calendar day (WIB, UTC+7) as YYYY-MM-DD — the scan route's dateGuess prefills it from that same calendar.",
+      "Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt, and their quantities add up into one stock write per item — a receipt never produces duplicate stock rows for one item. Item price is the unit price; an optional per-line line_total (the receipt's printed line total) is persisted as given, otherwise the server computes qty × price. purchases.total is always computed server-side as Σ COALESCE(line_total, price × qty) and never read from the client. date is a household calendar day (WIB, UTC+7) as YYYY-MM-DD — the scan route's dateGuess prefills it from that same calendar.",
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -3170,8 +3178,14 @@ apiApp.post(
     // batch has not run while the loop resolves, so the SELECT below cannot see
     // INSERTs the same receipt already pushed — without the map, two lines of
     // one new name each pushed an INSERT and created duplicate items rows.
-    // Plan-save keeps the same map over the same normalization.
+    // Plan-save resolves through the same shared helper over the same map.
     const itemIdsByName = new Map<string, string>()
+    // #551 (a): per-receipt stock map — item id → the receipt's stock delta.
+    // `stockId` is the pre-batch stock row when one exists (UPDATE target),
+    // null when the receipt must create it; `qty` is that row's quantity plus
+    // every same-receipt line's contribution so far. Folded into one write per
+    // item id after the loop.
+    const stockByItemId = new Map<string, { stockId: string | null; qty: number; unit: string }>()
 
     for (const item of body.items) {
       let itemId: string
@@ -3194,36 +3208,19 @@ apiApp.post(
         }
         itemId = owned.id
       } else {
-        // #526: mirror plan-save's resolve-or-create exactly — same
-        // normalizeItemName (trim, lowercase, collapse internal whitespace),
-        // same LOWER(name) lookup, first line's unit wins — so a name dedupes
-        // to the same items row whichever feature saved it. Explicit item_id
-        // lines are authoritative and never create rows, so the map only
-        // gates this name-resolved branch.
-        const normalizedName = normalizeItemName(item.name)
-        const seenItemId = itemIdsByName.get(normalizedName)
-
-        if (seenItemId) {
-          itemId = seenItemId
-        } else {
-          const existing = await c.env.DB.prepare(
-            'SELECT id FROM items WHERE household_id = ? AND LOWER(name) = LOWER(?)'
-          )
-            .bind(householdId, normalizedName)
-            .first<{ id: string }>()
-
-          if (existing) {
-            itemId = existing.id
-          } else {
-            itemId = crypto.randomUUID()
-            statements.push(
-              c.env.DB.prepare(
-                'INSERT INTO items (id, household_id, name, default_unit) VALUES (?, ?, ?, ?)'
-              ).bind(itemId, householdId, item.name.trim(), item.unit)
-            )
-          }
-          itemIdsByName.set(normalizedName, itemId)
-        }
+        // #551 (e): the shared resolve-or-create (R550-B1) — plan-save calls
+        // the same helper, so the normalization, lookup and INSERT shape stay
+        // identical across both save paths. Explicit item_id lines are
+        // authoritative and never create rows, so the map only gates this
+        // name-resolved branch.
+        itemId = await resolveOrCreateItemId({
+          db: c.env.DB,
+          householdId,
+          name: item.name,
+          unit: item.unit,
+          statements,
+          seenByName: itemIdsByName,
+        })
       }
 
       itemIds.push(itemId)
@@ -3247,19 +3244,43 @@ apiApp.post(
         )
       )
 
-      const existingStock = await c.env.DB.prepare(
-        'SELECT id, qty FROM stock WHERE household_id = ? AND item_id = ?'
-      )
-        .bind(householdId, itemId)
-        .first<{ id: string; qty: number }>()
+      // #551 (a): accumulate THIS receipt's stock delta per item id instead of
+      // writing per line. The per-line SELECT runs before the batch, so it
+      // cannot see writes the same receipt already queued: two lines of one
+      // item each took the INSERT branch (duplicate stock rows) or each
+      // recomputed from the same stale base qty, where last-write-wins dropped
+      // every earlier line's quantity. One entry per item id, folded into one
+      // write after the loop.
+      const stockDelta = stockByItemId.get(itemId)
+      if (stockDelta) {
+        stockDelta.qty += item.qty
+      } else {
+        const existingStock = await c.env.DB.prepare(
+          'SELECT id, qty FROM stock WHERE household_id = ? AND item_id = ?'
+        )
+          .bind(householdId, itemId)
+          .first<{ id: string; qty: number }>()
 
-      if (existingStock) {
-        const newQty = existingStock.qty + item.qty
-        const runOut = await computeRunOutDays(householdId, itemId, newQty, c.env.DB)
+        stockByItemId.set(itemId, {
+          stockId: existingStock?.id ?? null,
+          qty: (existingStock?.qty ?? 0) + item.qty,
+          unit: item.unit,
+        })
+      }
+    }
+
+    // #551 (a): exactly one stock write per distinct item id in the receipt.
+    // The UPDATE recomputes run-out from the receipt's true summed quantity
+    // (not the stale per-line base); the INSERT — first line's unit wins, like
+    // the items map — covers an item with no stock row yet, even when an
+    // earlier line of the same receipt already queued the delta.
+    for (const [stockItemId, delta] of stockByItemId) {
+      if (delta.stockId) {
+        const runOut = await computeRunOutDays(householdId, stockItemId, delta.qty, c.env.DB)
         statements.push(
           c.env.DB.prepare(
             `UPDATE stock SET qty = ?, run_out_days = ?, basis = ?, updated_at = datetime('now') WHERE id = ? AND household_id = ?`
-          ).bind(newQty, runOut.run_out_days, runOut.basis, existingStock.id, householdId)
+          ).bind(delta.qty, runOut.run_out_days, runOut.basis, delta.stockId, householdId)
         )
       } else {
         const stockId = crypto.randomUUID()
@@ -3267,7 +3288,16 @@ apiApp.post(
         statements.push(
           c.env.DB.prepare(
             'INSERT INTO stock (id, household_id, item_id, location_id, qty, unit, run_out_days, basis, updated_at) VALUES (?, ?, ?, ?, ?, ?, 30, ?, ?)'
-          ).bind(stockId, householdId, itemId, locationId, item.qty, item.unit, 'default', now)
+          ).bind(
+            stockId,
+            householdId,
+            stockItemId,
+            locationId,
+            delta.qty,
+            delta.unit,
+            'default',
+            now
+          )
         )
       }
     }
@@ -6281,7 +6311,6 @@ apiApp.post(
     const itemIdsByName = new Map<string, string>()
 
     for (const item of body.items) {
-      let itemId: string | null = null
       if (item.store_id) {
         const store = await c.env.DB.prepare(
           'SELECT id FROM stores WHERE id = ? AND household_id = ?'
@@ -6293,30 +6322,17 @@ apiApp.post(
         }
       }
 
-      const normalizedName = normalizeItemName(item.name)
-      const seenItemId = itemIdsByName.get(normalizedName)
-
-      if (seenItemId) {
-        itemId = seenItemId
-      } else {
-        const existingItem = await c.env.DB.prepare(
-          'SELECT id FROM items WHERE household_id = ? AND LOWER(name) = LOWER(?)'
-        )
-          .bind(householdId, normalizedName)
-          .first<{ id: string }>()
-
-        if (existingItem) {
-          itemId = existingItem.id
-        } else {
-          itemId = crypto.randomUUID()
-          statements.push(
-            c.env.DB.prepare(
-              'INSERT INTO items (id, household_id, name, default_unit) VALUES (?, ?, ?, ?)'
-            ).bind(itemId, householdId, item.name.trim(), item.unit)
-          )
-        }
-        itemIdsByName.set(normalizedName, itemId)
-      }
+      // #551 (e): the shared resolve-or-create (R550-B1) — the purchase loop
+      // calls the same helper over the same normalization (#526), so a name
+      // dedupes to one items row whichever feature saved it.
+      const itemId = await resolveOrCreateItemId({
+        db: c.env.DB,
+        householdId,
+        name: item.name,
+        unit: item.unit,
+        statements,
+        seenByName: itemIdsByName,
+      })
 
       const planItemId = crypto.randomUUID()
       const groundedObservationId =

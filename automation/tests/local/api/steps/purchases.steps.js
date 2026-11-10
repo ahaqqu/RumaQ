@@ -152,6 +152,52 @@ defineFeature(feature, (test) => {
     })
   })
 
+  // #551 (a): the seeded stock-rice row holds qty 2, and the receipt's two
+  // lines add 1 + 2 — one stock row summed to 5. Pre-fix the second line's
+  // stale-base UPDATE won and qty landed at 4 (line 1's quantity dropped).
+  test('Multi-line receipt of one item sums stock once', ({ given, when, then, and }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('I am authenticated as a test user', async () => {
+      await ctx.authenticate()
+    })
+
+    when(
+      /I create a purchase with store "([^"]+)" and date "([^"]+)" and items/,
+      async (storeId, date, itemsTable) => {
+        const items = itemsTable.map((row) => ({
+          name: row.name,
+          qty: parseFloat(row.qty),
+          unit: row.unit,
+          price: parseInt(row.price, 10),
+        }))
+        await ctx.sendRequestWithBody('POST', '/api/purchases', {
+          store_id: storeId,
+          date,
+          items,
+        })
+      }
+    )
+
+    then('the response status should be 201', () => {
+      ctx.expectStatus(201)
+    })
+
+    and('the response should have items array', () => {
+      ctx.expectItemsArray()
+    })
+
+    and('the response should have stock array', () => {
+      ctx.expectStockArray()
+    })
+
+    and('the stock for "Rice" should have qty 5', () => {
+      ctx.expectStockForItem('Rice', 5)
+    })
+  })
+
   test('Invalid items schema returns 400', ({ given, when, then, and }) => {
     given('the database has seed data', async () => {
       await ctx.resetAndSeed()
