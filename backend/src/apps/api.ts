@@ -3026,7 +3026,11 @@ apiApp.post(
       return c.json({ error: 'No image file provided. Use field name "image".' }, 400)
     }
 
-    const fileObj = { type: file.type, size: file.data.byteLength }
+    // #606: validateImage sniffs the bytes too — the declared MIME is
+    // client-supplied and can lie (QA-F1's text-as-reject.png). A rejection
+    // here returns before buildKey, before the storage put and before any
+    // provider call, so rejected bytes are never persisted.
+    const fileObj = { type: file.type, size: file.data.byteLength, bytes: file.data }
     const validationError = validateImage(fileObj)
     if (validationError) {
       return c.json({ error: validationError }, 400)
@@ -3098,9 +3102,13 @@ apiApp.post(
         // The provider billed the failed attempt's input tokens; record them
         // as the call's event even though no scan came back.
         await recordAiFailureUsage(c.env, userId, { call: usedCall, usage: tokenUsage }, err)
+        // #606: an adapter message embeds the provider's raw response body
+        // (adapters/wire.ts) — upstream internals stay in the server log, the
+        // client gets a generic actionable message instead.
+        console.error('[scan] vision provider call failed', err)
         return c.json(
           {
-            error: `AI scan failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+            error: 'AI scan failed. Please try again in a moment, or enter the items manually.',
             imageKey: key,
           },
           502

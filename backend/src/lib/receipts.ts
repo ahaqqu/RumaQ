@@ -32,12 +32,64 @@ const EXT_MAP: Record<string, string> = {
   'image/webp': 'webp',
 }
 
-export function validateImage(file: { type: string; size: number }): string | null {
+// --- magic bytes (#606) ------------------------------------------------------
+//
+// The declared MIME type is client-supplied and can lie: QA-F1 uploaded plain
+// text as reject.png and it arrived as image/png. The bytes are the only
+// trustworthy signal, so every allowed type is byte-verified before the scan
+// route spends a provider call or persists anything. Each sniff reads only the
+// leading bytes (at most 12), never the whole file.
+
+// WebP is a RIFF container: "RIFF" at 0, "WEBP" at 8.
+const RIFF = 'RIFF'
+const WEBP = 'WEBP'
+// HEIC/HEIF is an ISO-BMFF box: "ftyp" at 4, the major brand at 8. The brand
+// set is file-type's: real iPhone/Camera HEICs ship as mif1/heic/heix, hevc*
+// and msf1 cover the rest of the field.
+const FTYP = 'ftyp'
+const HEIC_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heif', 'mif1', 'msf1'])
+
+function asciiAt(view: Uint8Array, offset: number, length: number): string {
+  let s = ''
+  for (let i = offset; i < offset + length; i++) s += String.fromCharCode(view[i])
+  return s
+}
+
+/**
+ * True when the leading bytes carry the file signature of the declared type.
+ * A declared type with no signature table entry (or bytes too short to hold
+ * one) is a mismatch — the sniff is total over ALLOWED_TYPES.
+ */
+export function bytesMatchDeclaredImage(type: string, bytes: ArrayBuffer | Uint8Array): boolean {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  if (view.length < 12) return false
+  switch (type) {
+    case 'image/jpeg':
+      return view[0] === 0xff && view[1] === 0xd8 && view[2] === 0xff
+    case 'image/png':
+      return view[0] === 0x89 && view[1] === 0x50 && view[2] === 0x4e && view[3] === 0x47
+    case 'image/webp':
+      return asciiAt(view, 0, 4) === RIFF && asciiAt(view, 8, 4) === WEBP
+    case 'image/heic':
+      return asciiAt(view, 4, 4) === FTYP && HEIC_BRANDS.has(asciiAt(view, 8, 4))
+    default:
+      return false
+  }
+}
+
+export function validateImage(file: {
+  type: string
+  size: number
+  bytes: ArrayBuffer | Uint8Array
+}): string | null {
   if (!ALLOWED_TYPES.has(file.type)) {
     return 'Unsupported file type. Accepted: JPEG, PNG, HEIC, WEBP.'
   }
   if (file.size > MAX_SIZE) {
     return 'File too large. Maximum size is 5 MB.'
+  }
+  if (!bytesMatchDeclaredImage(file.type, file.bytes)) {
+    return 'This file does not look like a valid image. Please upload a real JPEG, PNG, HEIC, or WEBP photo.'
   }
   return null
 }
