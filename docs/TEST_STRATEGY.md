@@ -32,8 +32,9 @@ bash ./scripts/github/worker-boot-smoke.sh
 
 It is the only PR check that evaluates the real Worker bundle under the runtimes
 that host it (ahaqqu/RumaQ#534). Unit tests call `app.request()` on the Hono app
-in Node, which never evaluates a Worker bundle and never runs under workerd's
-global-scope restrictions; the Docker automation stack does boot the same
+in Node (no bundle evaluation, no workerd rules), and the static module-scope
+scan added with the #533 fix (`backend/src/__tests__/worker-global-scope.test.ts`)
+matches direct constructs only. The Docker automation stack does boot the same
 bundle, but only on its nightly schedule — a module-scope `new AbortController()`
 (#533) made the Worker unable to start at all and still merged green.
 

@@ -7,9 +7,10 @@ set -euo pipefail
 # Why this exists: backend/src/lib/ai/legacy.ts built an AbortController at
 # module scope (#533), which workerd forbids during bundle evaluation — the
 # Worker could not start AT ALL, yet every PR check passed and the break
-# merged. Unit tests never catch it: they call `app.request()` on the Hono app
-# in Node, which evaluates no Worker bundle and runs under no workerd rules.
-# The only job that boots the real Worker is the Docker/automation stack in
+# merged. Unit tests call `app.request()` on the Hono app in Node (no bundle
+# evaluation, no workerd rules), and the static module-scope scan added with the
+# #533 fix matches only direct constructs — neither evaluates the bundle. The
+# only job that boots the real Worker is the Docker/automation stack in
 # test-automation.yml, and that runs on a nightly schedule.
 #
 # This gate uses the same build path as dev and deploy: @cloudflare/vite-plugin's

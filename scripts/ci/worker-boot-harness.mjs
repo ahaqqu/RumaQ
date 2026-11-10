@@ -15,7 +15,9 @@
 //
 // No secrets, no D1 migrations, no Docker: /api/health is a static JSON handler
 // and the runtime evaluates the whole bundle at startup, which is what fails on
-// a module-scope forbidden call.
+// a module-scope forbidden call — including the shapes the static AST scan in
+// backend/src/__tests__/worker-global-scope.test.ts cannot see (indirect calls,
+// dependency code).
 
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, join, resolve } from 'node:path'
