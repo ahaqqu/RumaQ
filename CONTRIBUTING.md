@@ -40,6 +40,8 @@ Single entrypoint: `./scripts/test.sh` — see [`docs/TEST_STRATEGY.md`](docs/TE
 
 Coverage thresholds are 50/50/50/50 for frontend and backend. New API endpoints need an automation scenario in `automation/tests/local/api/`; new UI flows need one in `automation/tests/local/e2e/`.
 
+PR CI also boots the real bundled Worker in workerd and asserts `/api/health` (`bash ./scripts/github/worker-boot-smoke.sh`) — unit tests never evaluate the Worker bundle, so this is the check that catches a module-scope call workerd forbids at startup (see [`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md)).
+
 ## Code style
 
 - Format + lint + type-check in one pass: `./scripts/style.sh --check` (fix: `./scripts/style.sh`). Under the hood this is `vp check` (Oxfmt + Oxlint).

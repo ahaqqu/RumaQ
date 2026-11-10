@@ -11,6 +11,44 @@
 ./scripts/test.sh unit
 ```
 
+## Worker boot smoke (PR gate)
+
+`scripts/github/worker-boot-smoke.sh` builds the backend with the Cloudflare
+Vite plugin (`vp build backend`) and boots the resulting **bundle in workerd**
+twice, asserting `GET /api/health` answers `{"ok":true}` each time:
+
+1. `vp preview backend` — the plugin's own preview runtime, the one dev,
+   previews and deploys use.
+2. `scripts/ci/worker-boot-harness.mjs` — the repo's pinned `miniflare` dev
+   dependency, the runtime the nightly Docker/automation harness boots
+   (`automation/tests/support/worker-server.mjs`).
+
+It runs in the `ci` job of `.github/workflows/ci.yml` on every PR and is
+local-runnable:
+
+```
+bash ./scripts/github/worker-boot-smoke.sh
+```
+
+It is the only PR check that evaluates the real Worker bundle under the runtimes
+that host it (ahaqqu/RumaQ#534). Unit tests call `app.request()` on the Hono app
+in Node, which never evaluates a Worker bundle and never runs under workerd's
+global-scope restrictions; the Docker automation stack does boot the same
+bundle, but only on its nightly schedule — a module-scope `new AbortController()`
+(#533) made the Worker unable to start at all and still merged green.
+
+Booting **both** runtimes is deliberate: they ship different workerd versions
+and disagree on global-scope restrictions. The plugin's newer workerd accepts
+`new AbortController()` at module scope; the pinned one — the runtime #533
+actually broke — rejects it. A preview-only gate would let that line pass PRs
+and fail the nightly again, so the harness boot keeps the gate load-bearing for
+the nightly stack.
+
+No secrets, no D1 migrations and no Docker: `/api/health` is a static JSON
+handler, and the LOCAL environment (`CLOUDFLARE_ACCOUNT_ID` unset) turns the
+startup secrets check off. Keep it well under a minute — the full 150/53
+automation matrix stays nightly in `test-automation.yml`.
+
 ## Deploy guard test (offline)
 
 `scripts/test/deploy-secrets.sh` asserts the deploy surface's secret policy
@@ -146,6 +184,7 @@ heavy deps over raising the budget.
 - [x] All unit tests pass — `./scripts/test.sh unit`
 - [x] Code style and lint pass — `./scripts/style.sh --check`
 - [x] Deploy never writes the operator-owned ingest secret — `./scripts/test.sh deploy`
+- [x] Real Worker bundle boots in workerd and serves `/api/health` on every PR — `scripts/github/worker-boot-smoke.sh`
 - [x] Main user flows covered by page-level E2E — `automation/tests/local/e2e/features/`
 - [x] No critical/serious axe-core violations on main pages — `accessibility.feature`
 - [x] Bundle-size budget enforced in CI — `scripts/ci/bundle-budget.mjs`

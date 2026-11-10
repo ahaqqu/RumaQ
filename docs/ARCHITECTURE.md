@@ -79,6 +79,9 @@ rumaq/
 │                            #   Cloudflare Vite plugin and the cf CLI)
 ├── scripts/                # Setup, deployment, and smoke-trigger scripts
 │   ├── build.sh            # Worker + frontend build
+│   ├── ci/                 # CI-only node checks
+│   │   ├── bundle-budget.mjs        # gzipped JS budget (250 KB)
+│   │   └── worker-boot-harness.mjs  # Boots the Worker bundle in the pinned harness workerd
 │   ├── deploy/             # Deploy helper scripts
 │   │   ├── deploy-cf.js    # Cloudflare deploy helper: d1-setup, r2-ensure, put-secrets, pages-bindings
 │   │   └── setup-db.js     # D1 database setup
@@ -90,6 +93,7 @@ rumaq/
 │   │   ├── smoke.sh
 │   │   ├── check-price-freshness.sh  # Smoke staleness gate for the nightly scrape
 │   │   ├── test-automation.sh
+│   │   ├── worker-boot-smoke.sh  # Boots the built Worker in workerd + /api/health (PR gate)
 │   │   └── trigger-smoke.sh
 │   ├── style.sh            # Code formatting
 │   ├── test/               # Test runner scripts
@@ -396,6 +400,8 @@ Host configuration (units, timer, deploy contract, root-only env file) lives in 
 ### Production deployments
 
 Production deploys to `main` are **commit-based**: `.github/workflows/deploy.yml` triggers on every push to `main` (and on demand from the Actions tab for redeploys). Its first job runs the same CI gate as PRs (`scripts/github/ci.sh`), and the `deploy` job — gated by `needs: ci` — invokes the same `./scripts/deploy.sh cloudflare` used locally. Because both jobs live in a push-triggered workflow, CI and deploy status are visible on the commit itself. Pull requests use `.github/workflows/ci.yml` instead, which has no deploy job, so PR checks never show a deploy entry.
+
+The PR `ci` job also boots the **real bundled Worker in workerd** and asserts `GET /api/health` (#534): `scripts/github/worker-boot-smoke.sh` builds the bundle with `vp build backend` and boots it twice — through the plugin's preview server (`vp preview backend`, the runtime dev/previews/deploys use) and through the repo's pinned `miniflare` (`scripts/ci/worker-boot-harness.mjs`, the runtime the nightly Docker harness boots). Both are needed because the two workerd versions disagree on global-scope restrictions: the plugin's newer one accepts the module-scope `new AbortController()` that #533 broke the nightly with, so a preview-only gate would stay green and let the same break reach the nightly again. Unit tests call `app.request()` on the Hono app in Node — they never evaluate a Worker bundle — and the Docker automation stack that does boot one runs nightly. The check needs no secrets, no D1 migrations and no Docker.
 
 Rapid merges queue on the `deploy-main` concurrency group and deploy sequentially. When the changes since the **last successful deploy** only touch deploy-irrelevant files (Markdown, `docs/`, `.github/`, license/attribute files), `scripts/github/needs-deploy.sh` skips the deploy — a deliberate, visible skip; anything else deploys. Basing the skip decision on the last deployed commit (queried via the GitHub API) rather than the previous push means docs-only pushes and dropped queued runs can never hide a pending code change: the next deploy's diff still contains them. Production deploys always use the `rumaq` D1 database configured by `CLOUDFLARE_DATABASE_ID`.
 
