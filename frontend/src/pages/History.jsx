@@ -302,9 +302,11 @@ function Group({ g, monthLabel, fmtDate, t, formatRp, onReceiptClick }) {
             <td className="px-4 py-3 border-b border-border text-right tabular-nums">
               {it.price != null
                 ? formatRp(it.price)
-                : j === p.items.length - 1
+                : j === p.items.length - 1 && p.total != null
                   ? formatRp(p.total)
-                  : ''}
+                  : // #518: a no-estimate check-off line (and any legacy row's
+                    // unknown total) renders blank, never a fake "Rp 0".
+                    ''}
             </td>
             <td className="px-4 py-3 border-b border-border">
               {j === 0 && p.has_receipt ? (

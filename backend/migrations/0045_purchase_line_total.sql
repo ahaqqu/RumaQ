@@ -1,0 +1,25 @@
+-- Purchase price semantics, Option B (issue #518, owner decisions 2026-11-10):
+-- purchase_items.price is now the UNIT price — what the receipt's per-piece
+-- HARGA column shows (the receipt-scan prompt's existing rule). The printed
+-- line total moves to this new nullable line_total column: the scanned value
+-- when the receipt shows one, otherwise the server computes qty × price at
+-- write time. purchases.total = Σ COALESCE(line_total, price × qty), always
+-- computed server-side at both INSERT paths (receipt + plan check-off).
+--
+-- Append-only migration: legacy rows keep their ambiguous price meaning and a
+-- NULL line_total. Deliberately NO backfill (Q4) — pre-fix receipt rows mix
+-- unit and line prices indistinguishably (the scan prompt's line-total
+-- fallback), so any backfill would bake guessed numbers into permanent
+-- history; nobody has ever seen a correct spend total. Correct totals start
+-- at deploy.
+--
+-- NUMBERING NOTE: 0044 is taken by price_runs.ai_prompt_identity (merged and
+-- applied in production via #572), so this file takes the next free number,
+-- 0045. This file itself has never been applied anywhere (the PR is unmerged),
+-- which is why the 0044 → 0045 rename was safe. NEVER rename an APPLIED
+-- migration: wrangler keys its d1_migrations table by filename, so a rename
+-- re-runs the file.
+--
+-- 0001_schema.sql still describes purchase_items.price as "line total"; that
+-- comment is superseded here and left untouched on purpose — 0001 is applied.
+ALTER TABLE purchase_items ADD COLUMN line_total INTEGER;

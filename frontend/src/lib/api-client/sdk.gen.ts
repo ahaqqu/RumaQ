@@ -174,7 +174,7 @@ export const postApiAiChat = <ThrowOnError extends boolean = false>(options: Opt
 });
 
 /**
- * Upload a receipt image, scan with AI OCR, return parsed items.
+ * Upload a receipt image, scan with AI OCR, return parsed items. A line whose qty is not exactly 1 and that carries no printed total is returned with needsPriceReview: true — its price may be the line-total fallback, so the client must have the user confirm the unit price before submitting it (the server would otherwise multiply it by qty into purchases.total).
  */
 export const postApiPurchasesScan = <ThrowOnError extends boolean = false>(options?: Options<PostApiPurchasesScanData, ThrowOnError>): RequestResult<PostApiPurchasesScanResponses, PostApiPurchasesScanErrors, ThrowOnError> => (options?.client ?? client).post<PostApiPurchasesScanResponses, PostApiPurchasesScanErrors, ThrowOnError>({ url: '/api/purchases/scan', ...options });
 
@@ -184,7 +184,7 @@ export const postApiPurchasesScan = <ThrowOnError extends boolean = false>(optio
 export const getApiPurchases = <ThrowOnError extends boolean = false>(options?: Options<GetApiPurchasesData, ThrowOnError>): RequestResult<GetApiPurchasesResponses, GetApiPurchasesErrors, ThrowOnError> => (options?.client ?? client).get<GetApiPurchasesResponses, GetApiPurchasesErrors, ThrowOnError>({ url: '/api/purchases', ...options });
 
 /**
- * Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt.
+ * Create a purchase with items, updating stock and purchase history. A supplied item_id must belong to the caller's household — foreign and unknown ids answer 404 and write nothing. A supplied receipt_image_key must be a receipts key under the caller's own household in the exact shape the scan upload produced — any other value answers 400 and writes nothing. Lines naming the same item share one items row per receipt. Item price is the unit price; an optional per-line line_total (the receipt's printed line total) is persisted as given, otherwise the server computes qty × price. purchases.total is always computed server-side as Σ COALESCE(line_total, price × qty) and never read from the client.
  */
 export const postApiPurchases = <ThrowOnError extends boolean = false>(options: Options<PostApiPurchasesData, ThrowOnError>): RequestResult<PostApiPurchasesResponses, PostApiPurchasesErrors, ThrowOnError> => (options.client ?? client).post<PostApiPurchasesResponses, PostApiPurchasesErrors, ThrowOnError>({
     url: '/api/purchases',

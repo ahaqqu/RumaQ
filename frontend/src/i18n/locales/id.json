@@ -337,6 +337,10 @@
     "aiReview": "AI · periksa & ubah bila perlu",
     "reviewTitle": "Periksa hasil baca AI",
     "editHint": "Ketik untuk mengoreksi",
+    "checkUnitPrice": "Harga satuan belum dikonfirmasi — baris ini tak menampilkan total tercetak; harga bisa jadi harga baris.",
+    "confirmPricesFirst": "konfirmasi harga baris bertanda dulu",
+    "confirmPrice": "Harga satuan sudah benar",
+    "pricesUnconfirmed": "Konfirmasi dulu harga satuan yang bertanda sebelum menambahkan struk ini.",
     "total": "Total:",
     "retake": "Ulang foto",
     "confirmAdd": "Konfirmasi & tambah stok",
@@ -374,6 +378,7 @@
     "basedOnItems_other": "Rencana ini disusun dari {{count}} item yang menipis. Minta asisten menggabungkan agar cukup satu perjalanan per toko.",
     "groundedFrom": "harga dari brosur {{source}}",
     "groundedUntil": "berlaku s/d {{date}}",
+    "observedPrice": "Harga teramati {{price}}",
     "planLeadNoKey": "Atur AI dulu, lalu AI menyusun rencana belanja dari stok yang menipis."
   },
   "prices": {

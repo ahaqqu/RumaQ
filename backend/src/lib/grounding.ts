@@ -2,11 +2,13 @@ import type { GroundingMatch } from './plans.js'
 import { escapeLike } from './sql.js'
 
 // Deterministic plan price grounding (haqita-integration.md §5.4): fuzzy-match
-// a plan item's name against `price_products`, and on a confident match feed
-// the latest observed store price back into the plan item. No AI here on
-// purpose — the LLM price guess is only ever *overridden* by a rule the tests
-// can pin down. Precision over recall: a wrong match shows a wrong price with
-// a confident-looking badge.
+// a plan item's name against `price_products`, and on a confident match carry
+// the latest observed store price NEXT TO the plan item's LLM estimate — the
+// estimate is never overwritten; the observation rides its own price_grounded
+// field (#518 Q5), so the two price bases stay distinguishable. No AI here on
+// purpose — a deterministic rule the tests can pin down. Precision over
+// recall: a wrong match shows a wrong observation beside the estimate, never
+// in place of it.
 
 const GROUND_MIN_CONFIDENCE = 0.8
 // Containment of a full normalized name is a strong signal even when the
@@ -108,13 +110,15 @@ export type GroundedObservation = {
   validUntil: string | null
 }
 
-// Latest observation per source for one product, cheapest wins — the estimate
-// the plan item shows should be the best current deal. Cheapest is judged on
-// the effective price (COALESCE(effective_unit_price, price)) — the same basis
-// as the price explorer — so plan grounding and the explorer's cheapest
-// highlight always name the same store; s.slug breaks ties deterministically.
-// The returned price is the effective (payable) price, so estimates can move
-// down where promos apply (issue #291, deliberate behavior change).
+// Latest observation per source for one product, cheapest wins — the
+// observation shown next to the estimate should be the best current deal.
+// Cheapest is judged on the effective price (COALESCE(effective_unit_price,
+// price)) — the same basis as the price explorer — so plan grounding and the
+// explorer's cheapest highlight always name the same store; s.slug breaks
+// ties deterministically. The returned price is the effective (payable) price,
+// surfaced as the observation (price_grounded) next to the untouched estimate
+// (#518 Q5) — a promo's cheaper pack price becomes visible without ever
+// becoming the plan's number.
 async function cheapestCurrentObservation(
   db: D1Database,
   productId: string

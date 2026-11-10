@@ -337,6 +337,10 @@
     "aiReview": "AI — check & edit if needed",
     "reviewTitle": "Review AI reading",
     "editHint": "Type to correct",
+    "checkUnitPrice": "Unit price unconfirmed — this line shows no printed total; the price may be the line total.",
+    "confirmPricesFirst": "confirm the flagged unit prices first",
+    "confirmPrice": "Unit price is correct",
+    "pricesUnconfirmed": "Confirm the flagged unit prices before adding this receipt.",
     "total": "Total:",
     "retake": "Retake photo",
     "confirmAdd": "Confirm & add stock",
@@ -374,6 +378,7 @@
     "basedOnItems_other": "This plan was created from {{count}} items running low. Ask the assistant to combine into one trip per store.",
     "groundedFrom": "price from {{source}} brochure",
     "groundedUntil": "valid until {{date}}",
+    "observedPrice": "Observed price {{price}}",
     "planLeadNoKey": "Set up AI first, then it will create a shopping plan from items running low."
   },
   "prices": {

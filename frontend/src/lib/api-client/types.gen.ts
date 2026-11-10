@@ -1049,6 +1049,7 @@ export type PostApiPurchasesData = {
             qty: number;
             unit: string;
             price: number;
+            line_total?: number | null;
             item_id?: string;
         }>;
     };

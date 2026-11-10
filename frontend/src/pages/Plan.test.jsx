@@ -138,7 +138,7 @@ describe('Plan', () => {
     ).toBeTruthy()
   })
 
-  it('shows the grounded-estimate badge on grounded items', () => {
+  it('shows the grounded observation price labeled apart from the estimate (#518)', () => {
     const groundedPlan = {
       plans: [
         {
@@ -146,6 +146,8 @@ describe('Plan', () => {
           items: [
             {
               ...mockActivePlan.plans[0].items[0],
+              price_estimate: 18500,
+              price_grounded: 18000,
               price_source_name: 'Lotte Mart',
               price_valid_until: '2026-10-28',
             },
@@ -157,9 +159,22 @@ describe('Plan', () => {
     const { container } = renderWithQuery(
       React.createElement(Plan, { askAssistant: vi.fn(), setView: vi.fn() })
     )
-    // The i18n mock returns raw keys — assert the badge branch rendered.
+    // The i18n mock returns raw keys — assert the observation line rendered.
+    // #518: the observation price is its own labeled field; the row figure and
+    // the totals stay on the estimate.
+    expect(container.textContent).toContain('plan.observedPrice')
     expect(container.textContent).toContain('plan.groundedFrom')
     expect(container.textContent).toContain('plan.groundedUntil')
+  })
+
+  it('shows no observation line on ungrounded items (#518)', () => {
+    const { container } = renderWithQuery(
+      React.createElement(Plan, { askAssistant: vi.fn(), setView: vi.fn() })
+    )
+    // The mock plan items carry no price_grounded — the old groundedFrom badge
+    // must not render either.
+    expect(container.textContent).not.toContain('plan.observedPrice')
+    expect(container.textContent).not.toContain('plan.groundedFrom')
   })
 
   it('toggles checkbox on plan items', () => {
@@ -288,6 +303,10 @@ describe('Plan', () => {
     )
     expect(container.textContent).toContain('plan.savePlan')
     expect(container.textContent).toContain('Telur')
+    // #518: the draft grand total multiplies the per-unit estimate by qty —
+    // "Telur ×10 @ Rp 28.000" is Rp 280.000, not Rp 28.000 (Intl formats
+    // with a no-break space after Rp).
+    expect(container.textContent).toContain('Rp\u00A0280.000')
   })
 
   it('saves the viewed draft without regenerating', async () => {
