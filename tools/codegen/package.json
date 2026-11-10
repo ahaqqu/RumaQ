@@ -1,0 +1,13 @@
+{
+  "name": "@rumaq/codegen",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "openapi-typescript ../../frontend/openapi.json -o ../../frontend/src/lib/api-schema.d.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "^5.9.3"
+  }
+}

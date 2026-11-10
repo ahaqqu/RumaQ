@@ -71,9 +71,20 @@ export default defineConfig({
     tasks: {
       // Regenerates the typed API client inputs. Never cached: CI diffs the
       // committed artifacts to fail on backend route drift.
+      //
+      // openapi-typescript prints its output through the TypeScript compiler
+      // API (`ts.factory`, `ts.createPrinter`), which the native compiler
+      // (typescript@7) no longer ships — it peer-depends on `typescript@^5.x`
+      // and fails at import with "Cannot read properties of undefined (reading
+      // 'createKeywordTypeNode')" (openapi-ts/openapi-typescript#2841). No
+      // published version supports 7 yet; the proposed fix gives the generator
+      // its own compiler (#2867), which is what this workspace does. Revisit
+      // when that lands. It therefore lives in tools/codegen with its own
+      // pinned 5.9.3 compiler, so the root tree can move to 7 without the
+      // generator losing its JS API.
       'api:codegen': {
         command:
-          'bunx tsx scripts/api/generate-openapi-spec.ts && node node_modules/openapi-typescript/bin/cli.js frontend/openapi.json -o frontend/src/lib/api-schema.d.ts && bunx vp fmt --write frontend/openapi.json frontend/src/lib/api-schema.d.ts',
+          'bunx tsx scripts/api/generate-openapi-spec.ts && bun run --cwd tools/codegen generate && bunx vp fmt --write frontend/openapi.json frontend/src/lib/api-schema.d.ts',
         cache: false,
       },
     },
