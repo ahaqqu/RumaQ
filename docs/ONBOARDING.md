@@ -63,3 +63,4 @@ Default seed data (locations + stores) is created with the first household on si
 - **Migration errors on startup** — delete local dev state and re-run `./scripts/deploy.sh` (local D1 is disposable; never do this against production).
 - **CI fails with `Permission denied` on a new script** — add it to `.gitattributes` with `mode=755`.
 - **Lint/type failures** — run `./scripts/style.sh` to autofix before committing. The husky pre-commit hook does this automatically on every commit (and blocks unfixable style errors).
+- **Local types disagree with CI** — a stale workspace `node_modules` copy from an older lockfile wins over the root one (e.g. `backend/node_modules/typescript`); `rm -rf node_modules */node_modules && bun install --frozen-lockfile`.

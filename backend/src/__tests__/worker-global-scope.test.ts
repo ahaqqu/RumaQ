@@ -84,13 +84,41 @@ const nameOf = (node: Node | null): string | null => {
   return typeof value === 'string' ? value : null
 }
 
+const isCall = (node: Node): boolean =>
+  node.type === 'CallExpression' || node.type === 'OptionalCallExpression'
+
+/** A non-computed property access — `a.b`, or its optional-chaining form. */
+const isPropertyAccess = (node: Node): boolean =>
+  (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') &&
+  node.computed === false
+
+// Type-only wrappers around an expression: `x as T`, `x!`, `x satisfies T`.
+const EXPRESSION_WRAPPERS = new Set([
+  'ParenthesizedExpression',
+  'TSAsExpression',
+  'TSInstantiationExpression',
+  'TSNonNullExpression',
+  'TSSatisfiesExpression',
+])
+
+/** The expression a type-only wrapper stands for (`(fetch as any)` → `fetch`). */
+function unwrapExpression(node: Node): Node {
+  let current = node
+  while (EXPRESSION_WRAPPERS.has(current.type)) {
+    const inner = childOf(current, 'expression')
+    if (!inner) return current
+    current = inner
+  }
+  return current
+}
+
 /** The leftmost identifier of a property chain (`a.b.c` → `a`). */
 function rootIdentifier(node: Node): Node | null {
   let current: Node | null = node
   for (;;) {
     if (!current) return null
     if (current.type === 'Identifier') return current
-    if (current.type === 'MemberExpression' && current.computed === false) {
+    if (isPropertyAccess(current)) {
       current = childOf(current, 'object')
       continue
     }
@@ -108,18 +136,20 @@ const BANNED_CALLS = ['fetch', 'setTimeout', 'setInterval', 'queueMicrotask']
 /** The banned construct this node is, or null. */
 function bannedConstruct(node: Node): string | null {
   if (node.type === 'NewExpression') {
-    const callee = childOf(node, 'callee')
+    const rawCallee = childOf(node, 'callee')
+    const callee = rawCallee ? unwrapExpression(rawCallee) : null
     const name = callee?.type === 'Identifier' ? nameOf(callee) : null
     return name ? (BANNED_CONSTRUCTORS.get(name) ?? null) : null
   }
-  if (node.type !== 'CallExpression') return null
-  const callee = childOf(node, 'callee')
-  if (!callee) return null
+  if (!isCall(node)) return null
+  const rawCallee = childOf(node, 'callee')
+  if (!rawCallee) return null
+  const callee = unwrapExpression(rawCallee)
   if (callee.type === 'Identifier') {
     const name = nameOf(callee)
     return name && BANNED_CALLS.includes(name) ? `${name}()` : null
   }
-  if (callee.type !== 'MemberExpression' || callee.computed !== false) return null
+  if (!isPropertyAccess(callee)) return null
   const owner = rootIdentifier(callee)
   const name = nameOf(childOf(callee, 'property'))
   if (!owner || !name) return null
@@ -166,8 +196,9 @@ function scanEvaluated(node: Node, report: Report): void {
     report(node, banned)
     return
   }
-  if (node.type === 'CallExpression') {
-    const callee = childOf(node, 'callee')
+  if (isCall(node)) {
+    const rawCallee = childOf(node, 'callee')
+    const callee = rawCallee ? unwrapExpression(rawCallee) : null
     if (callee && ['ArrowFunctionExpression', 'FunctionExpression'].includes(callee.type)) {
       for (const argument of childrenOf(node, 'arguments')) walkEvaluated(argument, report)
       const body = childOf(callee, 'body')
@@ -189,6 +220,10 @@ function scanStatement(statement: Node, report: Report): void {
     for (const declaration of childrenOf(statement, 'declarations')) {
       const init = childOf(declaration, 'init')
       if (init) scanEvaluated(init, report)
+      // A binding pattern also runs at load: defaults (`{ a = new Request() }`)
+      // and computed keys (`{ [fetch('/x')]: a }`).
+      const pattern = childOf(declaration, 'id')
+      if (pattern) scanEvaluated(pattern, report)
     }
     return
   }
@@ -207,8 +242,13 @@ const lineOf = (source: string, offset: number): number => {
 }
 
 function scanSource(source: string, file = '<fixture>.ts'): Violation[] {
-  const program = parse(source, { sourceType: 'module', plugins: ['typescript'] })
-    .program as unknown as Node
+  // `sourceFilename` makes a parse error name the offending backend file
+  // instead of a bare "Unexpected token" over ~400 scanned files.
+  const program = parse(source, {
+    sourceType: 'module',
+    plugins: ['typescript'],
+    sourceFilename: file,
+  }).program as unknown as Node
   const violations: Violation[] = []
   const report: Report = (node, construct) => {
     const start = node.start ?? 0
@@ -308,6 +348,28 @@ describe('Worker bundle guard: scanner self-check', () => {
     expect(constructs(source)).toContain(construct)
   })
 
+  // Optional chaining is a distinct node pair in Babel (`OptionalCallExpression`
+  // / `OptionalMemberExpression`); it still runs at load, so it must be caught.
+  it.each([
+    ['crypto.*', 'crypto?.randomUUID()'],
+    ['fetch()', 'fetch?.("https://example.com")'],
+    ['AbortSignal.timeout()', 'const signal = AbortSignal?.timeout(1000)'],
+  ])('reports %s through optional chaining', (construct, source) => {
+    expect(constructs(source)).toContain(construct)
+  })
+
+  it('reports through type-only wrappers', () => {
+    expect(constructs(';(fetch as any)("https://example.com")')).toContain('fetch()')
+    expect(constructs('const request = (new Request("/x") as Request)')).toContain('new Request()')
+  })
+
+  it('reports binding-pattern defaults and computed keys', () => {
+    expect(constructs('const { client = new AbortController() } = config')).toContain(
+      'new AbortController()'
+    )
+    expect(constructs('const { [fetch("/x")]: value } = store')).toContain('fetch()')
+  })
+
   it('reports exports the bundler still evaluates', () => {
     expect(constructs('export const controller = new AbortController()')).toContain(
       'new AbortController()'
@@ -322,6 +384,8 @@ describe('Worker bundle guard: scanner self-check', () => {
   it('reports work inside a module-scope IIFE', () => {
     expect(constructs(';(function () { new Request("/x") })()')).toContain('new Request()')
     expect(constructs(';(() => { return Math.random() })()')).toContain('Math.random()')
+    // An optional IIFE still runs during evaluation.
+    expect(constructs(';(function () { crypto.randomUUID() })?.()')).toContain('crypto.*')
   })
 
   it('leaves per-call code alone', () => {
