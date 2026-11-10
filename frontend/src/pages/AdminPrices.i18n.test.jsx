@@ -125,6 +125,9 @@ describe('AdminPrices i18n (issue #463)', () => {
     fireEvent.click(container.querySelector('button'))
     expect(container.textContent).toContain('Verifier prompt v2')
     expect(container.textContent).toContain('01274416be4')
+    // The full digest is the tooltip's payload — the only place it is exposed.
+    const tooltip = container.querySelector('[title^="sha256:"]')
+    expect(tooltip?.getAttribute('title')).toBe(`sha256:${v2Run.aiPromptIdentity.sha256}`)
   })
 
   it('renders the provisional count on the store row in real copy', () => {

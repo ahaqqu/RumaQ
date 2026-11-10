@@ -492,17 +492,19 @@ products on large price gaps, v2 carries the instruction that stops it (pipeline
 invisible in the data: the only trace was the commit, and commits are not joined to
 rows. The report gains an additive-nullish `ai.verifierPrompt`:
 
-| field     | meaning                                                                           |
-| --------- | --------------------------------------------------------------------------------- |
-| `version` | integer `>= 1` — `0` can never mean "absent"; absence is the field being absent   |
-| `id`      | prompt identity, mirrors the bench's `ocr.verifier.ai_prompt_template`            |
-| `sha256`  | template digest, exactly 64 LOWERCASE hex (the bench strips its `sha256:` prefix) |
+| field     | meaning                                                                             |
+| --------- | ----------------------------------------------------------------------------------- |
+| `version` | integer `>= 1` — `0` can never mean "absent"; absence is the field being absent     |
+| `id`      | prompt identity, 1–200 chars; mirrors the bench's `ocr.verifier.ai_prompt_template` |
+| `sha256`  | template digest, exactly 64 LOWERCASE hex (the bench strips its `sha256:` prefix)   |
 
 The identity is a `strictObject` (a typo'd key fails ingest instead of silently
 dropping it) and the field itself is `nullish` (old scrapers and every current
 producer post no `verifierPrompt`; a new report on an OLD Worker fails loudly,
-Worker-first). `schemaVersion` stays `1`; the contract package version is `0.4.0` for
-this revision. Fixtures pin the shape: `valid/run-report-ai-prompt.json` plus
+Worker-first). `id` is capped at 200 chars like the other report strings — it is
+producer-controlled on the ingest endpoint. `schemaVersion` stays `1`; the contract
+package version is `0.4.0` for this revision. Fixtures pin the shape:
+`valid/run-report-ai-prompt.json` plus
 `invalid/run-report-prompt-{version-zero,bad-hash,unknown-key}.json`.
 
 **Where it is stored.** `recordRunReport` writes the validated slice into
@@ -510,8 +512,9 @@ this revision. Fixtures pin the shape: `valid/run-report-ai-prompt.json` plus
 #463/#537 precedent) and `listPriceRuns` reads it back as `aiPromptIdentity`, so
 `GET /api/admin/price-runs` names the prompt per run and the admin monitor renders
 `Verifier prompt v2 · <hash prefix>`. The existing `ai_usage` column stays usage-only:
-identity is not spend. Rows recorded before 0044 (and reports that do not send the
-field) read as `null`, which the monitor renders as absent.
+identity is not spend. Absence is bound as SQL NULL — never the JSON literal
+`'null'` — so rows recorded before 0044 and reports that do not send the field share
+one "absent" spelling, which `listPriceRuns` maps to `null` for the monitor.
 
 ## 9. Reset and rollout
 

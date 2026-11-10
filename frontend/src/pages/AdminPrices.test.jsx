@@ -514,6 +514,16 @@ describe('AdminPrices', () => {
   })
 
   it('renders no prompt identity for a report that does not carry one (pipeline #83)', () => {
+    // The API always serializes the key (SQL NULL → JSON null); this is the
+    // shape a pre-#83 / current-scraper row has, not a missing property.
+    vi.mocked(usePriceRuns).mockReturnValue({
+      data: {
+        runs: [{ ...mockFeed.runs[0], aiPromptIdentity: null }],
+        lastSuccessAt: recentSuccess,
+      },
+      isLoading: false,
+      isError: false,
+    })
     const { container } = renderAdmin()
     fireEvent.click(container.querySelector('button'))
     expect(container.textContent).not.toContain('monitor.verifierPrompt')

@@ -280,10 +280,9 @@ describe('recordRunReport', () => {
     expect(params[11]).toBeNull()
     expect(params[12]).toBeNull()
     expect(params[13]).toBeNull()
-    // Pipeline #83: a producer that sends no verifier prompt stores the JSON
-    // literal null — one "absent" spelling for every writer, parsed back to
-    // null by the read path.
-    expect(params[14]).toBe('null')
+    // Pipeline #83: a producer that sends no verifier prompt binds SQL NULL —
+    // the same "absent" spelling every pre-0044 row already carries.
+    expect(params[14]).toBeNull()
   })
 
   it('stores the verifier prompt identity (pipeline #83)', async () => {
@@ -832,13 +831,15 @@ describe('verifier prompt identity (pipeline #83)', () => {
 
     // The shape is pinned, not merely present: version is an integer >= 1
     // (0 can never mean "absent" — absence is the field being absent), the id
-    // is non-empty, the hash is exactly 64 LOWERCASE hex (the pipeline strips
-    // its `sha256:` prefix; a re-prefixed or uppercase digest is drift).
+    // is non-empty and capped (producer-controlled on the ingest endpoint),
+    // the hash is exactly 64 LOWERCASE hex (the pipeline strips its `sha256:`
+    // prefix; a re-prefixed or uppercase digest is drift).
     expect(safeParse(runVerifierPromptSchema, verifierPrompt).success).toBe(true)
     for (const bad of [
       { ...verifierPrompt, version: 0 },
       { ...verifierPrompt, version: 1.5 },
       { ...verifierPrompt, id: '' },
+      { ...verifierPrompt, id: 'x'.repeat(201) },
       { ...verifierPrompt, sha256: verifierPrompt.sha256.toUpperCase() },
       { ...verifierPrompt, sha256: `sha256:${verifierPrompt.sha256}` },
       { ...verifierPrompt, model: 'gemini-3.8-flash' },
@@ -872,7 +873,7 @@ describe('verifier prompt identity (pipeline #83)', () => {
   })
 
   it('reads absence as null for current scrapers and pre-#83 rows', async () => {
-    const { d1 } = createDb()
+    const { d1, sqlite } = createDb()
     // The shape every scraper posts today: an `ai` block with usage only.
     const res = await postReport(d1, { ...sampleReport(), ai: { usage } })
     expect(res.status).toBe(200)
@@ -880,6 +881,15 @@ describe('verifier prompt identity (pipeline #83)', () => {
     const feed = await listPriceRuns(d1)
     expect(feed.runs[0]!.ai).toEqual(usage)
     expect(feed.runs[0]!.aiPromptIdentity).toBeNull()
+
+    // The storage state, not just the read path: absence is SQL NULL, never
+    // the JSON literal 'null', so an `IS NULL` backfill sees every absent
+    // identity. `parseJson` maps both to null, so only the raw column can
+    // pin this convention.
+    const stored = sqlite.prepare('SELECT ai_prompt_identity FROM price_runs').get() as {
+      ai_prompt_identity: string | null
+    }
+    expect(stored.ai_prompt_identity).toBeNull()
   })
 
   it('refreshes the identity on a replayed report (idempotent upsert)', async () => {

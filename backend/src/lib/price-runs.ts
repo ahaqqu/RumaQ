@@ -65,10 +65,12 @@ export async function recordRunReport(db: D1Database, report: RunReport): Promis
       report.error ?? null,
       // Pipeline #83: the verifier prompt identity that produced this run's
       // decisions. Every scraper today sends no `ai.verifierPrompt` (the
-      // pipeline phase is a follow-up), so absence is written as the JSON
-      // literal `null` — `parseJson` reads that back as null, exactly like the
-      // SQL NULL on rows recorded before migration 0044.
-      JSON.stringify(report.ai?.verifierPrompt ?? null)
+      // pipeline phase is a follow-up), so absence is bound as SQL NULL — the
+      // same state as rows recorded before migration 0044. One "absent"
+      // spelling across the whole table keeps `IS NULL` queries and future
+      // backfills honest; a JSON literal `'null'` would be a present-but-empty
+      // value that only `parseJson` happens to tolerate.
+      report.ai?.verifierPrompt ? JSON.stringify(report.ai.verifierPrompt) : null
     )
     .run()
 }
@@ -177,8 +179,9 @@ export async function listPriceRuns(db: D1Database, limit = 50): Promise<PriceRu
     // Issue #537: NULL on runs recorded before 0043 (and any producer that
     // sends no `ai`/`failures`) — the monitor reads that as "absent".
     ai: parseJson<RunAiUsage>(row.ai_usage),
-    // Pipeline #83: JSON null for a report without `ai.verifierPrompt` (every
-    // scraper today), SQL NULL on pre-0044 rows; both read back as absent.
+    // Pipeline #83: SQL NULL on pre-0044 rows and on every report that does
+    // not send `ai.verifierPrompt` (every scraper today) — one absent state,
+    // which the monitor renders as nothing.
     aiPromptIdentity: parseJson<RunVerifierPrompt>(row.ai_prompt_identity),
     failures: parseJson<RunFailure[]>(row.failures),
     error: row.error,

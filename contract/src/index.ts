@@ -527,7 +527,8 @@ export type RunAiUsage = InferOutput<typeof runAiUsageSchema>
  * data (the only trace was the commit, and commits are not joined to rows).
  *
  * - `id` mirrors the pipeline bench's prompt identity
- *   (`ocr.verifier.ai_prompt_template`).
+ *   (`ocr.verifier.ai_prompt_template`). It is producer-controlled on the
+ *   ingest endpoint, so it is capped like the other report strings.
  * - `version` is the integer the ticket asks for. `>= 1`, so 0 can never be
  *   mistaken for "absent" (absence is the whole field being absent/null).
  * - `sha256` is the template's digest as 64 LOWERCASE hex characters — the
@@ -538,7 +539,7 @@ export type RunAiUsage = InferOutput<typeof runAiUsageSchema>
  */
 export const runVerifierPromptSchema = strictObject({
   version: pipe(number(), integer(), minValue(1)),
-  id: pipe(string(), minLength(1)),
+  id: pipe(string(), minLength(1), maxLength(200)),
   sha256: pipe(string(), regex(/^[0-9a-f]{64}$/, 'Expected 64 lowercase hex characters.')),
 })
 

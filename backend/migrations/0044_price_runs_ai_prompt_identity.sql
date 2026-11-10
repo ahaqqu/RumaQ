@@ -13,8 +13,10 @@
 -- identity, not spend.
 --
 -- Nullable on purpose: every current scraper sends no `verifierPrompt` yet
--- (Worker-first deploy order), and rows recorded before the field keep NULL,
--- which the monitor reads as "absent" (historical runs must keep rendering).
+-- (Worker-first deploy order), and rows recorded before the field keep NULL.
+-- Absence is bound as SQL NULL, never the JSON literal `'null'`, so NULL is
+-- the single "absent" spelling the monitor reads — historical runs keep
+-- rendering and `IS NULL` queries see every absent identity.
 --
 -- NUMBERING NOTE: 0043 is applied; this file takes the next free number,
 -- 0044. NEVER rename an applied migration: wrangler keys its d1_migrations
