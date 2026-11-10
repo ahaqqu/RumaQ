@@ -40,6 +40,18 @@ Feature: Purchase Creation and History
     Then the response status should be 201
     And the stock for "Rice" should have qty 7
 
+  Scenario: Multi-line receipt of one item sums stock once
+    Given the database has seed data
+    And I am authenticated as a test user
+    When I create a purchase with store "store-indo" and date "2026-07-01" and items
+      | name | qty | unit | price |
+      | Rice | 1   | kg   | 13000 |
+      | rice | 2   | kg   | 13000 |
+    Then the response status should be 201
+    And the response should have items array
+    And the response should have stock array
+    And the stock for "Rice" should have qty 5
+
   Scenario: Invalid items schema returns 400
     Given the database has seed data
     And I am authenticated as a test user

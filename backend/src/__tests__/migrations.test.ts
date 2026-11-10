@@ -3841,3 +3841,164 @@ describe('migration 0045: purchase_items.line_total (#518)', () => {
     expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('line_total')
   })
 })
+
+// Per-receipt stock semantics (#551 items b+c): the pre-fix purchase loop wrote
+// duplicate stock rows for one (household_id, item_id) pair (a multi-line
+// receipt's per-line SELECT cannot see batch-pending writes). 0046 collapses
+// those pairs — quantities SUM, every other field keeps the latest-updated_at
+// row — and replaces 0003's plain index with a UNIQUE one under the same name,
+// so the class stays closed permanently behind #551(a)'s per-item write.
+describe('migration 0046: stock unique (household_id, item_id) (#551)', () => {
+  function preUniqueDb(): Db {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    // D1 enforces foreign keys; node:sqlite defaults them OFF.
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0046')
+    )
+    return db
+  }
+
+  function seedFixture(db: Db): void {
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'u1@example.test')").run()
+    db.prepare("INSERT INTO users (id, email) VALUES ('u2', 'u2@example.test')").run()
+    db.prepare("INSERT INTO households (id, name, created_by) VALUES ('h1', 'Home', 'u1')").run()
+    db.prepare("INSERT INTO households (id, name, created_by) VALUES ('h2', 'Away', 'u2')").run()
+    db.prepare("INSERT INTO items (id, household_id, name) VALUES ('i-a', 'h1', 'Item A')").run()
+    db.prepare("INSERT INTO items (id, household_id, name) VALUES ('i-b', 'h1', 'Item B')").run()
+    db.prepare("INSERT INTO items (id, household_id, name) VALUES ('i-c', 'h2', 'Item C')").run()
+    db.prepare(
+      `INSERT INTO locations (id, household_id, label, sort_order)
+       VALUES ('loc-pantry', 'h1', 'Pantry', 0), ('loc-fridge', 'h1', 'Fridge', 1)`
+    ).run()
+    const insertStock = db.prepare(
+      `INSERT INTO stock
+         (id, household_id, item_id, location_id, qty, unit, expiry_date, run_out_days, basis, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    // Duplicate pair: the stale row and the latest row of one item. Pre-fix a
+    // two-line receipt could write exactly this.
+    insertStock.run(
+      's-a-old',
+      'h1',
+      'i-a',
+      'loc-pantry',
+      2,
+      'kg',
+      '2027-01-01',
+      14,
+      'default',
+      '2026-01-01 00:00:00'
+    )
+    insertStock.run(
+      's-a-new',
+      'h1',
+      'i-a',
+      'loc-fridge',
+      3,
+      'pack',
+      null,
+      7,
+      'history',
+      '2026-02-01 00:00:00'
+    )
+    // Single-row pair: untouched by the merge.
+    insertStock.run('s-b', 'h1', 'i-b', null, 5, null, null, null, null, '2026-01-15 00:00:00')
+    // Another household's row: the merge is per (household_id, item_id) pair —
+    // h1's collapse must not touch it.
+    insertStock.run('s-c', 'h2', 'i-c', null, 4, 'pcs', null, 9, 'default', '2026-01-15 00:00:00')
+  }
+
+  it('collapses duplicate pairs: quantities sum, other fields keep the latest row', () => {
+    const db = preUniqueDb()
+    seedFixture(db)
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0046_stock_unique_household_item.sql'), 'utf8'))
+
+    const rows = db.prepare('SELECT * FROM stock ORDER BY id').all() as Array<
+      Record<string, unknown>
+    >
+    // Exactly one row per pair: the survivors are the latest-updated_at rows.
+    expect(rows.map((r) => r.id)).toEqual(['s-a-new', 's-b', 's-c'])
+
+    const a = rows.find((r) => r.id === 's-a-new')
+    // The merged quantity is the SUM of the pair (2 + 3) — every duplicate row
+    // was a real delivered quantity; the other fields keep the LATEST row's
+    // values (fridge location, pack unit, its expiry/run-out/basis), including
+    // the fields the stale row set and the latest one left NULL.
+    expect(a).toMatchObject({
+      household_id: 'h1',
+      item_id: 'i-a',
+      qty: 5,
+      location_id: 'loc-fridge',
+      unit: 'pack',
+      expiry_date: null,
+      run_out_days: 7,
+      basis: 'history',
+      updated_at: '2026-02-01 00:00:00',
+    })
+    // A single-row pair rides through untouched — including NULL fields.
+    expect(rows.find((r) => r.id === 's-b')).toMatchObject({
+      qty: 5,
+      unit: null,
+      location_id: null,
+      run_out_days: null,
+      basis: null,
+    })
+    // Another household's row is not folded by h1's collapse.
+    expect(rows.find((r) => r.id === 's-c')).toMatchObject({ household_id: 'h2', qty: 4 })
+  })
+
+  it('breaks exact updated_at ties on the larger id (deterministic survivor)', () => {
+    const db = preUniqueDb()
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'u1@example.test')").run()
+    db.prepare("INSERT INTO households (id, name, created_by) VALUES ('h1', 'Home', 'u1')").run()
+    db.prepare("INSERT INTO items (id, household_id, name) VALUES ('i-a', 'h1', 'Item A')").run()
+    const insertStock = db.prepare(
+      `INSERT INTO stock (id, household_id, item_id, qty, updated_at) VALUES (?, ?, ?, ?, ?)`
+    )
+    insertStock.run('s-tie-aaa', 'h1', 'i-a', 2, '2026-01-01 00:00:00')
+    insertStock.run('s-tie-zzz', 'h1', 'i-a', 3, '2026-01-01 00:00:00')
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0046_stock_unique_household_item.sql'), 'utf8'))
+
+    const rows = db.prepare('SELECT id, qty FROM stock').all() as Array<Record<string, unknown>>
+    // The lexically larger id survives; the quantities still sum.
+    expect(rows).toEqual([{ id: 's-tie-zzz', qty: 5 }])
+  })
+
+  it('enforces the unique index: a second stock row for the same pair throws', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(db, migrationFiles())
+
+    db.prepare("INSERT INTO users (id, email) VALUES ('u1', 'u1@example.test')").run()
+    db.prepare("INSERT INTO households (id, name, created_by) VALUES ('h1', 'Home', 'u1')").run()
+    db.prepare("INSERT INTO items (id, household_id, name) VALUES ('i-a', 'h1', 'Item A')").run()
+    const insertStock = db.prepare(
+      'INSERT INTO stock (id, household_id, item_id, qty) VALUES (?, ?, ?, ?)'
+    )
+    insertStock.run('s-1', 'h1', 'i-a', 2)
+    expect(() => insertStock.run('s-2', 'h1', 'i-a', 3)).toThrow()
+    // Another household may still hold its own row for its own item — the
+    // uniqueness is per (household_id, item_id) pair, never per item_id alone.
+    db.prepare("INSERT INTO households (id, name, created_by) VALUES ('h2', 'Away', 'u1')").run()
+    db.prepare("INSERT INTO items (id, household_id, name) VALUES ('i-b', 'h2', 'Item B')").run()
+    expect(() => insertStock.run('s-3', 'h2', 'i-b', 1)).not.toThrow()
+  })
+
+  it("keeps the full chain green on a fresh database; 0003's plain index is replaced unique under the same name", () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+
+    const index = db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_stock_household_item'"
+      )
+      .get() as { sql: string | null }
+    // Same name as 0003's index (plans and reads keep their seek), now UNIQUE.
+    expect(index.sql).toContain('idx_stock_household_item')
+    expect(index.sql).toContain('UNIQUE')
+  })
+})
