@@ -49,9 +49,9 @@ import {
 
 // The client is mocked at the generated hey-api client boundary: these tests
 // cover the wrapper contract (paths, params, error mapping), while the client
-// owns URL building and response parsing. Assertions for body-carrying calls
-// use objectContaining because the generated SDK attaches its own
-// Content-Type header; url/path/query/body still have to match exactly.
+// owns URL building and response parsing. Assertions spell out the header (and
+// the multipart serializer) the generated SDK attaches, so the full call shape
+// stays pinned.
 const { clientMock } = vi.hoisted(() => ({
   clientMock: {
     delete: vi.fn(),
@@ -260,12 +260,11 @@ describe('api', () => {
     clientMock.post.mockResolvedValueOnce(ok({ ok: true }))
     const result = await emailLogin('test@rumaq.dev', 'password123')
     expect(result).toEqual({ ok: true })
-    expect(clientMock.post).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/api/auth/email-login',
-        body: { email: 'test@rumaq.dev', password: 'password123' },
-      })
-    )
+    expect(clientMock.post).toHaveBeenCalledWith({
+      url: '/api/auth/email-login',
+      body: { email: 'test@rumaq.dev', password: 'password123' },
+      headers: { 'Content-Type': 'application/json' },
+    })
   })
 
   it('getSettings calls /api/settings', async () => {
@@ -279,12 +278,11 @@ describe('api', () => {
     clientMock.patch.mockResolvedValueOnce(ok({ ok: true }))
     const result = await patchSettings({ language: 'id' })
     expect(result).toEqual({ ok: true })
-    expect(clientMock.patch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/api/settings',
-        body: { language: 'id' },
-      })
-    )
+    expect(clientMock.patch).toHaveBeenCalledWith({
+      url: '/api/settings',
+      body: { language: 'id' },
+      headers: { 'Content-Type': 'application/json' },
+    })
   })
 
   it('getLocations calls /api/locations', async () => {
@@ -298,12 +296,11 @@ describe('api', () => {
     clientMock.post.mockResolvedValueOnce(ok({ location: { id: 'l1', label: 'Kulkas' } }))
     const result = await createLocation('Kulkas')
     expect(result.location.label).toBe('Kulkas')
-    expect(clientMock.post).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/api/locations',
-        body: { label: 'Kulkas' },
-      })
-    )
+    expect(clientMock.post).toHaveBeenCalledWith({
+      url: '/api/locations',
+      body: { label: 'Kulkas' },
+      headers: { 'Content-Type': 'application/json' },
+    })
   })
 
   it('deleteLocation calls DELETE endpoint', async () => {
@@ -333,12 +330,11 @@ describe('api', () => {
     clientMock.post.mockResolvedValueOnce(ok({ store: { id: 's1', label: 'Indomaret' } }))
     const result = await createStore('Indomaret')
     expect(result.store.label).toBe('Indomaret')
-    expect(clientMock.post).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/api/stores',
-        body: { label: 'Indomaret' },
-      })
-    )
+    expect(clientMock.post).toHaveBeenCalledWith({
+      url: '/api/stores',
+      body: { label: 'Indomaret' },
+      headers: { 'Content-Type': 'application/json' },
+    })
   })
 
   it('deleteStore calls DELETE endpoint', async () => {
@@ -392,13 +388,12 @@ describe('api', () => {
     clientMock.patch.mockResolvedValueOnce(ok({ stock: { id: 'x' } }))
     const result = await patchStock('x', { qty: 5 })
     expect(result.stock.id).toBe('x')
-    expect(clientMock.patch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/api/stock/{id}',
-        path: { id: 'x' },
-        body: { qty: 5 },
-      })
-    )
+    expect(clientMock.patch).toHaveBeenCalledWith({
+      url: '/api/stock/{id}',
+      path: { id: 'x' },
+      body: { qty: 5 },
+      headers: { 'Content-Type': 'application/json' },
+    })
   })
 
   it('getHome calls /api/home', async () => {
@@ -438,12 +433,11 @@ describe('api', () => {
     clientMock.post.mockResolvedValueOnce(ok({ purchase: { id: 'p1' } }))
     const result = await createPurchase({ items: [{ name: 'A', qty: 1, unit: 'pcs', price: 0 }] })
     expect(result.purchase.id).toBe('p1')
-    expect(clientMock.post).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/api/purchases',
-        body: { items: [{ name: 'A', qty: 1, unit: 'pcs', price: 0 }] },
-      })
-    )
+    expect(clientMock.post).toHaveBeenCalledWith({
+      url: '/api/purchases',
+      body: { items: [{ name: 'A', qty: 1, unit: 'pcs', price: 0 }] },
+      headers: { 'Content-Type': 'application/json' },
+    })
   })
 
   it('getReceiptUrl returns URL', () => {
@@ -494,20 +488,21 @@ describe('api', () => {
     clientMock.post.mockResolvedValueOnce(ok({ reply: 'hello' }))
     const result = await sendChatMessage('hi')
     expect(result.reply).toBe('hello')
-    expect(clientMock.post).toHaveBeenCalledWith(
-      expect.objectContaining({ url: '/api/ai/chat', body: { message: 'hi' } })
-    )
+    expect(clientMock.post).toHaveBeenCalledWith({
+      url: '/api/ai/chat',
+      body: { message: 'hi' },
+      headers: { 'Content-Type': 'application/json' },
+    })
   })
 
   it('sendChatMessage includes history when provided', async () => {
     clientMock.post.mockResolvedValueOnce(ok({ reply: 'ok' }))
     await sendChatMessage('hi', [{ role: 'user', content: 'previous' }])
-    expect(clientMock.post).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/api/ai/chat',
-        body: { message: 'hi', history: [{ role: 'user', content: 'previous' }] },
-      })
-    )
+    expect(clientMock.post).toHaveBeenCalledWith({
+      url: '/api/ai/chat',
+      body: { message: 'hi', history: [{ role: 'user', content: 'previous' }] },
+      headers: { 'Content-Type': 'application/json' },
+    })
   })
 
   it('getPlans defaults to active', async () => {
@@ -531,25 +526,23 @@ describe('api', () => {
     clientMock.post.mockResolvedValueOnce(ok({ plan: { id: 'pl1' } }))
     const result = await savePlan([{ name: 'A' }])
     expect(result.plan.id).toBe('pl1')
-    expect(clientMock.post).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/api/plans',
-        body: { items: [{ name: 'A' }] },
-      })
-    )
+    expect(clientMock.post).toHaveBeenCalledWith({
+      url: '/api/plans',
+      body: { items: [{ name: 'A' }] },
+      headers: { 'Content-Type': 'application/json' },
+    })
   })
 
   it('updatePlanItem calls PATCH endpoint', async () => {
     clientMock.patch.mockResolvedValueOnce(ok({ item: { id: 'i1' } }))
     const result = await updatePlanItem('pl1', 'i1', 'bought')
     expect(result.item.id).toBe('i1')
-    expect(clientMock.patch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/api/plans/{id}/items/{itemId}',
-        path: { id: 'pl1', itemId: 'i1' },
-        body: { status: 'bought' },
-      })
-    )
+    expect(clientMock.patch).toHaveBeenCalledWith({
+      url: '/api/plans/{id}/items/{itemId}',
+      path: { id: 'pl1', itemId: 'i1' },
+      body: { status: 'bought' },
+      headers: { 'Content-Type': 'application/json' },
+    })
   })
 
   describe('document uploads (multipart)', () => {
@@ -560,25 +553,27 @@ describe('api', () => {
       // A plain object, never a pre-built FormData: the client's multipart
       // serializer reads own enumerable entries, and FormData has none — a
       // FormData body would silently upload an empty form.
-      expect(clientMock.post).toHaveBeenCalledWith(
-        expect.objectContaining({
-          url: '/api/documents',
-          body: { name: 'Receipt', file, label: 'warranty', memberId: 'm1' },
-        })
-      )
+      expect(clientMock.post).toHaveBeenCalledWith({
+        url: '/api/documents',
+        body: { name: 'Receipt', file, label: 'warranty', memberId: 'm1' },
+        // Multipart ops carry the serializer that turns the plain object into
+        // FormData (and drop Content-Type so the boundary is set by fetch).
+        bodySerializer: expect.any(Function),
+        headers: { 'Content-Type': null },
+      })
     })
 
     it('addDocumentFile posts the file and optional label', async () => {
       clientMock.post.mockResolvedValueOnce(ok({ file: { id: 'f1' } }))
       const file = new File(['page'], 'page.png', { type: 'image/png' })
       await addDocumentFile('doc-1', file, 'page 1')
-      expect(clientMock.post).toHaveBeenCalledWith(
-        expect.objectContaining({
-          url: '/api/documents/{id}/files',
-          path: { id: 'doc-1' },
-          body: { file, label: 'page 1' },
-        })
-      )
+      expect(clientMock.post).toHaveBeenCalledWith({
+        url: '/api/documents/{id}/files',
+        path: { id: 'doc-1' },
+        body: { file, label: 'page 1' },
+        bodySerializer: expect.any(Function),
+        headers: { 'Content-Type': null },
+      })
     })
   })
 
@@ -633,18 +628,17 @@ describe('api', () => {
         acknowledgeWarnings: true,
       })
       expect(result.indexVersion).toBe(7)
-      expect(clientMock.post).toHaveBeenCalledWith(
-        expect.objectContaining({
-          url: '/api/admin/products/{productKey}/rename',
-          path: { productKey: 'k' },
-          body: {
-            canonicalName: 'Minyak Goreng Bimoli',
-            expectedMetadataVersion: 3,
-            reason: 'wrong label',
-            acknowledgeWarnings: true,
-          },
-        })
-      )
+      expect(clientMock.post).toHaveBeenCalledWith({
+        url: '/api/admin/products/{productKey}/rename',
+        path: { productKey: 'k' },
+        body: {
+          canonicalName: 'Minyak Goreng Bimoli',
+          expectedMetadataVersion: 3,
+          reason: 'wrong label',
+          acknowledgeWarnings: true,
+        },
+        headers: { 'Content-Type': 'application/json' },
+      })
     })
 
     it('revertProductRename addresses the audit row with an empty body by default', async () => {
@@ -652,13 +646,12 @@ describe('api', () => {
         ok({ product: { name: 'Minyak Bimoli' }, warnings: [], audit: [], indexVersion: 8 })
       )
       await revertProductRename('k', 'audit-1')
-      expect(clientMock.post).toHaveBeenCalledWith(
-        expect.objectContaining({
-          url: '/api/admin/products/{productKey}/audit/{auditId}/revert',
-          path: { productKey: 'k', auditId: 'audit-1' },
-          body: {},
-        })
-      )
+      expect(clientMock.post).toHaveBeenCalledWith({
+        url: '/api/admin/products/{productKey}/audit/{auditId}/revert',
+        path: { productKey: 'k', auditId: 'audit-1' },
+        body: {},
+        headers: { 'Content-Type': 'application/json' },
+      })
     })
 
     it('carries the structured rename 409 body on ApiError.body', async () => {
@@ -726,12 +719,11 @@ describe('api', () => {
     it('setReviewMode PUTs the chosen mode', async () => {
       clientMock.put.mockResolvedValueOnce(ok({ mode: 'auto', aiConfigured: true }))
       const result = await setReviewMode('auto')
-      expect(clientMock.put).toHaveBeenCalledWith(
-        expect.objectContaining({
-          url: '/api/admin/review/mode',
-          body: { mode: 'auto' },
-        })
-      )
+      expect(clientMock.put).toHaveBeenCalledWith({
+        url: '/api/admin/review/mode',
+        body: { mode: 'auto' },
+        headers: { 'Content-Type': 'application/json' },
+      })
       expect(result).toEqual({ mode: 'auto', aiConfigured: true })
     })
 
@@ -740,33 +732,30 @@ describe('api', () => {
         ok({ evaluated: 5, applied: 0, mode: 'assist', aiConfigured: true })
       )
       const result = await evaluateReviewItems(5)
-      expect(clientMock.post).toHaveBeenCalledWith(
-        expect.objectContaining({
-          url: '/api/admin/review/evaluate',
-          body: { limit: 5 },
-        })
-      )
+      expect(clientMock.post).toHaveBeenCalledWith({
+        url: '/api/admin/review/evaluate',
+        body: { limit: 5 },
+        headers: { 'Content-Type': 'application/json' },
+      })
       expect(result.evaluated).toBe(5)
     })
 
     it('decideReviewItem sends agreement only when one is given', async () => {
       clientMock.post.mockResolvedValue(ok({ item: { id: 'rev-1' } }))
       await decideReviewItem('rev-1', 'approved')
-      expect(clientMock.post).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          url: '/api/admin/review/{id}/decision',
-          path: { id: 'rev-1' },
-          body: { decision: 'approved' },
-        })
-      )
+      expect(clientMock.post).toHaveBeenLastCalledWith({
+        url: '/api/admin/review/{id}/decision',
+        path: { id: 'rev-1' },
+        body: { decision: 'approved' },
+        headers: { 'Content-Type': 'application/json' },
+      })
       await decideReviewItem('rev-1', 'rejected', 'disagreed')
-      expect(clientMock.post).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          url: '/api/admin/review/{id}/decision',
-          path: { id: 'rev-1' },
-          body: { decision: 'rejected', agreement: 'disagreed' },
-        })
-      )
+      expect(clientMock.post).toHaveBeenLastCalledWith({
+        url: '/api/admin/review/{id}/decision',
+        path: { id: 'rev-1' },
+        body: { decision: 'rejected', agreement: 'disagreed' },
+        headers: { 'Content-Type': 'application/json' },
+      })
     })
   })
 })

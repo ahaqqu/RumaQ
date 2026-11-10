@@ -103,7 +103,7 @@ import {
   putApiAdminReviewMode,
   putApiAiCapabilitiesByCapability,
   putApiPluginsByPluginIdEnablement,
-} from './api-client/sdk.gen.js'
+} from './api-client/index.js'
 
 client.setConfig({ credentials: 'include' })
 
@@ -148,7 +148,12 @@ async function unwrap<T>(resultPromise: Promise<unknown>): Promise<T> {
   const result = (await resultPromise) as {
     data?: T
     error?: unknown
-    response: Response
+    // Optional: the generated client leaves it out when the request could not
+    // be built at all (invalid body/headers), so there is no response to read.
+    response?: Response
+  }
+  if (!result.response) {
+    throw new ApiError('Request failed: could not build request', 0, null, result.error)
   }
   if (result.error !== undefined || !result.response.ok) {
     const body = result.error as { error?: string } | undefined
@@ -159,6 +164,9 @@ async function unwrap<T>(resultPromise: Promise<unknown>): Promise<T> {
       result.error
     )
   }
+  // 204 / empty bodies resolve to `{}` in the generated client; callers of the
+  // wrapper have always seen `null` there, so keep that contract explicit.
+  if (result.response.status === 204) return null as T
   return (result.data ?? null) as T
 }
 

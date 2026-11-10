@@ -157,6 +157,10 @@ in maintenance mode); cf CLI is built around it.
      `frontend/src/lib/api.js`. Contract drift becomes a build-time error. Add spec
      generation to `vp run` tasks so it runs in CI.
 
+   **Superseded** by #569/#570: the pipeline exists and now uses
+   `hey-api/openapi-ts` into `frontend/src/lib/api-client/` — see `vite.config.ts`
+   (`api:codegen`) and `frontend/src/lib/api.ts`.
+
 ### Deferred / noted (do not do now)
 
 - **Rate limiting KV/DO migration** (known tech debt, per api.ts comment): current
