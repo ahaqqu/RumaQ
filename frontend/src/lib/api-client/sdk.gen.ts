@@ -174,7 +174,7 @@ export const postApiAiChat = <ThrowOnError extends boolean = false>(options: Opt
 });
 
 /**
- * Upload a receipt image, scan with AI OCR, return parsed items.
+ * Upload a receipt image, scan with AI OCR, return parsed items. A line whose qty is not exactly 1 and that carries no printed total is returned with needsPriceReview: true — its price may be the line-total fallback, so the client must have the user confirm the unit price before submitting it (the server would otherwise multiply it by qty into purchases.total).
  */
 export const postApiPurchasesScan = <ThrowOnError extends boolean = false>(options?: Options<PostApiPurchasesScanData, ThrowOnError>): RequestResult<PostApiPurchasesScanResponses, PostApiPurchasesScanErrors, ThrowOnError> => (options?.client ?? client).post<PostApiPurchasesScanResponses, PostApiPurchasesScanErrors, ThrowOnError>({ url: '/api/purchases/scan', ...options });
 

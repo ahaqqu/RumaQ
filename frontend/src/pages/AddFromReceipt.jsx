@@ -115,7 +115,9 @@ export function AddFromReceipt({ onDone }) {
   }
 
   function updateItem(id, field, value) {
-    // Editing qty or price invalidates the scanned line total, if any.
+    // Editing qty or price invalidates the scanned line total, if any. Only a
+    // PRICE edit clears the #567-B1 hold: the hazard is the unit price being
+    // the line-total fallback, and changing the qty never confirms it.
     setItems((prev) =>
       prev.map((it) =>
         it._id === id
@@ -123,10 +125,19 @@ export function AddFromReceipt({ onDone }) {
               ...it,
               [field]: value,
               ...(field === 'qty' || field === 'price' ? { total: undefined } : {}),
+              ...(field === 'price' ? { needsPriceReview: false } : {}),
             }
           : it
       )
     )
+  }
+
+  // #567-B1: confirming a flagged unit price must not require EDITING it — the
+  // scan may well have read the per-piece price correctly, and retyping the
+  // same number to unlock submit would be busywork (and a trap: an unchanged
+  // controlled input fires no change event).
+  function confirmPrice(id) {
+    setItems((prev) => prev.map((it) => (it._id === id ? { ...it, needsPriceReview: false } : it)))
   }
 
   function selectItemMatch(id, catalogItemId) {
@@ -143,7 +154,21 @@ export function AddFromReceipt({ onDone }) {
     }
   }
 
+  // #567-B1: a line whose qty is not exactly 1 and that has no printed total
+  // is where the scan's line-total fallback (price := the line amount) would be
+  // multiplied by qty into the persisted grand total. Hold submit until the
+  // user has confirmed each flagged row's unit price — never silently
+  // multiplied.
+  const hasUnreviewedPrices = items.some((it) => it.needsPriceReview)
+
   async function handleConfirm() {
+    // #567-B1: the disabled button is the visible guard; this is the real one —
+    // a flagged row (qty != 1, no printed total, unit price unconfirmed) must
+    // never reach the server and be multiplied by qty into the grand total.
+    if (hasUnreviewedPrices) {
+      setError(t('addReceipt.pricesUnconfirmed'))
+      return
+    }
     setCreating(true)
     setError(null)
 
@@ -352,7 +377,7 @@ export function AddFromReceipt({ onDone }) {
                   key={it._id}
                   className="grid grid-cols-1 sm:grid-cols-[1fr_90px_110px] gap-2 items-center py-3 border-b border-border last:border-b-0"
                 >
-                  <div className="flex gap-2 items-center min-w-0">
+                  <div className="flex flex-wrap gap-2 items-center min-w-0">
                     <select
                       value={selectedItemIds[it._id] || ''}
                       onChange={(e) => selectItemMatch(it._id, e.target.value || null)}
@@ -373,6 +398,19 @@ export function AddFromReceipt({ onDone }) {
                       className="min-w-0"
                       placeholder={t('addReceipt.itemName') || 'Item name'}
                     />
+                    {it.needsPriceReview && (
+                      <div className="basis-full flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
+                        <p className="text-xs text-warn">{t('addReceipt.checkUnitPrice')}</p>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="min-h-0 px-2 py-1 text-xs"
+                          onClick={() => confirmPrice(it._id)}
+                        >
+                          <IconCheck size={14} /> {t('addReceipt.confirmPrice')}
+                        </Button>
+                      </div>
+                    )}
                   </div>
                   <input
                     type="number"
@@ -403,12 +441,15 @@ export function AddFromReceipt({ onDone }) {
             <PanelFoot className="justify-between">
               <div className="text-text-muted text-sm">
                 {t('addReceipt.total')} <strong className="text-text">{formatRp(lineTotal)}</strong>
+                {hasUnreviewedPrices && (
+                  <span className="text-warn"> · {t('addReceipt.confirmPricesFirst')}</span>
+                )}
               </div>
               <div className="flex gap-3">
                 <Button variant="ghost" onClick={handleRetake}>
                   <IconArrowLeft size={18} /> {t('addReceipt.retake')}
                 </Button>
-                <Button onClick={handleConfirm} disabled={creating}>
+                <Button onClick={handleConfirm} disabled={creating || hasUnreviewedPrices}>
                   {creating ? (
                     <>
                       <IconBolt size={18} className="animate-spin" /> {t('addReceipt.confirmAdd')}
