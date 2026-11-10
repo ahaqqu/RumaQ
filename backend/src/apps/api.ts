@@ -3063,10 +3063,12 @@ apiApp.post(
                   required: ['name', 'qty', 'unit', 'price'],
                   properties: {
                     name: { type: 'string', minLength: 1 },
-                    qty: { type: 'number', minimum: 0 },
+                    // Caps mirror purchaseItemSchema (#586): both fields feed
+                    // server-side total arithmetic, so the wire is bounded.
+                    qty: { type: 'number', minimum: 0, maximum: 1000000 },
                     unit: { type: 'string' },
                     price: { type: 'integer', minimum: 0 },
-                    line_total: { type: ['integer', 'null'], minimum: 0 },
+                    line_total: { type: ['integer', 'null'], minimum: 0, maximum: 1000000000000 },
                     item_id: { type: 'string' },
                   },
                 },
@@ -6175,13 +6177,15 @@ apiApp.post(
                   required: ['name', 'qty', 'unit'],
                   properties: {
                     name: { type: 'string', minLength: 1 },
-                    qty: { type: 'number', minimum: 0 },
+                    // Caps mirror planCreateSchema (#586): the two fields the
+                    // server multiplies into plans.total_estimate.
+                    qty: { type: 'number', minimum: 0, maximum: 1000000 },
                     unit: { type: 'string' },
                     // Explicit null is accepted (planCreateSchema is nullish):
                     // the browser client forwards the generate response's
                     // nulls verbatim (R552-C1).
                     store_id: { type: ['string', 'null'] },
-                    price_estimate: { type: ['number', 'null'] },
+                    price_estimate: { type: ['number', 'null'], maximum: 1000000000000 },
                     why: { type: 'string' },
                     price_observation_id: { type: ['string', 'null'] },
                   },

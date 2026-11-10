@@ -10,6 +10,7 @@ import {
   minLength,
   maxLength,
   minValue,
+  maxValue,
   nullable,
   regex,
   union,
@@ -95,14 +96,21 @@ export const stockPatchSchema = strictObject({
 
 export const purchaseItemSchema = object({
   name: pipe(string(), minLength(1)),
-  qty: pipe(number(), minValue(0)),
+  // #586: both fields feed server-side arithmetic (qty × price per line,
+  // Σ COALESCE(line_total, price × qty) as the persisted grand total), so an
+  // unbounded wire value would propagate straight into the total. The caps
+  // sit far above any real receipt line — a million units, a trillion
+  // rupiah — while bounding the request shape.
+  qty: pipe(number(), minValue(0), maxValue(1_000_000)),
   unit: string(),
   // Unit price (per-piece HARGA), canonical under #518 Option B.
   price: pipe(number(), integer(), minValue(0)),
   // The receipt's printed line total, when it shows one (#518 Q2). Absent or
   // null → the server computes qty × price and persists that; the client's
   // grand total is never trusted (Q3).
-  line_total: optional(nullable(pipe(number(), integer(), minValue(0)))),
+  line_total: optional(
+    nullable(pipe(number(), integer(), minValue(0), maxValue(1_000_000_000_000)))
+  ),
   item_id: optional(string()),
 })
 

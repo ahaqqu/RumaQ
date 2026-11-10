@@ -70,6 +70,22 @@ describe('planCreateSchema', () => {
     expect(result.success).toBe(false)
   })
 
+  it('rejects an absurd qty (#586)', () => {
+    // The cap mirrors the purchase line's qty: the value is multiplied into
+    // plans.total_estimate, so the wire shape is bounded.
+    const result = safeParse(planCreateSchema, {
+      items: [{ name: 'Susu', qty: 1_000_001, unit: 'L' }],
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects an absurd price_estimate (#586)', () => {
+    const result = safeParse(planCreateSchema, {
+      items: [{ name: 'Susu', qty: 1, unit: 'L', price_estimate: 1_000_000_000_001 }],
+    })
+    expect(result.success).toBe(false)
+  })
+
   it('rejects empty items array', () => {
     const result = safeParse(planCreateSchema, { items: [] })
     expect(result.success).toBe(false)

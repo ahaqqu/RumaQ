@@ -19,6 +19,7 @@ import {
   pipe,
   minLength,
   minValue,
+  maxValue,
   nullish,
   type InferOutput,
 } from 'valibot'
@@ -61,7 +62,13 @@ export const planCreateSchema = strictObject({
     array(
       object({
         name: pipe(string(), minLength(1)),
-        qty: pipe(number(), minValue(0)),
+        // #586: qty and price_estimate are the two fields the server multiplies
+        // into plans.total_estimate (Σ estimate × qty), so they carry the same
+        // caps as the purchase line's qty/line_total. The generate ANSWER
+        // schema above stays uncapped on purpose: one absurd model line must
+        // not sink the whole plan (502) — the draft is reviewable, and the
+        // save is where the persisted contract is enforced.
+        qty: pipe(number(), minValue(0), maxValue(1_000_000)),
         unit: string(),
         // The browser client forwards the generate response's fields verbatim
         // (Plan.jsx), and that response carries explicit nulls — for "no
@@ -71,7 +78,8 @@ export const planCreateSchema = strictObject({
         // nullable column and the UI groups null stores under "Other stores",
         // so null IS the established no-store value.
         store_id: nullish(string()),
-        price_estimate: nullish(number()),
+        // #586: same money cap as the purchase line's line_total.
+        price_estimate: nullish(pipe(number(), maxValue(1_000_000_000_000))),
         why: optional(string()),
         // Set when the estimate was grounded on a real price observation
         // (§5.4). The browser client sends an explicit null for ungrounded
@@ -144,7 +152,7 @@ Return ONLY valid JSON in this exact format:
   "items": [
     {
       "name": "Item name",
-      "qty": 1,
+      "qty": 12,
       "unit": "pcs",
       "store_id": "the exact store_id from the list above (or null if no store fits)",
       "price_estimate": 10000,
@@ -158,7 +166,7 @@ Rules:
 - Include items from purchase history that may need restocking.
 - Group items by store where possible using the store ids above. store_id must be exactly one of the listed ids — never invent one; if no store fits or none are listed, set store_id to null.
 - Cap at 50 items maximum.
-- price_estimate is optional — provide a rough estimate in ${currency} if possible.
+- price_estimate is optional — provide a rough estimate in ${currency} if possible. price_estimate is the per-item unit price — what ONE unit costs, not the line total — and the server multiplies it by qty.
 - The "why" field explains why the item is suggested.
 - Include a sensible quantity based on past purchase patterns.
 - Do NOT include any text outside the JSON.`

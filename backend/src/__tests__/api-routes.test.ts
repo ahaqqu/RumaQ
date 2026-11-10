@@ -643,6 +643,28 @@ describe('api routes', () => {
     expect(res.status).toBe(400)
   })
 
+  it('/api/purchases returns 400 for an absurd qty or line_total (#586)', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    // Each payload sits one step past its cap (qty 1e6, line_total 1e12);
+    // the strict schema must refuse before anything reaches the database.
+    for (const items of [
+      [{ name: 'Milk', qty: 1_000_001, unit: 'L', price: 18500 }],
+      [{ name: 'Milk', qty: 1, unit: 'L', price: 18500, line_total: 1_000_000_000_001 }],
+    ]) {
+      const res = await apiApp.request(
+        '/api/purchases',
+        {
+          method: 'POST',
+          body: JSON.stringify({ date: '2026-07-26', items }),
+          headers: { 'Content-Type': 'application/json' },
+        },
+        env
+      )
+      expect(res.status, JSON.stringify(items)).toBe(400)
+    }
+    expect(env.DB.prepare).not.toHaveBeenCalled()
+  })
+
   it('/api/purchases lists purchases', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.all = vi
@@ -783,6 +805,29 @@ describe('api routes', () => {
       env
     )
     expect(res.status).toBe(201)
+  })
+
+  it('/api/plans returns 400 for an absurd qty or price_estimate (#586)', async () => {
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    // The two fields the server multiplies into plans.total_estimate carry
+    // the same caps as the purchase line; the strict schema must refuse the
+    // save before anything reaches the database.
+    for (const items of [
+      [{ name: 'Milk', qty: 1_000_001, unit: 'L' }],
+      [{ name: 'Milk', qty: 1, unit: 'L', price_estimate: 1_000_000_000_001 }],
+    ]) {
+      const res = await apiApp.request(
+        '/api/plans',
+        {
+          method: 'POST',
+          body: JSON.stringify({ items }),
+          headers: { 'Content-Type': 'application/json' },
+        },
+        env
+      )
+      expect(res.status, JSON.stringify(items)).toBe(400)
+    }
+    expect(env.DB.prepare).not.toHaveBeenCalled()
   })
 
   // Capturing fake DB for the POST /api/plans route: records every prepared
