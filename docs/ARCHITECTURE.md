@@ -80,7 +80,7 @@ rumaq/
 ├── scripts/                # Setup, deployment, and smoke-trigger scripts
 │   ├── build.sh            # Worker + frontend build
 │   ├── ci/                 # CI-only node checks
-│   │   ├── bundle-budget.mjs        # gzipped JS budget (250 KB)
+│   │   ├── bundle-budget.mjs        # gzipped JS budget (350 KB, #580)
 │   │   └── worker-boot-harness.mjs  # Boots the Worker bundle in the pinned harness workerd
 │   ├── deploy/             # Deploy helper scripts
 │   │   ├── deploy-cf.js    # Cloudflare deploy helper: d1-setup, r2-ensure, put-secrets, pages-bindings

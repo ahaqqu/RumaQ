@@ -4,15 +4,19 @@
 //
 //   node scripts/ci/bundle-budget.mjs [budget-kb]
 //
-// Budget: 250 KB gzipped for all JS shipped in frontend/dist/assets. The
-// 2026-10 baseline is ~185 KB; headroom covers feature growth before the
-// budget must be revisited (lazy-load or split heavy deps first).
+// Budget: 350 KB gzipped for all JS shipped in frontend/dist/assets. The
+// 2026-10 baseline is ~185 KB. Raised from 250 KB to 350 KB on 2026-11-11
+// (#580, deliberate — measured at 247.9 KB before the raise): the #518
+// purchase/receipt flows, the hey-api generated client, and their tests
+// added real UI + generated code to the main bundle. Follow-up: revisit
+// this budget once the generated client is slimmed (lazy-load or split
+// heavy deps first).
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { join, resolve } from 'node:path'
 
 const DIST_ASSETS = resolve(process.argv[2] ?? 'frontend/dist/assets')
-const BUDGET_KB = Number(process.argv[3] ?? 250)
+const BUDGET_KB = Number(process.argv[3] ?? 350)
 if (!Number.isFinite(BUDGET_KB) || BUDGET_KB <= 0) {
   console.error(`bundle-budget: invalid budget "${process.argv[3]}" — pass a positive KB number`)
   process.exit(1)
