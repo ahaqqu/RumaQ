@@ -40,8 +40,28 @@ jobs:
           if-no-files-found: ignore
 
       # ci.sh leaves frontend/dist behind; audit it against the phase-09
-      # performance (>= 0.7) and accessibility (>= 0.9) budgets.
+      # performance (>= 0.7) and accessibility (>= 0.9) budgets. A change set
+      # that cannot reach that bundle (docs, backend, contract, codegen tools,
+      # most scripts) skips the audit. The gate lives here, not in ci.sh,
+      # because only PR CI runs Lighthouse — the main-push ci job in
+      # deploy.yml never does. The rule is offline-tested in
+      # scripts/test/lighthouse-scope.sh and it fails safe: an unavailable
+      # change set runs the audit.
+      - id: lighthouse-scope
+        name: Check if Lighthouse CI is needed
+        env:
+          # Exact base tree for the change-set diff (changed-paths.sh).
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if bash ./scripts/github/lighthouse-scope.sh; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Lighthouse CI: skipped for this change set"
+          fi
+
       - name: Lighthouse CI (performance + accessibility budgets)
+        if: steps.lighthouse-scope.outputs.run == 'true'
         uses: treosh/lighthouse-ci-action@v12
         with:
           configPath: .lighthouserc.json

@@ -31,10 +31,25 @@ bunx vp run api:codegen
 git diff --exit-code frontend/openapi.json frontend/src/lib/api-client
 
 echo "=== CI: frontend tests ==="
-"$ROOT_DIR/scripts/test.sh" unit frontend --coverage
+# Scope: a change set that cannot reach the frontend suite skips it — docs,
+# the backend workspace outside the parity edge (backend/src/plugins/ feeds
+# the frontend parity test), contract, codegen tools. The rule is
+# offline-tested in scripts/test/unit-test-scope.sh and it fails safe: an
+# unavailable change set runs the suite.
+if bash "$ROOT_DIR/scripts/github/unit-test-scope.sh" frontend; then
+  "$ROOT_DIR/scripts/test.sh" unit frontend --coverage
+else
+  echo "  skip  frontend tests for this change set"
+fi
 
 echo "=== CI: backend tests ==="
-"$ROOT_DIR/scripts/test.sh" unit backend --coverage
+# Scope: mirrors the frontend rule — docs, the frontend workspace, codegen
+# tools skip; backend, contract and anything unknown run.
+if bash "$ROOT_DIR/scripts/github/unit-test-scope.sh" backend; then
+  "$ROOT_DIR/scripts/test.sh" unit backend --coverage
+else
+  echo "  skip  backend tests for this change set"
+fi
 
 echo "=== CI: audit ==="
 bun audit --audit-level=critical
