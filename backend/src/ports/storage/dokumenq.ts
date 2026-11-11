@@ -199,6 +199,23 @@ function messageOf(res: Response, body: ErrorEnvelope, fallback: string): string
   return `${fallback} (HTTP ${res.status})`
 }
 
+/** workerd does not ship fetch's `redirect: 'error'` — it throws TypeError at
+ *  runtime (found live in production 2026-11-11: every scan 500'd AFTER a
+ *  successful mint, because the option only exists in browsers). The
+ *  edge-equivalent fail-closed contract: fetch with `redirect: 'manual'` and
+ *  refuse any 3xx ourselves — a signed URL must serve exactly the transfer it
+ *  was minted for, never bounce. clients/offline §2 keeps the browser's
+ *  native `redirect: 'error'`. */
+function refuseRedirect(res: Response, fallback: string): void {
+  if (res.status >= 300 && res.status < 400) {
+    throw new DokumenQStorageError(
+      res.status,
+      'redirect_refused',
+      `${fallback}: signed-URL transfer attempted a redirect (${res.status}) — refusing fail-closed`
+    )
+  }
+}
+
 /** Map any non-OK DokumenQ response to the typed error family. The 404 paths
  *  never reach this: get/delete resolve them into the port's own semantics
  *  (null / idempotent success) BEFORE mapping. */
@@ -285,13 +302,16 @@ export function createDokumenQStorageAdapter(config: DokumenQStorageConfig): Sto
           },
           body: payload,
           // A signed URL must serve exactly the transfer it was minted for —
-          // a redirect is tampering, fail closed (clients/offline §2 pins the
-          // same option browser-side).
-          redirect: 'error',
+          // a redirect is tampering, fail closed. workerd has no `redirect:
+          // 'error'` (throws TypeError — see refuseRedirect); manual + the
+          // refusal check below is the edge equivalent (clients/offline §2
+          // keeps the browser pin).
+          redirect: 'manual',
         })
       } catch (cause) {
         throw new DokumenQStorageError(0, 'network', `DokumenQ upload failed: ${String(cause)}`)
       }
+      refuseRedirect(upload, 'DokumenQ upload failed')
       if (upload.ok) return
 
       if (upload.status === 409) {
@@ -327,10 +347,11 @@ export function createDokumenQStorageAdapter(config: DokumenQStorageConfig): Sto
 
       let stream: Response
       try {
-        stream = await doFetch(url, { redirect: 'error' })
+        stream = await doFetch(url, { redirect: 'manual' })
       } catch (cause) {
         throw new DokumenQStorageError(0, 'network', `DokumenQ fetch failed: ${String(cause)}`)
       }
+      refuseRedirect(stream, 'DokumenQ fetch failed')
       if (stream.status === 404) return null // raced a delete/GC after minting — port's not-found
       if (!stream.ok) throw await mapError(stream, 'DokumenQ fetch failed')
       if (!stream.body) {

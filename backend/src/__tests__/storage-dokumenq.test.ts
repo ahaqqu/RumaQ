@@ -515,3 +515,57 @@ describe('receipts scan route under the DokumenQ cutover (#442)', () => {
     expect(uploadBody).toEqual(jpegBytes)
   })
 })
+
+describe('signed-URL redirect refusal — the workerd redirect contract', () => {
+  // workerd throws TypeError on fetch's `redirect: 'error'` (browsers-only);
+  // the adapter must fetch with `redirect: 'manual'` and refuse any 3xx
+  // itself. Found live in production 2026-11-11: scans 500'd after a
+  // successful mint because the pinned option doesn't exist at the edge.
+  function redirectingFake(byteStatus: number): { calls: Call[]; fetch: typeof fetch } {
+    const calls: Call[] = []
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+        const url = String(input)
+        calls.push({ url, init })
+        if (url === `${BASE}/v1/authorize`) {
+          const body = JSON.parse(String(init.body)) as { method: string; doc_id: string }
+          return jsonRes(200, {
+            url: mintedUrl(body.doc_id, body.method === 'put' ? 'put' : 'get'),
+            doc_id: body.doc_id,
+            expires_at: 1700000000,
+            node: 'n1',
+          })
+        }
+        return new Response(null, {
+          status: byteStatus,
+          headers: { location: `${BASE}/v1/o/elsewhere` },
+        })
+      }
+    ) as unknown as typeof fetch
+    return { calls, fetch: fetchMock }
+  }
+
+  it('put: fetches with redirect manual and refuses a 3xx from the signed URL', async () => {
+    const fake = redirectingFake(302)
+    const adapter = adapterWith(fake)
+    await expect(adapter.put(KEY, PDF_BYTES, 'application/pdf')).rejects.toMatchObject({
+      name: 'DokumenQStorageError',
+      code: 'redirect_refused',
+      status: 302,
+    })
+    const putCall = fake.calls.find((c) => c.init.method === 'PUT')!
+    // The edge-safe option, not the browsers-only 'error'.
+    expect(putCall.init.redirect).toBe('manual')
+  })
+
+  it('get: refuses a 3xx from the signed URL instead of following it', async () => {
+    const fake = redirectingFake(301)
+    const adapter = adapterWith(fake)
+    await expect(adapter.get(KEY)).rejects.toMatchObject({
+      name: 'DokumenQStorageError',
+      code: 'redirect_refused',
+      status: 301,
+    })
+    expect(fake.calls[1]!.init.redirect).toBe('manual')
+  })
+})
