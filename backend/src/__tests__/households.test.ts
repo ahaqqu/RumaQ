@@ -72,7 +72,7 @@ function createFakeDb(
 function createEnv(db: FakeDb, overrides: Partial<MockEnv> = {}): MockEnv {
   return {
     DB: db as unknown as MockEnv['DB'],
-    RECEIPTS: {},
+    RECEIPTS: {} as MockEnv['RECEIPTS'],
     BROCHURES: {} as MockEnv['BROCHURES'],
     DOCUMENTS: {} as MockEnv['DOCUMENTS'],
     GOOGLE_CLIENT_ID: 'test-client-id',

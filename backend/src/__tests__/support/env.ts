@@ -7,6 +7,7 @@ type MockD1 = {
   first: Mock
   all: Mock
   batch: Mock
+  run: Mock
 }
 
 // Minimal in-memory R2 stub for the BROCHURES bucket (issue #293) and the
@@ -112,7 +113,10 @@ export type MockEnv = Omit<
   'DB' | 'RECEIPTS' | 'BROCHURES' | 'DOCUMENTS' | 'ASSETS' | 'props'
 > & {
   DB: MockD1
-  RECEIPTS: Record<string, never>
+  // The receipts binding rides the SAME stub shape as the vault's (#503
+  // routed receipt IO through the StorageAdapter port; #442's selector keeps
+  // the R2 adapter over this stub in tests) — no more Record<never> dead type.
+  RECEIPTS: MockBrochures
   BROCHURES: MockBrochures
   DOCUMENTS: MockBrochures
   ASSETS: Fetcher
@@ -127,8 +131,9 @@ export function createMockEnv(overrides: Partial<MockEnv> = {}): MockEnv {
       first: vi.fn().mockResolvedValue(null),
       all: vi.fn().mockResolvedValue({ results: [] }),
       batch: vi.fn().mockResolvedValue([]),
+      run: vi.fn().mockResolvedValue(undefined),
     },
-    RECEIPTS: {},
+    RECEIPTS: createDocumentsStub(),
     BROCHURES: createBrochuresStub(),
     DOCUMENTS: createDocumentsStub(),
     GOOGLE_CLIENT_ID: 'test-client-id',

@@ -111,6 +111,13 @@ export default defineConfig({
       BROCHURES: bindings.r2({ name: brochuresBucketName }),
       ASSETS: bindings.assets(),
       EMAIL_AUTH_ENABLED: bindings.text('true'),
+      // DokumenQ storage cutover (ahaqqu/RumaQ#442): the file service's
+      // public hostname rides as a plain var — the secret half of the pair
+      // (DOKUMENQ_APP_SECRET) is deliberately NOT declared here, set
+      // out-of-band on the api Worker like HAQITA_INGEST_SECRET, so an
+      // ordinary deploy preserves it and branch/preview Workers (which have
+      // no secret) keep the R2 adapter via ports/storage/select.ts.
+      DOKUMENQ_BASE_URL: bindings.text('https://dokumenq.ahaqqu.com'),
       // Startup secrets check only makes sense against a real account; local
       // dev runs on placeholder secrets from .dev.vars.
       RUN_SECRETS_CHECK: bindings.text(accountId === 'LOCAL' ? 'false' : 'true'),

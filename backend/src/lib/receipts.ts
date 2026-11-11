@@ -17,8 +17,7 @@
 // forbids signed URLs for private objects (ports/storage/index.ts — the
 // receipt-proxy pattern, docs/ARCHITECTURE.md §10), so a scan answer can only
 // ever hand back imageUrl: null.
-import { createR2StorageAdapter } from '../ports/storage/r2.js'
-import { missingBindingAdapter } from '../ports/storage/missing.js'
+import { selectStorageAdapter } from '../ports/storage/select.js'
 import type { StorageAdapter } from '../ports/storage/index.js'
 import type { Env } from '../types.js'
 
@@ -144,20 +143,21 @@ export function isOwnReceiptKey(key: string, householdId: string): boolean {
 }
 
 /**
- * The receipts StorageAdapter, built from the RECEIPTS binding wiring — the
- * receipts domain's composition root, mirroring the vault's
- * `env.DOCUMENTS ? createR2StorageAdapter(...) : missingBindingAdapter(...)`
- * in plugins/registry.ts (V1-A1 call-time refusal when the binding is
- * mis-wired, contract parity pinned in receipts-storage.test.ts).
+ * The receipts StorageAdapter — the receipts domain's composition root,
+ * mirroring the vault's registry wiring through the SAME cutover selector
+ * (#442): DokumenQ Mode A when the deployment is cut over (DOKUMENQ_BASE_URL
+ * + DOKUMENQ_APP_SECRET both set), the R2 RECEIPTS binding until then, the
+ * V1-A1 call-time refusal when the binding is mis-wired. Contract parity is
+ * pinned in receipts-storage.test.ts.
  *
  * The former `uploadReceipt(bucket, …)` R2Bucket-shaped helper is gone: the
  * scan route now calls `receiptsStorage(env).put(...)` on the port. The one
- * write-side delta is R2 `customMetadata.uploadedAt`, which the port does not
- * represent — nothing ever read it back (it predates the port; the vault never
- * wrote per-object metadata either), so the swap is reader-invisible.
+ * write-side delta was R2 `customMetadata.uploadedAt`, which the port does
+ * not represent — nothing ever read it back (it predates the port; the vault
+ * never wrote per-object metadata either), so the swap is reader-invisible.
  */
 export function receiptsStorage(env: Env['Bindings']): StorageAdapter {
-  return env.RECEIPTS ? createR2StorageAdapter(env.RECEIPTS) : missingBindingAdapter('RECEIPTS')
+  return selectStorageAdapter(env, env.RECEIPTS, 'RECEIPTS')
 }
 
 export function getSignedUrl(): null {

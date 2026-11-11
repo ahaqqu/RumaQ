@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { apiApp } from '../apps/api.js'
 import { receiptsStorage, buildKey } from '../lib/receipts.js'
-import { PluginBindingMissingError } from '../ports/storage/missing.js'
-import { createDocumentsStub } from './support/env.js'
+import { StorageBindingMissingError } from '../ports/storage/missing.js'
+import { createDocumentsStub, createMockEnv, type MockEnv } from './support/env.js'
 
 // Receipt storage port pins (#503). The purchase routes' receipt IO rides the
 // StorageAdapter port exactly like the vault's document IO — driven here by the
@@ -39,29 +39,24 @@ const AI_ROW = {
   encrypted_key: ENCRYPTED_KEY,
 }
 
-function createEnv(overrides = {}) {
+// The canonical mock env (support/env.ts — R546-B1, PR #546 disposition
+// folded into #442): this file no longer keeps a bespoke createEnv. The
+// RECEIPTS binding rides the same stub shape the vault harness uses, so the
+// selector under test here (receiptsStorage → selectStorageAdapter) sees
+// exactly what production hands it: an R2 binding until the DokumenQ secret
+// exists. WORKER_ENCRYPTION_KEY stays the value the AI_ROW fixture's
+// encrypted_key envelope was sealed with — the canonical env's default key
+// cannot open it (the scan route's vision resolution 402s on an undecryptable
+// stored key).
+function createEnv(overrides: Partial<MockEnv> = {}) {
   const bucket = createDocumentsStub()
-  const env = {
-    DB: {
-      prepare: vi.fn().mockReturnThis(),
-      bind: vi.fn().mockReturnThis(),
-      first: vi.fn().mockResolvedValue(null),
-      all: vi.fn().mockResolvedValue({ results: [] }),
-      batch: vi.fn().mockResolvedValue([]),
-      run: vi.fn().mockResolvedValue(undefined),
-    },
+  const env = createMockEnv({
     RECEIPTS: bucket,
-    GOOGLE_CLIENT_ID: 'test-client-id',
-    GOOGLE_CLIENT_SECRET: 'test-client-secret',
-    WORKER_JWT_SECRET: 'test-secret',
     WORKER_ENCRYPTION_KEY: 'test-encryption-key-32-bytes-long!!',
-    PAGES_ORIGIN: 'http://localhost:5173',
-    EMAIL_AUTH_ENABLED: 'false',
-    ASSETS: undefined as unknown as Fetcher,
     props: { userId: 'u1', householdId: 'h1' },
     TEST_MODE: 'true',
     ...overrides,
-  }
+  })
   return { env, bucket }
 }
 
@@ -140,7 +135,11 @@ describe('receipts storage port (#503)', () => {
 
   it('a rejected put answers the same 500 the route has always mapped storage failures to', async () => {
     const { env } = createEnv({
-      RECEIPTS: { put: vi.fn().mockRejectedValue(new Error('bucket down')) },
+      // A minimal bucket-shaped mock whose put rejects — the failure path
+      // never reads past put(), so the full stub shape is unnecessary here.
+      RECEIPTS: {
+        put: vi.fn().mockRejectedValue(new Error('bucket down')),
+      } as unknown as MockEnv['RECEIPTS'],
     })
     env.DB.first = vi.fn().mockResolvedValue(AI_ROW)
     env.DB.run = vi.fn().mockResolvedValue(undefined)
@@ -152,14 +151,14 @@ describe('receipts storage port (#503)', () => {
 
 describe('receipts missing-binding failover (vault port-contract parity, V1-A1)', () => {
   it('receiptsStorage over an unwired binding refuses from EVERY method with the typed error naming RECEIPTS', async () => {
-    const { env } = createEnv({ RECEIPTS: undefined })
+    const { env } = createEnv({ RECEIPTS: undefined as unknown as MockEnv['RECEIPTS'] })
     const adapter = receiptsStorage(env as unknown as Parameters<typeof receiptsStorage>[0])
     for (const attempt of [
       () => adapter.put('receipts/h1/k.jpg', new Uint8Array([0x78]), 'image/jpeg'),
       () => adapter.get('receipts/h1/k.jpg'),
       () => adapter.delete('receipts/h1/k.jpg'),
     ]) {
-      await expect(attempt()).rejects.toThrow(PluginBindingMissingError)
+      await expect(attempt()).rejects.toThrow(StorageBindingMissingError)
       await expect(attempt()).rejects.toThrow(/'RECEIPTS'/)
     }
   })
@@ -169,7 +168,7 @@ describe('receipts missing-binding failover (vault port-contract parity, V1-A1)'
     // worker or fall over as an opaque TypeError — the refusal surfaces at the
     // first call that would have touched the binding, through the same
     // onError contract every api route answers with.
-    const { env } = createEnv({ RECEIPTS: undefined })
+    const { env } = createEnv({ RECEIPTS: undefined as unknown as MockEnv['RECEIPTS'] })
     // Well-shaped own-household key so the route reaches the adapter and its
     // typed refusal (the key-shape re-check, #548 R549-B1, must pass first).
     env.DB.first = vi.fn().mockResolvedValue({

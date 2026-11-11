@@ -12,8 +12,8 @@
 // a WeakMap keyed on the env object (the gateway's own secrets-check
 // precedent) — one factory call per isolate, never per request.
 import { createDocumentsPlugin } from './documents/app.js'
-import { createR2StorageAdapter } from '../ports/storage/r2.js'
-import { missingBindingAdapter, PluginBindingMissingError } from '../ports/storage/missing.js'
+import { selectStorageAdapter } from '../ports/storage/select.js'
+import { missingBindingAdapter, StorageBindingMissingError } from '../ports/storage/missing.js'
 import type { Env } from '../types.js'
 import type { PluginRegistration } from './types.js'
 
@@ -21,19 +21,21 @@ import type { PluginRegistration } from './types.js'
 // missing.ts, #503) so a second port consumer — the receipts composition —
 // can share it without importing the plugin registry. Re-exported here to
 // keep the registry's composition surface (and the plugin-registry tests)
-// unchanged.
-export { missingBindingAdapter, PluginBindingMissingError }
+// unchanged. Renamed to the port-level StorageBindingMissingError by #442
+// (R546-B2): it serves core receipts too, not just plugins.
+export { missingBindingAdapter, StorageBindingMissingError }
 
 function composeRegistrations(env: Env['Bindings']): readonly PluginRegistration[] {
   return [
     // Registered FIRST: the vault is plugin #1 (§0). Core domains (auth,
     // households/members) are NOT plugins — they stay hand-wired in the
-    // gateway ahead of this loop.
+    // gateway ahead of this loop. Since #442 the adapter CHOICE (DokumenQ
+    // Mode A when the cutover vars are set, else the R2 binding, else the
+    // missing-binding failover) lives in ports/storage/select.ts — the one
+    // cutover decision both port consumers share.
     createDocumentsPlugin({
       ports: {
-        storage: env.DOCUMENTS
-          ? createR2StorageAdapter(env.DOCUMENTS)
-          : missingBindingAdapter('DOCUMENTS'),
+        storage: selectStorageAdapter(env, env.DOCUMENTS, 'DOCUMENTS'),
       },
     }),
   ]

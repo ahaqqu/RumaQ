@@ -16,7 +16,7 @@ import {
   pluginRegistrations,
   matchPlugin,
   missingBindingAdapter,
-  PluginBindingMissingError,
+  StorageBindingMissingError,
 } from '../plugins/registry.js'
 import { cronTaskBindingViolations } from '../lib/plugin-cron.js'
 import { createDocumentsPlugin } from '../plugins/documents/app.js'
@@ -251,7 +251,7 @@ describe('plugin registry (#435)', () => {
       () => adapter.get('k'),
       () => adapter.delete('k'),
     ]) {
-      await expect(attempt()).rejects.toThrow(PluginBindingMissingError)
+      await expect(attempt()).rejects.toThrow(StorageBindingMissingError)
       await expect(attempt()).rejects.toThrow(/'DOCUMENTS'/)
     }
   })

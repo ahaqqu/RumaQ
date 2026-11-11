@@ -284,25 +284,28 @@ describe('plugin import boundary (#435)', () => {
 // template: consumers see the contract, the construction site sees the
 // adapter.
 describe('receipts storage boundary (#503)', () => {
-  it('apps/api.ts never touches the RECEIPTS binding and never imports the R2 adapter', () => {
+  it('apps/api.ts never touches the RECEIPTS binding and never imports an adapter', () => {
     const source = realRead('apps/api.ts')
     // Zero references — stricter than "no object IO", and deliberate: the
     // route layer has no reason to name the binding at all now that the port
     // carries every byte.
     expect(source).not.toMatch(/\bRECEIPTS\b/)
     // Adapter construction stays out of the app — same shape as the vault's
-    // allow-list refusing ports/storage/r2.ts to plugins.
+    // allow-list refusing ports/storage/r2.ts to plugins. #442 grows the
+    // family: the route layer never picks between R2 and DokumenQ either.
     expect(importSpecifiers(source)).not.toContain('../ports/storage/r2.js')
     expect(importSpecifiers(source)).not.toContain('../ports/storage/missing.js')
+    expect(importSpecifiers(source)).not.toContain('../ports/storage/dokumenq.js')
+    expect(importSpecifiers(source)).not.toContain('../ports/storage/select.js')
   })
 
   it('the binding is touched in exactly two source files: the Env declaration and the construction site', () => {
-    // Code-level touches only: a runtime read (env.RECEIPTS — the shape both
-    // the old c.env.RECEIPTS route code and the new composition use) or the
-    // Env field declaration. Prose comments that merely name the bucket
-    // (plugins/documents/keys.ts documents the shared-bucket fact) are not
-    // touches.
-    const bindingTouch = /\benv\.RECEIPTS\b|\bRECEIPTS\s*:/
+    // Code-level touches only: a runtime read — BOTH access shapes, dot and
+    // bracket (R546-A1, PR #546 disposition folded into #442: the original
+    // regex missed `env['RECEIPTS']`) — or the Env field declaration. Prose
+    // comments that merely name the bucket (plugins/documents/keys.ts
+    // documents the shared-bucket fact) are not touches.
+    const bindingTouch = /\benv\.RECEIPTS\b|\benv\['RECEIPTS'\]\b|\bRECEIPTS\s*:/
     const touching = listSourceFiles(BACKEND_SRC).filter((file) =>
       bindingTouch.test(realRead(file))
     )
@@ -313,13 +316,28 @@ describe('receipts storage boundary (#503)', () => {
     expect(touching.sort()).toEqual(['lib/receipts.ts', 'types.ts'])
   })
 
-  it('lib/receipts.ts composes through the port modules (contract + adapter + failover)', () => {
+  it('lib/receipts.ts composes through the port modules (contract + the shared cutover selector)', () => {
     const specifiers = importSpecifiers(realRead('lib/receipts.ts'))
     // The port contract the route consumes…
     expect(specifiers).toContain('../ports/storage/index.js')
-    // …the R2 adapter ONLY receiptsStorage() may build…
-    expect(specifiers).toContain('../ports/storage/r2.js')
-    // …and the missing-binding failover, shared with the vault's registry.
-    expect(specifiers).toContain('../ports/storage/missing.js')
+    // …and the ONE adapter-selection decision (#442): receiptsStorage no
+    // longer builds R2/missing adapters itself — select.ts owns the R2 →
+    // DokumenQ choice for BOTH composition sites, so the cutover is decided
+    // in exactly one place.
+    expect(specifiers).toContain('../ports/storage/select.js')
+    expect(specifiers).not.toContain('../ports/storage/r2.js')
+    expect(specifiers).not.toContain('../ports/storage/missing.js')
+    expect(specifiers).not.toContain('../ports/storage/dokumenq.js')
+  })
+
+  it('ports/storage/select.ts is the only module composing the adapter family', () => {
+    const specifiers = importSpecifiers(realRead('ports/storage/select.ts'))
+    // The selector names every implementation — the R2 MVP adapter, the
+    // missing-binding failover, and the #442 DokumenQ Mode A adapter — so an
+    // implementation that escapes composition (built directly at a
+    // call site) fails this pin first.
+    expect(specifiers).toContain('./r2.js')
+    expect(specifiers).toContain('./missing.js')
+    expect(specifiers).toContain('./dokumenq.js')
   })
 })
