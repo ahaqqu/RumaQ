@@ -2,6 +2,8 @@
 // side-effect free so the page stays a thin render layer over the backend's
 // effective-price aggregates (291-design-pm.md §2, 291-design-arch.md §3.2).
 
+import { prettyPromoText } from './productDisplay.js'
+
 // "Save X%" only fires at ≥5% — sub-5% cross-store gaps (≈ Rp 400 on
 // Rp 20.000) badge half the catalog and devalue the badge (PM §3.2).
 export const SAVE_PCT_THRESHOLD = 5
@@ -50,11 +52,27 @@ export function promoTone(label) {
 }
 
 // [{ text, tone }] for an offer's promo fields — promo_label first,
-// promo_type as fallback text; footnote lines render no badge.
+// promo_type as fallback text. Brochure labels pack several offers into one
+// semicolon-joined string ("DISKON 50%;PROMO 1 HARI!"), so each non-empty,
+// non-footnote segment becomes its own badge with its own tone (issue #633).
 export function promoBadges(label, type) {
-  const text = label ?? type
-  if (!text || isFootnoteLabel(text)) return []
-  return [{ text, tone: promoTone(text) }]
+  const rawLabel = typeof label === 'string' ? label.trim() : ''
+  if (!rawLabel) {
+    return type ? [{ text: type, tone: promoTone(type) }] : []
+  }
+
+  const rawSegments = rawLabel
+    .split(';')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+  // A label of only separators is no label at all — keep the type fallback.
+  if (rawSegments.length === 0) {
+    return type ? [{ text: type, tone: promoTone(type) }] : []
+  }
+
+  return rawSegments
+    .filter((segment) => !isFootnoteLabel(segment))
+    .map((segment) => ({ text: prettyPromoText(segment), tone: promoTone(segment) }))
 }
 
 // Day-granularity countdown from a date-only valid_until, normalized to the

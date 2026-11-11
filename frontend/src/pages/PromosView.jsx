@@ -5,6 +5,7 @@ import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel, PanelBody } from '../components/Panel.jsx'
 import { Badge } from '../components/Badge.jsx'
 import { IconSearch, IconWarning } from '../components/icons.jsx'
+import { brandSuffix, prettyName, prettyUnit } from '../lib/productDisplay.js'
 import { formatPrice } from '../lib/pricesHelpers.js'
 
 // i18n key per promo group — the API returns groups in the fixed order
@@ -58,7 +59,7 @@ function PromoCard({ group, sourceNames, expanded, onToggle, onJump }) {
               product.effective_unit_price !== product.price
                 ? t('prices.perUnit', {
                     price: formatPrice(product.effective_unit_price),
-                    unit: product.unit,
+                    unit: prettyUnit(product.unit),
                   })
                 : null
             return (
@@ -69,8 +70,8 @@ function PromoCard({ group, sourceNames, expanded, onToggle, onJump }) {
               >
                 <div className="min-w-0">
                   <div className="text-sm font-medium truncate">
-                    {product.name}
-                    {product.brand ? ` · ${product.brand}` : ''}
+                    {prettyName(product.name)}
+                    {brandSuffix(product.name, product.brand)}
                   </div>
                   {perUnit && <div className="text-xs text-text-muted">{perUnit}</div>}
                 </div>

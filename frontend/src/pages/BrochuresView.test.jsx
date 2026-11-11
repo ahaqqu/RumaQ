@@ -172,6 +172,35 @@ describe('BrochuresView', () => {
     expect(rows).toHaveLength(5)
   })
 
+  it('normalizes example names and suppresses a duplicated brand (#633)', () => {
+    vi.mocked(usePriceBrochures).mockReturnValue({
+      data: {
+        groups: [
+          {
+            ...mockGroups[0],
+            example_products: [
+              {
+                product_key: 'salak--pondoh--2-pcs',
+                name: 'SALAK PONDOH',
+                brand: 'Salak',
+                unit: '2pcs',
+                price: 12000,
+                effective_unit_price: null,
+              },
+            ],
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderView()
+    fireEvent.click(container.querySelector('button[aria-expanded]'))
+    expect(container.textContent).toContain('Salak Pondoh')
+    expect(container.textContent).not.toContain('SALAK PONDOH')
+    expect(container.textContent).not.toContain('· Salak')
+  })
+
   it('renders the empty state without sections', () => {
     vi.mocked(usePriceBrochures).mockReturnValue({
       data: { groups: [] },

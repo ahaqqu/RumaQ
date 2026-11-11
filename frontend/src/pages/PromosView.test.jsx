@@ -143,6 +143,40 @@ describe('PromosView', () => {
     expect(container.textContent).toContain('prices.perUnit')
   })
 
+  it('normalizes example names and suppresses a duplicated brand (#633)', () => {
+    vi.mocked(usePricePromos).mockReturnValue({
+      data: {
+        types: [
+          {
+            promo_type: 'other',
+            product_count: 1,
+            stores: { superindo: 1 },
+            example_products: [
+              {
+                product_key: 'salak--pondoh--2-pcs',
+                name: 'SALAK PONDOH',
+                brand: 'Salak',
+                unit: '2pcs',
+                source_slug: 'superindo',
+                source_name: 'Superindo',
+                price: 12000,
+                effective_unit_price: null,
+              },
+            ],
+          },
+        ],
+        total: 1,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderPromos()
+    fireEvent.click(findClickable(container, 'prices.promoTypeOther'))
+    expect(container.textContent).toContain('Salak Pondoh')
+    expect(container.textContent).not.toContain('SALAK PONDOH')
+    expect(container.textContent).not.toContain('· Salak')
+  })
+
   it('calls onJump with the product key when an example is clicked', () => {
     const onJump = vi.fn()
     const { container } = renderPromos({ onJump })
