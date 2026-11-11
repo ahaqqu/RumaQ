@@ -1,5 +1,8 @@
 # RumaQ — Testing Strategy
 
+The test and check scripts print failures only. The full output is written to
+`test-results/*.log` (gitignored), and CI uploads those logs when a run fails.
+
 ## Unit test
 
 | Location                          | Runner | Environment | Coverage                |
