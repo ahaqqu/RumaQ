@@ -10,6 +10,7 @@ import fixture from '../../../contract/fixtures/valid/ingest-v2.json'
 import v1Fixture from '../../../contract/fixtures/invalid/ingest-v1.json'
 import unknownFieldFixture from '../../../contract/fixtures/invalid/ingest-unknown-field.json'
 import missingRawNameFixture from '../../../contract/fixtures/invalid/ingest-missing-raw-name.json'
+import sizeInvalidFixture from '../../../contract/fixtures/invalid/ingest-size-invalid.json'
 import undeclaredStoreFixture from '../../../contract/fixtures/invalid/ingest-undeclared-store.json'
 
 // Same contained node:sqlite suppressions as migrations.test.ts / taxonomy.test.ts:
@@ -449,6 +450,237 @@ describe('ingestPricesV2', () => {
   })
 })
 
+// Pipeline #116: ingest carries the canonical size tuple from the payload.
+// Creation writes it, an all-null existing row is filled once (first-write-
+// wins, metadata_version + 1), a stored size is never overwritten, and a size
+// on a sizeless key (`name--brand--`) is dropped with a log — the keyed-size
+// authority mirrored on the write side.
+describe('ingestPricesV2 size write (#116)', () => {
+  type PayloadSize = { quantity: number; unit: 'g' | 'ml' | 'pcs'; packCount?: number }
+
+  function sizedPayload(size: PayloadSize) {
+    const input = payload()
+    input.items[0]!.size = { ...size }
+    return input
+  }
+
+  function sizelessPayload() {
+    const input = payload()
+    delete input.items[0]!.size
+    return input
+  }
+
+  function storedSize(sqlite: SqliteDb) {
+    return sqlite
+      .prepare(
+        `SELECT size_quantity, size_unit, pack_count, total_quantity, metadata_version
+         FROM price_products`
+      )
+      .get()
+  }
+
+  function warnings(spy: { mock: { calls: unknown[][] } }): string {
+    return spy.mock.calls.map((call) => call.join(' ')).join('\n')
+  }
+
+  it('creates the product with the size tuple and derives total_quantity', async () => {
+    const { sqlite, db } = setup()
+    // 6 × 200 ml: `quantity` is ONE pack, and total_quantity is the listing
+    // total the index reports — never `unitQty`'s 1200 in size_quantity.
+    await ingestPricesV2(db, sizedPayload({ quantity: 200, unit: 'ml', packCount: 6 }))
+
+    expect(storedSize(sqlite)).toEqual({
+      size_quantity: 200,
+      size_unit: 'ml',
+      pack_count: 6,
+      total_quantity: 1200,
+      metadata_version: 1,
+    })
+    const index = await getCanonicalIndex(db)
+    expect(index.products[0]?.size).toMatchObject({
+      quantity: 200,
+      unit: 'ml',
+      packCount: 6,
+      totalQuantity: 1200,
+      packaging: null,
+      quantityMin: null,
+      quantityMax: null,
+    })
+  })
+
+  it('writes the size from the shared valid fixture through to the canonical index', async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, payload())
+
+    expect(storedSize(sqlite)).toEqual({
+      size_quantity: 2000,
+      size_unit: 'ml',
+      pack_count: 1,
+      total_quantity: 2000,
+      metadata_version: 1,
+    })
+    // getCanonicalIndex parses with canonicalIndexSchema: the contract
+    // validates the size it returns.
+    const index = await getCanonicalIndex(db)
+    expect(index.products[0]?.size).toMatchObject({ quantity: 2000, unit: 'ml', packCount: 1 })
+  })
+
+  it('defaults packCount to 1 when the payload omits it', async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, sizedPayload({ quantity: 280, unit: 'g' }))
+    expect(storedSize(sqlite)).toMatchObject({ pack_count: 1, total_quantity: 280 })
+  })
+
+  it('fills a sizeless existing product once and bumps metadata_version', async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, sizelessPayload())
+    expect(storedSize(sqlite)).toMatchObject({ size_quantity: null, metadata_version: 1 })
+
+    await ingestPricesV2(db, sizedPayload({ quantity: 2000, unit: 'ml', packCount: 1 }))
+    expect(storedSize(sqlite)).toEqual({
+      size_quantity: 2000,
+      size_unit: 'ml',
+      pack_count: 1,
+      total_quantity: 2000,
+      metadata_version: 2,
+    })
+    expect((await getCanonicalIndex(db)).products[0]?.metadataVersion).toBe(2)
+
+    // A second identical payload is a no-op: the fill guard does not rewrite
+    // the tuple, so the bump does not repeat either.
+    await ingestPricesV2(db, sizedPayload({ quantity: 2000, unit: 'ml', packCount: 1 }))
+    expect(storedSize(sqlite)?.metadata_version).toBe(2)
+  })
+
+  it('never overwrites a stored size and logs the conflict', async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, payload())
+
+    const logged = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const changed = payload()
+      changed.items[0]!.size = { quantity: 1000, unit: 'ml', packCount: 1 }
+      const receipt = await ingestPricesV2(db, changed)
+
+      // A disagreement is a logged conflict, not a failure or a 400.
+      expect(receipt.accepted).toBe(1)
+      expect(storedSize(sqlite)).toMatchObject({
+        size_quantity: 2000,
+        size_unit: 'ml',
+        pack_count: 1,
+        total_quantity: 2000,
+        metadata_version: 1,
+      })
+      expect(warnings(logged)).toContain('size_conflict')
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  it('leaves the size columns null for a payload without a size', async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, sizelessPayload())
+
+    expect(storedSize(sqlite)).toEqual({
+      size_quantity: null,
+      size_unit: null,
+      pack_count: null,
+      total_quantity: null,
+      metadata_version: 1,
+    })
+    expect((await getCanonicalIndex(db)).products[0]?.size).toBeNull()
+  })
+
+  it('drops a payload size for a sizeless key and logs it', async () => {
+    const { sqlite, db } = setup()
+    const input = payload()
+    // `name----` — the empty unit segment is the sizeless spelling (§2.3).
+    input.items[0]!.productKey = 'filma-minyak-goreng-pch-2l----'
+
+    const logged = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const receipt = await ingestPricesV2(db, input)
+      expect(receipt.accepted).toBe(1)
+      expect(storedSize(sqlite)).toMatchObject({
+        size_quantity: null,
+        size_unit: null,
+        pack_count: null,
+        total_quantity: null,
+      })
+      expect(warnings(logged)).toContain('size_with_sizeless_key')
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  it('never fills a row that already carries range evidence', async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, sizelessPayload())
+    // A range-only product (admin/backfill) has no point tuple; the fill must
+    // not overwrite the range with a per-pack size.
+    sqlite.prepare('UPDATE price_products SET quantity_min = 1900, quantity_max = 2100').run()
+
+    const logged = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await ingestPricesV2(db, sizedPayload({ quantity: 2000, unit: 'ml', packCount: 1 }))
+      expect(storedSize(sqlite)).toMatchObject({
+        size_quantity: null,
+        total_quantity: null,
+        metadata_version: 1,
+      })
+      expect(sqlite.prepare('SELECT quantity_min, quantity_max FROM price_products').get()).toEqual(
+        {
+          quantity_min: 1900,
+          quantity_max: 2100,
+        }
+      )
+      expect(warnings(logged)).toContain('size_conflict')
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  it('uses the first item WITH a size when a key repeats', async () => {
+    const { sqlite, db } = setup()
+    const input = payload()
+    // The first item is the unit-less spelling (no size); array order must not
+    // make the product sizeless.
+    delete input.items[0]!.size
+    const secondStore = clone(input.items[0]!)
+    secondStore.storeSlug = 'lotte-mart'
+    secondStore.size = { quantity: 2000, unit: 'ml', packCount: 1 }
+    input.stores.push({ slug: 'lotte-mart', name: 'Lotte Mart', region: null, website: null })
+    input.items.push(secondStore)
+
+    await ingestPricesV2(db, input)
+    expect(storedSize(sqlite)).toMatchObject({
+      size_quantity: 2000,
+      size_unit: 'ml',
+      pack_count: 1,
+      total_quantity: 2000,
+    })
+  })
+
+  it('keeps the first payload size for a key and logs the disagreement', async () => {
+    const { sqlite, db } = setup()
+    const input = payload()
+    const secondStore = clone(input.items[0]!)
+    secondStore.storeSlug = 'lotte-mart'
+    secondStore.size = { quantity: 1000, unit: 'ml', packCount: 1 }
+    input.stores.push({ slug: 'lotte-mart', name: 'Lotte Mart', region: null, website: null })
+    input.items.push(secondStore)
+
+    const logged = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await ingestPricesV2(db, input)
+      expect(storedSize(sqlite)).toMatchObject({ size_quantity: 2000, size_unit: 'ml' })
+      expect(warnings(logged)).toContain('size_conflict')
+    } finally {
+      logged.mockRestore()
+    }
+  })
+})
+
 // D1's per-invocation query budget is a hard stop, not a tuning knob: past it
 // the invocation dies mid-chunk, and the chunks that already committed carry
 // the version they had before the ingest (lib/d1.ts). So the guard has to fire
@@ -503,6 +735,58 @@ describe('ingestPricesV2 query budget', () => {
     const { db } = setup()
     await expect(ingestPricesV2(db, bulkPayload(650))).rejects.toThrow(D1QueryBudgetExceededError)
   })
+
+  // Pipeline #116: the mandatory 400-item warm budget test. Every product
+  // already exists and every stored size is null, so the payload's size fills
+  // all 400 rows. One fill UPDATE per product rides in the same statement
+  // batches as the aliases/observations — 25 batches, 33 queries — instead of
+  // one query per fill, so the chunk (INGEST_CHUNK_SIZE = 400) does not shrink.
+  it('keeps a 400-item warm payload that fills every size inside the budget', async () => {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyMigrations(sqlite)
+    const trace: ShimTrace = { statements: [], batchSizes: [], queries: 0 }
+    const db = sqliteD1(sqlite, trace)
+
+    const sizedItems = (withSize: boolean) =>
+      parse(ingestPayloadV2Schema, {
+        schemaVersion: 2,
+        scrapedAt: '2026-11-05T23:00:05Z',
+        stores: [{ slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' }],
+        items: Array.from({ length: 400 }, (_, index) => ({
+          productKey: `bulk-item-${index}--acme--1-pcs`,
+          rawName: `Bulk Item ${index}`,
+          storeSlug: 'lotte-mart',
+          price: 1000 + index,
+          matchConfidence: 1,
+          ...(withSize ? { size: { quantity: 100 + index, unit: 'g', packCount: 1 } } : {}),
+        })),
+      })
+
+    // Warm it: the products exist and every size column is still null.
+    await ingestPricesV2(db, sizedItems(false))
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM price_products WHERE size_quantity IS NULL')
+        .get()?.count
+    ).toBe(400)
+
+    trace.queries = 0
+    trace.statements.length = 0
+    trace.batchSizes.length = 0
+    const receipt = await ingestPricesV2(db, sizedItems(true))
+
+    expect(receipt.productsCreated).toBe(0)
+    expect(trace.queries).toBeLessThanOrEqual(D1_QUERY_BUDGET)
+    // The ceiling only means something if the fills really ran: all 400 rows
+    // got their size and the metadata bump.
+    expect(
+      sqlite
+        .prepare(
+          'SELECT COUNT(*) AS count FROM price_products WHERE size_quantity IS NOT NULL AND metadata_version = 2'
+        )
+        .get()?.count
+    ).toBe(400)
+  })
 })
 
 describe('POST /api/internal/ingest/prices v2 boundary', () => {
@@ -529,6 +813,7 @@ describe('POST /api/internal/ingest/prices v2 boundary', () => {
     ['v1 payload', v1Fixture],
     ['unknown field', unknownFieldFixture],
     ['missing raw name', missingRawNameFixture],
+    ['invalid size', sizeInvalidFixture],
     ['undeclared store', undeclaredStoreFixture],
   ])('rejects the shared %s fixture with 400 and writes nothing', async (_label, body) => {
     const { sqlite, db } = setup()
@@ -562,9 +847,20 @@ describe('POST /api/internal/ingest/prices v2 boundary', () => {
     const res = await indexRequest(db)
     expect(res.status).toBe(200)
     expect(res.headers.get('cache-control')).toBe('no-store')
-    const index = (await res.json()) as { schemaVersion: number; products: unknown[] }
+    const index = (await res.json()) as {
+      schemaVersion: number
+      products: Array<{ size: unknown }>
+    }
     expect(index.schemaVersion).toBe(2)
     expect(index.products).toHaveLength(1)
+    // Pipeline #116 consumer test: the shared valid fixture carries a `size`,
+    // the route ingests it, and the index returns the tuple it wrote.
+    expect(index.products[0]?.size).toMatchObject({
+      quantity: 2000,
+      unit: 'ml',
+      packCount: 1,
+      totalQuantity: 2000,
+    })
 
     const unauthorized = await apiApp.request('/api/internal/canonical-index', {}, env(db))
     expect(unauthorized.status).toBe(401)

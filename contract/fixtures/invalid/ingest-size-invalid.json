@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "scrapedAt": "2026-11-05T23:00:05Z",
+  "stores": [
+    {
+      "slug": "superindo",
+      "name": "Superindo",
+      "region": "jakarta",
+      "website": null
+    }
+  ],
+  "items": [
+    {
+      "productKey": "filma-minyak-goreng-pch-2l--filma--2-l",
+      "rawName": "FILMA MINYAK GORENG PCH 2L",
+      "rawBrand": "Filma",
+      "rawUnit": "2 L",
+      "category": "minyak-goreng",
+      "taxoVersion": "v0.2",
+      "storeSlug": "superindo",
+      "price": 34500,
+      "memberPrice": 29900,
+      "originalPrice": 39900,
+      "effectiveUnitPrice": 17250,
+      "unitQty": 2000,
+      "unitQtyUnit": "ml",
+      "size": {
+        "quantity": 2000,
+        "packCount": 1
+      },
+      "unitPrice": 17250,
+      "promoType": "discount_pct",
+      "promoLabel": "Diskon 14%",
+      "validFrom": "2026-11-01",
+      "validUntil": "2026-11-07",
+      "observedDate": "2026-11-05",
+      "matchMethod": "exact",
+      "matchConfidence": 1,
+      "brochureUrl": "https://example.test/brochure",
+      "sourceUrl": "https://example.test/campaign",
+      "page": 2,
+      "ocrModel": "gemini-3.8-flash"
+    }
+  ]
+}

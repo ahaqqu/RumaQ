@@ -19,6 +19,12 @@ type ExistingProduct = {
   product_key: string
   category: string | null
   category_version: string | null
+  size_quantity: number | null
+  size_unit: string | null
+  pack_count: number | null
+  total_quantity: number | null
+  quantity_min: number | null
+  quantity_max: number | null
 }
 
 type ProductRow = {
@@ -79,6 +85,67 @@ function provisionalName(rawName: string, productKey: string): string {
   return rawName.trim() || productKey
 }
 
+// Contract §4.3 (pipeline #116): the per-pack size tuple an observation carries.
+// `quantity` is one pack in the base unit; `packCount` is part of the identity
+// and defaults to 1 (the backend derives `total_quantity` from the two).
+type SizeTuple = {
+  quantity: number
+  unit: 'g' | 'ml' | 'pcs'
+  packCount: number
+}
+
+// Contract §4.3 (design §2.3): a key is `name--brand--unit`; an empty unit
+// segment is the sizeless spelling (`name----`). Such a product is sizeless by
+// identity, so ingest refuses to write a size onto it even when the payload
+// carries one — the pipeline is the enforcement point, the backend is the
+// alarm. The rule is defined on the unclamped key format: `clampProductKey`
+// truncation can hide the trailing empty segment, a rare pre-existing edge.
+function isSizedKey(productKey: string): boolean {
+  return !productKey.endsWith('--')
+}
+
+function sizeTupleOf(item: IngestPayloadV2['items'][number]): SizeTuple | null {
+  if (!item.size) return null
+  return {
+    quantity: item.size.quantity,
+    unit: item.size.unit,
+    packCount: item.size.packCount ?? 1,
+  }
+}
+
+function logSizeEvent(
+  event: 'size_conflict' | 'size_with_sizeless_key',
+  details: Record<string, unknown>
+): void {
+  // Server-side only: these are the identity writes the backend refuses or
+  // keeps. Never a 400 — one bad item must not lose a night.
+  console.warn(`[ingest-v2] ${event}`, JSON.stringify(details))
+}
+
+// Contract §4.3: "all size columns are null" is the fill gate — the six
+// identity/range columns ingest owns. `packaging` is display-only and does not
+// block the fill.
+function hasNoSizeEvidence(row: ExistingProduct): boolean {
+  return (
+    row.size_quantity === null &&
+    row.size_unit === null &&
+    row.pack_count === null &&
+    row.total_quantity === null &&
+    row.quantity_min === null &&
+    row.quantity_max === null
+  )
+}
+
+// A stored tuple without `pack_count` predates the writer (or came from an
+// admin form); the payload's default of 1 is the same identity.
+function sameStoredSize(row: ExistingProduct, size: SizeTuple): boolean {
+  return (
+    row.size_quantity === size.quantity &&
+    row.size_unit === size.unit &&
+    (row.pack_count ?? 1) === size.packCount
+  )
+}
+
 export async function ingestPricesV2(
   db: D1Database,
   payload: IngestPayloadV2
@@ -128,10 +195,51 @@ export async function ingestPricesV2(
   for (const item of payload.items) {
     if (!itemByKey.has(item.productKey)) itemByKey.set(item.productKey, item)
   }
+  // Contract §4.3: the first item WITH a size per key supplies the tuple — not
+  // the first item by array order, which can be the unit-less spelling (the
+  // product would otherwise be born sizeless). A later disagreement is the
+  // matcher/identity bug signal; the backend cannot choose, so it keeps the
+  // first and logs.
+  const sizeByKey = new Map<string, SizeTuple>()
+  const payloadSizeConflictLogged = new Set<string>()
+  const sizelessKeyLogged = new Set<string>()
+  for (const item of payload.items) {
+    const size = sizeTupleOf(item)
+    if (!size) continue
+    if (!isSizedKey(item.productKey)) {
+      if (!sizelessKeyLogged.has(item.productKey)) {
+        sizelessKeyLogged.add(item.productKey)
+        logSizeEvent('size_with_sizeless_key', { productKey: item.productKey, size })
+      }
+      continue
+    }
+    const kept = sizeByKey.get(item.productKey)
+    if (!kept) {
+      sizeByKey.set(item.productKey, size)
+      continue
+    }
+    if (
+      kept.quantity !== size.quantity ||
+      kept.unit !== size.unit ||
+      kept.packCount !== size.packCount
+    ) {
+      if (!payloadSizeConflictLogged.has(item.productKey)) {
+        payloadSizeConflictLogged.add(item.productKey)
+        logSizeEvent('size_conflict', {
+          productKey: item.productKey,
+          against: 'payload',
+          kept,
+          ignored: size,
+        })
+      }
+    }
+  }
   const existingRows = keys.length
     ? await selectIn<ExistingProduct>(
         db,
-        'SELECT id, product_key, category, category_version FROM price_products WHERE product_key IN',
+        `SELECT id, product_key, category, category_version, size_quantity, size_unit,
+                pack_count, total_quantity, quantity_min, quantity_max
+         FROM price_products WHERE product_key IN`,
         keys
       )
     : []
@@ -155,13 +263,19 @@ export async function ingestPricesV2(
 
   for (const key of newKeys) {
     const item = itemByKey.get(key)!
+    // Contract §4.3: creation is the only moment the backend sees the key and
+    // the size together, so the tuple is written here. `total_quantity` is
+    // derived (one pack × packCount); packaging and the range bounds stay null
+    // from ingest.
+    const size = sizeByKey.get(key) ?? null
     statements.push(
       db
         .prepare(
           `INSERT INTO price_products
              (id, product_key, name, brand, unit, category, category_version,
+              size_quantity, size_unit, pack_count, total_quantity,
               status, metadata_version, first_seen_at, last_seen_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'provisional', 1, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisional', 1, ?, ?, ?)`
         )
         .bind(
           newIdByKey.get(key)!,
@@ -171,6 +285,10 @@ export async function ingestPricesV2(
           item.rawUnit?.trim() || null,
           item.category ?? null,
           item.taxoVersion ?? null,
+          size?.quantity ?? null,
+          size?.unit ?? null,
+          size?.packCount ?? null,
+          size ? size.quantity * size.packCount : null,
           now,
           now,
           now
@@ -212,6 +330,58 @@ export async function ingestPricesV2(
            WHERE product_key = ? AND category IS NULL`
         )
         .bind(item.category, item.taxoVersion ?? null, row.product_key)
+    )
+  }
+
+  // Contract §4.3 (pipeline #116): fill the size tuple once, when the stored row
+  // has no size evidence at all. Never overwrite — a product created before
+  // this writer becomes sized without a separate backfill, and a disagreeing
+  // stored tuple is a logged conflict, not a failure. The UPDATE re-checks the
+  // all-null guard so a retry (or a concurrent chunk) is a no-op instead of a
+  // second write; the bump keeps an admin form opened before the fill from
+  // overwriting the identity. One statement per filled product rides in the
+  // existing statement batches — the 400-item budget test in
+  // ingest-v2.test.ts pins that this stays under D1_QUERY_BUDGET.
+  const storedSizeConflictLogged = new Set<string>()
+  for (const row of existingRows) {
+    const size = sizeByKey.get(row.product_key)
+    if (!size) continue
+    if (!hasNoSizeEvidence(row)) {
+      if (!sameStoredSize(row, size) && !storedSizeConflictLogged.has(row.product_key)) {
+        storedSizeConflictLogged.add(row.product_key)
+        logSizeEvent('size_conflict', {
+          productKey: row.product_key,
+          against: 'stored',
+          kept: {
+            quantity: row.size_quantity,
+            unit: row.size_unit,
+            packCount: row.pack_count,
+            totalQuantity: row.total_quantity,
+            quantityMin: row.quantity_min,
+            quantityMax: row.quantity_max,
+          },
+          ignored: size,
+        })
+      }
+      continue
+    }
+    statements.push(
+      db
+        .prepare(
+          `UPDATE price_products
+           SET size_quantity = ?, size_unit = ?, pack_count = ?, total_quantity = ?,
+               metadata_version = metadata_version + 1
+           WHERE product_key = ?
+             AND size_quantity IS NULL AND size_unit IS NULL AND pack_count IS NULL
+             AND total_quantity IS NULL AND quantity_min IS NULL AND quantity_max IS NULL`
+        )
+        .bind(
+          size.quantity,
+          size.unit,
+          size.packCount,
+          size.quantity * size.packCount,
+          row.product_key
+        )
     )
   }
 
@@ -330,6 +500,10 @@ export async function ingestPricesV2(
   // before the canonical write, instead of shipping content stamped with an
   // older indexVersion. The store upsert above is the only write that precedes
   // this check: idempotent price_sources metadata, outside the canonical index.
+  // pipeline #116: a size/total fill is one more statement in the same list, so
+  // `statements.length` already counts it; a 400-item warm payload that fills
+  // every stored size is 25 statement batches and 33 queries in total, which
+  // the mandatory budget test pins.
   assertQueryBudget(
     Math.ceil(payload.stores.length / BATCH_CHUNK) +
       (slugs.length ? Math.ceil(slugs.length / SELECT_IN_CHUNK) : 0) +

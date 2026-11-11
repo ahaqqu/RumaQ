@@ -8,6 +8,7 @@ import {
   ingestItemV2Schema,
   ingestPayloadV2Schema,
   ingestReceiptSchema,
+  ingestSizeSchema,
   validateIngestV2,
 } from '@rumaq/contract'
 import validIndex from '../../../contract/fixtures/valid/canonical-index.json'
@@ -16,6 +17,7 @@ import validReceipt from '../../../contract/fixtures/valid/ingest-receipt.json'
 import badStatus from '../../../contract/fixtures/invalid/index-bad-status.json'
 import missingId from '../../../contract/fixtures/invalid/receipt-missing-product-id.json'
 import missingRawName from '../../../contract/fixtures/invalid/ingest-missing-raw-name.json'
+import sizeInvalid from '../../../contract/fixtures/invalid/ingest-size-invalid.json'
 import undeclaredStore from '../../../contract/fixtures/invalid/ingest-undeclared-store.json'
 import unknownField from '../../../contract/fixtures/invalid/ingest-unknown-field.json'
 import v1 from '../../../contract/fixtures/invalid/ingest-v1.json'
@@ -130,5 +132,100 @@ describe('member price contract (#627)', () => {
   it('rejects a fractional member price on both schemas', () => {
     expect(safeParse(ingestItemSchema, { ...v1Item, memberPrice: 19900.5 }).success).toBe(false)
     expect(safeParse(ingestItemV2Schema, { ...v2Item, memberPrice: 19900.5 }).success).toBe(false)
+  })
+})
+
+// Pipeline #116: the observation carries the identity slice of the product's
+// size — one pack in the base unit + packCount — separate from the unit-price
+// totals in `unitQty`/`unitQtyUnit`. Additive-nullish on the v2 schema: an old
+// payload (no field) keeps validating, a new payload hitting an old Worker
+// fails loudly (strictObject, Worker-first).
+describe('ingest size contract (#116)', () => {
+  const v2Item = {
+    productKey: 'fitmee-beras-porang----1kg',
+    rawName: 'Fitmee Beras Porang',
+    rawBrand: 'Fitmee',
+    rawUnit: '1kg',
+    category: null,
+    taxoVersion: null,
+    storeSlug: 'lotte-mart',
+    price: 206100,
+    matchConfidence: 1,
+  }
+  const size = { quantity: 1000, unit: 'g', packCount: 1 }
+
+  it('accepts a size on a v2 item and keeps it in the parsed output', () => {
+    const result = safeParse(ingestItemV2Schema, { ...v2Item, size })
+    expect(result.success).toBe(true)
+    expect(result.success && result.output.size).toEqual(size)
+    expect(safeParse(ingestSizeSchema, size).success).toBe(true)
+  })
+
+  it('accepts a size without packCount (the backend defaults it to 1)', () => {
+    expect(
+      safeParse(ingestItemV2Schema, { ...v2Item, size: { quantity: 280, unit: 'g' } }).success
+    ).toBe(true)
+    expect(safeParse(ingestSizeSchema, { quantity: 280, unit: 'g', packCount: null }).success).toBe(
+      true
+    )
+  })
+
+  it('accepts null and absent sizes so old payloads keep validating', () => {
+    expect(safeParse(ingestItemV2Schema, { ...v2Item, size: null }).success).toBe(true)
+    expect(safeParse(ingestItemV2Schema, v2Item).success).toBe(true)
+  })
+
+  it('carries the size in the shared valid fixture', () => {
+    const parsed = safeParse(ingestPayloadV2Schema, validIngest)
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.output.items[0]?.size).toEqual({
+      quantity: 2000,
+      unit: 'ml',
+      packCount: 1,
+    })
+  })
+
+  it('rejects the shared invalid size fixture with a path to the subfield', () => {
+    const result = validateIngestV2(sizeInvalid)
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.issues[0]?.path).toEqual(['items', 0, 'size', 'unit'])
+    }
+  })
+
+  it('rejects a size without a unit', () => {
+    expect(safeParse(ingestItemV2Schema, { ...v2Item, size: { quantity: 280 } }).success).toBe(
+      false
+    )
+  })
+
+  it('rejects a non-positive quantity', () => {
+    for (const quantity of [0, -280]) {
+      expect(
+        safeParse(ingestItemV2Schema, { ...v2Item, size: { quantity, unit: 'g' } }).success
+      ).toBe(false)
+    }
+  })
+
+  it('rejects a packCount below 1 or fractional', () => {
+    for (const packCount of [0, -1, 1.5]) {
+      expect(
+        safeParse(ingestItemV2Schema, { ...v2Item, size: { ...size, packCount } }).success
+      ).toBe(false)
+    }
+  })
+
+  it('rejects an unknown base unit and an unknown size field (strictObject)', () => {
+    expect(
+      safeParse(ingestItemV2Schema, { ...v2Item, size: { quantity: 1, unit: 'kg' } }).success
+    ).toBe(false)
+    expect(
+      safeParse(ingestItemV2Schema, {
+        ...v2Item,
+        // totalQuantity/packaging are product-level fields ingest derives or
+        // leaves null; a producer may not invent them.
+        size: { ...size, totalQuantity: 1000 },
+      }).success
+    ).toBe(false)
   })
 })

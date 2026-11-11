@@ -48,21 +48,21 @@ variant, description, status, `metadataVersion`, or an approved alias.
 
 ## 3. Ownership
 
-| Field                              | Owner                                  | Pipeline may send?                              |
-| ---------------------------------- | -------------------------------------- | ----------------------------------------------- |
-| `id` (UUID)                        | Backend                                | No; returned in receipt/index                   |
-| `productKey`                       | Pipeline creates, backend freezes      | Yes, as the join key                            |
-| `canonicalName`                    | Backend/admin                          | No                                              |
-| `brand`, `productType`, `variant`  | Backend/admin                          | No                                              |
-| `size`                             | Backend/admin                          | No; observation carries `unitQty`/`unitQtyUnit` |
-| `description`                      | Backend                                | No                                              |
-| `category`, `categoryVersion`      | Backend (pipeline proposal, null-fill) | `category` + `taxoVersion`                      |
-| `status`                           | Backend/admin                          | No                                              |
-| `metadataVersion`                  | Backend                                | No                                              |
-| approved aliases                   | Backend/admin                          | No; raw names become candidates                 |
-| observation price/promo/source/raw | Pipeline                               | Yes                                             |
-| `matchMethod`, `matchConfidence`   | Pipeline                               | Yes, observation-level                          |
-| `page`, `ocrModel`                 | Pipeline                               | Yes, observation-level                          |
+| Field                              | Owner                                  | Pipeline may send?                                |
+| ---------------------------------- | -------------------------------------- | ------------------------------------------------- |
+| `id` (UUID)                        | Backend                                | No; returned in receipt/index                     |
+| `productKey`                       | Pipeline creates, backend freezes      | Yes, as the join key                              |
+| `canonicalName`                    | Backend/admin                          | No                                                |
+| `brand`, `productType`, `variant`  | Backend/admin                          | No                                                |
+| `size`                             | Backend/admin                          | Yes, identity tuple only; backend fills when null |
+| `description`                      | Backend                                | No                                                |
+| `category`, `categoryVersion`      | Backend (pipeline proposal, null-fill) | `category` + `taxoVersion`                        |
+| `status`                           | Backend/admin                          | No                                                |
+| `metadataVersion`                  | Backend                                | No                                                |
+| approved aliases                   | Backend/admin                          | No; raw names become candidates                   |
+| observation price/promo/source/raw | Pipeline                               | Yes                                               |
+| `matchMethod`, `matchConfidence`   | Pipeline                               | Yes, observation-level                            |
+| `page`, `ocrModel`                 | Pipeline                               | Yes, observation-level                            |
 
 `productType` is the product kind (`Minyak Goreng`, `Susu UHT`, `Beras`). `category` is
 the existing 48-bucket shopping taxonomy (`minyak-goreng`, `susu-uht`, `beras`) and is
@@ -97,6 +97,7 @@ feature-flagged by `RUMAQ_CATEGORY=off|shadow|on`. They are separate fields.
       "effectiveUnitPrice": 17250,
       "unitQty": 2000,
       "unitQtyUnit": "ml",
+      "size": { "quantity": 2000, "unit": "ml", "packCount": 1 },
       "unitPrice": 17250,
       "promoType": "discount_pct",
       "promoLabel": "Diskon 14%",
@@ -130,6 +131,7 @@ feature-flagged by `RUMAQ_CATEGORY=off|shadow|on`. They are separate fields.
 | `effectiveUnitPrice` | number/null                          |       no | Promo-effective unit price                      |
 | `unitQty`            | number/null, >0                      |       no | Normalized quantity in base unit                |
 | `unitQtyUnit`        | `g`/`ml`/`pcs`/null                  |       no | Base unit                                       |
+| `size`               | size object/null                     |       no | Identity slice of the product size (see below)  |
 | `unitPrice`          | integer/null, ≥0                     |       no | Listed price per display unit                   |
 | `promoType`          | string/null, ≤100                    |       no | Existing promo vocabulary                       |
 | `promoLabel`         | string/null, ≤200                    |       no | Human label                                     |
@@ -142,6 +144,30 @@ feature-flagged by `RUMAQ_CATEGORY=off|shadow|on`. They are separate fields.
 | `sourceUrl`          | string/null, ≤500                    |       no | Retailer campaign/listing page                  |
 | `page`               | integer/null, ≥0                     |       no | Source page number                              |
 | `ocrModel`           | string/null, ≤100                    |       no | OCR model actually used                         |
+
+**`size` (additive, schema version 2):** the identity slice of the product's size —
+what makes a sized key resolvable. It is deliberately not the product-level
+`productSizeSchema`: the observation carries only what identifies the pack, and the
+backend derives the rest.
+
+| Subfield    | Type           | Required       | Semantics                                                                                            |
+| ----------- | -------------- | -------------- | ---------------------------------------------------------------------------------------------------- |
+| `quantity`  | number > 0     | yes            | One pack in the base unit. Not the listed total.                                                     |
+| `unit`      | `g`/`ml`/`pcs` | yes            | Canonical base unit; the producer maps `parseSizeTuple.type` (weight → g, volume → ml, count → pcs). |
+| `packCount` | integer ≥ 1    | no (default 1) | Packs the listing declares ("6 × 200 ml" → 6). Part of the identity.                                 |
+
+- `quantity` is **one pack**; `totalQuantity` is derived by the backend
+  (`quantity × packCount`) and is not sent.
+- Do **not** reuse `unitQty`/`unitQtyUnit`: those are listing totals for unit-price
+  math ("6 × 200 ml" → 1200 ml) and can legitimately disagree with the pack identity.
+- The producer builds `size` from the **structured unit only** (`product.unit`), with
+  the same parser the index item evidence uses. A name-borne size with a sizeless key
+  (Alfamart) sends no `size`: the key is the authority.
+- Ranges are not carried: the item parser produces none, and a range-only product is an
+  admin/backfill concern. A follow-up can widen the payload without changing the index
+  shape.
+- Additive-nullish: old payloads validate unchanged; a new payload hitting an old Worker
+  fails the whole chunk (`strictObject`), so the Worker deploys first.
 
 **Removed from v1:** `name`, `brand`, `unit` — replaced by `rawName`, `rawBrand`,
 `rawUnit`. No v1 compatibility is provided.
@@ -169,6 +195,24 @@ feature-flagged by `RUMAQ_CATEGORY=off|shadow|on`. They are separate fields.
   merge.
 - `matchMethod`, `matchConfidence`, `page`, `ocrModel`, and raw fields are observation
   metadata. They do not change canonical fields.
+- `size` is an identity write, not a display field:
+  - **Creation**: a product created by this payload gets `size_quantity`, `size_unit`,
+    `pack_count`, and `total_quantity` (`quantity × (packCount ?? 1)`) from `size`;
+    `packaging` and `quantityMin`/`quantityMax` stay null.
+  - **Existing**: ingest fills those columns only when **all** size columns
+    (`size_quantity`, `size_unit`, `pack_count`, `total_quantity`, `quantityMin`,
+    `quantityMax`) are null. It never overwrites; a different non-null stored size is a
+    logged conflict (`size_conflict`), not a failure. A fill bumps `metadataVersion`
+    by 1 so an admin form opened before the fill cannot overwrite the identity.
+  - **Key/size invariant**: a payload `size` is dropped (and logged
+    `size_with_sizeless_key`) when the `productKey`'s unit segment is empty
+    (`name--brand--`). The backend never writes a size onto a sizeless-key product and
+    never answers `400` for one — a single bad item must not lose a night.
+  - **First-wins per key**: the first item **with** a size supplies the tuple; a later
+    disagreement for the same key is logged (`size_conflict`) and the first is kept. The
+    first item by array order may be the unit-less spelling, so it does not decide the
+    tuple.
+  - No migration: the `size_*` columns exist since `0030_canonical_products.sql`.
 
 ## 5. Ingest receipt
 
@@ -269,6 +313,18 @@ The `200` response is a receipt, not just counts:
 - `size` is nullable; each subfield is nullable. `quantity` is per pack in the base unit;
   `totalQuantity` is `quantity × packCount` when both are known. Ranges use
   `quantityMin`/`quantityMax`; the midpoint is never guessed.
+- `size` is populated from `price_products.size_*`, which ingest now fills (create /
+  fill-if-null, §4.3). The index shape does not change: `canonicalProductSchema.size`
+  already exists.
+- The canonical name may or may not carry a size token; the columns are the authority.
+  The pipeline's name fallback remains for legacy rows but is not the contract's
+  intended source.
+- A product is not "made sized" by a rename: `product_key` is frozen (rename/revert
+  never touch it), so a sizeless-key product stays sizeless by identity and a rename
+  cannot give it a sized target (§6.4).
+- No `retired`/`archived` status in this contract. If retire/rekey lands later (R2), a
+  retired product is filtered out of the index rather than becoming a new `status`
+  value, and its history remains in `price_observations`.
 - `description` is a neutral generated descriptor, not marketing copy.
 - `category` is the existing taxonomy; `categoryVersion` is the taxonomy version.
 - No price, promo, or observation data is in the index. Those belong to observations.
@@ -298,22 +354,35 @@ The `200` response is a receipt, not just counts:
 ### 6.4 Lookup key
 
 The pipeline matches an observation using a **size-inclusive lookup key**: the normalized
-name plus the normalized size tuple. The index already carries that tuple (`quantity`,
-`unit`, `quantityMin`/`quantityMax`, `packCount`), so the key needs no schema or endpoint
-change; the pipeline implementation follows in a separate PR (RumaQ#465, option (a)).
+name plus the normalized size tuple. The key needs no new schema or endpoint — the index
+shape already carries the tuple (`quantity`, `unit`, `quantityMin`/`quantityMax`,
+`packCount`); the ingest write (§4.3) is what makes it true of the data, not only of the
+schema (RumaQ#465, option (a)).
 
-- Quantity is unit-normalized before comparison: mass in kg or g, volume in L or ml, so a
-  `2 L` item and a `2000 ml` product are the same size.
-- Ranges compare against `quantityMin`/`quantityMax`; a range is never collapsed to a
-  guessed midpoint.
+- The tuple is **per pack in the base unit plus `packCount`**. Quantity is unit-normalized
+  before comparison: mass in kg or g, volume in L or ml, so a `2 L` item and a `2000 ml`
+  product are the same size. Ranges compare against `quantityMin`/`quantityMax`; a range
+  is never collapsed to a guessed midpoint.
 - `packCount` is part of the identity when present: a 6 × 200 ml pack is not a 200 ml
   product.
 - Resolution order:
-  1. The exact size-inclusive key.
-  2. The size-stripped name key, only when it is unique across the index and the item's
-     size does not contradict the candidate. An item with no size cannot confirm a size
-     family, so it stays ambiguous.
+  1. **Exact tier**: normalized name + normalized size tuple. Ambiguous exact keys are
+     dropped, never guessed.
+  2. **Stripped tier**: the size-stripped name key, only when it is unique across the
+     index **and** the item's size does not contradict the candidate. A candidate with
+     **no** size evidence cannot confirm an item with size evidence; a one-sided pair
+     does not resolve and falls to the local matcher.
   3. Anything still ambiguous is dropped. The pipeline never guesses.
+- **Keyed-size authority**: a product whose `productKey` has an empty unit segment
+  (`name--brand--`) is sizeless by identity and is never a sized target, even if its
+  canonical name or `size` fields carry a size. This is the rule that makes the sized key
+  authoritative; ingest mirrors it on the write side (§4.3).
+- **Asymmetry**: an item with no size evidence may still resolve a unique sized candidate
+  (a single target is not a family). The residual risk is documented, not fixed here;
+  making this symmetric requires name-derived item evidence and is a follow-up.
+- **ProductKey**: pipeline-owned, opaque to the backend, frozen across rename/revert;
+  there is no rekey API. A sized publication's key must carry the size. Legacy sizeless
+  keys are not repaired in place.
 - A size-mismatched candidate never resolves through the index. The pre-fix pre-pass
   matched a 10 kg item to the 5 kg canonical product at confidence 1.0 (pipeline PR #28,
   finding A2); the key compares size instead of stripping it.
@@ -386,6 +455,7 @@ All internal-route errors use:
 | `invalid/ingest-unknown-field.json`       | Must be rejected                          |
 | `invalid/ingest-missing-raw-name.json`    | Must be rejected                          |
 | `invalid/ingest-undeclared-store.json`    | Must be rejected                          |
+| `invalid/ingest-size-invalid.json`        | Must be rejected (size without `unit`)    |
 | `invalid/index-bad-status.json`           | Must be rejected                          |
 | `invalid/receipt-missing-product-id.json` | Must be rejected                          |
 
