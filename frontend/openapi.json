@@ -4669,6 +4669,9 @@
                                 "price": {
                                   "type": "number"
                                 },
+                                "member_price": {
+                                  "type": ["number", "null"]
+                                },
                                 "effective_unit_price": {
                                   "type": ["number", "null"]
                                 }
@@ -4681,6 +4684,7 @@
                                 "source_slug",
                                 "source_name",
                                 "price",
+                                "member_price",
                                 "effective_unit_price"
                               ]
                             }
@@ -4766,6 +4770,9 @@
                                 "price": {
                                   "type": "number"
                                 },
+                                "member_price": {
+                                  "type": ["number", "null"]
+                                },
                                 "effective_unit_price": {
                                   "type": ["number", "null"]
                                 }
@@ -4776,6 +4783,7 @@
                                 "brand",
                                 "unit",
                                 "price",
+                                "member_price",
                                 "effective_unit_price"
                               ]
                             }
@@ -4882,6 +4890,9 @@
                           "price": {
                             "type": "number"
                           },
+                          "member_price": {
+                            "type": ["number", "null"]
+                          },
                           "effective_unit_price": {
                             "type": ["number", "null"]
                           },
@@ -4930,6 +4941,7 @@
                           "category",
                           "category_version",
                           "price",
+                          "member_price",
                           "effective_unit_price",
                           "promo_type",
                           "promo_label",

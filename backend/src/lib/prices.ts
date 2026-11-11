@@ -70,6 +70,9 @@ export type PromoExampleProduct = {
   source_slug: string
   source_name: string
   price: number
+  // Issue #627: the member/app price beside the shelf price; null when the
+  // retailer prints none (or the observation predates the field).
+  member_price: number | null
   effective_unit_price: number | null
 }
 
@@ -115,7 +118,7 @@ WITH base AS (
   SELECT ${PROMO_GROUP_CASE} AS group_key,
          p.product_key, p.name, p.brand, p.unit,
          s.slug AS source_slug, s.name AS source_name,
-         o.price, o.effective_unit_price
+         o.price, o.member_price, o.effective_unit_price
   ${PROMO_LATEST_BASE}
     AND ${PROMO_EVIDENCE}
 ),
@@ -123,7 +126,7 @@ best AS (
   -- one display row per product per group: its cheapest promo offer
   SELECT *, ROW_NUMBER() OVER (
     PARTITION BY group_key, product_key
-    ORDER BY COALESCE(effective_unit_price, price) ASC, source_slug ASC
+    ORDER BY COALESCE(member_price, effective_unit_price, price) ASC, source_slug ASC
   ) AS offer_rn
   FROM base
 ),
@@ -135,7 +138,7 @@ ranked AS (
   FROM best WHERE offer_rn = 1
 )
 SELECT group_key, product_key, name, brand, unit, source_slug, source_name,
-       price, effective_unit_price
+       price, member_price, effective_unit_price
 FROM ranked WHERE group_rn <= 5
 ORDER BY group_key ASC, group_rn ASC`),
     db.prepare(`-- promos: total

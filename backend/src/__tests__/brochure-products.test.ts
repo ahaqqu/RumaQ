@@ -171,7 +171,7 @@ function seed(sqlite: SqliteDb): void {
   sqlite
     .prepare(
       `UPDATE price_observations
-       SET price = 72000, effective_unit_price = 14400,
+       SET price = 72000, member_price = 69000, effective_unit_price = 14400,
            promo_type = 'discount_pct', promo_label = 'DISKON 20%',
            valid_from = '2026-10-29', valid_until = '2026-11-04',
            match_method = 'embedding', match_confidence = 0.92
@@ -219,7 +219,9 @@ function seed(sqlite: SqliteDb): void {
   )
 
   // Cheapest-offer basis: two current offers for the same product on one
-  // brochure; the lower COALESCE(effective, price) wins.
+  // brochure. Lotte's effective price (15000) would win on the shelf/promo
+  // basis; Superindo's member price (12000, #627) is the lower payable price,
+  // so the member-first COALESCE picks Superindo.
   insertProduct.run(
     'prod-multi',
     'apel--fuji--1-kg',
@@ -261,6 +263,9 @@ function seed(sqlite: SqliteDb): void {
     BROCHURE_MULTI,
     '2026-10-29T23:00:05Z'
   )
+  sqlite
+    .prepare("UPDATE price_observations SET member_price = 12000 WHERE id = 'obs-multi-super'")
+    .run()
 }
 
 function freshDb() {
@@ -321,6 +326,7 @@ describe('getBrochureProducts', () => {
       category: 'beras',
       category_version: '2026-01',
       price: 72000,
+      member_price: 69000,
       effective_unit_price: 14400,
       promo_type: 'discount_pct',
       promo_label: 'DISKON 20%',
@@ -367,9 +373,10 @@ describe('getBrochureProducts', () => {
     expect(page.total).toBe(1)
     expect(page.items[0]).toMatchObject({
       product_key: 'apel--fuji--1-kg',
-      price: 30000,
-      effective_unit_price: 15000,
-      source_slug: 'lotte-mart',
+      price: 20000,
+      member_price: 12000,
+      effective_unit_price: null,
+      source_slug: 'superindo',
     })
   })
 

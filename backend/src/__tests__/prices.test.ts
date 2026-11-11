@@ -35,7 +35,11 @@ function createPricesEnv(
           if (sql.includes('ORDER BY o.observed_date ASC')) {
             return { results: rows.history ?? [] }
           }
-          if (sql.includes('ORDER BY COALESCE(o.effective_unit_price, o.price) ASC, s.slug ASC')) {
+          if (
+            sql.includes(
+              'ORDER BY COALESCE(o.member_price, o.effective_unit_price, o.price) ASC, s.slug ASC'
+            )
+          ) {
             return { results: rows.current ?? [] }
           }
           if (sql.includes('SELECT DISTINCT p.category')) {
@@ -109,6 +113,9 @@ const listRow = {
   source_name: 'Lotte Mart',
   observed_date: '2026-10-24',
   price: 21500,
+  // Issue #627: the member price rides beside the shelf price and becomes the
+  // comparison basis; null on rows the retailer prints no member price for.
+  member_price: 19900,
   effective_unit_price: 21500,
   // Canonical unit normalization (issue #368 phase A) — null on rows the
   // producer could not normalize.
@@ -253,7 +260,7 @@ describe('GET /api/prices sort', () => {
       const listCall = prepareCalls.find((call) => call.sql.includes('WITH latest AS'))
       expect(listCall, `sort=${sort}`).toBeDefined()
       expect(listCall!.sql).toContain(
-        'COALESCE(o.effective_unit_price, o.price) AS effective_price'
+        'COALESCE(o.member_price, o.effective_unit_price, o.price) AS effective_price'
       )
       expect(listCall!.sql).toContain('ROW_NUMBER() OVER')
       expect(listCall!.sql).toContain(`LIMIT 201`)
@@ -550,7 +557,7 @@ describe('GET /api/prices/:productKey', () => {
 
     const currentCall = prepareCalls.find((call) => call.sql.includes('FROM price_observations'))!
     expect(currentCall.sql).toContain(
-      'ORDER BY COALESCE(o.effective_unit_price, o.price) ASC, s.slug ASC'
+      'ORDER BY COALESCE(o.member_price, o.effective_unit_price, o.price) ASC, s.slug ASC'
     )
 
     const body = (await res.json()) as { current: Array<{ source_slug: string }> }
@@ -570,6 +577,7 @@ describe('GET /api/prices/promos', () => {
     source_slug: 'lotte-mart',
     source_name: 'Lotte Mart',
     price: 21500,
+    member_price: 19900,
     effective_unit_price: 21500,
     ...overrides,
   })
@@ -735,8 +743,11 @@ describe('GET /api/prices/promos', () => {
     expect(examplesCall.sql).toContain('ORDER BY name COLLATE NOCASE ASC, product_key ASC')
     // Cheapest offer per (group, product) on the effective-price basis.
     expect(examplesCall.sql).toContain(
-      'ORDER BY COALESCE(effective_unit_price, price) ASC, source_slug ASC'
+      'ORDER BY COALESCE(member_price, effective_unit_price, price) ASC, source_slug ASC'
     )
+    // Both price columns ship to the view: shelf for the reference, member
+    // for the headline (#627).
+    expect(examplesCall.sql).toContain('price, member_price, effective_unit_price')
     // The evidence filter admits label-only (NULL type) rows.
     expect(examplesCall.sql).toContain(
       "o.promo_type IS NOT NULL OR (o.promo_label IS NOT NULL AND o.promo_label <> '')"

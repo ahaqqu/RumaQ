@@ -2505,6 +2505,7 @@ export type GetApiPricesPromosResponses = {
                 source_slug: string;
                 source_name: string;
                 price: number;
+                member_price: number | null;
                 effective_unit_price: number | null;
             }>;
         }>;
@@ -2549,6 +2550,7 @@ export type GetApiPricesBrochuresResponses = {
                 brand: string;
                 unit: string;
                 price: number;
+                member_price: number | null;
                 effective_unit_price: number | null;
             }>;
         }>;
@@ -2599,6 +2601,7 @@ export type GetApiPricesBrochuresProductsResponses = {
             category: string | null;
             category_version: string | null;
             price: number;
+            member_price: number | null;
             effective_unit_price: number | null;
             promo_type: string | null;
             promo_label: string | null;

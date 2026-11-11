@@ -4214,7 +4214,15 @@ type PriceListRow = {
   source_name: string
   observed_date: string
   price: number
+  // Issue #627: the member/app price printed beside the shelf `price`; null
+  // when the retailer prints none (or the row predates the field). The
+  // comparison/effective expression is COALESCE(member_price,
+  // effective_unit_price, price), exposed below as effective_price.
+  member_price: number | null
   effective_unit_price: number | null
+  // The comparison/aggregate basis (issue #627): member price when present,
+  // else the promo/shelf effective price, else the shelf price.
+  effective_price: number
   // Canonical unit normalization (issue #368 phase A): null when the
   // observation was not normalizable.
   unit_qty: number | null
@@ -5659,10 +5667,11 @@ apiApp.get(
     if (!sort) {
       let sql = `SELECT p.product_key, p.name, p.brand, p.unit, p.category,
                       s.slug AS source_slug, s.name AS source_name,
-                      o.observed_date, o.price, o.effective_unit_price,
+                      o.observed_date, o.price, o.member_price, o.effective_unit_price,
                       o.unit_qty, o.unit_qty_unit, o.unit_price,
                       o.promo_type, o.promo_label, o.valid_from, o.valid_until,
-                      o.match_method, o.match_confidence, o.brochure_url
+                      o.match_method, o.match_confidence, o.brochure_url,
+                      COALESCE(o.member_price, o.effective_unit_price, o.price) AS effective_price
                FROM price_observations o
                JOIN price_products p ON p.id = o.product_id
                JOIN price_sources s ON s.id = o.source_id
@@ -5693,11 +5702,11 @@ apiApp.get(
     const sql = `WITH latest AS (
   SELECT p.product_key, p.name, p.brand, p.unit, p.category,
          s.slug AS source_slug, s.name AS source_name,
-         o.observed_date, o.price, o.effective_unit_price,
+         o.observed_date, o.price, o.member_price, o.effective_unit_price,
          o.unit_qty, o.unit_qty_unit, o.unit_price,
          o.promo_type, o.promo_label, o.valid_from, o.valid_until,
          o.match_method, o.match_confidence, o.brochure_url,
-         COALESCE(o.effective_unit_price, o.price) AS effective_price
+         COALESCE(o.member_price, o.effective_unit_price, o.price) AS effective_price
   FROM price_observations o
   JOIN price_products p ON p.id = o.product_id
   JOIN price_sources s ON s.id = o.source_id
@@ -5733,7 +5742,7 @@ page AS (
 )
 SELECT l.product_key, l.name, l.brand, l.unit, l.category,
        l.source_slug, l.source_name,
-       l.observed_date, l.price, l.effective_unit_price,
+       l.observed_date, l.price, l.member_price, l.effective_unit_price,
        l.unit_qty, l.unit_qty_unit, l.unit_price,
        l.promo_type, l.promo_label, l.valid_from, l.valid_until,
        l.match_method, l.match_confidence, l.brochure_url,
@@ -5856,6 +5865,7 @@ apiApp.get(
                             source_slug: { type: 'string' },
                             source_name: { type: 'string' },
                             price: { type: 'number' },
+                            member_price: { type: ['number', 'null'] } as any,
                             effective_unit_price: { type: ['number', 'null'] } as any,
                           },
                           required: [
@@ -5866,6 +5876,7 @@ apiApp.get(
                             'source_slug',
                             'source_name',
                             'price',
+                            'member_price',
                             'effective_unit_price',
                           ],
                         },
@@ -5934,6 +5945,7 @@ apiApp.get(
                             brand: { type: 'string', nullable: true } as any,
                             unit: { type: 'string', nullable: true } as any,
                             price: { type: 'number' },
+                            member_price: { type: ['number', 'null'] } as any,
                             effective_unit_price: { type: ['number', 'null'] } as any,
                           },
                           required: [
@@ -5942,6 +5954,7 @@ apiApp.get(
                             'brand',
                             'unit',
                             'price',
+                            'member_price',
                             'effective_unit_price',
                           ],
                         },
@@ -5990,6 +6003,7 @@ const BROCHURE_PRODUCT_SCHEMA: OpenAPIV3_1.SchemaObject = {
     category: { type: ['string', 'null'] } as any,
     category_version: { type: ['string', 'null'] } as any,
     price: { type: 'number' },
+    member_price: { type: ['number', 'null'] } as any,
     effective_unit_price: { type: ['number', 'null'] } as any,
     promo_type: { type: ['string', 'null'] } as any,
     promo_label: { type: ['string', 'null'] } as any,
@@ -6012,6 +6026,7 @@ const BROCHURE_PRODUCT_SCHEMA: OpenAPIV3_1.SchemaObject = {
     'category',
     'category_version',
     'price',
+    'member_price',
     'effective_unit_price',
     'promo_type',
     'promo_label',
@@ -6135,14 +6150,14 @@ apiApp.get(
 
     const { results: current } = await c.env.DB.prepare(
       `SELECT s.slug AS source_slug, s.name AS source_name,
-              o.observed_date, o.price, o.effective_unit_price,
+              o.observed_date, o.price, o.member_price, o.effective_unit_price,
               o.promo_type, o.promo_label, o.valid_from, o.valid_until,
               o.match_method, o.match_confidence, o.brochure_url
        FROM price_observations o
        JOIN price_sources s ON s.id = o.source_id
        WHERE o.product_id = (SELECT id FROM price_products WHERE product_key = ?)
          AND ${LATEST_OBSERVATION_SUBQUERY}
-       ORDER BY COALESCE(o.effective_unit_price, o.price) ASC, s.slug ASC`
+       ORDER BY COALESCE(o.member_price, o.effective_unit_price, o.price) ASC, s.slug ASC`
     )
       .bind(productKey)
       .all<{
@@ -6150,6 +6165,7 @@ apiApp.get(
         source_name: string
         observed_date: string
         price: number
+        member_price: number | null
         effective_unit_price: number | null
         promo_type: string | null
         promo_label: string | null
