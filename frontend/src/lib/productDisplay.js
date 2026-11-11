@@ -8,7 +8,7 @@ const HAS_LETTER = /\p{L}/u
 const HAS_NON_LETTER = /[^\p{L}]/u
 const HAS_DIGIT = /\p{Nd}/u
 const LETTER_RUN = /\p{L}+/gu
-const NON_ALNUM = /[^\p{L}\p{N}]+/gu
+const ALNUM_CHAR = /[\p{L}\p{N}]/u
 
 function upperFirst(word) {
   return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
@@ -110,20 +110,51 @@ export function prettyName(name) {
   return prettyUnit(collapsed.split(' ').map(titleCaseNameToken).join(' '))
 }
 
-function alnumKey(value) {
-  return String(value ?? '')
-    .toLowerCase()
-    .replace(NON_ALNUM, '')
+// Words of a display name for the duplicate-brand check: lowercase letters
+// and digits only, plus the offsets that start/end a word in that stream.
+// Punctuation is a separator, not an identity marker, so "MR.P" still spells
+// the brand "MRP" and "RON-88" matches "RON 88", while "Sariwangi" is one
+// word and cannot contain the brand "Sari".
+function wordKey(value) {
+  const text = String(value ?? '').toLowerCase()
+  let key = ''
+  const boundaries = new Set([0])
+  let separated = false
+  for (const character of text) {
+    if (!ALNUM_CHAR.test(character)) {
+      separated = true
+      continue
+    }
+    if (separated) boundaries.add(key.length)
+    separated = false
+    key += character
+  }
+  boundaries.add(key.length)
+  return { key, boundaries }
+}
+
+function containsBrandWords(name, brand) {
+  const brandKey = wordKey(brand).key
+  if (!brandKey) return false
+  const nameKey = wordKey(name)
+  for (
+    let at = nameKey.key.indexOf(brandKey);
+    at !== -1;
+    at = nameKey.key.indexOf(brandKey, at + 1)
+  ) {
+    if (nameKey.boundaries.has(at) && nameKey.boundaries.has(at + brandKey.length)) return true
+  }
+  return false
 }
 
 // " · Brand" only when the brand is not already in the display name —
 // "RON 88 Spring 300ml · RON 88" and "CARNATION … · CARNATION" are the same
-// words twice. Compare alphanumerics only (case/punctuation-insensitive) and
-// skip brands too short to compare meaningfully (XL, A B).
+// words twice. A brand only counts as present when it lines up with whole
+// words ("Sariwangi" is not "Sari", "Indomie" is not "Ina"), ignoring case
+// and punctuation; even a short brand (XL, 3M) is appended when it is
+// genuinely missing.
 export function brandSuffix(name, brand) {
-  const brandKey = alnumKey(brand)
-  if (brandKey.length < 3) return ''
-  if (alnumKey(name).includes(brandKey)) return ''
+  if (containsBrandWords(name, brand)) return ''
   const prettyBrand = prettyName(brand)
   return prettyBrand ? ` · ${prettyBrand}` : ''
 }
