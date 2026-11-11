@@ -205,15 +205,20 @@ function messageOf(res: Response, body: ErrorEnvelope, fallback: string): string
  *  edge-equivalent fail-closed contract: fetch with `redirect: 'manual'` and
  *  refuse any 3xx ourselves — a signed URL must serve exactly the transfer it
  *  was minted for, never bounce. clients/offline §2 keeps the browser's
- *  native `redirect: 'error'`. */
+ *  native `redirect: 'error'`. The refusal is uniform across EVERY fetch in
+ *  the adapter (authorize mint, signed byte path, CRUD delete), and the
+ *  cross-origin arm catches the opaqueredirect filtered response (status 0,
+ *  type 'opaqueredirect') that a cross-origin 3xx arrives as under manual —
+ *  same tampering, same code, not the less precise http_0. */
 function refuseRedirect(res: Response, fallback: string): void {
-  if (res.status >= 300 && res.status < 400) {
-    throw new DokumenQStorageError(
-      res.status,
-      'redirect_refused',
-      `${fallback}: signed-URL transfer attempted a redirect (${res.status}) — refusing fail-closed`
-    )
-  }
+  const redirected = res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)
+  if (!redirected) return
+  const via = res.type === 'opaqueredirect' ? 'opaqueredirect' : String(res.status)
+  throw new DokumenQStorageError(
+    res.status,
+    'redirect_refused',
+    `${fallback}: signed-URL transfer attempted a redirect (${via}) — refusing fail-closed`
+  )
 }
 
 /** Map any non-OK DokumenQ response to the typed error family. The 404 paths
@@ -241,18 +246,24 @@ export function createDokumenQStorageAdapter(config: DokumenQStorageConfig): Sto
   const base = config.baseUrl.replace(/\/+$/, '')
 
   const authorize = async (body: Record<string, unknown>): Promise<Response> => {
+    let res: Response
     try {
-      return await doFetch(`${base}/v1/authorize`, {
+      res = await doFetch(`${base}/v1/authorize`, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${config.appSecret}`,
           'content-type': 'application/json',
         },
         body: JSON.stringify(body),
+        // Uniform redirect refusal (see refuseRedirect): a followed 3xx here
+        // would re-POST the app secret + intent body to the redirect target.
+        redirect: 'manual',
       })
     } catch (cause) {
       throw new DokumenQStorageError(0, 'network', `DokumenQ unreachable: ${String(cause)}`)
     }
+    refuseRedirect(res, 'DokumenQ authorize failed')
+    return res
   }
 
   // The key's filename rides to the signed PUT as a sanitized Content-
@@ -376,10 +387,14 @@ export function createDokumenQStorageAdapter(config: DokumenQStorageConfig): Sto
         res = await doFetch(`${base}/v1/documents/${docId}`, {
           method: 'DELETE',
           headers: { authorization: `Bearer ${config.appSecret}` },
+          // Uniform redirect refusal (see refuseRedirect) — a followed 3xx
+          // here would re-send the bearer secret to the redirect target.
+          redirect: 'manual',
         })
       } catch (cause) {
         throw new DokumenQStorageError(0, 'network', `DokumenQ unreachable: ${String(cause)}`)
       }
+      refuseRedirect(res, 'DokumenQ delete failed')
       if (res.ok) return
       // Uniform 404 (API.md §1.3) covers unknown AND already-deleted — the
       // same idempotent-success contract the R2 adapter pins for retry-safe

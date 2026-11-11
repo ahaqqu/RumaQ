@@ -521,7 +521,11 @@ describe('signed-URL redirect refusal — the workerd redirect contract', () => 
   // the adapter must fetch with `redirect: 'manual'` and refuse any 3xx
   // itself. Found live in production 2026-11-11: scans 500'd after a
   // successful mint because the pinned option doesn't exist at the edge.
-  function redirectingFake(byteStatus: number): { calls: Call[]; fetch: typeof fetch } {
+  // The contract is uniform across EVERY fetch in the adapter — the authorize
+  // mint POST, the signed byte path, the CRUD delete — and also catches the
+  // cross-origin shape: under manual, a cross-origin 3xx arrives as an
+  // opaqueredirect filtered response (status 0, type 'opaqueredirect').
+  function redirectingFake(byte: number | Response): { calls: Call[]; fetch: typeof fetch } {
     const calls: Call[] = []
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
@@ -536,10 +540,13 @@ describe('signed-URL redirect refusal — the workerd redirect contract', () => 
             node: 'n1',
           })
         }
-        return new Response(null, {
-          status: byteStatus,
-          headers: { location: `${BASE}/v1/o/elsewhere` },
-        })
+        if (typeof byte === 'number') {
+          return new Response(null, {
+            status: byte,
+            headers: { location: `${BASE}/v1/o/elsewhere` },
+          })
+        }
+        return byte
       }
     ) as unknown as typeof fetch
     return { calls, fetch: fetchMock }
@@ -567,5 +574,58 @@ describe('signed-URL redirect refusal — the workerd redirect contract', () => 
       status: 301,
     })
     expect(fake.calls[1]!.init.redirect).toBe('manual')
+  })
+
+  it('delete: refuses a 3xx from the CRUD endpoint instead of following it', async () => {
+    const fake = redirectingFake(302)
+    const adapter = adapterWith(fake)
+    await expect(adapter.delete(KEY)).rejects.toMatchObject({
+      name: 'DokumenQStorageError',
+      code: 'redirect_refused',
+      status: 302,
+    })
+    expect(fake.calls[0]!.init.redirect).toBe('manual')
+  })
+
+  it('authorize: refuses a 3xx from the mint POST instead of following it', async () => {
+    // The mint POST itself answers 3xx — a followed redirect would re-POST
+    // the app secret + intent body to the redirect target. Every fetch
+    // answers 307 here; the refusal must fire on the very first call.
+    const calls: Call[] = []
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+        calls.push({ url: String(input), init })
+        return new Response(null, {
+          status: 307,
+          headers: { location: `${BASE}/v1/authorize/elsewhere` },
+        })
+      }
+    ) as unknown as typeof fetch
+    const adapter = adapterWith({ fetch: fetchMock })
+    await expect(adapter.put(KEY, PDF_BYTES, 'application/pdf')).rejects.toMatchObject({
+      name: 'DokumenQStorageError',
+      code: 'redirect_refused',
+      status: 307,
+    })
+    expect(calls[0]!.init.redirect).toBe('manual')
+  })
+
+  it('refuses a cross-origin opaqueredirect (status-0 filtered response) as redirect_refused', async () => {
+    // A CROSS-ORIGIN 3xx under redirect:'manual' never arrives as a readable
+    // 30x — the fetch resolves with an opaqueredirect filtered response
+    // (status 0, unreadable body), which slips past the 3xx window and would
+    // surface as the less precise http_0. undici cannot construct that shape
+    // (init.status must be ≥ 200), so the fake hand-shapes the two fields
+    // the refusal contract reads: status and type.
+    const opaque = { status: 0, type: 'opaqueredirect', ok: false } as unknown as Response
+    const fake = redirectingFake(opaque)
+    const adapter = adapterWith(fake)
+    await expect(adapter.get(KEY)).rejects.toMatchObject({
+      name: 'DokumenQStorageError',
+      code: 'redirect_refused',
+      status: 0,
+    })
+    // Log precision is the point: the refusal names the shape, not "HTTP 0".
+    await expect(adapter.get(KEY)).rejects.toThrow(/opaqueredirect/)
   })
 })
