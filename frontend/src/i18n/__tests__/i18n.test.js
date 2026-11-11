@@ -346,6 +346,36 @@ describe('locale files', () => {
     checkStrings(en)
     checkStrings(id)
   })
+
+  // Plural suffixes (#579): i18next v21+ resolves count keys through
+  // Intl.PluralRules with the `_one`/`_other` family and IGNORES the legacy
+  // v1 `_plural` suffix — a key carrying it silently renders the singular for
+  // every count ("2 product"). No locale key may use a suffix the engine
+  // drops, and the count keys must exist as `_one`/`_other` in both locales.
+  describe('plural suffixes (#579)', () => {
+    it('no key in either locale uses the legacy _plural suffix', () => {
+      for (const [locale, tree] of [
+        ['en', en],
+        ['id', id],
+      ]) {
+        for (const key of flattenKeys(tree)) {
+          expect(key.endsWith('_plural'), `${locale}: ${key} uses the ignored _plural suffix`).toBe(
+            false
+          )
+        }
+      }
+    })
+
+    it('the count keys exist as _one/_other in both locales', () => {
+      for (const ns of ['prices']) {
+        expect(en[ns].storesCount_one, 'en storesCount_one').toBeTypeOf('string')
+        expect(en[ns].storesCount_other, 'en storesCount_other').toBeTypeOf('string')
+        expect(en[ns].productsCount_one, 'en productsCount_one').toBeTypeOf('string')
+        expect(en[ns].productsCount_other, 'en productsCount_other').toBeTypeOf('string')
+        expect(Object.keys(id[ns]).sort()).toEqual(Object.keys(en[ns]).sort())
+      }
+    })
+  })
 })
 
 describe('i18n initialisation', () => {
@@ -353,6 +383,27 @@ describe('i18n initialisation', () => {
     const mod = await import('../index.js')
     expect(mod.i18n).toBeDefined()
     expect(mod.i18n.language).toBe('en')
+  })
+
+  // The engine-level pin for #579: the count keys resolve through the real
+  // plural machinery, so a count of 2 renders the plural form — not the
+  // singular every count got while the legacy `_plural` suffix was ignored.
+  it('resolves plural counts through the engine (en)', async () => {
+    const mod = await import('../index.js')
+    mod.i18n.changeLanguage('en')
+    expect(mod.i18n.t('prices.productsCount', { count: 2 })).toBe('2 products')
+    expect(mod.i18n.t('prices.productsCount', { count: 1 })).toBe('1 product')
+    expect(mod.i18n.t('prices.storesCount', { count: 2 })).toBe('2 stores')
+    expect(mod.i18n.t('prices.storesCount', { count: 1 })).toBe('1 store')
+  })
+
+  it('resolves plural counts through the engine (id, single plural category)', async () => {
+    const mod = await import('../index.js')
+    mod.i18n.changeLanguage('id')
+    expect(mod.i18n.t('prices.productsCount', { count: 2 })).toBe('2 produk')
+    expect(mod.i18n.t('prices.productsCount', { count: 1 })).toBe('1 produk')
+    expect(mod.i18n.t('prices.storesCount', { count: 2 })).toBe('2 toko')
+    mod.i18n.changeLanguage('en')
   })
 
   it('switches language and updates html lang attribute', async () => {
