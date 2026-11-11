@@ -19,6 +19,7 @@
       "taxoVersion": "v0.2",
       "storeSlug": "superindo",
       "price": 34500,
+      "memberPrice": 29900,
       "originalPrice": 39900,
       "effectiveUnitPrice": 17250,
       "unitQty": 2000,

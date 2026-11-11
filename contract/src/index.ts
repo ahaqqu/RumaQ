@@ -56,6 +56,14 @@ export const ingestItemSchema = strictObject({
   category: nullish(string()),
   storeSlug: pipe(string(), minLength(1)),
   price: pipe(number(), integer(), minValue(0)),
+  // Issue #627 (part 1): the member/app price when the retailer prints one
+  // separately from the shelf price. `price` stays the shelf price; this is
+  // the price a (free-to-join) member actually pays, so comparisons and the
+  // displayed payable price prefer it. Additive-nullish (#294 pattern): old
+  // payloads (no field) still validate; a NEW payload hitting an OLD Worker
+  // fails loudly (strictObject — the Worker-first deploy order exists for
+  // this). No backfill: observations predating the field stay null.
+  memberPrice: nullish(pipe(number(), integer(), minValue(0))),
   // Issue #367: the strikethrough/original price when the source shows one —
   // what extraction accuracy is measured against. Additive: old payloads
   // (no field) still validate; a NEW payload hitting an OLD Worker fails
@@ -139,6 +147,13 @@ export const ingestItemV2Schema = strictObject({
   taxoVersion: nullish(pipe(string(), maxLength(50))),
   storeSlug: rawText(100),
   price: pipe(number(), integer(), minValue(0)),
+  // Issue #627 (part 1): the member/app price when the retailer prints one
+  // separately from the shelf price `price` — the price a (free-to-join)
+  // member actually pays. Additive-nullish (#294 pattern), Worker-first:
+  // old payloads (no field) still validate; a NEW payload hitting an OLD
+  // Worker fails loudly (strictObject). No backfill — observations predating
+  // the field stay null.
+  memberPrice: nullish(pipe(number(), integer(), minValue(0))),
   originalPrice: nullish(pipe(number(), integer(), minValue(0))),
   effectiveUnitPrice: nullish(number()),
   unitQty: nullish(pipe(number(), gtValue(0))),
