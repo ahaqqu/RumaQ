@@ -49,7 +49,17 @@ echo "=== CI: worker boot smoke (workerd) ==="
 # Boots the real bundle in workerd and asserts /api/health (#534). This lives
 # in ci.sh, not in ci.yml, so the main-push ci job in deploy.yml runs the same
 # gate before deploy — PR checks and main CI stay one contract.
-bash "$ROOT_DIR/scripts/github/worker-boot-smoke.sh"
+#
+# Scope: a change set that cannot reach the bundle (docs, a skill, an
+# automation test, Markdown) skips it. The rule is offline-tested here and in
+# scripts/test/worker-smoke-scope.sh, and it fails safe: an unavailable change
+# set runs the smoke.
+"$ROOT_DIR/scripts/test.sh" smoke-scope
+if "$ROOT_DIR/scripts/github/worker-smoke-scope.sh"; then
+  bash "$ROOT_DIR/scripts/github/worker-boot-smoke.sh"
+else
+  echo "worker boot smoke: skipped for this change set"
+fi
 
 echo "=== CI: validate Worker config ==="
 if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then

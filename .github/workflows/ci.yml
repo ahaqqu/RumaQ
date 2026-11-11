@@ -24,6 +24,8 @@ jobs:
 
       - run: bash ./scripts/github/ci.sh
         env:
+          # Exact base tree for the worker-smoke scope diff (worker-smoke-scope.sh).
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}

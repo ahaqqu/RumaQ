@@ -35,6 +35,14 @@ It runs inside `scripts/github/ci.sh` — the gate both the PR `ci` job
 bash ./scripts/github/worker-boot-smoke.sh
 ```
 
+Scope: the smoke runs when the change set can reach the bundle — any path
+outside `docs/`, `.agents/`, `automation/` and Markdown. A docs-, skill- or
+test-only change skips it, because `vp build backend` cannot differ for those
+paths. `scripts/github/worker-smoke-scope.sh` decides from the change set, the
+decision is covered offline by `./scripts/test.sh smoke-scope`, and an
+unavailable diff runs the smoke — a wasted minute, never a bundle that merges
+green.
+
 It is the only CI check that evaluates the real Worker bundle under the runtimes
 that host it (ahaqqu/RumaQ#534). Unit tests call `app.request()` on the Hono app
 in Node (no bundle evaluation, no workerd rules), and the static module-scope
@@ -208,7 +216,7 @@ heavy deps over raising the budget.
 - [x] All unit tests pass — `./scripts/test.sh unit`
 - [x] Code style and lint pass — `./scripts/style.sh --check`
 - [x] Deploy never writes the operator-owned ingest secret — `./scripts/test.sh deploy`
-- [x] Real Worker bundle boots in workerd and serves `/api/health` on every CI run (PR and main push) — `scripts/github/worker-boot-smoke.sh`
+- [x] Real Worker bundle boots in workerd and serves `/api/health` on every CI run whose change set can reach the bundle — `scripts/github/worker-boot-smoke.sh`, scoped by `scripts/github/worker-smoke-scope.sh`
 - [x] Main user flows covered by page-level E2E — `automation/tests/local/e2e/features/`
 - [x] No critical/serious axe-core violations on main pages — `accessibility.feature`
 - [x] Bundle-size budget enforced in CI — `scripts/ci/bundle-budget.mjs`

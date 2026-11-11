@@ -26,15 +26,22 @@ case "$SUITE" in
     # staleness branch must keep its behaviour. Canned responses, no network.
     exec "$ROOT_DIR/scripts/test/price-freshness.sh" "$@"
     ;;
+  smoke-scope)
+    # Offline guard for the worker-smoke scope rule: docs, skills, automation
+    # tests and Markdown cannot change the bundle, so the workerd boot skips
+    # them; anything else runs it.
+    exec "$ROOT_DIR/scripts/test/worker-smoke-scope.sh" "$@"
+    ;;
   all)
     "$ROOT_DIR/scripts/test/deploy-secrets.sh" "$@"
+    "$ROOT_DIR/scripts/test/worker-smoke-scope.sh" "$@"
     "$ROOT_DIR/scripts/test/price-freshness.sh" "$@"
     "$ROOT_DIR/scripts/test/unit.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-local.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-live.sh" "$@"
     ;;
   *)
-    echo "Usage: $0 [unit|automation-local|automation-live|deploy|freshness|all]"
+    echo "Usage: $0 [unit|automation-local|automation-live|deploy|freshness|smoke-scope|all]"
     exit 1
     ;;
 esac
