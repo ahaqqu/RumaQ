@@ -273,7 +273,18 @@ const reviewQuery = object({
   limit: optional(
     pipe(string(), transform(Number), number(), integer(), minValue(1), maxValue(200))
   ),
-  offset: optional(pipe(string(), transform(Number), number(), integer(), minValue(0))),
+  // Same int64 bound as the brochure products route (#630 A1): a valid JS
+  // integer above this would be bound as an out-of-range OFFSET and 500.
+  offset: optional(
+    pipe(
+      string(),
+      transform(Number),
+      number(),
+      integer(),
+      minValue(0),
+      maxValue(Number.MAX_SAFE_INTEGER)
+    )
+  ),
 })
 
 // Admin AI usage analytics (issue #353): ts-exact ranges, 400 on anything else.

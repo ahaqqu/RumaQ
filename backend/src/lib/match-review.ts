@@ -405,7 +405,7 @@ export async function listReviewItems(
   // (the `? IS NULL` guard short-circuits the blob read entirely).
   const reason = options.reason ?? null
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
-  const offset = Math.max(options.offset ?? 0, 0)
+  const offset = Math.min(Math.max(options.offset ?? 0, 0), Number.MAX_SAFE_INTEGER)
 
   const [pageResult, countResult, reasonCountResult, filteredResult] = await db.batch([
     db

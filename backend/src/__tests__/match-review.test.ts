@@ -288,6 +288,14 @@ describe('listReviewItems', () => {
     expect(reasonStmt!.sql).toContain('GROUP BY flag_reason')
   })
 
+  it('clamps an oversized offset instead of binding it (#630 A1)', async () => {
+    const { db, statements } = createFakeDb({
+      batchResults: [{ results: [] }, { results: [] }, { results: [] }, { results: [] }],
+    })
+    await listReviewItems(db, { offset: Number.MAX_SAFE_INTEGER + 1 })
+    expect(statements[0]!.params[5]).toBe(Number.MAX_SAFE_INTEGER)
+  })
+
   it('narrows the page and filteredTotal by reason, keeping the status counts whole (issue #628)', async () => {
     const { db, statements } = createFakeDb({
       batchResults: [
@@ -667,6 +675,10 @@ describe('review reason vocabulary (issue #493)', () => {
     const reasonParam = (operation.parameters as Array<Record<string, any>>).find(
       (param) => param.name === 'reason'
     )!
+    const offsetParam = (operation.parameters as Array<Record<string, any>>).find(
+      (param) => param.name === 'offset'
+    )!
+    expect(offsetParam.schema.maximum).toBe(Number.MAX_SAFE_INTEGER)
     expect(reasonParam.in).toBe('query')
     expect(reasonParam.required).toBe(false)
     expect([...reasonParam.schema.enum].sort()).toEqual(
@@ -731,6 +743,14 @@ describe('review routes', () => {
     for (const [path, init] of paths) {
       const res = await apiApp.request(path, init, nonAdmin as never)
       expect(res.status).toBe(403)
+    }
+  })
+
+  it('400s an offset outside the documented maximum (#630 A1)', async () => {
+    const env = adminEnv()
+    for (const offset of ['1e19', String(Number.MAX_SAFE_INTEGER + 1)]) {
+      const res = await apiApp.request(`/api/admin/review?offset=${offset}`, {}, env as never)
+      expect(res.status).toBe(400)
     }
   })
 

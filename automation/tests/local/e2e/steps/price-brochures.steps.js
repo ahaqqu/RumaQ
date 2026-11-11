@@ -172,6 +172,11 @@ Then('the brochure QA view should have no critical or serious axe violations', a
   await expect(page.locator('[data-testid="brochure-card"]').first()).toBeVisible()
   await expect(page.locator('#brochure-review')).toBeVisible()
   await expect(page.locator('[data-testid="brochure-product-metadata"]')).toBeVisible()
+  // The promo cell is what caught the danger-token contrast regression: pin
+  // it so a future fixture change cannot silently scan an empty badge.
+  const promo = page.locator('[data-testid="brochure-product-row"]').getByText('Diskon 5%').first()
+  await expect(promo).toBeVisible()
+  await promo.scrollIntoViewIfNeeded()
   assertNoCriticalOrSerious((await scanPage(page).analyze()).violations)
 })
 
