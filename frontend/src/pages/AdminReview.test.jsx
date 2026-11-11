@@ -454,7 +454,27 @@ describe('AdminReview', () => {
     vi.mocked(useReviewItems).mockReturnValue(mockReviewData({ items: [], filteredTotal: 0 }))
     const { container } = renderAdmin()
     expect(container.textContent).toContain('review.noneFiltered')
+    // Status-only: no reason filter is active, so the reason-aware copy stays off.
+    expect(container.textContent).not.toContain('review.noneFilteredReason')
     expect(container.textContent).not.toContain('review.empty')
+  })
+
+  // Issue #628 (A2): with a reason filter active the empty sentence must name
+  // it, or "No pending items" contradicts the whole-queue counts above.
+  it('names the active reason in the filtered-empty line', () => {
+    vi.mocked(useReviewItems).mockReturnValue(mockReviewData({ items: [], filteredTotal: 0 }))
+    const { container } = renderAdmin()
+    const reasonChips = () =>
+      container.querySelectorAll('[role="group"][aria-label="review.filterReason"] [aria-pressed]')
+
+    fireEvent.click(reasonChips()[3])
+    expect(container.textContent).toContain('review.noneFilteredReason')
+    // The counts are untouched by the filter — the mismatch the copy fixes.
+    expect(container.textContent).toContain('review.pending 3')
+
+    // Back to "All" → the status-only sentence returns.
+    fireEvent.click(reasonChips()[0])
+    expect(container.textContent).not.toContain('review.noneFilteredReason')
   })
 
   it('downloads the decisions export through the same-origin blob fetch', async () => {

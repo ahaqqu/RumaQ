@@ -212,6 +212,15 @@ describe('locale files', () => {
       )
     })
 
+    it('pins the reason-aware filtered-empty line', () => {
+      // With a reason active, "No pending items" alone would contradict the
+      // whole-queue count above it — the sentence names the reason.
+      expect(en.review.noneFilteredReason).toBe('No {{status}} items flagged “{{reason}}”')
+      expect(id.review.noneFilteredReason).toBe(
+        'Tidak ada item {{status}} yang ditandai “{{reason}}”'
+      )
+    })
+
     it('pins the reason filter label in both locales', () => {
       expect(en.review.filterReason).toBe('Flag reason')
       expect(id.review.filterReason).toBe('Alasan penanda')

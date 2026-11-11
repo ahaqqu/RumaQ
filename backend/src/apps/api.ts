@@ -4520,6 +4520,17 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
   },
 }
 
+// Issue #628: the pending split's keys ARE the flag-reason vocabulary, so they
+// are DERIVED from REVIEW_REASONS instead of hand-listed in the response
+// schema — a reason added there appears in the query param, the item enum and
+// the counts shape together (or not at all).
+const REVIEW_PENDING_BY_REASON_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: Object.fromEntries(
+    REVIEW_REASONS.map((reason) => [reason, { type: 'integer' as const }])
+  ),
+}
+
 apiApp.get(
   '/api/admin/review',
   describeRoute({
@@ -4572,14 +4583,7 @@ apiApp.get(
                     // Issue #628: the exact pending split by flag reason,
                     // unaffected by the list filter (same rule as the status
                     // counts). Every reason is always present.
-                    pendingByReason: {
-                      type: 'object',
-                      properties: {
-                        price_ratio: { type: 'integer' },
-                        verifier_unresolved: { type: 'integer' },
-                        taxonomy: { type: 'integer' },
-                      },
-                    },
+                    pendingByReason: REVIEW_PENDING_BY_REASON_SCHEMA,
                   },
                 },
                 filteredTotal: { type: 'integer' },

@@ -46,7 +46,12 @@ vi.mock('../lib/queries/review.js', () => ({
   useSetReviewMode: vi.fn(),
   useEvaluateReview: vi.fn(),
 }))
-vi.mock('../lib/api', () => ({ fetchReviewExport: vi.fn() }))
+// Spread the real module: the page imports the shared review reason
+// vocabulary (issue #628) as well as the export helper this mock replaces.
+vi.mock('../lib/api', async (importOriginal) => ({
+  ...(await importOriginal()),
+  fetchReviewExport: vi.fn(),
+}))
 
 import { useMe } from '../lib/queries/me.js'
 import { usePriceSources } from '../lib/queries/index.js'
@@ -229,6 +234,29 @@ describe('AdminReview — initialized i18n copy (issue #480)', () => {
     expect(container.textContent).toContain('Pending 482')
     expect(container.textContent).toContain('Approved 0')
     expect(container.textContent).toContain('Rejected 0')
+  })
+
+  // Issue #628 (A2): a reason filter that matches nothing names the reason, so
+  // the sentence agrees with the exact whole-queue counts beside it.
+  it('names the active reason when the filtered list is empty', () => {
+    vi.mocked(useReviewItems).mockReturnValue(
+      reviewData([], {
+        pending: 3,
+        approved: 0,
+        rejected: 0,
+        pendingByReason: { price_ratio: 2, verifier_unresolved: 1, taxonomy: 0 },
+      })
+    )
+    const { container } = renderAdmin()
+    expect(container.textContent).toContain('No Pending items')
+    const reasonGroup = container.querySelector('[role="group"][aria-label="Flag reason"]')
+    fireEvent.click([...reasonGroup.querySelectorAll('button')][3])
+    expect(container.textContent).toContain(
+      'No Pending items flagged “Category needs a human look”'
+    )
+    // The whole-queue split stays put — the copy explains the empty list, it
+    // does not restate the counts.
+    expect(container.textContent).toContain('Pending 3 — price 2 · verifier 1 · taxonomy 0')
   })
 
   it('names the copy button with the visible short id (label-in-name, thermos A2)', () => {

@@ -8,7 +8,7 @@
  * backend and this client fails `vp check` / CI.
  */
 import { client } from './api-client/client.gen.js'
-import type { PostApiAdminScrapeData } from './api-client/types.gen.js'
+import type { GetApiAdminReviewData, PostApiAdminScrapeData } from './api-client/types.gen.js'
 import {
   deleteApiAdminReviewByIdDecision,
   deleteApiAiCapabilitiesByCapability,
@@ -629,9 +629,24 @@ export function getScrapeEvents(
 // matcher flagged. Decisions are recorded only; they never change price data.
 
 export type ReviewStatusFilter = 'pending' | 'approved' | 'rejected' | 'all'
-// Issue #628: the flag reason — the same closed vocabulary as the backend's
-// REVIEW_REASONS (mirrored by the generated client's query type).
-export type ReviewReasonFilter = 'price_ratio' | 'verifier_unresolved' | 'taxonomy'
+
+// The flag-reason vocabulary (issue #628). The backend owns it (REVIEW_REASONS
+// in backend/src/lib/match-review.ts) and the generated query type mirrors it;
+// this ONE runtime list is what the review page's filter chips iterate, and
+// `satisfies` keeps every value a valid generated reason. A test pins it to the
+// committed OpenAPI spec, so a fourth backend reason cannot leave the UI
+// silently offering the old three.
+type GeneratedReviewReason = Exclude<
+  NonNullable<GetApiAdminReviewData['query']>['reason'],
+  undefined
+>
+export const REVIEW_REASONS = [
+  'price_ratio',
+  'verifier_unresolved',
+  'taxonomy',
+] as const satisfies readonly GeneratedReviewReason[]
+
+export type ReviewReasonFilter = (typeof REVIEW_REASONS)[number]
 export type ReviewDecision = 'approved' | 'rejected'
 // Issue #484: how the AI assists the queue, and how a human's decision
 // relates to the cached AI verdict (the agreement history).

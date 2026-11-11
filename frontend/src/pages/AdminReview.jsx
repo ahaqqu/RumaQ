@@ -11,7 +11,7 @@ import {
   useSetReviewMode,
   useEvaluateReview,
 } from '../lib/queries/review.js'
-import { fetchReviewExport } from '../lib/api'
+import { fetchReviewExport, REVIEW_REASONS } from '../lib/api'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
@@ -34,10 +34,10 @@ import { IconWarning, IconReview, IconDownload, IconBolt } from '../components/i
 
 const FILTERS = ['pending', 'approved', 'rejected', 'all']
 
-// Issue #628: the reason filter — the same closed vocabulary as the backend's
-// REVIEW_REASONS (lib/match-review.ts owns it; the API 400s on anything else).
-// A null entry is the "all reasons" chip, which omits the query param.
-const REVIEW_REASONS = ['price_ratio', 'verifier_unresolved', 'taxonomy']
+// Issue #628: the reason filter iterates the vocabulary exported by lib/api.ts
+// (one runtime list, type-pinned to the generated query enum), so the chips
+// cannot drift from the backend's REVIEW_REASONS. A null entry is the "all
+// reasons" chip, which omits the query param.
 const REASON_FILTERS = [null, ...REVIEW_REASONS]
 
 // The three modes, in the owner's order (issue #484). `assist` is the
@@ -845,7 +845,15 @@ export function AdminReview() {
       ) : items.length === 0 ? (
         <Panel>
           <div className="p-5 text-sm text-text-muted">
-            {t('review.noneFiltered', { status: t(`review.${status}`) })}
+            {/* Issue #628: a reason filter must be NAMED here — without it the
+                sentence says "No Pending items" beside a whole-queue count of
+                482 pending, contradicting the exact numbers above. */}
+            {reason === null
+              ? t('review.noneFiltered', { status: t(`review.${status}`) })
+              : t('review.noneFilteredReason', {
+                  status: t(`review.${status}`),
+                  reason: t(reasonKey(reason)),
+                })}
           </div>
         </Panel>
       ) : (

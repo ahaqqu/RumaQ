@@ -858,6 +858,7 @@
     "empty": "Tidak ada item untuk ditinjau",
     "emptyDesc": "Pasangan kandidat akan muncul di sini setelah ada run yang menandai kecocokan yang tidak pasti.",
     "noneFiltered": "Tidak ada item {{status}}",
+    "noneFilteredReason": "Tidak ada item {{status}} yang ditandai “{{reason}}”",
     "showing": "Menampilkan {{shown}} dari {{total}}",
     "flagCount_one": "Ditandai {{count}} kali",
     "flagCount_other": "Ditandai {{count}} kali",

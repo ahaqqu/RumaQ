@@ -858,6 +858,7 @@
     "empty": "No items to review",
     "emptyDesc": "Candidate pairs will appear here after a run flags uncertain matches.",
     "noneFiltered": "No {{status}} items",
+    "noneFilteredReason": "No {{status}} items flagged “{{reason}}”",
     "showing": "Showing {{shown}} of {{total}}",
     "flagCount_one": "Flagged {{count}} time",
     "flagCount_other": "Flagged {{count}} times",

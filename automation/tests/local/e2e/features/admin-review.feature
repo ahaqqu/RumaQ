@@ -17,6 +17,15 @@ Feature: Admin review queue
     When I undo the verdict
     Then the pair is pending again
 
+  Scenario: Filtering the queue by flag reason
+    Given the queue holds one pair for each flag reason
+    And I am logged in as the seeded test user
+    When I navigate to "/admin/review"
+    Then the pending split shows one pair per reason
+    When I filter the queue by the taxonomy reason
+    Then only the taxonomy pair is listed
+    And the pending counts stay whole-queue
+
   Scenario: The AI review mode switch persists across a reload
     Given I am logged in as the seeded test user
     When I navigate to "/admin/review"
