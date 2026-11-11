@@ -481,6 +481,7 @@ describe('brochure products OpenAPI schema', () => {
       'category',
       'category_version',
       'price',
+      'member_price',
       'effective_unit_price',
       'promo_type',
       'promo_label',
