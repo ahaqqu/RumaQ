@@ -4805,6 +4805,166 @@
         }
       }
     },
+    "/api/prices/brochures/products": {
+      "get": {
+        "operationId": "getApiPricesBrochuresProducts",
+        "description": "All current products ingested from one brochure image (ingestion QA): one row per product at its cheapest current offer, name-ordered, paginated with an exact total.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "url",
+            "required": true,
+            "description": "Servable brochure URL under /api/brochures/.",
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "product_key": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "brand": {
+                            "type": ["string", "null"]
+                          },
+                          "unit": {
+                            "type": ["string", "null"]
+                          },
+                          "category": {
+                            "type": ["string", "null"]
+                          },
+                          "category_version": {
+                            "type": ["string", "null"]
+                          },
+                          "price": {
+                            "type": "number"
+                          },
+                          "effective_unit_price": {
+                            "type": ["number", "null"]
+                          },
+                          "promo_type": {
+                            "type": ["string", "null"]
+                          },
+                          "promo_label": {
+                            "type": ["string", "null"]
+                          },
+                          "valid_from": {
+                            "type": ["string", "null"]
+                          },
+                          "valid_until": {
+                            "type": ["string", "null"]
+                          },
+                          "match_method": {
+                            "type": ["string", "null"]
+                          },
+                          "match_confidence": {
+                            "type": "number"
+                          },
+                          "source_slug": {
+                            "type": "string"
+                          },
+                          "source_name": {
+                            "type": "string"
+                          },
+                          "source_website": {
+                            "type": ["string", "null"]
+                          },
+                          "observed_date": {
+                            "type": "string"
+                          },
+                          "brochure_url": {
+                            "type": "string"
+                          },
+                          "scraped_at": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "product_key",
+                          "name",
+                          "brand",
+                          "unit",
+                          "category",
+                          "category_version",
+                          "price",
+                          "effective_unit_price",
+                          "promo_type",
+                          "promo_label",
+                          "valid_from",
+                          "valid_until",
+                          "match_method",
+                          "match_confidence",
+                          "source_slug",
+                          "source_name",
+                          "source_website",
+                          "observed_date",
+                          "brochure_url",
+                          "scraped_at"
+                        ]
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": ["items", "total"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query (non-servable URL or out-of-range pagination)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        }
+      }
+    },
     "/api/prices/{productKey}": {
       "get": {
         "operationId": "getApiPricesByProductKey",

@@ -435,6 +435,109 @@ describe('locale files', () => {
   })
 })
 
+// Brochure ingestion-QA browser (issue #630): the filter, table, pagination,
+// and full-metadata labels are part of the admin surface. The catalog
+// namespace parity/translation tests above already cover every key; these
+// pins name the contract so a copy change is deliberate and the count keys
+// resolve through the real plural machinery.
+describe('catalog brochure QA (#630)', () => {
+  const REQUIRED_KEYS = [
+    'brochuresFilters',
+    'brochuresFilterStore',
+    'brochuresFilterDate',
+    'brochuresAllStores',
+    'brochuresAllDates',
+    'brochuresCount_one',
+    'brochuresCount_other',
+    'brochuresSelectHint',
+    'brochuresReviewTitle',
+    'brochuresReviewAria',
+    'brochuresShowing',
+    'brochuresLoadMore',
+    'brochuresTableCaption',
+    'brochuresProductsEmpty',
+    'brochuresProductsEmptyDesc',
+    'brochuresProductsError',
+    'brochuresFilteredEmpty',
+    'brochuresFilteredEmptyDesc',
+    'brochuresResetFilters',
+    'brochuresSelected',
+    'brochuresColumnName',
+    'brochuresColumnUnit',
+    'brochuresColumnPrice',
+    'brochuresColumnEffective',
+    'brochuresColumnPromo',
+    'brochuresColumnCategory',
+    'brochuresColumnMatch',
+    'metaProductKey',
+    'metaName',
+    'metaBrand',
+    'metaUnit',
+    'metaCategory',
+    'metaCategoryVersion',
+    'metaPrice',
+    'metaEffectiveUnitPrice',
+    'metaPromoType',
+    'metaPromoLabel',
+    'metaValidFrom',
+    'metaValidUntil',
+    'metaMatchMethod',
+    'metaMatchConfidence',
+    'metaStore',
+    'metaSourceSlug',
+    'metaSourceWebsite',
+    'metaObservedDate',
+    'metaBrochureDate',
+    'metaBrochureUrl',
+    'metaScrapedAt',
+  ]
+
+  it('defines every QA label in both locales', () => {
+    for (const key of REQUIRED_KEYS) {
+      expect(en.catalog[key], `catalog.${key} missing in en`).toBeTypeOf('string')
+      expect(id.catalog[key], `catalog.${key} missing in id`).toBeTypeOf('string')
+    }
+  })
+
+  it('pins the filter, table, and metadata copy', () => {
+    expect(en.catalog.brochuresFilters).toBe('Brochure filters')
+    expect(id.catalog.brochuresFilters).toBe('Filter brosur')
+    expect(en.catalog.brochuresFilterStore).toBe('Store')
+    expect(id.catalog.brochuresFilterStore).toBe('Toko')
+    expect(en.catalog.brochuresFilterDate).toBe('Date')
+    expect(id.catalog.brochuresFilterDate).toBe('Tanggal')
+    expect(en.catalog.brochuresAllStores).toBe('All stores')
+    expect(id.catalog.brochuresAllStores).toBe('Semua toko')
+    expect(en.catalog.brochuresColumnName).toBe('Product')
+    expect(id.catalog.brochuresColumnName).toBe('Produk')
+    expect(en.catalog.brochuresColumnEffective).toBe('Effective unit price')
+    expect(id.catalog.brochuresColumnEffective).toBe('Harga satuan efektif')
+    expect(en.catalog.metaProductKey).toBe('Product key')
+    expect(id.catalog.metaProductKey).toBe('Kunci produk')
+    expect(en.catalog.metaBrochureUrl).toBe('Brochure URL')
+    expect(id.catalog.metaBrochureUrl).toBe('URL brosur')
+    expect(en.catalog.metaScrapedAt).toBe('Scraped at')
+    expect(id.catalog.metaScrapedAt).toBe('Waktu scrape')
+  })
+
+  it('resolves the filtered-set count and shown-of-total strings through i18n', async () => {
+    const mod = await import('../index.js')
+    mod.i18n.changeLanguage('en')
+    expect(mod.i18n.t('catalog.brochuresCount', { count: 2 })).toBe('2 brochures')
+    expect(mod.i18n.t('catalog.brochuresCount', { count: 1 })).toBe('1 brochure')
+    expect(mod.i18n.t('catalog.brochuresShowing', { shown: 50, total: 120 })).toBe(
+      'Showing 50 of 120'
+    )
+    mod.i18n.changeLanguage('id')
+    expect(mod.i18n.t('catalog.brochuresCount', { count: 2 })).toBe('2 brosur')
+    expect(mod.i18n.t('catalog.brochuresCount', { count: 1 })).toBe('1 brosur')
+    expect(mod.i18n.t('catalog.brochuresShowing', { shown: 50, total: 120 })).toBe(
+      'Menampilkan 50 dari 120'
+    )
+    mod.i18n.changeLanguage('en')
+  })
+})
+
 describe('i18n initialisation', () => {
   it('can dynamically import and initialise i18n', async () => {
     const mod = await import('../index.js')

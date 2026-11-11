@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import {
@@ -8,8 +8,10 @@ import {
   usePriceSources,
   usePricePromos,
   usePriceBrochures,
+  useBrochureProducts,
+  BROCHURE_PRODUCTS_PAGE_SIZE,
 } from './prices.js'
-import { getPrices, getPricesMeta, getPromos, getBrochures } from '../api'
+import { getPrices, getPricesMeta, getPromos, getBrochures, getBrochureProducts } from '../api'
 
 vi.mock('../api', () => ({
   getPrices: vi.fn(),
@@ -18,6 +20,7 @@ vi.mock('../api', () => ({
   getPriceRuns: vi.fn(),
   getPromos: vi.fn(),
   getBrochures: vi.fn(),
+  getBrochureProducts: vi.fn(),
 }))
 
 function createWrapper(queryClient) {
@@ -134,6 +137,48 @@ describe('usePriceBrochures', () => {
     // disagree mid-session (issue #293 PM §2).
     expect(queryClient.getQueryCache().getAll()[0].options.refetchInterval).toBe(300_000)
     expect(queryClient.getQueryData(['prices', 'brochures'])).toEqual({ groups: [] })
+  })
+})
+
+describe('useBrochureProducts', () => {
+  it('loads 50-row pages by offset and flattens them into one item list', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    vi.clearAllMocks()
+    const url = '/api/brochures/lotte-mart/20261029/page_1.jpg'
+    getBrochureProducts
+      .mockResolvedValueOnce({ items: [{ product_key: 'a', name: 'A' }], total: 2 })
+      .mockResolvedValueOnce({ items: [{ product_key: 'b', name: 'B' }], total: 2 })
+
+    const { result } = renderHook(() => useBrochureProducts(url), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(getBrochureProducts).toHaveBeenCalledWith(
+      { url, limit: BROCHURE_PRODUCTS_PAGE_SIZE, offset: 0 },
+      expect.anything()
+    )
+    expect(result.current.data).toEqual({ items: [{ product_key: 'a', name: 'A' }], total: 2 })
+    // 1 of 2 loaded: Load more must be offered.
+    expect(result.current.hasNextPage).toBe(true)
+
+    await act(async () => {
+      await result.current.fetchNextPage()
+    })
+    await waitFor(() => expect(result.current.data.items).toHaveLength(2))
+    // Offset append: the second page starts after the first page's one row.
+    expect(getBrochureProducts).toHaveBeenLastCalledWith(
+      { url, limit: BROCHURE_PRODUCTS_PAGE_SIZE, offset: 1 },
+      expect.anything()
+    )
+    expect(result.current.hasNextPage).toBe(false)
+  })
+
+  it('stays idle without a selected brochure URL', () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    vi.clearAllMocks()
+    renderHook(() => useBrochureProducts(null), { wrapper: createWrapper(queryClient) })
+    expect(getBrochureProducts).not.toHaveBeenCalled()
   })
 })
 

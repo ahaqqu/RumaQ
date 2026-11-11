@@ -2557,6 +2557,68 @@ export type GetApiPricesBrochuresResponses = {
 
 export type GetApiPricesBrochuresResponse = GetApiPricesBrochuresResponses[keyof GetApiPricesBrochuresResponses];
 
+export type GetApiPricesBrochuresProductsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Servable brochure URL under /api/brochures/.
+         */
+        url: string;
+        limit?: number;
+        offset?: number;
+    };
+    url: '/api/prices/brochures/products';
+};
+
+export type GetApiPricesBrochuresProductsErrors = {
+    /**
+     * Invalid query (non-servable URL or out-of-range pagination)
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+};
+
+export type GetApiPricesBrochuresProductsResponses = {
+    /**
+     * OK
+     */
+    200: {
+        items: Array<{
+            product_key: string;
+            name: string;
+            brand: string | null;
+            unit: string | null;
+            category: string | null;
+            category_version: string | null;
+            price: number;
+            effective_unit_price: number | null;
+            promo_type: string | null;
+            promo_label: string | null;
+            valid_from: string | null;
+            valid_until: string | null;
+            match_method: string | null;
+            match_confidence: number;
+            source_slug: string;
+            source_name: string;
+            source_website: string | null;
+            observed_date: string;
+            brochure_url: string;
+            scraped_at: string;
+        }>;
+        total: number;
+    };
+};
+
+export type GetApiPricesBrochuresProductsResponse = GetApiPricesBrochuresProductsResponses[keyof GetApiPricesBrochuresProductsResponses];
+
 export type GetApiPricesByProductKeyData = {
     body?: never;
     path: {

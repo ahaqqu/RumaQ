@@ -2,6 +2,7 @@ import { describe, test as it, beforeEach, expect } from 'vite-plus/test'
 import { setJestCucumberConfiguration, loadFeature, defineFeature } from 'jest-cucumber'
 import { ApiContext } from './helpers.js'
 import {
+  BROCHURE_PAGE_LOTTE,
   BROCHURE_PALINGMURAH_INDOMARET,
   brochureSnapshot,
   priceSnapshot,
@@ -20,6 +21,30 @@ const UPLOAD_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10, 1, 
 const OLD_UNREFERENCED_KEY = 'lotte-mart/20250101/old-unreferenced_1a2b3c4d.jpg'
 const OLD_REFERENCED_KEY = 'lotte-mart/20250101/old-referenced_2b3c4d5e.jpg'
 const FRESH_UNREFERENCED_KEY = 'superindo/20990101/fresh_3c4d5e6f.jpg'
+
+// Issue #630: more rows than the old ≤5 example cap. One page, seven
+// products, all current.
+const SEVEN_PAGE_KEY = 'lotte-mart/20261026/page_1_seven_5f6a7b8c.jpg'
+const SEVEN_PAGE_URL = `/api/brochures/${SEVEN_PAGE_KEY}`
+
+function sevenProductSnapshot() {
+  return {
+    schemaVersion: 2,
+    scrapedAt: '2026-10-26T23:00:05Z',
+    stores: [{ slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' }],
+    items: Array.from({ length: 7 }, (_, index) => ({
+      productKey: `bulk-${index}--merek--1-pcs`,
+      rawName: `Bulk ${index} 1 pcs`,
+      rawBrand: 'Merek',
+      rawUnit: '1 pcs',
+      storeSlug: 'lotte-mart',
+      price: 10000 + index,
+      matchMethod: 'exact',
+      matchConfidence: 1.0,
+      brochureUrl: SEVEN_PAGE_URL,
+    })),
+  }
+}
 
 defineFeature(feature, (test) => {
   let ctx
@@ -265,6 +290,113 @@ defineFeature(feature, (test) => {
           expect(example.product_key).not.toBe('roti-tawar--sari-roti--1-bungkus')
         }
       }
+    })
+  })
+
+  test('Brochure product list requires authentication', ({ given, and, when, then }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a brochure snapshot has been pushed', async () => {
+      await pushSnapshot(brochureSnapshot())
+      ctx.expectStatus(200)
+    })
+
+    when('I request the brochure products list without a session', async () => {
+      const saved = ctx.headers
+      ctx.headers = { ...ctx.headers }
+      delete ctx.headers.Cookie
+      await ctx.sendRequest(
+        'GET',
+        `/api/prices/brochures/products?url=${encodeURIComponent(BROCHURE_PAGE_LOTTE)}`
+      )
+      ctx.headers = saved
+    })
+
+    then('the response status should be 401', () => {
+      ctx.expectStatus(401)
+    })
+  })
+
+  test('Brochure product list returns every current product with an exact total', ({
+    given,
+    and,
+    when,
+    then,
+  }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a seven-product brochure snapshot has been pushed', async () => {
+      await pushSnapshot(sevenProductSnapshot())
+      ctx.expectStatus(200)
+    })
+
+    and('I am authenticated as a test user', async () => {
+      await ctx.authenticate()
+    })
+
+    when(
+      'I request the brochure products list for the pushed page with limit 5 and offset 0',
+      async () => {
+        await ctx.sendRequest(
+          'GET',
+          `/api/prices/brochures/products?url=${encodeURIComponent(SEVEN_PAGE_URL)}&limit=5&offset=0`
+        )
+        // Stash before the offset-5 request overwrites the body.
+        ctx.brochureProductsBody = ctx.responseBody
+      }
+    )
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and('the brochure products page should carry 5 items with an exact total of 7', () => {
+      expect(ctx.brochureProductsBody.total).toBe(7)
+      expect(ctx.brochureProductsBody.items).toHaveLength(5)
+      expect(ctx.brochureProductsBody.items.map((item) => item.name)).toEqual([
+        'Bulk 0 1 pcs',
+        'Bulk 1 1 pcs',
+        'Bulk 2 1 pcs',
+        'Bulk 3 1 pcs',
+        'Bulk 4 1 pcs',
+      ])
+      // The QA payload carries the full provenance, not just the example
+      // fields the catalog ships.
+      expect(ctx.brochureProductsBody.items[0]).toMatchObject({
+        product_key: 'bulk-0--merek--1-pcs',
+        source_slug: 'lotte-mart',
+        source_name: 'Lotte Mart',
+        brochure_url: SEVEN_PAGE_URL,
+        observed_date: '2026-10-26',
+        match_method: 'exact',
+        match_confidence: 1,
+      })
+    })
+
+    when(
+      'I request the brochure products list for the pushed page with limit 5 and offset 5',
+      async () => {
+        await ctx.sendRequest(
+          'GET',
+          `/api/prices/brochures/products?url=${encodeURIComponent(SEVEN_PAGE_URL)}&limit=5&offset=5`
+        )
+      }
+    )
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and('the second brochure products page should carry the remaining 2 items', () => {
+      expect(ctx.responseBody.total).toBe(7)
+      expect(ctx.responseBody.items.map((item) => item.name)).toEqual([
+        'Bulk 5 1 pcs',
+        'Bulk 6 1 pcs',
+      ])
     })
   })
 

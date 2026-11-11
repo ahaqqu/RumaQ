@@ -225,11 +225,14 @@ describe('requireEntitlement', () => {
 })
 
 // Behavior-neutral pins (design §7.3): with no user_plans row the guard
-// resolves 'free', which carries every entitlement — all five /api/prices*
+// resolves 'free', which carries every entitlement — all six /api/prices*
 // routes answer exactly as before, and the plan lookup is observable in the
 // SQL log.
+const BROCHURE_PRODUCTS_PATH =
+  '/api/prices/brochures/products?url=%2Fapi%2Fbrochures%2Flotte-mart%2F20261029%2Fpage_1.jpg'
+
 describe('prices routes — entitlement wiring, behavior-neutral tonight', () => {
-  it('plan-missing ⇒ 200 on all five routes, with one plan lookup each', async () => {
+  it('plan-missing ⇒ 200 on all six routes, with one plan lookup each', async () => {
     const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
     applyMigrations(sqlite, migrationFiles())
     seedCatalog(sqlite)
@@ -256,12 +259,16 @@ describe('prices routes — entitlement wiring, behavior-neutral tonight', () =>
     const brochures = await apiApp.request('/api/prices/brochures', {}, env)
     expect(brochures.status).toBe(200)
 
+    const brochureProducts = await apiApp.request(BROCHURE_PRODUCTS_PATH, {}, env)
+    expect(brochureProducts.status).toBe(200)
+    expect(await brochureProducts.json()).toEqual({ items: [], total: 0 })
+
     const detail = await apiApp.request('/api/prices/minyak-goreng--bimoli--1-l', {}, env)
     expect(detail.status).toBe(200)
     const body = (await detail.json()) as { product: { product_key: string } }
     expect(body.product.product_key).toBe('minyak-goreng--bimoli--1-l')
 
-    expect(sqlCalls.filter((sql) => sql === PLAN_LOOKUP)).toHaveLength(5)
+    expect(sqlCalls.filter((sql) => sql === PLAN_LOOKUP)).toHaveLength(6)
   })
 
   it('maps explore routes to prices.explore and only the detail route to prices.history', async () => {
@@ -276,9 +283,10 @@ describe('prices routes — entitlement wiring, behavior-neutral tonight', () =>
       '/api/prices/meta',
       '/api/prices/promos',
       '/api/prices/brochures',
+      BROCHURE_PRODUCTS_PATH,
     ]
 
-    // Premium stripped of prices.history: the four explore routes stay open,
+    // Premium stripped of prices.history: the five explore routes stay open,
     // the detail/history route denies — the route-level attachment keeps the
     // statics from being captured by :productKey (double-gating landmine).
     await withPremiumEntitlements(['prices.explore'], async () => {
@@ -316,6 +324,12 @@ describe('prices routes — entitlement wiring, behavior-neutral tonight', () =>
     await withPremiumEntitlements([], async () => {
       const res = await apiApp.request('/api/prices', {}, env)
       expect(res.status).toBe(401)
+      // The two-segment QA leaf gets its own auth use-line (#630): the
+      // `:productKey` line cannot match it, so without that line the
+      // entitlement guard would run first and answer 403 to an anonymous
+      // caller.
+      const brochureProducts = await apiApp.request(BROCHURE_PRODUCTS_PATH, {}, env)
+      expect(brochureProducts.status).toBe(401)
     })
   })
 })

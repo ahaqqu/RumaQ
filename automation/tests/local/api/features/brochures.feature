@@ -46,6 +46,23 @@ Feature: Brochure image hosting and brochures catalog
     And the brochure counts should match the explorer per brochure page
     And the legacy retailer-page URL should appear in no group
 
+  Scenario: Brochure product list requires authentication
+    Given the database has seed data
+    And a brochure snapshot has been pushed
+    When I request the brochure products list without a session
+    Then the response status should be 401
+
+  Scenario: Brochure product list returns every current product with an exact total
+    Given the database has seed data
+    And a seven-product brochure snapshot has been pushed
+    And I am authenticated as a test user
+    When I request the brochure products list for the pushed page with limit 5 and offset 0
+    Then the response status should be 200
+    And the brochure products page should carry 5 items with an exact total of 7
+    When I request the brochure products list for the pushed page with limit 5 and offset 5
+    Then the response status should be 200
+    And the second brochure products page should carry the remaining 2 items
+
   Scenario: Retention sweep deletes unreferenced past-grace objects and keeps the rest
     Given the database has seed data
     And brochure images exist with an old referenced key, an old unreferenced key, and a fresh unreferenced key
