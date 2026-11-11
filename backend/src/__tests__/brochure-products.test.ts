@@ -431,6 +431,11 @@ describe('GET /api/prices/brochures/products', () => {
       pagePath(BROCHURE_A, { limit: 'abc' }),
       pagePath(BROCHURE_A, { offset: -1 }),
       pagePath(BROCHURE_A, { offset: '1.5' }),
+      // 1e19 is an integer to Number() but outside SQLite's int64 range:
+      // without the upper bound it would reach DB.batch and throw a
+      // datatype-mismatch 500 instead of a documented 400.
+      pagePath(BROCHURE_A, { offset: '1e19' }),
+      pagePath(BROCHURE_A, { offset: Number.MAX_SAFE_INTEGER + 1 }),
     ]
     for (const path of cases) {
       const res = await request(path)
@@ -455,6 +460,7 @@ describe('brochure products OpenAPI schema', () => {
     expect(params.get('limit')!.schema.maximum).toBe(BROCHURE_PRODUCTS_MAX_LIMIT)
     expect(params.get('limit')!.schema.default).toBe(BROCHURE_PRODUCTS_DEFAULT_LIMIT)
     expect(params.get('offset')!.schema.minimum).toBe(0)
+    expect(params.get('offset')!.schema.maximum).toBe(Number.MAX_SAFE_INTEGER)
     expect(operation.responses['400']).toBeDefined()
 
     const schema = operation.responses['200'].content['application/json'].schema

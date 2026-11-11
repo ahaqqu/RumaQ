@@ -23,6 +23,7 @@ Feature: Admin brochure ingestion QA
     Then the brochure review should show "Gula Pasir Gulaku 1 kg"
     And I expand the "Gula Pasir Gulaku 1 kg" product row
     Then the ingestion metadata should show the product key, store, and brochure URL
+    And the brochure QA view should have no critical or serious axe violations
     And I should stay on the admin catalog brochures tab
 
   Scenario: The hash overrides the tab param (deep-link precedence)

@@ -220,7 +220,20 @@ const brochureProductsQuery = object({
       maxValue(BROCHURE_PRODUCTS_MAX_LIMIT)
     )
   ),
-  offset: optional(pipe(string(), transform(Number), number(), integer(), minValue(0))),
+  // Upper bound: a syntactically valid integer such as 1e19 passes minValue
+  // but is outside SQLite's int64 range, and D1 throws a datatype mismatch
+  // when it is bound as OFFSET (a 500, not the documented 400). Cap at the
+  // largest exactly-representable JS integer, which is inside int64.
+  offset: optional(
+    pipe(
+      string(),
+      transform(Number),
+      number(),
+      integer(),
+      minValue(0),
+      maxValue(Number.MAX_SAFE_INTEGER)
+    )
+  ),
 })
 
 const plansQuery = object({
@@ -4593,7 +4606,12 @@ apiApp.get(
         required: false,
         schema: { type: 'integer', minimum: 1, maximum: 200 },
       },
-      { in: 'query', name: 'offset', required: false, schema: { type: 'integer', minimum: 0 } },
+      {
+        in: 'query',
+        name: 'offset',
+        required: false,
+        schema: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      },
     ],
     responses: {
       200: {
@@ -6024,7 +6042,12 @@ apiApp.get(
           default: BROCHURE_PRODUCTS_DEFAULT_LIMIT,
         },
       },
-      { in: 'query', name: 'offset', required: false, schema: { type: 'integer', minimum: 0 } },
+      {
+        in: 'query',
+        name: 'offset',
+        required: false,
+        schema: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      },
     ],
     responses: {
       200: {

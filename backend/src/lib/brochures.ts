@@ -318,7 +318,7 @@ export async function getBrochureProducts(
   { brochureUrl, limit = BROCHURE_PRODUCTS_DEFAULT_LIMIT, offset = 0 }: BrochureProductsOptions
 ): Promise<BrochureProductsPage> {
   const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), BROCHURE_PRODUCTS_MAX_LIMIT)
-  const boundedOffset = Math.max(Math.trunc(offset), 0)
+  const boundedOffset = Math.min(Math.max(Math.trunc(offset), 0), Number.MAX_SAFE_INTEGER)
 
   const [pageResult, totalResult] = await db.batch([
     db

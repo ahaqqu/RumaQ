@@ -1,6 +1,7 @@
 import { createBdd } from 'playwright-bdd'
 import { expect } from '@playwright/test'
 import { SUGAR_KEY } from '../../../support/price-fixtures.js'
+import { assertNoCriticalOrSerious, scanPage } from './axe.js'
 
 const { Given, When, Then } = createBdd()
 
@@ -163,6 +164,15 @@ Then(
 Then('I should stay on the admin catalog brochures tab', async ({ page }) => {
   await expect(page).toHaveURL(/\/admin\/catalog\?tab=brochures$/)
   await expect(page.locator('#brochure-review')).toBeVisible()
+})
+
+Then('the brochure QA view should have no critical or serious axe violations', async ({ page }) => {
+  // Scans the state no static page path reaches: the grid, the full product
+  // table, and the expanded metadata panel (issue #630).
+  await expect(page.locator('[data-testid="brochure-card"]').first()).toBeVisible()
+  await expect(page.locator('#brochure-review')).toBeVisible()
+  await expect(page.locator('[data-testid="brochure-product-metadata"]')).toBeVisible()
+  assertNoCriticalOrSerious((await scanPage(page).analyze()).violations)
 })
 
 Then(
