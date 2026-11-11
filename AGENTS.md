@@ -21,6 +21,7 @@
 - When implementing a complex or unclear plan from a file, follow the `guided-implementation` skill.
 - When data or behaviour has no live users (unshipped features, internal-only tables), prefer the simplest destructive change — no backward-compatibility migration, dual-write window, or compatibility shim; breaking changes are acceptable.
 - When asked to implement a phase or feature, read the matching `docs/plan/*.md` first and check open GitHub Issues and the Delivery Kanban board for current status.
+- When fixing review findings, mutation-check each new/changed test (revert the fix, the pin must fail, restore) and give every finding ID a disposition (accepted / rejected-with-reason / deferred-to-ticket); out-of-scope residues land as tickets.
 - Before merging a PR, ensure the GitHub Action succeeds.
 - When creating new shell scripts, add them to `.gitattributes` with `mode=755` — otherwise CI will fail with `Permission denied`.
 - When asked to update this file, use format: "When <condition>, <action>", keep it concise and clear.

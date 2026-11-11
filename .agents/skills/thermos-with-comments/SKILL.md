@@ -44,7 +44,7 @@ Do **not** dispatch subagents or launch any background agents — the entire rev
    - An item index table: `ID | Priority | File | Short title` for every posted item.
    - An overall recommendation: `approve`, `request-changes`, or `escalate` (when evidence is inconclusive or the fix requires the author's judgment).
    - Per-item fix recommendations (the same text as each comment, in one place for triage).
-   - A line stating that items can be addressed individually by ID, e.g. "Reply to individual comments with **accept** or **reject** plus reasoning. If you only want a subset fixed, instruct by ID, e.g. 'fix A1–A3, reject B2'."
+   - A line stating that items can be addressed individually by ID, e.g. "Reply to individual comments with **accept** or **reject** plus reasoning. If you only want a subset fixed, instruct by ID, e.g. 'fix A1–A3, reject B2'. A fix round owes every ID a disposition (accepted / rejected-with-reason / deferred-to-ticket) — out-of-scope findings land as tickets; see `code-review` § Fix rounds and mutation-checked pins."
 9. Return to the caller: the PR URL, the full itemized report (all IDs, priorities, files, one-line summaries, and each item's posted review-comment ID so dispositions can thread on the original comment), and the posted-comment verification result.
 
 ## Comment body template (per item)
@@ -76,7 +76,7 @@ Do **not** dispatch subagents or launch any background agents — the entire rev
 - **[A1]** — <recommended fix>
 - **[B1]** — <recommended fix>
 
-Reply to individual comments with **accept** or **reject** plus reasoning. To apply a subset, instruct by ID, e.g. "fix A1–A3, reject B2".
+Reply to individual comments with **accept** or **reject** plus reasoning. To apply a subset, instruct by ID, e.g. "fix A1–A3, reject B2". A fix round owes every ID a disposition — accepted, rejected-with-reason, or deferred-to-ticket; out-of-scope findings land as tickets.
 ```
 
 ## Critical rules

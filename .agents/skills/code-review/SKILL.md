@@ -71,6 +71,11 @@ Cross-cutting:
 - **PR-level fallback is justified, not silent.** Reserve PR-level comments for genuinely unanchorable findings (cross-cutting, process notes); the comment itself must open with the justification, e.g. "no single anchorable line: …".
 - **Stale pending-draft preflight.** GitHub allows one pending review per user per pull request (its 422 text: "user_id can only have one pending review per pull request"); a stale PENDING review draft under the authenticated account forces 422s on review-comment creation. Before posting itemized comments, list `gh api repos/{owner}/{repo}/pulls/{n}/reviews`, and delete any PENDING draft (`gh api -X DELETE repos/{owner}/{repo}/pulls/{n}/reviews/<review_id>`).
 
+## Fix rounds and mutation-checked pins
+
+- **Every behavior pin is mutation-checked before the PR is judged**: revert the fix — the new/changed test must fail — then restore it. A pin that stays green through its own revert proves nothing. Authors run this check before opening the fix PR; reviewers re-run it before approving.
+- **A fix round closes every finding ID** — accepted, rejected-with-reason, or deferred-to-ticket. Out-of-scope residues land as tickets, never as silence: "fix A1–A3, reject B2" still owes B2 its disposition on the comment thread.
+
 ## Output
 
 Report:
