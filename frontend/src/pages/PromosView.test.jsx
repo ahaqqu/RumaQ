@@ -5,6 +5,11 @@ import React from 'react'
 import { PromosView } from './PromosView.jsx'
 import { formatPrice } from '../lib/pricesHelpers.js'
 
+vi.mock('react-i18next', async () => {
+  const { mockReactI18next } = await import('../test-i18n.js')
+  return mockReactI18next()
+})
+
 vi.mock('../lib/queries/index.js', () => ({
   usePricePromos: vi.fn(),
   usePriceSources: vi.fn(),
@@ -141,7 +146,7 @@ describe('PromosView', () => {
     const { container } = renderPromos()
     fireEvent.click(findClickable(container, 'prices.promoTypeDiscountPct'))
     // effective 36000 ≠ price 41000 with unit → per-unit line.
-    expect(container.textContent).toContain('prices.perUnit')
+    expect(container.textContent).toContain(`${formatPrice(36000)}/1 kg`)
   })
 
   it('headlines a member price with the Member label and the shelf reference (#627)', () => {
@@ -215,6 +220,42 @@ describe('PromosView', () => {
     expect(container.textContent).toContain('Salak Pondoh')
     expect(container.textContent).not.toContain('SALAK PONDOH')
     expect(container.textContent).not.toContain('· Salak')
+  })
+
+  it('spaces a raw per-package unit on the per-unit example line (#636)', () => {
+    vi.mocked(usePricePromos).mockReturnValue({
+      data: {
+        types: [
+          {
+            promo_type: 'discount_pct',
+            product_count: 1,
+            stores: { superindo: 1 },
+            example_products: [
+              {
+                product_key: 'indomie--sari--2-pcs',
+                name: 'INDOMIE SARI',
+                brand: 'Indomie',
+                unit: '2pcs',
+                source_slug: 'superindo',
+                source_name: 'Superindo',
+                price: 12000,
+                effective_unit_price: 6000,
+              },
+            ],
+          },
+        ],
+        total: 1,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderPromos()
+    fireEvent.click(findClickable(container, 'prices.promoTypeDiscountPct'))
+
+    // The example's per-unit line interpolates the prettyUnit result: a
+    // reverted prettyUnit call would print the raw "2pcs".
+    expect(container.textContent).toContain(`${formatPrice(6000)}/2 pcs`)
+    expect(container.textContent).not.toContain('2pcs')
   })
 
   it('calls onJump with the product key when an example is clicked', () => {

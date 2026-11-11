@@ -8,21 +8,30 @@ const HAS_LETTER = /\p{L}/u
 const HAS_NON_LETTER = /[^\p{L}]/u
 const HAS_DIGIT = /\p{Nd}/u
 const LETTER_RUN = /\p{L}+/gu
-const NON_ALNUM = /[^\p{L}\p{N}]+/gu
+const ALNUM_CHAR = /[\p{L}\p{N}]/u
 
 function upperFirst(word) {
   return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+}
+
+// The shared acronym policy: an uppercase run of at most three letters is an
+// acronym (ABC, SGM, UHT, RON, XL) and survives, while a longer run is a
+// shouted word and takes sentence case. Lowercase runs do too; mixed-case
+// runs are identity markers (iPhone) and stay raw. Both product names and
+// promo labels go through this one rule so a future policy change lives here.
+const MAX_ACRONYM_LENGTH = 3
+
+function caseWord(run) {
+  if (ALL_UPPER.test(run)) return run.length > MAX_ACRONYM_LENGTH ? upperFirst(run) : run
+  if (ALL_LOWER.test(run)) return upperFirst(run)
+  return run
 }
 
 // One whitespace token of a product name. Punctuation and digits are raw
 // identity markers (MR.P, 6×38g, RON 88), so they skip the casing rules.
 function titleCaseNameToken(token) {
   if (!HAS_LETTER.test(token) || HAS_NON_LETTER.test(token)) return token
-  if (ALL_UPPER.test(token)) {
-    return token.length > 3 ? upperFirst(token) : token
-  }
-  if (ALL_LOWER.test(token)) return upperFirst(token)
-  return token
+  return caseWord(token)
 }
 
 // Promo labels are prose, unlike product names: a trailing "!" or "," must
@@ -30,11 +39,7 @@ function titleCaseNameToken(token) {
 // stay untouched so a size or percentage never gains a stray capital.
 function titleCasePromoToken(token) {
   if (HAS_DIGIT.test(token)) return token
-  return token.replace(LETTER_RUN, (run) => {
-    if (ALL_UPPER.test(run)) return run.length > 3 ? upperFirst(run) : run
-    if (ALL_LOWER.test(run)) return upperFirst(run)
-    return run
-  })
+  return token.replace(LETTER_RUN, caseWord)
 }
 
 // Casing-only display helper for semicolon-split promo segments.
@@ -110,20 +115,52 @@ export function prettyName(name) {
   return prettyUnit(collapsed.split(' ').map(titleCaseNameToken).join(' '))
 }
 
-function alnumKey(value) {
-  return String(value ?? '')
-    .toLowerCase()
-    .replace(NON_ALNUM, '')
+// Words of a display name for the duplicate-brand check: lowercase letters
+// and digits only, plus the offsets that start/end a word in that stream.
+// Punctuation is a separator, not an identity marker, so "MR.P" still spells
+// the brand "MRP" and "RON-88" matches "RON 88", while "Sariwangi" is one
+// word and cannot contain the brand "Sari".
+function wordKey(value) {
+  const text = String(value ?? '').toLowerCase()
+  let key = ''
+  const boundaries = new Set([0])
+  let separated = false
+  for (const character of text) {
+    if (!ALNUM_CHAR.test(character)) {
+      separated = true
+      continue
+    }
+    if (separated) boundaries.add(key.length)
+    separated = false
+    key += character
+  }
+  boundaries.add(key.length)
+  return { key, boundaries }
+}
+
+function containsBrandWords(name, brandKey) {
+  const nameKey = wordKey(name)
+  for (
+    let at = nameKey.key.indexOf(brandKey);
+    at !== -1;
+    at = nameKey.key.indexOf(brandKey, at + 1)
+  ) {
+    if (nameKey.boundaries.has(at) && nameKey.boundaries.has(at + brandKey.length)) return true
+  }
+  return false
 }
 
 // " · Brand" only when the brand is not already in the display name —
 // "RON 88 Spring 300ml · RON 88" and "CARNATION … · CARNATION" are the same
-// words twice. Compare alphanumerics only (case/punctuation-insensitive) and
-// skip brands too short to compare meaningfully (XL, A B).
+// words twice. A brand only counts as present when it lines up with whole
+// words ("Sariwangi" is not "Sari", "Indomie" is not "Ina"), ignoring case
+// and punctuation; even a short brand (XL, 3M) is appended when it is
+// genuinely missing. A brand with no letters or digits ("-", "!!") is not a
+// brand at all and never earns a suffix.
 export function brandSuffix(name, brand) {
-  const brandKey = alnumKey(brand)
-  if (brandKey.length < 3) return ''
-  if (alnumKey(name).includes(brandKey)) return ''
+  const brandKey = wordKey(brand).key
+  if (!brandKey) return ''
+  if (containsBrandWords(name, brandKey)) return ''
   const prettyBrand = prettyName(brand)
   return prettyBrand ? ` · ${prettyBrand}` : ''
 }

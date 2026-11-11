@@ -72,24 +72,42 @@ describe('prettyUnit', () => {
 })
 
 describe('brandSuffix', () => {
-  it('suppresses duplicate brands (case/punctuation-insensitive)', () => {
+  it('suppresses a brand already present as whole words (case/punctuation-insensitive)', () => {
     expect(brandSuffix('RON 88 Spring 300ml', 'RON 88')).toBe('')
+    expect(brandSuffix('RON-88 Spring 300ml', 'RON 88')).toBe('')
+    expect(brandSuffix('RON88 Spring 300ml', 'RON 88')).toBe('')
+    expect(brandSuffix('RON 88 Spring 300ml', 'RON-88')).toBe('')
+    expect(brandSuffix('RON 88 Spring 300ml', 'RON88')).toBe('')
     expect(brandSuffix('CARNATION Kental Manis 6×38g', 'CARNATION')).toBe('')
     expect(brandSuffix('Minyak Goreng Bimoli', 'bimoli')).toBe('')
     expect(brandSuffix('ABC KACANG', 'A.B.C')).toBe('')
+    expect(brandSuffix('A.B.C KACANG', 'ABC')).toBe('')
+    expect(brandSuffix('ABC Kacang', 'ABC')).toBe('')
     expect(brandSuffix('MR.P Special', 'MRP')).toBe('')
+    expect(brandSuffix('MRP Special', 'MR.P')).toBe('')
+  })
+
+  it('appends a brand that only occurs inside a longer word (#636)', () => {
+    // Substring, not a word: the old alphanumeric comparison dropped these
+    // brands even though the name never shows them.
+    expect(brandSuffix('Sariwangi', 'Sari')).toBe(' · Sari')
+    expect(brandSuffix('Roman', 'Roma')).toBe(' · Roma')
+    expect(brandSuffix('Indomie', 'Ina')).toBe(' · Ina')
+    expect(brandSuffix('Gulaku', 'Gula')).toBe(' · Gula')
+    expect(brandSuffix('Gula Pasir', 'Gulaku')).toBe(' · Gulaku')
+  })
+
+  it('appends short brands missing from the name (#636)', () => {
+    expect(brandSuffix('Minyak Goreng', 'XL')).toBe(' · XL')
+    expect(brandSuffix('Minyak Goreng', '3M')).toBe(' · 3M')
+    expect(brandSuffix('Minyak Goreng', 'A B')).toBe(' · A B')
+    expect(brandSuffix('Minyak Goreng', 'AB')).toBe(' · AB')
   })
 
   it('appends a pretty-cased brand when the name does not contain it', () => {
     expect(brandSuffix('Minyak Goreng', 'Bimoli')).toBe(' · Bimoli')
     expect(brandSuffix('Gula Pasir', 'CARNATION')).toBe(' · Carnation')
     expect(brandSuffix('Gula Pasir', 'BIMOLI 1L')).toBe(' · Bimoli 1 L')
-  })
-
-  it('skips brands shorter than three alphanumerics', () => {
-    expect(brandSuffix('Minyak Goreng', 'XL')).toBe('')
-    expect(brandSuffix('Minyak Goreng', 'A B')).toBe('')
-    expect(brandSuffix('Minyak Goreng', 'AB')).toBe('')
     expect(brandSuffix('Minyak Goreng', 'ABC')).toBe(' · ABC')
   })
 
@@ -97,5 +115,8 @@ describe('brandSuffix', () => {
     expect(brandSuffix('Minyak Goreng', null)).toBe('')
     expect(brandSuffix('Minyak Goreng', '')).toBe('')
     expect(brandSuffix('Minyak Goreng', '   ')).toBe('')
+    // A brand with no letters or digits is not a brand — never " · -".
+    expect(brandSuffix('Minyak Goreng', '-')).toBe('')
+    expect(brandSuffix('Minyak Goreng', '!!!')).toBe('')
   })
 })
