@@ -20,6 +20,13 @@ export type ReviewDecision = 'approved' | 'rejected'
 // under the verifier label.
 export const REVIEW_REASONS = ['price_ratio', 'verifier_unresolved', 'taxonomy'] as const
 
+/** One flag reason — derivable, so the query param and the counts cannot drift. */
+export type ReviewReason = (typeof REVIEW_REASONS)[number]
+
+function isReviewReason(value: unknown): value is ReviewReason {
+  return typeof value === 'string' && (REVIEW_REASONS as readonly string[]).includes(value)
+}
+
 // AI-review vocabulary (issue #484, migration 0038). It lives here — with the
 // table whose rows it stores — so the queue read (which joins the verdict) and
 // lib/review-ai.ts (which writes it) cannot drift on the value domain.
@@ -169,7 +176,18 @@ export type ReviewItem = ReviewItemPair & {
   entryObservedAt: string | null
 }
 
-export type ReviewCounts = { pending: number; approved: number; rejected: number }
+export type ReviewCounts = {
+  pending: number
+  approved: number
+  rejected: number
+  /**
+   * Issue #628: the exact pending split by flag reason, from the same
+   * whole-queue GROUP BY rule as the status counts — never the active
+   * filter or paging. Every reason is present (an absent one is 0), so the
+   * client renders the split without existence checks.
+   */
+  pendingByReason: Record<ReviewReason, number>
+}
 
 export type ReviewListPage = {
   items: ReviewItem[]
@@ -361,36 +379,72 @@ const REVIEW_ROW_JOINS = `LEFT JOIN price_runs p ON p.run_started_at = r.run_sta
  * honest. Counts come from one GROUP BY: exact at any size, independent of
  * paging.
  *
+ * Issue #628: `reason` narrows the PAGE (and filteredTotal) only — the
+ * counts stay whole-queue, and `counts.pendingByReason` splits the pending
+ * total by flag reason. Both reads go through `json_valid` because
+ * `json_extract` THROWS on a malformed blob, and this read deliberately
+ * tolerates one (parseReviewPair drops it from the page instead of failing
+ * the request).
+ *
  * Deliberately NO AI here (issue #484): the list read is the hot path and
  * must never wait on a provider. Verdicts are computed by the explicit
  * evaluate route or the cron sweep and merely JOINED in when cached.
  */
 export async function listReviewItems(
   db: D1Database,
-  options: { status?: ReviewStatus | 'all'; limit?: number; offset?: number } = {}
+  options: {
+    status?: ReviewStatus | 'all'
+    /** Issue #628: optional flag-reason filter, combinable with the status. */
+    reason?: ReviewReason
+    limit?: number
+    offset?: number
+  } = {}
 ): Promise<ReviewListPage> {
   const status = options.status ?? 'pending'
+  // Absent reason = every reason; bound as NULL so one SQL shape serves both
+  // (the `? IS NULL` guard short-circuits the blob read entirely).
+  const reason = options.reason ?? null
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
   const offset = Math.max(options.offset ?? 0, 0)
 
-  const [pageResult, countResult, filteredResult] = await db.batch([
+  const [pageResult, countResult, reasonCountResult, filteredResult] = await db.batch([
     db
       .prepare(
         `SELECT ${REVIEW_ROW_COLUMNS}
          FROM match_review_items r
          ${REVIEW_ROW_JOINS}
          WHERE (? = 'all' OR r.status = ?)
+           AND (? IS NULL OR (CASE WHEN json_valid(r.pair_data)
+                                   THEN json_extract(r.pair_data, '$.reason') END) = ?)
          -- Pairs flagged by the same run share last_flagged_at; the natural
          -- key tie-break makes the total order deterministic so an offset
          -- page walk cannot skip/repeat tied rows across reads.
          ORDER BY r.last_flagged_at DESC, r.item_product_key ASC, r.entry_product_key ASC
          LIMIT ? OFFSET ?`
       )
-      .bind(status, status, limit, offset),
+      .bind(status, status, reason, reason, limit, offset),
     db.prepare(`SELECT status, COUNT(*) AS count FROM match_review_items GROUP BY status`).bind(),
+    // Issue #628: the exact pending split by reason. The alias cannot be
+    // `reason` — that is a real column, and SQLite resolves a GROUP BY name
+    // to the column over the output alias — so `flag_reason` it is.
     db
-      .prepare(`SELECT COUNT(*) AS count FROM match_review_items WHERE (? = 'all' OR status = ?)`)
-      .bind(status, status),
+      .prepare(
+        `SELECT (CASE WHEN json_valid(r.pair_data)
+                      THEN json_extract(r.pair_data, '$.reason') END) AS flag_reason,
+                COUNT(*) AS count
+         FROM match_review_items r
+         WHERE r.status = 'pending'
+         GROUP BY flag_reason`
+      )
+      .bind(),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM match_review_items
+         WHERE (? = 'all' OR status = ?)
+           AND (? IS NULL OR (CASE WHEN json_valid(pair_data)
+                                   THEN json_extract(pair_data, '$.reason') END) = ?)`
+      )
+      .bind(status, status, reason, reason),
   ])
 
   const items: ReviewItem[] = []
@@ -408,11 +462,27 @@ export async function listReviewItems(
     )
   )
 
-  const counts: ReviewCounts = { pending: 0, approved: 0, rejected: 0 }
+  const counts: ReviewCounts = {
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    // Every reason present from the start: an absent reason counts 0, and the
+    // client renders the split without existence checks (issue #628).
+    pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
+  }
   for (const row of (countResult.results ?? []) as unknown as { status: string; count: number }[]) {
     if (row.status === 'pending' || row.status === 'approved' || row.status === 'rejected') {
       counts[row.status] = row.count
     }
+  }
+  for (const row of (reasonCountResult.results ?? []) as unknown as {
+    flag_reason: string | null
+    count: number
+  }[]) {
+    // A malformed blob yields a NULL reason (json_valid); an unknown value is
+    // not a reason this queue serves, so both are dropped rather than widening
+    // the response vocabulary.
+    if (isReviewReason(row.flag_reason)) counts.pendingByReason[row.flag_reason] = row.count
   }
 
   const filteredRows = (filteredResult.results ?? []) as unknown as { count: number }[]

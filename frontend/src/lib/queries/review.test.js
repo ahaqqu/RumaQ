@@ -75,7 +75,14 @@ describe('selectReviewPageData', () => {
   it('survives an absent first page', () => {
     expect(selectReviewPageData(undefined)).toEqual({
       items: [],
-      counts: { pending: 0, approved: 0, rejected: 0 },
+      // Issue #628: the split is always present (all zeros) so the counts
+      // line never has to guard for a missing field.
+      counts: {
+        pending: 0,
+        approved: 0,
+        rejected: 0,
+        pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
+      },
       filteredTotal: 0,
     })
   })
@@ -106,6 +113,39 @@ describe('useReviewItems', () => {
     expect(getReviewItems).toHaveBeenCalledTimes(2)
     // loaded (3) === filteredTotal (3) → no next page.
     expect(result.current.hasNextPage).toBe(false)
+  })
+
+  // Issue #628: the reason is a REQUEST argument and part of the cache key.
+  it('sends the reason and keys the cache by it; omitted reason = every reason', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    vi.mocked(getReviewItems).mockResolvedValue(
+      page([reviewItem('a')], { pending: 1, approved: 0, rejected: 0 }, 1)
+    )
+
+    const { result } = renderHook(() => useReviewItems('pending', 'taxonomy'), {
+      wrapper: createWrapper(queryClient),
+    })
+    await waitFor(() => expect(result.current.data.items).toHaveLength(1))
+    expect(getReviewItems).toHaveBeenCalledWith(
+      { status: 'pending', reason: 'taxonomy', limit: 50, offset: 0 },
+      expect.anything()
+    )
+
+    // The unfiltered view is a separate cache entry, not a reuse of the
+    // filtered one — otherwise switching back would show taxonomy pages.
+    renderHook(() => useReviewItems('pending'), { wrapper: createWrapper(queryClient) })
+    await waitFor(() =>
+      expect(getReviewItems).toHaveBeenCalledWith(
+        { status: 'pending', reason: undefined, limit: 50, offset: 0 },
+        expect.anything()
+      )
+    )
+    const keys = queryClient
+      .getQueryCache()
+      .getAll()
+      .map((query) => query.queryKey)
+    expect(keys).toContainEqual(['review', 'pending', 'taxonomy'])
+    expect(keys).toContainEqual(['review', 'pending', null])
   })
 })
 

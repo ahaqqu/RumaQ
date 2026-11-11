@@ -629,6 +629,9 @@ export function getScrapeEvents(
 // matcher flagged. Decisions are recorded only; they never change price data.
 
 export type ReviewStatusFilter = 'pending' | 'approved' | 'rejected' | 'all'
+// Issue #628: the flag reason — the same closed vocabulary as the backend's
+// REVIEW_REASONS (mirrored by the generated client's query type).
+export type ReviewReasonFilter = 'price_ratio' | 'verifier_unresolved' | 'taxonomy'
 export type ReviewDecision = 'approved' | 'rejected'
 // Issue #484: how the AI assists the queue, and how a human's decision
 // relates to the cached AI verdict (the agreement history).
@@ -636,10 +639,20 @@ export type ReviewMode = 'manual' | 'assist' | 'auto'
 export type ReviewAgreement = 'agreed' | 'disagreed'
 
 export function getReviewItems(
-  { status, limit, offset }: { status?: ReviewStatusFilter; limit?: number; offset?: number } = {},
+  {
+    status,
+    reason,
+    limit,
+    offset,
+  }: {
+    status?: ReviewStatusFilter
+    reason?: ReviewReasonFilter
+    limit?: number
+    offset?: number
+  } = {},
   signal?: AbortSignal
 ): Promise<unknown> {
-  return unwrap(getApiAdminReview({ query: { status, limit, offset }, signal }))
+  return unwrap(getApiAdminReview({ query: { status, reason, limit, offset }, signal }))
 }
 
 export function decideReviewItem(

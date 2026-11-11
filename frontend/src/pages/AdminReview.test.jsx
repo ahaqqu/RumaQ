@@ -90,7 +90,13 @@ function mockReviewData(dataOverrides = {}, hookOverrides = {}) {
   return {
     data: {
       items: [reviewItem],
-      counts: { pending: 3, approved: 1, rejected: 2 },
+      counts: {
+        pending: 3,
+        approved: 1,
+        rejected: 2,
+        // Issue #628: the exact pending split by flag reason.
+        pendingByReason: { price_ratio: 2, verifier_unresolved: 1, taxonomy: 0 },
+      },
       filteredTotal: 3,
       ...dataOverrides,
     },
@@ -202,22 +208,61 @@ describe('AdminReview', () => {
     expect(container.textContent).toContain('review.rejected')
   })
 
-  it('defaults the filter to pending and switches on click', () => {
+  it('defaults the status filter to pending and switches on click', () => {
     const { container } = renderAdmin()
-    const pressed = container.querySelector('[aria-pressed="true"]')
-    expect(pressed.textContent).toBe('review.pending')
-
-    // Four filter chips: pending, approved, rejected, all.
-    const chips = [...container.querySelectorAll('[aria-pressed]')]
+    const statusGroup = container.querySelector('[role="group"][aria-label="review.lead"]')
+    const chips = [...statusGroup.querySelectorAll('[aria-pressed]')]
+    // Four status filter chips: pending, approved, rejected, all.
     expect(chips.map((chip) => chip.textContent)).toEqual([
       'review.pending',
       'review.approved',
       'review.rejected',
       'review.all',
     ])
+    expect(chips[0].getAttribute('aria-pressed')).toBe('true')
 
     fireEvent.click(chips[3])
     expect(chips[3].getAttribute('aria-pressed')).toBe('true')
+    expect(useReviewItems).toHaveBeenLastCalledWith('all', null)
+  })
+
+  // Issue #628: the pending total shows its per-reason split, and the reason
+  // filter re-asks the server with the reason while the counts stay exact.
+  it('renders the pending split and filters the list by reason', () => {
+    const { container } = renderAdmin()
+    // One split line: Pending 3 — price 2 · verifier 1 · taxonomy 0.
+    expect(container.textContent).toContain('review.pendingByReason')
+    expect(container.textContent).toContain('review.approved 1')
+    expect(container.textContent).toContain('review.rejected 2')
+
+    const reasonGroup = container.querySelector('[role="group"][aria-label="review.filterReason"]')
+    const reasonChips = [...reasonGroup.querySelectorAll('[aria-pressed]')]
+    expect(reasonChips.map((chip) => chip.textContent)).toEqual([
+      'review.all',
+      'review.reasonPriceRatio',
+      'review.reasonVerifierUnresolved',
+      'review.reasonTaxonomy',
+    ])
+    // "All" is the default: the unfiltered request.
+    expect(reasonChips[0].getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.click(reasonChips[3])
+    expect(reasonChips[3].getAttribute('aria-pressed')).toBe('true')
+    expect(useReviewItems).toHaveBeenLastCalledWith('pending', 'taxonomy')
+
+    // The counts are whole-queue server reads: the filter never distorts them.
+    expect(container.textContent).toContain('review.pending 3')
+    expect(container.textContent).toContain('review.approved 1')
+    expect(container.textContent).toContain('review.rejected 2')
+  })
+
+  it('falls back to a zero split for a Worker without pendingByReason', () => {
+    vi.mocked(useReviewItems).mockReturnValue(
+      mockReviewData({ counts: { pending: 3, approved: 1, rejected: 2 } })
+    )
+    const { container } = renderAdmin()
+    expect(container.textContent).toContain('review.pendingByReason')
+    expect(container.textContent).toContain('review.pending 3')
   })
 
   it('renders the side-by-side pair with honest labels and store display names', () => {
@@ -896,8 +941,13 @@ describe('AdminReview', () => {
         mockReviewData({ items: [{ ...reviewItem, reason: 'taxonomy' }] })
       )
       const { container } = renderAdmin()
-      expect(container.textContent).toContain('review.reasonTaxonomy')
-      expect(container.textContent).not.toContain('review.reasonVerifierUnresolved')
+      // Scoped to the ROW's flag chip: the reason filter (issue #628) renders
+      // all three labels as controls, so a page-wide text assertion would now
+      // match the filter rather than the row.
+      const flagChip = [...container.querySelectorAll('span')].find((el) =>
+        el.textContent.startsWith('review.flagPrefix')
+      )
+      expect(flagChip.textContent).toBe('review.flagPrefix review.reasonTaxonomy')
       expect(container.textContent).not.toContain('review.aiVerdict')
       expect(container.textContent).not.toContain('review.aiAgree')
       expect(container.textContent).toContain('review.aiTaxonomyExcluded')

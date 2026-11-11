@@ -108,11 +108,17 @@ const ID_CONFIDENCE_HINT =
   'Seberapa yakin matcher bahwa kedua sisi adalah produk yang sama — 100% berarti nama dan unit ' +
   'cocok persis. Tinjauan dipicu oleh penanda, bukan oleh skor ini.'
 
-function reviewData(items = [reviewItem]) {
+function reviewData(items = [reviewItem], counts) {
   return {
     data: {
       items,
-      counts: { pending: items.length, approved: 0, rejected: 0 },
+      counts: counts ?? {
+        pending: items.length,
+        approved: 0,
+        rejected: 0,
+        // Issue #628: the exact pending split by flag reason.
+        pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
+      },
       filteredTotal: items.length,
     },
     hasNextPage: false,
@@ -199,6 +205,32 @@ describe('AdminReview — initialized i18n copy (issue #480)', () => {
     expect(container.textContent).not.toContain('— · —')
   })
 
+  // Issue #628: the pending chip carries the real split sentence, and the
+  // reason filter offers the three labels next to the status filter.
+  it('renders the pending split by flag reason and the reason filter labels', () => {
+    vi.mocked(useReviewItems).mockReturnValue(
+      reviewData([reviewItem], {
+        pending: 482,
+        approved: 0,
+        rejected: 0,
+        pendingByReason: { price_ratio: 400, verifier_unresolved: 50, taxonomy: 32 },
+      })
+    )
+    const { container } = renderAdmin()
+    expect(container.textContent).toContain('Pending 482 — price 400 · verifier 50 · taxonomy 32')
+    const reasonGroup = container.querySelector('[role="group"][aria-label="Flag reason"]')
+    expect(reasonGroup).not.toBeNull()
+    expect(reasonGroup.textContent).toContain('Flag reason')
+    expect(reasonGroup.textContent).toContain('All')
+    expect(reasonGroup.textContent).toContain('Price ratio')
+    expect(reasonGroup.textContent).toContain('Verifier unresolved')
+    expect(reasonGroup.textContent).toContain('Category needs a human look')
+    // The status counts stay whole-queue and exact, filter or not.
+    expect(container.textContent).toContain('Pending 482')
+    expect(container.textContent).toContain('Approved 0')
+    expect(container.textContent).toContain('Rejected 0')
+  })
+
   it('names the copy button with the visible short id (label-in-name, thermos A2)', () => {
     const { container } = renderAdmin()
     const idButton = container.querySelector(`button[title="${reviewItem.id}"]`)
@@ -258,9 +290,12 @@ describe('AdminReview — initialized i18n copy (issue #480)', () => {
     it('labels a taxonomy flag in real copy and states the no-verdict rule (issue #493)', () => {
       vi.mocked(useReviewItems).mockReturnValue(reviewData([{ ...reviewItem, reason: 'taxonomy' }]))
       const { container } = renderAdmin()
-      expect(container.textContent).toContain('Review flag: Category needs a human look')
-      // The old fallback labelled every unknown reason as the verifier.
-      expect(container.textContent).not.toContain('Verifier unresolved')
+      // Scoped to the ROW's flag chip: the reason filter (issue #628) renders
+      // every label — including the verifier's — as a control.
+      const flagChip = [...container.querySelectorAll('span')].find((el) =>
+        el.textContent.startsWith('Review flag:')
+      )
+      expect(flagChip.textContent).toBe('Review flag: Category needs a human look')
       expect(container.textContent).toContain(
         'No AI verdict for a category flag — the AI only judges product identity. ' +
           'This one is yours to decide.'

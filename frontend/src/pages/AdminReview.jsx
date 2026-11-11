@@ -34,6 +34,12 @@ import { IconWarning, IconReview, IconDownload, IconBolt } from '../components/i
 
 const FILTERS = ['pending', 'approved', 'rejected', 'all']
 
+// Issue #628: the reason filter — the same closed vocabulary as the backend's
+// REVIEW_REASONS (lib/match-review.ts owns it; the API 400s on anything else).
+// A null entry is the "all reasons" chip, which omits the query param.
+const REVIEW_REASONS = ['price_ratio', 'verifier_unresolved', 'taxonomy']
+const REASON_FILTERS = [null, ...REVIEW_REASONS]
+
 // The three modes, in the owner's order (issue #484). `assist` is the
 // backend default; the UI mirrors it while the mode query is in flight.
 const REVIEW_MODES = ['manual', 'assist', 'auto']
@@ -565,8 +571,11 @@ export function AdminReview() {
   const { data: me } = useMe()
   const isAdmin = me?.user?.isAdmin === true
   const [status, setStatus] = useState('pending')
+  // Issue #628: null = every reason (the "All" chip), so the default queue
+  // read is byte-for-byte the pre-filter request.
+  const [reason, setReason] = useState(null)
   const { data, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage } =
-    useReviewItems(status)
+    useReviewItems(status, reason)
   const decide = useDecideReview()
   const undo = useUndoReview()
   // Issue #484: the mode query is admin-gated up front (enabled:false keeps a
@@ -630,6 +639,15 @@ export function AdminReview() {
   const counts = data?.counts ?? { pending: 0, approved: 0, rejected: 0 }
   const filteredTotal = data?.filteredTotal ?? 0
   const total = counts.pending + counts.approved + counts.rejected
+  // Issue #628: absent until the first page lands (and all-zero from a Worker
+  // that predates the field) — the split line reads 0/0/0 either way, never
+  // "undefined".
+  const pendingByReason = {
+    price_ratio: 0,
+    verifier_unresolved: 0,
+    taxonomy: 0,
+    ...(counts.pendingByReason ?? {}),
+  }
 
   function handleModeChange(next) {
     if (next === mode || setMode.isPending) return
@@ -750,10 +768,19 @@ export function AdminReview() {
         </Panel>
       ) : null}
 
-      {/* Exact server-computed counts — unaffected by paging or the filter. */}
-      <div className="mb-4 flex flex-wrap gap-2">
+      {/* Exact server-computed counts — unaffected by paging or the filters.
+          Issue #628: the pending total carries its per-reason split, so the
+          three kinds of work are distinguishable at a glance. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <Chip variant="default">
-          {t('review.pending')} {counts.pending}
+          {t('review.pending')} {counts.pending}{' '}
+          <span className="text-text-muted">
+            {t('review.pendingByReason', {
+              price: pendingByReason.price_ratio,
+              verifier: pendingByReason.verifier_unresolved,
+              taxonomy: pendingByReason.taxonomy,
+            })}
+          </span>
         </Chip>
         <Chip variant="default">
           {t('review.approved')} {counts.approved}
@@ -763,19 +790,44 @@ export function AdminReview() {
         </Chip>
       </div>
 
-      {/* Filter is list-only: switching never distorts the counts above. */}
-      <div className="mb-4 flex flex-wrap gap-2" role="group" aria-label={t('review.lead')}>
-        {FILTERS.map((filter) => (
-          <Chip
-            key={filter}
-            variant="filter"
-            pressed={status === filter}
-            aria-pressed={status === filter}
-            onClick={() => setStatus(filter)}
-          >
-            {t(`review.${filter}`)}
-          </Chip>
-        ))}
+      {/* Filters are list-only: switching never distorts the counts above.
+          The reason filter (issue #628) combines with the status one. */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap gap-2" role="group" aria-label={t('review.lead')}>
+          {FILTERS.map((filter) => (
+            <Chip
+              key={filter}
+              variant="filter"
+              pressed={status === filter}
+              aria-pressed={status === filter}
+              onClick={() => setStatus(filter)}
+            >
+              {t(`review.${filter}`)}
+            </Chip>
+          ))}
+        </div>
+        <div
+          className="flex flex-wrap items-center gap-2"
+          role="group"
+          aria-label={t('review.filterReason')}
+        >
+          {/* A visible label, so the second "All" is never ambiguous — the
+              group's aria-label already carries it for assistive tech. */}
+          <span className="text-xs text-text-muted" aria-hidden="true">
+            {t('review.filterReason')}
+          </span>
+          {REASON_FILTERS.map((value) => (
+            <Chip
+              key={value ?? 'all'}
+              variant="filter"
+              pressed={reason === value}
+              aria-pressed={reason === value}
+              onClick={() => setReason(value)}
+            >
+              {value === null ? t('review.all') : t(reasonKey(value))}
+            </Chip>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (

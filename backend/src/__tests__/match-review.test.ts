@@ -53,6 +53,22 @@ function sqliteD1(db: SqliteDb): D1Database {
   } as unknown as D1Database
 }
 
+// The same adapter plus db.batch (just the statements executed in order), for
+// readers like listReviewItems that issue their reads as one batch.
+type BatchableStatement = { all: () => Promise<{ results: unknown[] }> }
+
+function sqliteD1Batch(db: SqliteDb): D1Database {
+  return {
+    prepare: (sql: string) => ({
+      bind: (...params: unknown[]) => ({
+        all: async () => ({ results: db.prepare(sql).all(...params) }),
+      }),
+    }),
+    batch: async (statements: BatchableStatement[]) =>
+      Promise.all(statements.map((statement) => statement.all())),
+  } as unknown as D1Database
+}
+
 // The run report ride-along lands pairs in D1 (issue #294). The fake DB
 // follows the price-runs.test.ts pattern; the export test drives keyset
 // paging for real so the non-truncation pin means something.
@@ -225,6 +241,12 @@ describe('listReviewItems', () => {
             { status: 'rejected', count: 1 },
           ],
         },
+        {
+          results: [
+            { flag_reason: 'price_ratio', count: 2 },
+            { flag_reason: 'taxonomy', count: 1 },
+          ],
+        },
         { results: [{ count: 3 }] },
       ],
     })
@@ -240,20 +262,81 @@ describe('listReviewItems', () => {
       runId: 'run-uuid-1',
       decidedAt: null,
     })
-    expect(page.counts).toEqual({ pending: 3, approved: 0, rejected: 1 })
+    expect(page.counts).toEqual({
+      pending: 3,
+      approved: 0,
+      rejected: 1,
+      // Issue #628: absent reasons are 0, never missing keys.
+      pendingByReason: { price_ratio: 2, verifier_unresolved: 0, taxonomy: 1 },
+    })
     expect(page.filteredTotal).toBe(3)
   })
 
   it('binds the requested filter and window', async () => {
     const { db, statements } = createFakeDb({
-      batchResults: [{ results: [] }, { results: [] }, { results: [] }],
+      batchResults: [{ results: [] }, { results: [] }, { results: [] }, { results: [] }],
     })
     await listReviewItems(db, { status: 'approved', limit: 10, offset: 25 })
-    const [pageStmt, , filteredStmt] = statements
-    expect(pageStmt!.params).toEqual(['approved', 'approved', 10, 25])
-    expect(filteredStmt!.params).toEqual(['approved', 'approved'])
+    const [pageStmt, , reasonStmt, filteredStmt] = statements
+    // No reason = every reason: the same SQL shape with a NULL bind.
+    expect(pageStmt!.params).toEqual(['approved', 'approved', null, null, 10, 25])
+    expect(filteredStmt!.params).toEqual(['approved', 'approved', null, null])
     expect(statements[0]!.sql).toContain('LEFT JOIN price_runs p ON p.run_started_at')
     expect(statements[0]!.sql).toContain('ORDER BY r.last_flagged_at DESC')
+    // The exact pending split is its own whole-queue GROUP BY.
+    expect(reasonStmt!.sql).toContain(`WHERE r.status = 'pending'`)
+    expect(reasonStmt!.sql).toContain('GROUP BY flag_reason')
+  })
+
+  it('narrows the page and filteredTotal by reason, keeping the status counts whole (issue #628)', async () => {
+    const { db, statements } = createFakeDb({
+      batchResults: [
+        { results: [rowFor({})] },
+        { results: [{ status: 'pending', count: 9 }] },
+        { results: [{ flag_reason: 'taxonomy', count: 4 }] },
+        { results: [{ count: 1 }] },
+      ],
+    })
+    const page = await listReviewItems(db, { reason: 'taxonomy' })
+    expect(page.items).toHaveLength(1)
+    expect(page.filteredTotal).toBe(1)
+    // Counts stay independent of the filter — same rule as the status filter.
+    expect(page.counts.pending).toBe(9)
+    expect(page.counts.pendingByReason).toEqual({
+      price_ratio: 0,
+      verifier_unresolved: 0,
+      taxonomy: 4,
+    })
+    const [pageStmt, statusStmt, , filteredStmt] = statements
+    expect(pageStmt!.params).toEqual(['pending', 'pending', 'taxonomy', 'taxonomy', 50, 0])
+    expect(pageStmt!.sql).toContain(`json_extract(r.pair_data, '$.reason')`)
+    // The reason filter reaches the total too, or "Showing X of Y" would lie.
+    expect(filteredStmt!.params).toEqual(['pending', 'pending', 'taxonomy', 'taxonomy'])
+    // The status GROUP BY is unsullied by the filter (no JSON in it at all).
+    expect(statusStmt!.sql).not.toContain('json')
+  })
+
+  it('drops unknown and malformed reasons from the pending split instead of widening it', async () => {
+    const { db } = createFakeDb({
+      batchResults: [
+        { results: [] },
+        { results: [{ status: 'pending', count: 5 }] },
+        {
+          results: [
+            { flag_reason: 'price_ratio', count: 3 },
+            { flag_reason: 'something_else', count: 1 },
+            { flag_reason: null, count: 1 },
+          ],
+        },
+        { results: [{ count: 5 }] },
+      ],
+    })
+    const page = await listReviewItems(db)
+    expect(page.counts.pendingByReason).toEqual({
+      price_ratio: 3,
+      verifier_unresolved: 0,
+      taxonomy: 0,
+    })
   })
 
   it('survives a malformed pair_data blob without losing the rest of the page', async () => {
@@ -263,6 +346,7 @@ describe('listReviewItems', () => {
           results: [rowFor({ id: 'bad', pair_data: '{not json' }), rowFor({ id: 'good' })],
         },
         { results: [{ status: 'pending', count: 2 }] },
+        { results: [{ flag_reason: 'price_ratio', count: 2 }] },
         { results: [{ count: 2 }] },
       ],
     })
@@ -298,6 +382,9 @@ describe('entry-side evidence enrichment (issue #380)', () => {
     return [
       { results: rows },
       { results: [{ status: 'pending', count: rows.length }] },
+      // Issue #628: the pending split by reason (empty here — the split is
+      // pinned by the list tests; these are the enrichment semantics).
+      { results: [] },
       { results: [{ count: rows.length }] },
     ]
   }
@@ -568,6 +655,29 @@ describe('review reason vocabulary (issue #493)', () => {
     const contractReasons = [...reviewItemPairSchema.entries.reason.options]
     expect(published.sort()).toEqual(contractReasons.sort())
   })
+
+  // Issue #628: the filter param and the pendingByReason split are both
+  // derived from REVIEW_REASONS, so the contract picklist stays the one
+  // source — a reason added there must surface in both without drift.
+  it('publishes the same vocabulary on the reason query param and the split', async () => {
+    const specs = (await generateSpecs(apiApp, {
+      documentation: { info: { title: 'RumaQ API', version: '0.1.0' } },
+    })) as Record<string, any>
+    const operation = specs.paths['/api/admin/review'].get
+    const reasonParam = (operation.parameters as Array<Record<string, any>>).find(
+      (param) => param.name === 'reason'
+    )!
+    expect(reasonParam.in).toBe('query')
+    expect(reasonParam.required).toBe(false)
+    expect([...reasonParam.schema.enum].sort()).toEqual(
+      [...reviewItemPairSchema.entries.reason.options].sort()
+    )
+    const countsSchema =
+      operation.responses['200'].content['application/json'].schema.properties.counts
+    expect(Object.keys(countsSchema.properties.pendingByReason.properties).sort()).toEqual(
+      [...reviewItemPairSchema.entries.reason.options].sort()
+    )
+  })
 })
 
 describe('review routes', () => {
@@ -628,13 +738,38 @@ describe('review routes', () => {
     const env = adminEnv()
     env.DB.batch = vi
       .fn()
-      .mockResolvedValue([{ results: [] }, { results: [] }, { results: [{ count: 0 }] }])
+      .mockResolvedValue([{ results: [] }, { results: [] }, { results: [] }, { results: [] }])
     const res = await apiApp.request('/api/admin/review', {}, env as never)
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
     const body = (await res.json()) as { counts: unknown; filteredTotal: number }
-    expect(body.counts).toEqual({ pending: 0, approved: 0, rejected: 0 })
+    expect(body.counts).toEqual({
+      pending: 0,
+      approved: 0,
+      rejected: 0,
+      pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
+    })
     expect(body.filteredTotal).toBe(0)
+  })
+
+  it('passes a valid reason through to the list read (issue #628)', async () => {
+    const env = adminEnv()
+    env.DB.batch = vi
+      .fn()
+      .mockResolvedValue([{ results: [] }, { results: [] }, { results: [] }, { results: [] }])
+    const res = await apiApp.request('/api/admin/review?reason=taxonomy', {}, env as never)
+    expect(res.status).toBe(200)
+    // The page query's binds carry the reason twice (status guard + reason
+    // guard). find() skips requireAdmin's own user lookup binds.
+    const pageBinds = env.DB.bind.mock.calls.find(
+      (call: unknown[]) => call.length === 6 && call[0] === 'pending'
+    )
+    expect(pageBinds).toEqual(['pending', 'pending', 'taxonomy', 'taxonomy', 50, 0])
+  })
+
+  it('rejects an unknown reason with 400 (issue #628)', async () => {
+    const res = await apiApp.request('/api/admin/review?reason=bogus', {}, adminEnv() as never)
+    expect(res.status).toBe(400)
   })
 
   it('rejects an invalid decision value with 400', async () => {
@@ -791,5 +926,115 @@ describe('fetchEntryEvidence — real-SQLite semantics (thermos A2)', () => {
     applyRealMigrations(sqlite)
     const evidence = await fetchEntryEvidence(sqliteD1(sqlite), ['never-seen--null--1-kg'])
     expect(evidence.size).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Issue #628 reason semantics on REAL SQLite: the fake db above answers by SQL
+// string, so it cannot prove the json_extract filter or the pending GROUP BY
+// actually do what the API promises. These run listReviewItems' REAL SQL
+// through node:sqlite (D1 is SQLite) on the real migration chain — including
+// the malformed-blob tolerance the json_valid guard exists for.
+describe('listReviewItems — real-SQLite reason semantics (issue #628)', () => {
+  function seed(sqlite: SqliteDb): void {
+    const insert = sqlite.prepare(
+      `INSERT INTO match_review_items
+         (id, item_product_key, entry_product_key, pair_data, reason, match_method,
+          confidence, run_started_at, first_flagged_at, last_flagged_at, status)
+       VALUES (?, ?, ?, ?, ?, 'exact', 0.9,
+               '2026-10-28T23:00:05Z', '2026-10-28T23:00:05Z', '2026-10-28T23:00:05Z', ?)`
+    )
+    const add = (
+      id: string,
+      reason: ReviewItemPair['reason'],
+      status: 'pending' | 'approved' | 'rejected',
+      pairData?: string
+    ) =>
+      insert.run(
+        id,
+        `${id}----`,
+        `${id}--x--`,
+        pairData ?? JSON.stringify(pair({ reason })),
+        reason,
+        status
+      )
+
+    add('rev-p1', 'price_ratio', 'pending')
+    add('rev-p2', 'price_ratio', 'pending')
+    add('rev-v1', 'verifier_unresolved', 'pending')
+    add('rev-t1', 'taxonomy', 'pending')
+    add('rev-t2', 'taxonomy', 'pending')
+    // Decided rows never count in the pending split.
+    add('rev-app', 'price_ratio', 'approved')
+    // A corrupted legacy blob: json_extract would THROW on it, so the whole
+    // list read depends on the json_valid guard. It still counts as pending
+    // (the real row exists) but carries no reason.
+    add('rev-bad', 'price_ratio', 'pending', '{not json')
+  }
+
+  function freshDb(): SqliteDb {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyRealMigrations(sqlite)
+    seed(sqlite)
+    return sqlite
+  }
+
+  it('filters the page and filteredTotal by reason while the counts stay whole-queue', async () => {
+    const db = sqliteD1Batch(freshDb())
+
+    const taxonomy = await listReviewItems(db, { reason: 'taxonomy' })
+    expect(taxonomy.items.map((item) => item.id).sort()).toEqual(['rev-t1', 'rev-t2'])
+    expect(taxonomy.filteredTotal).toBe(2)
+    // Counts are exact and filter-independent (same rule as the status counts).
+    expect(taxonomy.counts).toEqual({
+      pending: 6,
+      approved: 1,
+      rejected: 0,
+      pendingByReason: { price_ratio: 2, verifier_unresolved: 1, taxonomy: 2 },
+    })
+
+    const verifier = await listReviewItems(db, { reason: 'verifier_unresolved' })
+    expect(verifier.items.map((item) => item.id)).toEqual(['rev-v1'])
+    expect(verifier.filteredTotal).toBe(1)
+    expect(verifier.counts.pendingByReason.taxonomy).toBe(2)
+  })
+
+  it('combines the reason filter with the status filter', async () => {
+    const db = sqliteD1Batch(freshDb())
+    const approved = await listReviewItems(db, { status: 'approved', reason: 'price_ratio' })
+    expect(approved.items.map((item) => item.id)).toEqual(['rev-app'])
+    expect(approved.filteredTotal).toBe(1)
+    // The status counts still describe the whole queue.
+    expect(approved.counts.pending).toBe(6)
+
+    const rejected = await listReviewItems(db, { status: 'rejected', reason: 'price_ratio' })
+    expect(rejected.items).toEqual([])
+    expect(rejected.filteredTotal).toBe(0)
+  })
+
+  it('leaves the no-reason read unchanged and tolerates the malformed blob', async () => {
+    const db = sqliteD1Batch(freshDb())
+    const page = await listReviewItems(db)
+    // Six pending rows exist; the corrupted one is dropped from the page by
+    // the pair parser, exactly as before issue #628.
+    expect(page.items.map((item) => item.id).sort()).toEqual([
+      'rev-p1',
+      'rev-p2',
+      'rev-t1',
+      'rev-t2',
+      'rev-v1',
+    ])
+    expect(page.counts).toEqual({
+      pending: 6,
+      approved: 1,
+      rejected: 0,
+      pendingByReason: { price_ratio: 2, verifier_unresolved: 1, taxonomy: 2 },
+    })
+    expect(page.filteredTotal).toBe(6)
+
+    // Filtering must not 500 on the corrupted row: it simply has no reason.
+    const price = await listReviewItems(db, { reason: 'price_ratio' })
+    expect(price.items.map((item) => item.id).sort()).toEqual(['rev-p1', 'rev-p2'])
+    expect(price.filteredTotal).toBe(2)
   })
 })

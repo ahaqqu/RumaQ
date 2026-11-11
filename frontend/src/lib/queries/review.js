@@ -16,21 +16,37 @@ export const REVIEW_PAGE_SIZE = 50
 
 // Counts + filteredTotal are exact server-side GROUP BYs, identical on every
 // page — reading them from the FIRST page keeps them stable as pages append
-// and across filter switches.
+// and across filter switches. Issue #628 adds `pendingByReason`: the pending
+// total's split by flag reason, whole-queue and therefore filter-independent
+// too (the same first-page read serves it).
 export function selectReviewPageData(data) {
   const first = data?.pages?.[0] ?? {}
   return {
     items: (data?.pages ?? []).flatMap((page) => page?.items ?? []),
-    counts: first.counts ?? { pending: 0, approved: 0, rejected: 0 },
+    counts: first.counts ?? {
+      pending: 0,
+      approved: 0,
+      rejected: 0,
+      pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
+    },
     filteredTotal: first.filteredTotal ?? 0,
   }
 }
 
-export function useReviewItems(status = 'pending') {
+/**
+ * The queue list. `reason` (issue #628) narrows the list to one flag reason
+ * and rides the query key — null/omitted is "every reason", a distinct cache
+ * entry from each filtered view, so switching never shows another filter's
+ * pages. The counts stay whole-queue on the server; only the list changes.
+ */
+export function useReviewItems(status = 'pending', reason = null) {
   return useInfiniteQuery({
-    queryKey: ['review', status],
+    queryKey: ['review', status, reason],
     queryFn: ({ signal, pageParam }) =>
-      getReviewItems({ status, limit: REVIEW_PAGE_SIZE, offset: pageParam }, signal),
+      getReviewItems(
+        { status, reason: reason ?? undefined, limit: REVIEW_PAGE_SIZE, offset: pageParam },
+        signal
+      ),
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
       const loaded = allPages.reduce((sum, page) => sum + (page?.items?.length ?? 0), 0)

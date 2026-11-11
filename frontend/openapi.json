@@ -2685,7 +2685,7 @@
     "/api/admin/review": {
       "get": {
         "operationId": "getApiAdminReview",
-        "description": "Match review queue: flagged candidate pairs with exact per-status counts (admin-only). Offset-paginated, newest flags first.",
+        "description": "Match review queue: flagged candidate pairs with exact per-status counts and the pending split by flag reason (admin-only). Offset-paginated, newest flags first. `reason` narrows the page only — counts stay whole-queue.",
         "security": [
           {
             "cookieAuth": []
@@ -2700,6 +2700,15 @@
               "type": "string",
               "enum": ["pending", "approved", "rejected", "all"],
               "default": "pending"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reason",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["price_ratio", "verifier_unresolved", "taxonomy"]
             }
           },
           {
@@ -2871,6 +2880,20 @@
                         },
                         "rejected": {
                           "type": "integer"
+                        },
+                        "pendingByReason": {
+                          "type": "object",
+                          "properties": {
+                            "price_ratio": {
+                              "type": "integer"
+                            },
+                            "verifier_unresolved": {
+                              "type": "integer"
+                            },
+                            "taxonomy": {
+                              "type": "integer"
+                            }
+                          }
                         }
                       }
                     },
@@ -2881,6 +2904,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid query (unknown reason)"
           },
           "401": {
             "description": "Unauthorized"
