@@ -17,9 +17,9 @@ description: |
 4. Analyze the performance implications of the actual changes.
 5. Read `docs/` (`README.md` and all `.md` files), validate them against the code, and update whichever side is out of sync so they stay consistent.
 6. Ensure all acceptance criteria in `docs/TEST_STRATEGY.md` are met and pass.
-7. Run `./scripts/github/ci.sh` and fix any failures until it exits successfully.
+7. Run `./scripts/check.sh` before pushing: it regenerates the API docs and the typed client and fails on drift, printing the failing lines only. The commit hook owns formatting, and `./scripts/github/ci.sh` stays on GitHub — never run it by hand.
 8. Push the changes and create the PR with below format.
-9. Check the CI gates on GitHub. If any fail, fix them and push the changes to the PR branch.
+9. Read the CI result on the PR (`gh pr checks --watch`). When a gate fails, run only that gate locally, fix it, and push again until the PR is green.
 10. Once all CI gates pass, request a human review and wait for approval before merging.
 
 ## PR Title Format
