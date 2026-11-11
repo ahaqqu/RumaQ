@@ -14,15 +14,24 @@ function upperFirst(word) {
   return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
 }
 
+// The shared acronym policy: an uppercase run of at most three letters is an
+// acronym (ABC, SGM, UHT, RON, XL) and survives, while a longer run is a
+// shouted word and takes sentence case. Lowercase runs do too; mixed-case
+// runs are identity markers (iPhone) and stay raw. Both product names and
+// promo labels go through this one rule so a future policy change lives here.
+const MAX_ACRONYM_LENGTH = 3
+
+function caseWord(run) {
+  if (ALL_UPPER.test(run)) return run.length > MAX_ACRONYM_LENGTH ? upperFirst(run) : run
+  if (ALL_LOWER.test(run)) return upperFirst(run)
+  return run
+}
+
 // One whitespace token of a product name. Punctuation and digits are raw
 // identity markers (MR.P, 6×38g, RON 88), so they skip the casing rules.
 function titleCaseNameToken(token) {
   if (!HAS_LETTER.test(token) || HAS_NON_LETTER.test(token)) return token
-  if (ALL_UPPER.test(token)) {
-    return token.length > 3 ? upperFirst(token) : token
-  }
-  if (ALL_LOWER.test(token)) return upperFirst(token)
-  return token
+  return caseWord(token)
 }
 
 // Promo labels are prose, unlike product names: a trailing "!" or "," must
@@ -30,11 +39,7 @@ function titleCaseNameToken(token) {
 // stay untouched so a size or percentage never gains a stray capital.
 function titleCasePromoToken(token) {
   if (HAS_DIGIT.test(token)) return token
-  return token.replace(LETTER_RUN, (run) => {
-    if (ALL_UPPER.test(run)) return run.length > 3 ? upperFirst(run) : run
-    if (ALL_LOWER.test(run)) return upperFirst(run)
-    return run
-  })
+  return token.replace(LETTER_RUN, caseWord)
 }
 
 // Casing-only display helper for semicolon-split promo segments.
