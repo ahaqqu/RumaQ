@@ -1,6 +1,7 @@
 import { describe, test as it, beforeEach } from 'vite-plus/test'
 import { setJestCucumberConfiguration, loadFeature, defineFeature } from 'jest-cucumber'
 import { ApiContext } from './helpers.js'
+import { JPEG_IMAGE_BYTES } from '../../../support/image-fixtures.js'
 
 setJestCucumberConfiguration({ runner: { describe, test: it } })
 
@@ -115,12 +116,11 @@ defineFeature(feature, (test) => {
       ctx.expectStatus(200)
     })
     when('I upload a receipt image for scanning', async () => {
-      const img = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10])
       await ctx.sendMultipart(
         'POST',
         '/api/purchases/scan',
         'image',
-        img,
+        JPEG_IMAGE_BYTES,
         'receipt.jpg',
         'image/jpeg'
       )
