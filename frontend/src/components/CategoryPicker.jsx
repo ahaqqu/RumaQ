@@ -16,8 +16,9 @@ import { IconCheck, IconChevronDown, IconClose, IconSearch } from './icons.jsx'
 // while open and drives the listbox through aria-activedescendant; options
 // carry role="option" + aria-selected (the checked row). Arrow keys move the
 // active entry, Enter selects it, Escape closes and returns focus to the
-// trigger, and a mousedown outside the picker closes it. "All categories" is
-// pinned at the top of the list and clears the filter (null).
+// trigger, and a mousedown outside the picker closes it. A permanent
+// role="status" region carries the no-results announcement (#641). "All
+// categories" is pinned at the top of the list and clears the filter (null).
 export function CategoryPicker({ categories = [], value = null, onChange, className }) {
   const { t } = useTranslation()
   const baseId = useId()
@@ -282,12 +283,23 @@ export function CategoryPicker({ categories = [], value = null, onChange, classN
           </ul>
 
           {matches.length === 0 && (
-            <p role="status" className="px-3 pb-3 text-sm text-text-muted">
+            // Decorative for sighted users: the announcement comes from the
+            // always-mounted status region below, so this copy is hidden from
+            // assistive tech to avoid a second, unannounced reading.
+            <p aria-hidden="true" className="px-3 pb-3 text-sm text-text-muted">
               {t('prices.categoryNoResults')}
             </p>
           )}
         </div>
       )}
+
+      {/* #641: a live region that enters the DOM together with its text is not
+          reliably announced, so the polite status node stays mounted for the
+          lifetime of the picker and only its text is swapped. While there are
+          matches the text is empty, so typing does not announce on every key. */}
+      <p role="status" aria-live="polite" className="sr-only">
+        {open && matches.length === 0 ? t('prices.categoryNoResults') : ''}
+      </p>
     </div>
   )
 }

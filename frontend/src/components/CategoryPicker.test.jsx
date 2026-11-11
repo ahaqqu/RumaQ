@@ -92,13 +92,37 @@ describe('CategoryPicker', () => {
     expect(optionNames()).toEqual(['prices.allCategories', 'beras'])
   })
 
-  it('shows a no-results state when no slug matches', () => {
+  it('keeps the status region mounted and silent while matches exist', () => {
     const { container } = renderPicker()
+    // #641: the live region must already be in the DOM before its text is
+    // set, otherwise screen readers miss the announcement.
+    const status = screen.getByRole('status')
+    expect(status.getAttribute('aria-live')).toBe('polite')
+    expect(status.textContent).toBe('')
+
+    openPicker(container)
+    fireEvent.change(searchInput(), { target: { value: 'ber' } })
+    expect(status.textContent).toBe('')
+
+    fireEvent.change(searchInput(), { target: { value: '' } })
+    expect(status.textContent).toBe('')
+  })
+
+  it('swaps the mounted status region to the no-results message', () => {
+    const { container } = renderPicker()
+    const status = screen.getByRole('status')
     openPicker(container)
     fireEvent.change(searchInput(), { target: { value: 'tidak-ada' } })
 
     expect(optionNames()).toEqual(['prices.allCategories'])
-    expect(screen.getByRole('status').textContent).toBe('prices.categoryNoResults')
+    // Same node, new text — not a freshly mounted live region.
+    expect(screen.getByRole('status')).toBe(status)
+    expect(status.textContent).toBe('prices.categoryNoResults')
+    // The visible no-results styling stays for sighted users; the mounted
+    // region above owns the announcement.
+    expect(
+      screen.getByText('prices.categoryNoResults', { selector: 'p[aria-hidden="true"]' })
+    ).toBeTruthy()
   })
 
   it('clears the search text with the clear button', () => {
