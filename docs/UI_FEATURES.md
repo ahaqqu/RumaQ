@@ -75,7 +75,7 @@ so you waste less food, shop in fewer trips, and spend less.
 ### Pay less (Prices)
 
 - Compare current prices of products across supermarkets.
-- When a supermarket prints a member/app price, it is the headline (labelled **Member price**) and the shelf price is shown as the reference; cross-store comparisons, savings %, and the cheapest store use the member price, and shelf-only items are unchanged.
+- When a supermarket prints a member/app price, it is the headline (labelled **Member price**) and the shelf price is shown as the reference; cross-store comparisons, savings %, and the cheapest store use the member price when it is lower — a member price above the shelf/promo basis never raises the payable price — and shelf-only items are unchanged.
 - Search products; filter by store; filter by category with one searchable picker (the sealed taxonomy slugs plus "All categories", keyboard-navigable, hidden until categories exist); sort by cheapest / biggest saving / name / expiring soon.
 - See promos with the deal type (discount %, fixed discount, buy-one-get-one, bundle, …), savings %, and how long the price is still valid.
 - See how fresh the data is (last scrape time).

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vite-plus/test'
+import { generateSpecs } from 'hono-openapi'
 import { apiApp } from '../apps/api.js'
-import { LATEST_OBSERVATION_PREDICATE } from '../lib/prices.js'
+import { LATEST_OBSERVATION_PREDICATE, PAYABLE_PRICE_SQL, payablePriceSql } from '../lib/prices.js'
 
 type FakeRow = Record<string, unknown>
 
@@ -35,11 +36,7 @@ function createPricesEnv(
           if (sql.includes('ORDER BY o.observed_date ASC')) {
             return { results: rows.history ?? [] }
           }
-          if (
-            sql.includes(
-              'ORDER BY COALESCE(o.member_price, o.effective_unit_price, o.price) ASC, s.slug ASC'
-            )
-          ) {
+          if (sql.includes(`ORDER BY ${PAYABLE_PRICE_SQL} ASC, s.slug ASC`)) {
             return { results: rows.current ?? [] }
           }
           if (sql.includes('SELECT DISTINCT p.category')) {
@@ -113,8 +110,8 @@ const listRow = {
   source_name: 'Lotte Mart',
   observed_date: '2026-10-24',
   price: 21500,
-  // Issue #627: the member price rides beside the shelf price and becomes the
-  // comparison basis; null on rows the retailer prints no member price for.
+  // Issue #627: the member price rides beside the shelf price and is used when
+  // lower; null on rows the retailer prints no member price for.
   member_price: 19900,
   effective_unit_price: 21500,
   // Canonical unit normalization (issue #368 phase A) — null on rows the
@@ -182,6 +179,38 @@ describe('GET /api/prices', () => {
       expect(body.items[0]!.unit_qty_unit).toBe('ml')
       expect(body.items[0]!.unit_price).toBe(10750)
       expect(body.items[1]!.unit_price).toBeNull()
+    }
+  })
+
+  // Issue #627: member_price rides both list paths; the flat path no longer
+  // invents an undocumented effective_price (B2), while the sorted CTE applies
+  // the shared MIN basis — a member premium cannot raise the compared price.
+  it('carries the member price on both list paths and compares on the MIN basis', async () => {
+    for (const sort of [undefined, 'cheapest'] as const) {
+      const { env, prepareCalls } = createPricesEnv({
+        list: [
+          listRow,
+          { ...listRow, product_key: 'shelf-only--item', member_price: null },
+          { ...listRow, product_key: 'member-premium--item', member_price: 24900 },
+        ],
+      })
+      const res = await apiApp.request(`/api/prices${sort ? `?sort=${sort}` : ''}`, {}, env)
+      expect(res.status).toBe(200)
+
+      const body = (await res.json()) as {
+        items: Array<{ member_price: number | null; price: number }>
+      }
+      expect(body.items[0]!.member_price).toBe(19900)
+      expect(body.items[1]!.member_price).toBeNull()
+      expect(body.items[2]!.member_price).toBe(24900)
+
+      const listCall = prepareCalls.find((call) => call.sql.includes('FROM price_observations'))!
+      expect(listCall.sql).toContain('o.member_price')
+      if (sort) {
+        expect(listCall.sql).toContain(`${PAYABLE_PRICE_SQL} AS effective_price`)
+      } else {
+        expect(listCall.sql).not.toContain('effective_price')
+      }
     }
   })
 
@@ -259,9 +288,7 @@ describe('GET /api/prices sort', () => {
 
       const listCall = prepareCalls.find((call) => call.sql.includes('WITH latest AS'))
       expect(listCall, `sort=${sort}`).toBeDefined()
-      expect(listCall!.sql).toContain(
-        'COALESCE(o.member_price, o.effective_unit_price, o.price) AS effective_price'
-      )
+      expect(listCall!.sql).toContain(`${PAYABLE_PRICE_SQL} AS effective_price`)
       expect(listCall!.sql).toContain('ROW_NUMBER() OVER')
       expect(listCall!.sql).toContain(`LIMIT 201`)
       // The sort expression drives both the page CTE and the outer query so
@@ -556,9 +583,7 @@ describe('GET /api/prices/:productKey', () => {
     expect(res.status).toBe(200)
 
     const currentCall = prepareCalls.find((call) => call.sql.includes('FROM price_observations'))!
-    expect(currentCall.sql).toContain(
-      'ORDER BY COALESCE(o.member_price, o.effective_unit_price, o.price) ASC, s.slug ASC'
-    )
+    expect(currentCall.sql).toContain(`ORDER BY ${PAYABLE_PRICE_SQL} ASC, s.slug ASC`)
 
     const body = (await res.json()) as { current: Array<{ source_slug: string }> }
     expect(body.current).toHaveLength(2)
@@ -742,9 +767,7 @@ describe('GET /api/prices/promos', () => {
     expect(examplesCall.sql).toContain('WHERE group_rn <= 5')
     expect(examplesCall.sql).toContain('ORDER BY name COLLATE NOCASE ASC, product_key ASC')
     // Cheapest offer per (group, product) on the effective-price basis.
-    expect(examplesCall.sql).toContain(
-      'ORDER BY COALESCE(member_price, effective_unit_price, price) ASC, source_slug ASC'
-    )
+    expect(examplesCall.sql).toContain(`ORDER BY ${payablePriceSql()} ASC, source_slug ASC`)
     // Both price columns ship to the view: shelf for the reference, member
     // for the headline (#627).
     expect(examplesCall.sql).toContain('price, member_price, effective_unit_price')
@@ -755,5 +778,24 @@ describe('GET /api/prices/promos', () => {
 
     const totalCall = prepareCalls.find((call) => call.sql.includes('-- promos: total'))!
     expect(totalCall.sql).toContain('COUNT(DISTINCT p.product_key)')
+  })
+})
+
+// Issue #627 / B2: the detail endpoint had no declared response shape, so the
+// generated client could not see member_price on its current offers. The
+// schema now declares it; history stays shelf-based by design (v1).
+describe('GET /api/prices/:productKey OpenAPI schema', () => {
+  it('declares member_price on current offers and leaves history shelf-based', async () => {
+    const specs = (await generateSpecs(apiApp, {
+      documentation: { info: { title: 'RumaQ API', version: '0.1.0' } },
+    })) as Record<string, any>
+    const operation = specs.paths['/api/prices/{productKey}'].get
+    expect(operation).toBeDefined()
+
+    const schema = operation.responses['200'].content['application/json'].schema
+    const current = schema.properties.current.items
+    expect(current.properties).toHaveProperty('member_price')
+    expect(current.required).toContain('member_price')
+    expect(schema.properties.history.items.properties).not.toHaveProperty('member_price')
   })
 })

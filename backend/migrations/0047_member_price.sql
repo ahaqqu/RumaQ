@@ -9,8 +9,10 @@
 -- Nullable with deliberately NO backfill: observations written before this
 -- migration (and payloads from a scraper that does not send memberPrice yet)
 -- genuinely have no member price — null means "not printed", not zero.
--- Readers compare on COALESCE(member_price, effective_unit_price, price) and
--- fall back to the shelf side for every old row.
+-- Readers compare on MIN(COALESCE(member_price, effective_unit_price, price),
+-- COALESCE(effective_unit_price, price)): the member price wins when lower,
+-- but never raises the payable price above the shelf/promo basis, and every
+-- old row falls back to the shelf side.
 --
 -- Additive and Worker-first: the ingest contract accepts the field only after
 -- this column exists, and an old Worker rejects a payload carrying it

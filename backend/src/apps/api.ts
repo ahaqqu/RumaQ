@@ -44,6 +44,7 @@ import {
 import {
   LATEST_OBSERVATION_SUBQUERY,
   LATEST_OBSERVATION_PREDICATE,
+  PAYABLE_PRICE_SQL,
   getPromoCatalog,
   listPriceCategories,
 } from '../lib/prices.js'
@@ -4216,13 +4217,10 @@ type PriceListRow = {
   price: number
   // Issue #627: the member/app price printed beside the shelf `price`; null
   // when the retailer prints none (or the row predates the field). The
-  // comparison/effective expression is COALESCE(member_price,
-  // effective_unit_price, price), exposed below as effective_price.
+  // comparison basis is PAYABLE_PRICE_SQL (member price when lower, never
+  // above the shelf/promo basis), applied in the sorted path's CTE.
   member_price: number | null
   effective_unit_price: number | null
-  // The comparison/aggregate basis (issue #627): member price when present,
-  // else the promo/shelf effective price, else the shelf price.
-  effective_price: number
   // Canonical unit normalization (issue #368 phase A): null when the
   // observation was not normalizable.
   unit_qty: number | null
@@ -5670,8 +5668,7 @@ apiApp.get(
                       o.observed_date, o.price, o.member_price, o.effective_unit_price,
                       o.unit_qty, o.unit_qty_unit, o.unit_price,
                       o.promo_type, o.promo_label, o.valid_from, o.valid_until,
-                      o.match_method, o.match_confidence, o.brochure_url,
-                      COALESCE(o.member_price, o.effective_unit_price, o.price) AS effective_price
+                      o.match_method, o.match_confidence, o.brochure_url
                FROM price_observations o
                JOIN price_products p ON p.id = o.product_id
                JOIN price_sources s ON s.id = o.source_id
@@ -5706,7 +5703,7 @@ apiApp.get(
          o.unit_qty, o.unit_qty_unit, o.unit_price,
          o.promo_type, o.promo_label, o.valid_from, o.valid_until,
          o.match_method, o.match_confidence, o.brochure_url,
-         COALESCE(o.member_price, o.effective_unit_price, o.price) AS effective_price
+         ${PAYABLE_PRICE_SQL} AS effective_price
   FROM price_observations o
   JOIN price_products p ON p.id = o.product_id
   JOIN price_sources s ON s.id = o.source_id
@@ -6110,6 +6107,104 @@ apiApp.get(
   }
 )
 
+// Response shape for the product detail (issue #627). The endpoint is the
+// only price surface whose rows are not covered by a declared schema, so the
+// generated client had no `member_price` for the current offers. History is
+// shelf-based on purpose in v1: it is the observed shelf price over time.
+const PRICE_DETAIL_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    product: {
+      type: 'object',
+      properties: {
+        product_key: { type: 'string' },
+        name: { type: 'string' },
+        brand: { type: ['string', 'null'] } as any,
+        unit: { type: ['string', 'null'] } as any,
+        category: { type: ['string', 'null'] } as any,
+        first_seen_at: { type: ['string', 'null'] } as any,
+        last_seen_at: { type: ['string', 'null'] } as any,
+      },
+      required: [
+        'product_key',
+        'name',
+        'brand',
+        'unit',
+        'category',
+        'first_seen_at',
+        'last_seen_at',
+      ],
+    },
+    current: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          source_slug: { type: 'string' },
+          source_name: { type: 'string' },
+          observed_date: { type: 'string' },
+          price: { type: 'number' },
+          member_price: { type: ['number', 'null'] } as any,
+          effective_unit_price: { type: ['number', 'null'] } as any,
+          promo_type: { type: ['string', 'null'] } as any,
+          promo_label: { type: ['string', 'null'] } as any,
+          valid_from: { type: ['string', 'null'] } as any,
+          valid_until: { type: ['string', 'null'] } as any,
+          match_method: { type: ['string', 'null'] } as any,
+          match_confidence: { type: 'number' },
+          brochure_url: { type: ['string', 'null'] } as any,
+          low_confidence: { type: 'boolean' },
+        },
+        required: [
+          'source_slug',
+          'source_name',
+          'observed_date',
+          'price',
+          'member_price',
+          'effective_unit_price',
+          'promo_type',
+          'promo_label',
+          'valid_from',
+          'valid_until',
+          'match_method',
+          'match_confidence',
+          'brochure_url',
+          'low_confidence',
+        ],
+      },
+    },
+    history: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          source_slug: { type: 'string' },
+          observed_date: { type: 'string' },
+          price: { type: 'number' },
+          promo_type: { type: ['string', 'null'] } as any,
+          promo_label: { type: ['string', 'null'] } as any,
+          valid_from: { type: ['string', 'null'] } as any,
+          valid_until: { type: ['string', 'null'] } as any,
+          match_method: { type: ['string', 'null'] } as any,
+          match_confidence: { type: 'number' },
+        },
+        required: [
+          'source_slug',
+          'observed_date',
+          'price',
+          'promo_type',
+          'promo_label',
+          'valid_from',
+          'valid_until',
+          'match_method',
+          'match_confidence',
+        ],
+      },
+    },
+  },
+  required: ['product', 'current', 'history'],
+}
+
 apiApp.get(
   '/api/prices/:productKey',
   // Route-level (not a use-line) so the static leaves above are never
@@ -6120,7 +6215,10 @@ apiApp.get(
     security: [{ cookieAuth: [] }],
     parameters: [{ in: 'path', name: 'productKey', required: true, schema: { type: 'string' } }],
     responses: {
-      200: { description: 'OK' },
+      200: {
+        description: 'OK',
+        content: { 'application/json': { schema: PRICE_DETAIL_SCHEMA } },
+      },
       401: { description: 'Unauthorized' },
       403: { description: 'Forbidden' },
       404: { description: 'Product not found' },
@@ -6157,7 +6255,7 @@ apiApp.get(
        JOIN price_sources s ON s.id = o.source_id
        WHERE o.product_id = (SELECT id FROM price_products WHERE product_key = ?)
          AND ${LATEST_OBSERVATION_SUBQUERY}
-       ORDER BY COALESCE(o.member_price, o.effective_unit_price, o.price) ASC, s.slug ASC`
+       ORDER BY ${PAYABLE_PRICE_SQL} ASC, s.slug ASC`
     )
       .bind(productKey)
       .all<{

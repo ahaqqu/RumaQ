@@ -5,6 +5,7 @@ import {
   hasMemberPrice,
   hasPromoEvidence,
   referencePrice,
+  showsMemberPrice,
   promoBadges,
   promoTone,
   isFootnoteLabel,
@@ -46,8 +47,9 @@ describe('displayPrice', () => {
   })
 })
 
-// Issue #627: the member/app price is the headline and the comparison basis
-// when the retailer prints one; the shelf price becomes the reference.
+// Issue #627: the member/app price is the headline and comparison basis when
+// it is LOWER; a member premium must never raise the payable price above the
+// shelf/promo basis. The shelf price becomes the struck reference.
 describe('member price', () => {
   it('detects a printed member price, not null/undefined', () => {
     expect(hasMemberPrice({ member_price: 19900 })).toBe(true)
@@ -56,7 +58,7 @@ describe('member price', () => {
     expect(hasMemberPrice({})).toBe(false)
   })
 
-  it('compares on member first, then promo, then shelf', () => {
+  it('compares on MIN(member, shelf/promo), never letting a premium raise it', () => {
     expect(effectivePrice({ price: 21500, member_price: 19900 })).toBe(19900)
     expect(effectivePrice({ price: 21500, member_price: null, effective_unit_price: 20500 })).toBe(
       20500
@@ -64,9 +66,15 @@ describe('member price', () => {
     expect(effectivePrice({ price: 21500, member_price: null, effective_unit_price: null })).toBe(
       21500
     )
+    // Member premium: the shelf price stays the compared price.
+    expect(effectivePrice({ price: 21500, member_price: 24900 })).toBe(21500)
+    // Promo-effective lower than the member price wins the comparison.
+    expect(effectivePrice({ price: 21500, member_price: 19900, effective_unit_price: 18000 })).toBe(
+      18000
+    )
   })
 
-  it('headlines the member price even when a promo price also exists', () => {
+  it('headlines the member price when it is at or below the shelf/promo price', () => {
     expect(
       displayPrice({
         price: 21500,
@@ -75,6 +83,35 @@ describe('member price', () => {
         promo_label: 'Diskon 5%',
       })
     ).toBe(19900)
+    // Equal prices: the member price is still the displayed price.
+    expect(displayPrice({ price: 19900, member_price: 19900 })).toBe(19900)
+  })
+
+  it('never displays a member premium above the shelf/promo price', () => {
+    expect(displayPrice({ price: 18000, member_price: 19900 })).toBe(18000)
+    expect(
+      displayPrice({
+        price: 21500,
+        member_price: 19900,
+        effective_unit_price: 18000,
+        promo_label: 'Diskon 16%',
+      })
+    ).toBe(18000)
+  })
+
+  it('labels a headline as Member only when the member price is displayed', () => {
+    expect(showsMemberPrice({ price: 21500, member_price: 19900 })).toBe(true)
+    expect(showsMemberPrice({ price: 19900, member_price: 19900 })).toBe(true)
+    expect(showsMemberPrice({ price: 18000, member_price: 19900 })).toBe(false)
+    expect(
+      showsMemberPrice({
+        price: 21500,
+        member_price: 19900,
+        effective_unit_price: 18000,
+        promo_label: 'Diskon 16%',
+      })
+    ).toBe(false)
+    expect(showsMemberPrice({ price: 21500 })).toBe(false)
   })
 
   it('keeps the existing promo/shelf behaviour without a member price', () => {
@@ -87,19 +124,26 @@ describe('member price', () => {
     )
   })
 
-  it('returns the shelf price as a struck reference when the member price is lower', () => {
+  it('returns the shelf price as a struck reference when the headline is lower', () => {
     expect(referencePrice({ price: 21500, member_price: 19900 })).toEqual({
       price: 21500,
       struck: true,
     })
+    expect(
+      referencePrice({
+        price: 21500,
+        member_price: 19900,
+        effective_unit_price: 18000,
+        promo_label: 'Diskon 16%',
+      })
+    ).toEqual({ price: 21500, struck: true })
   })
 
-  it('never strikes a shelf price that is not higher than the member price', () => {
+  it('never renders a premium or an equal shelf price as a discount', () => {
+    // Member premium: the shelf price IS the headline, so no reference line.
+    expect(referencePrice({ price: 18000, member_price: 19900 })).toBeNull()
+    // Equal: nothing is saved, so nothing is struck.
     expect(referencePrice({ price: 19900, member_price: 19900 })).toBeNull()
-    expect(referencePrice({ price: 18000, member_price: 19900 })).toEqual({
-      price: 18000,
-      struck: false,
-    })
   })
 
   it('keeps the struck promo reference for non-member rows', () => {

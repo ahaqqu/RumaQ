@@ -58,11 +58,16 @@ export const ingestItemSchema = strictObject({
   price: pipe(number(), integer(), minValue(0)),
   // Issue #627 (part 1): the member/app price when the retailer prints one
   // separately from the shelf price. `price` stays the shelf price; this is
-  // the price a (free-to-join) member actually pays, so comparisons and the
-  // displayed payable price prefer it. Additive-nullish (#294 pattern): old
-  // payloads (no field) still validate; a NEW payload hitting an OLD Worker
-  // fails loudly (strictObject — the Worker-first deploy order exists for
-  // this). No backfill: observations predating the field stay null.
+  // the price a (free-to-join) member actually pays, so readers use it as the
+  // payable/comparison price WHEN IT IS LOWER — never above the shelf/promo
+  // basis (a member premium must not raise the price). Additive-nullish
+  // (#294 pattern): old payloads (no field) still validate; a NEW payload
+  // hitting an OLD Worker fails loudly (strictObject — the Worker-first
+  // deploy order exists for this). No backfill: observations predating the
+  // field stay null. Member-only tiles (only the member price printed) are a
+  // part-2 representation decision: `price` stays required in v1, so a
+  // producer with no shelf price maps the member price into `price` until
+  // then.
   memberPrice: nullish(pipe(number(), integer(), minValue(0))),
   // Issue #367: the strikethrough/original price when the source shows one —
   // what extraction accuracy is measured against. Additive: old payloads
@@ -149,10 +154,12 @@ export const ingestItemV2Schema = strictObject({
   price: pipe(number(), integer(), minValue(0)),
   // Issue #627 (part 1): the member/app price when the retailer prints one
   // separately from the shelf price `price` — the price a (free-to-join)
-  // member actually pays. Additive-nullish (#294 pattern), Worker-first:
-  // old payloads (no field) still validate; a NEW payload hitting an OLD
-  // Worker fails loudly (strictObject). No backfill — observations predating
-  // the field stay null.
+  // member actually pays, used when lower (never above the shelf/promo
+  // basis). Additive-nullish (#294 pattern), Worker-first: old payloads (no
+  // field) still validate; a NEW payload hitting an OLD Worker fails loudly
+  // (strictObject). No backfill — observations predating the field stay null.
+  // Member-only tiles are a part-2 representation decision: `price` stays
+  // required in v1 (a lone member price maps into `price` until then).
   memberPrice: nullish(pipe(number(), integer(), minValue(0))),
   originalPrice: nullish(pipe(number(), integer(), minValue(0))),
   effectiveUnitPrice: nullish(number()),

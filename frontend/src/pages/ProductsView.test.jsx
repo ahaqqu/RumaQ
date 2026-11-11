@@ -378,6 +378,62 @@ describe('ProductsView', () => {
     expect(container.textContent).not.toContain('prices.unitPrice')
   })
 
+  it('never headlines or labels a member premium above the shelf price (#627)', () => {
+    vi.mocked(usePrices).mockReturnValue({
+      data: {
+        items: [
+          {
+            product_key: PRODUCT_KEY,
+            name: 'Minyak Goreng Bimoli',
+            brand: 'Bimoli',
+            unit: '1 L',
+            source_slug: 'superindo',
+            source_name: 'Superindo',
+            price: 21500,
+            // A member price above the shelf price must not raise the
+            // displayed price or earn the Member badge.
+            member_price: 24900,
+            effective_unit_price: 21500,
+            unit_qty: 1000,
+            unit_qty_unit: 'ml',
+            unit_price: 21500,
+            promo_label: null,
+            low_confidence: false,
+          },
+        ],
+        total: 1,
+        truncated: false,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    vi.mocked(usePriceDetail).mockReturnValue({
+      data: {
+        current: [
+          {
+            source_slug: 'superindo',
+            source_name: 'Superindo',
+            price: 21500,
+            member_price: 24900,
+            effective_unit_price: 21500,
+            unit: '1 L',
+          },
+        ],
+        history: [],
+      },
+      isLoading: false,
+    })
+
+    const { container } = renderProducts()
+    fireEvent.click(productRow(container))
+
+    expect(container.textContent).toContain(formatPrice(21500))
+    expect(container.textContent).not.toContain('prices.memberPrice')
+    expect(container.querySelector('[data-testid="shelf-reference-price"]')).toBeNull()
+    // The shelf-derived per-unit hint is truthful on this (shelf) headline.
+    expect(container.textContent).toContain('prices.unitPrice')
+  })
+
   it('normalizes names, brands, units and promo badges in the row (#633)', () => {
     vi.mocked(usePrices).mockReturnValue({
       data: {

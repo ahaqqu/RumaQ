@@ -10,7 +10,7 @@ import { brandSuffix, prettyName, prettyUnit } from '../lib/productDisplay.js'
 import {
   displayPrice,
   formatPrice,
-  hasMemberPrice,
+  showsMemberPrice,
   promoBadges,
   referencePrice,
 } from '../lib/pricesHelpers.js'
@@ -212,7 +212,7 @@ function BrochureProductsTable({ items, brochureDateLabel }) {
             const expanded = expandedKey === product.product_key
             const badges = promoBadges(product.promo_label, product.promo_type)
             const priceShown = displayPrice(product)
-            const memberPriceShown = hasMemberPrice(product)
+            const memberPriceShown = showsMemberPrice(product)
             const priceReference = referencePrice(product)
             const metaId = `brochure-product-meta-${product.product_key}`
             return (

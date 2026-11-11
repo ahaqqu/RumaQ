@@ -6,7 +6,7 @@
 
 import { SCRAPE_STORE_SLUGS } from '@rumaq/contract'
 
-import { LATEST_OBSERVATION_PREDICATE } from './prices.js'
+import { LATEST_OBSERVATION_PREDICATE, payablePriceSql } from './prices.js'
 
 /**
  * Unreferenced objects younger than this grace period survive the sweep.
@@ -198,7 +198,7 @@ best AS (
   -- one display row per product per brochure: its cheapest offer
   SELECT *, ROW_NUMBER() OVER (
     PARTITION BY brochure_url, product_key
-    ORDER BY COALESCE(member_price, effective_unit_price, price) ASC
+    ORDER BY ${payablePriceSql()} ASC
   ) AS offer_rn
   FROM base
 ),
@@ -301,7 +301,7 @@ const BROCHURE_PRODUCTS_BASE = `WITH base AS (
          s.slug AS source_slug, s.name AS source_name, s.website AS source_website,
          ROW_NUMBER() OVER (
            PARTITION BY p.product_key
-           ORDER BY COALESCE(o.member_price, o.effective_unit_price, o.price) ASC, o.price ASC, o.id ASC
+           ORDER BY ${payablePriceSql('o')} ASC, o.price ASC, o.id ASC
          ) AS offer_rn
   FROM price_observations o
   JOIN price_products p ON p.id = o.product_id

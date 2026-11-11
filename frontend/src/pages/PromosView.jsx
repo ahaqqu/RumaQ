@@ -7,7 +7,12 @@ import { Badge } from '../components/Badge.jsx'
 import { IconSearch, IconWarning } from '../components/icons.jsx'
 import { brandSuffix, prettyName, prettyUnit } from '../lib/productDisplay.js'
 import { cn } from '../lib/cn.js'
-import { displayPrice, formatPrice, hasMemberPrice, referencePrice } from '../lib/pricesHelpers.js'
+import {
+  displayPrice,
+  formatPrice,
+  referencePrice,
+  showsMemberPrice,
+} from '../lib/pricesHelpers.js'
 
 // i18n key per promo group — the API returns groups in the fixed order
 // (discount_pct → … → other last), cards render in that order.
@@ -53,7 +58,7 @@ function PromoCard({ group, sourceNames, expanded, onToggle, onJump }) {
         <div className="px-5 py-3 border-t border-border bg-surface-sunken/40 flex flex-col gap-2">
           {(group.example_products ?? []).map((product) => {
             const shown = displayPrice(product)
-            const member = hasMemberPrice(product)
+            const member = showsMemberPrice(product)
             const reference = referencePrice(product)
             // Per-unit line only when the effective price differs from the
             // package price shown — same vocabulary as the explorer row.

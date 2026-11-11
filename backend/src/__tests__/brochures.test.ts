@@ -7,7 +7,7 @@ import {
   parseBrochureKey,
   sweepUnreferencedBrochures,
 } from '../lib/brochures.js'
-import { LATEST_OBSERVATION_PREDICATE } from '../lib/prices.js'
+import { LATEST_OBSERVATION_PREDICATE, payablePriceSql } from '../lib/prices.js'
 import { createBrochuresStub } from './support/env.js'
 
 type FakeRow = Record<string, unknown>
@@ -396,9 +396,7 @@ describe('GET /api/prices/brochures', () => {
     const examplesCall = prepareCalls.find((call) => call.sql.includes('-- brochures: examples'))!
     expect(examplesCall.sql).toContain('WHERE group_rn <= 5')
     expect(examplesCall.sql).toContain('ORDER BY name COLLATE NOCASE ASC, product_key ASC')
-    expect(examplesCall.sql).toContain(
-      'ORDER BY COALESCE(member_price, effective_unit_price, price) ASC'
-    )
+    expect(examplesCall.sql).toContain(`ORDER BY ${payablePriceSql()} ASC`)
     // The shelf price and the member price both ship: headline + reference.
     expect(examplesCall.sql).toContain('price, member_price, effective_unit_price')
     expect(examplesCall.sql).toContain('PARTITION BY brochure_url, product_key')

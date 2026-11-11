@@ -2650,8 +2650,47 @@ export type GetApiPricesByProductKeyResponses = {
     /**
      * OK
      */
-    200: unknown;
+    200: {
+        product: {
+            product_key: string;
+            name: string;
+            brand: string | null;
+            unit: string | null;
+            category: string | null;
+            first_seen_at: string | null;
+            last_seen_at: string | null;
+        };
+        current: Array<{
+            source_slug: string;
+            source_name: string;
+            observed_date: string;
+            price: number;
+            member_price: number | null;
+            effective_unit_price: number | null;
+            promo_type: string | null;
+            promo_label: string | null;
+            valid_from: string | null;
+            valid_until: string | null;
+            match_method: string | null;
+            match_confidence: number;
+            brochure_url: string | null;
+            low_confidence: boolean;
+        }>;
+        history: Array<{
+            source_slug: string;
+            observed_date: string;
+            price: number;
+            promo_type: string | null;
+            promo_label: string | null;
+            valid_from: string | null;
+            valid_until: string | null;
+            match_method: string | null;
+            match_confidence: number;
+        }>;
+    };
 };
+
+export type GetApiPricesByProductKeyResponse = GetApiPricesByProductKeyResponses[keyof GetApiPricesByProductKeyResponses];
 
 export type GetApiPlansData = {
     body?: never;

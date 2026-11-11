@@ -20,7 +20,7 @@ import {
   displayPrice,
   effectivePrice,
   formatPrice,
-  hasMemberPrice,
+  showsMemberPrice,
   isFreshnessStale,
   normalizeHash,
   promoBadges,
@@ -184,7 +184,7 @@ function PriceDetail({ productKey, isAdmin }) {
         {current.map((offer, index) => {
           const shown = displayPrice(offer)
           const reference = referencePrice(offer)
-          const member = hasMemberPrice(offer)
+          const member = showsMemberPrice(offer)
           const gap = index > 0 && current[0] ? shown - displayPrice(current[0]) : null
           // Per-piece unit price whenever the per-unit value differs from the
           // package price shown (AC 4) — unit comes from the data. v1 (#627):
@@ -442,7 +442,7 @@ export function ProductsView({
                 {products.map((product) => {
                   const cheapest = product.cheapestOffer
                   const shown = cheapest ? displayPrice(cheapest) : undefined
-                  const member = cheapest != null && hasMemberPrice(cheapest)
+                  const member = cheapest != null && showsMemberPrice(cheapest)
                   const reference = cheapest ? referencePrice(cheapest) : null
                   const countdown = countdownState(product.cheapest_valid_until)
                   const badges = cheapest
