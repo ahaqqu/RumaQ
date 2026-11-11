@@ -1,22 +1,28 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useLocation, useNavigate, useSearch } from '@tanstack/react-router'
 import { Chip } from '../components/Chip.jsx'
+import { Panel } from '../components/Panel.jsx'
+import { SkeletonRows } from '../components/ui.jsx'
 import { ProductsView } from './ProductsView.jsx'
 import { PromosView } from './PromosView.jsx'
-import { BrochuresView } from './BrochuresView.jsx'
-import { resolvePriceView } from '../lib/pricesHelpers.js'
+import { useMe } from '../lib/queries/me.js'
+import { normalizeHash, resolvePriceView } from '../lib/pricesHelpers.js'
 
 // Lead copy per catalog view; the Products explorer keeps prices.lead.
 const LEAD_KEY_BY_VIEW = {
   promos: 'prices.promosLead',
-  brochures: 'prices.brochuresLead',
 }
 
-// Products|Promos|Brochures shell for /prices (issue #292 PM §3, #293 PM §2).
+// Products|Promos shell for /prices (issue #292 PM §3, #293 PM §2).
 // The search text and source filter live here (not inside ProductsView) so
-// the promo/brochure views' example jump can clear them — a jump is a fresh
-// browse context that must land inside the unfiltered 200.
+// the promo view's example jump can clear them — a jump is a fresh browse
+// context that must land inside the unfiltered 200.
+//
+// #631: /prices is the end-user explorer for every household user, admins
+// included. The Brochures tab and every admin/QA tool (rename, alias
+// candidates, duplicate names) moved to /admin/catalog; this page never
+// renders them, whatever me.user.isAdmin says.
 export function Prices() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -25,11 +31,45 @@ export function Prices() {
   const [source, setSource] = useState(null)
   const [category, setCategory] = useState(null)
 
-  // ?view=promos|brochures selects a catalog view; a #productKey hash is the
-  // stronger intent and forces the Products view regardless of the param
-  // (PM AC 7 / #293 AC 5) — one shared resolver (lib/pricesHelpers.js).
+  // ?view=promos selects a catalog view; a #productKey hash is the stronger
+  // intent and forces the Products view regardless of the param (PM AC 7 /
+  // #293 AC 5) — one shared resolver (lib/pricesHelpers.js).
   const { view } = useSearch({ strict: false })
   const activeView = resolvePriceView(view, location.hash)
+
+  // #631: the Brochures view moved to the admin catalog. The old
+  // ?view=brochures deep link must not 404: an admin is redirected to the
+  // admin catalog's Brochures tab (a #productKey hash still wins and opens
+  // Products there), everyone else silently lands on Products.
+  const { data: me, isLoading: meLoading } = useMe()
+  const isAdmin = me?.user?.isAdmin === true
+  const legacyBrochures = view === 'brochures'
+  const hash = normalizeHash(location.hash)
+  // #631 review: until the identity resolves we must not guess — rendering
+  // the explorer for the legacy link would fire the price query and flash the
+  // moved view before an admin redirect (or a non-admin fallback) lands.
+  const identityPending = legacyBrochures && meLoading
+
+  useEffect(() => {
+    if (!legacyBrochures || !isAdmin) return
+    navigate({
+      to: '/admin/catalog',
+      search: hash ? {} : { tab: 'brochures' },
+      hash,
+      replace: true,
+    })
+  }, [legacyBrochures, isAdmin, hash, navigate])
+
+  // While the identity loads or the admin redirect is in flight, render a
+  // pending state — never the Products explorer, which used to sit under the
+  // removed Brochures tab.
+  if (identityPending || (legacyBrochures && isAdmin)) {
+    return (
+      <Panel>
+        <SkeletonRows n={3} />
+      </Panel>
+    )
+  }
 
   const selectView = (next) => {
     navigate({ to: '/prices', search: next === 'products' ? {} : { view: next }, hash: '' })
@@ -69,13 +109,6 @@ export function Prices() {
         >
           {t('prices.viewPromos')}
         </Chip>
-        <Chip
-          variant="filter"
-          pressed={activeView === 'brochures'}
-          onClick={() => selectView('brochures')}
-        >
-          {t('prices.viewBrochures')}
-        </Chip>
       </div>
 
       {activeView === 'products' ? (
@@ -87,10 +120,8 @@ export function Prices() {
           category={category}
           setCategory={setCategory}
         />
-      ) : activeView === 'promos' ? (
-        <PromosView onJump={jump} />
       ) : (
-        <BrochuresView onJump={jump} />
+        <PromosView onJump={jump} />
       )}
     </>
   )

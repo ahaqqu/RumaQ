@@ -5,6 +5,7 @@
     "plan": "Shopping Plan",
     "history": "History",
     "prices": "Prices",
+    "catalog": "Catalog",
     "monitor": "Scraper Monitor",
     "settings": "Settings",
     "addFromReceipt": "Add from Receipt",
@@ -382,6 +383,14 @@
     "perUnitEstimate": "{{price}}/{{unit}}",
     "perUnitEstimateNoUnit": "{{price}} per unit",
     "planLeadNoKey": "Set up AI first, then it will create a shopping plan from items running low."
+  },
+  "catalog": {
+    "lead": "Ingestion QA and product identity tools. Browse the brochure pages behind the current prices, then look up, rename, and audit the products they produce.",
+    "tabProducts": "Products & identity",
+    "tabBrochures": "Brochures",
+    "tabsLabel": "Catalog sections",
+    "forbidden": "Admins only",
+    "forbiddenDesc": "The catalog tools are available to administrators."
   },
   "prices": {
     "lead": "Store prices observed from weekly promo brochures. Filter by store, tap a product for its price history.",

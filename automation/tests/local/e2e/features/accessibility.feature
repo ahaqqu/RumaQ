@@ -33,3 +33,7 @@ Feature: Accessibility
   Scenario: Prices promos view has no critical or serious violations
     Given I am logged in as the seeded test user
     Then the "Prices promos" page should have no critical or serious axe violations
+
+  Scenario: Admin catalog page has no critical or serious violations
+    Given I am logged in as the seeded test user
+    Then the "Admin catalog" page should have no critical or serious axe violations

@@ -13,6 +13,7 @@ import {
   buildFooterStats,
   normalizeHash,
   resolvePriceView,
+  resolveCatalogTab,
 } from './pricesHelpers.js'
 
 // Fixed instants: midday local so local-midnight normalization is exercised,
@@ -259,14 +260,29 @@ describe('effectivePrice', () => {
 })
 
 describe('resolvePriceView', () => {
-  it('maps the catalog views, defaults to products, and lets the hash win', () => {
+  it('maps the remaining catalog views, defaults to products, and lets the hash win', () => {
     expect(resolvePriceView(undefined, '')).toBe('products')
     expect(resolvePriceView('promos', '')).toBe('promos')
-    expect(resolvePriceView('brochures', '')).toBe('brochures')
     expect(resolvePriceView('nonsense', '')).toBe('products')
+    // #631: Brochures moved to /admin/catalog — /prices falls back to
+    // Products for it instead of rendering the moved view.
+    expect(resolvePriceView('brochures', '')).toBe('products')
     // A #productKey deep link is the stronger intent (PM AC 7 / #293 AC 5):
     // the hash forces the Products view whatever ?view= says.
     expect(resolvePriceView('brochures', 'gula-pasir')).toBe('products')
     expect(resolvePriceView(undefined, 'gula-pasir')).toBe('products')
+  })
+})
+
+describe('resolveCatalogTab', () => {
+  it('maps the admin catalog tabs, defaults to products, and lets the hash win', () => {
+    expect(resolveCatalogTab(undefined, '')).toBe('products')
+    expect(resolveCatalogTab('brochures', '')).toBe('brochures')
+    expect(resolveCatalogTab('products', '')).toBe('products')
+    expect(resolveCatalogTab('nonsense', '')).toBe('products')
+    // The brochure example jump and the retired /prices?view=brochures#key
+    // deep link both open the Products tab so the hash can expand the row.
+    expect(resolveCatalogTab('brochures', 'gula-pasir')).toBe('products')
+    expect(resolveCatalogTab(undefined, 'gula-pasir')).toBe('products')
   })
 })

@@ -243,6 +243,9 @@ describe('AppShell', () => {
     expect(container.textContent).toContain('Household admin')
     expect(container.textContent).toContain('Household members')
     expect(container.textContent).not.toContain('Scraper Monitor')
+    // #631: the admin catalog is an operator surface too — absent for users.
+    expect(container.textContent).not.toContain('Catalog')
+    expect(container.querySelector('a[href="/admin/catalog"]')).toBeNull()
 
     vi.mocked(useMe).mockReturnValue({
       data: { user: { id: 'u1', email: 'a@b.com', name: 'Alice', isAdmin: true } },
@@ -251,6 +254,9 @@ describe('AppShell', () => {
     const adminView = renderWithProviders(React.createElement(AppShell, null, null))
     expect(adminView.container.textContent).toContain('Household admin')
     expect(adminView.container.textContent).toContain('Scraper Monitor')
+    // The admin catalog sits in the same operator group.
+    expect(adminView.container.textContent).toContain('Catalog')
+    expect(adminView.container.querySelector('a[href="/admin/catalog"]')).toBeTruthy()
   })
 
   it('keeps plugin nav entries when /api/me omits enabledPlugins (legacy payloads)', () => {

@@ -5,6 +5,7 @@
     "plan": "Rencana belanja",
     "history": "Riwayat",
     "prices": "Harga",
+    "catalog": "Katalog",
     "monitor": "Monitor Scraper",
     "settings": "Pengaturan",
     "addFromReceipt": "Tambah dari struk",
@@ -382,6 +383,14 @@
     "perUnitEstimate": "{{price}}/{{unit}}",
     "perUnitEstimateNoUnit": "{{price}} per satuan",
     "planLeadNoKey": "Atur AI dulu, lalu AI menyusun rencana belanja dari stok yang menipis."
+  },
+  "catalog": {
+    "lead": "Alat QA ingesti dan identitas produk. Telusuri halaman brosur di balik harga berjalan, lalu cari, ganti nama, dan audit produk yang dihasilkannya.",
+    "tabProducts": "Produk & identitas",
+    "tabBrochures": "Brosur",
+    "tabsLabel": "Bagian katalog",
+    "forbidden": "Khusus admin",
+    "forbiddenDesc": "Alat katalog hanya tersedia untuk administrator."
   },
   "prices": {
     "lead": "Harga toko hasil pemindaian brosur promo mingguan. Saring per toko, ketuk produk untuk melihat riwayat harganya.",

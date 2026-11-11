@@ -408,6 +408,31 @@ describe('locale files', () => {
       }
     })
   })
+
+  // Admin catalog (#631): the nav entry, page lead, tab labels, and the
+  // unauthorized state exist in both locales with real Indonesian copy.
+  describe('catalog namespace (#631)', () => {
+    it('exists in both locales with the same keys', () => {
+      expect(en.catalog).toBeDefined()
+      expect(id.catalog).toBeDefined()
+      expect(Object.keys(id.catalog).sort()).toEqual(Object.keys(en.catalog).sort())
+      expect(en.nav.catalog).toBe('Catalog')
+      expect(id.nav.catalog).toBe('Katalog')
+    })
+
+    it('has real Indonesian copy, not English copies', () => {
+      for (const [key, value] of Object.entries(en.catalog)) {
+        expect(id.catalog[key], `catalog.${key} is untranslated`).not.toBe(value)
+      }
+    })
+
+    it('pins the tab labels', () => {
+      expect(en.catalog.tabProducts).toBe('Products & identity')
+      expect(id.catalog.tabProducts).toBe('Produk & identitas')
+      expect(en.catalog.tabBrochures).toBe('Brochures')
+      expect(id.catalog.tabBrochures).toBe('Brosur')
+    })
+  })
 })
 
 describe('i18n initialisation', () => {

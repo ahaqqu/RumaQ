@@ -62,7 +62,7 @@ Then(/I should land on the products view with "(.+)" expanded/, async ({ page },
   // The jump/deep link wrote the #productKey hash and the hash-apply effect
   // expanded the product (apply, no click).
   await expect(page).toHaveURL(new RegExp(`#${SUGAR_KEY}`))
-  await expect(page.getByText('Current prices')).toBeVisible()
+  await expect(page.getByText('Current prices', { exact: true })).toBeVisible()
   await expect(page.locator('button').filter({ hasText: name }).first()).toContainText(
     'Price history'
   )

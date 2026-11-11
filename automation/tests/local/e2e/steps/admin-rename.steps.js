@@ -16,7 +16,7 @@ const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
 const INGEST_SECRET = 'test-ingest-secret'
 
 // The shared v2 fixture seeds this product ("Minyak Goreng Bimoli") at two
-// stores; its row is what the explorer rename scenario opens.
+// stores; its row is what the catalog rename scenario opens.
 const EXPLORER_PRODUCT_KEY = OIL_KEY
 
 // The review fixture: one canonical product the scraper reported, plus the
@@ -191,8 +191,9 @@ Given('the review queue holds a flagged pair for a seeded product', async () => 
 When('I open the product detail for {string}', async ({ page }, name) => {
   await productRows(page).filter({ hasText: name }).first().click()
   // The detail only mounts inside the expanded row; its first heading is the
-  // anchor the admin rename action lives under.
-  await expect(page.getByText('Current prices')).toBeVisible()
+  // anchor the admin rename action lives under. Exact: the admin catalog's
+  // lead also contains the words "current prices" (review finding A1).
+  await expect(page.getByText('Current prices', { exact: true })).toBeVisible()
 })
 
 When('I open the canonical rename form', async ({ page }) => {
@@ -233,7 +234,7 @@ When('I rename the seeded product through the admin API to {string}', async ({ p
   renameSubject.result = await res.json()
 })
 
-When('I reload the price explorer', async ({ page }) => {
+When('I reload the catalog', async ({ page }) => {
   await page.reload()
   await expect(page.locator('header').first()).toBeVisible({ timeout: 10_000 })
 })
@@ -285,7 +286,7 @@ Then(
   }
 )
 
-Then('the price explorer shows {string}', async ({ page }, name) => {
+Then('the catalog shows {string}', async ({ page }, name) => {
   // The row title renders /api/prices, so this only passes once the canonical
   // write invalidated and refetched the list — the form's optimistic copy
   // never rewrites a row.
