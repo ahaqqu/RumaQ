@@ -17,7 +17,7 @@
     "@tanstack/react-query-devtools": "^5.107.1",
     "@tanstack/react-query-persist-client": "^5.107.1",
     "@tanstack/react-router": "^1.170.46",
-    "i18next": "^26.7.2",
+    "i18next": "^27.0.1",
     "idb-keyval": "^6.3.0",
     "lucide-react": "^1.70.0",
     "react": "^19.3.1",
