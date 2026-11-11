@@ -120,8 +120,7 @@ sandbox):
 checked-in admin secret. Export `QA_ADMIN_PASSWORD` with that fixture value
 before a live run: the spec still demands the env var and fails fast at the
 run's first check when it is unset, so a "credential pending check-in" stall
-means the env var was missing, not the account (run 2026-11-11-01 confirmed
-test@rumaq.dev authenticates with the family fixture).
+means the env var was missing, not the account.
 
 The registration probe stays in every run as a negative test
 (`qa-<epoch>@<domain>` + strong random password → "Invalid email or
