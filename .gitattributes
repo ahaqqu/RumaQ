@@ -4,3 +4,6 @@ scripts/*.sh text eol=lf mode=755
 scripts/**/*.sh text eol=lf mode=755
 scripts/deploy/*.js text eol=lf mode=755
 scripts/ci/*.mjs text eol=lf mode=755
+
+# Skill scripts run directly.
+.agents/skills/**/*.sh text eol=lf mode=755
