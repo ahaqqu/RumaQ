@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test'
 import type { Env } from '../types.js'
 import { apiApp } from '../apps/api.js'
 import { encryptAiKey } from '../lib/crypto.js'
-import { householdIsoDate } from '../lib/household-day.js'
+import { householdIsoDate, householdDayFrom } from '../lib/household-day.js'
 import type { Capability } from '../lib/ai/types.js'
 import { createDb, type Db } from './support/d1-sqlite.js'
 
@@ -613,6 +613,71 @@ describe('an empty household is not configured on every AI route', () => {
     })
     expect(fetchMock).not.toHaveBeenCalled()
     expect(sqlite.prepare('SELECT * FROM review_ai_verdicts').all()).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Chat grounding: the recent-purchases window (#560). The prompt promises
+// "last 30 days" — the SQL that feeds it must cut the household calendar
+// accordingly, so a seeded purchase inside the window reaches the wire and
+// older / future-dated ones do not.
+
+describe('the chat grounding recent-purchases window (#560)', () => {
+  /** One purchase dated `date` carrying a single item, joined to the household. */
+  function seedPurchase(date: string, ids: { purchase: string; item: string; name: string }): void {
+    sqlite
+      .prepare('INSERT INTO items (id, household_id, name) VALUES (?, ?, ?)')
+      .run(ids.item, HOUSEHOLD, ids.name)
+    sqlite
+      .prepare('INSERT INTO purchases (id, household_id, date) VALUES (?, ?, ?)')
+      .run(ids.purchase, HOUSEHOLD, date)
+    sqlite
+      .prepare('INSERT INTO purchase_items (id, purchase_id, item_id, qty) VALUES (?, ?, ?, 1)')
+      .run(`pi-${ids.purchase}`, ids.purchase, ids.item)
+  }
+
+  it('grounds the prompt with a purchase 5 days back, not one 40 days back or future-dated', async () => {
+    providerMock(() => openAiAnswer('Hello from the assistant'))
+    seedPurchase(householdDayFrom(new Date(), -5), {
+      purchase: 'pur-recent',
+      item: 'i-milk',
+      name: 'Milk',
+    })
+    seedPurchase(householdDayFrom(new Date(), -40), {
+      purchase: 'pur-old',
+      item: 'i-flour',
+      name: 'Flour',
+    })
+    seedPurchase(householdDayFrom(new Date(), 2), {
+      purchase: 'pur-future',
+      item: 'i-eggs',
+      name: 'Eggs',
+    })
+
+    const res = await request('/api/ai/chat', jsonRequest('POST', { message: 'hi' }))
+    expect(res.status).toBe(200)
+
+    // The system prompt is messages[0]: the purchase lines it carries ARE the
+    // grounding the model saw.
+    const messages = calls[0].body.messages as Array<{ role: string; content: string }>
+    const systemPrompt = messages[0].content
+    expect(systemPrompt).toContain('- Milk')
+    expect(systemPrompt).not.toContain('- Flour')
+    expect(systemPrompt).not.toContain('- Eggs')
+  })
+
+  it('shows today-dated purchases: the window is inclusive of the household today', async () => {
+    providerMock(() => openAiAnswer('Hello from the assistant'))
+    seedPurchase(householdDayFrom(new Date(), 0), {
+      purchase: 'pur-today',
+      item: 'i-rice',
+      name: 'Rice',
+    })
+
+    const res = await request('/api/ai/chat', jsonRequest('POST', { message: 'hi' }))
+    expect(res.status).toBe(200)
+    const messages = calls[0].body.messages as Array<{ role: string; content: string }>
+    expect(messages[0].content).toContain('- Rice')
   })
 })
 
