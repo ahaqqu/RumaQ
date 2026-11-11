@@ -191,8 +191,9 @@ Given('the review queue holds a flagged pair for a seeded product', async () => 
 When('I open the product detail for {string}', async ({ page }, name) => {
   await productRows(page).filter({ hasText: name }).first().click()
   // The detail only mounts inside the expanded row; its first heading is the
-  // anchor the admin rename action lives under.
-  await expect(page.getByText('Current prices')).toBeVisible()
+  // anchor the admin rename action lives under. Exact: the admin catalog's
+  // lead also contains the words "current prices" (review finding A1).
+  await expect(page.getByText('Current prices', { exact: true })).toBeVisible()
 })
 
 When('I open the canonical rename form', async ({ page }) => {

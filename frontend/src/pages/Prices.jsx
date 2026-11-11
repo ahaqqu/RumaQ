@@ -41,10 +41,14 @@ export function Prices() {
   // ?view=brochures deep link must not 404: an admin is redirected to the
   // admin catalog's Brochures tab (a #productKey hash still wins and opens
   // Products there), everyone else silently lands on Products.
-  const { data: me } = useMe()
+  const { data: me, isLoading: meLoading } = useMe()
   const isAdmin = me?.user?.isAdmin === true
   const legacyBrochures = view === 'brochures'
   const hash = normalizeHash(location.hash)
+  // #631 review: until the identity resolves we must not guess — rendering
+  // the explorer for the legacy link would fire the price query and flash the
+  // moved view before an admin redirect (or a non-admin fallback) lands.
+  const identityPending = legacyBrochures && meLoading
 
   useEffect(() => {
     if (!legacyBrochures || !isAdmin) return
@@ -56,9 +60,10 @@ export function Prices() {
     })
   }, [legacyBrochures, isAdmin, hash, navigate])
 
-  // While the admin redirect is in flight, render a pending state — never the
-  // Products explorer, which used to sit under the removed Brochures tab.
-  if (legacyBrochures && isAdmin) {
+  // While the identity loads or the admin redirect is in flight, render a
+  // pending state — never the Products explorer, which used to sit under the
+  // removed Brochures tab.
+  if (identityPending || (legacyBrochures && isAdmin)) {
     return (
       <Panel>
         <SkeletonRows n={3} />

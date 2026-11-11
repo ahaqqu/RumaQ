@@ -58,7 +58,7 @@ Then('the expanded detail for {string} should show the cheapest chip', async ({ 
   const row = productRows(page).filter({ hasText: name }).first()
   await expect(row).toContainText('Price history')
   // The detail block sits beside the button, inside the row container.
-  await expect(page.getByText('Current prices')).toBeVisible()
+  await expect(page.getByText('Current prices', { exact: true })).toBeVisible()
   // The deep link survives: the hash is neither cleared nor errored.
   await expect(page).toHaveURL(/prices#gula-pasir--gulaku--1-kg/)
   // The chip is a span; the sort select also carries the "Cheapest" label,

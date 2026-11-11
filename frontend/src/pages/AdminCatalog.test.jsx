@@ -137,13 +137,28 @@ function renderCatalog() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   })
-  return render(
+  const utils = render(
     React.createElement(
       QueryClientProvider,
       { client: queryClient },
       React.createElement(AdminCatalog, null)
     )
   )
+  utils._queryClient = queryClient
+  return utils
+}
+
+// The tab param is mocked, so switching sections in a test means rerendering
+// the same tree (component state — the page-owned filters — must survive).
+function rerenderCatalog(utils) {
+  utils.rerender(
+    React.createElement(
+      QueryClientProvider,
+      { client: utils._queryClient },
+      React.createElement(AdminCatalog, null)
+    )
+  )
+  return utils
 }
 
 function clickable(container, text) {
@@ -300,6 +315,52 @@ describe('AdminCatalog', () => {
     const brochuresView = renderCatalog()
     fireEvent.click(tabByText(brochuresView.container, 'catalog.tabProducts'))
     expect(navigateMock).toHaveBeenLastCalledWith({ to: '/admin/catalog', search: {}, hash: '' })
+  })
+
+  it('clears the lookup filters when a brochure example jumps (#631 review)', () => {
+    vi.mocked(usePriceMeta).mockReturnValue({
+      data: {
+        latestScrapedAt: new Date().toISOString(),
+        categories: ['beras', 'minyak-goreng'],
+      },
+    })
+    const utils = renderCatalog()
+    const { container } = utils
+    // Prime the page-owned filters through the Products tab — the jump must
+    // clear exactly these, not just the view.
+    fireEvent.change(container.querySelector('input[type="search"]'), {
+      target: { value: 'minyak' },
+    })
+    fireEvent.click(clickable(container, 'Lotte Mart'))
+    fireEvent.click(clickable(container, 'minyak-goreng'))
+    expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
+      q: undefined,
+      source: 'lotte-mart',
+      category: 'minyak-goreng',
+      sort: 'cheapest',
+    })
+
+    mockTab = 'brochures'
+    rerenderCatalog(utils)
+    fireEvent.click(container.querySelector('button[aria-expanded]'))
+    fireEvent.click(clickable(container, 'Minyak Goreng Bimoli'))
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: '/admin/catalog',
+      search: {},
+      hash: OIL_KEY,
+      replace: false,
+    })
+
+    // The hash forces the Products tab; the landing context is the
+    // unfiltered list, so the target is guaranteed to be inside the 200.
+    rerenderCatalog(utils)
+    expect(container.querySelector('input[type="search"]').value).toBe('')
+    expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
+      q: undefined,
+      source: null,
+      category: undefined,
+      sort: 'cheapest',
+    })
   })
 
   it('opens and expands a #productKey deep link on the Products tab', () => {

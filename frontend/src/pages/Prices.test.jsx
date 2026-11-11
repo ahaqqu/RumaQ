@@ -136,9 +136,9 @@ function findClickable(container, text) {
 
 describe('Prices', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     mockHash = ''
     mockView = ''
-    navigate.mockClear()
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
     vi.mocked(usePriceSources).mockReturnValue({
@@ -716,6 +716,19 @@ describe('Prices', () => {
         hash: OIL_KEY,
         replace: true,
       })
+    })
+
+    it('waits for the identity before rendering Products while loading', () => {
+      // #631 review: the legacy link must not flash the explorer (and fire
+      // the price query) before we know whether this viewer is the admin who
+      // gets redirected or a shopper who falls back.
+      mockView = 'brochures'
+      vi.mocked(useMe).mockReturnValue({ data: undefined, isLoading: true })
+      const { container } = renderPrices()
+      expect(container.querySelector('input[type="search"]')).toBeNull()
+      expect(container.textContent).not.toContain('prices.lead')
+      expect(usePrices).not.toHaveBeenCalled()
+      expect(navigate).not.toHaveBeenCalled()
     })
 
     it('still lets a #productKey hash win over the retired view param', () => {
