@@ -33,7 +33,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
-    "@babel/parser": "^7.29.11",
+    "@babel/parser": "^8.1.0",
     "@cucumber/cucumber": "^13.3.0",
     "@playwright/test": "^1.65.0",
     "@types/node": "^26.6.6",
