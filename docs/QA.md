@@ -115,6 +115,13 @@ sandbox):
   strictly read-only browsing + negative-only probes; used for the
   no-existence-leak and unauth suites from a NON-admin vantage).
 
+`test@rumaq.dev`'s password is the checked-in family fixture — the same
+`PASSWORD` constant `login.spec.js` uses for alice; there is no separate
+checked-in admin secret. Export `QA_ADMIN_PASSWORD` with that fixture value
+before a live run: the spec still demands the env var and fails fast at the
+run's first check when it is unset, so a "credential pending check-in" stall
+means the env var was missing, not the account.
+
 The registration probe stays in every run as a negative test
 (`qa-<epoch>@<domain>` + strong random password → "Invalid email or
 password", no enumeration leak) — registration is closed; there is NO
@@ -129,6 +136,10 @@ persist markers into the smoke or family household.
   `/tmp/qa-run-<N>/evidence/` — never into the repo.
 - Scratch specs live in `/tmp/qa-run-<N>/`; tracked files are never modified
   by a QA run.
+- A live config needing overrides (viewport, trace, extra projects) mirrors
+  `automation/playwright.live.config.js` under `/tmp/qa-run-<N>/` with the
+  repo's `node_modules` symlinked beside the copy — a scratch config outside
+  the repo cannot resolve dependencies otherwise.
 - Reference evidence by absolute path in the results comment.
 - No secrets, tokens, cookie values, or `.env` contents in evidence or
   comments (cookie _metadata_ such as length/expiry is fine).
