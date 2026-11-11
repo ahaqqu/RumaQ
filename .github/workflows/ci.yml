@@ -30,6 +30,15 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
 
+      # The test scripts print failures only; the full output is in these logs.
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs
+          path: test-results/*.log
+          if-no-files-found: ignore
+
       # ci.sh leaves frontend/dist behind; audit it against the phase-09
       # performance (>= 0.7) and accessibility (>= 0.9) budgets.
       - name: Lighthouse CI (performance + accessibility budgets)
