@@ -199,6 +199,38 @@ describe('locale files', () => {
     })
   })
 
+  // Review queue reason filter + pending split (issue #628). The flattened-key
+  // parity test above proves both locales carry the keys; this pins the copy
+  // and that the Indonesian is a real translation.
+  describe('review reason filter (#628)', () => {
+    it('pins the pending split templates', () => {
+      expect(en.review.pendingByReason).toBe(
+        '— price {{price}} · verifier {{verifier}} · taxonomy {{taxonomy}}'
+      )
+      expect(id.review.pendingByReason).toBe(
+        '— harga {{price}} · verifier {{verifier}} · taksonomi {{taxonomy}}'
+      )
+    })
+
+    it('pins the reason-aware filtered-empty line', () => {
+      // With a reason active, "No pending items" alone would contradict the
+      // whole-queue count above it — the sentence names the reason.
+      expect(en.review.noneFilteredReason).toBe('No {{status}} items flagged “{{reason}}”')
+      expect(id.review.noneFilteredReason).toBe(
+        'Tidak ada item {{status}} yang ditandai “{{reason}}”'
+      )
+    })
+
+    it('pins the reason filter label in both locales', () => {
+      expect(en.review.filterReason).toBe('Flag reason')
+      expect(id.review.filterReason).toBe('Alasan penanda')
+      // The chips reuse the three flag labels the queue already renders.
+      expect(en.review.reasonPriceRatio).toBe('Price ratio')
+      expect(en.review.reasonVerifierUnresolved).toBe('Verifier unresolved')
+      expect(en.review.reasonTaxonomy).toBe('Category needs a human look')
+    })
+  })
+
   // Read-only duplicate-name report (ahaqqu/RumaQ#485). The parity tests below
   // prove the shape; these pin that the panel's copy exists in both locales
   // with real Indonesian and that it keeps saying "read-only".

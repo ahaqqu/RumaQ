@@ -34,7 +34,30 @@ const reviewPair = {
   reason: 'price_ratio',
 }
 
-async function seedReviewPair() {
+// Issue #628: one pair per flag reason, so a scenario can filter the queue by
+// reason and see the exact pending split. Distinct item/entry names keep the
+// filtered-list assertions unambiguous.
+const reasonPairs = [
+  reviewPair,
+  {
+    ...reviewPair,
+    itemProductKey: 'gula-pasir-1kg----1-kg',
+    itemName: 'Gula Pasir Gulaku 1 kg',
+    entryProductKey: 'gula-pasir-1kg--gulaku--1-kg',
+    entryName: 'Gula Pasir 1 kg',
+    reason: 'verifier_unresolved',
+  },
+  {
+    ...reviewPair,
+    itemProductKey: 'sabun-mandi-1pcs----1-pcs',
+    itemName: 'Sabun Mandi 1 pcs',
+    entryProductKey: 'sabun-mandi-1pcs--lifebuoy--1-pcs',
+    entryName: 'Sabun Mandi Lifebuoy',
+    reason: 'taxonomy',
+  },
+]
+
+async function seedReviewPairs(pairs = [reviewPair]) {
   const report = {
     schemaVersion: 1,
     // A fresh run id per scenario keeps the flag timestamps plausible and
@@ -49,11 +72,11 @@ async function seedReviewPair() {
       exact: 0,
       embedding: 0,
       ai: 0,
-      solo: 1,
-      reviewItems: 1,
+      solo: pairs.length,
+      reviewItems: pairs.length,
       embeddingsDegraded: false,
-      reviewItemPairs: [reviewPair],
-      reviewItemsTotal: 1,
+      reviewItemPairs: pairs,
+      reviewItemsTotal: pairs.length,
       reviewItemsTruncated: false,
     },
     publish: null,
@@ -70,7 +93,7 @@ async function seedReviewPair() {
 let reviewDownload = null
 
 Given('the queue holds one flagged pair', async () => {
-  await seedReviewPair()
+  await seedReviewPairs()
 })
 
 // The seed's second user (second@rumaq.dev, no is_admin grant) is born
@@ -105,7 +128,10 @@ Then('the queue shows the flagged pair side by side', async ({ page }) => {
   await expect(page.getByText('Catalog entry (last seen)')).toBeVisible()
   await expect(page.getByText('Beras Ramos 5 kg')).toBeVisible()
   await expect(page.getByText('Beras Ramos 5kg')).toBeVisible()
-  await expect(page.getByText('Price ratio')).toBeVisible()
+  // Scoped to the ROW's flag chip: the reason filter (issue #628) renders the
+  // same label as a chip, so a bare getByText('Price ratio') is a strict-mode
+  // violation. The row chip's full text starts with the flag prefix.
+  await expect(page.getByText('Review flag: Price ratio')).toBeVisible()
 })
 
 When('I approve the flagged pair', async ({ page }) => {
@@ -144,6 +170,44 @@ Then('the pair is pending again', async ({ page }) => {
   await page.getByText('Pending', { exact: true }).click()
   await expect(page.getByRole('button', { name: 'Approve Match' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Reject Match' })).toBeVisible()
+})
+
+// Issue #628: the reason filter. The first assertion guards the text
+// collision A1 describes — the filter chip and the row's flag both carry the
+// reason label, so queue assertions scope to the row's "Review flag:" prefix
+// and filter interactions use the button role.
+Given('the queue holds one pair for each flag reason', async () => {
+  await seedReviewPairs(reasonPairs)
+})
+
+Then('the pending split shows one pair per reason', async ({ page }) => {
+  // The counts line is exact and whole-queue: Pending 3 — price 1 · verifier 1
+  // · taxonomy 1. exact:true pins the whole chip (the inner split span alone
+  // would also match a substring).
+  await expect(
+    page.getByText('Pending 3 — price 1 · verifier 1 · taxonomy 1', { exact: true })
+  ).toBeVisible()
+})
+
+When('I filter the queue by the taxonomy reason', async ({ page }) => {
+  // The reason chips are real toggle buttons; the row's flag chip is a span,
+  // so the role query cannot collide with it.
+  await page.getByRole('button', { name: 'Category needs a human look', exact: true }).click()
+})
+
+Then('only the taxonomy pair is listed', async ({ page }) => {
+  await expect(page.getByText('Sabun Mandi 1 pcs')).toBeVisible()
+  await expect(page.getByText('Sabun Mandi Lifebuoy')).toBeVisible()
+  await expect(page.getByText('Beras Ramos 5 kg')).not.toBeVisible()
+  await expect(page.getByText('Gula Pasir Gulaku 1 kg')).not.toBeVisible()
+})
+
+Then('the pending counts stay whole-queue', async ({ page }) => {
+  // The list is filtered; the counts are not. The same split must still be on
+  // screen next to the pressed taxonomy chip.
+  await expect(
+    page.getByText('Pending 3 — price 1 · verifier 1 · taxonomy 1', { exact: true })
+  ).toBeVisible()
 })
 
 When('I export the decisions', async ({ page }) => {
@@ -256,7 +320,7 @@ async function seedCachedVerdict(page) {
 Given('the queue holds one flagged pair with a cached AI verdict', async ({ page }) => {
   // The scenario logs in first, so the seed can use the session's cookie jar
   // for the admin-only settings and review routes.
-  await seedReviewPair()
+  await seedReviewPairs()
   // Decision is the capability the review assist resolves.
   await configureAi(page, ['decision'])
   await seedCachedVerdict(page)

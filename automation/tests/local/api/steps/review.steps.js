@@ -298,7 +298,14 @@ defineFeature(feature, (test) => {
       ctx.expectStatus(200)
       ctx.expectAuthenticatedCacheHeaders()
       expect(ctx.queue.items).toHaveLength(2)
-      expect(ctx.queue.counts).toEqual({ pending: 2, approved: 0, rejected: 0 })
+      // Issue #628: the pending total carries its exact per-reason split; both
+      // fixture pairs are price_ratio flags.
+      expect(ctx.queue.counts).toEqual({
+        pending: 2,
+        approved: 0,
+        rejected: 0,
+        pendingByReason: { price_ratio: 2, verifier_unresolved: 0, taxonomy: 0 },
+      })
       expect(ctx.queue.filteredTotal).toBe(2)
       for (const item of ctx.queue.items) {
         expect(item.status).toBe('pending')
@@ -337,7 +344,13 @@ defineFeature(feature, (test) => {
 
     and('the counts should show one approved and one pending', async () => {
       await readQueue(ctx)
-      expect(ctx.queue.counts).toEqual({ pending: 1, approved: 1, rejected: 0 })
+      expect(ctx.queue.counts).toEqual({
+        pending: 1,
+        approved: 1,
+        rejected: 0,
+        // Only PENDING rows split by reason; the approved pair is not counted.
+        pendingByReason: { price_ratio: 1, verifier_unresolved: 0, taxonomy: 0 },
+      })
     })
 
     when('I read the review queue again', async () => {
@@ -484,7 +497,14 @@ defineFeature(feature, (test) => {
     then('the pairs should still show one flag each with unchanged counts', () => {
       ctx.expectStatus(200)
       expect(ctx.queue.items).toHaveLength(2)
-      expect(ctx.queue.counts).toEqual({ pending: 2, approved: 0, rejected: 0 })
+      // Issue #628: the pending total carries its exact per-reason split; both
+      // fixture pairs are price_ratio flags.
+      expect(ctx.queue.counts).toEqual({
+        pending: 2,
+        approved: 0,
+        rejected: 0,
+        pendingByReason: { price_ratio: 2, verifier_unresolved: 0, taxonomy: 0 },
+      })
       for (const item of ctx.queue.items) {
         expect(item.flagCount).toBe(1)
       }
@@ -519,7 +539,12 @@ defineFeature(feature, (test) => {
       await readQueue(ctx)
       ctx.expectStatus(200)
       expect(ctx.queue.items).toEqual([])
-      expect(ctx.queue.counts).toEqual({ pending: 0, approved: 0, rejected: 0 })
+      expect(ctx.queue.counts).toEqual({
+        pending: 0,
+        approved: 0,
+        rejected: 0,
+        pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
+      })
     })
   })
 })

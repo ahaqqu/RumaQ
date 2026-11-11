@@ -1552,6 +1552,7 @@ export type GetApiAdminReviewData = {
     path?: never;
     query?: {
         status?: 'pending' | 'approved' | 'rejected' | 'all';
+        reason?: 'price_ratio' | 'verifier_unresolved' | 'taxonomy';
         limit?: number;
         offset?: number;
     };
@@ -1559,6 +1560,10 @@ export type GetApiAdminReviewData = {
 };
 
 export type GetApiAdminReviewErrors = {
+    /**
+     * Invalid query (unknown reason)
+     */
+    400: unknown;
     /**
      * Unauthorized
      */
@@ -1619,6 +1624,11 @@ export type GetApiAdminReviewResponses = {
             pending?: number;
             approved?: number;
             rejected?: number;
+            pendingByReason?: {
+                price_ratio?: number;
+                verifier_unresolved?: number;
+                taxonomy?: number;
+            };
         };
         filteredTotal?: number;
     };

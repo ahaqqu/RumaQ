@@ -3,7 +3,11 @@ import { render, waitFor } from '@testing-library/react'
 import React from 'react'
 import { App } from './App.jsx'
 
-vi.mock('./lib/api', () => ({
+// Spread the real module so shared exports the pages read at module load
+// (e.g. the review reason vocabulary, issue #628) exist; every API call the
+// app makes is overridden below.
+vi.mock('./lib/api', async (importOriginal) => ({
+  ...(await importOriginal()),
   getMe: vi.fn().mockResolvedValue({
     user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: null },
   }),

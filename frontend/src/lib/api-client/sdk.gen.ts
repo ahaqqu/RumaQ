@@ -297,7 +297,7 @@ export const getApiAdminScrapeCommands = <ThrowOnError extends boolean = false>(
 export const getApiAdminScrapeCommandsByIdEvents = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminScrapeCommandsByIdEventsData, ThrowOnError>): RequestResult<GetApiAdminScrapeCommandsByIdEventsResponses, GetApiAdminScrapeCommandsByIdEventsErrors, ThrowOnError> => (options.client ?? client).get<GetApiAdminScrapeCommandsByIdEventsResponses, GetApiAdminScrapeCommandsByIdEventsErrors, ThrowOnError>({ url: '/api/admin/scrape/commands/{id}/events', ...options });
 
 /**
- * Match review queue: flagged candidate pairs with exact per-status counts (admin-only). Offset-paginated, newest flags first.
+ * Match review queue: flagged candidate pairs with exact per-status counts and the pending split by flag reason (admin-only). Offset-paginated, newest flags first. `reason` narrows the page only — counts stay whole-queue.
  */
 export const getApiAdminReview = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminReviewData, ThrowOnError>): RequestResult<GetApiAdminReviewResponses, GetApiAdminReviewErrors, ThrowOnError> => (options?.client ?? client).get<GetApiAdminReviewResponses, GetApiAdminReviewErrors, ThrowOnError>({ url: '/api/admin/review', ...options });
 

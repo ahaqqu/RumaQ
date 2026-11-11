@@ -229,6 +229,10 @@ const scrapeCommandsQuery = object({
 
 const reviewQuery = object({
   status: optional(picklist(['pending', 'approved', 'rejected', 'all'])),
+  // Issue #628: the optional flag-reason filter, combinable with `status`.
+  // Absent = every reason; an unknown value 400s through the valibot picklist
+  // (same closed vocabulary as the item schema's `reason`).
+  reason: optional(picklist(REVIEW_REASONS)),
   limit: optional(
     pipe(string(), transform(Number), number(), integer(), minValue(1), maxValue(200))
   ),
@@ -4516,11 +4520,22 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
   },
 }
 
+// Issue #628: the pending split's keys ARE the flag-reason vocabulary, so they
+// are DERIVED from REVIEW_REASONS instead of hand-listed in the response
+// schema — a reason added there appears in the query param, the item enum and
+// the counts shape together (or not at all).
+const REVIEW_PENDING_BY_REASON_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: Object.fromEntries(
+    REVIEW_REASONS.map((reason) => [reason, { type: 'integer' as const }])
+  ),
+}
+
 apiApp.get(
   '/api/admin/review',
   describeRoute({
     description:
-      'Match review queue: flagged candidate pairs with exact per-status counts (admin-only). Offset-paginated, newest flags first.',
+      'Match review queue: flagged candidate pairs with exact per-status counts and the pending split by flag reason (admin-only). Offset-paginated, newest flags first. `reason` narrows the page only — counts stay whole-queue.',
     security: [{ cookieAuth: [] }],
     parameters: [
       {
@@ -4531,6 +4546,15 @@ apiApp.get(
           type: 'string',
           enum: ['pending', 'approved', 'rejected', 'all'],
           default: 'pending',
+        },
+      },
+      {
+        in: 'query',
+        name: 'reason',
+        required: false,
+        schema: {
+          type: 'string',
+          enum: [...REVIEW_REASONS],
         },
       },
       {
@@ -4556,6 +4580,10 @@ apiApp.get(
                     pending: { type: 'integer' },
                     approved: { type: 'integer' },
                     rejected: { type: 'integer' },
+                    // Issue #628: the exact pending split by flag reason,
+                    // unaffected by the list filter (same rule as the status
+                    // counts). Every reason is always present.
+                    pendingByReason: REVIEW_PENDING_BY_REASON_SCHEMA,
                   },
                 },
                 filteredTotal: { type: 'integer' },
@@ -4564,6 +4592,7 @@ apiApp.get(
           },
         },
       },
+      400: { description: 'Invalid query (unknown reason)' },
       401: { description: 'Unauthorized' },
       403: { description: 'Not an admin' },
     },
@@ -4571,9 +4600,10 @@ apiApp.get(
   requireAdmin,
   sValidator('query', reviewQuery),
   async (c) => {
-    const { status, limit, offset } = c.req.valid('query')
+    const { status, reason, limit, offset } = c.req.valid('query')
     const page = await listReviewItems(c.env.DB, {
       status,
+      reason,
       limit,
       offset,
     })
