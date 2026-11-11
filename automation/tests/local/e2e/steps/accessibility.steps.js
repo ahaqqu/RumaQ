@@ -1,6 +1,6 @@
 import pkg from 'playwright-bdd'
 import { expect } from '@playwright/test'
-import AxeBuilder from '@axe-core/playwright'
+import { assertNoCriticalOrSerious, scanPage } from './axe.js'
 
 const { createBdd } = pkg
 const { Then } = createBdd()
@@ -34,20 +34,10 @@ const READY = {
   'Admin catalog': (page) => page.getByLabel('Search prices'),
 }
 
-const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']
-
-const scan = (page) => new AxeBuilder({ page }).withTags(AXE_TAGS)
-
-function assertNoCriticalOrSerious(violations) {
-  const blocking = violations.filter((v) => ['critical', 'serious'].includes(v.impact))
-  const summary = blocking.map((v) => `${v.id} (${v.impact}): ${v.nodes.length} node(s)`).join('; ')
-  expect(blocking, `axe found blocking violations: ${summary}`).toHaveLength(0)
-}
-
 Then('the login page should have no critical or serious axe violations', async ({ page }) => {
   // "I visit the app" (smoke.steps.js) already navigated to the app root.
   await page.waitForSelector('input#email', { timeout: 15_000 })
-  assertNoCriticalOrSerious((await scan(page).analyze()).violations)
+  assertNoCriticalOrSerious((await scanPage(page).analyze()).violations)
 })
 
 Then(
@@ -62,6 +52,6 @@ Then(
       // Give queries one settle cycle on pages without a stable ready signal.
       await page.waitForLoadState('networkidle')
     }
-    assertNoCriticalOrSerious((await scan(page).analyze()).violations)
+    assertNoCriticalOrSerious((await scanPage(page).analyze()).violations)
   }
 )

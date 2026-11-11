@@ -23,6 +23,18 @@ export const BROCHURE_URL_PREFIX = '/api/brochures/'
 /** Upload size cap (flyer pages are ≪ 1 MB; the cap is abuse protection). */
 export const BROCHURE_MAX_BYTES = 10 * 1024 * 1024
 
+/**
+ * Query-string length cap for the per-brochure product list (issue #630).
+ * The prefix (15), store slug, 8-digit date and 200-char filename cap out
+ * around 225 characters; 300 leaves headroom without accepting unbounded
+ * input. Rejected before any DB read.
+ */
+export const BROCHURE_URL_MAX_LENGTH = 300
+
+/** Page size defaults/bounds for the QA product list (issue #630). */
+export const BROCHURE_PRODUCTS_DEFAULT_LIMIT = 50
+export const BROCHURE_PRODUCTS_MAX_LIMIT = 200
+
 /** Image types the scraper detects (state.ts's GEMINI_IMAGE_TYPES clamp set). */
 export const BROCHURE_CONTENT_TYPES = new Set([
   'image/png',
@@ -232,4 +244,109 @@ ORDER BY brochure_url ASC, group_rn ASC`),
       example_products: examplesByUrl.get(row.brochure_url) ?? [],
     })),
   }
+}
+
+// --- Per-brochure product QA list (issue #630) ---
+
+export type BrochureProduct = {
+  product_key: string
+  name: string
+  brand: string | null
+  unit: string | null
+  category: string | null
+  category_version: string | null
+  price: number
+  effective_unit_price: number | null
+  promo_type: string | null
+  promo_label: string | null
+  valid_from: string | null
+  valid_until: string | null
+  match_method: string | null
+  match_confidence: number
+  source_slug: string
+  source_name: string
+  /** Cheap JOIN column (price_sources.website) — useful provenance for QA. */
+  source_website: string | null
+  observed_date: string
+  brochure_url: string
+  scraped_at: string
+}
+
+export type BrochureProductsPage = {
+  items: BrochureProduct[]
+  total: number
+}
+
+export type BrochureProductsOptions = {
+  brochureUrl: string
+  limit?: number
+  offset?: number
+}
+
+// One row per product on the brochure: its cheapest CURRENT offer. The
+// window partition is product_key alone because the WHERE pins one brochure;
+// price/id tie-breaks keep the pick deterministic. The base CTE is shared by
+// the count and the page so `total` always describes the same set the page
+// pages through.
+const BROCHURE_PRODUCTS_BASE = `WITH base AS (
+  SELECT p.product_key, p.name, p.brand, p.unit, p.category, p.category_version,
+         o.price, o.effective_unit_price, o.promo_type, o.promo_label,
+         o.valid_from, o.valid_until, o.match_method, o.match_confidence,
+         o.observed_date, o.brochure_url, o.scraped_at,
+         s.slug AS source_slug, s.name AS source_name, s.website AS source_website,
+         ROW_NUMBER() OVER (
+           PARTITION BY p.product_key
+           ORDER BY COALESCE(o.effective_unit_price, o.price) ASC, o.price ASC, o.id ASC
+         ) AS offer_rn
+  FROM price_observations o
+  JOIN price_products p ON p.id = o.product_id
+  JOIN price_sources s ON s.id = o.source_id
+  WHERE o.brochure_url = ?
+    AND ${BROCHURE_SERVABLE}
+    AND ${LATEST_OBSERVATION_PREDICATE}
+)`
+
+/**
+ * Every current product ingested from one servable brochure URL (issue
+ * #630): no five-row example cap, one row per product at its cheapest
+ * current offer, stable name/product_key order, and the exact total for the
+ * same base set. Two bound statements in one DB.batch (count + page); callers
+ * validate the URL prefix/length before this point.
+ */
+export async function getBrochureProducts(
+  db: D1Database,
+  { brochureUrl, limit = BROCHURE_PRODUCTS_DEFAULT_LIMIT, offset = 0 }: BrochureProductsOptions
+): Promise<BrochureProductsPage> {
+  const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), BROCHURE_PRODUCTS_MAX_LIMIT)
+  const boundedOffset = Math.min(Math.max(Math.trunc(offset), 0), Number.MAX_SAFE_INTEGER)
+
+  const [pageResult, totalResult] = await db.batch([
+    db
+      .prepare(`${BROCHURE_PRODUCTS_BASE}
+SELECT product_key, name, brand, unit, category, category_version,
+       price, effective_unit_price, promo_type, promo_label,
+       valid_from, valid_until, match_method, match_confidence,
+       source_slug, source_name, source_website,
+       observed_date, brochure_url, scraped_at
+FROM base WHERE offer_rn = 1
+ORDER BY name COLLATE NOCASE ASC, product_key ASC
+LIMIT ? OFFSET ?`)
+      .bind(brochureUrl, boundedLimit, boundedOffset),
+    db
+      .prepare(`${BROCHURE_PRODUCTS_BASE}
+SELECT COUNT(*) AS total FROM base WHERE offer_rn = 1`)
+      .bind(brochureUrl),
+  ])
+
+  const items =
+    (pageResult as { results?: BrochureProduct[] }).results?.map((row) => ({
+      ...row,
+      price: Number(row.price),
+      effective_unit_price:
+        row.effective_unit_price == null ? null : Number(row.effective_unit_price),
+      match_confidence: Number(row.match_confidence),
+    })) ?? []
+  const totalRow = (totalResult as { results?: Array<{ total: number }> }).results?.[0]
+
+  return { items, total: Number(totalRow?.total ?? 0) }
 }

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import {
   getPrices,
   getPricesMeta,
@@ -6,6 +6,7 @@ import {
   getPriceRuns,
   getPromos,
   getBrochures,
+  getBrochureProducts,
 } from '../api'
 
 // Brochure data changes only when a scrape lands (daily) — a 5-minute
@@ -53,6 +54,39 @@ export function usePriceBrochures() {
     queryFn: ({ signal }) => getBrochures(signal),
     staleTime: 1000 * 60 * 5,
     refetchInterval: PRICES_REFETCH_MS,
+  })
+}
+
+// One page of the per-brochure QA list (issue #630): the full product set for
+// a selected brochure, 50 rows at a time. Offset append ("Load more"),
+// identical to the review queue's pagination; the exact total rides every
+// page, so the first page's value stays stable while pages append.
+export const BROCHURE_PRODUCTS_PAGE_SIZE = 50
+
+export function useBrochureProducts(brochureUrl) {
+  return useInfiniteQuery({
+    queryKey: ['prices', 'brochures', 'products', brochureUrl ?? ''],
+    queryFn: ({ signal, pageParam }) =>
+      getBrochureProducts(
+        {
+          url: brochureUrl,
+          limit: BROCHURE_PRODUCTS_PAGE_SIZE,
+          offset: pageParam,
+        },
+        signal
+      ),
+    enabled: Boolean(brochureUrl),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((sum, page) => sum + (page?.items?.length ?? 0), 0)
+      const total = lastPage?.total ?? 0
+      return loaded < total ? loaded : undefined
+    },
+    select: (data) => ({
+      items: (data.pages ?? []).flatMap((page) => page?.items ?? []),
+      total: (data.pages ?? [])[0]?.total ?? 0,
+    }),
+    staleTime: 1000 * 60 * 5,
   })
 }
 

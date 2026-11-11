@@ -30,6 +30,7 @@ vi.mock('../lib/queries/index.js', () => ({
   usePriceMeta: vi.fn(),
   usePriceDetail: vi.fn(),
   usePriceBrochures: vi.fn(),
+  useBrochureProducts: vi.fn(),
 }))
 
 vi.mock('../lib/queries/me.js', () => ({ useMe: vi.fn() }))
@@ -52,6 +53,7 @@ import {
   usePriceMeta,
   usePriceDetail,
   usePriceBrochures,
+  useBrochureProducts,
 } from '../lib/queries/index.js'
 import { useMe } from '../lib/queries/me.js'
 import {
@@ -148,19 +150,6 @@ function renderCatalog() {
   return utils
 }
 
-// The tab param is mocked, so switching sections in a test means rerendering
-// the same tree (component state — the page-owned filters — must survive).
-function rerenderCatalog(utils) {
-  utils.rerender(
-    React.createElement(
-      QueryClientProvider,
-      { client: utils._queryClient },
-      React.createElement(AdminCatalog, null)
-    )
-  )
-  return utils
-}
-
 function clickable(container, text) {
   return [...container.querySelectorAll('button, span')].find((el) => el.textContent.includes(text))
 }
@@ -196,6 +185,35 @@ describe('AdminCatalog', () => {
       data: brochureCatalog,
       isLoading: false,
       isError: false,
+    })
+    vi.mocked(useBrochureProducts).mockReturnValue({
+      data: {
+        items: [
+          {
+            ...brochureCatalog.groups[0].example_products[0],
+            category: 'minyak-goreng',
+            category_version: '2026-01',
+            promo_type: 'discount_pct',
+            promo_label: 'DISKON 10%',
+            valid_from: '2026-10-29',
+            valid_until: '2026-11-04',
+            match_method: 'exact',
+            match_confidence: 1,
+            source_slug: 'lotte-mart',
+            source_name: 'Lotte Mart',
+            source_website: 'https://www.lottemart.co.id',
+            observed_date: '2026-10-29',
+            brochure_url: brochureUrl,
+            scraped_at: '2026-10-29T23:00:05Z',
+          },
+        ],
+        total: 1,
+      },
+      isLoading: false,
+      isError: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
     })
     vi.mocked(useProductIdentity).mockReturnValue({
       data: {
@@ -288,18 +306,17 @@ describe('AdminCatalog', () => {
     expect(usePriceBrochures).toHaveBeenCalled()
   })
 
-  it('brochure example click stays inside the admin area with the product hash', () => {
+  it('selects a brochure and expands a row in place without navigating (#630)', () => {
     mockTab = 'brochures'
     const { container } = renderCatalog()
-    fireEvent.click(container.querySelector('button[aria-expanded]'))
-    fireEvent.click(clickable(container, 'Minyak Goreng Bimoli'))
-    expect(navigateMock).toHaveBeenCalledWith({
-      to: '/admin/catalog',
-      search: {},
-      hash: OIL_KEY,
-      replace: false,
-    })
-    expect(mockHash).toBe(`#${OIL_KEY}`)
+    fireEvent.click(container.querySelector('[data-testid="brochure-card"]'))
+    expect(useBrochureProducts).toHaveBeenCalledWith(brochureUrl)
+
+    fireEvent.click(container.querySelector('[data-testid="brochure-product-row"]'))
+    expect(container.querySelector('[data-testid="brochure-product-metadata"]')).toBeTruthy()
+    // The QA view never leaves the admin area or the Brochures tab.
+    expect(navigateMock).not.toHaveBeenCalled()
+    expect(mockHash).toBe('')
   })
 
   it('switches tabs through the route search param', () => {
@@ -315,52 +332,6 @@ describe('AdminCatalog', () => {
     const brochuresView = renderCatalog()
     fireEvent.click(tabByText(brochuresView.container, 'catalog.tabProducts'))
     expect(navigateMock).toHaveBeenLastCalledWith({ to: '/admin/catalog', search: {}, hash: '' })
-  })
-
-  it('clears the lookup filters when a brochure example jumps (#631 review)', () => {
-    vi.mocked(usePriceMeta).mockReturnValue({
-      data: {
-        latestScrapedAt: new Date().toISOString(),
-        categories: ['beras', 'minyak-goreng'],
-      },
-    })
-    const utils = renderCatalog()
-    const { container } = utils
-    // Prime the page-owned filters through the Products tab — the jump must
-    // clear exactly these, not just the view.
-    fireEvent.change(container.querySelector('input[type="search"]'), {
-      target: { value: 'minyak' },
-    })
-    fireEvent.click(clickable(container, 'Lotte Mart'))
-    fireEvent.click(clickable(container, 'minyak-goreng'))
-    expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
-      q: undefined,
-      source: 'lotte-mart',
-      category: 'minyak-goreng',
-      sort: 'cheapest',
-    })
-
-    mockTab = 'brochures'
-    rerenderCatalog(utils)
-    fireEvent.click(container.querySelector('button[aria-expanded]'))
-    fireEvent.click(clickable(container, 'Minyak Goreng Bimoli'))
-    expect(navigateMock).toHaveBeenCalledWith({
-      to: '/admin/catalog',
-      search: {},
-      hash: OIL_KEY,
-      replace: false,
-    })
-
-    // The hash forces the Products tab; the landing context is the
-    // unfiltered list, so the target is guaranteed to be inside the 200.
-    rerenderCatalog(utils)
-    expect(container.querySelector('input[type="search"]').value).toBe('')
-    expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
-      q: undefined,
-      source: null,
-      category: undefined,
-      sort: 'cheapest',
-    })
   })
 
   it('opens and expands a #productKey deep link on the Products tab', () => {

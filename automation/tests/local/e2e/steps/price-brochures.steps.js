@@ -1,14 +1,16 @@
 import { createBdd } from 'playwright-bdd'
 import { expect } from '@playwright/test'
 import { SUGAR_KEY } from '../../../support/price-fixtures.js'
+import { assertNoCriticalOrSerious, scanPage } from './axe.js'
 
 const { Given, When, Then } = createBdd()
 
 // Fixtures pushed through the internal ingest endpoint like the promos suite;
-// the brochure object rides the internal PUT endpoint (issue #293). The jump
-// assertions reuse price-promos.steps.js's globally-registered steps (they
-// match this suite's feature text verbatim). Since #631 the surface lives on
-// /admin/catalog?tab=brochures — /prices?view=brochures only redirects here.
+// the brochure object rides the internal PUT endpoint (issue #293). Since
+// #631 the surface lives on /admin/catalog?tab=brochures —
+// /prices?view=brochures only redirects here. Since #630 the view is a QA
+// browser: selecting a card opens the full product table and a row expands
+// its metadata in place (no jump into the products explorer).
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
 const INGEST_SECRET = 'test-ingest-secret'
 // A real 1x1 transparent PNG: the browser must be able to DECODE the served
@@ -105,17 +107,13 @@ Then('the catalog tab row should be visible', async ({ page }) => {
   await expect(page.getByText('Brochures', { exact: true })).toBeVisible()
 })
 
-Then('the old brochures view param should be gone from the URL', async ({ page }) => {
-  // The jump navigates to /admin/catalog with search {} and the product hash:
-  // the moved view never comes back on /prices.
-  await expect(page).toHaveURL(/\/admin\/catalog/)
-  await expect(page).not.toHaveURL(/view=brochures/)
-  await expect(page).not.toHaveURL(/tab=brochures/)
-})
-
-Then(/the store sections should appear in order "(.+)"/, async ({ page }, expected) => {
-  const headings = await page.locator('h3').allTextContents()
-  expect(headings).toEqual(expected.split(','))
+Then(/the brochure grid should show cards for "(.+)"/, async ({ page }, expected) => {
+  const names = expected.split(',')
+  const cards = page.locator('[data-testid="brochure-card"]')
+  await expect(cards).toHaveCount(names.length)
+  for (const name of names) {
+    await expect(cards.filter({ hasText: name }).first()).toBeVisible()
+  }
 })
 
 Then('the {string} card should show the uploaded brochure image', async ({ page }, _store) => {
@@ -129,14 +127,57 @@ Then('the {string} card should show the uploaded brochure image', async ({ page 
     .toBe('loaded')
 })
 
-When('I expand the {string} brochure card', async ({ page }, store) => {
-  await page.locator('button[aria-expanded]').filter({ hasText: store }).first().click()
+When('I select the {string} brochure card', async ({ page }, store) => {
+  const card = page.locator('[data-testid="brochure-card"]').filter({ hasText: store }).first()
+  await card.click()
+  await expect(card).toHaveAttribute('aria-expanded', 'true')
 })
 
-When('I click the {string} brochure example', async ({ page }, name) => {
-  // Example rows exist only inside an expanded card, so the name is
-  // unambiguous here.
-  await page.locator('button').filter({ hasText: name }).first().click()
+Then('the brochure review should show {string}', async ({ page }, name) => {
+  const review = page.locator('#brochure-review')
+  await expect(review).toBeVisible()
+  await expect(review.getByText(name, { exact: false }).first()).toBeVisible()
+  await expect(review.locator('[data-testid="brochure-product-row"]')).toHaveCount(1)
+})
+
+When('I expand the {string} product row', async ({ page }, name) => {
+  const row = page.locator('[data-testid="brochure-product-row"]').filter({ hasText: name }).first()
+  await row.click()
+  await expect(page.locator('[data-testid="brochure-product-metadata"]')).toBeVisible()
+})
+
+Then(
+  'the ingestion metadata should show the product key, store, and brochure URL',
+  async ({ page }) => {
+    const panel = page.locator('[data-testid="brochure-product-metadata"]')
+    // The row's full provenance, not a narrow summary: key, store, brochure
+    // object URL, and the QA field labels are all present.
+    await expect(panel).toContainText(SUGAR_KEY)
+    await expect(panel).toContainText('Lotte Mart')
+    await expect(panel).toContainText(`/api/brochures/${e2eBrochureKey()}`)
+    await expect(panel).toContainText('Observed date')
+    await expect(panel).toContainText('Match confidence')
+    await expect(panel).toContainText('Scraped at')
+  }
+)
+
+Then('I should stay on the admin catalog brochures tab', async ({ page }) => {
+  await expect(page).toHaveURL(/\/admin\/catalog\?tab=brochures$/)
+  await expect(page.locator('#brochure-review')).toBeVisible()
+})
+
+Then('the brochure QA view should have no critical or serious axe violations', async ({ page }) => {
+  // Scans the state no static page path reaches: the grid, the full product
+  // table, and the expanded metadata panel (issue #630).
+  await expect(page.locator('[data-testid="brochure-card"]').first()).toBeVisible()
+  await expect(page.locator('#brochure-review')).toBeVisible()
+  await expect(page.locator('[data-testid="brochure-product-metadata"]')).toBeVisible()
+  // The promo cell is what caught the danger-token contrast regression: pin
+  // it so a future fixture change cannot silently scan an empty badge.
+  const promo = page.locator('[data-testid="brochure-product-row"]').getByText('Diskon 5%').first()
+  await expect(promo).toBeVisible()
+  await promo.scrollIntoViewIfNeeded()
+  assertNoCriticalOrSerious((await scanPage(page).analyze()).violations)
 })
 
 Then(
@@ -145,7 +186,7 @@ Then(
     // The object was never uploaded → the img is gone; the same 3:4 frame
     // shows the store name and product count instead of a broken-image glyph.
     const frame = page
-      .locator('button[aria-expanded]')
+      .locator('[data-testid="brochure-card"]')
       .filter({ hasText: store })
       .first()
       .locator('div[style*="3 / 4"]')

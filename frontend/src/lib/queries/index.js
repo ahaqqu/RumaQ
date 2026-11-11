@@ -83,6 +83,8 @@ export {
   usePriceRuns,
   usePricePromos,
   usePriceBrochures,
+  useBrochureProducts,
+  BROCHURE_PRODUCTS_PAGE_SIZE,
 } from './prices.js'
 export {
   useScrapeStores,

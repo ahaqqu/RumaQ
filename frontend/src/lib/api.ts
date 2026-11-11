@@ -8,7 +8,11 @@
  * backend and this client fails `vp check` / CI.
  */
 import { client } from './api-client/client.gen.js'
-import type { GetApiAdminReviewData, PostApiAdminScrapeData } from './api-client/types.gen.js'
+import type {
+  GetApiAdminReviewData,
+  GetApiPricesBrochuresProductsResponse,
+  PostApiAdminScrapeData,
+} from './api-client/types.gen.js'
 import {
   deleteApiAdminReviewByIdDecision,
   deleteApiAiCapabilitiesByCapability,
@@ -51,6 +55,7 @@ import {
   getApiPlugins,
   getApiPrices,
   getApiPricesBrochures,
+  getApiPricesBrochuresProducts,
   getApiPricesByProductKey,
   getApiPricesMeta,
   getApiPricesPromos,
@@ -576,6 +581,22 @@ export function getPromos(signal?: AbortSignal) {
 // authenticated /api/brochures proxy, not the typed client.
 export function getBrochures(signal?: AbortSignal) {
   return unwrap(getApiPricesBrochures({ signal }))
+}
+
+// One row of the per-brochure ingestion-QA list (issue #630). The generated
+// OpenAPI response is the single source for the field set — the metadata
+// panel renders every key without a hand-copied mirror.
+export type BrochureProduct = GetApiPricesBrochuresProductsResponse['items'][number]
+
+// All current products on one brochure (paginated, exact total). The URL is
+// a servable /api/brochures/ path; the backend 400s anything else.
+export function getBrochureProducts(
+  { url, limit, offset }: { url: string; limit?: number; offset?: number },
+  signal?: AbortSignal
+): Promise<GetApiPricesBrochuresProductsResponse> {
+  return unwrap<GetApiPricesBrochuresProductsResponse>(
+    getApiPricesBrochuresProducts({ query: { url, limit, offset }, signal })
+  )
 }
 
 export function getPriceDetail(productKey: string, signal?: AbortSignal): Promise<unknown> {

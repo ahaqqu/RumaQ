@@ -17,9 +17,11 @@ import { IconWarning } from '../components/icons.jsx'
 //   admins) plus the duplicate-names report and alias-candidates action,
 //   reusing ProductsView with adminTools. A #productKey deep link opens this
 //   section and expands/scrolls the product (ProductsView owns that effect).
-// - Brochures — the ingestion-QA view moved verbatim off /prices. Its example
-//   click stays inside the admin area: it jumps to the Products section with
-//   the #productKey hash (never back to /prices).
+// - Brochures — the ingestion-QA browser moved off /prices and reworked for
+//   #630: store/date filters, a multi-column brochure grid, and an in-place
+//   review section with every product and its full ingestion metadata. It no
+//   longer jumps into the Products section (the old #productKey jump landed on
+//   the wrong/ambiguous item).
 //
 // ?tab= selects the section; the retired /prices?view=brochures deep link
 // redirects an admin here on the Brochures tab. The route guard is the same
@@ -36,9 +38,7 @@ export function AdminCatalog() {
   const activeTab = resolveCatalogTab(tab, location.hash)
 
   // Search text and the source/category filters live here (not inside
-  // ProductsView) so the brochure example jump can clear them, exactly like
-  // the /prices shell: a jump is a fresh browse context that must land inside
-  // the unfiltered 200.
+  // ProductsView) so they survive a tab switch.
   const [search, setSearch] = useState('')
   const [source, setSource] = useState(null)
   const [category, setCategory] = useState(null)
@@ -57,17 +57,6 @@ export function AdminCatalog() {
 
   const selectTab = (next) => {
     navigate({ to: '/admin/catalog', search: next === 'products' ? {} : { tab: next }, hash: '' })
-  }
-
-  // Brochure example jump (#631): clear the local filters — guaranteeing the
-  // target is inside the unfiltered 200 — then navigate to the #productKey
-  // deep link on this route. The hash makes resolveCatalogTab pick Products;
-  // ProductsView's hash-apply effect expands and scrolls the row.
-  const jump = (productKey) => {
-    setSearch('')
-    setSource(null)
-    setCategory(null)
-    navigate({ to: '/admin/catalog', search: {}, hash: productKey, replace: false })
   }
 
   return (
@@ -110,7 +99,7 @@ export function AdminCatalog() {
           basePath="/admin/catalog"
         />
       ) : (
-        <BrochuresView onJump={jump} />
+        <BrochuresView />
       )}
     </>
   )

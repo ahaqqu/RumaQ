@@ -117,7 +117,10 @@
   --warn: oklch(0.51 0.13 65);
   --warn-soft: oklch(0.95 0.04 65);
   --warn-border: oklch(0.85 0.07 65);
-  --danger: oklch(0.55 0.16 25);
+  /* --danger is darkened from 0.55 so text-danger on bg-danger-soft
+     (the promo/danger badge) clears WCAG AA: #ba3e3c on #ffe6e3 ≈ 4.62:1.
+     White on --danger also improves (≈5.5:1). */
+  --danger: oklch(0.54 0.16 25);
   --danger-soft: oklch(0.95 0.035 25);
   --danger-border: oklch(0.85 0.07 25);
   --ok: oklch(0.58 0.11 155);

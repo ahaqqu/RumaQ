@@ -16,6 +16,7 @@ import {
   maxValue,
   maxLength,
   minLength,
+  startsWith,
   pipe,
   regex,
   transform,
@@ -50,7 +51,12 @@ import { applyCategoryBackfill, listUncategorizedProducts } from '../lib/taxonom
 import {
   BROCHURE_CONTENT_TYPES,
   BROCHURE_MAX_BYTES,
+  BROCHURE_PRODUCTS_DEFAULT_LIMIT,
+  BROCHURE_PRODUCTS_MAX_LIMIT,
+  BROCHURE_URL_MAX_LENGTH,
+  BROCHURE_URL_PREFIX,
   getBrochureCatalog,
+  getBrochureProducts,
   parseBrochureKey,
   sweepUnreferencedBrochures,
 } from '../lib/brochures.js'
@@ -199,6 +205,37 @@ const pricesQuery = object({
   sort: optional(picklist(['name', 'cheapest', 'savings', 'expiry'])),
 })
 
+// Per-brochure ingestion-QA product list (issue #630). `url` must be a
+// servable brochure path — the prefix check and the length cap reject junk
+// before any DB read; the route still pins the same servability in SQL.
+const brochureProductsQuery = object({
+  url: pipe(string(), startsWith(BROCHURE_URL_PREFIX), maxLength(BROCHURE_URL_MAX_LENGTH)),
+  limit: optional(
+    pipe(
+      string(),
+      transform(Number),
+      number(),
+      integer(),
+      minValue(1),
+      maxValue(BROCHURE_PRODUCTS_MAX_LIMIT)
+    )
+  ),
+  // Upper bound: a syntactically valid integer such as 1e19 passes minValue
+  // but is outside SQLite's int64 range, and D1 throws a datatype mismatch
+  // when it is bound as OFFSET (a 500, not the documented 400). Cap at the
+  // largest exactly-representable JS integer, which is inside int64.
+  offset: optional(
+    pipe(
+      string(),
+      transform(Number),
+      number(),
+      integer(),
+      minValue(0),
+      maxValue(Number.MAX_SAFE_INTEGER)
+    )
+  ),
+})
+
 const plansQuery = object({
   status: optional(picklist(['active', 'archived', 'completed', 'all'])),
 })
@@ -236,7 +273,18 @@ const reviewQuery = object({
   limit: optional(
     pipe(string(), transform(Number), number(), integer(), minValue(1), maxValue(200))
   ),
-  offset: optional(pipe(string(), transform(Number), number(), integer(), minValue(0))),
+  // Same int64 bound as the brochure products route (#630 A1): a valid JS
+  // integer above this would be bound as an out-of-range OFFSET and 500.
+  offset: optional(
+    pipe(
+      string(),
+      transform(Number),
+      number(),
+      integer(),
+      minValue(0),
+      maxValue(Number.MAX_SAFE_INTEGER)
+    )
+  ),
 })
 
 // Admin AI usage analytics (issue #353): ts-exact ranges, 400 on anything else.
@@ -705,6 +753,11 @@ apiApp.use('/api/plans/generate', propsAuthMiddleware)
 apiApp.use('/api/plans/:id/items/:itemId', propsAuthMiddleware)
 apiApp.use('/api/prices', propsAuthMiddleware)
 apiApp.use('/api/prices/:productKey', propsAuthMiddleware)
+// The per-brochure QA list (issue #630) is a two-segment leaf: the
+// `:productKey` line above cannot match it, and apiApp.use('/api/prices')
+// does not cover subpaths (#292) — without this line the route would be
+// unauthenticated.
+apiApp.use('/api/prices/brochures/products', propsAuthMiddleware)
 // Premium gating hooks (ahaqqu/RumaQ#376): one entitlement check per prices
 // route, wired right behind the session guards. Behavior-neutral tonight —
 // the 'free' plan carries every entitlement and user_plans has no writer
@@ -717,6 +770,7 @@ apiApp.use('/api/prices', requirePricesEntitlement('prices.explore'))
 apiApp.use('/api/prices/meta', requirePricesEntitlement('prices.explore'))
 apiApp.use('/api/prices/promos', requirePricesEntitlement('prices.explore'))
 apiApp.use('/api/prices/brochures', requirePricesEntitlement('prices.explore'))
+apiApp.use('/api/prices/brochures/products', requirePricesEntitlement('prices.explore'))
 apiApp.use('/api/admin/price-runs', propsAuthMiddleware)
 apiApp.use('/api/admin/ai/usage', propsAuthMiddleware)
 apiApp.use('/api/admin/scrape', propsAuthMiddleware)
@@ -4563,7 +4617,12 @@ apiApp.get(
         required: false,
         schema: { type: 'integer', minimum: 1, maximum: 200 },
       },
-      { in: 'query', name: 'offset', required: false, schema: { type: 'integer', minimum: 0 } },
+      {
+        in: 'query',
+        name: 'offset',
+        required: false,
+        schema: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      },
     ],
     responses: {
       200: {
@@ -5911,6 +5970,126 @@ apiApp.get(
   async (c) => {
     const catalog = await getBrochureCatalog(c.env.DB)
     const res = c.json(catalog)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+// Per-brochure product list for the admin ingestion-QA view (issue #630):
+// every current observation on one brochure, one row per product (cheapest
+// current offer), paginated with an exact total. Registered before
+// /api/prices/:productKey so the static leaf is never captured as a product
+// key. The catalog keeps its lean ≤5 examples; this is the full view.
+const BROCHURE_PRODUCT_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    product_key: { type: 'string' },
+    name: { type: 'string' },
+    brand: { type: ['string', 'null'] } as any,
+    unit: { type: ['string', 'null'] } as any,
+    category: { type: ['string', 'null'] } as any,
+    category_version: { type: ['string', 'null'] } as any,
+    price: { type: 'number' },
+    effective_unit_price: { type: ['number', 'null'] } as any,
+    promo_type: { type: ['string', 'null'] } as any,
+    promo_label: { type: ['string', 'null'] } as any,
+    valid_from: { type: ['string', 'null'] } as any,
+    valid_until: { type: ['string', 'null'] } as any,
+    match_method: { type: ['string', 'null'] } as any,
+    match_confidence: { type: 'number' },
+    source_slug: { type: 'string' },
+    source_name: { type: 'string' },
+    source_website: { type: ['string', 'null'] } as any,
+    observed_date: { type: 'string' },
+    brochure_url: { type: 'string' },
+    scraped_at: { type: 'string' },
+  },
+  required: [
+    'product_key',
+    'name',
+    'brand',
+    'unit',
+    'category',
+    'category_version',
+    'price',
+    'effective_unit_price',
+    'promo_type',
+    'promo_label',
+    'valid_from',
+    'valid_until',
+    'match_method',
+    'match_confidence',
+    'source_slug',
+    'source_name',
+    'source_website',
+    'observed_date',
+    'brochure_url',
+    'scraped_at',
+  ],
+}
+
+apiApp.get(
+  '/api/prices/brochures/products',
+  describeRoute({
+    description:
+      'All current products ingested from one brochure image (ingestion QA): one row per product at its cheapest current offer, name-ordered, paginated with an exact total.',
+    security: [{ cookieAuth: [] }],
+    parameters: [
+      {
+        in: 'query',
+        name: 'url',
+        required: true,
+        description: 'Servable brochure URL under /api/brochures/.',
+        schema: { type: 'string', maxLength: BROCHURE_URL_MAX_LENGTH },
+      },
+      {
+        in: 'query',
+        name: 'limit',
+        required: false,
+        schema: {
+          type: 'integer',
+          minimum: 1,
+          maximum: BROCHURE_PRODUCTS_MAX_LIMIT,
+          default: BROCHURE_PRODUCTS_DEFAULT_LIMIT,
+        },
+      },
+      {
+        in: 'query',
+        name: 'offset',
+        required: false,
+        schema: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      },
+    ],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                items: { type: 'array', items: BROCHURE_PRODUCT_SCHEMA },
+                total: { type: 'integer' },
+              },
+              required: ['items', 'total'],
+            },
+          },
+        },
+      },
+      400: { description: 'Invalid query (non-servable URL or out-of-range pagination)' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Forbidden' },
+    },
+  }),
+  sValidator('query', brochureProductsQuery),
+  async (c) => {
+    const { url, limit, offset } = c.req.valid('query')
+    const page = await getBrochureProducts(c.env.DB, {
+      brochureUrl: url,
+      limit: limit ?? BROCHURE_PRODUCTS_DEFAULT_LIMIT,
+      offset: offset ?? 0,
+    })
+    const res = c.json(page)
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }
