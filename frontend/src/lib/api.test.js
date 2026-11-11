@@ -26,6 +26,7 @@ import {
   getPurchases,
   getPurchasePatterns,
   getPurchase,
+  getPrices,
   sendChatMessage,
   getPlans,
   getAiProviders,
@@ -466,6 +467,18 @@ describe('api', () => {
         limit: 10,
         cursor: 'c1',
       },
+      signal: undefined,
+    })
+  })
+
+  it('getPrices carries the selected category into the query', async () => {
+    clientMock.get.mockResolvedValueOnce(ok({ items: [], total: 0 }))
+    await getPrices({ q: 'beras', category: 'beras', sort: 'cheapest' })
+    // issue #632: the picker selects a slug, the explorer requests
+    // /api/prices?category=<slug> — the same param the chip group sent.
+    expect(clientMock.get).toHaveBeenCalledWith({
+      url: '/api/prices',
+      query: { q: 'beras', source: undefined, category: 'beras', sort: 'cheapest' },
       signal: undefined,
     })
   })

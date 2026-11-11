@@ -75,7 +75,7 @@ so you waste less food, shop in fewer trips, and spend less.
 ### Pay less (Prices)
 
 - Compare current prices of products across supermarkets.
-- Search products; filter by store; sort by cheapest / biggest saving / name / expiring soon.
+- Search products; filter by store; filter by category with one searchable picker (the sealed taxonomy slugs plus "All categories", keyboard-navigable, hidden until categories exist); sort by cheapest / biggest saving / name / expiring soon.
 - See promos with the deal type (discount %, fixed discount, buy-one-get-one, bundle, …), savings %, and how long the price is still valid.
 - See how fresh the data is (last scrape time).
 - Open each product's per-store price detail: cheapest store highlighted, price gap vs cheapest, and a price-history sparkline.

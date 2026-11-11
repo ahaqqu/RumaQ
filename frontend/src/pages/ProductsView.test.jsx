@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
-import { render, fireEvent } from '@testing-library/react'
+import { render, fireEvent, screen, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { ProductsView } from './ProductsView.jsx'
@@ -73,7 +73,12 @@ const mockItems = [
   },
 ]
 
-function renderProducts({ adminTools = false, basePath = '/prices' } = {}) {
+function renderProducts({
+  adminTools = false,
+  basePath = '/prices',
+  category = null,
+  setCategory = vi.fn(),
+} = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   })
@@ -86,8 +91,8 @@ function renderProducts({ adminTools = false, basePath = '/prices' } = {}) {
         setSearch: vi.fn(),
         source: null,
         setSource: vi.fn(),
-        category: null,
-        setCategory: vi.fn(),
+        category,
+        setCategory,
         adminTools,
         basePath,
       })
@@ -185,6 +190,42 @@ describe('ProductsView', () => {
       refetch: vi.fn(),
     })
     vi.mocked(useBulkApproveExactAliases).mockReturnValue({ mutate: vi.fn(), isPending: false })
+  })
+
+  it('hides the category picker until meta carries categories (#373/#632)', () => {
+    const { container } = renderProducts()
+    expect(container.querySelector('[data-testid="prices-category-filter"]')).toBeNull()
+  })
+
+  it('renders the searchable category picker and reports the chosen slug', () => {
+    vi.mocked(usePriceMeta).mockReturnValue({
+      data: { latestScrapedAt: new Date().toISOString(), categories: ['beras', 'minyak-goreng'] },
+    })
+    const setCategory = vi.fn()
+    const { container } = renderProducts({ setCategory })
+    const filter = container.querySelector('[data-testid="prices-category-filter"]')
+    expect(filter).not.toBeNull()
+
+    fireEvent.click(within(filter).getByRole('button', { name: /prices\.allCategories/ }))
+    fireEvent.change(
+      within(filter).getByRole('combobox', { name: 'prices.categorySearchPlaceholder' }),
+      { target: { value: 'goreng' } }
+    )
+    expect(
+      within(filter)
+        .getAllByRole('option')
+        .map((option) => option.textContent)
+    ).toEqual(['prices.allCategories', 'minyak-goreng'])
+    fireEvent.click(within(filter).getByRole('option', { name: 'minyak-goreng' }))
+
+    // Same contract the chip group had: the shell's setCategory gets the raw
+    // sealed taxonomy slug (null clears), so /prices and /admin/catalog share
+    // one filter behaviour.
+    expect(setCategory).toHaveBeenCalledWith('minyak-goreng')
+    // The picker is controlled: the trigger re-renders from the shell's
+    // `category` prop (Prices/AdminCatalog own that state — see the page
+    // suites), so the spy call is the contract here.
+    expect(screen.queryByRole('listbox')).toBeNull()
   })
 
   it('renders no admin surface by default (the /prices read-only mode)', () => {

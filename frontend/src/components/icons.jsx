@@ -27,6 +27,7 @@ import {
   ArrowLeft as _IconArrowLeft,
   ArrowRight as _IconArrowRight,
   Calendar as _IconCalendarBlank,
+  ChevronDown as _IconChevronDown,
   CloudOff as _IconOffline,
   CloudCheck as _IconCloudCheck,
   ChartNoAxesCombined as _IconPrices,
@@ -77,6 +78,7 @@ export const IconWarning = light(_IconWarning)
 export const IconArrowLeft = light(_IconArrowLeft)
 export const IconArrowRight = light(_IconArrowRight)
 export const IconCalendarBlank = light(_IconCalendarBlank)
+export const IconChevronDown = light(_IconChevronDown)
 export const IconOffline = light(_IconOffline)
 export const IconCloudCheck = light(_IconCloudCheck)
 export const IconPrices = light(_IconPrices)

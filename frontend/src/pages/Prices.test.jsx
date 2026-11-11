@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
-import { render, fireEvent } from '@testing-library/react'
+import { render, fireEvent, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { Prices } from './Prices.jsx'
@@ -267,14 +267,15 @@ describe('Prices', () => {
     })
   })
 
-  // Issue #373: the category filter — hidden until meta carries categories,
-  // exact-slug chips, badge on classified cards.
+  // Issue #373 / #632: the category filter — hidden until meta carries
+  // categories, one searchable picker instead of the chip wall, the same
+  // category slug in the query. The badge on classified cards is unchanged.
   it('hides the category filter until meta carries categories', () => {
     const { container } = renderPrices()
     expect(container.querySelector('[data-testid="prices-category-filter"]')).toBeNull()
   })
 
-  it('renders category chips and reacts to a category filter', () => {
+  it('renders the category picker and applies then clears the category filter', () => {
     vi.mocked(usePriceMeta).mockReturnValue({
       data: {
         latestScrapedAt: isoDaysFromNow(-5 * 60_000),
@@ -285,25 +286,42 @@ describe('Prices', () => {
     const { container } = renderPrices()
     const filter = container.querySelector('[data-testid="prices-category-filter"]')
     expect(filter).not.toBeNull()
-    expect(filter.textContent).toContain('prices.allCategories')
-    expect(filter.textContent).toContain('beras')
+    const trigger = within(filter).getByRole('button', { name: /prices\.allCategories/ })
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
 
-    fireEvent.click(findClickable(container, 'beras'))
+    fireEvent.click(trigger)
+    // Search narrows the sealed taxonomy; the reset row stays pinned.
+    fireEvent.change(
+      within(filter).getByRole('combobox', { name: 'prices.categorySearchPlaceholder' }),
+      { target: { value: 'BER' } }
+    )
+    expect(
+      within(filter)
+        .getAllByRole('option')
+        .map((option) => option.textContent)
+    ).toEqual(['prices.allCategories', 'beras'])
+
+    fireEvent.click(within(filter).getByRole('option', { name: 'beras' }))
+    // Selecting applies the same usePrices `category` param the chips used.
     expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
       q: undefined,
       source: null,
       category: 'beras',
       sort: 'cheapest',
     })
-    // Clicking the active chip again clears it (the hook maps null →
-    // undefined before the query call, like the absent value).
-    fireEvent.click(findClickable(container, 'beras'))
+    expect(within(filter).getByRole('button', { name: /beras/ })).toBeTruthy()
+
+    // "All categories" clears it (the hook maps null → undefined before the
+    // query call, like the absent value).
+    fireEvent.click(within(filter).getByRole('button', { name: /beras/ }))
+    fireEvent.click(within(filter).getByRole('option', { name: 'prices.allCategories' }))
     expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
       q: undefined,
       source: null,
       category: undefined,
       sort: 'cheapest',
     })
+    expect(within(filter).getByRole('button', { name: /prices\.allCategories/ })).toBeTruthy()
   })
 
   it('shows the category badge on classified products', () => {
@@ -599,7 +617,7 @@ describe('Prices', () => {
     })
 
     it('clicking an example jumps: clears filters and deep-links the product', () => {
-      // The category filter (issue #373) must be present to be primed.
+      // The category picker (issue #373/#632) must be present to be primed.
       vi.mocked(usePriceMeta).mockReturnValue({
         data: {
           latestScrapedAt: isoDaysFromNow(-5 * 60_000),
@@ -616,7 +634,9 @@ describe('Prices', () => {
         target: { value: 'minyak' },
       })
       fireEvent.click(findClickable(container, 'Lotte Mart'))
-      fireEvent.click(findClickable(container, 'minyak-goreng'))
+      const categoryFilter = container.querySelector('[data-testid="prices-category-filter"]')
+      fireEvent.click(within(categoryFilter).getByRole('button', { name: /prices\.allCategories/ }))
+      fireEvent.click(within(categoryFilter).getByRole('option', { name: 'minyak-goreng' }))
       expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
         q: undefined,
         source: 'lotte-mart',
