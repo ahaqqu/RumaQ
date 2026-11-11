@@ -317,6 +317,31 @@ describe('BrochuresView — selection and the full product review', () => {
     expect(shelfRow.querySelector('[data-testid="shelf-reference-price"]')).toBeNull()
   })
 
+  it('spaces a raw per-package unit in the QA table unit column (#636)', () => {
+    vi.mocked(useBrochureProducts).mockReturnValue(
+      productPage({
+        items: [
+          {
+            ...fullProduct,
+            product_key: 'indomie--sari--2-pcs',
+            name: 'INDOMIE SARI',
+            brand: 'Indomie',
+            unit: '2pcs',
+          },
+        ],
+        total: 1,
+      })
+    )
+    const { container } = renderView()
+    fireEvent.click(cardFor(container, BROCHURE_A))
+
+    // The review table's Unit column interpolates the prettyUnit result: a
+    // reverted prettyUnit call would print the raw "2pcs".
+    const row = container.querySelector('[data-testid="brochure-product-row"]')
+    expect(text(row)).toContain('2 pcs')
+    expect(text(row)).not.toContain('2pcs')
+  })
+
   it('collapses the review when the selected card is clicked again', () => {
     const { container } = renderView()
     fireEvent.click(cardFor(container, BROCHURE_A))

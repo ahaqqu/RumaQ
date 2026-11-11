@@ -12,6 +12,14 @@ import { formatPrice } from '../lib/pricesHelpers.js'
 // by Prices.test.jsx, which renders this view through the page shell.
 const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }))
 
+// The per-unit template is the one translated string this suite asserts a
+// rendered value for (prettyUnit runs before interpolation); every other key
+// keeps the setup's raw-key behaviour.
+vi.mock('react-i18next', async () => {
+  const { mockReactI18next } = await import('../test-i18n.js')
+  return mockReactI18next()
+})
+
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
   useLocation: () => ({ hash: '' }),
@@ -503,5 +511,58 @@ describe('ProductsView', () => {
     expect(gulaRow.textContent).toContain('1 kg ·')
     expect(gulaRow.textContent).toContain('Diskon 50%')
     expect(gulaRow.textContent).toContain('Promo 1 Hari!')
+  })
+
+  it('spaces a raw per-package unit on the expanded per-unit line (#636)', () => {
+    vi.mocked(usePrices).mockReturnValue({
+      data: {
+        items: [
+          {
+            product_key: 'indomie--sari--2-pcs',
+            name: 'INDOMIE SARI',
+            brand: 'Indomie',
+            unit: '2pcs',
+            source_slug: 'superindo',
+            source_name: 'Superindo',
+            price: 12000,
+            effective_unit_price: 6000,
+            promo_label: 'DISKON 50%',
+            low_confidence: false,
+          },
+        ],
+        total: 1,
+        truncated: false,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    vi.mocked(usePriceDetail).mockReturnValue({
+      data: {
+        current: [
+          {
+            source_slug: 'superindo',
+            source_name: 'Superindo',
+            price: 12000,
+            effective_unit_price: 6000,
+            unit: '2pcs',
+            promo_label: 'DISKON 50%',
+          },
+        ],
+        history: [],
+      },
+      isLoading: false,
+    })
+
+    const { container } = renderProducts()
+    fireEvent.click(
+      [...container.querySelectorAll('button')].find((button) =>
+        button.textContent.includes('Indomie Sari')
+      )
+    )
+
+    // PriceDetail's per-unit line interpolates the prettyUnit result: a
+    // reverted prettyUnit call would print the raw "2pcs".
+    expect(container.textContent).toContain(`${formatPrice(6000)}/2 pcs`)
+    expect(container.textContent).not.toContain('2pcs')
   })
 })
