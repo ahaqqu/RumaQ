@@ -17,6 +17,7 @@ import validReceipt from '../../../contract/fixtures/valid/ingest-receipt.json'
 import badStatus from '../../../contract/fixtures/invalid/index-bad-status.json'
 import missingId from '../../../contract/fixtures/invalid/receipt-missing-product-id.json'
 import missingRawName from '../../../contract/fixtures/invalid/ingest-missing-raw-name.json'
+import sizeInvalid from '../../../contract/fixtures/invalid/ingest-size-invalid.json'
 import undeclaredStore from '../../../contract/fixtures/invalid/ingest-undeclared-store.json'
 import unknownField from '../../../contract/fixtures/invalid/ingest-unknown-field.json'
 import v1 from '../../../contract/fixtures/invalid/ingest-v1.json'
@@ -182,6 +183,14 @@ describe('ingest size contract (#116)', () => {
       unit: 'ml',
       packCount: 1,
     })
+  })
+
+  it('rejects the shared invalid size fixture with a path to the subfield', () => {
+    const result = validateIngestV2(sizeInvalid)
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.issues[0]?.path).toEqual(['items', 0, 'size', 'unit'])
+    }
   })
 
   it('rejects a size without a unit', () => {

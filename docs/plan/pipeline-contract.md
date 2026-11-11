@@ -455,6 +455,7 @@ All internal-route errors use:
 | `invalid/ingest-unknown-field.json`       | Must be rejected                          |
 | `invalid/ingest-missing-raw-name.json`    | Must be rejected                          |
 | `invalid/ingest-undeclared-store.json`    | Must be rejected                          |
+| `invalid/ingest-size-invalid.json`        | Must be rejected (size without `unit`)    |
 | `invalid/index-bad-status.json`           | Must be rejected                          |
 | `invalid/receipt-missing-product-id.json` | Must be rejected                          |
 

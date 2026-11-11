@@ -10,6 +10,7 @@ import fixture from '../../../contract/fixtures/valid/ingest-v2.json'
 import v1Fixture from '../../../contract/fixtures/invalid/ingest-v1.json'
 import unknownFieldFixture from '../../../contract/fixtures/invalid/ingest-unknown-field.json'
 import missingRawNameFixture from '../../../contract/fixtures/invalid/ingest-missing-raw-name.json'
+import sizeInvalidFixture from '../../../contract/fixtures/invalid/ingest-size-invalid.json'
 import undeclaredStoreFixture from '../../../contract/fixtures/invalid/ingest-undeclared-store.json'
 
 // Same contained node:sqlite suppressions as migrations.test.ts / taxonomy.test.ts:
@@ -812,6 +813,7 @@ describe('POST /api/internal/ingest/prices v2 boundary', () => {
     ['v1 payload', v1Fixture],
     ['unknown field', unknownFieldFixture],
     ['missing raw name', missingRawNameFixture],
+    ['invalid size', sizeInvalidFixture],
     ['undeclared store', undeclaredStoreFixture],
   ])('rejects the shared %s fixture with 400 and writes nothing', async (_label, body) => {
     const { sqlite, db } = setup()
@@ -845,9 +847,20 @@ describe('POST /api/internal/ingest/prices v2 boundary', () => {
     const res = await indexRequest(db)
     expect(res.status).toBe(200)
     expect(res.headers.get('cache-control')).toBe('no-store')
-    const index = (await res.json()) as { schemaVersion: number; products: unknown[] }
+    const index = (await res.json()) as {
+      schemaVersion: number
+      products: Array<{ size: unknown }>
+    }
     expect(index.schemaVersion).toBe(2)
     expect(index.products).toHaveLength(1)
+    // Pipeline #116 consumer test: the shared valid fixture carries a `size`,
+    // the route ingests it, and the index returns the tuple it wrote.
+    expect(index.products[0]?.size).toMatchObject({
+      quantity: 2000,
+      unit: 'ml',
+      packCount: 1,
+      totalQuantity: 2000,
+    })
 
     const unauthorized = await apiApp.request('/api/internal/canonical-index', {}, env(db))
     expect(unauthorized.status).toBe(401)
