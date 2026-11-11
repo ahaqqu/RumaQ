@@ -5,6 +5,7 @@ import { usePrices, usePriceMeta, usePriceSources, usePriceDetail } from '../lib
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
+import { CategoryPicker } from '../components/CategoryPicker.jsx'
 import { Badge } from '../components/Badge.jsx'
 import { Button } from '../components/Button.jsx'
 import { ProductRenameForm } from '../components/ProductRenameForm.jsx'
@@ -233,13 +234,13 @@ function PriceDetail({ productKey, isAdmin }) {
   )
 }
 
-// The Products explorer: search, source chips, category chips (issue #373),
-// sort, per-product cards with #productKey deep links. Extracted verbatim
-// from Prices.jsx when the page became a Products|Promos shell (issue #292)
-// — search text and the selected source live in the shell so the promo
-// view's example jump can clear them (the category filter rides along for
-// the same reason: a jump is a fresh browse context that must land inside
-// the unfiltered 200).
+// The Products explorer: search, source chips, the searchable category picker
+// (issues #373/#632), sort, per-product cards with #productKey deep links.
+// Extracted verbatim from Prices.jsx when the page became a Products|Promos
+// shell (issue #292) — search text and the selected source live in the shell
+// so the promo view's example jump can clear them (the category filter rides
+// along for the same reason: a jump is a fresh browse context that must land
+// inside the unfiltered 200).
 //
 // #631: the same view serves /prices (read-only) and /admin/catalog (admin
 // tools) instead of forking it. `adminTools` is the opt-in that renders the
@@ -372,29 +373,15 @@ export function ProductsView({
         </div>
       )}
 
-      {/* Issue #373: the category filter — same chip pattern as the source
-      bar, fed by meta.categories (the sealed taxonomy slugs, shown as-is;
-      only the chrome is translated). Hidden until a category exists. */}
+      {/* Issue #373 / #632: the category filter — a single searchable picker
+      instead of a wall of ~49 taxonomy chips. Fed by meta.categories (the
+      sealed v0.4 taxonomy slugs, shown as-is; only the chrome is translated)
+      and hidden until a category exists. Selecting reports the same slug (or
+      null for "All categories") the chip group used, so the usePrices
+      `category` param is unchanged; the store chips above stay untouched. */}
       {categories.length > 0 && (
-        <div
-          className="flex flex-wrap gap-2 mb-5"
-          role="group"
-          aria-label={t('prices.categoryFilterLabel')}
-          data-testid="prices-category-filter"
-        >
-          <Chip variant="filter" pressed={!category} onClick={() => setCategory(null)}>
-            {t('prices.allCategories')}
-          </Chip>
-          {categories.map((slug) => (
-            <Chip
-              key={slug}
-              variant="filter"
-              pressed={category === slug}
-              onClick={() => setCategory(category === slug ? null : slug)}
-            >
-              {slug}
-            </Chip>
-          ))}
+        <div className="mb-5" data-testid="prices-category-filter">
+          <CategoryPicker categories={categories} value={category} onChange={setCategory} />
         </div>
       )}
 

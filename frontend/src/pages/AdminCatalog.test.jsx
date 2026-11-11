@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
-import { render, fireEvent } from '@testing-library/react'
+import { render, fireEvent, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { AdminCatalog } from './AdminCatalog.jsx'
@@ -280,6 +280,26 @@ describe('AdminCatalog', () => {
     expect(container.querySelector('[data-testid="alias-candidates-panel"]')).not.toBeNull()
     // The Brochures read stays unmounted on this tab.
     expect(usePriceBrochures).not.toHaveBeenCalled()
+  })
+
+  it('filters the catalog through the shared category picker (#632)', () => {
+    vi.mocked(usePriceMeta).mockReturnValue({
+      data: { latestScrapedAt: new Date().toISOString(), categories: ['beras', 'minyak-goreng'] },
+    })
+    const { container } = renderCatalog()
+    // The admin catalog hosts the same ProductsView, so it renders the same
+    // picker with no behavioural fork.
+    const filter = container.querySelector('[data-testid="prices-category-filter"]')
+    expect(filter).not.toBeNull()
+    fireEvent.click(within(filter).getByRole('button', { name: /prices\.allCategories/ }))
+    fireEvent.click(within(filter).getByRole('option', { name: 'minyak-goreng' }))
+
+    expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
+      q: undefined,
+      source: null,
+      category: 'minyak-goreng',
+      sort: 'cheapest',
+    })
   })
 
   it('offers the rename action inside the expanded admin product detail', () => {
