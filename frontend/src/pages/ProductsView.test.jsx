@@ -3,6 +3,7 @@ import { render, fireEvent, screen, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { ProductsView } from './ProductsView.jsx'
+import { formatPrice } from '../lib/pricesHelpers.js'
 
 // The product explorer is shared by /prices (read-only) and /admin/catalog
 // (admin tools, issue #631): the admin rename surface (#423) and the
@@ -306,6 +307,75 @@ describe('ProductsView', () => {
     })
     fireEvent.click(productRow(admin.container))
     expect(navigateMock).toHaveBeenLastCalledWith({ to: '/admin/catalog', hash: '', replace: true })
+  })
+
+  it('leaves shelf-only rows unchanged — no member label or reference (#627)', () => {
+    const { container } = renderProducts()
+    expect(container.textContent).not.toContain('prices.memberPrice')
+    expect(container.querySelector('[data-testid="shelf-reference-price"]')).toBeNull()
+  })
+
+  it('headlines the member price with a Member label and the shelf reference (#627)', () => {
+    vi.mocked(usePrices).mockReturnValue({
+      data: {
+        items: [
+          {
+            product_key: PRODUCT_KEY,
+            name: 'Minyak Goreng Bimoli',
+            brand: 'Bimoli',
+            unit: '1 L',
+            source_slug: 'superindo',
+            source_name: 'Superindo',
+            price: 21500,
+            member_price: 19900,
+            effective_unit_price: 21500,
+            unit_qty: 1000,
+            unit_qty_unit: 'ml',
+            // Shelf-derived per-unit hint — must not ride beside the member
+            // headline (v1 limitation documented in the view).
+            unit_price: 21500,
+            promo_label: null,
+            low_confidence: false,
+          },
+        ],
+        total: 1,
+        truncated: false,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    vi.mocked(usePriceDetail).mockReturnValue({
+      data: {
+        current: [
+          {
+            source_slug: 'superindo',
+            source_name: 'Superindo',
+            price: 21500,
+            member_price: 19900,
+            effective_unit_price: 21500,
+            unit: '1 L',
+          },
+        ],
+        history: [],
+      },
+      isLoading: false,
+    })
+
+    const { container } = renderProducts()
+    fireEvent.click(productRow(container))
+
+    expect(container.textContent).toContain(formatPrice(19900))
+    expect(container.textContent).toContain('prices.memberPrice')
+    // The shelf price is the reference, struck because the member price is
+    // lower. The row and its expanded detail each render it.
+    const references = [...container.querySelectorAll('[data-testid="shelf-reference-price"]')]
+    expect(references.length).toBeGreaterThanOrEqual(2)
+    for (const reference of references) {
+      expect(reference.textContent).toBe(formatPrice(21500))
+      expect(reference.className).toContain('line-through')
+    }
+    // The shelf-derived per-unit hint is suppressed on a member row.
+    expect(container.textContent).not.toContain('prices.unitPrice')
   })
 
   it('normalizes names, brands, units and promo badges in the row (#633)', () => {

@@ -409,6 +409,20 @@ describe('locale files', () => {
     })
   })
 
+  // Member price (#627): the headline label and the shelf-reference label
+  // exist in both locales with real Indonesian copy, so a non-member is never
+  // shown the member number unlabelled.
+  describe('member price (#627)', () => {
+    it('pins the member and shelf reference labels in both locales', () => {
+      expect(en.prices.memberPrice).toBe('Member price')
+      expect(id.prices.memberPrice).toBe('Harga member')
+      expect(en.prices.shelfPrice).toBe('Shelf price')
+      expect(id.prices.shelfPrice).toBe('Harga rak')
+      expect(en.catalog.metaMemberPrice).toBe('Member price')
+      expect(id.catalog.metaMemberPrice).toBe('Harga member')
+    })
+  })
+
   // Admin catalog (#631): the nav entry, page lead, tab labels, and the
   // unauthorized state exist in both locales with real Indonesian copy.
   describe('catalog namespace (#631)', () => {

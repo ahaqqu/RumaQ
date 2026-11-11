@@ -3,6 +3,7 @@ import { render, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { BrochuresView } from './BrochuresView.jsx'
+import { formatPrice } from '../lib/pricesHelpers.js'
 
 // Render the REAL English copy (the AdminPrices.i18n.test.jsx idiom) so the
 // filter summary, count labels, and metadata labels are asserted as users see
@@ -76,6 +77,9 @@ const fullProduct = {
   category: 'beras',
   category_version: '2026-01',
   price: 72000,
+  // Issue #627: the member price is the headline; the shelf price above stays
+  // the reference.
+  member_price: 69000,
   effective_unit_price: 14400,
   promo_type: 'discount_pct',
   promo_label: 'DISKON 20%',
@@ -277,6 +281,12 @@ describe('BrochuresView — selection and the full product review', () => {
     expect(text(container)).toContain('Beras Pandan Wangi 5 kg')
     expect(text(container)).toContain('Rp 72.000')
     expect(text(container)).toContain('Rp 14.400')
+    // Member headline + label, shelf price as the struck reference.
+    expect(text(container)).toContain('Member price')
+    expect(text(container)).toContain('Rp 69.000')
+    const shelfReference = container.querySelector('[data-testid="shelf-reference-price"]')
+    expect(shelfReference.textContent).toBe(formatPrice(72000))
+    expect(shelfReference.className).toContain('line-through')
     expect(text(container)).toContain('Diskon 20%')
     expect(text(container)).toContain('beras')
     expect(text(container)).toContain('embedding · 92%')
@@ -293,6 +303,18 @@ describe('BrochuresView — selection and the full product review', () => {
     expect(cardFor(container, BROCHURE_A).getAttribute('aria-expanded')).toBe('true')
     expect(cardFor(container, BROCHURE_B).getAttribute('aria-expanded')).toBe('false')
     expect(text(container)).toContain('Showing 7 of 120')
+  })
+
+  it('leaves shelf-only rows unchanged (#627)', () => {
+    const { container } = renderView()
+    fireEvent.click(cardFor(container, BROCHURE_A))
+
+    const shelfRow = [...container.querySelectorAll('[data-testid="brochure-product-row"]')].find(
+      (row) => row.textContent.includes('Produk 0')
+    )
+    expect(shelfRow).toBeTruthy()
+    expect(shelfRow.textContent).not.toContain('Member price')
+    expect(shelfRow.querySelector('[data-testid="shelf-reference-price"]')).toBeNull()
   })
 
   it('collapses the review when the selected card is clicked again', () => {
@@ -367,6 +389,8 @@ describe('BrochuresView — row metadata panel', () => {
       '5 kg',
       'Category version',
       '2026-01',
+      'Member price',
+      'Rp 69.000',
       'Promo type',
       'discount_pct',
       'Promo label',

@@ -12,23 +12,47 @@ export const SAVE_PCT_THRESHOLD = 5
 // the monitor page's "over a day old" convention (PM §3.5).
 export const FRESH_WARN_MS = 26 * 60 * 60 * 1000
 
+// Issue #627: when the retailer prints a member/app price beside the shelf
+// price, the member price is the final payable price (Superindo/Lotte
+// membership is free, so most buyers are members). The shelf `price` stays
+// the visible reference. These helpers mirror the backend's comparison basis
+// exactly: COALESCE(member_price, effective_unit_price, price).
+export function hasMemberPrice(offer) {
+  return offer?.member_price != null
+}
+
 export function effectivePrice(offer) {
-  return offer?.effective_unit_price ?? offer?.price
+  return offer?.member_price ?? offer?.effective_unit_price ?? offer?.price
 }
 
 export function hasPromoEvidence(offer) {
   return offer?.promo_type != null || offer?.promo_label != null
 }
 
-// Show the promo-adjusted price only with real promo evidence AND an actual
-// cut: ingest fixtures carry `price == effective_unit_price` alongside a
-// label, and a bare `effective < price` check would strike through honest
-// prices (PM §2). No evidence → the tag price is the display price.
+// Show the member price whenever the source printed one; otherwise the
+// promo-adjusted price only with real promo evidence AND an actual cut: ingest
+// fixtures carry `price == effective_unit_price` alongside a label, and a bare
+// `effective < price` check would strike through honest prices (PM §2). No
+// evidence → the tag price is the display price.
 export function displayPrice(offer) {
+  if (hasMemberPrice(offer)) return offer.member_price
   if (hasPromoEvidence(offer) && effectivePrice(offer) < offer?.price) {
     return effectivePrice(offer)
   }
   return offer?.price
+}
+
+// The reference price beside the headline: the shelf price when a member
+// price headlines, the struck shelf price when a promo price headlines, and
+// null when the headline IS the shelf price. `struck` is only true when the
+// headline is lower, so a member premium is never rendered as a discount.
+export function referencePrice(offer) {
+  const shown = displayPrice(offer)
+  if (offer?.price == null || shown == null || shown === offer.price) return null
+  return {
+    price: offer.price,
+    struck: hasMemberPrice(offer) ? offer.member_price < offer.price : true,
+  }
 }
 
 // Brochure footnote marker, not a promo (haqita filterPromos).

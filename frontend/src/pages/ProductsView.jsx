@@ -20,9 +20,11 @@ import {
   displayPrice,
   effectivePrice,
   formatPrice,
+  hasMemberPrice,
   isFreshnessStale,
   normalizeHash,
   promoBadges,
+  referencePrice,
   relativeAge,
   savePctVisible,
 } from '../lib/pricesHelpers.js'
@@ -145,8 +147,9 @@ function PriceDetail({ productKey, isAdmin }) {
     )
   }
 
-  // current[] is server-ordered by COALESCE(effective_unit_price, price) —
-  // first row is the payable-price cheapest (arch §3.1).
+  // current[] is server-ordered by COALESCE(member_price,
+  // effective_unit_price, price) — first row is the payable-price cheapest
+  // (arch §3.1, #627).
   const current = data?.current ?? []
   const history = data?.history ?? []
 
@@ -180,12 +183,16 @@ function PriceDetail({ productKey, isAdmin }) {
       <div className="flex flex-col gap-2">
         {current.map((offer, index) => {
           const shown = displayPrice(offer)
-          const struck = shown !== offer.price
+          const reference = referencePrice(offer)
+          const member = hasMemberPrice(offer)
           const gap = index > 0 && current[0] ? shown - displayPrice(current[0]) : null
           // Per-piece unit price whenever the per-unit value differs from the
-          // package price shown (AC 4) — unit comes from the data.
+          // package price shown (AC 4) — unit comes from the data. v1 (#627):
+          // effective_unit_price is still shelf/promo-derived, so it is only
+          // truthful on a non-member row; a member row omits it rather than
+          // mislabel a shelf-derived number as the member price.
           const perUnit =
-            offer.unit && effectivePrice(offer) !== offer.price
+            !member && offer.unit && effectivePrice(offer) !== offer.price
               ? t('prices.perUnit', {
                   price: formatPrice(effectivePrice(offer)),
                   unit: prettyUnit(offer.unit),
@@ -216,11 +223,19 @@ function PriceDetail({ productKey, isAdmin }) {
                       +{formatPrice(gap)}
                     </span>
                   )}
-                  {struck && (
-                    <span className="text-xs text-text-muted line-through tabular-nums">
-                      {formatPrice(offer.price)}
+                  {reference && (
+                    <span
+                      data-testid="shelf-reference-price"
+                      title={member ? t('prices.shelfPrice') : undefined}
+                      className={cn(
+                        'text-xs text-text-muted tabular-nums',
+                        reference.struck && 'line-through'
+                      )}
+                    >
+                      {formatPrice(reference.price)}
                     </span>
                   )}
+                  {member && <Badge tone="ok">{t('prices.memberPrice')}</Badge>}
                   <span className="tabular-nums font-semibold">{formatPrice(shown)}</span>
                 </span>
                 <Sparkline history={history} sourceSlug={offer.source_slug} />
@@ -427,16 +442,20 @@ export function ProductsView({
                 {products.map((product) => {
                   const cheapest = product.cheapestOffer
                   const shown = cheapest ? displayPrice(cheapest) : undefined
-                  const struck = cheapest != null && shown !== cheapest.price
+                  const member = cheapest != null && hasMemberPrice(cheapest)
+                  const reference = cheapest ? referencePrice(cheapest) : null
                   const countdown = countdownState(product.cheapest_valid_until)
                   const badges = cheapest
                     ? promoBadges(cheapest.promo_label, cheapest.promo_type)
                     : []
                   // Canonical per-unit hint (issue #368 phase A): the
                   // cheapest offer's listed price per kg / liter / piece,
-                  // when the scraper could normalize the observation.
+                  // when the scraper could normalize the observation. v1
+                  // (#627): unit_price is still computed from the shelf
+                  // price, so a member row omits the hint instead of showing
+                  // a shelf-derived number beside the member headline.
                   const perUnitHint =
-                    cheapest?.unit_price != null && cheapest?.unit_qty_unit
+                    !member && cheapest?.unit_price != null && cheapest?.unit_qty_unit
                       ? t(`prices.unitPrice.${cheapest.unit_qty_unit}`, {
                           price: formatPrice(cheapest.unit_price),
                         })
@@ -484,14 +503,26 @@ export function ProductsView({
                           )}
                         </div>
                         <div className="text-right">
-                          {struck && (
-                            <div className="text-xs text-text-muted line-through tabular-nums">
-                              {formatPrice(cheapest.price)}
+                          {reference && (
+                            <div
+                              data-testid="shelf-reference-price"
+                              title={member ? t('prices.shelfPrice') : undefined}
+                              className={cn(
+                                'text-xs text-text-muted tabular-nums',
+                                reference.struck && 'line-through'
+                              )}
+                            >
+                              {formatPrice(reference.price)}
                             </div>
                           )}
                           <div className="text-sm font-semibold tabular-nums">
                             {formatPrice(shown)}
                           </div>
+                          {member && (
+                            <div className="mt-0.5">
+                              <Badge tone="ok">{t('prices.memberPrice')}</Badge>
+                            </div>
+                          )}
                           {savePctVisible(product.savings_pct) && (
                             <div className="mt-0.5">
                               <Badge tone="ok">
