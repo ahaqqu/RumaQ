@@ -112,13 +112,19 @@ export type GroundedObservation = {
 
 // Latest observation per source for one product, cheapest wins — the
 // observation shown next to the estimate should be the best current deal.
-// Cheapest is judged on the effective price (COALESCE(effective_unit_price,
-// price)) — the same basis as the price explorer — so plan grounding and the
-// explorer's cheapest highlight always name the same store; s.slug breaks
-// ties deterministically. The returned price is the effective (payable) price,
+// Cheapest is judged on the shelf/promo effective price
+// (COALESCE(effective_unit_price, price)); s.slug breaks ties
+// deterministically. The returned price is the effective (payable) price,
 // surfaced as the observation (price_grounded) next to the untouched estimate
 // (#518 Q5) — a promo's cheaper pack price becomes visible without ever
 // becoming the plan's number.
+//
+// v1 of #627 deliberately leaves this on the shelf/promo basis: the explorer
+// now compares on COALESCE(member_price, effective_unit_price, price), so on a
+// member-priced row the two surfaces can name different stores. A plan price
+// labelled as member-only needs its own UI label (the plan surface has none
+// yet), so grounding follows in a later part rather than silently showing a
+// member price to a non-member.
 async function cheapestCurrentObservation(
   db: D1Database,
   productId: string
