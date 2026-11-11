@@ -4,6 +4,7 @@ import { usePriceBrochures } from '../lib/queries/index.js'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel } from '../components/Panel.jsx'
 import { IconSearch, IconWarning } from '../components/icons.jsx'
+import { brandSuffix, prettyName, prettyUnit } from '../lib/productDisplay.js'
 import { formatPrice } from '../lib/pricesHelpers.js'
 
 // The API returns groups store-name-asc, date-desc, url-asc — adjacent runs
@@ -81,7 +82,7 @@ function BrochureCard({ group, expanded, onToggle, onJump }) {
               product.effective_unit_price !== product.price
                 ? t('prices.perUnit', {
                     price: formatPrice(product.effective_unit_price),
-                    unit: product.unit,
+                    unit: prettyUnit(product.unit),
                   })
                 : null
             return (
@@ -91,8 +92,8 @@ function BrochureCard({ group, expanded, onToggle, onJump }) {
                 onClick={() => onJump(product.product_key)}
               >
                 <span className="min-w-0 text-sm font-medium truncate">
-                  {product.name}
-                  {product.brand ? ` · ${product.brand}` : ''}
+                  {prettyName(product.name)}
+                  {brandSuffix(product.name, product.brand)}
                 </span>
                 <span className="flex flex-col items-end shrink-0">
                   <span className="text-sm font-semibold tabular-nums">

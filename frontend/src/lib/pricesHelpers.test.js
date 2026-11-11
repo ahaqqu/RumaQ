@@ -64,10 +64,46 @@ describe('promo evidence and badges', () => {
   it('filters brochure footnote lines starting with *Harga', () => {
     expect(isFootnoteLabel('*Harga spesial minimarket')).toBe(true)
     expect(promoBadges('*Harga untuk kemasan khusus', null)).toEqual([])
+    // A footnote segment is dropped without suppressing the real offers.
+    expect(promoBadges('DISKON 20%; *Harga khusus; GRATIS 1', null)).toEqual([
+      { text: 'Diskon 20%', tone: 'danger' },
+      { text: 'Gratis 1', tone: 'ok' },
+    ])
+  })
+
+  it('splits semicolon labels into one badge per segment with its own tone', () => {
+    expect(promoBadges('DISKON 50%;PROMO 1 HARI!', null)).toEqual([
+      { text: 'Diskon 50%', tone: 'danger' },
+      { text: 'Promo 1 Hari!', tone: 'muted' },
+    ])
+    expect(promoBadges('GRATIS ONGKIR;BELI 2 DAPAT 1', null)).toEqual([
+      { text: 'Gratis Ongkir', tone: 'ok' },
+      { text: 'Beli 2 Dapat 1', tone: 'warn' },
+    ])
+  })
+
+  it('pretty-cases uppercase and lowercase segments, preserving acronyms and numbers', () => {
+    expect(promoBadges('FRESH DEALS!', null)).toEqual([{ text: 'Fresh Deals!', tone: 'muted' }])
+    expect(promoBadges('promo spesial', null)).toEqual([{ text: 'Promo Spesial', tone: 'muted' }])
+    expect(promoBadges('DISKON 50%;ABC PROMO', null)).toEqual([
+      { text: 'Diskon 50%', tone: 'danger' },
+      { text: 'ABC Promo', tone: 'muted' },
+    ])
+    expect(promoBadges('PROMO 1 HARI!', null)).toEqual([{ text: 'Promo 1 Hari!', tone: 'muted' }])
+  })
+
+  it('drops empty segments and keeps repeated text as separate badges', () => {
+    expect(promoBadges(' ; DISKON 5% ; ', null)).toEqual([{ text: 'Diskon 5%', tone: 'danger' }])
+    expect(promoBadges('GRATIS 1;GRATIS 1', null)).toEqual([
+      { text: 'Gratis 1', tone: 'ok' },
+      { text: 'Gratis 1', tone: 'ok' },
+    ])
   })
 
   it('falls back to promo_type as badge text', () => {
     expect(promoBadges(null, 'discount_pct')).toEqual([{ text: 'discount_pct', tone: 'muted' }])
+    expect(promoBadges('', 'discount_pct')).toEqual([{ text: 'discount_pct', tone: 'muted' }])
+    expect(promoBadges(' ; ', 'discount_pct')).toEqual([{ text: 'discount_pct', tone: 'muted' }])
   })
 
   it('renders no badge without any promo fields', () => {

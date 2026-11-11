@@ -106,7 +106,7 @@ function renameToggle(container) {
   )
 }
 
-describe('ProductsView admin rename action (#423)', () => {
+describe('ProductsView', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(usePrices).mockReturnValue({
@@ -254,5 +254,76 @@ describe('ProductsView admin rename action (#423)', () => {
     expect(shopper.container.querySelector('[data-testid="duplicate-names-panel"]')).toBeNull()
     // Nor does a shopper's page ever ask for it.
     expect(useDuplicateProductNames).toHaveBeenCalledTimes(1)
+  })
+
+  it('normalizes names, brands, units and promo badges in the row (#633)', () => {
+    vi.mocked(usePrices).mockReturnValue({
+      data: {
+        items: [
+          {
+            product_key: 'mangga--bintang--300-ml',
+            name: 'MANGGA HARUM MANIS BINTANG',
+            brand: 'Bintang',
+            unit: '300ml',
+            source_slug: 'lotte-mart',
+            source_name: 'Lotte Mart',
+            price: 21500,
+            effective_unit_price: 21500,
+            promo_label: null,
+            low_confidence: false,
+          },
+          {
+            product_key: 'ron-88--spring--300-ml',
+            name: 'RON 88 Spring 300ml',
+            brand: 'RON 88',
+            unit: '300ml',
+            source_slug: 'superindo',
+            source_name: 'Superindo',
+            price: 23000,
+            effective_unit_price: 23000,
+            promo_label: null,
+            low_confidence: false,
+          },
+          {
+            product_key: 'gula-pasir--gulaku--1-kg',
+            name: 'GULA PASIR',
+            brand: 'Gulaku',
+            unit: '1kg',
+            source_slug: 'lotte-mart',
+            source_name: 'Lotte Mart',
+            price: 18000,
+            effective_unit_price: 18000,
+            promo_label: 'DISKON 50%;PROMO 1 HARI!',
+            low_confidence: false,
+          },
+        ],
+        total: 3,
+        truncated: false,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderProducts()
+
+    const rowWith = (text) =>
+      [...container.querySelectorAll('button')].find((button) => button.textContent.includes(text))
+
+    const manggaRow = rowWith('Mangga Harum Manis Bintang')
+    expect(manggaRow).toBeTruthy()
+    expect(container.textContent).not.toContain('MANGGA HARUM MANIS BINTANG')
+    expect(manggaRow.textContent).toContain('300 ml')
+
+    // The name already carries RON 88 — the brand suffix must not repeat it.
+    const ronRow = rowWith('RON 88 Spring')
+    expect(ronRow.textContent).toContain('RON 88 Spring 300 ml')
+    expect(ronRow.textContent.match(/RON 88/g)).toHaveLength(1)
+    expect(ronRow.textContent).not.toContain('· RON 88')
+
+    // No duplicate brand, canonical unit spacing, and one badge per segment.
+    const gulaRow = rowWith('Gula Pasir')
+    expect(gulaRow.textContent).toContain('Gula Pasir · Gulaku')
+    expect(gulaRow.textContent).toContain('1 kg ·')
+    expect(gulaRow.textContent).toContain('Diskon 50%')
+    expect(gulaRow.textContent).toContain('Promo 1 Hari!')
   })
 })

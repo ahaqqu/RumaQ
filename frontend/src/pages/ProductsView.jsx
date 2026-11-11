@@ -13,6 +13,7 @@ import { AliasCandidatesPanel } from '../components/AliasCandidatesPanel.jsx'
 import { DuplicateNamesPanel } from '../components/DuplicateNamesPanel.jsx'
 import { IconSearch, IconWarning, IconClock } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
+import { brandSuffix, prettyName, prettyUnit } from '../lib/productDisplay.js'
 import {
   buildFooterStats,
   countdownState,
@@ -186,7 +187,7 @@ function PriceDetail({ productKey, isAdmin }) {
             offer.unit && effectivePrice(offer) !== offer.price
               ? t('prices.perUnit', {
                   price: formatPrice(effectivePrice(offer)),
-                  unit: offer.unit,
+                  unit: prettyUnit(offer.unit),
                 })
               : null
           return (
@@ -198,8 +199,8 @@ function PriceDetail({ productKey, isAdmin }) {
                     ✓ {t('prices.cheapestBadge')}
                   </span>
                 )}
-                {promoBadges(offer.promo_label, offer.promo_type).map((badge) => (
-                  <Badge key={badge.text} tone={badge.tone}>
+                {promoBadges(offer.promo_label, offer.promo_type).map((badge, index) => (
+                  <Badge key={`${index}-${badge.text}`} tone={badge.tone}>
                     {badge.text}
                   </Badge>
                 ))}
@@ -456,11 +457,11 @@ export function ProductsView({ search, setSearch, source, setSource, category, s
                       >
                         <div className="min-w-0">
                           <div className="font-medium truncate">
-                            {product.name}
-                            {product.brand ? ` · ${product.brand}` : ''}
+                            {prettyName(product.name)}
+                            {brandSuffix(product.name, product.brand)}
                           </div>
                           <div className="text-xs text-text-muted mt-0.5">
-                            {product.unit ? `${product.unit} · ` : ''}
+                            {product.unit ? `${prettyUnit(product.unit)} · ` : ''}
                             {t('prices.storesCount', { count: product.offers.length })}
                             {perUnitHint && <span> · {perUnitHint}</span>}
                             {product.offers.some((o) => o.low_confidence) && (
@@ -469,8 +470,8 @@ export function ProductsView({ search, setSearch, source, setSource, category, s
                           </div>
                           {(badges.length > 0 || product.category) && (
                             <div className="flex flex-wrap items-center gap-1 mt-1">
-                              {badges.map((badge) => (
-                                <Badge key={badge.text} tone={badge.tone}>
+                              {badges.map((badge, index) => (
+                                <Badge key={`${index}-${badge.text}`} tone={badge.tone}>
                                   {badge.text}
                                 </Badge>
                               ))}
