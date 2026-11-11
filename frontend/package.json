@@ -22,12 +22,12 @@
     "lucide-react": "^1.70.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "react-i18next": "^18.0.0",
+    "react-i18next": "^18.0.1",
     "workbox-window": "^7.4.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.5",
-    "@tanstack/router-plugin": "^1.168.48",
+    "@tanstack/router-plugin": "^1.169.0",
     "@testing-library/react": "^16.3.3",
     "@vitejs/plugin-react": "^6.2.1",
     "clsx": "^2.1.1",
