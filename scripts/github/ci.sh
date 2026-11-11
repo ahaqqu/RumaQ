@@ -17,6 +17,13 @@ echo "=== CI: price-freshness probe guard (#536) ==="
 # keep its behaviour.
 "$ROOT_DIR/scripts/test.sh" freshness
 
+echo "=== CI: automation Docker stack guard (#356) ==="
+# Offline: asserts the per-invocation project identity, toolchain digest,
+# readiness probe classification, backoff schedule and label teardown rules
+# that keep source edits image-free and parallel runs collision-free. Shell
+# shims only — no Docker daemon, no network.
+"$ROOT_DIR/scripts/test.sh" automation-stack
+
 echo "=== CI: style check ==="
 bash "$ROOT_DIR/scripts/style.sh" --check
 

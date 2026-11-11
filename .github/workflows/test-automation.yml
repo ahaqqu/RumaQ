@@ -8,6 +8,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The readiness gate has its own 180 s budget, but a cold image build plus
+    # the full suite (and Playwright's first install on a fresh runner) needs
+    # headroom. A stuck run must fail in minutes, not burn the 6-hour default.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 

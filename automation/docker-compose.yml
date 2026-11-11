@@ -6,10 +6,27 @@ services:
   # headroom, so a run throttles instead of taking the host. Bounds also cover
   # the ephemeral `compose run --rm test-runner` containers, which inherit this
   # service definition.
+  #
+  # Toolchain-only images (#356): every image below carries the toolchain and
+  # the installed dependency tree, and NONE of the repo source. Source is
+  # bind-mounted read-only per subtree, so a code edit is visible to the next
+  # run with zero image work. `image:` tags are the content digest of the
+  # toolchain inputs (automation/scripts/lib/stack.sh stack_deps_digest), which
+  # the runner exports; a deps/config edit yields a new tag that compose builds
+  # automatically, and every checkout with the same lockfile shares one tag.
   api:
+    image: rumaq-test-api:${RUMAQ_DEPS_DIGEST:-dev}
+    pull_policy: never
     build:
       context: ..
       dockerfile: automation/docker/Dockerfile.api
+      labels:
+        rumaq.automation.toolchain: '1'
+    # Labels are the run identity for teardown: `--down` sweeps by the checkout
+    # label, so it can never guess a project name or hit another checkout.
+    labels:
+      rumaq.automation.checkout: '${RUMAQ_CHECKOUT_PATH:-unknown}'
+      rumaq.automation.run: '${RUMAQ_RUN_ID:-manual}'
     # Measured: ~1.1 cores sustained, ~0.9 GB memory peak (Miniflare workerd).
     cpus: 1.0
     mem_limit: 768m
@@ -25,6 +42,21 @@ services:
       # Lets e2e scenarios seed price data through the internal ingest
       # endpoint (tests/local/e2e/features/prices-explorer.feature).
       - HAQITA_INGEST_SECRET=test-ingest-secret
+      # Content-hash build cache (entrypoint-api.sh). 0 bypasses it.
+      - RUMAQ_BUILD_CACHE=${RUMAQ_BUILD_CACHE:-1}
+    # Read-only source subtrees. Never node_modules: deps live in the image, so
+    # a deps change is a rebuild by definition and the image's tree is the only
+    # one the container sees.
+    volumes:
+      - ../backend/src:/app/backend/src:ro
+      - ../backend/migrations:/app/backend/migrations:ro
+      - ../contract/src:/app/contract/src:ro
+      - ../automation/tests:/app/automation/tests:ro
+      - cache:/cache
+    # The in-container Worker build runs at container start (~11 s cold), so the
+    # start period covers it; this healthcheck is an ordering primitive for the
+    # proxy, not the readiness contract (that lives in test-local.sh, on the
+    # published port).
     healthcheck:
       test:
         [
@@ -34,15 +66,36 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
-      start_period: 15s
+      start_period: 90s
 
   web:
+    image: rumaq-test-web:${RUMAQ_DEPS_DIGEST:-dev}
+    pull_policy: never
     build:
       context: ..
       dockerfile: automation/docker/Dockerfile.web
-    # Static nginx over a prebuilt bundle — a fraction of the api budget.
+      labels:
+        rumaq.automation.toolchain: '1'
+    labels:
+      rumaq.automation.checkout: '${RUMAQ_CHECKOUT_PATH:-unknown}'
+      rumaq.automation.run: '${RUMAQ_RUN_ID:-manual}'
+    # nginx + a container-start SPA build over a read-only source mount.
     cpus: 1.0
     mem_limit: 768m
+    environment:
+      - RUMAQ_BUILD_CACHE=${RUMAQ_BUILD_CACHE:-1}
+    volumes:
+      - ../frontend/src:/app/frontend/src:ro
+      # Icons/robots.txt. The old image served a bundle built without them;
+      # production has them, so the harness now matches production.
+      - ../frontend/public:/app/frontend/public:ro
+      - cache:/cache
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS --max-time 3 --output /dev/null http://localhost/']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
 
   proxy:
     # Static reverse proxy: ~0.01 cores and ~10-20 MB measured.
@@ -50,23 +103,35 @@ services:
     mem_limit: 128m
     image: nginx:alpine
     ports:
-      # Per-run host port (#511): test-local.sh exports RUMAQ_TEST_PORT before
-      # every compose call, so parallel checkouts never fight over 3000. The
-      # container port stays 3000 (nginx.proxy.conf) and the test-runner keeps
-      # using proxy:3000 on the project network.
-      - '${RUMAQ_TEST_PORT:-3000}:3000'
+      # Ephemeral, loopback-only by default (#356): Docker assigns a free host
+      # port; test-local.sh discovers it with `docker compose port` after `up`,
+      # so there is no port scan and no check-then-bind race. RUMAQ_TEST_PORT
+      # still picks an explicit loopback port, and RUMAQ_PROXY_PORTS can
+      # override the whole mapping. The container port stays 3000
+      # (nginx.proxy.conf) and the test-runner keeps using proxy:3000 on the
+      # project network, so in-network origins (CSRF assertions) do not move.
+      - '${RUMAQ_PROXY_PORTS:-127.0.0.1::3000}'
     volumes:
       - ./docker/nginx.proxy.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       api:
         condition: service_healthy
+      # service_healthy, not service_started: the SPA is built at container
+      # start now, so "started" would let e2e hit a 502 window.
       web:
-        condition: service_started
+        condition: service_healthy
 
   test-runner:
+    image: rumaq-test-runner:${RUMAQ_DEPS_DIGEST:-dev}
+    pull_policy: never
     build:
       context: ..
       dockerfile: automation/docker/Dockerfile.test-runner
+      labels:
+        rumaq.automation.toolchain: '1'
+    labels:
+      rumaq.automation.checkout: '${RUMAQ_CHECKOUT_PATH:-unknown}'
+      rumaq.automation.run: '${RUMAQ_RUN_ID:-manual}'
     # Measured: ~1.25 cores sustained, ~700 MB peak per runner. 2.0 cpus gives
     # the suite the biggest share so caps do not slow it much; 2g mem covers
     # Playwright + Chromium. shm_size replaces the default 64 MB /dev/shm,
@@ -77,10 +142,32 @@ services:
     shm_size: 1g
     environment:
       - TEST_BASE_URL=http://proxy:3000
+      - RUMAQ_BUILD_CACHE=${RUMAQ_BUILD_CACHE:-1}
     depends_on:
       proxy:
         condition: service_started
+    # Chromium/Playwright scratch space; the report paths below stay the only
+    # writable host mounts.
+    tmpfs:
+      - '/tmp:size=512m,mode=1777'
     volumes:
+      # Read-only build inputs. automation/tests/support/auth.js imports
+      # backend/src/auth.ts and scrape.steps.js imports contract/src, so both
+      # mount here too; a step that reaches a new workspace path must add one
+      # here as well (a missing mount fails loudly with "module not found").
+      - ../automation/tests:/app/automation/tests:ro
+      - ../automation/playwright.config.js:/app/automation/playwright.config.js:ro
+      - ../backend/src:/app/backend/src:ro
+      - ../contract/src:/app/contract/src:ro
+      - cache:/cache
       - ./test-results/vitest:/app/vitest-report
       - ./test-results/playwright:/app/playwright-report
       - ./test-results/artifacts:/app/test-results
+
+volumes:
+  # One cache volume per toolchain digest, shared by every checkout. Declared
+  # external so `compose down --volumes` (per run, every run) cannot delete a
+  # cache another run is still using; the runner creates it before `up`.
+  cache:
+    name: rumaq-test-cache-${RUMAQ_DEPS_DIGEST:-dev}
+    external: true

@@ -1,10 +1,22 @@
-FROM oven/bun:1.4.0-slim AS build
+FROM oven/bun:1.4.0-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+# nginx serves the SPA that the entrypoint builds at container start. This is
+# one container instead of the previous bun-builder + nginx:alpine final stage
+# because the bundle no longer exists at image-build time — and nginx:alpine is
+# musl, which cannot run the pinned glibc bun. Installing nginx on the bun base
+# keeps one toolchain family and lets the entrypoint build and serve in place.
+# curl is the compose healthcheck's probe.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl nginx && rm -rf /var/lib/apt/lists/*
+
+# Debian's nginx package ships a default_server site that would answer :80
+# before our SPA config; remove it so automation/docker/nginx.web.conf is the
+# only server.
+RUN rm -f /etc/nginx/sites-enabled/default
 
 WORKDIR /app
 
-# Layer 1: dependencies (cached until lockfiles change)
+# Layer 1: dependencies (cached until the lockfile/manifests change). Never
+# bind-mounted — see Dockerfile.api for why.
 COPY bun.lock package.json ./
 COPY frontend/package.json ./frontend/
 COPY backend/package.json ./backend/
@@ -12,20 +24,18 @@ COPY contract/package.json ./contract/
 RUN --mount=type=cache,target=/root/.bun \
   bun install --frozen-lockfile
 
-# Layer 2: stable configs & templates (rarely change)
+# Layer 2: build configs and template (image inputs — hashed by the toolchain
+# digest). frontend/src and frontend/public are read-only mounts.
 COPY vite.config.ts ./
 COPY frontend/vite.config.js ./frontend/
-COPY frontend/index.html ./frontend/index.html
+COPY frontend/index.html ./frontend/
 COPY backend/vite.config.ts ./backend/
 
-# Layer 3: src (changes most frequently)
-COPY frontend/src/ ./frontend/src/
-
-RUN bunx vp build frontend
-
-FROM nginx:alpine
-
-COPY --from=build /app/frontend/dist /usr/share/nginx/html
 COPY automation/docker/nginx.web.conf /etc/nginx/conf.d/default.conf
+COPY automation/docker/build-cache.sh automation/docker/entrypoint-web.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint-web.sh
 
 EXPOSE 80
+
+ENTRYPOINT ["/usr/local/bin/entrypoint-web.sh"]
+CMD ["nginx", "-g", "daemon off;"]
