@@ -2,7 +2,6 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useLocation, useNavigate } from '@tanstack/react-router'
 import { usePrices, usePriceMeta, usePriceSources, usePriceDetail } from '../lib/queries/index.js'
-import { useMe } from '../lib/queries/me.js'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
@@ -131,8 +130,9 @@ function Sparkline({ history, sourceSlug }) {
 function PriceDetail({ productKey, isAdmin }) {
   const { t } = useTranslation()
   const { data, isLoading } = usePriceDetail(productKey)
-  // Admin-only canonical rename (#423): the action lives in the expanded
-  // detail, so an admin fixes the label right where the bad name shows up.
+  // Canonical rename (#423) is an admin/QA tool: the action lives in the
+  // expanded detail, so an admin fixes the label right where the bad name
+  // shows up. Only /admin/catalog passes isAdmin (#631); /prices never does.
   const [renameOpen, setRenameOpen] = useState(false)
   const renameFormId = useId()
 
@@ -240,17 +240,29 @@ function PriceDetail({ productKey, isAdmin }) {
 // view's example jump can clear them (the category filter rides along for
 // the same reason: a jump is a fresh browse context that must land inside
 // the unfiltered 200).
-export function ProductsView({ search, setSearch, source, setSource, category, setCategory }) {
+//
+// #631: the same view serves /prices (read-only) and /admin/catalog (admin
+// tools) instead of forking it. `adminTools` is the opt-in that renders the
+// rename action and the identity/QA panels; it defaults to false, so the
+// user page has no admin branch left to mis-render for an admin. `basePath`
+// is where expansion writes the #productKey hash (the route that owns the
+// view), so the two pages keep their own deep links.
+export function ProductsView({
+  search,
+  setSearch,
+  source,
+  setSource,
+  category,
+  setCategory,
+  adminTools = false,
+  basePath = '/prices',
+}) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
   const [sort, setSort] = useState('cheapest')
   const [expandedKey, setExpandedKey] = useState(null)
   const debouncedSearch = useDebouncedValue(search.trim(), 300)
-  // #423: the canonical rename action is admin-only; a shopper never sees it
-  // and never triggers the identity read behind it.
-  const { data: me } = useMe()
-  const isAdmin = me?.user?.isAdmin === true
 
   const { data, isLoading, isError } = usePrices({
     q: debouncedSearch || undefined,
@@ -308,7 +320,7 @@ export function ProductsView({ search, setSearch, source, setSource, category, s
   const toggleExpanded = (key) => {
     const next = expandedKey === key ? null : key
     setExpandedKey(next)
-    navigate({ to: '/prices', hash: next ?? '', replace: true })
+    navigate({ to: basePath, hash: next ?? '', replace: true })
   }
 
   const setRowRef = (key) => (el) => {
@@ -320,15 +332,13 @@ export function ProductsView({ search, setSearch, source, setSource, category, s
     <>
       <FreshnessBar />
 
-      {/* #485: the read-only duplicate-name report lives on the products page
-      next to the rename action that can surface a collision. Admin-only, and
-      it fetches nothing until an admin opens it. */}
-      {isAdmin && <DuplicateNamesPanel />}
-
-      {/* #515: the safe bulk action for candidate aliases — approve exactly the
-      ones that restate a product's canonical name, leave every variant for the
-      rename form's manual decision. Admin-only; read-only until clicked. */}
-      {isAdmin && <AliasCandidatesPanel />}
+      {/* #485/#515: the admin/QA identity tools — the read-only
+      duplicate-name report and the bulk safe-alias action. They render only
+      when the page opts in (adminTools; /admin/catalog, #631): /prices never
+      mounts them, not even for an admin. Both are lazy — no fetch until the
+      relevant control is used. */}
+      {adminTools && <DuplicateNamesPanel />}
+      {adminTools && <AliasCandidatesPanel />}
 
       <div className="relative mb-4">
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">
@@ -528,7 +538,7 @@ export function ProductsView({ search, setSearch, source, setSource, category, s
                         </div>
                       </button>
                       {expanded && (
-                        <PriceDetail productKey={product.product_key} isAdmin={isAdmin} />
+                        <PriceDetail productKey={product.product_key} isAdmin={adminTools} />
                       )}
                     </div>
                   )

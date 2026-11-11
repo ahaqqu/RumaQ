@@ -4,12 +4,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { ProductsView } from './ProductsView.jsx'
 
-// The product explorer's admin rename surface (#423): the action lives inside
-// the expanded price detail and is gated on me.isAdmin. Everything below the
-// fold (search, sort, grouping) is covered by Prices.test.jsx, which renders
-// this view through the page shell.
+// The product explorer is shared by /prices (read-only) and /admin/catalog
+// (admin tools, issue #631): the admin rename surface (#423) and the
+// identity/QA panels (#485, #515) render only when the page opts in with
+// adminTools. Everything below the fold (search, sort, grouping) is covered
+// by Prices.test.jsx, which renders this view through the page shell.
+const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }))
+
 vi.mock('@tanstack/react-router', () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => navigateMock,
   useLocation: () => ({ hash: '' }),
 }))
 
@@ -19,8 +22,6 @@ vi.mock('../lib/queries/index.js', () => ({
   usePriceMeta: vi.fn(),
   usePriceDetail: vi.fn(),
 }))
-
-vi.mock('../lib/queries/me.js', () => ({ useMe: vi.fn() }))
 
 vi.mock('../lib/queries/products.js', () => ({
   useProductIdentity: vi.fn(),
@@ -33,7 +34,6 @@ vi.mock('../lib/queries/products.js', () => ({
 }))
 
 import { usePrices, usePriceSources, usePriceMeta, usePriceDetail } from '../lib/queries/index.js'
-import { useMe } from '../lib/queries/me.js'
 import {
   useProductIdentity,
   useRenameProduct,
@@ -73,7 +73,7 @@ const mockItems = [
   },
 ]
 
-function renderProducts() {
+function renderProducts({ adminTools = false, basePath = '/prices' } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   })
@@ -88,6 +88,8 @@ function renderProducts() {
         setSource: vi.fn(),
         category: null,
         setCategory: vi.fn(),
+        adminTools,
+        basePath,
       })
     )
   )
@@ -108,6 +110,7 @@ function renameToggle(container) {
 
 describe('ProductsView', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(usePrices).mockReturnValue({
       data: { items: mockItems, total: mockItems.length, truncated: false },
@@ -146,7 +149,8 @@ describe('ProductsView', () => {
           metadataVersion: 2,
         },
         // A candidate alias makes the shared form's admin-only decision
-        // actions observable here (#489): the page's isAdmin must reach them.
+        // actions observable here (#489): the page's adminTools must reach
+        // them.
         aliases: [
           {
             id: 'alias-candidate',
@@ -181,17 +185,25 @@ describe('ProductsView', () => {
       refetch: vi.fn(),
     })
     vi.mocked(useBulkApproveExactAliases).mockReturnValue({ mutate: vi.fn(), isPending: false })
-    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
   })
 
-  it('offers no rename action until the product detail is expanded', () => {
+  it('renders no admin surface by default (the /prices read-only mode)', () => {
     const { container } = renderProducts()
+    expect(container.querySelector('[data-testid="duplicate-names-panel"]')).toBeNull()
+    expect(container.querySelector('[data-testid="alias-candidates-panel"]')).toBeNull()
+
+    fireEvent.click(productRow(container))
+    expect(container.textContent).toContain('prices.currentPrices')
+    // #631: rename lives on /admin/catalog only; the default view never
+    // offers it and never triggers the identity read behind it.
     expect(renameToggle(container)).toBeUndefined()
     expect(useProductIdentity).not.toHaveBeenCalled()
+    expect(useDuplicateProductNames).not.toHaveBeenCalled()
+    expect(useAliasCandidateCounts).not.toHaveBeenCalled()
   })
 
-  it('opens the shared rename form for the expanded product as an admin', () => {
-    const { container } = renderProducts()
+  it('opens the shared rename form for the expanded product when the page opts in', () => {
+    const { container } = renderProducts({ adminTools: true })
     fireEvent.click(productRow(container))
 
     const toggle = renameToggle(container)
@@ -217,43 +229,42 @@ describe('ProductsView', () => {
     expect(container.querySelector('[data-testid="product-rename-form"]')).toBeNull()
   })
 
-  it('hides the rename action from a non-admin shopper', () => {
-    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
-    const { container } = renderProducts()
-    fireEvent.click(productRow(container))
-    expect(container.textContent).toContain('prices.currentPrices')
-    expect(renameToggle(container)).toBeUndefined()
-    expect(useProductIdentity).not.toHaveBeenCalled()
-  })
-
-  it('mounts the alias-candidates bulk action for admins only (#515)', () => {
-    const admin = renderProducts()
+  it('mounts the alias-candidates bulk action when the page opts in (#515)', () => {
+    const admin = renderProducts({ adminTools: true })
     const panel = admin.container.querySelector('[data-testid="alias-candidates-panel"]')
     expect(panel).not.toBeNull()
     // The counts the confirm names are on screen before anything is clicked.
     expect(panel.querySelector('[data-testid="alias-candidate-exact"]').textContent).toBe('3')
     expect(useAliasCandidateCounts).toHaveBeenCalledTimes(1)
-    admin.unmount()
-
-    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
-    const shopper = renderProducts()
-    expect(shopper.container.querySelector('[data-testid="alias-candidates-panel"]')).toBeNull()
-    // A shopper's page never asks for the catalog-wide counts.
-    expect(useAliasCandidateCounts).toHaveBeenCalledTimes(1)
   })
 
-  it('mounts the read-only duplicate-name report for admins only (#485)', () => {
-    const admin = renderProducts()
-    expect(admin.container.querySelector('[data-testid="duplicate-names-panel"]')).not.toBeNull()
+  it('mounts the read-only duplicate-name report when the page opts in (#485)', () => {
+    const { container } = renderProducts({ adminTools: true })
+    expect(container.querySelector('[data-testid="duplicate-names-panel"]')).not.toBeNull()
     // Collapsed: the page never fetches the catalog-wide report on mount.
     expect(useDuplicateProductNames).toHaveBeenCalledWith({ enabled: false })
-    admin.unmount()
+  })
 
-    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
-    const shopper = renderProducts()
-    expect(shopper.container.querySelector('[data-testid="duplicate-names-panel"]')).toBeNull()
-    // Nor does a shopper's page ever ask for it.
-    expect(useDuplicateProductNames).toHaveBeenCalledTimes(1)
+  it('writes the #productKey deep link to the route that owns the view', () => {
+    const defaults = renderProducts()
+    fireEvent.click(productRow(defaults.container))
+    expect(navigateMock).toHaveBeenLastCalledWith({
+      to: '/prices',
+      hash: PRODUCT_KEY,
+      replace: true,
+    })
+    defaults.unmount()
+
+    navigateMock.mockClear()
+    const admin = renderProducts({ adminTools: true, basePath: '/admin/catalog' })
+    fireEvent.click(productRow(admin.container))
+    expect(navigateMock).toHaveBeenLastCalledWith({
+      to: '/admin/catalog',
+      hash: PRODUCT_KEY,
+      replace: true,
+    })
+    fireEvent.click(productRow(admin.container))
+    expect(navigateMock).toHaveBeenLastCalledWith({ to: '/admin/catalog', hash: '', replace: true })
   })
 
   it('normalizes names, brands, units and promo badges in the row (#633)', () => {

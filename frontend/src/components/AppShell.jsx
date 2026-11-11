@@ -18,6 +18,7 @@ import {
   IconTask,
   IconCalendarBlank,
   IconClose,
+  IconCatalog,
   BrandMark,
 } from './icons.jsx'
 import { useApp } from '../context/AppContext.jsx'
@@ -47,6 +48,7 @@ const MOBILE_TABS = NAV.filter((n) => ['home', 'inventory', 'plan', 'prices'].in
 )
 
 const ADMIN_NAV = [
+  { id: 'catalog', key: 'nav.catalog', Icon: IconCatalog, to: '/admin/catalog' },
   { id: 'monitor', key: 'nav.monitor', Icon: IconSliders, to: '/admin/prices' },
   { id: 'review', key: 'nav.review', Icon: IconReview, to: '/admin/review' },
   { id: 'scrape', key: 'nav.scrape', Icon: IconBolt, to: '/admin/scrape' },

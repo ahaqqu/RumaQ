@@ -21,7 +21,6 @@ vi.mock('../lib/queries/index.js', () => ({
   usePriceMeta: vi.fn(),
   usePriceDetail: vi.fn(),
   usePricePromos: vi.fn(),
-  usePriceBrochures: vi.fn(),
 }))
 
 // #423: the expanded detail asks who is looking (the rename action is
@@ -34,7 +33,6 @@ import {
   usePriceMeta,
   usePriceDetail,
   usePricePromos,
-  usePriceBrochures,
 } from '../lib/queries/index.js'
 import { useMe } from '../lib/queries/me.js'
 
@@ -656,89 +654,77 @@ describe('Prices', () => {
     })
   })
 
-  describe('Brochures view (issue #293)', () => {
-    const brochureCatalog = {
-      groups: [
-        {
-          source_slug: 'lotte-mart',
-          source_name: 'Lotte Mart',
-          brochure_url: '/api/brochures/lotte-mart/20261029/page_1_2ad1c95b.jpg',
-          observed_date: '2026-10-29',
-          product_count: 2,
-          example_products: [
-            {
-              product_key: OIL_KEY,
-              name: 'Minyak Goreng Bimoli',
-              brand: 'Bimoli',
-              unit: '1 L',
-              price: 21500,
-              effective_unit_price: 21500,
-            },
-          ],
-        },
-      ],
-    }
+  // --- Issue #631: Brochures and the admin tools moved to /admin/catalog ---
 
-    it('?view=brochures renders the brochures view with the third segment', () => {
+  describe('admin surfaces removed from /prices', () => {
+    it('renders no admin controls for an admin', () => {
+      vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
+      const { container } = renderPrices()
+      // Products + Promos only: no Brochures tab, no identity/QA panels.
+      expect(container.textContent).not.toContain('prices.viewBrochures')
+      expect(container.querySelector('[data-testid="duplicate-names-panel"]')).toBeNull()
+      expect(container.querySelector('[data-testid="alias-candidates-panel"]')).toBeNull()
+      // The expanded detail offers no rename action either.
+      fireEvent.click(findClickable(container, 'Minyak Goreng Bimoli'))
+      expect(container.textContent).toContain('prices.currentPrices')
+      expect(container.textContent).not.toContain('rename.action')
+    })
+
+    it('renders no admin controls for a shopper', () => {
+      const { container } = renderPrices()
+      expect(container.textContent).not.toContain('prices.viewBrochures')
+      expect(container.querySelector('[data-testid="duplicate-names-panel"]')).toBeNull()
+      expect(container.querySelector('[data-testid="alias-candidates-panel"]')).toBeNull()
+      fireEvent.click(findClickable(container, 'Minyak Goreng Bimoli'))
+      expect(container.textContent).not.toContain('rename.action')
+    })
+  })
+
+  describe('retired Brochures deep link (?view=brochures)', () => {
+    it('falls back to Products for a shopper without redirecting', () => {
       mockView = 'brochures'
-      vi.mocked(usePriceBrochures).mockReturnValue({
-        data: brochureCatalog,
-        isLoading: false,
-        isError: false,
-      })
       const { container } = renderPrices()
-      expect(container.textContent).toContain('prices.brochuresLead')
-      expect(container.textContent).toContain('Lotte Mart')
-      expect(container.textContent).toContain('prices.viewBrochures')
-      // Products-only controls hidden; segment row stays visible.
-      expect(container.querySelector('input[type="search"]')).toBeNull()
-      expect(container.textContent).toContain('prices.viewProducts')
-      expect(container.textContent).toContain('prices.viewPromos')
-    })
-
-    it('absent view param still defaults to Products', () => {
-      const { container } = renderPrices()
-      expect(container.textContent).not.toContain('prices.brochuresLead')
       expect(container.querySelector('input[type="search"]')).toBeTruthy()
+      expect(container.textContent).toContain('prices.lead')
+      expect(container.textContent).not.toContain('prices.brochuresLead')
+      expect(navigate).not.toHaveBeenCalled()
     })
 
-    it('a hash present forces the products view even with view=brochures', () => {
+    it('redirects an admin to the admin catalog Brochures tab', () => {
+      mockView = 'brochures'
+      vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
+      const { container } = renderPrices()
+      expect(navigate).toHaveBeenCalledWith({
+        to: '/admin/catalog',
+        search: { tab: 'brochures' },
+        hash: '',
+        replace: true,
+      })
+      // The moved view never flash-renders on /prices while redirecting.
+      expect(container.querySelector('input[type="search"]')).toBeNull()
+      expect(container.textContent).not.toContain('prices.brochuresLead')
+    })
+
+    it('keeps a #productKey hash on the admin redirect (the hash wins)', () => {
+      mockView = 'brochures'
+      mockHash = `#${OIL_KEY}`
+      vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
+      renderPrices()
+      expect(navigate).toHaveBeenCalledWith({
+        to: '/admin/catalog',
+        search: {},
+        hash: OIL_KEY,
+        replace: true,
+      })
+    })
+
+    it('still lets a #productKey hash win over the retired view param', () => {
       mockView = 'brochures'
       mockHash = `#${OIL_KEY}`
       const { container } = renderPrices()
       expect(container.textContent).toContain('prices.lead')
       expect(container.textContent).not.toContain('prices.brochuresLead')
-    })
-
-    it('empty catalog renders the empty state with the segment row visible', () => {
-      mockView = 'brochures'
-      vi.mocked(usePriceBrochures).mockReturnValue({
-        data: { groups: [] },
-        isLoading: false,
-        isError: false,
-      })
-      const { container } = renderPrices()
-      expect(container.textContent).toContain('prices.brochuresEmpty')
-      expect(container.textContent).toContain('prices.viewBrochures')
-      expect(container.textContent).toContain('prices.viewProducts')
-    })
-
-    it('clicking a brochure example jumps with the product key', () => {
-      mockView = 'brochures'
-      vi.mocked(usePriceBrochures).mockReturnValue({
-        data: brochureCatalog,
-        isLoading: false,
-        isError: false,
-      })
-      const { container } = renderPrices()
-      fireEvent.click(container.querySelector('button[aria-expanded]'))
-      fireEvent.click(findClickable(container, 'Minyak Goreng Bimoli'))
-      expect(navigate).toHaveBeenCalledWith({
-        to: '/prices',
-        search: {},
-        hash: OIL_KEY,
-        replace: false,
-      })
+      expect(container.querySelector('input[type="search"]')).toBeTruthy()
     })
   })
 

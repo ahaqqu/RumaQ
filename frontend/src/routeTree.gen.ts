@@ -21,6 +21,7 @@ import { Route as PricesRouteImport } from './routes/prices'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as AdminAiUsageRouteImport } from './routes/admin.ai-usage'
+import { Route as AdminCatalogRouteImport } from './routes/admin.catalog'
 import { Route as AdminPricesRouteImport } from './routes/admin.prices'
 import { Route as AdminReviewRouteImport } from './routes/admin.review'
 import { Route as AdminScrapeRouteImport } from './routes/admin.scrape'
@@ -85,6 +86,11 @@ const AdminAiUsageRoute = AdminAiUsageRouteImport.update({
   path: '/admin/ai-usage',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminCatalogRoute = AdminCatalogRouteImport.update({
+  id: '/admin/catalog',
+  path: '/admin/catalog',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminPricesRoute = AdminPricesRouteImport.update({
   id: '/admin/prices',
   path: '/admin/prices',
@@ -114,6 +120,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/tasks': typeof TasksRoute
   '/admin/ai-usage': typeof AdminAiUsageRoute
+  '/admin/catalog': typeof AdminCatalogRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/review': typeof AdminReviewRoute
   '/admin/scrape': typeof AdminScrapeRoute
@@ -131,6 +138,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/tasks': typeof TasksRoute
   '/admin/ai-usage': typeof AdminAiUsageRoute
+  '/admin/catalog': typeof AdminCatalogRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/review': typeof AdminReviewRoute
   '/admin/scrape': typeof AdminScrapeRoute
@@ -149,6 +157,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/tasks': typeof TasksRoute
   '/admin/ai-usage': typeof AdminAiUsageRoute
+  '/admin/catalog': typeof AdminCatalogRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/review': typeof AdminReviewRoute
   '/admin/scrape': typeof AdminScrapeRoute
@@ -168,6 +177,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/tasks'
     | '/admin/ai-usage'
+    | '/admin/catalog'
     | '/admin/prices'
     | '/admin/review'
     | '/admin/scrape'
@@ -185,6 +195,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/tasks'
     | '/admin/ai-usage'
+    | '/admin/catalog'
     | '/admin/prices'
     | '/admin/review'
     | '/admin/scrape'
@@ -202,6 +213,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/tasks'
     | '/admin/ai-usage'
+    | '/admin/catalog'
     | '/admin/prices'
     | '/admin/review'
     | '/admin/scrape'
@@ -220,6 +232,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   TasksRoute: typeof TasksRoute
   AdminAiUsageRoute: typeof AdminAiUsageRoute
+  AdminCatalogRoute: typeof AdminCatalogRoute
   AdminPricesRoute: typeof AdminPricesRoute
   AdminReviewRoute: typeof AdminReviewRoute
   AdminScrapeRoute: typeof AdminScrapeRoute
@@ -311,6 +324,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminAiUsageRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/catalog': {
+      id: '/admin/catalog'
+      path: '/admin/catalog'
+      fullPath: '/admin/catalog'
+      preLoaderRoute: typeof AdminCatalogRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/prices': {
       id: '/admin/prices'
       path: '/admin/prices'
@@ -348,6 +368,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   TasksRoute: TasksRoute,
   AdminAiUsageRoute: AdminAiUsageRoute,
+  AdminCatalogRoute: AdminCatalogRoute,
   AdminPricesRoute: AdminPricesRoute,
   AdminReviewRoute: AdminReviewRoute,
   AdminScrapeRoute: AdminScrapeRoute,

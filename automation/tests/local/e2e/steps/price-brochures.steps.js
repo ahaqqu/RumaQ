@@ -7,7 +7,8 @@ const { Given, When, Then } = createBdd()
 // Fixtures pushed through the internal ingest endpoint like the promos suite;
 // the brochure object rides the internal PUT endpoint (issue #293). The jump
 // assertions reuse price-promos.steps.js's globally-registered steps (they
-// match this suite's feature text verbatim).
+// match this suite's feature text verbatim). Since #631 the surface lives on
+// /admin/catalog?tab=brochures — /prices?view=brochures only redirects here.
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
 const INGEST_SECRET = 'test-ingest-secret'
 // A real 1x1 transparent PNG: the browser must be able to DECODE the served
@@ -94,9 +95,22 @@ Given('a brochure snapshot has been pushed with one image uploaded', async () =>
   }
 })
 
-Then('the brochures segment row should be visible', async ({ page }) => {
+Then('I should be on the admin catalog brochures tab', async ({ page }) => {
+  // The retired /prices?view=brochures deep link redirects an admin here.
+  await expect(page).toHaveURL(/\/admin\/catalog\?tab=brochures$/)
+})
+
+Then('the catalog tab row should be visible', async ({ page }) => {
+  await expect(page.getByText('Products & identity', { exact: true })).toBeVisible()
   await expect(page.getByText('Brochures', { exact: true })).toBeVisible()
-  await expect(page.getByText('Products', { exact: true })).toBeVisible()
+})
+
+Then('the old brochures view param should be gone from the URL', async ({ page }) => {
+  // The jump navigates to /admin/catalog with search {} and the product hash:
+  // the moved view never comes back on /prices.
+  await expect(page).toHaveURL(/\/admin\/catalog/)
+  await expect(page).not.toHaveURL(/view=brochures/)
+  await expect(page).not.toHaveURL(/tab=brochures/)
 })
 
 Then(/the store sections should appear in order "(.+)"/, async ({ page }, expected) => {
@@ -141,8 +155,8 @@ Then(
   }
 )
 
-Then('the brochures empty state should render with the segment visible', async ({ page }) => {
+Then('the brochures empty state should render with the tabs visible', async ({ page }) => {
   await expect(page.getByText('No brochures yet')).toBeVisible()
   await expect(page.getByText('Brochures', { exact: true })).toBeVisible()
-  await expect(page.getByText('Products', { exact: true })).toBeVisible()
+  await expect(page.getByText('Products & identity', { exact: true })).toBeVisible()
 })

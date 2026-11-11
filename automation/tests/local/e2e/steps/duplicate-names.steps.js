@@ -5,7 +5,7 @@ const { Given, When, Then } = createBdd()
 
 // Read-only duplicate-name report E2E (issue #485). The API suite pins the
 // grouping and bounds (products-duplicates.feature + real SQLite); this
-// scenario pins the surface itself: the panel is on the prices page, admin
+// scenario pins the surface itself: the panel is on the admin catalog page, admin
 // only, collapsed until opened, and its one lazy fetch reaches the real
 // endpoint through the real query hook. Seeding goes through the internal
 // ingest the scraper uses, so the group is formed by two real canonical

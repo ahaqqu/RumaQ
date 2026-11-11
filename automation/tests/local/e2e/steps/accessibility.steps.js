@@ -13,6 +13,7 @@ const PATHS = {
   Settings: '/settings',
   Prices: '/prices',
   'Prices promos': '/prices?view=promos',
+  'Admin catalog': '/admin/catalog',
 }
 
 // Per-page signals that the async data has rendered, so axe scans real
@@ -30,6 +31,7 @@ const READY = {
   Settings: (page) => page.getByRole('heading', { name: 'Storage Locations' }),
   Prices: (page) => page.getByLabel('Search prices'),
   'Prices promos': null,
+  'Admin catalog': (page) => page.getByLabel('Search prices'),
 }
 
 const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']
