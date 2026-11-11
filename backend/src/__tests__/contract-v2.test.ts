@@ -4,6 +4,8 @@ import { safeParse } from 'valibot'
 import {
   apiErrorSchema,
   canonicalIndexSchema,
+  ingestItemSchema,
+  ingestItemV2Schema,
   ingestPayloadV2Schema,
   ingestReceiptSchema,
   validateIngestV2,
@@ -74,5 +76,59 @@ describe('pipeline contract v2', () => {
         issues: [{ path: ['items', 3, 'rawName'], message: 'Expected a string' }],
       }).success
     ).toBe(true)
+  })
+})
+
+// Issue #627 part 1: memberPrice is the member/app price beside the shelf
+// `price`. Additive-nullish on BOTH ingest schemas — an old producer without
+// the field keeps validating, and the bounds are the same money rules as
+// `price` (non-negative integer).
+describe('member price contract (#627)', () => {
+  const v1Item = {
+    productKey: 'minyak-goreng--bimoli--1-l',
+    name: 'Minyak Goreng Bimoli',
+    brand: null,
+    unit: null,
+    category: null,
+    storeSlug: 'lotte-mart',
+    price: 21500,
+    matchConfidence: 1,
+  }
+  const v2Item = {
+    productKey: 'minyak-goreng--bimoli--1-l',
+    rawName: 'MINYAK GORENG BIMOLI 1 L',
+    rawBrand: null,
+    rawUnit: null,
+    category: null,
+    taxoVersion: null,
+    storeSlug: 'lotte-mart',
+    price: 21500,
+    matchConfidence: 1,
+  }
+
+  it('accepts an integer member price on both schemas', () => {
+    expect(safeParse(ingestItemSchema, { ...v1Item, memberPrice: 19900 }).success).toBe(true)
+    expect(safeParse(ingestItemV2Schema, { ...v2Item, memberPrice: 19900 }).success).toBe(true)
+    // The parsed output carries the field (it is not silently dropped).
+    const v2 = safeParse(ingestItemV2Schema, { ...v2Item, memberPrice: 19900 })
+    expect(v2.success && v2.output.memberPrice).toBe(19900)
+  })
+
+  it('accepts null and absent member prices (old payloads keep validating)', () => {
+    for (const item of [v1Item, v2Item]) {
+      const schema = item === v1Item ? ingestItemSchema : ingestItemV2Schema
+      expect(safeParse(schema, { ...item, memberPrice: null }).success).toBe(true)
+      expect(safeParse(schema, item).success).toBe(true)
+    }
+  })
+
+  it('rejects a negative member price on both schemas', () => {
+    expect(safeParse(ingestItemSchema, { ...v1Item, memberPrice: -1 }).success).toBe(false)
+    expect(safeParse(ingestItemV2Schema, { ...v2Item, memberPrice: -1 }).success).toBe(false)
+  })
+
+  it('rejects a fractional member price on both schemas', () => {
+    expect(safeParse(ingestItemSchema, { ...v1Item, memberPrice: 19900.5 }).success).toBe(false)
+    expect(safeParse(ingestItemV2Schema, { ...v2Item, memberPrice: 19900.5 }).success).toBe(false)
   })
 })

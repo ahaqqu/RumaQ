@@ -7,7 +7,13 @@ import { Button } from '../components/Button.jsx'
 import { Badge } from '../components/Badge.jsx'
 import { IconSearch, IconWarning } from '../components/icons.jsx'
 import { brandSuffix, prettyName, prettyUnit } from '../lib/productDisplay.js'
-import { formatPrice, promoBadges } from '../lib/pricesHelpers.js'
+import {
+  displayPrice,
+  formatPrice,
+  showsMemberPrice,
+  promoBadges,
+  referencePrice,
+} from '../lib/pricesHelpers.js'
 import { cn } from '../lib/cn.js'
 
 const NONE = '—'
@@ -123,6 +129,10 @@ function BrochureProductMetadata({ product, brochureDateLabel }) {
       />
       <MetaField label={t('catalog.metaPrice')} value={formatPrice(product.price)} />
       <MetaField
+        label={t('catalog.metaMemberPrice')}
+        value={product.member_price == null ? NONE : formatPrice(product.member_price)}
+      />
+      <MetaField
         label={t('catalog.metaEffectiveUnitPrice')}
         value={
           product.effective_unit_price == null ? NONE : formatPrice(product.effective_unit_price)
@@ -201,6 +211,9 @@ function BrochureProductsTable({ items, brochureDateLabel }) {
           {items.map((product) => {
             const expanded = expandedKey === product.product_key
             const badges = promoBadges(product.promo_label, product.promo_type)
+            const priceShown = displayPrice(product)
+            const memberPriceShown = showsMemberPrice(product)
+            const priceReference = referencePrice(product)
             const metaId = `brochure-product-meta-${product.product_key}`
             return (
               <Fragment key={product.product_key}>
@@ -227,7 +240,26 @@ function BrochureProductsTable({ items, brochureDateLabel }) {
                   <td className="px-3 py-3 text-text-muted">
                     {product.unit ? prettyUnit(product.unit) : NONE}
                   </td>
-                  <td className="px-3 py-3 tabular-nums">{formatPrice(product.price)}</td>
+                  <td className="px-3 py-3 tabular-nums">
+                    {priceReference && (
+                      <div
+                        data-testid="shelf-reference-price"
+                        title={memberPriceShown ? t('prices.shelfPrice') : undefined}
+                        className={cn(
+                          'text-xs text-text-muted',
+                          priceReference.struck && 'line-through'
+                        )}
+                      >
+                        {formatPrice(priceReference.price)}
+                      </div>
+                    )}
+                    <div className="font-medium">{formatPrice(priceShown)}</div>
+                    {memberPriceShown && (
+                      <Badge tone="ok" className="mt-1">
+                        {t('prices.memberPrice')}
+                      </Badge>
+                    )}
+                  </td>
                   <td className="px-3 py-3 tabular-nums text-text-muted">
                     {product.effective_unit_price == null
                       ? NONE

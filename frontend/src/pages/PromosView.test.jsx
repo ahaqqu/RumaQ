@@ -3,6 +3,7 @@ import { render, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { PromosView } from './PromosView.jsx'
+import { formatPrice } from '../lib/pricesHelpers.js'
 
 vi.mock('../lib/queries/index.js', () => ({
   usePricePromos: vi.fn(),
@@ -141,6 +142,45 @@ describe('PromosView', () => {
     fireEvent.click(findClickable(container, 'prices.promoTypeDiscountPct'))
     // effective 36000 ≠ price 41000 with unit → per-unit line.
     expect(container.textContent).toContain('prices.perUnit')
+  })
+
+  it('headlines a member price with the Member label and the shelf reference (#627)', () => {
+    vi.mocked(usePricePromos).mockReturnValue({
+      data: {
+        types: [
+          {
+            promo_type: 'discount_pct',
+            product_count: 1,
+            stores: { superindo: 1 },
+            example_products: [
+              {
+                product_key: OIL_KEY,
+                name: 'Minyak Goreng Bimoli',
+                brand: 'Bimoli',
+                unit: '1 L',
+                source_slug: 'superindo',
+                source_name: 'Superindo',
+                price: 41000,
+                member_price: 36000,
+                effective_unit_price: null,
+              },
+            ],
+          },
+        ],
+        total: 1,
+      },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderPromos()
+    fireEvent.click(findClickable(container, 'prices.promoTypeDiscountPct'))
+
+    expect(container.textContent).toContain('prices.memberPrice')
+    expect(container.textContent).toContain(formatPrice(36000))
+    const reference = container.querySelector('[data-testid="shelf-reference-price"]')
+    expect(reference).not.toBeNull()
+    expect(reference.textContent).toBe(formatPrice(41000))
+    expect(reference.className).toContain('line-through')
   })
 
   it('normalizes example names and suppresses a duplicated brand (#633)', () => {

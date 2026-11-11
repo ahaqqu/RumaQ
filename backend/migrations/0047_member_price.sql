@@ -1,0 +1,20 @@
+-- Member price, part 1 of issue #627 (RumaQ side only).
+--
+-- Superindo/Lotte membership is free, so most buyers are members: the
+-- member/app price the brochure prints next to the shelf price is the price
+-- they actually pay. It gets its own nullable column instead of overloading
+-- `price` (which stays the shelf price, the reference shown beside it) or
+-- `effective_unit_price` (which keeps its existing promo/shelf meaning).
+--
+-- Nullable with deliberately NO backfill: observations written before this
+-- migration (and payloads from a scraper that does not send memberPrice yet)
+-- genuinely have no member price — null means "not printed", not zero.
+-- Readers compare on MIN(COALESCE(member_price, effective_unit_price, price),
+-- COALESCE(effective_unit_price, price)): the member price wins when lower,
+-- but never raises the payable price above the shelf/promo basis, and every
+-- old row falls back to the shelf side.
+--
+-- Additive and Worker-first: the ingest contract accepts the field only after
+-- this column exists, and an old Worker rejects a payload carrying it
+-- (strictObject), so the Worker deploys before the pipeline starts sending.
+ALTER TABLE price_observations ADD COLUMN member_price INTEGER;

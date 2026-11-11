@@ -189,6 +189,36 @@ describe('ingestPricesV2', () => {
     })
   })
 
+  it('writes the member price beside the shelf price (#627)', async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, payload())
+
+    expect(sqlite.prepare('SELECT price, member_price FROM price_observations').get()).toEqual({
+      price: 34500,
+      member_price: 29900,
+    })
+
+    // A repeated observation upserts the member price, not just the shelf one.
+    const changed = payload()
+    changed.items[0]!.memberPrice = 27900
+    await ingestPricesV2(db, changed)
+    expect(sqlite.prepare('SELECT member_price FROM price_observations').get()?.member_price).toBe(
+      27900
+    )
+  })
+
+  it('leaves the member price null for a payload without it (#627)', async () => {
+    const { sqlite, db } = setup()
+    const input = payload()
+    // Old scraper shape: the field is absent/null; the row stays null (no
+    // zero, no backfill).
+    input.items[0]!.memberPrice = null
+    await ingestPricesV2(db, input)
+    expect(
+      sqlite.prepare('SELECT member_price FROM price_observations').get()?.member_price
+    ).toBeNull()
+  })
+
   it('is idempotent: a retry keeps the ID and reports existing', async () => {
     const { sqlite, db } = setup()
     const first = await ingestPricesV2(db, payload())

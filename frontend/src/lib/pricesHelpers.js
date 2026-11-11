@@ -12,23 +12,76 @@ export const SAVE_PCT_THRESHOLD = 5
 // the monitor page's "over a day old" convention (PM §3.5).
 export const FRESH_WARN_MS = 26 * 60 * 60 * 1000
 
-export function effectivePrice(offer) {
+// Issue #627: when the retailer prints a member/app price beside the shelf
+// price, the member price is the final payable price (Superindo/Lotte
+// membership is free, so most buyers are members). The shelf `price` stays
+// the visible reference. The basis mirrors the backend exactly:
+// MIN(COALESCE(member_price, effective_unit_price, price),
+//     COALESCE(effective_unit_price, price))
+// — the member price wins when lower, but a member premium never RAISES the
+// payable price above the shelf/promo basis.
+export function hasMemberPrice(offer) {
+  return offer?.member_price != null
+}
+
+// The shelf/promo basis: the promo-effective price when the source printed
+// one, else the shelf price. Comparison uses this even without promo evidence
+// (matching the backend); display trusts it only with evidence (PM §2).
+function shelfBasisPrice(offer) {
   return offer?.effective_unit_price ?? offer?.price
+}
+
+export function effectivePrice(offer) {
+  const shelf = shelfBasisPrice(offer)
+  if (!hasMemberPrice(offer)) return shelf
+  if (shelf == null) return offer.member_price
+  return Math.min(offer.member_price, shelf)
 }
 
 export function hasPromoEvidence(offer) {
   return offer?.promo_type != null || offer?.promo_label != null
 }
 
-// Show the promo-adjusted price only with real promo evidence AND an actual
-// cut: ingest fixtures carry `price == effective_unit_price` alongside a
-// label, and a bare `effective < price` check would strike through honest
-// prices (PM §2). No evidence → the tag price is the display price.
-export function displayPrice(offer) {
-  if (hasPromoEvidence(offer) && effectivePrice(offer) < offer?.price) {
-    return effectivePrice(offer)
+// The shelf price a shopper can actually pay without a membership: the
+// promo-adjusted value only with real promo evidence AND an actual cut (ingest
+// fixtures carry `price == effective_unit_price` alongside a label, and a bare
+// `effective < price` check would strike through honest prices, PM §2), else
+// the tag price. No evidence → the tag price.
+function shelfDisplayPrice(offer) {
+  if (
+    hasPromoEvidence(offer) &&
+    offer?.effective_unit_price != null &&
+    offer.effective_unit_price < offer.price
+  ) {
+    return offer.effective_unit_price
   }
   return offer?.price
+}
+
+// The headline: the member price when it is at or below the shelf/promo basis
+// (a member premium must never raise the displayed price), the promo price
+// when a real promo is cheaper, else the shelf price.
+export function displayPrice(offer) {
+  const shelf = shelfDisplayPrice(offer)
+  if (!hasMemberPrice(offer)) return shelf
+  if (shelf == null) return offer.member_price
+  return Math.min(offer.member_price, shelf)
+}
+
+// True only when the member price is the displayed price — the views use this
+// to label the headline "Member price". A higher member price gets no badge
+// (it is not the displayed price).
+export function showsMemberPrice(offer) {
+  return hasMemberPrice(offer) && displayPrice(offer) === offer.member_price
+}
+
+// The shelf reference beside the headline — returned only when the displayed
+// price is genuinely lower than the shelf price, so it is struck exactly when
+// it represents a saving a shopper without the deal would pay.
+export function referencePrice(offer) {
+  const shown = displayPrice(offer)
+  if (offer?.price == null || shown == null || shown >= offer.price) return null
+  return { price: offer.price, struck: true }
 }
 
 // Brochure footnote marker, not a promo (haqita filterPromos).

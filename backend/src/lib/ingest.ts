@@ -143,13 +143,14 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
       db
         .prepare(
           `INSERT INTO price_observations
-             (id, product_id, source_id, observed_date, price, effective_unit_price,
+             (id, product_id, source_id, observed_date, price, member_price, effective_unit_price,
               unit_qty, unit_qty_unit, unit_price,
               promo_type, promo_label, valid_from, valid_until, match_method,
               match_confidence, brochure_url, source_url, taxo_version, scraped_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(product_id, source_id, observed_date) DO UPDATE SET
              price = excluded.price,
+             member_price = excluded.member_price,
              effective_unit_price = excluded.effective_unit_price,
              unit_qty = excluded.unit_qty,
              unit_qty_unit = excluded.unit_qty_unit,
@@ -174,6 +175,9 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
           sourceIdBySlug.get(item.storeSlug)!,
           item.observedDate ?? observedDefault,
           item.price,
+          // Issue #627: the member/app price beside the shelf price; null for
+          // old payloads (additive field, no backfill) and non-member rows.
+          item.memberPrice ?? null,
           item.effectiveUnitPrice ?? null,
           // Canonical unit normalization (issue #368 phase A) — null when
           // the producer could not normalize the item.

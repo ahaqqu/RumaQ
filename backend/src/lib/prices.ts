@@ -26,6 +26,21 @@ export const LATEST_OBSERVATION_SUBQUERY = `o.id = (
 export const LATEST_OBSERVATION_PREDICATE = `${LATEST_OBSERVATION_SUBQUERY}
 AND o.match_confidence >= ${PRICE_MIN_CONFIDENCE}`
 
+// Issue #627: the payable/comparison price of one observation. The member
+// price is the final payable price when it is lower, but it must never RAISE
+// the price above the shelf/promo basis — MIN() keeps a member premium from
+// hiding a cheaper shelf price or promo. Single source for every read query
+// (explorer, detail ordering, promo examples, brochure catalog/products).
+// `prefix` is the SQL alias the caller uses ('o.' for price_observations;
+// '' inside a CTE whose columns are bare).
+export function payablePriceSql(prefix = ''): string {
+  const p = prefix ? `${prefix}.` : ''
+  return `MIN(COALESCE(${p}member_price, ${p}effective_unit_price, ${p}price), COALESCE(${p}effective_unit_price, ${p}price))`
+}
+
+// The same basis for the price_observations alias every read query uses.
+export const PAYABLE_PRICE_SQL = payablePriceSql('o')
+
 // --- Promo catalog (issue #292 design-arch §1.2) ---
 
 // The closed 5-value promo_type enum the brochure parser produces. Single
@@ -70,6 +85,9 @@ export type PromoExampleProduct = {
   source_slug: string
   source_name: string
   price: number
+  // Issue #627: the member/app price beside the shelf price; null when the
+  // retailer prints none (or the observation predates the field).
+  member_price: number | null
   effective_unit_price: number | null
 }
 
@@ -115,7 +133,7 @@ WITH base AS (
   SELECT ${PROMO_GROUP_CASE} AS group_key,
          p.product_key, p.name, p.brand, p.unit,
          s.slug AS source_slug, s.name AS source_name,
-         o.price, o.effective_unit_price
+         o.price, o.member_price, o.effective_unit_price
   ${PROMO_LATEST_BASE}
     AND ${PROMO_EVIDENCE}
 ),
@@ -123,7 +141,7 @@ best AS (
   -- one display row per product per group: its cheapest promo offer
   SELECT *, ROW_NUMBER() OVER (
     PARTITION BY group_key, product_key
-    ORDER BY COALESCE(effective_unit_price, price) ASC, source_slug ASC
+    ORDER BY ${payablePriceSql()} ASC, source_slug ASC
   ) AS offer_rn
   FROM base
 ),
@@ -135,7 +153,7 @@ ranked AS (
   FROM best WHERE offer_rn = 1
 )
 SELECT group_key, product_key, name, brand, unit, source_slug, source_name,
-       price, effective_unit_price
+       price, member_price, effective_unit_price
 FROM ranked WHERE group_rn <= 5
 ORDER BY group_key ASC, group_rn ASC`),
     db.prepare(`-- promos: total

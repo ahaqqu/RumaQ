@@ -4669,6 +4669,9 @@
                                 "price": {
                                   "type": "number"
                                 },
+                                "member_price": {
+                                  "type": ["number", "null"]
+                                },
                                 "effective_unit_price": {
                                   "type": ["number", "null"]
                                 }
@@ -4681,6 +4684,7 @@
                                 "source_slug",
                                 "source_name",
                                 "price",
+                                "member_price",
                                 "effective_unit_price"
                               ]
                             }
@@ -4766,6 +4770,9 @@
                                 "price": {
                                   "type": "number"
                                 },
+                                "member_price": {
+                                  "type": ["number", "null"]
+                                },
                                 "effective_unit_price": {
                                   "type": ["number", "null"]
                                 }
@@ -4776,6 +4783,7 @@
                                 "brand",
                                 "unit",
                                 "price",
+                                "member_price",
                                 "effective_unit_price"
                               ]
                             }
@@ -4882,6 +4890,9 @@
                           "price": {
                             "type": "number"
                           },
+                          "member_price": {
+                            "type": ["number", "null"]
+                          },
                           "effective_unit_price": {
                             "type": ["number", "null"]
                           },
@@ -4930,6 +4941,7 @@
                           "category",
                           "category_version",
                           "price",
+                          "member_price",
                           "effective_unit_price",
                           "promo_type",
                           "promo_label",
@@ -4988,7 +5000,164 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "product": {
+                      "type": "object",
+                      "properties": {
+                        "product_key": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "brand": {
+                          "type": ["string", "null"]
+                        },
+                        "unit": {
+                          "type": ["string", "null"]
+                        },
+                        "category": {
+                          "type": ["string", "null"]
+                        },
+                        "first_seen_at": {
+                          "type": ["string", "null"]
+                        },
+                        "last_seen_at": {
+                          "type": ["string", "null"]
+                        }
+                      },
+                      "required": [
+                        "product_key",
+                        "name",
+                        "brand",
+                        "unit",
+                        "category",
+                        "first_seen_at",
+                        "last_seen_at"
+                      ]
+                    },
+                    "current": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source_slug": {
+                            "type": "string"
+                          },
+                          "source_name": {
+                            "type": "string"
+                          },
+                          "observed_date": {
+                            "type": "string"
+                          },
+                          "price": {
+                            "type": "number"
+                          },
+                          "member_price": {
+                            "type": ["number", "null"]
+                          },
+                          "effective_unit_price": {
+                            "type": ["number", "null"]
+                          },
+                          "promo_type": {
+                            "type": ["string", "null"]
+                          },
+                          "promo_label": {
+                            "type": ["string", "null"]
+                          },
+                          "valid_from": {
+                            "type": ["string", "null"]
+                          },
+                          "valid_until": {
+                            "type": ["string", "null"]
+                          },
+                          "match_method": {
+                            "type": ["string", "null"]
+                          },
+                          "match_confidence": {
+                            "type": "number"
+                          },
+                          "brochure_url": {
+                            "type": ["string", "null"]
+                          },
+                          "low_confidence": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "source_slug",
+                          "source_name",
+                          "observed_date",
+                          "price",
+                          "member_price",
+                          "effective_unit_price",
+                          "promo_type",
+                          "promo_label",
+                          "valid_from",
+                          "valid_until",
+                          "match_method",
+                          "match_confidence",
+                          "brochure_url",
+                          "low_confidence"
+                        ]
+                      }
+                    },
+                    "history": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source_slug": {
+                            "type": "string"
+                          },
+                          "observed_date": {
+                            "type": "string"
+                          },
+                          "price": {
+                            "type": "number"
+                          },
+                          "promo_type": {
+                            "type": ["string", "null"]
+                          },
+                          "promo_label": {
+                            "type": ["string", "null"]
+                          },
+                          "valid_from": {
+                            "type": ["string", "null"]
+                          },
+                          "valid_until": {
+                            "type": ["string", "null"]
+                          },
+                          "match_method": {
+                            "type": ["string", "null"]
+                          },
+                          "match_confidence": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "source_slug",
+                          "observed_date",
+                          "price",
+                          "promo_type",
+                          "promo_label",
+                          "valid_from",
+                          "valid_until",
+                          "match_method",
+                          "match_confidence"
+                        ]
+                      }
+                    }
+                  },
+                  "required": ["product", "current", "history"]
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized"

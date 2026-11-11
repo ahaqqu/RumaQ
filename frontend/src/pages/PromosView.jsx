@@ -6,7 +6,13 @@ import { Panel, PanelBody } from '../components/Panel.jsx'
 import { Badge } from '../components/Badge.jsx'
 import { IconSearch, IconWarning } from '../components/icons.jsx'
 import { brandSuffix, prettyName, prettyUnit } from '../lib/productDisplay.js'
-import { formatPrice } from '../lib/pricesHelpers.js'
+import { cn } from '../lib/cn.js'
+import {
+  displayPrice,
+  formatPrice,
+  referencePrice,
+  showsMemberPrice,
+} from '../lib/pricesHelpers.js'
 
 // i18n key per promo group — the API returns groups in the fixed order
 // (discount_pct → … → other last), cards render in that order.
@@ -51,9 +57,16 @@ function PromoCard({ group, sourceNames, expanded, onToggle, onJump }) {
       {expanded && (
         <div className="px-5 py-3 border-t border-border bg-surface-sunken/40 flex flex-col gap-2">
           {(group.example_products ?? []).map((product) => {
+            const shown = displayPrice(product)
+            const member = showsMemberPrice(product)
+            const reference = referencePrice(product)
             // Per-unit line only when the effective price differs from the
             // package price shown — same vocabulary as the explorer row.
+            // v1 (#627): effective_unit_price is shelf/promo-derived, so a
+            // member row omits it instead of mislabeling it as the member
+            // price.
             const perUnit =
+              !member &&
               product.unit &&
               product.effective_unit_price != null &&
               product.effective_unit_price !== product.price
@@ -75,8 +88,23 @@ function PromoCard({ group, sourceNames, expanded, onToggle, onJump }) {
                   </div>
                   {perUnit && <div className="text-xs text-text-muted">{perUnit}</div>}
                 </div>
-                <span className="text-sm font-semibold tabular-nums shrink-0">
-                  {formatPrice(product.price)}
+                <span className="flex shrink-0 items-center gap-2">
+                  <span className="flex flex-col items-end">
+                    {reference && (
+                      <span
+                        data-testid="shelf-reference-price"
+                        title={member ? t('prices.shelfPrice') : undefined}
+                        className={cn(
+                          'text-xs text-text-muted tabular-nums',
+                          reference.struck && 'line-through'
+                        )}
+                      >
+                        {formatPrice(reference.price)}
+                      </span>
+                    )}
+                    <span className="text-sm font-semibold tabular-nums">{formatPrice(shown)}</span>
+                  </span>
+                  {member && <Badge tone="ok">{t('prices.memberPrice')}</Badge>}
                 </span>
               </button>
             )

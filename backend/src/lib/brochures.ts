@@ -6,7 +6,7 @@
 
 import { SCRAPE_STORE_SLUGS } from '@rumaq/contract'
 
-import { LATEST_OBSERVATION_PREDICATE } from './prices.js'
+import { LATEST_OBSERVATION_PREDICATE, payablePriceSql } from './prices.js'
 
 /**
  * Unreferenced objects younger than this grace period survive the sweep.
@@ -143,6 +143,9 @@ export type BrochureExampleProduct = {
   brand: string | null
   unit: string | null
   price: number
+  // Issue #627: the member/app price beside the shelf price; null when the
+  // retailer prints none (or the observation predates the field).
+  member_price: number | null
   effective_unit_price: number | null
 }
 
@@ -184,7 +187,7 @@ ORDER BY s.name COLLATE NOCASE ASC, observed_date DESC, o.brochure_url ASC`),
     db.prepare(`-- brochures: examples
 WITH base AS (
   SELECT p.product_key, p.name, p.brand, p.unit,
-         o.brochure_url, o.price, o.effective_unit_price
+         o.brochure_url, o.price, o.member_price, o.effective_unit_price
   FROM price_observations o
   JOIN price_products p ON p.id = o.product_id
   JOIN price_sources s ON s.id = o.source_id
@@ -195,7 +198,7 @@ best AS (
   -- one display row per product per brochure: its cheapest offer
   SELECT *, ROW_NUMBER() OVER (
     PARTITION BY brochure_url, product_key
-    ORDER BY COALESCE(effective_unit_price, price) ASC
+    ORDER BY ${payablePriceSql()} ASC
   ) AS offer_rn
   FROM base
 ),
@@ -206,7 +209,7 @@ ranked AS (
   ) AS group_rn
   FROM best WHERE offer_rn = 1
 )
-SELECT brochure_url, product_key, name, brand, unit, price, effective_unit_price
+SELECT brochure_url, product_key, name, brand, unit, price, member_price, effective_unit_price
 FROM ranked WHERE group_rn <= 5
 ORDER BY brochure_url ASC, group_rn ASC`),
   ])
@@ -256,6 +259,8 @@ export type BrochureProduct = {
   category: string | null
   category_version: string | null
   price: number
+  /** Issue #627: member/app price beside the shelf price; null when absent. */
+  member_price: number | null
   effective_unit_price: number | null
   promo_type: string | null
   promo_label: string | null
@@ -290,13 +295,13 @@ export type BrochureProductsOptions = {
 // pages through.
 const BROCHURE_PRODUCTS_BASE = `WITH base AS (
   SELECT p.product_key, p.name, p.brand, p.unit, p.category, p.category_version,
-         o.price, o.effective_unit_price, o.promo_type, o.promo_label,
+         o.price, o.member_price, o.effective_unit_price, o.promo_type, o.promo_label,
          o.valid_from, o.valid_until, o.match_method, o.match_confidence,
          o.observed_date, o.brochure_url, o.scraped_at,
          s.slug AS source_slug, s.name AS source_name, s.website AS source_website,
          ROW_NUMBER() OVER (
            PARTITION BY p.product_key
-           ORDER BY COALESCE(o.effective_unit_price, o.price) ASC, o.price ASC, o.id ASC
+           ORDER BY ${payablePriceSql('o')} ASC, o.price ASC, o.id ASC
          ) AS offer_rn
   FROM price_observations o
   JOIN price_products p ON p.id = o.product_id
@@ -324,7 +329,7 @@ export async function getBrochureProducts(
     db
       .prepare(`${BROCHURE_PRODUCTS_BASE}
 SELECT product_key, name, brand, unit, category, category_version,
-       price, effective_unit_price, promo_type, promo_label,
+       price, member_price, effective_unit_price, promo_type, promo_label,
        valid_from, valid_until, match_method, match_confidence,
        source_slug, source_name, source_website,
        observed_date, brochure_url, scraped_at
@@ -342,6 +347,7 @@ SELECT COUNT(*) AS total FROM base WHERE offer_rn = 1`)
     (pageResult as { results?: BrochureProduct[] }).results?.map((row) => ({
       ...row,
       price: Number(row.price),
+      member_price: row.member_price == null ? null : Number(row.member_price),
       effective_unit_price:
         row.effective_unit_price == null ? null : Number(row.effective_unit_price),
       match_confidence: Number(row.match_confidence),

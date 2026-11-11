@@ -171,7 +171,7 @@ function seed(sqlite: SqliteDb): void {
   sqlite
     .prepare(
       `UPDATE price_observations
-       SET price = 72000, effective_unit_price = 14400,
+       SET price = 72000, member_price = 69000, effective_unit_price = 14400,
            promo_type = 'discount_pct', promo_label = 'DISKON 20%',
            valid_from = '2026-10-29', valid_until = '2026-11-04',
            match_method = 'embedding', match_confidence = 0.92
@@ -219,7 +219,9 @@ function seed(sqlite: SqliteDb): void {
   )
 
   // Cheapest-offer basis: two current offers for the same product on one
-  // brochure; the lower COALESCE(effective, price) wins.
+  // brochure. Lotte's effective price (15000) would win on the shelf/promo
+  // basis; Superindo's member price (12000, #627) is the lower payable price,
+  // so the MIN basis picks Superindo.
   insertProduct.run(
     'prod-multi',
     'apel--fuji--1-kg',
@@ -261,6 +263,61 @@ function seed(sqlite: SqliteDb): void {
     BROCHURE_MULTI,
     '2026-10-29T23:00:05Z'
   )
+  sqlite
+    .prepare("UPDATE price_observations SET member_price = 12000 WHERE id = 'obs-multi-super'")
+    .run()
+
+  // A member premium must not win the cheapest-offer pick (#627): Lotte's
+  // member price (40000) is ABOVE its own promo (10000) and Superindo's
+  // member basis (12000). On a plain member-first COALESCE Lotte would score
+  // 40000 and Superindo would win; the MIN basis keeps Lotte's 10000.
+  insertProduct.run(
+    'prod-premium',
+    'durian--premium--1-kg',
+    'Durian Premium 1 kg',
+    null,
+    null,
+    'buah',
+    '2026-01'
+  )
+  insertObservation.run(
+    'obs-premium-lotte',
+    'prod-premium',
+    'src-lotte',
+    '2026-10-29',
+    30_000,
+    10_000,
+    null,
+    null,
+    null,
+    null,
+    'exact',
+    1,
+    BROCHURE_MULTI,
+    '2026-10-29T23:00:05Z'
+  )
+  insertObservation.run(
+    'obs-premium-super',
+    'prod-premium',
+    'src-super',
+    '2026-10-29',
+    20_000,
+    null,
+    null,
+    null,
+    null,
+    null,
+    'exact',
+    1,
+    BROCHURE_MULTI,
+    '2026-10-29T23:00:05Z'
+  )
+  sqlite
+    .prepare("UPDATE price_observations SET member_price = 40000 WHERE id = 'obs-premium-lotte'")
+    .run()
+  sqlite
+    .prepare("UPDATE price_observations SET member_price = 12000 WHERE id = 'obs-premium-super'")
+    .run()
 }
 
 function freshDb() {
@@ -321,6 +378,7 @@ describe('getBrochureProducts', () => {
       category: 'beras',
       category_version: '2026-01',
       price: 72000,
+      member_price: 69000,
       effective_unit_price: 14400,
       promo_type: 'discount_pct',
       promo_label: 'DISKON 20%',
@@ -357,18 +415,28 @@ describe('getBrochureProducts', () => {
     for (const page of [first, second, tail, past]) expect(page.total).toBe(7)
   })
 
-  it('picks the cheapest current offer per product', async () => {
+  it('picks the cheapest current offer per product on the MIN basis', async () => {
     const { db } = freshDb()
     const page = await getBrochureProducts(db, {
       brochureUrl: BROCHURE_MULTI,
       limit: 50,
       offset: 0,
     })
-    expect(page.total).toBe(1)
-    expect(page.items[0]).toMatchObject({
-      product_key: 'apel--fuji--1-kg',
+    expect(page.total).toBe(2)
+    const byKey = new Map(page.items.map((item) => [item.product_key, item]))
+
+    // A lower member price wins over the shelf/promo basis.
+    expect(byKey.get('apel--fuji--1-kg')).toMatchObject({
+      price: 20000,
+      member_price: 12000,
+      effective_unit_price: null,
+      source_slug: 'superindo',
+    })
+    // A member price ABOVE the promo never hides the cheaper promo.
+    expect(byKey.get('durian--premium--1-kg')).toMatchObject({
       price: 30000,
-      effective_unit_price: 15000,
+      member_price: 40000,
+      effective_unit_price: 10000,
       source_slug: 'lotte-mart',
     })
   })
@@ -474,6 +542,7 @@ describe('brochure products OpenAPI schema', () => {
       'category',
       'category_version',
       'price',
+      'member_price',
       'effective_unit_price',
       'promo_type',
       'promo_label',

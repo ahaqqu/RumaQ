@@ -72,6 +72,8 @@ function samplePayload() {
         category: null,
         storeSlug: 'lotte-mart',
         price: 21500,
+        // Issue #627: the member price is written beside the shelf `price`.
+        memberPrice: 19900,
         effectiveUnitPrice: 21500,
         promoType: 'discount_pct',
         promoLabel: 'Diskon 15%',
@@ -302,6 +304,34 @@ describe('ingestPrices', () => {
     expect(observationStmts.flatMap((s) => s.params)).toContain(productStmts[0]!.params[0])
   })
 
+  it('binds the member price beside the shelf price (#627)', async () => {
+    const { db, executedBatches } = createFakeDb([
+      { match: /^SELECT id, slug FROM price_sources/, rows: [{ id: 'src-1', slug: 'lotte-mart' }] },
+      {
+        match: /^SELECT id, product_key, category FROM price_products/,
+        rows: [
+          { id: 'prod-1', product_key: 'minyak-goreng--bimoli--1-l' },
+          { id: 'prod-2', product_key: 'beras--pandan-wangi--5-kg' },
+        ],
+      },
+    ])
+
+    const parsed = samplePayload()
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+    await ingestPrices(db, parsed.output)
+
+    const observationStmts = executedBatches
+      .flat()
+      .filter((s) => s.sql.includes('INSERT INTO price_observations'))
+    expect(observationStmts[0]!.sql).toContain('member_price')
+    expect(observationStmts[0]!.sql).toContain('member_price = excluded.member_price')
+    // Bind position 5 is member_price, right after the shelf price.
+    expect(observationStmts[0]!.params[5]).toBe(19900)
+    // The second item has no memberPrice: null, never 0.
+    expect(observationStmts[1]!.params[5]).toBeNull()
+  })
+
   it('chunks the product IN-lists — a catalog beyond D1’s 100-parameter cap still ingests', async () => {
     const items = Array.from({ length: 150 }, (_, i) => ({
       productKey: `catalog-item-${i}`,
@@ -450,13 +480,14 @@ describe('ingestPrices', () => {
       .filter((s) => s.sql.includes('INSERT INTO price_observations'))
     expect(observationStmts).toHaveLength(2)
     // Columns ride right after effective_unit_price: binds 7/8/9 are
-    // unit_qty, unit_qty_unit, unit_price.
+    // unit_qty, unit_qty_unit, unit_price (member_price holds bind 5, so the
+    // block starts one index later than before #627).
     expect(observationStmts[0]!.sql).toContain('unit_qty, unit_qty_unit, unit_price')
     const riceParams = observationStmts[0]!.params as unknown[]
-    expect(riceParams.slice(6, 9)).toEqual([5000, 'g', 110000])
+    expect(riceParams.slice(7, 10)).toEqual([5000, 'g', 110000])
     // …and the field-less oil item binds explicit nulls (old payload, additive).
     const oilParams = observationStmts[1]!.params as unknown[]
-    expect(oilParams.slice(6, 9)).toEqual([null, null, null])
+    expect(oilParams.slice(7, 10)).toEqual([null, null, null])
   })
 })
 
@@ -515,12 +546,13 @@ describe('ingestPrices — source_url (issue #380)', () => {
       .flat()
       .filter((s) => s.sql.includes('INSERT INTO price_observations'))
     for (const stmt of observationStmts) {
-      // brochure_url is bind 15 (0-based), source_url bind 16 right after
-      // it, taxo_version bind 17 (issue #373) — positional, because the
+      // brochure_url is bind 16 (0-based, one later since #627 added
+      // member_price at bind 5), source_url bind 17 right after it,
+      // taxo_version bind 18 (issue #373) — positional, because the
       // fixture's brochureUrl values differ.
-      expect((stmt.params as unknown[])[16]).toBeNull()
       expect((stmt.params as unknown[])[17]).toBeNull()
-      expect((stmt.params as unknown[])[18]).toBe(parsed.output.scrapedAt)
+      expect((stmt.params as unknown[])[18]).toBeNull()
+      expect((stmt.params as unknown[])[19]).toBe(parsed.output.scrapedAt)
     }
   })
 })
