@@ -115,5 +115,8 @@ describe('brandSuffix', () => {
     expect(brandSuffix('Minyak Goreng', null)).toBe('')
     expect(brandSuffix('Minyak Goreng', '')).toBe('')
     expect(brandSuffix('Minyak Goreng', '   ')).toBe('')
+    // A brand with no letters or digits is not a brand — never " · -".
+    expect(brandSuffix('Minyak Goreng', '-')).toBe('')
+    expect(brandSuffix('Minyak Goreng', '!!!')).toBe('')
   })
 })

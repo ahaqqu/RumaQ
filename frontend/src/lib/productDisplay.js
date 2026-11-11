@@ -138,9 +138,7 @@ function wordKey(value) {
   return { key, boundaries }
 }
 
-function containsBrandWords(name, brand) {
-  const brandKey = wordKey(brand).key
-  if (!brandKey) return false
+function containsBrandWords(name, brandKey) {
   const nameKey = wordKey(name)
   for (
     let at = nameKey.key.indexOf(brandKey);
@@ -157,9 +155,12 @@ function containsBrandWords(name, brand) {
 // words twice. A brand only counts as present when it lines up with whole
 // words ("Sariwangi" is not "Sari", "Indomie" is not "Ina"), ignoring case
 // and punctuation; even a short brand (XL, 3M) is appended when it is
-// genuinely missing.
+// genuinely missing. A brand with no letters or digits ("-", "!!") is not a
+// brand at all and never earns a suffix.
 export function brandSuffix(name, brand) {
-  if (containsBrandWords(name, brand)) return ''
+  const brandKey = wordKey(brand).key
+  if (!brandKey) return ''
+  if (containsBrandWords(name, brandKey)) return ''
   const prettyBrand = prettyName(brand)
   return prettyBrand ? ` · ${prettyBrand}` : ''
 }
