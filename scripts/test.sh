@@ -32,16 +32,30 @@ case "$SUITE" in
     # them; anything else runs it.
     exec "$ROOT_DIR/scripts/test/worker-smoke-scope.sh" "$@"
     ;;
+  lighthouse-scope)
+    # Offline guard for the Lighthouse scope rule: docs, backend, contract,
+    # codegen tools and most scripts cannot reach the frontend bundle, so the
+    # audit skips them; a frontend, lockfile, or build-script change runs it.
+    exec "$ROOT_DIR/scripts/test/lighthouse-scope.sh" "$@"
+    ;;
+  unit-test-scope)
+    # Offline guard for the unit-test scope rules: a suite skips change sets
+    # that cannot reach its workspace, with the parity edge (backend/src/
+    # plugins/ runs the frontend suite) and contract/ running the backend.
+    exec "$ROOT_DIR/scripts/test/unit-test-scope.sh" "$@"
+    ;;
   all)
     "$ROOT_DIR/scripts/test/deploy-secrets.sh" "$@"
     "$ROOT_DIR/scripts/test/worker-smoke-scope.sh" "$@"
+    "$ROOT_DIR/scripts/test/lighthouse-scope.sh" "$@"
+    "$ROOT_DIR/scripts/test/unit-test-scope.sh" "$@"
     "$ROOT_DIR/scripts/test/price-freshness.sh" "$@"
     "$ROOT_DIR/scripts/test/unit.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-local.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-live.sh" "$@"
     ;;
   *)
-    echo "Usage: $0 [unit|automation-local|automation-live|deploy|freshness|smoke-scope|all]"
+    echo "Usage: $0 [unit|automation-local|automation-live|deploy|freshness|smoke-scope|lighthouse-scope|unit-test-scope|all]"
     exit 1
     ;;
 esac

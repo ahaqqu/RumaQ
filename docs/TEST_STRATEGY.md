@@ -14,6 +14,17 @@ The test and check scripts print failures only. The full output is written to
 ./scripts/test.sh unit
 ```
 
+Scope: in CI each suite runs only when the change set can reach it — the
+frontend suite runs on `frontend/` (plus dependencies, the test plumbing under
+`scripts/`, and anything unknown), the backend suite on `backend/` +
+`contract/`. The other workspace's sources, docs, codegen tools and Markdown
+skip. Named edge: `frontend/src/plugins/registry.test.js` imports backend's
+`plugins/manifests.js` (plugin parity), so `backend/src/plugins/` always runs
+the frontend suite. `scripts/github/unit-test-scope.sh` decides from the
+change set, the decision is covered offline by
+`./scripts/test.sh unit-test-scope`, and an unavailable diff runs both suites
+— a wasted minute, never a regression that merges green.
+
 ## Worker boot smoke (CI gate)
 
 `scripts/github/worker-boot-smoke.sh` builds the backend with the Cloudflare
@@ -195,7 +206,8 @@ Runs every 6 hours via `.github/workflows/smoke.yml`. Base URL: `rumaq.ahaqqu.co
 
 ## Performance budget
 
-Enforced in CI (`.github/workflows/ci.yml`, on every PR):
+Enforced in CI (`.github/workflows/ci.yml`, on pull requests — the audit
+gates are scoped to the change set, see below):
 
 - **Bundle size** — `scripts/ci/bundle-budget.mjs` fails when the total JS in
   `frontend/dist/assets` exceeds **350 KB gzipped** (2026-10 baseline ≈ 185 KB;
@@ -204,7 +216,11 @@ Enforced in CI (`.github/workflows/ci.yml`, on every PR):
 - **Lighthouse CI** — `treosh/lighthouse-ci-action` against the built
   `frontend/dist` (desktop preset, static run; measures the public login
   page). Assertions: Performance ≥ 0.7 (error), Accessibility ≥ 0.9 (error),
-  Best-Practices ≥ 0.9 (warn), SEO off. Config: `.lighthouserc.json`.
+  Best-Practices ≥ 0.9 (warn), SEO off. Config: `.lighthouserc.json`. PRs
+  whose change set cannot reach the bundle (docs, backend, contract, codegen
+  tools, most scripts) skip the audit — scoped by
+  `scripts/github/lighthouse-scope.sh`, offline-tested via
+  `./scripts/test.sh lighthouse-scope`, failing safe to a run.
 
 Both gates are hard errors; relax them only with a documented reason in the
 PR (e.g. a deliberate dependency addition), and prefer lazy-loading/splitting
@@ -225,4 +241,4 @@ heavy deps over raising the budget.
 - [x] Main user flows covered by page-level E2E — `automation/tests/local/e2e/features/`
 - [x] No critical/serious axe-core violations on main pages — `accessibility.feature`
 - [x] Bundle-size budget enforced in CI — `scripts/ci/bundle-budget.mjs`
-- [x] Lighthouse budgets enforced in CI — `.lighthouserc.json` + `ci.yml`
+- [x] Lighthouse budgets enforced in CI — `.lighthouserc.json` + `ci.yml`, scoped to change sets that can reach the bundle
