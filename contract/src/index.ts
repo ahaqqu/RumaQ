@@ -143,6 +143,21 @@ export const PIPELINE_CONTRACT_VERSION = 2 as const
 
 const rawText = (max: number) => pipe(string(), minLength(1), maxLength(max))
 
+// pipeline #116: the identity slice of a product's size, carried by the
+// observation so ingest can write `price_products.size_*` on create / first
+// sight. `quantity` is ONE pack in the base unit (not the listed total used by
+// `unitQty`); `packCount` defaults to 1. Additive-nullish (#294 pattern),
+// Worker-first: old payloads (no field) still validate; a NEW payload hitting
+// an OLD Worker fails loudly (strictObject). The backend derives
+// `totalQuantity = quantity × packCount` and keeps packaging/ranges null —
+// this schema deliberately excludes the display/ranges fields of the
+// product-side `productSizeSchema`.
+export const ingestSizeSchema = strictObject({
+  quantity: pipe(number(), gtValue(0)),
+  unit: picklist(['g', 'ml', 'pcs']),
+  packCount: nullish(pipe(number(), integer(), minValue(1))),
+})
+
 export const ingestItemV2Schema = strictObject({
   productKey: rawText(300),
   rawName: rawText(500),
@@ -177,6 +192,10 @@ export const ingestItemV2Schema = strictObject({
   sourceUrl: nullish(pipe(string(), maxLength(500))),
   page: nullish(pipe(number(), integer(), minValue(0))),
   ocrModel: nullish(pipe(string(), maxLength(100))),
+  // pipeline #116: the size tuple this observation identifies (see
+  // `ingestSizeSchema`). Never a canonical rename: the key is frozen, and the
+  // backend refuses to write a size onto a key whose unit segment is empty.
+  size: nullish(ingestSizeSchema),
 })
 
 export const ingestPayloadV2Schema = strictObject({
@@ -186,6 +205,7 @@ export const ingestPayloadV2Schema = strictObject({
   items: array(ingestItemV2Schema),
 })
 
+export type IngestSize = InferOutput<typeof ingestSizeSchema>
 export type IngestItemV2 = InferOutput<typeof ingestItemV2Schema>
 export type IngestPayloadV2 = InferOutput<typeof ingestPayloadV2Schema>
 

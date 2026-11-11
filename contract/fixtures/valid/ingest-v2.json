@@ -24,6 +24,11 @@
       "effectiveUnitPrice": 17250,
       "unitQty": 2000,
       "unitQtyUnit": "ml",
+      "size": {
+        "quantity": 2000,
+        "unit": "ml",
+        "packCount": 1
+      },
       "unitPrice": 17250,
       "promoType": "discount_pct",
       "promoLabel": "Diskon 14%",
