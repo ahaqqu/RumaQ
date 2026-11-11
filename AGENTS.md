@@ -12,6 +12,7 @@
 - When a change touches both sides (contract/ here + pipeline consumption), ship the RumaQ PR first, then `./scripts/sync-contract.sh <sha>` in a pipeline PR.
 - When writing automation (automation-local/live), target the app only — the scraper has no harness in this repo.
 - `scripts/test.sh` is the single entrypoint for all tests (unit, automation-local, automation-live). Run `./scripts/test.sh unit frontend` etc.
+- When installing dependencies in a worktree or fresh clone, run `bun install` — never `npm install` or `npm ci`: bun hardlinks from its global cache, so sibling worktrees share inodes instead of copying.
 - `scripts/docs.sh` generates API documentation.
 - `scripts/github/` contains scripts used only by GitHub Actions, not for local developer use.
 - Consider to use public trusted library when working with external product (e.g. cloudflare) or commonly used logic (e.g. parsing json, authentication)
