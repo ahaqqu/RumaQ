@@ -19,14 +19,17 @@ import type { StorageAdapter } from './index.js'
 
 /**
  * Raised by the missing-binding adapter below — the compose-time wiring
- * mistake surfacing at call time (V1-A1, PR #473 review).
+ * mistake surfacing at call time (V1-A1, PR #473 review). Port-level name
+ * (R546-B2, PR #546 disposition folded into #442): the class serves the core
+ * receipts domain as much as the plugin registry, so "Plugin" in the name
+ * and message stopped being true.
  */
-export class PluginBindingMissingError extends Error {
+export class StorageBindingMissingError extends Error {
   constructor(binding: string) {
     super(
-      `plugin port is unwired: the '${binding}' binding is missing from this deployment's env — declare it in wrangler.toml (or .dev.vars locally) and redeploy`
+      `storage port is unwired: the '${binding}' binding is missing from this deployment's env — declare it in backend/cloudflare.config.ts (or .dev.vars locally) and redeploy`
     )
-    this.name = 'PluginBindingMissingError'
+    this.name = 'StorageBindingMissingError'
   }
 }
 
@@ -40,7 +43,7 @@ export class PluginBindingMissingError extends Error {
  */
 export function missingBindingAdapter(binding: string): StorageAdapter {
   const refuse = (): never => {
-    throw new PluginBindingMissingError(binding)
+    throw new StorageBindingMissingError(binding)
   }
   return {
     put: async () => refuse(),

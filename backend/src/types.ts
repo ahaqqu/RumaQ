@@ -42,6 +42,25 @@ export type Env = {
      *  the deploy writes neither secret (ahaqqu/RumaQ#456), so the operator
      *  writes it as HAQITA_INGEST_SECRET and deletes this one. */
     HAQITA_INGEST_SECRET_NEXT?: string
+    /**
+     * DokumenQ file-service base URL (ahaqqu/RumaQ#442 Mode A cutover) — a
+     * plain, public hostname, not a secret. Declared in
+     * backend/cloudflare.config.ts as a text binding. Part of the storage
+     * cutover pair: set together with DOKUMENQ_APP_SECRET the storage port
+     * (ports/storage/select.ts) swaps to the DokumenQ adapter; leave both
+     * unset to keep R2.
+     */
+    DOKUMENQ_BASE_URL?: string
+    /**
+     * DokumenQ app secret (bearer for /v1/authorize + the documents CRUD,
+     * DokumenQ API.md §1.1) — issued once by the DokumenQ admin registration
+     * for the RumaQ app. Set OUT-OF-BAND on the api Worker only
+     * (`cf workers secrets update`), like HAQITA_INGEST_SECRET: never
+     * declared in cloudflare.config.ts, so an ordinary deploy preserves it,
+     * and branch/preview Workers run without it and keep the R2 adapter.
+     * Never enters the repo.
+     */
+    DOKUMENQ_APP_SECRET?: string
     PAGES_ORIGIN?: string
     EMAIL_AUTH_ENABLED: string
     ASSETS: Fetcher
