@@ -149,7 +149,10 @@ Playwright reports, Vitest JSON, artifacts or diagnostics. `--down` takes no
 arguments: it sweeps this checkout's stacks by label and never touches another
 checkout's. A project that also contains a foreign container is refused as a
 whole — it is never `down`-ed project-wide — and pre-#356 unlabelled stacks are
-found by their deterministic old project name. `--clean` also removes this
+found by their deterministic old project name. The same ownership check runs
+before a normal `up` and again at teardown: if an explicit `COMPOSE_PROJECT_NAME`
+already points at another checkout's containers (even ones created from this
+compose file), the run refuses to start or tear it down and exits nonzero. `--clean` also removes this
 toolchain's cache volume; that volume is shared by every checkout using the same
 lockfile, so run `--clean` only when no other automation run is active (Docker
 refuses to remove a volume that is in use).

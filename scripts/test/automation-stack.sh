@@ -509,6 +509,72 @@ else
 fi
 
 # ------------------------------------------------------------------
+# 7b. Normal-run ownership (ensure_stack / cleanup)
+# ------------------------------------------------------------------
+echo '==> normal-run ownership'
+
+cat > "$SHIM_DIR/fixture-normal-foreign" <<'FIXTURE'
+cid-normal-other normalprobe /compose/ours.yml /checkout/other
+FIXTURE
+export DOCKER_FIXTURE="$SHIM_DIR/fixture-normal-foreign"
+RC=0
+PATH="$SHIM_DIR:$PATH" stack_project_has_foreign 'normalprobe' '/checkout/ours' '/compose/ours.yml' > /dev/null 2>&1 || RC=$?
+if ((RC == 0)); then
+  pass 'same compose file + another checkout label is foreign (normal cleanup refuses it)'
+else
+  fail "normal ownership check missed a same-compose-file foreign checkout (rc $RC, must be 0)"
+fi
+
+cat > "$SHIM_DIR/fixture-normal-mixed" <<'FIXTURE'
+cid-normal-ours normalprobe /compose/ours.yml /checkout/ours
+cid-normal-other normalprobe /compose/ours.yml /checkout/other
+FIXTURE
+export DOCKER_FIXTURE="$SHIM_DIR/fixture-normal-mixed"
+RC=0
+PATH="$SHIM_DIR:$PATH" stack_project_has_foreign 'normalprobe' '/checkout/ours' '/compose/ours.yml' > /dev/null 2>&1 || RC=$?
+if ((RC == 0)); then
+  pass 'one foreign container among ours makes the whole project foreign (every container checked)'
+else
+  fail "normal ownership check accepted a mixed project (rc $RC, must be 0)"
+fi
+
+cat > "$SHIM_DIR/fixture-normal-ours" <<'FIXTURE'
+cid-normal-ours normalprobe /compose/ours.yml /checkout/ours
+FIXTURE
+export DOCKER_FIXTURE="$SHIM_DIR/fixture-normal-ours"
+RC=0
+PATH="$SHIM_DIR:$PATH" stack_project_has_foreign 'normalprobe' '/checkout/ours' '/compose/ours.yml' > /dev/null 2>&1 || RC=$?
+if ((RC == 1)); then
+  pass 'a project with only our containers is safe to adopt/tear down'
+else
+  fail "a fully-owned project was reported foreign (rc $RC, must be 1)"
+fi
+
+RC=0
+PATH="$SHIM_DIR:$PATH" stack_project_has_foreign 'empty-project' '/checkout/ours' '/compose/ours.yml' > /dev/null 2>&1 || RC=$?
+if ((RC == 1)); then
+  pass 'an empty project is safe (nothing to adopt or tear down)'
+else
+  fail "an empty project was not treated as safe (rc $RC, must be 1)"
+fi
+
+RC=0
+PATH="$SHIM_DIR:$PATH" DOCKER_FAIL_PS=1 stack_project_has_foreign 'normalprobe' '/checkout/ours' '/compose/ours.yml' > /dev/null 2>&1 || RC=$?
+if ((RC == 2)); then
+  pass 'docker ps failure returns 2 (callers must fail, not assume the project is empty)'
+else
+  fail "docker ps failure returned $RC (must be 2)"
+fi
+
+RC=0
+PATH="$SHIM_DIR:$PATH" DOCKER_FAIL_INSPECT=1 stack_project_has_foreign 'normalprobe' '/checkout/ours' '/compose/ours.yml' > /dev/null 2>&1 || RC=$?
+if ((RC == 2)); then
+  pass 'docker inspect failure returns 2 (ownership cannot be verified)'
+else
+  fail "docker inspect failure returned $RC (must be 2)"
+fi
+
+# ------------------------------------------------------------------
 # 8. Structural invariants (toolchain-only images, read-only mounts)
 # ------------------------------------------------------------------
 echo '==> toolchain-only image invariants'
@@ -558,6 +624,13 @@ if grep -q 'test-results/runs/${RUMAQ_RUN_ID' "$COMPOSE_FILE"; then
   pass 'test reports mount a per-run directory (concurrent runs cannot overwrite each other)'
 else
   fail 'test reports still mount the shared test-results/{vitest,playwright,artifacts} paths'
+fi
+
+if grep -qE '^[[:space:]]*image: nginx:[0-9]+\.[0-9]+\.[0-9]+-alpine' "$COMPOSE_FILE" &&
+  ! grep -qE '^[[:space:]]*image: nginx:alpine' "$COMPOSE_FILE"; then
+  pass 'the proxy image is pinned to an exact nginx tag (no floating :alpine)'
+else
+  fail 'the proxy image is floating (pin an exact nginx tag)'
 fi
 
 if grep -q 'external: true' "$COMPOSE_FILE"; then

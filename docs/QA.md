@@ -18,8 +18,9 @@ from different worktrees/sessions never share containers, ports, Playwright
 reports, Vitest JSON or artifacts. Override with `COMPOSE_PROJECT_NAME` /
 `RUMAQ_TEST_PORT`; `--down` takes no arguments — it sweeps this checkout's
 stacks by label, so it never removes a stack owned by another checkout (a
-project that mixes in a foreign container is refused as a whole, and pre-#356
-unlabelled stacks are found by their old project name). `--clean` also removes
+project that mixes in a foreign container is refused as a whole — on the normal
+run path and teardown too, not just `--down` — and pre-#356 unlabelled stacks
+are found by their old project name). `--clean` also removes
 this toolchain's build-cache volume, which is shared by every checkout with the
 same lockfile — run it only when no other automation run is active. `--api`
 starts only api + proxy (no SPA build); the full and e2e modes also prove the

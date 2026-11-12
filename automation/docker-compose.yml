@@ -106,7 +106,11 @@ services:
     # Static reverse proxy: ~0.01 cores and ~10-20 MB measured.
     cpus: 0.25
     mem_limit: 128m
-    image: nginx:alpine
+    # Pinned (#655 review B9): `nginx:alpine` floats with every upstream release,
+    # so two checkouts could run different proxies under the same compose file.
+    # The apt nginx in the web image is the documented exception (Debian security
+    # updates; pinning the exact package breaks builds when it is superseded).
+    image: nginx:1.31.8-alpine
     # Carry the same run labels as the buildable services (#356 review B6): the
     # proxy is the service that always outlives a killed run, so --down must be
     # able to find its project even when nothing else from the run is left.

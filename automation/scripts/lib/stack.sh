@@ -315,6 +315,38 @@ stack_project_owned_by() {
   return 0
 }
 
+# Normal-run ownership check (#655 review A1): the project this invocation is
+# about to use (ensure_stack) or tear down (cleanup) may already exist through
+# an explicit COMPOSE_PROJECT_NAME. It is safe only when it is empty or every
+# container is ours.
+#
+#   0  at least one container is foreign (other checkout label or compose file)
+#   1  empty, or every container belongs to <checkout> and <compose-file>
+#   2  docker failed (the caller must fail, never continue)
+stack_project_has_foreign() {
+  local project="${1:-}" checkout="${2:-}" compose_file="${3:-}"
+  local ids cid checkout_label config_files
+  if ! ids="$(docker ps -a -q --filter "label=com.docker.compose.project=$project")"; then
+    printf 'stack: docker ps failed while checking project %s\n' "$project" >&2
+    return 2
+  fi
+  [[ -n "$ids" ]] || return 1
+  for cid in $ids; do
+    if ! checkout_label="$(stack_container_label "$cid" 'rumaq.automation.checkout')"; then
+      printf 'stack: docker inspect failed for container %s\n' "$cid" >&2
+      return 2
+    fi
+    if ! config_files="$(stack_container_label "$cid" 'com.docker.compose.project.config_files')"; then
+      printf 'stack: docker inspect failed for container %s\n' "$cid" >&2
+      return 2
+    fi
+    if [[ "$checkout_label" != "$checkout" || "$config_files" != "$compose_file" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Print the compose projects that are safe to tear down for <checkout>.
 #
 #   stdout  owned project names, one per line

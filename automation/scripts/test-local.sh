@@ -277,7 +277,7 @@ prepare_writable_paths() {
     # as root by design; only the mount top directories matter to the host).
     # Repair the ownership with the image the proxy already uses, then retry.
     info "Repairing ownership of automation/test-results (created by an earlier run as root)..."
-    docker run --rm -v "$RESULTS_ROOT:/results" nginx:alpine \
+    docker run --rm -v "$RESULTS_ROOT:/results" nginx:1.31.8-alpine \
       sh -c "chown -R $(id -u):$(id -g) /results" > /dev/null 2>&1 || true
     mkdir -p "${WRITABLE_PATHS[@]}" 2> /dev/null || true
   fi
@@ -293,30 +293,31 @@ prepare_writable_paths() {
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
-# Compose records the compose file that created each container. The project name
-# is per-invocation now, but an explicit COMPOSE_PROJECT_NAME can still point two
-# checkouts at one project, so that label stays the ownership check: a stack
-# under our project whose compose file is not ours belongs to another checkout,
-# and neither ensure_stack nor cleanup may touch it. Query by project label, not
-# `compose ps`: the latter hides profile-gated services (web), so a project whose
-# only leftover was the web container would look empty.
-running_stack_owners() {
-  local cid ids
-  if ! ids="$(docker ps -a -q --filter "label=com.docker.compose.project=$PROJECT_NAME")"; then
-    return 0
-  fi
-  for cid in $ids; do
-    docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$cid" 2> /dev/null || true
-  done | sed '/^$/d' | sort -u || true
-}
-
-# Print the foreign compose file path(s) when our project name is owned by
-# another checkout, and return non-zero when the project is ours (or empty).
-foreign_project_owner() {
-  local owners
-  owners="$(running_stack_owners)"
-  [[ -n "$owners" && "$owners" != "$COMPOSE_FILE" ]] || return 1
-  printf '%s\n' "$owners"
+# Normal-run ownership check (#655 review A1). An explicit COMPOSE_PROJECT_NAME
+# can point another checkout at this project, so before `up` (ensure_stack) and
+# before `down` (cleanup) every existing container must carry BOTH this
+# checkout's label and this compose file's config label. Checking only the
+# compose file was the hole: a foreign stack started from the same file with its
+# own checkout label passed and was torn down.
+#
+# Returns 0 and prints the offenders when the project has foreign containers,
+# 1 when it is empty/ours, 2 when docker failed. Deliberately not a command
+# substitution with `exit` inside: callers branch on the status and must fail
+# the run on 2 instead of treating it as "nothing there".
+foreign_project_containers() {
+  local status=0 names
+  stack_project_has_foreign "$PROJECT_NAME" "$ROOT_DIR" "$COMPOSE_FILE" || status=$?
+  case "$status" in
+    0)
+      names="$(docker ps -a --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+        --format '{{.Names}} (checkout={{.Label "rumaq.automation.checkout"}}, compose={{.Label "com.docker.compose.project.config_files"}})')" \
+        || names='<docker ps failed>'
+      printf '%s\n' "$names"
+      return 0
+      ;;
+    1) return 1 ;;
+    *) return 2 ;;
+  esac
 }
 
 # ------------------------------------------------------------------
@@ -554,7 +555,7 @@ apply_build_policy() {
 }
 
 ensure_stack() {
-  local owners
+  local owners status
   local -a services=(api proxy) profiles=()
 
   preflight_mounts
@@ -565,13 +566,21 @@ ensure_stack() {
     profiles=(--profile spa)
   fi
 
-  # Refuse to stomp a project owned by another checkout: `up -d` would adopt it
+  # Refuse to adopt a project owned by another checkout: `up -d` would join it
   # and later teardown would kill that run. Only reachable through an explicit
   # COMPOSE_PROJECT_NAME now, kept as defence in depth.
-  if owners="$(foreign_project_owner)"; then
-    fail "Compose project '$PROJECT_NAME' is already running from another checkout: ${owners//$'\n'/, }"
-    info "Refusing to reuse or tear it down. Finish that run, or stop it from"
-    info "that checkout with: COMPOSE_PROJECT_NAME='$PROJECT_NAME' ./scripts/test.sh automation-local --down"
+  owners=''
+  status=0
+  owners="$(foreign_project_containers)" || status=$?
+  if ((status == 2)); then
+    fail "Could not inspect compose project '$PROJECT_NAME' (docker ps/inspect failed)."
+    info "Refusing to reuse or tear it down while ownership is unknown."
+    exit 1
+  fi
+  if ((status == 0)); then
+    fail "Compose project '$PROJECT_NAME' contains containers that are not from this checkout/compose file:"
+    info "${owners//$'\n'/, }"
+    info "Refusing to reuse or tear it down. Finish that run, or stop it from its own checkout."
     exit 1
   fi
 
@@ -603,18 +612,30 @@ cleanup() {
 
   # Re-check ownership at teardown time: an explicit COMPOSE_PROJECT_NAME may
   # have pointed another checkout at this project since ensure_stack ran, and
-  # its stack must survive.
-  local owners
-  if owners="$(foreign_project_owner)"; then
-    info "Leaving compose project '$PROJECT_NAME' in place: it belongs to another checkout (${owners//$'\n'/, })."
-    return 0
+  # its stack must survive. A foreign container means the whole project is left
+  # untouched (never project-wide `down`), and the invocation is failed.
+  local owners status
+  owners=''
+  status=0
+  owners="$(foreign_project_containers)" || status=$?
+  if ((status == 2)); then
+    fail "Could not verify compose project '$PROJECT_NAME' ownership (docker ps/inspect failed); leaving it in place."
+    return 1
+  fi
+  if ((status == 0)); then
+    fail "Leaving compose project '$PROJECT_NAME' in place: it contains foreign containers (${owners//$'\n'/, })."
+    info "After that project is gone, run ./scripts/test.sh automation-local --down from this checkout."
+    return 1
   fi
 
   info "Tearing down compose project '$PROJECT_NAME'..."
   # --profile spa: `down` skips services in a disabled profile, and leaving the
   # web container behind after a green full run was a real leak (#356 review A2).
-  compose --profile spa down --volumes --remove-orphans \
-    || fail "Teardown failed. Run ./scripts/test.sh automation-local --down from this checkout to clean up."
+  if ! compose --profile spa down --volumes --remove-orphans; then
+    fail "Teardown failed. Run ./scripts/test.sh automation-local --down from this checkout to clean up."
+    return 1
+  fi
+  return 0
 }
 
 # #506: a failing suite used to exit under `set -e` before the success-path
