@@ -104,6 +104,7 @@ This project uses agent skills to keep complex workflows consistent. Invoke them
 | `guided-implementation` | Implementing a difficult or unclear plan from a markdown file | Invoke `guided-implementation` with the plan file path | Confirms the high-level approach before coding and protects architecture decisions                                                                      |
 | `code-review`           | Reviewing a PR after it is created                            | Mention or invoke `code-review`                        | Sets review depth, checks philosophy and guardrails, posts itemized PR comments                                                                         |
 | `manager`               | Orchestrating workstreams via subagents ("run as manager")    | Mention or invoke `manager`                            | Runs the issue → research → design → plan → implement → review → verify loop over a GitHub-issue backlog and kanban board, without touching code itself |
+| `daily-report`          | Daily briefing ("daily report", "what needs me")              | Mention or invoke `daily-report`                       | Produces one read-only briefing across state, board, PR/CI/E2E, pipeline, owner inbox, contract and hygiene — no mutations, no secrets                  |
 | `security-audit`        | Security review, vulnerability hunt, or full codebase audit   | Mention or invoke `security-audit`                     | Runs a coverage-led audit — recon, hunt, candidate validation, verified report — with schema-validated findings                                         |
 
 ### `/pr-creation`
@@ -121,6 +122,10 @@ Use whenever a PR needs review. It sets the review depth — normal for docs/ski
 ### `/manager`
 
 Use when managing workstreams or implementations via subagents, when asked to "run as manager", or when orchestrating the issue → research → design → plan → implement → review → verify loop. It drives GitHub-issue-driven backlogs through a GitHub Projects kanban board, coordinates research/design/implementation/review/verification subagents in the background, maintains a durable per-session state directory, and raises workflow problems as `[workflow]` GitHub issues — never editing product code itself. See [`.agents/skills/manager/SKILL.md`](.agents/skills/manager/SKILL.md).
+
+### `/daily-report`
+
+Use when the owner asks for a daily report, "what needs me", or a status briefing. It produces one compact, evidence-based briefing across manager state, issues and Kanban drift, PR/CI/deploy, nightly E2E, pipeline/VPS, the owner-local `MANUAL_ACTIONS.md`, contract sync, local hygiene, audit/backup, and pending decisions. It is read-only by construction — no issue/PR/board mutations, no deploys, no test runs, no secret reads — and writes `unknown` rather than guessing when a query fails. See [`.agents/skills/daily-report/SKILL.md`](.agents/skills/daily-report/SKILL.md).
 
 ### `/security-audit`
 
