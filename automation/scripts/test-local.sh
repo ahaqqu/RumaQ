@@ -19,6 +19,7 @@ set -euo pipefail
 #   ./automation/scripts/test-local.sh --clean      # --down + this toolchain's build-cache volume
 #   ./automation/scripts/test-local.sh --api        # API tests only (api + proxy, no web build)
 #   ./automation/scripts/test-local.sh --e2e        # run E2E tests only (needs stack)
+#   ./automation/scripts/test-local.sh --smoke      # E2E @smoke critical-path subset only
 #
 # Images are toolchain-only (#356): they carry bun/node/nginx/Playwright and the
 # installed dependency tree, never repo source. Source is bind-mounted read-only
@@ -786,8 +787,22 @@ case "$MODE" in
     exit $EXIT_CODE
     ;;
 
+  smoke)
+    # Fast pre-PR signal (#657 phase 1): Playwright-native tag filter over the
+    # same generated BDD suite, so an undefined step or Gherkin parse error
+    # anywhere in the features still fails generation. The nightly runs no
+    # filter, so every scenario stays in the completeness gate.
+    info "Running E2E critical-path subset (@smoke)..."
+    ensure_stack
+
+    EXIT_CODE=0
+    compose run --rm test-runner \
+      sh -c "bun x playwright test --config automation/playwright.config.js --grep '@smoke' --reporter=list,html && sync" || EXIT_CODE=$?
+    exit $EXIT_CODE
+    ;;
+
   *)
-    echo "Usage: $0 [--build|--no-build|--down|--clean|--api|--e2e]"
+    echo "Usage: $0 [--build|--no-build|--down|--clean|--api|--e2e|--smoke]"
     echo ""
     echo "  (no flag)       Full Docker test suite; build only missing toolchain images"
     echo "  --build         Re-run this digest's image build (layer cache reused)"
@@ -796,6 +811,7 @@ case "$MODE" in
     echo "  --clean         --down plus this toolchain's content-hash cache volume"
     echo "  --api           API integration tests only (api + proxy, no SPA build)"
     echo "  --e2e           E2E tests only"
+    echo "  --smoke         E2E critical-path subset (@smoke scenarios) only"
     echo ""
     echo "Each invocation uses its own compose project, an ephemeral loopback host"
     echo "port discovered after 'up', and its own test-results/runs/<run-id>/ dir"

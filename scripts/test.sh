@@ -50,6 +50,12 @@ case "$SUITE" in
     # and label teardown — shell shims only, no Docker, no network.
     exec "$ROOT_DIR/scripts/test/automation-stack.sh" "$@"
     ;;
+  e2e-smoke)
+    # Offline guard for the fast PR E2E smoke subset (#657): pins 3-5 @smoke
+    # scenarios and one anchor per smoke/add-receipt/prices-explorer feature,
+    # so the fast mode cannot silently grow, shrink or lose a risk class.
+    exec "$ROOT_DIR/scripts/test/e2e-smoke.sh" "$@"
+    ;;
   all)
     "$ROOT_DIR/scripts/test/deploy-secrets.sh" "$@"
     "$ROOT_DIR/scripts/test/worker-smoke-scope.sh" "$@"
@@ -57,12 +63,13 @@ case "$SUITE" in
     "$ROOT_DIR/scripts/test/unit-test-scope.sh" "$@"
     "$ROOT_DIR/scripts/test/price-freshness.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-stack.sh" "$@"
+    "$ROOT_DIR/scripts/test/e2e-smoke.sh" "$@"
     "$ROOT_DIR/scripts/test/unit.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-local.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-live.sh" "$@"
     ;;
   *)
-    echo "Usage: $0 [unit|automation-local|automation-live|deploy|freshness|smoke-scope|lighthouse-scope|unit-test-scope|automation-stack|all]"
+    echo "Usage: $0 [unit|automation-local|automation-live|deploy|freshness|smoke-scope|lighthouse-scope|unit-test-scope|automation-stack|e2e-smoke|all]"
     exit 1
     ;;
 esac

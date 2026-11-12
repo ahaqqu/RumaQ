@@ -36,7 +36,12 @@ Single entrypoint: `./scripts/test.sh` — see [`docs/TEST_STRATEGY.md`](docs/TE
 | Unit (all)         | `./scripts/test.sh unit`                      |
 | Unit (one project) | `./scripts/test.sh unit frontend` / `backend` |
 | Local integration  | `./scripts/test.sh automation-local`          |
+| E2E smoke (~20 s)  | `./scripts/test.sh automation-local --smoke`  |
 | Production smoke   | `./scripts/test.sh automation-live`           |
+
+The E2E smoke runs only the `@smoke`-tagged critical-path scenarios against the
+same local stack; it is a fast local/pre-PR signal, not a required PR gate —
+the nightly still runs the full automation matrix unfiltered.
 
 Coverage thresholds are 50/50/50/50 for frontend and backend. New API endpoints need an automation scenario in `automation/tests/local/api/`; new UI flows need one in `automation/tests/local/e2e/`.
 

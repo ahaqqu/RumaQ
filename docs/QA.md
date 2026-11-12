@@ -23,8 +23,11 @@ run path and teardown too, not just `--down` — and pre-#356 unlabelled stacks
 are found by their old project name). `--clean` also removes
 this toolchain's build-cache volume, which is shared by every checkout with the
 same lockfile — run it only when no other automation run is active. `--api`
-starts only api + proxy (no SPA build); the full and e2e modes also prove the
-published SPA bundle. Images are toolchain-only (source is mounted read-only),
+starts only api + proxy (no SPA build); the full, e2e and `--smoke` modes also
+prove the published SPA bundle. `./scripts/test.sh automation-local --smoke`
+runs only the three `@smoke` critical-path scenarios (~20 s warm) — a local
+pre-PR signal, not a required PR gate; the nightly still runs all 55 E2E
+scenarios unfiltered. Images are toolchain-only (source is mounted read-only),
 so a code edit needs no image rebuild; the first run on a machine builds the
 Playwright/Chromium toolchain image and later runs reuse it (see
 [`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md) for tag pruning).

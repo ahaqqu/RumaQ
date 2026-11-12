@@ -7,6 +7,7 @@ Feature: Add From Receipt
     Given I am logged in as the seeded test user
     And the test user has AI configured
 
+  @smoke
   Scenario: Scan, review, and confirm adds items to stock
     When I navigate to "/add"
     And I upload the receipt fixture image

@@ -4,6 +4,7 @@ Feature: Price explorer parity
   (issue #291). Price data is pushed through the internal ingest endpoint —
   the same fixtures the API feature suite uses.
 
+  @smoke
   Scenario: Sort select reorders the list
     Given a price snapshot and a promo snapshot have been pushed
     And I am logged in as the seeded test user
