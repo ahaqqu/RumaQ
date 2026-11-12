@@ -46,9 +46,13 @@ Run the blocks in order. Each block writes scratch JSON under `$BRIEF`; summaris
 
 ```bash
 STATE=$(ls -1t "$HOME"/.agents/manager/RumaQ/*/state.md 2>/dev/null | head -1)
-sed -n '1,8p' "$STATE"
-tail -60 "$STATE"
-grep -nE '^## (Agents in flight|Blocked on user|Report log|Goal|Current)' "$STATE"
+if [ -n "$STATE" ]; then
+  sed -n '1,8p' "$STATE"
+  tail -60 "$STATE"
+  grep -nE '^## (Agents in flight|Blocked on user|Report log|Goal|Current)' "$STATE" || true
+else
+  echo "unknown — no manager state under ~/.agents/manager/RumaQ"
+fi
 ```
 
 - Read the newest `state.md` by mtime. Its **last dated `##` section and the report log tail override stale headings**: the `Agents in flight` block may describe a previous wave, so trust the newest section.
@@ -198,6 +202,8 @@ MA="$(dirname "$COMMON")/docs/MANUAL_ACTIONS.md"
 [ -f "$MA" ] || MA="$REPO_DIR/docs/MANUAL_ACTIONS.md"
 [ -f "$MA" ] && echo "found $MA" || echo "not present in this checkout"
 ```
+
+If it is absent, skip the parse block and report `not present in this checkout` — the inbox is owner-local, not a missing file to chase.
 
 Parse IDs, age, and linked ticket (read only — never quote section bodies):
 
