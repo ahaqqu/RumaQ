@@ -362,7 +362,8 @@ write_diagnostics() {
     fi
   } > "$dir/probe.txt" 2>&1 || true
   for svc in api web proxy; do
-    compose logs --no-color --tail=200 "$svc" > "$dir/logs-$svc.txt" 2>&1 || true
+    # --profile spa: `logs web` errors when the profile is disabled (--api).
+    compose --profile spa logs --no-color --tail=200 "$svc" > "$dir/logs-$svc.txt" 2>&1 || true
   done
   rm -f "${PROBE_ATTEMPTS:-}"
   info "Diagnostics: automation/test-results/runs/$RUN_ID/diagnostics"
@@ -622,7 +623,9 @@ cleanup() {
 on_exit() {
   local status=$?
   trap - EXIT
-  cleanup
+  # A failed teardown must not be hidden behind a green suite: it leaves a
+  # container/port/volume behind, so surface it as a failed invocation.
+  cleanup || { [[ "$status" -eq 0 ]] && status=1; }
   exit "$status"
 }
 

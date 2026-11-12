@@ -181,6 +181,7 @@ manually when disk matters (no run in flight):
 docker image ls --filter label=rumaq.automation.toolchain
 docker image prune -a --filter label=rumaq.automation.toolchain
 docker volume ls --filter name=rumaq-test-cache-
+rm -rf automation/test-results/runs   # per-run reports/diagnostics (gitignored)
 ```
 
 `./scripts/test.sh automation-local --clean` removes only the current
