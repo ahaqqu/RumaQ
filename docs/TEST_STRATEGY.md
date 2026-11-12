@@ -136,23 +136,35 @@ volume. Consequences:
   the container sees, which is what keeps "deps change ⇒ rebuild" true.
 
 The first run on a machine (or after a Docker prune) builds the toolchain
-images; the Playwright + Chromium layer dominates that cold cost. Later runs
-reuse them. `--build` forces a rebuild of the current digest, `--no-build` fails
-fast when the tag is missing instead of silently building it, and
-`RUMAQ_BUILD_CACHE=0` bypasses the artifact cache.
+images; the Playwright + Chromium layer dominates that cold cost, and a lockfile
+change rebuilds it too. Later runs reuse them. `--build` re-runs the image build
+for the current digest (Docker's layer cache is reused — it is not `--no-cache`),
+`--no-build` fails fast when the tag is missing instead of silently building it,
+and `RUMAQ_BUILD_CACHE=0` bypasses the artifact cache.
 
-Each **invocation** gets its own Compose project and labels its containers with
-the checkout path, so runs from the same checkout or different worktrees never
-share containers. `--down` takes no arguments: it sweeps this checkout's stacks
-by label and never touches another checkout's; `--clean` also removes this
-toolchain's cache volume.
+Each **invocation** gets its own Compose project, an ephemeral loopback port and
+its own results directory (`automation/test-results/runs/<run-id>/`), so runs
+from the same checkout or different worktrees never share containers, ports,
+Playwright reports, Vitest JSON, artifacts or diagnostics. `--down` takes no
+arguments: it sweeps this checkout's stacks by label and never touches another
+checkout's. A project that also contains a foreign container is refused as a
+whole — it is never `down`-ed project-wide — and pre-#356 unlabelled stacks are
+found by their deterministic old project name. `--clean` also removes this
+toolchain's cache volume; that volume is shared by every checkout using the same
+lockfile, so run `--clean` only when no other automation run is active (Docker
+refuses to remove a volume that is in use).
+
+`--api` starts only `api` + `proxy` (the API suite never requests the SPA), so it
+skips the web build and the SPA phase of the readiness gate; the full and
+`--e2e` modes start `web` too and therefore prove the published SPA bundle.
 
 Readiness is a real gate on the published port: `/api/health` must answer 200
-**and** `{"ok":true}`, `/` must answer 200 with `id="root"`, then the #318 canary
-`POST /api/purchases` must answer 401 — with a 250 ms→2 s jittered backoff, one
-180 s budget (`RUMAQ_READY_TIMEOUT`), per-attempt logging, and a diagnostics
-bundle under `automation/test-results/diagnostics/<run>/` that the workflow
-uploads.
+**and** `{"ok":true}`, `/` must answer 200 with `id="root"` (full/e2e), then the
+#318 canary `POST /api/purchases` must answer 401 — with a 250 ms→2 s jittered
+backoff, one 180 s budget (`RUMAQ_READY_TIMEOUT`, each probe capped at the
+remaining budget), per-attempt logging, and a diagnostics bundle under
+`automation/test-results/runs/<run-id>/diagnostics/` that the workflow uploads.
+A diagnostics write failure is reported but never masks the original failure.
 
 ```
 ./scripts/test.sh automation-local
@@ -172,7 +184,9 @@ docker volume ls --filter name=rumaq-test-cache-
 ```
 
 `./scripts/test.sh automation-local --clean` removes only the current
-toolchain's cache volume (the recovery for a corrupted cache).
+toolchain's cache volume (the recovery for a corrupted cache). Because that
+volume is shared across checkouts for the same lockfile, use it only when no
+other automation run is active; the next run rebuilds the cache.
 
 ### E2E page-level coverage (`automation/tests/local/e2e/`)
 

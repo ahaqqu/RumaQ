@@ -69,6 +69,11 @@ services:
       start_period: 90s
 
   web:
+    # SPA mode (#356 review B13): the profile keeps `--api` from starting (and
+    # building) the web container. The full and e2e modes pass --profile spa.
+    # The proxy still declares web as an optional dependency so the profile-less
+    # `up -d api proxy` is valid.
+    profiles: ['spa']
     image: rumaq-test-web:${RUMAQ_DEPS_DIGEST:-dev}
     pull_policy: never
     build:
@@ -102,6 +107,12 @@ services:
     cpus: 0.25
     mem_limit: 128m
     image: nginx:alpine
+    # Carry the same run labels as the buildable services (#356 review B6): the
+    # proxy is the service that always outlives a killed run, so --down must be
+    # able to find its project even when nothing else from the run is left.
+    labels:
+      rumaq.automation.checkout: '${RUMAQ_CHECKOUT_PATH:-unknown}'
+      rumaq.automation.run: '${RUMAQ_RUN_ID:-manual}'
     ports:
       # Ephemeral, loopback-only by default (#356): Docker assigns a free host
       # port; test-local.sh discovers it with `docker compose port` after `up`,
@@ -117,9 +128,12 @@ services:
       api:
         condition: service_healthy
       # service_healthy, not service_started: the SPA is built at container
-      # start now, so "started" would let e2e hit a 502 window.
+      # start now, so "started" would let e2e hit a 502 window. required: false
+      # lets `--api` start api + proxy without building the SPA (#356 review
+      # B13); the full/e2e modes request web explicitly.
       web:
         condition: service_healthy
+        required: false
 
   test-runner:
     image: rumaq-test-runner:${RUMAQ_DEPS_DIGEST:-dev}
@@ -160,9 +174,13 @@ services:
       - ../backend/src:/app/backend/src:ro
       - ../contract/src:/app/contract/src:ro
       - cache:/cache
-      - ./test-results/vitest:/app/vitest-report
-      - ./test-results/playwright:/app/playwright-report
-      - ./test-results/artifacts:/app/test-results
+      # Per-run report/artifact directories (#356 review A2/B3): the runner
+      # creates them as the host user before `up`, so two concurrent runs from
+      # one checkout never overwrite each other's reports and diagnostics can
+      # still be written by the host after a green run.
+      - ./test-results/runs/${RUMAQ_RUN_ID:-manual}/vitest:/app/vitest-report
+      - ./test-results/runs/${RUMAQ_RUN_ID:-manual}/playwright:/app/playwright-report
+      - ./test-results/runs/${RUMAQ_RUN_ID:-manual}/artifacts:/app/test-results
 
 volumes:
   # One cache volume per toolchain digest, shared by every checkout. Declared

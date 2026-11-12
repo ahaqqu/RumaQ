@@ -40,6 +40,18 @@ cache_enabled() {
 # not depend on filesystem order; sha256sum prints the path with each digest, so
 # a rename is a change too.
 cache_stamp() {
+  local link
+  # Only regular files are hashed, so a symlinked input would be invisible: a
+  # target edit could reuse a stale artifact. Fail closed instead (#356 review
+  # B8): a unique stamp never matches a stored one, so the caller builds and
+  # overwrites the slot. The repo has no symlinks today; this keeps that
+  # assumption enforced rather than assumed.
+  link="$(find "$@" -type l -print -quit 2> /dev/null || true)"
+  if [[ -n "$link" ]]; then
+    printf 'uncacheable-%s-%s\n' "$$" "$RANDOM"
+    printf 'build-cache: symlinked input %s makes the artifact uncacheable; building\n' "$link" >&2
+    return 0
+  fi
   find "$@" -type f -print0 | sort -z | xargs -0 -r sha256sum | sha256sum | cut -c1-16
 }
 

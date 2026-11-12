@@ -5,7 +5,11 @@ FROM oven/bun:1.4.0-slim
 # because the bundle no longer exists at image-build time — and nginx:alpine is
 # musl, which cannot run the pinned glibc bun. Installing nginx on the bun base
 # keeps one toolchain family and lets the entrypoint build and serve in place.
-# curl is the compose healthcheck's probe.
+# curl is the compose healthcheck's probe. nginx/curl are Debian (trixie) apt
+# packages, deliberately not version-pinned (#356 review B9): pinning the exact
+# package version makes builds fail as soon as Debian ships a security update
+# and removes the old one. Their drift is accepted and documented — they are
+# not part of the toolchain digest, so a rebuild (not a code edit) picks them up.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl nginx && rm -rf /var/lib/apt/lists/*
 
 # Debian's nginx package ships a default_server site that would answer :80

@@ -41,4 +41,8 @@ RUN chmod +x /usr/local/bin/entrypoint-test-runner.sh
 ENV TEST_BASE_URL=http://proxy:3000
 
 ENTRYPOINT ["/usr/local/bin/entrypoint-test-runner.sh"]
-CMD ["sh", "-c", "bunx vp test --project integration && bun x playwright test --config automation/playwright.config.js && sync"]
+# The JSON reporter is passed on the command line, not only in the project
+# config: vite-plus's `vp test` wrapper does not apply the per-project reporters
+# block, so the HTML summary silently had no input (#356 review B12). The
+# default reporter stays on for the live log.
+CMD ["sh", "-c", "bunx vp test --project integration --reporter=default --reporter=json --outputFile=vitest-report/api-results.json && bun x playwright test --config automation/playwright.config.js && sync"]

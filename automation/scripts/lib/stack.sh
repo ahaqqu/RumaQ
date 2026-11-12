@@ -68,6 +68,21 @@ stack_run_id() {
   printf '%s-%s\n' "$(stack_base36 "$(date +%s)")" "$$"
 }
 
+# The pre-#356 project name: automation-<slug24>-<checkout hash8>. Stacks from
+# before the per-invocation switch carry no checkout label, so `--down` finds
+# them by this deterministic name (and still re-checks every container's
+# compose file in stack_sweep_projects). Kept byte-compatible with the old
+# derive_project_name so an upgrade can clean up its predecessor.
+stack_legacy_project_name() {
+  local root="${1:-}" base hash
+  base="$(stack_sanitize_name "$(basename "$root")")"
+  base="${base:0:24}"
+  base="${base%-}"
+  [[ -n "$base" ]] || base="checkout"
+  hash="$(stack_checkout_hash "$root")"
+  printf 'automation-%s-%08x\n' "$base" "$hash"
+}
+
 # automation-<slug16>-<checkout_hash8>-<run_id>
 #
 # The project (not the run id) is what keeps parallel runs apart, so it must be
@@ -234,33 +249,138 @@ stack_classify_probe() {
 # One HTTP probe: print the status code and write the body to <body-file>.
 # A refused connection makes curl print 000, which every classifier treats as
 # retry — the stack is simply not listening yet.
+#
+# <max-time> is capped by the caller to the remaining readiness budget (#356
+# review B10): a hung connect must not overshoot the 180 s deadline by curl's
+# own 10 s timeout. Defaults to 10 s for standalone probes.
 stack_http_code() {
-  local method="${1:-GET}" url="${2:-}" body_file="${3:-/dev/null}"
+  local method="${1:-GET}" url="${2:-}" body_file="${3:-/dev/null}" max_time="${4:-10}"
+  [[ "$max_time" =~ ^[0-9]+$ ]] && ((max_time > 0)) || max_time=1
   if [[ "$method" == 'GET' ]]; then
-    curl -sS -o "$body_file" -w '%{http_code}' --max-time 10 "$url" 2>/dev/null || true
+    curl -sS -o "$body_file" -w '%{http_code}' --max-time "$max_time" "$url" 2>/dev/null || true
   else
-    curl -sS -o "$body_file" -w '%{http_code}' --max-time 10 -X "$method" "$url" 2>/dev/null || true
+    curl -sS -o "$body_file" -w '%{http_code}' --max-time "$max_time" -X "$method" "$url" 2>/dev/null || true
   fi
 }
 
 # ------------------------------------------------------------------
-# Teardown sweep (#356: label-addressed, per checkout)
+# Teardown safety (#356 review A1: never project-wide `down` on a mixed project)
 # ------------------------------------------------------------------
-# Print the compose projects that belong to <checkout> AND were created by
-# <compose-file>. The checkout label is the run identity; the config_files
-# label is defence in depth (the same idea as the #511 ownership guard), so a
-# container relabelled or started by a different compose file — e.g. an older
-# checkout with an explicit COMPOSE_PROJECT_NAME — is never swept.
+# One label of one container. Returns docker's status so a missing container or
+# a broken daemon is surfaced instead of being read as an empty label.
+stack_container_label() {
+  local cid="${1:-}" label="${2:-}"
+  docker inspect -f "{{ index .Config.Labels \"$label\" }}" "$cid"
+}
+
+# True when every container of <project> belongs to <checkout> and was created
+# by <compose-file>.
+#
+#   0  the project is entirely ours -> project-wide `down` is safe
+#   1  at least one container is foreign -> skip the project (never `down`)
+#   2  docker failed -> the caller must surface it
+#
+# A compose project can contain containers from more than one compose file (an
+# explicit COMPOSE_PROJECT_NAME, a legacy stack, a manual container). Checking
+# only the matching container (the pre-review code) let `down --remove-orphans`
+# delete the foreign ones, so this check walks *every* container.
+#
+# <allow-unlabelled>=1 is only used for the pre-#356 project name: those
+# containers predate the checkout label, so an empty label is accepted there —
+# the compose-file check still rejects another checkout's stack.
+stack_project_owned_by() {
+  local project="${1:-}" checkout="${2:-}" compose_file="${3:-}" allow_unlabelled="${4:-0}"
+  local ids cid checkout_label config_files
+  if ! ids="$(docker ps -a -q --filter "label=com.docker.compose.project=$project")"; then
+    printf 'stack: docker ps failed while inspecting project %s\n' "$project" >&2
+    return 2
+  fi
+  [[ -n "$ids" ]] || return 2
+  for cid in $ids; do
+    if ! checkout_label="$(stack_container_label "$cid" 'rumaq.automation.checkout')"; then
+      printf 'stack: docker inspect failed for container %s\n' "$cid" >&2
+      return 2
+    fi
+    if ! config_files="$(stack_container_label "$cid" 'com.docker.compose.project.config_files')"; then
+      printf 'stack: docker inspect failed for container %s\n' "$cid" >&2
+      return 2
+    fi
+    [[ "$config_files" == "$compose_file" ]] || return 1
+    if [[ "$allow_unlabelled" == '1' ]]; then
+      [[ -z "$checkout_label" || "$checkout_label" == "$checkout" ]] || return 1
+    else
+      [[ "$checkout_label" == "$checkout" ]] || return 1
+    fi
+  done
+  return 0
+}
+
+# Print the compose projects that are safe to tear down for <checkout>.
+#
+#   stdout  owned project names, one per line
+#   rc 0    clean
+#   rc 1    docker failed (the caller must fail the command)
+#   rc 3    at least one project was skipped because it is mixed; the caller
+#           must warn and exit non-zero rather than pretend it cleaned up
+#
+# Candidates come from the checkout label plus the deterministic pre-#356
+# project name. Every candidate is then verified container by container.
 stack_sweep_projects() {
-  local checkout="${1:-}" compose_file="${2:-}" cid project config_files
+  local checkout="${1:-}" compose_file="${2:-}" cid project legacy legacy_ids status
+  local -a candidates=()
+  local skipped=0
   [[ -n "$checkout" ]] || return 0
-  docker ps -a -q --filter "label=rumaq.automation.checkout=$checkout" 2>/dev/null |
-    while read -r cid; do
-      [[ -n "$cid" ]] || continue
-      project="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$cid" 2>/dev/null || true)"
-      [[ -n "$project" ]] || continue
-      config_files="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$cid" 2>/dev/null || true)"
-      [[ "$config_files" == "$compose_file" ]] || continue
-      printf '%s\n' "$project"
-    done | sort -u
+
+  if ! legacy_ids="$(docker ps -a -q --filter "label=rumaq.automation.checkout=$checkout")"; then
+    printf 'stack: docker ps failed while enumerating checkout %s\n' "$checkout" >&2
+    return 1
+  fi
+  for cid in $legacy_ids; do
+    if ! project="$(stack_container_label "$cid" 'com.docker.compose.project')"; then
+      printf 'stack: docker inspect failed for container %s\n' "$cid" >&2
+      return 1
+    fi
+    [[ -n "$project" ]] && candidates+=("$project")
+  done
+
+  legacy="$(stack_legacy_project_name "$checkout")"
+  if ! legacy_ids="$(docker ps -a -q --filter "label=com.docker.compose.project=$legacy")"; then
+    printf 'stack: docker ps failed while checking legacy project %s\n' "$legacy" >&2
+    return 1
+  fi
+  if [[ -n "$legacy_ids" ]]; then
+    candidates+=("$legacy")
+  fi
+
+  [[ ${#candidates[@]} -gt 0 ]] || return 0
+
+  while read -r project; do
+    [[ -n "$project" ]] || continue
+    status=0
+    stack_project_owned_by "$project" "$checkout" "$compose_file" 0 || status=$?
+    case "$status" in
+      0)
+        printf '%s\n' "$project"
+        continue
+        ;;
+      2) return 1 ;;
+    esac
+    if [[ "$project" == "$legacy" ]]; then
+      status=0
+      stack_project_owned_by "$project" "$checkout" "$compose_file" 1 || status=$?
+      case "$status" in
+        0)
+          printf '%s\n' "$project"
+          continue
+          ;;
+        2) return 1 ;;
+      esac
+    fi
+    printf 'stack: refusing to tear down project %s: not every container belongs to checkout %s and compose file %s\n' \
+      "$project" "$checkout" "$compose_file" >&2
+    skipped=1
+  done < <(printf '%s\n' "${candidates[@]}" | sort -u)
+
+  ((skipped)) && return 3
+  return 0
 }

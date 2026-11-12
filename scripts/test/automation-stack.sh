@@ -87,6 +87,15 @@ else
   fail "run id has an unexpected shape: '$RUN_ID'"
 fi
 
+# The pre-#356 name is what --down falls back to for unlabelled stacks; it must
+# stay byte-compatible with the old derive_project_name (slug24 + cksum hash8).
+LEGACY_NAME="$(stack_legacy_project_name '/home/ahaqqu/Projects/RumaQ.wt/356-docker')"
+if [[ "$LEGACY_NAME" == 'automation-356-docker-f0c9d82a' ]]; then
+  pass "legacy project name matches the pre-#356 derivation ('$LEGACY_NAME')"
+else
+  fail "legacy project name drifted from derive_project_name: '$LEGACY_NAME'"
+fi
+
 # ------------------------------------------------------------------
 # 2. Published-port parsing
 # ------------------------------------------------------------------
@@ -182,6 +191,52 @@ if stack_deps_digest "$DIGEST_ROOT" > /dev/null 2>&1; then
   fail 'a missing toolchain input still produced a digest'
 else
   pass 'a missing toolchain input fails instead of producing a partial digest'
+fi
+
+# Every file baked by a Dockerfile must be hashed by stack_deps_inputs
+# (#356 review B2). A new COPY whose source is not in the digest list would
+# silently reuse an image tag across a changed baked file.
+copy_sources() {
+  local df line token i
+  for df in "$ROOT_DIR"/automation/docker/Dockerfile.api \
+    "$ROOT_DIR"/automation/docker/Dockerfile.web \
+    "$ROOT_DIR"/automation/docker/Dockerfile.test-runner; do
+    while IFS= read -r line; do
+      [[ "$line" == COPY[[:space:]]* ]] || continue
+      local -a tokens=() srcs=()
+      read -r -a tokens <<< "$line"
+      for ((i = 1; i < ${#tokens[@]}; i++)); do
+        token="${tokens[$i]}"
+        # COPY --from=<stage>: the source is an earlier build stage, not a repo file.
+        [[ "$token" == --from=* ]] && continue 2
+        [[ "$token" == --* ]] && continue
+        srcs+=("$token")
+      done
+      # The final non-flag token is the destination.
+      ((${#srcs[@]} > 1)) || continue
+      for ((i = 0; i < ${#srcs[@]} - 1; i++)); do
+        token="${srcs[$i]#./}"
+        printf '%s\n' "$token"
+      done
+    done < "$df"
+  done
+}
+
+BAKED_SOURCES="$(copy_sources | sort -u)"
+DIGEST_INPUTS="$(stack_deps_inputs | sed 's#^\./##' | sort -u)"
+UNHASHED=''
+while read -r src; do
+  [[ -n "$src" ]] || continue
+  # Deliberate exception: baked only as a bind-mount target, always overridden
+  # by the live file, and the BDD tests are regenerated at container start.
+  [[ "$src" == 'automation/playwright.config.js' ]] && continue
+  grep -qxF "$src" <<< "$DIGEST_INPUTS" || UNHASHED+="$src"$'\n'
+done <<< "$BAKED_SOURCES"
+
+if [[ -n "$BAKED_SOURCES" && -z "$UNHASHED" ]]; then
+  pass "every Dockerfile COPY source is part of the toolchain digest ($(wc -l <<< "$BAKED_SOURCES" | tr -d ' ') files)"
+else
+  fail "Dockerfile bakes file(s) the digest does not hash: $(head -3 <<< "${UNHASHED:-<no COPY sources found>}" | tr '\n' ' ')"
 fi
 
 # ------------------------------------------------------------------
@@ -290,6 +345,21 @@ else
   fail "POST probe used the wrong method/status ('$CODE')"
 fi
 
+# The readiness gate caps each request at the remaining budget (#356 review
+# B10), so a hung connect cannot overshoot the deadline by curl's own timeout.
+: > "$CURL_LOG"
+CODE="$(PATH="$SHIM_DIR:$PATH" stack_http_code GET 'http://127.0.0.1:1234/api/health' "$PROBE_BODY" 3)"
+if [[ "$CODE" == '401' ]] && grep -q -- '--max-time 3' "$CURL_LOG"; then
+  pass 'HTTP probe honours an explicit max-time (bounded by the readiness budget)'
+else
+  fail "HTTP probe ignored the max-time argument: $(tr '\n' ' ' < "$CURL_LOG")"
+fi
+if ! grep -q -- '--max-time 0' "$CURL_LOG"; then
+  pass 'max-time is never zero (curl would not treat it as a budget)'
+else
+  fail 'HTTP probe passed --max-time 0'
+fi
+
 # ------------------------------------------------------------------
 # 7. Label teardown sweep (docker shim)
 # ------------------------------------------------------------------
@@ -298,20 +368,34 @@ echo '==> label teardown sweep'
 cat > "$SHIM_DIR/docker" <<'SHIM'
 #!/usr/bin/env bash
 # Minimal docker ps/inspect shim over fixture lines: "cid project config checkout".
+if [[ "${DOCKER_FAIL_PS:-0}" == '1' ]]; then
+  exit 1
+fi
 case "${1:-}" in
   ps)
-    want=''
+    filter=''
     for arg in "$@"; do
       case "$arg" in
-        label=rumaq.automation.checkout=*) want="${arg#label=rumaq.automation.checkout=}" ;;
+        label=*) filter="${arg#label=}" ;;
       esac
     done
     while read -r cid project config checkout; do
       [[ -n "$cid" ]] || continue
-      [[ "$want" == "$checkout" ]] && printf '%s\n' "$cid"
+      case "$filter" in
+        rumaq.automation.checkout=*)
+          [[ "$checkout" == "${filter#rumaq.automation.checkout=}" ]] && printf '%s\n' "$cid"
+          ;;
+        com.docker.compose.project=*)
+          [[ "$project" == "${filter#com.docker.compose.project=}" ]] && printf '%s\n' "$cid"
+          ;;
+        '')
+          printf '%s\n' "$cid"
+          ;;
+      esac
     done < "${DOCKER_FIXTURE:?}"
     ;;
   inspect)
+    [[ "${DOCKER_FAIL_INSPECT:-0}" == '1' ]] && exit 1
     fmt="${3:-}"
     cid="${4:-}"
     while read -r id project config checkout; do
@@ -319,37 +403,105 @@ case "${1:-}" in
       case "$fmt" in
         *config_files*) printf '%s\n' "$config" ;;
         *com.docker.compose.project*) printf '%s\n' "$project" ;;
-        '') ;;
+        *rumaq.automation.checkout*) printf '%s\n' "$checkout" ;;
       esac
     done < "${DOCKER_FIXTURE:?}"
     ;;
 esac
-# docker ps/inspect succeed even when their output is empty.
 exit 0
 SHIM
 chmod +x "$SHIM_DIR/docker"
 
-cat > "$SHIM_DIR/fixture" <<'FIXTURE'
+# The pre-#356 project names (unlabelled containers) this checkout's --down
+# falls back to.
+LEGACY="$(stack_legacy_project_name '/checkout/ours')"
+
+# Fixture A: only this checkout's projects (plus a pure legacy stack). The
+# foreign *project* and the other checkout must not even be candidates.
+cat > "$SHIM_DIR/fixture-clean" <<FIXTURE
 cid-ours-1 automation-ours-1 /compose/ours.yml /checkout/ours
 cid-ours-2 automation-ours-1 /compose/ours.yml /checkout/ours
 cid-killed automation-ours-2 /compose/ours.yml /checkout/ours
-cid-foreign automation-foreign /compose/other.yml /checkout/ours
-cid-other automation-other /compose/ours.yml /checkout/other
+other-1 automation-other /compose/ours.yml /checkout/other
+legacy-1 $LEGACY /compose/ours.yml
+legacy-2 $LEGACY /compose/ours.yml
 FIXTURE
 
-export DOCKER_FIXTURE="$SHIM_DIR/fixture"
-SWEPT="$(PATH="$SHIM_DIR:$PATH" stack_sweep_projects '/checkout/ours' '/compose/ours.yml')"
-EXPECTED_SWEEP=$'automation-ours-1\nautomation-ours-2'
-if [[ "$SWEPT" == "$EXPECTED_SWEEP" ]]; then
-  pass 'sweep returns every project from this checkout, deduplicated, including a killed run'
+export DOCKER_FIXTURE="$SHIM_DIR/fixture-clean"
+RC=0
+SWEPT="$(PATH="$SHIM_DIR:$PATH" stack_sweep_projects '/checkout/ours' '/compose/ours.yml')" || RC=$?
+EXPECTED_SWEEP="$(printf '%s\n' 'automation-ours-1' 'automation-ours-2' "$LEGACY" | sort)"
+GOT_SWEEP="$(sort <<< "$SWEPT")"
+if ((RC == 0)) && [[ "$GOT_SWEEP" == "$EXPECTED_SWEEP" ]]; then
+  pass 'sweep returns every owned project (deduplicated, killed run and legacy stack included)'
 else
-  fail "sweep returned '$SWEPT' (expected '$EXPECTED_SWEEP')"
+  fail "sweep returned '$SWEPT' (rc $RC, expected '$EXPECTED_SWEEP')"
 fi
-if [[ "$SWEPT" != *automation-foreign* && "$SWEPT" != *automation-other* ]]; then
-  pass 'sweep never touches another checkout or a foreign compose file'
+if [[ "$SWEPT" != *automation-other* ]]; then
+  pass 'sweep never touches another checkout'
 else
-  fail 'sweep leaked a project it must not touch'
+  fail 'sweep leaked another checkout project'
 fi
+
+# Fixture B (#356 review A1): a project that mixes our container with a foreign
+# one must be refused as a whole, never project-wide `down`-ed. Also covers a
+# container with our checkout label but a foreign compose file.
+cat > "$SHIM_DIR/fixture-mixed" <<'FIXTURE'
+cid-ours mixedprobe-1 /compose/ours.yml /checkout/ours
+cid-foreign mixedprobe-1 /compose/other.yml /checkout/other
+cid-config mixedprobe-2 /compose/ours.yml /checkout/ours
+cid-config-foreign mixedprobe-2 /compose/other.yml /checkout/ours
+cid-only-foreign mixedprobe-3 /compose/other.yml /checkout/ours
+FIXTURE
+export DOCKER_FIXTURE="$SHIM_DIR/fixture-mixed"
+RC=0
+SWEPT="$(PATH="$SHIM_DIR:$PATH" stack_sweep_projects '/checkout/ours' '/compose/ours.yml' 2> "$SHIM_DIR/mixed.err")" || RC=$?
+if ((RC == 3)) && [[ -z "$SWEPT" ]]; then
+  pass 'a mixed project is refused as a whole (no project-wide down, rc 3)'
+else
+  fail "mixed project was not refused: rc $RC, stdout '$SWEPT'"
+fi
+if grep -q 'refusing to tear down project mixedprobe-1' "$SHIM_DIR/mixed.err" &&
+  grep -q 'refusing to tear down project mixedprobe-2' "$SHIM_DIR/mixed.err"; then
+  pass 'the refusal names the mixed projects (mixed checkout label and foreign compose file)'
+else
+  fail "refusal warning missing: $(tr '\n' ' ' < "$SHIM_DIR/mixed.err")"
+fi
+
+# Fixture C: a pre-#356 legacy project that has since gained a foreign compose
+# file is refused too — the unlabelled fallback is not a blanket bypass.
+cat > "$SHIM_DIR/fixture-legacy-mixed" <<FIXTURE
+legacy-1 $LEGACY /compose/ours.yml
+legacy-mixed-1 $LEGACY /compose/ours.yml
+legacy-mixed-2 $LEGACY /compose/other.yml
+FIXTURE
+export DOCKER_FIXTURE="$SHIM_DIR/fixture-legacy-mixed"
+RC=0
+SWEPT="$(PATH="$SHIM_DIR:$PATH" stack_sweep_projects '/checkout/ours' '/compose/ours.yml' 2> /dev/null)" || RC=$?
+if ((RC == 3)) && [[ -z "$SWEPT" ]]; then
+  pass 'a legacy project that gained a foreign container is refused too (unlabelled fallback is not a bypass)'
+else
+  fail "legacy mixed handling wrong: rc $RC, stdout '$SWEPT'"
+fi
+
+# A docker failure must surface (rc 1), not look like "no stack to clean".
+export DOCKER_FIXTURE="$SHIM_DIR/fixture-clean"
+RC=0
+PATH="$SHIM_DIR:$PATH" DOCKER_FAIL_PS=1 stack_sweep_projects '/checkout/ours' '/compose/ours.yml' > /dev/null 2>&1 || RC=$?
+if ((RC == 1)); then
+  pass 'docker ps failure surfaces instead of being swallowed as an empty sweep'
+else
+  fail "docker ps failure produced rc $RC (must be 1)"
+fi
+
+RC=0
+PATH="$SHIM_DIR:$PATH" DOCKER_FAIL_INSPECT=1 stack_sweep_projects '/checkout/ours' '/compose/ours.yml' > /dev/null 2>&1 || RC=$?
+if ((RC == 1)); then
+  pass 'docker inspect failure surfaces instead of being read as an empty label'
+else
+  fail "docker inspect failure produced rc $RC (must be 1)"
+fi
+
 if [[ -z "$(PATH="$SHIM_DIR:$PATH" stack_sweep_projects '' '/compose/ours.yml')" ]]; then
   pass 'empty checkout filter sweeps nothing (no accidental global down)'
 else
@@ -389,10 +541,23 @@ else
   fail 'docker-compose.yml lost the 127.0.0.1::3000 default (fixed/LAN port regression)'
 fi
 
-if grep -q 'rumaq.automation.checkout' "$COMPOSE_FILE"; then
-  pass 'services carry the rumaq.automation.checkout label'
+CHECKOUT_LABELS="$(grep -c 'rumaq.automation.checkout:' "$COMPOSE_FILE" || true)"
+if ((CHECKOUT_LABELS == 4)); then
+  pass 'all four services carry the checkout label (the proxy stays addressable after a killed run)'
 else
-  fail 'the checkout label is missing (label teardown cannot work)'
+  fail "expected 4 checkout labels (api/web/proxy/test-runner), found $CHECKOUT_LABELS"
+fi
+
+if grep -qE '^\s*required: false' "$COMPOSE_FILE"; then
+  pass 'the proxy treats web as an optional dependency (--api skips the SPA build)'
+else
+  fail 'the proxy requires web unconditionally (--api would build the SPA needlessly)'
+fi
+
+if grep -q 'test-results/runs/${RUMAQ_RUN_ID' "$COMPOSE_FILE"; then
+  pass 'test reports mount a per-run directory (concurrent runs cannot overwrite each other)'
+else
+  fail 'test reports still mount the shared test-results/{vitest,playwright,artifacts} paths'
 fi
 
 if grep -q 'external: true' "$COMPOSE_FILE"; then
@@ -412,6 +577,40 @@ if grep -q 'automation/\*\*/\*\.sh text eol=lf mode=755' "$ROOT_DIR/.gitattribut
   pass '.gitattributes tracks automation shell scripts as mode=755'
 else
   fail '.gitattributes does not mark automation shell scripts mode=755'
+fi
+
+# ------------------------------------------------------------------
+# 9. Build-cache content hash (#356 review B8)
+# ------------------------------------------------------------------
+echo '==> build-cache stamp'
+
+CACHE_TREE="$(mktemp -d)"
+printf 'a\n' > "$CACHE_TREE/a.txt"
+STAMP_PLAIN="$(
+  RUMAQ_CACHE_DIR="$CACHE_TREE/cache" bash -c '
+    set -euo pipefail
+    source "$1"
+    cache_stamp "$2"
+  ' _ "$ROOT_DIR/automation/docker/build-cache.sh" "$CACHE_TREE"
+)"
+if [[ "$STAMP_PLAIN" =~ ^[0-9a-f]{16}$ ]]; then
+  pass "cache stamp is a 16-hex content hash ('$STAMP_PLAIN')"
+else
+  fail "cache stamp has an unexpected shape: '$STAMP_PLAIN'"
+fi
+
+ln -s a.txt "$CACHE_TREE/link"
+STAMP_LINK="$(
+  RUMAQ_CACHE_DIR="$CACHE_TREE/cache" bash -c '
+    set -euo pipefail
+    source "$1"
+    cache_stamp "$2"
+  ' _ "$ROOT_DIR/automation/docker/build-cache.sh" "$CACHE_TREE" 2> /dev/null
+)"
+if [[ "$STAMP_LINK" =~ ^uncacheable- ]] && [[ "$STAMP_LINK" != "$STAMP_PLAIN" ]]; then
+  pass 'a symlinked input fails closed instead of hashing only the regular files'
+else
+  fail "symlink input produced '$STAMP_LINK' (must be an uncacheable stamp)"
 fi
 
 # ------------------------------------------------------------------

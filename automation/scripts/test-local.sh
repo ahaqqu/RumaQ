@@ -13,11 +13,11 @@ set -euo pipefail
 #
 # Usage:
 #   ./automation/scripts/test-local.sh              # run everything
-#   ./automation/scripts/test-local.sh --build      # force rebuild images for this toolchain
+#   ./automation/scripts/test-local.sh --build      # re-run this digest's image build (layer cache reused)
 #   ./automation/scripts/test-local.sh --no-build   # never build; fail fast if images are missing
 #   ./automation/scripts/test-local.sh --down       # tear down every stack from this checkout (by label)
 #   ./automation/scripts/test-local.sh --clean      # --down + this toolchain's build-cache volume
-#   ./automation/scripts/test-local.sh --api        # run API tests only (needs stack)
+#   ./automation/scripts/test-local.sh --api        # API tests only (api + proxy, no web build)
 #   ./automation/scripts/test-local.sh --e2e        # run E2E tests only (needs stack)
 #
 # Images are toolchain-only (#356): they carry bun/node/nginx/Playwright and the
@@ -28,11 +28,13 @@ set -euo pipefail
 #   - a deps/config edit builds one new tag (compose builds a missing image);
 #   - every checkout with the same lockfile shares one tag.
 #
-# Every invocation gets its own Compose project and an ephemeral, loopback-only
-# host port discovered after `up` (#356, superseding the #511 per-checkout
-# identity). Containers carry a rumaq.automation.checkout label, and --down
-# sweeps by that label, so a parallel run from the same checkout is never
-# adopted, recreated, or torn down.
+# Every invocation gets its own Compose project, an ephemeral, loopback-only
+# host port discovered after `up`, and a per-run results directory
+# (automation/test-results/runs/<run-id>) (#356, superseding the #511
+# per-checkout identity). Containers carry a rumaq.automation.checkout label, and
+# --down sweeps by that label, so a parallel run from the same checkout is never
+# adopted, recreated, or torn down. A project that also contains a foreign
+# container is refused as a whole (--down never project-wides a mixed stack).
 #   COMPOSE_PROJECT_NAME  explicit project name (validated, still wins)
 #   RUMAQ_TEST_PORT       explicit loopback host port instead of an ephemeral one
 #   RUMAQ_READY_TIMEOUT   readiness budget in seconds (default 180)
@@ -208,6 +210,19 @@ CACHE_VOLUME="rumaq-test-cache-${RUMAQ_DEPS_DIGEST}"
 
 IMAGE_TAGS=("$IMAGE_API" "$IMAGE_WEB" "$IMAGE_RUNNER")
 
+# Per-run results (#356 review A2/B3): reports and diagnostics live under a
+# per-invocation directory, so two runs from one checkout never overwrite each
+# other's Playwright report, Vitest JSON, artifacts or diagnostics — and the
+# directory is created by the host user, so a later failure can always write.
+RESULTS_ROOT="$ROOT_DIR/automation/test-results"
+RUN_RESULTS="$RESULTS_ROOT/runs/$RUN_ID"
+DIAG_DIR="$RUN_RESULTS/diagnostics"
+
+# Whether this invocation starts the web service. `--api` exercises the API
+# through the proxy and does not need the SPA (#356 review B13); the full and
+# e2e modes do, and their readiness gate includes the SPA phase.
+WEB_ENABLED=1
+
 # ------------------------------------------------------------------
 # Source preflight
 # ------------------------------------------------------------------
@@ -238,6 +253,43 @@ preflight_mounts() {
   fi
 }
 
+# Paths the test-runner writes through a bind mount, plus the host-only
+# diagnostics directory (#356 review A2/B7). Create them as the host user
+# before `up`: Docker would otherwise create a missing mount source as root,
+# and a later failure's diagnostics write would fail with EACCES.
+WRITABLE_PATHS=(
+  "$RESULTS_ROOT"
+  "$RUN_RESULTS"
+  "$RUN_RESULTS/vitest"
+  "$RUN_RESULTS/playwright"
+  "$RUN_RESULTS/artifacts"
+  "$DIAG_DIR"
+)
+
+prepare_writable_paths() {
+  local path need_chown=0
+  mkdir -p "${WRITABLE_PATHS[@]}" 2> /dev/null || need_chown=1
+  for path in "${WRITABLE_PATHS[@]}"; do
+    [[ -w "$path" ]] || need_chown=1
+  done
+  if ((need_chown)); then
+    # An earlier pre-review run created these mounts as root (the container runs
+    # as root by design; only the mount top directories matter to the host).
+    # Repair the ownership with the image the proxy already uses, then retry.
+    info "Repairing ownership of automation/test-results (created by an earlier run as root)..."
+    docker run --rm -v "$RESULTS_ROOT:/results" nginx:alpine \
+      sh -c "chown -R $(id -u):$(id -g) /results" > /dev/null 2>&1 || true
+    mkdir -p "${WRITABLE_PATHS[@]}" 2> /dev/null || true
+  fi
+  for path in "${WRITABLE_PATHS[@]}"; do
+    if [[ ! -w "$path" ]]; then
+      fail "Cannot write test output under $RESULTS_ROOT (permission denied)."
+      info "Remove that directory (it only holds gitignored test output) and re-run."
+      exit 1
+    fi
+  done
+}
+
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
@@ -245,11 +297,15 @@ preflight_mounts() {
 # is per-invocation now, but an explicit COMPOSE_PROJECT_NAME can still point two
 # checkouts at one project, so that label stays the ownership check: a stack
 # under our project whose compose file is not ours belongs to another checkout,
-# and neither ensure_stack nor cleanup may touch it.
+# and neither ensure_stack nor cleanup may touch it. Query by project label, not
+# `compose ps`: the latter hides profile-gated services (web), so a project whose
+# only leftover was the web container would look empty.
 running_stack_owners() {
-  local cid
-  compose ps -q 2> /dev/null | while read -r cid; do
-    [[ -n "$cid" ]] || continue
+  local cid ids
+  if ! ids="$(docker ps -a -q --filter "label=com.docker.compose.project=$PROJECT_NAME")"; then
+    return 0
+  fi
+  for cid in $ids; do
     docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$cid" 2> /dev/null || true
   done | sed '/^$/d' | sort -u || true
 }
@@ -273,17 +329,23 @@ READY_STATUS=""
 READY_BODY=""
 READY_ELAPSED=0
 
+# Best-effort by design (#356 review A2): a diagnostics failure must never mask
+# the original error or abort under `set -e`. The per-run directory is created
+# by prepare_writable_paths() as the host user before `up`.
 write_diagnostics() {
-  local dir="$ROOT_DIR/automation/test-results/diagnostics/$RUN_ID" cid svc
-  mkdir -p "$dir"
+  local dir="$DIAG_DIR" cid svc
+  if ! mkdir -p "$dir" 2> /dev/null; then
+    fail "Diagnostics could not be written to $dir (permission denied); the failure above stands."
+    return 0
+  fi
   {
     printf 'project: %s\n' "$PROJECT_NAME"
     printf 'proxy: %s\n' "${TEST_PORT:-unknown}"
     printf 'toolchain digest: %s\n' "$RUMAQ_DEPS_DIGEST"
     printf '\n== compose ps ==\n'
-    compose ps -a 2>&1 || true
+    compose --profile spa ps -a 2>&1 || true
     printf '\n== container state ==\n'
-    compose ps -a -q 2> /dev/null | while read -r cid; do
+    compose --profile spa ps -a -q 2> /dev/null | while read -r cid; do
       [[ -n "$cid" ]] || continue
       docker inspect -f '{{.Name}} status={{.State.Status}} exit={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}}' "$cid" 2>&1 || true
     done
@@ -295,7 +357,7 @@ write_diagnostics() {
     printf 'elapsed: %ss (budget %ss)\n' "$READY_ELAPSED" "$READY_TIMEOUT"
     printf 'body: %s\n' "${READY_BODY:-none}"
     printf '\n== attempts ==\n'
-    if [[ -n "$PROBE_ATTEMPTS" && -f "$PROBE_ATTEMPTS" ]]; then
+    if [[ -n "${PROBE_ATTEMPTS:-}" && -f "$PROBE_ATTEMPTS" ]]; then
       cat "$PROBE_ATTEMPTS"
     fi
   } > "$dir/probe.txt" 2>&1 || true
@@ -303,13 +365,14 @@ write_diagnostics() {
     compose logs --no-color --tail=200 "$svc" > "$dir/logs-$svc.txt" 2>&1 || true
   done
   rm -f "${PROBE_ATTEMPTS:-}"
-  info "Diagnostics: automation/test-results/diagnostics/$RUN_ID"
+  info "Diagnostics: automation/test-results/runs/$RUN_ID/diagnostics"
   info "Readiness budget: RUMAQ_READY_TIMEOUT=${READY_TIMEOUT}s (raise it on a cold machine)."
+  return 0
 }
 
 diagnose_and_fail() {
   fail "$1"
-  write_diagnostics
+  write_diagnostics || true
   exit 1
 }
 
@@ -324,15 +387,19 @@ diagnose_and_fail() {
 # deadline covers all three phases; every attempt is logged with status, elapsed
 # time and a body snippet, and a failure leaves a diagnostics bundle behind.
 probe_until_ready() {
-  local phase="$1" method="$2" url="$3" body_file attempt=0 code body snippet class ms remaining
+  local phase="$1" method="$2" url="$3" body_file attempt=0 code body snippet class ms remaining probe_timeout
   body_file="$(mktemp)"
   while :; do
-    if ((SECONDS >= READY_DEADLINE)); then
+    remaining=$((READY_DEADLINE - SECONDS))
+    if ((remaining <= 0)); then
       READY_ELAPSED=$((SECONDS - READY_STARTED))
       break
     fi
     attempt=$((attempt + 1))
-    code="$(stack_http_code "$method" "$url" "$body_file")"
+    # Cap the request at the remaining budget (#356 review B10): a hung connect
+    # would otherwise overshoot the deadline by curl's own 10 s timeout.
+    probe_timeout=$((remaining < 10 ? remaining : 10))
+    code="$(stack_http_code "$method" "$url" "$body_file" "$probe_timeout")"
     code="${code:-000}"
     # Classify the whole body (the SPA's id="root" sits past the first 200
     # chars); only the log/diagnostics excerpt is truncated.
@@ -388,12 +455,16 @@ wait_ready() {
     diagnose_and_fail "The stack did not answer GET /api/health within ${READY_TIMEOUT}s."
   fi
 
-  rc=0
-  probe_until_ready spa GET "http://127.0.0.1:${TEST_PORT}/" || rc=$?
-  if ((rc == 2)); then
-    diagnose_and_fail "The SPA root returned 404 — nginx is not serving the built app."
-  elif ((rc != 0)); then
-    diagnose_and_fail "The SPA root did not become ready within ${READY_TIMEOUT}s (web build or nginx not up)."
+  # --api starts only api + proxy (the SPA is not built), so its gate is the
+  # health and canary phases; full/e2e also prove the published SPA bundle.
+  if ((WEB_ENABLED)); then
+    rc=0
+    probe_until_ready spa GET "http://127.0.0.1:${TEST_PORT}/" || rc=$?
+    if ((rc == 2)); then
+      diagnose_and_fail "The SPA root returned 404 — nginx is not serving the built app."
+    elif ((rc != 0)); then
+      diagnose_and_fail "The SPA root did not become ready within ${READY_TIMEOUT}s (web build or nginx not up)."
+    fi
   fi
 
   rc=0
@@ -458,7 +529,9 @@ apply_build_policy() {
   case "$BUILD_MODE" in
     force)
       info "Rebuilding toolchain images for digest ${RUMAQ_DEPS_DIGEST}..."
-      compose build
+      # --profile spa: web is profile-gated (--api never builds it), but --build
+      # still means "rebuild every toolchain image for this digest".
+      compose --profile spa build
       ;;
     never)
       for tag in "${IMAGE_TAGS[@]}"; do
@@ -481,9 +554,15 @@ apply_build_policy() {
 
 ensure_stack() {
   local owners
+  local -a services=(api proxy) profiles=()
 
   preflight_mounts
+  prepare_writable_paths
   configure_port
+  if ((WEB_ENABLED)); then
+    services=(api web proxy)
+    profiles=(--profile spa)
+  fi
 
   # Refuse to stomp a project owned by another checkout: `up -d` would adopt it
   # and later teardown would kill that run. Only reachable through an explicit
@@ -508,7 +587,7 @@ ensure_stack() {
 
   info "Compose project: $PROJECT_NAME"
   info "Toolchain digest: $RUMAQ_DEPS_DIGEST (images rumaq-test-*:${RUMAQ_DEPS_DIGEST})"
-  if ! compose up -d api web proxy; then
+  if ! compose "${profiles[@]}" up -d "${services[@]}"; then
     diagnose_and_fail "docker compose up failed (a dependency did not become healthy)."
   fi
 
@@ -531,7 +610,9 @@ cleanup() {
   fi
 
   info "Tearing down compose project '$PROJECT_NAME'..."
-  compose down --volumes --remove-orphans \
+  # --profile spa: `down` skips services in a disabled profile, and leaving the
+  # web container behind after a green full run was a real leak (#356 review A2).
+  compose --profile spa down --volumes --remove-orphans \
     || fail "Teardown failed. Run ./scripts/test.sh automation-local --down from this checkout to clean up."
 }
 
@@ -557,17 +638,39 @@ trap 'exit 143' TERM
 # checkout's compose file, then tear that project down. Killed runs and
 # COMPOSE_PROJECT_NAME overrides are covered; another checkout never is.
 sweep_checkout_stacks() {
-  local project found=0
+  local projects rc=0 mixed=0 project found=0
+  projects="$(stack_sweep_projects "$ROOT_DIR" "$COMPOSE_FILE")" || rc=$?
+  case "$rc" in
+    0) ;;
+    3) mixed=1 ;;
+    *)
+      fail "Could not enumerate this checkout's compose projects (docker ps failed)."
+      return 1
+      ;;
+  esac
   while read -r project; do
     [[ -n "$project" ]] || continue
     found=1
     info "Tearing down compose project '$project' (checkout label sweep)..."
-    docker compose -f "$COMPOSE_FILE" -p "$project" down --volumes --remove-orphans \
-      || fail "Teardown of project '$project' failed."
-  done < <(stack_sweep_projects "$ROOT_DIR" "$COMPOSE_FILE")
+    # The profile must be enabled here too: a project's web container is
+    # profile-gated, and a profile-less `down` would leave it running.
+    if ! docker compose -f "$COMPOSE_FILE" --profile spa -p "$project" down --volumes --remove-orphans; then
+      fail "Teardown of project '$project' failed."
+      rc=1
+    fi
+  done <<< "$projects"
   if ((found == 0)); then
-    ok "No automation stack for this checkout."
+    if ((mixed)); then
+      info "No owned stack was torn down (the mixed project above was left untouched)."
+    else
+      ok "No automation stack for this checkout."
+    fi
   fi
+  if ((mixed)); then
+    fail "Refused at least one mixed compose project (see warning above): it contains containers from another checkout."
+    return 1
+  fi
+  return "$rc"
 }
 
 # ------------------------------------------------------------------
@@ -581,10 +684,16 @@ case "$MODE" in
     EXIT_CODE=0
     compose run --rm test-runner || EXIT_CODE=$?
 
-    # Generate HTML report from vitest JSON (mounted volume)
-    if [ -f "$ROOT_DIR/automation/test-results/vitest/api-results.json" ]; then
-      node "$ROOT_DIR/automation/scripts/generate-test-report.js" 2> /dev/null \
-        && ok "HTML report: automation/test-results/test-report.html" || true
+    # Generate the HTML summary from this run's Vitest JSON (#356 review B3/B11):
+    # per-run paths, and a generation failure is reported instead of swallowed.
+    if [[ -f "$RUN_RESULTS/vitest/api-results.json" ]]; then
+      if node "$ROOT_DIR/automation/scripts/generate-test-report.js" "$RUN_RESULTS"; then
+        ok "HTML report: ${RUN_RESULTS#"$ROOT_DIR"/}/test-report.html"
+      else
+        fail "HTML report generation failed (the suite result is unchanged)."
+      fi
+    else
+      info "No Vitest JSON report found; skipping the HTML summary."
     fi
 
     if [[ $EXIT_CODE -eq 0 ]]; then
@@ -600,19 +709,23 @@ case "$MODE" in
 
   build)
     info "Building toolchain images for digest '$RUMAQ_DEPS_DIGEST'..."
-    compose build
+    compose --profile spa build
     ok "Images built. Run ./automation/scripts/test-local.sh to start tests."
     ;;
 
   down)
-    sweep_checkout_stacks
+    sweep_checkout_stacks || exit 1
     ;;
 
   clean)
-    sweep_checkout_stacks
+    sweep_checkout_stacks || exit 1
     if docker volume inspect "$CACHE_VOLUME" > /dev/null 2>&1; then
-      docker volume rm "$CACHE_VOLUME" > /dev/null \
-        && ok "Removed build-cache volume '$CACHE_VOLUME' (this toolchain digest only)."
+      if ! docker volume rm "$CACHE_VOLUME" > /dev/null; then
+        fail "Could not remove build-cache volume '$CACHE_VOLUME' (in use by a running automation run?)."
+        exit 1
+      fi
+      ok "Removed build-cache volume '$CACHE_VOLUME' (for this toolchain digest)."
+      info "It is shared by every checkout using digest ${RUMAQ_DEPS_DIGEST}; run --clean only when no other automation run is active (the next run rebuilds the cache)."
     else
       ok "No build-cache volume for this toolchain digest."
     fi
@@ -620,12 +733,22 @@ case "$MODE" in
     ;;
 
   api)
-    info "Running API integration tests..."
+    # #356 review B13: the API suite reaches the API through the proxy and never
+    # requests the SPA, so this mode skips the web build entirely.
+    WEB_ENABLED=0
+    info "Running API integration tests (api + proxy; no SPA build)..."
     ensure_stack
 
     EXIT_CODE=0
     compose run --rm test-runner \
-      sh -c "bunx vp test --project integration && sync" || EXIT_CODE=$?
+      sh -c "bunx vp test --project integration --reporter=default --reporter=json --outputFile=vitest-report/api-results.json && sync" || EXIT_CODE=$?
+    if [[ -f "$RUN_RESULTS/vitest/api-results.json" ]]; then
+      if node "$ROOT_DIR/automation/scripts/generate-test-report.js" "$RUN_RESULTS"; then
+        ok "HTML report: ${RUN_RESULTS#"$ROOT_DIR"/}/test-report.html"
+      else
+        fail "HTML report generation failed (the suite result is unchanged)."
+      fi
+    fi
     exit $EXIT_CODE
     ;;
 
@@ -643,15 +766,16 @@ case "$MODE" in
     echo "Usage: $0 [--build|--no-build|--down|--clean|--api|--e2e]"
     echo ""
     echo "  (no flag)       Full Docker test suite; build only missing toolchain images"
-    echo "  --build         Force rebuild of this toolchain digest's images"
+    echo "  --build         Re-run this digest's image build (layer cache reused)"
     echo "  --no-build      Never build; fail fast if this digest's images are missing"
     echo "  --down          Tear down every stack started from this checkout (by label)"
     echo "  --clean         --down plus this toolchain's content-hash cache volume"
-    echo "  --api           API integration tests only"
+    echo "  --api           API integration tests only (api + proxy, no SPA build)"
     echo "  --e2e           E2E tests only"
     echo ""
-    echo "Each invocation uses its own compose project and an ephemeral loopback"
-    echo "host port, discovered after 'up' (#356). Environment overrides:"
+    echo "Each invocation uses its own compose project, an ephemeral loopback host"
+    echo "port discovered after 'up', and its own test-results/runs/<run-id>/ dir"
+    echo "(#356). Environment overrides:"
     echo "  COMPOSE_PROJECT_NAME=<name>   explicit project name"
     echo "  RUMAQ_TEST_PORT=<port>        explicit loopback port"
     echo "  RUMAQ_READY_TIMEOUT=<seconds> readiness budget (default 180)"
