@@ -108,16 +108,89 @@ serves the responses — no network, no secret.
 
 ## Local automation test
 
-All services behind `nginx` proxy on a per-run host port: the runner picks a
-free port and prints it (`RUMAQ_TEST_PORT` overrides; `localhost:3000` when
-compose is used directly). Worker exposes `TEST_MODE`-guarded admin endpoints.
-Gherkin features + `jest-cucumber` for API, `playwright-bdd` for E2E. Run by
-Vitest + Playwright inside Docker. Each checkout uses its own Compose project,
-so parallel worktrees/sessions can run the suite concurrently.
+All services behind an `nginx` proxy published on an **ephemeral, loopback-only**
+host port: Docker assigns a free port and the runner discovers it after `up` and
+prints `http://127.0.0.1:<port>` (`RUMAQ_TEST_PORT` pins an explicit loopback
+port; `RUMAQ_PROXY_PORTS` overrides the whole mapping). Inside the Compose
+network the proxy stays `proxy:3000`, so test origins and the CSRF assertions
+are unchanged. Worker exposes `TEST_MODE`-guarded admin endpoints. Gherkin
+features + `jest-cucumber` for API, `playwright-bdd` for E2E. Run by Vitest +
+Playwright inside Docker.
+
+The images are **toolchain-only** (ahaqqu/RumaQ#356): bun 1.4.0, real Node for
+the Worker build, nginx, Playwright/Chromium and the installed dependency tree —
+never repo source. `backend/src`, `backend/migrations`, `contract/src`,
+`automation/tests`, `frontend/src` and `frontend/public` are bind-mounted
+read-only, and each service builds its artifact at container start (Worker
+bundle, SPA, BDD tests) behind a content-hash cache in a per-toolchain-digest
+volume. Consequences:
+
+- a **source** edit needs no image work at all — the next run reads the mount;
+- a **deps/config** edit changes the image tag (a digest of Dockerfiles,
+  entrypoints, nginx config, manifests, lockfile and build configs), and Compose
+  builds exactly that one missing tag; every checkout with the same lockfile
+  shares it;
+- a **warm, unchanged** run reuses the cache, so the artifact builds cost
+  roughly a copy instead of the build;
+- `node_modules` is never mounted — the image's dependency tree is the only one
+  the container sees, which is what keeps "deps change ⇒ rebuild" true.
+
+The first run on a machine (or after a Docker prune) builds the toolchain
+images; the Playwright + Chromium layer dominates that cold cost, and a lockfile
+change rebuilds it too. Later runs reuse them. `--build` re-runs the image build
+for the current digest (Docker's layer cache is reused — it is not `--no-cache`),
+`--no-build` fails fast when the tag is missing instead of silently building it,
+and `RUMAQ_BUILD_CACHE=0` bypasses the artifact cache.
+
+Each **invocation** gets its own Compose project, an ephemeral loopback port and
+its own results directory (`automation/test-results/runs/<run-id>/`), so runs
+from the same checkout or different worktrees never share containers, ports,
+Playwright reports, Vitest JSON, artifacts or diagnostics. `--down` takes no
+arguments: it sweeps this checkout's stacks by label and never touches another
+checkout's. A project that also contains a foreign container is refused as a
+whole — it is never `down`-ed project-wide — and pre-#356 unlabelled stacks are
+found by their deterministic old project name. The same ownership check runs
+before a normal `up` and again at teardown: if an explicit `COMPOSE_PROJECT_NAME`
+already points at another checkout's containers (even ones created from this
+compose file), the run refuses to start or tear it down and exits nonzero. `--clean` also removes this
+toolchain's cache volume; that volume is shared by every checkout using the same
+lockfile, so run `--clean` only when no other automation run is active (Docker
+refuses to remove a volume that is in use).
+
+`--api` starts only `api` + `proxy` (the API suite never requests the SPA), so it
+skips the web build and the SPA phase of the readiness gate; the full and
+`--e2e` modes start `web` too and therefore prove the published SPA bundle.
+
+Readiness is a real gate on the published port: `/api/health` must answer 200
+**and** `{"ok":true}`, `/` must answer 200 with `id="root"` (full/e2e), then the
+#318 canary `POST /api/purchases` must answer 401 — with a 250 ms→2 s jittered
+backoff, one 180 s budget (`RUMAQ_READY_TIMEOUT`, each probe capped at the
+remaining budget), per-attempt logging, and a diagnostics bundle under
+`automation/test-results/runs/<run-id>/diagnostics/` that the workflow uploads.
+A diagnostics write failure is reported but never masks the original failure.
 
 ```
 ./scripts/test.sh automation-local
 ```
+
+### Image tags and manual pruning
+
+Image tags are content-addressed and local-only (`rumaq-test-*:<digest>`); a
+lockfile/config change simply stops referencing the old tag. Nothing prunes
+automatically — removing a tag can race a parallel run still using it. Prune
+manually when disk matters (no run in flight):
+
+```bash
+docker image ls --filter label=rumaq.automation.toolchain
+docker image prune -a --filter label=rumaq.automation.toolchain
+docker volume ls --filter name=rumaq-test-cache-
+rm -rf automation/test-results/runs   # per-run reports/diagnostics (gitignored)
+```
+
+`./scripts/test.sh automation-local --clean` removes only the current
+toolchain's cache volume (the recovery for a corrupted cache). Because that
+volume is shared across checkouts for the same lockfile, use it only when no
+other automation run is active; the next run rebuilds the cache.
 
 ### E2E page-level coverage (`automation/tests/local/e2e/`)
 

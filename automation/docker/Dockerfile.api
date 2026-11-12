@@ -1,4 +1,7 @@
-FROM node:22-slim AS node-dist
+# Pinned minor (#356 review B9): `node:22-slim` silently moved to a new Node
+# patch on every pull, changing the Worker build toolchain under an unchanged
+# image tag.
+FROM node:22.23.5-slim AS node-dist
 
 FROM oven/bun:1.4.0-slim AS api
 
@@ -6,14 +9,20 @@ FROM oven/bun:1.4.0-slim AS api
 # Node.js >= 22.18 — the bun image's `node` is a Bun shim that the config
 # loader rejects, and shadowing it breaks bun's lifecycle-script execution.
 # Install the real binary under a distinct name and use it only for the
-# Worker build step below.
+# Worker build step in the entrypoint.
 COPY --from=node-dist /usr/local/bin/node /usr/local/bin/node-real
 
+# curl is the compose healthcheck's probe (and the runner's readiness gate runs
+# on the host, so nothing else is needed here).
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Layer 1: dependencies (cached until lockfiles change)
+# Layer 1: dependencies (cached until the lockfile/manifests change). This is
+# the only dependency tree the harness ever uses — node_modules is deliberately
+# never bind-mounted (host bun installs hardlink into bun's global cache; a
+# container must not be able to mutate that tree, and mounting it would tie the
+# image's deps to the host platform).
 COPY bun.lock package.json ./
 COPY frontend/package.json ./frontend/
 COPY backend/package.json ./backend/
@@ -21,29 +30,30 @@ COPY contract/package.json ./contract/
 RUN --mount=type=cache,target=/root/.bun \
   bun install --frozen-lockfile
 
-# Layer 2: stable configs (rarely change)
+# Layer 2: build configs (image inputs — the toolchain digest in
+# automation/scripts/lib/stack.sh hashes every file copied below).
 COPY vite.config.ts ./
 COPY backend/vite.config.ts ./backend/
 COPY backend/tsconfig.json ./backend/
 COPY backend/cloudflare.config.ts ./backend/
 COPY contract/tsconfig.json ./contract/
 
-# Layer 3: build source (changes most frequently). Keep migrations and test
-# support files out of this layer so backend-only edits don't invalidate them.
-COPY backend/src/ ./backend/src/
-COPY backend/migrations/ ./backend/migrations/
-COPY contract/src/ ./contract/src/
-# The backend build packs frontend/dist as Worker static assets; the API test
-# harness serves the SPA via nginx instead, so an empty dist is sufficient.
-# Run vp with Node (not bunx) so cloudflare.config.ts can load.
-RUN mkdir -p frontend/dist && node-real node_modules/.bin/vp build backend
+# The backend build packs frontend/dist as Worker static assets
+# (backend/vite.config.ts publicDir); the API test harness serves the SPA via
+# nginx instead, so an empty directory is sufficient.
+RUN mkdir -p frontend/dist
 
-# Layer 4: test support files (change independently of backend source)
-COPY automation/tests/ ./automation/tests/
+# Layer 3: the container-start build. Source is NOT copied: backend/src,
+# contract/src, backend/migrations and automation/tests are read-only bind
+# mounts, so an edit is picked up by the next run with zero image work. The
+# bundle is produced by entrypoint-api.sh (content-hash cached).
+COPY automation/docker/build-cache.sh automation/docker/entrypoint-api.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint-api.sh
 
 EXPOSE 8787
 
 ENV NODE_ENV=test
 ENV TEST_MODE=true
 
+ENTRYPOINT ["/usr/local/bin/entrypoint-api.sh"]
 CMD ["node", "automation/tests/support/worker-server.mjs"]

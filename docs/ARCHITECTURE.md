@@ -112,12 +112,13 @@ rumaq/
 │   │   │   └── health/     # Health-check feature + steps
 │   │   ├── fixtures/       # seed.sql, reset.sql
 │   │   └── support/        # worker-server.mjs, auth.js, db.js helpers
-│   ├── docker/             # Dockerfiles and nginx configs for test harness
+│   ├── docker/             # Toolchain-only Dockerfiles, entrypoints, nginx configs
 │   ├── scripts/            # Test runner and report scripts
+│   │   ├── lib/stack.sh            # Project identity, digest, probe + sweep rules (#356)
 │   │   ├── test-local.sh           # Full Docker test suite orchestrator
 │   │   ├── run-smoke-tests.sh      # Production smoke runner (CI)
 │   │   └── generate-test-report.js # HTML report from vitest JSON
-│   ├── docker-compose.yml  # One-command test orchestration
+│   ├── docker-compose.yml  # Per-invocation stack: read-only source mounts + digest tags
 │   └── playwright.config.js
 ├── .github/
 │   ├── dependabot.yml                # Daily dependency version bumps

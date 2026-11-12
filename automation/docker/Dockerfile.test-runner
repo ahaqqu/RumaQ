@@ -4,7 +4,8 @@ WORKDIR /app
 
 USER root
 
-# Layer 1: dependencies (cached until lockfiles change)
+# Layer 1: dependencies (cached until the lockfile/manifests change). Never
+# bind-mounted — see Dockerfile.api for why.
 COPY bun.lock package.json ./
 COPY frontend/package.json ./frontend/
 COPY backend/package.json ./backend/
@@ -17,31 +18,31 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 # libraries via apt, which removes the need for a version-pinned base image.
 RUN bunx playwright install --with-deps chromium
 
-# Layer 2: stable configs & migrations (rarely change). Workspace vite configs
-# are copied because the root vp config resolves each project's own config.
+# Layer 2: stable configs (image inputs — hashed by the toolchain digest).
+# Workspace vite configs are copied because the root vp config resolves each
+# project's own config. automation/playwright.config.js is baked only so the
+# read-only bind-mount target exists: Docker creates a directory when a
+# bind-mount source file is missing, and the live mount always overrides this
+# copy, so it is deliberately not part of the image identity.
 COPY vite.config.ts ./
 COPY frontend/vite.config.js ./frontend/
 COPY backend/vite.config.ts ./backend/
 COPY backend/tsconfig.json ./backend/
-COPY backend/migrations/ ./backend/migrations/
+COPY contract/tsconfig.json ./contract/
 COPY automation/playwright.config.js ./automation/playwright.config.js
 
-# Layer 3: app source (changes moderately)
-COPY backend/src/ ./backend/src/
-COPY frontend/src/ ./frontend/src/
-# The contract workspace is imported by the backend (@rumaq/contract) and has
-# no build step — the source is the package.
-COPY contract/src/ ./contract/src/
-COPY contract/tsconfig.json ./contract/
-
-# Layer 4: tests (changes most frequently)
-COPY automation/tests/ ./automation/tests/
+# No app source and no tests are copied: automation/tests,
+# automation/playwright.config.js, backend/src and contract/src are read-only
+# mounts (the step files import backend/src/auth.ts and contract/src directly).
+# Playwright-BDD generation runs in the entrypoint, content-hash cached.
+COPY automation/docker/build-cache.sh automation/docker/entrypoint-test-runner.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint-test-runner.sh
 
 ENV TEST_BASE_URL=http://proxy:3000
 
-# Pre-generate Playwright-BDD tests so the output is part of the image. This
-# avoids regenerating them on every test run and makes `bunx playwright test`
-# discover tests immediately.
-RUN bunx bddgen test --config automation/playwright.config.js
-
-CMD ["sh", "-c", "bunx vp test --project integration && bun x playwright test --config automation/playwright.config.js && sync"]
+ENTRYPOINT ["/usr/local/bin/entrypoint-test-runner.sh"]
+# The JSON reporter is passed on the command line, not only in the project
+# config: vite-plus's `vp test` wrapper does not apply the per-project reporters
+# block, so the HTML summary silently had no input (#356 review B12). The
+# default reporter stays on for the live log.
+CMD ["sh", "-c", "bunx vp test --project integration --reporter=default --reporter=json --outputFile=vitest-report/api-results.json && bun x playwright test --config automation/playwright.config.js && sync"]

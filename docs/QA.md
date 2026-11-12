@@ -10,12 +10,24 @@ feature ships (new surface, new migration, auth/authorization change), or on
 demand from the owner. It complements — never replaces — `docs/TEST_STRATEGY.md`
 and the local/live automation suites.
 
-Local automation runs are parallel-safe: each checkout derives its own Compose
-project (`automation-<worktree>-<hash>`) and picks a free host port, so suites
-from different worktrees/sessions never share containers or ports. Override
-with `COMPOSE_PROJECT_NAME` / `RUMAQ_TEST_PORT` (repeat both for `--down`);
-`--down` only removes the caller's project, and a stack owned by another
-checkout is never reused or torn down.
+Local automation runs are parallel-safe: each **invocation** gets its own
+Compose project, an ephemeral loopback host port that the runner prints
+(`http://127.0.0.1:<port>`) and a per-run results directory
+(`automation/test-results/runs/<run-id>/`), so suites from the same checkout or
+from different worktrees/sessions never share containers, ports, Playwright
+reports, Vitest JSON or artifacts. Override with `COMPOSE_PROJECT_NAME` /
+`RUMAQ_TEST_PORT`; `--down` takes no arguments — it sweeps this checkout's
+stacks by label, so it never removes a stack owned by another checkout (a
+project that mixes in a foreign container is refused as a whole — on the normal
+run path and teardown too, not just `--down` — and pre-#356 unlabelled stacks
+are found by their old project name). `--clean` also removes
+this toolchain's build-cache volume, which is shared by every checkout with the
+same lockfile — run it only when no other automation run is active. `--api`
+starts only api + proxy (no SPA build); the full and e2e modes also prove the
+published SPA bundle. Images are toolchain-only (source is mounted read-only),
+so a code edit needs no image rebuild; the first run on a machine builds the
+Playwright/Chromium toolchain image and later runs reuse it (see
+[`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md) for tag pruning).
 
 Runs are also resource-bounded (ahaqqu/RumaQ#589): every Compose service has
 explicit CPU/memory caps sized from kernel-measured peaks (api 1.0 CPU / 768m,

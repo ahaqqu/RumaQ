@@ -44,18 +44,25 @@ case "$SUITE" in
     # plugins/ runs the frontend suite) and contract/ running the backend.
     exec "$ROOT_DIR/scripts/test/unit-test-scope.sh" "$@"
     ;;
+  automation-stack)
+    # Offline guard for the automation Docker stack (#356): per-invocation
+    # project identity, toolchain digest, readiness classification, backoff
+    # and label teardown — shell shims only, no Docker, no network.
+    exec "$ROOT_DIR/scripts/test/automation-stack.sh" "$@"
+    ;;
   all)
     "$ROOT_DIR/scripts/test/deploy-secrets.sh" "$@"
     "$ROOT_DIR/scripts/test/worker-smoke-scope.sh" "$@"
     "$ROOT_DIR/scripts/test/lighthouse-scope.sh" "$@"
     "$ROOT_DIR/scripts/test/unit-test-scope.sh" "$@"
     "$ROOT_DIR/scripts/test/price-freshness.sh" "$@"
+    "$ROOT_DIR/scripts/test/automation-stack.sh" "$@"
     "$ROOT_DIR/scripts/test/unit.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-local.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-live.sh" "$@"
     ;;
   *)
-    echo "Usage: $0 [unit|automation-local|automation-live|deploy|freshness|smoke-scope|lighthouse-scope|unit-test-scope|all]"
+    echo "Usage: $0 [unit|automation-local|automation-live|deploy|freshness|smoke-scope|lighthouse-scope|unit-test-scope|automation-stack|all]"
     exit 1
     ;;
 esac

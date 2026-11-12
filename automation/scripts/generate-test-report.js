@@ -6,9 +6,16 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '../..')
 
-const vitestJsonPath = resolve(ROOT, 'automation/test-results/vitest/api-results.json')
-const playwrightReportDir = resolve(ROOT, 'automation/test-results/playwright')
-const outputPath = resolve(ROOT, 'automation/test-results/test-report.html')
+// Per-run results directory (#356 review B3). The runner passes
+// automation/test-results/runs/<run-id>; the default keeps a manual invocation
+// working against the legacy shared location.
+const resultsRoot = process.argv[2]
+  ? resolve(process.argv[2])
+  : resolve(ROOT, 'automation/test-results')
+
+const vitestJsonPath = resolve(resultsRoot, 'vitest/api-results.json')
+const playwrightReportDir = resolve(resultsRoot, 'playwright')
+const outputPath = resolve(resultsRoot, 'test-report.html')
 
 const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19)
 

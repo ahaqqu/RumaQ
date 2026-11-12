@@ -8,6 +8,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The readiness gate has its own 180 s budget, but a cold image build plus
+    # the full suite (and Playwright's first install on a fresh runner) needs
+    # headroom. A stuck run must fail in minutes, not burn the 6-hour default.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -21,7 +25,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report
-          path: automation/test-results/playwright/
+          # Reports are per-run (tests/results/runs/<run-id>/playwright), so two
+          # runs on one runner never overwrite each other.
+          path: automation/test-results/runs/
 
       - name: Upload test results
         if: failure()
