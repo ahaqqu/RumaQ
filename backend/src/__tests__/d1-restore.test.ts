@@ -7,6 +7,8 @@ import { describe, it, expect, afterEach } from 'vite-plus/test'
 // @ts-expect-error — no node types in this tsconfig
 import { readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 // @ts-expect-error — no node types in this tsconfig
+import { DatabaseSync } from 'node:sqlite'
+// @ts-expect-error — no node types in this tsconfig
 import { join, dirname } from 'node:path'
 // @ts-expect-error — no node types in this tsconfig
 import { tmpdir } from 'node:os'
@@ -31,6 +33,11 @@ const verifyDump = verifyDumpJs as (
 ) => VerifyResult
 
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../migrations')
+const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
+// A real D1-format dump: per-table CREATE+INSERT in sqlite_schema rowid order,
+// `PRAGMA defer_foreign_keys=TRUE` header, and plan_items rows emitted before
+// the price_observations table they reference (#659).
+const D1_FORWARD_REF_DUMP = join(FIXTURES_DIR, 'd1-export-forward-reference.sql')
 
 function migrationFiles(): string[] {
   return readdirSync(MIGRATIONS_DIR)
@@ -148,10 +155,82 @@ describe('restore drill: verifyDump (scripts/backup/verify-dump.mjs)', () => {
     expect(result.counts['canary']).toBe(2)
   })
 
+  it('restores a real D1-format dump whose table order forward-references a later table (#659)', () => {
+    // D1 emits each table's CREATE then its rows in sqlite_schema rowid order,
+    // so plan_items (0001, FK added in 0007) is inserted before the
+    // price_observations table exists. The old drill replayed with node:sqlite's
+    // default FK enforcement on and died here with `no such table:
+    // main.price_observations` — the exact two-night backup failure. Pin the
+    // trigger: the same dump still fails under FK enforcement on.
+    const fixture = readFileSync(D1_FORWARD_REF_DUMP, 'utf8')
+    const strict = new DatabaseSync(':memory:')
+    expect(() => strict.exec(fixture)).toThrow(/no such table: main\.price_observations/)
+    strict.close()
+
+    const result = verifyDump(D1_FORWARD_REF_DUMP, {
+      requireTables: CANARY_TABLES,
+      expect: [
+        { table: 'users', op: '>=', count: 1 },
+        { table: 'households', op: '>=', count: 1 },
+        { table: 'household_members', op: '>=', count: 1 },
+        { table: 'plan_items', op: '=', count: 1 },
+        { table: 'price_observations', op: '=', count: 1 },
+      ],
+    })
+
+    expect(result.failures).toEqual([])
+    expect(result.integrity).toBe('ok')
+    expect(result.fkViolations).toEqual([])
+    // The forward-referenced row is validated, not skipped: plan_items.obs-1
+    // resolves only after the price_observations INSERT later in the dump.
+    expect(result.counts['plan_items']).toBe(1)
+    expect(result.counts['price_observations']).toBe(1)
+  })
+
+  it('keeps foreign_key_check real in a D1-format dump (FK-off replay cannot hide damage)', () => {
+    // Same dump, parent row removed: the restore itself must succeed (a D1
+    // import runs with FK enforcement off) but the post-restore probe must
+    // report the dangling plan_items.price_observation_id.
+    const fixture = readFileSync(D1_FORWARD_REF_DUMP, 'utf8')
+    const missingParent = fixture.replace(
+      `INSERT INTO "price_observations" ("id","product_id","price") VALUES('obs1','prod1',15000);\n`,
+      ''
+    )
+    expect(missingParent).not.toBe(fixture)
+
+    const result = verifyDump(writeTempDump(missingParent))
+
+    expect(result.integrity).toBe('ok')
+    expect(result.fkViolations).toHaveLength(1)
+    expect(JSON.stringify(result.fkViolations[0])).toContain('plan_items')
+    expect(result.failures.join('\n')).toMatch(/foreign_key_check found 1 violation/)
+  })
+
+  it('still fails a D1-format dump truncated mid-statement', () => {
+    const fixture = readFileSync(D1_FORWARD_REF_DUMP, 'utf8')
+    const cutAt = fixture.indexOf('CREATE TABLE documents') + 'CREATE TABLE doc'.length
+    const result = verifyDump(writeTempDump(fixture.slice(0, cutAt)))
+
+    expect(result.failures.join('\n')).toMatch(/failed to execute/)
+    expect(result.failures.join('\n')).toMatch(/incomplete input|syntax error/)
+  })
+
+  it('fails a transaction-wrapped D1-format dump truncated before COMMIT', () => {
+    // Every statement completes but the export's COMMIT is gone: the ROLLBACK
+    // probe (not the SQL parser) is what must catch this.
+    const fixture = readFileSync(D1_FORWARD_REF_DUMP, 'utf8')
+    const withoutCommit = fixture.replace('\nCOMMIT;\n', '\n')
+    expect(withoutCommit).not.toBe(fixture)
+    const result = verifyDump(writeTempDump(withoutCommit))
+
+    expect(result.failures.join('\n')).toMatch(/missing COMMIT/)
+  })
+
   it('catches referential damage the import itself does not reject (foreign_key_check)', () => {
-    // The D1 import path runs with FK enforcement off, exactly like the
-    // drill's restore — a child row naming a missing parent lands silently.
-    // The drill exists to catch precisely this, so the probe must be real.
+    // The drill replays with FK enforcement off (a D1 dump may order a child
+    // table's rows before its parent's CREATE) — a child row naming a missing
+    // parent lands silently. The drill exists to catch precisely this, so the
+    // probe must be real.
     const sql = [
       'PRAGMA foreign_keys=OFF;',
       'BEGIN TRANSACTION;',

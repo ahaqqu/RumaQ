@@ -17,9 +17,9 @@
 //      statement but before its COMMIT is caught by a ROLLBACK probe instead
 //      of silently presenting session-local uncommitted rows as "restored"
 //   4. PRAGMA integrity_check = ok
-//   5. PRAGMA foreign_key_check = zero violations (the import runs with FK
-//      enforcement off, exactly like the D1 import path, so referential
-//      damage in the dump is caught here, not silently accepted)
+//   5. PRAGMA foreign_key_check = zero violations (the dump is replayed with
+//      FK enforcement off — see the restore connection below — so referential
+//      damage is caught here instead of silently accepted)
 //   6. row counts per user table — always reported; asserted when --expect
 //      is given (`table=count` exact, `table>=count` floor)
 //
@@ -65,10 +65,22 @@ export function verifyDump(dumpPath, options = {}) {
     return { ...empty, failures: [`dump file is empty: ${dumpPath}`] }
   }
 
-  const db = new DatabaseSync(':memory:')
+  // FK enforcement MUST be off while the dump is replayed (ahaqqu/RumaQ#659).
+  // A d1-compatibility dump is emitted table-by-table in sqlite_schema rowid
+  // order and starts with `PRAGMA defer_foreign_keys=TRUE;`. A table created
+  // early can carry an FK added later — `plan_items.price_observation_id`
+  // references `price_observations`, created six migrations later — so the
+  // dump legitimately inserts plan_items rows before price_observations
+  // exists. `defer_foreign_keys` defers row checks but still resolves table
+  // names when a statement is prepared; with FK enforcement on (node:sqlite's
+  // default) replaying that dump fails `no such table:
+  // main.price_observations` even though the dump is valid for D1 import.
+  // Referential integrity is not weakened: `PRAGMA foreign_key_check` below
+  // validates every FK in the restored database independently of this flag.
+  const db = new DatabaseSync(':memory:', { enableForeignKeyConstraints: false })
   try {
-    // The dump runs as one script, exactly like it would against D1. A
-    // mid-statement truncation surfaces here as a syntax error.
+    // The dump runs as one script, in file order. A mid-statement
+    // truncation surfaces here as a syntax error.
     try {
       db.exec(sql)
     } catch (err) {
