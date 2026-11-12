@@ -262,11 +262,14 @@ purchases, documents) — then production cutover verifies `api/health` + login.
 
 - `scripts/backup/verify-dump.mjs` — core module + CLI:
   `node scripts/backup/verify-dump.mjs <dump.sql> [--expect table=count ...]`.
-  Restores the dump into a scratch SQLite (node:sqlite), then verifies:
+  Restores the dump into a scratch SQLite (node:sqlite) **with FK enforcement
+  off** (a `d1`-compatibility dump emits each table's rows in creation order,
+  so a later-created parent table can be referenced first), then verifies:
   dump fully executed (transactional wrapper handled; a mid-statement
   truncation fails loudly), `PRAGMA integrity_check` = `ok`, zero
-  `foreign_key_check` rows, and row counts per table — asserted against
-  `--expect` when given, always printed otherwise. Exit 1 on any failure.
+  `foreign_key_check` rows (the probe re-validates every FK, independent of
+  the replay flag), and row counts per table — asserted against `--expect`
+  when given, always printed otherwise. Exit 1 on any failure.
 - `scripts/backup/restore-drill.sh` — the human entrypoint
   (mode=755, `.gitattributes`): wraps `verify-dump.mjs` with the default
   canary expectations and a readable verdict. Monthly cadence: the owner runs
@@ -275,9 +278,26 @@ purchases, documents) — then production cutover verifies `api/health` + login.
 - Tests: `backend/src/__tests__/d1-restore.test.ts` builds a dump from the
   **real migration chain** (synthetic canary rows — no real PII, the same
   node:sqlite pattern as `migrations.test.ts`), restores it via the module,
-  and asserts counts/integrity; plus a static edge-case fixture and the
-  failure modes (truncated dump → non-zero; expectation mismatch → non-zero).
-  Runs under `./scripts/test.sh unit backend`.
+  and asserts counts/integrity; plus a real D1-format fixture whose
+  `plan_items` row precedes the `price_observations` table it references
+  (#659), a static edge-case fixture, and the failure modes (truncated dump →
+  non-zero; dangling FK → non-zero; expectation mismatch → non-zero). Runs
+  under `./scripts/test.sh unit backend`.
+
+**Dump replay semantics (#659).** A `d1`-compatibility export starts with
+`PRAGMA defer_foreign_keys=TRUE;` and emits each table's CREATE followed by
+its rows, in `sqlite_schema` rowid (creation) order. `plan_items` was created
+by 0001 and gained its `price_observation_id` FK in 0007, so its rows
+legitimately appear before the `price_observations` CREATE. Deferred FK
+checks still resolve table names when a statement is prepared, so replaying
+with FK enforcement on fails `no such table: main.price_observations` — even
+though the dump is valid for D1 import. The drill therefore opens its scratch
+DB with `enableForeignKeyConstraints: false` and relies on the post-restore
+`PRAGMA foreign_key_check`; the regression tests pin both directions (forward
+reference passes, dangling FK still fails). The 2026-11-11/12 failures
+(#619, #659) were this drill bug, not a truncated export: the first
+`plan_items` row made the nightly dump hit it. Code-only fix — no token or R2
+owner action.
 
 **Backup-success visibility (implemented):** `.github/workflows/backup.yml`
 reuses the `smoke.yml` pattern verbatim, with its own `backup-failure` label:
