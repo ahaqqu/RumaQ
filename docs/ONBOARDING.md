@@ -6,7 +6,7 @@ A walkthrough from clean clone to running app. For day-to-day workflow see [`CON
 
 - [Bun](https://bun.sh) — package manager and runtime (`bun --version` should match `packageManager` in `package.json`)
 - Google OAuth credentials (client ID + secret) from Google Cloud Console
-- Docker only if you plan to run the local automation suite
+- Docker only if you plan to run the local automation suite (the first run builds the toolchain images; later runs reuse them and pick up source edits without rebuilding)
 
 ## 2. Configure local secrets
 

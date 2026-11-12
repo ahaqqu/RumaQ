@@ -29,7 +29,7 @@ Before the first run, copy `backend/.dev.vars.example` to `backend/.dev.vars` an
 
 ## Testing
 
-Single entrypoint: `./scripts/test.sh` — see [`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md).
+Single entrypoint: `./scripts/test.sh` — see [`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md). The first `automation-local` run builds the toolchain images (Playwright/Chromium dominates); later runs reuse them, and source edits are picked up through read-only mounts with no image rebuild.
 
 | Suite              | Command                                       |
 | ------------------ | --------------------------------------------- |

@@ -515,6 +515,7 @@ ensure_stack() {
   discover_port
   info "Proxy: http://127.0.0.1:$TEST_PORT (in-network: http://proxy:3000)"
   wait_ready
+  ok "Stack ready in ${SECONDS}s (project $PROJECT_NAME, port $TEST_PORT)."
 }
 
 cleanup() {
