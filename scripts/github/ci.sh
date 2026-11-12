@@ -24,6 +24,13 @@ echo "=== CI: automation Docker stack guard (#356) ==="
 # shims only — no Docker daemon, no network.
 "$ROOT_DIR/scripts/test.sh" automation-stack
 
+echo "=== CI: fast E2E smoke subset guard (#657) ==="
+# Offline: pins the @smoke set to 3-5 scenarios with one anchor per
+# smoke/add-receipt/prices-explorer feature, and rejects a tag on a Feature,
+# Background, Scenario Outline or Examples line — so the fast mode cannot
+# silently grow, shrink or lose a risk class between reviews.
+"$ROOT_DIR/scripts/test.sh" e2e-smoke
+
 echo "=== CI: style check ==="
 bash "$ROOT_DIR/scripts/style.sh" --check
 

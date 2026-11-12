@@ -76,7 +76,7 @@ No secrets, no D1 migrations and no Docker: `/api/health` is a static JSON
 handler, and the script clears `CLOUDFLARE_ACCOUNT_ID` (and the API token)
 before building, so the LOCAL environment turns the startup secrets check off.
 The harness has a 60 s boot deadline and the preview a 90 s health deadline.
-Keep it well under a minute once dependencies are installed — the full 150/53
+Keep it well under a minute once dependencies are installed — the full 156/55
 automation matrix stays nightly in `test-automation.yml`.
 
 ## Deploy guard test (offline)
@@ -158,8 +158,9 @@ lockfile, so run `--clean` only when no other automation run is active (Docker
 refuses to remove a volume that is in use).
 
 `--api` starts only `api` + `proxy` (the API suite never requests the SPA), so it
-skips the web build and the SPA phase of the readiness gate; the full and
-`--e2e` modes start `web` too and therefore prove the published SPA bundle.
+skips the web build and the SPA phase of the readiness gate; the full, `--e2e`
+and `--smoke` modes start `web` too and therefore prove the published SPA
+bundle.
 
 Readiness is a real gate on the published port: `/api/health` must answer 200
 **and** `{"ok":true}`, `/` must answer 200 with `id="root"` (full/e2e), then the
@@ -172,6 +173,45 @@ A diagnostics write failure is reported but never masks the original failure.
 ```
 ./scripts/test.sh automation-local
 ```
+
+### Fast PR E2E smoke subset (`--smoke`, #657 phase 1)
+
+`@smoke` tags on three existing scenarios are the single source of truth for a
+~20 s warm critical-path check. It runs the same generated BDD suite with
+Playwright's native tag filter — same features, steps, fixtures and config, so
+nothing is copied, skipped or weakened in the full suite:
+
+```
+./scripts/test.sh automation-local --smoke
+```
+
+| Scenario                                      | Feature                   | Risk covered                                                                 |
+| --------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------- |
+| Main page loads, logs in, and renders shell   | `smoke.feature`           | app boot, SPA serve, login, session, API reachability                        |
+| Scan, review, and confirm adds items to stock | `add-receipt.feature`     | receipt upload → mocked scan → review → the one write → fresh inventory read |
+| Sort select reorders the list                 | `prices-explorer.feature` | price ingest fixtures → visible rows → server-side sort                      |
+
+The mode starts the full api + web + proxy stack (it needs the SPA) and runs
+only those three scenarios (`bun x playwright test --grep '@smoke'`); it does
+not run the API integration suite. A warm run is ~20 s (30 s budget) versus
+~60–90 s for the full E2E and ~2 min for API + E2E. A cold first run still pays
+the toolchain image build — the mode is a local/agent pre-PR signal, not a
+replacement for the nightly.
+
+The nightly `test-automation.yml` still runs **all 55 E2E scenarios and 156 API
+tests unfiltered**; the smoke is **not** a required PR gate. Phase 2 (a per-PR
+workflow) waits for toolchain image reuse: a cold Docker job is ~5–5.5 min for
+~3 s of tests (see ahaqqu/RumaQ#657).
+
+Add or remove a scenario by editing the `@smoke` line above its `Scenario:` in
+the existing feature file — the scenario stays in the full suite either way.
+`./scripts/test.sh e2e-smoke` is the offline guard (also run by
+`scripts/github/ci.sh`): it prints the selected set, pins 3–5 tagged scenarios,
+requires at least one in each anchor feature (`smoke`, `add-receipt`,
+`prices-explorer`), and rejects a tag on a Feature, Background, Scenario Outline
+or Examples line, so creep and accidental loss are visible in review. Adding a
+4th or 5th scenario requires stating the reason here and keeping warm execution
+at ≤ 10 s.
 
 ### Image tags and manual pruning
 

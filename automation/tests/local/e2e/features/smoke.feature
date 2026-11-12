@@ -2,6 +2,7 @@ Feature: App Shell Smoke
   The frontend application loads, authenticates against the local test stack,
   and renders the dashboard shell.
 
+  @smoke
   Scenario: Main page loads, logs in, and renders shell
     Given I visit the app
     Then the page should have a title
