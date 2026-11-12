@@ -1,7 +1,9 @@
 -- Representative D1 export dump (`dump_options.compatibility = "d1"`), in
 -- the shape Cloudflare's dumpSql emits: a `PRAGMA defer_foreign_keys=TRUE;`
--- header, then per table its CREATE followed by its INSERTs, in
--- sqlite_schema rowid (= creation) order, with indexes last.
+-- header, the export's transaction wrapper, then per table its CREATE
+-- followed by its INSERTs, in sqlite_schema rowid (= creation) order, with
+-- indexes last. The BEGIN/COMMIT wrapper also exercises the drill's
+-- open-transaction ROLLBACK truncation probe on this fixture.
 --
 -- The table order mirrors the real migration chain: plan_items is created by
 -- 0001 and gets its price_observation_id FK in 0007, so its row is emitted
@@ -13,6 +15,7 @@
 --
 -- Synthetic canary rows only — no production data.
 PRAGMA defer_foreign_keys=TRUE;
+BEGIN TRANSACTION;
 
 CREATE TABLE users (
   id TEXT PRIMARY KEY,
@@ -95,3 +98,5 @@ INSERT INTO "documents" ("id","household_id","member_id","name","uploaded_by") V
 
 CREATE INDEX idx_plan_items_plan ON plan_items(plan_id);
 CREATE INDEX idx_documents_household ON documents(household_id);
+
+COMMIT;

@@ -215,6 +215,17 @@ describe('restore drill: verifyDump (scripts/backup/verify-dump.mjs)', () => {
     expect(result.failures.join('\n')).toMatch(/incomplete input|syntax error/)
   })
 
+  it('fails a transaction-wrapped D1-format dump truncated before COMMIT', () => {
+    // Every statement completes but the export's COMMIT is gone: the ROLLBACK
+    // probe (not the SQL parser) is what must catch this.
+    const fixture = readFileSync(D1_FORWARD_REF_DUMP, 'utf8')
+    const withoutCommit = fixture.replace('\nCOMMIT;\n', '\n')
+    expect(withoutCommit).not.toBe(fixture)
+    const result = verifyDump(writeTempDump(withoutCommit))
+
+    expect(result.failures.join('\n')).toMatch(/missing COMMIT/)
+  })
+
   it('catches referential damage the import itself does not reject (foreign_key_check)', () => {
     // The drill replays with FK enforcement off (a D1 dump may order a child
     // table's rows before its parent's CREATE) — a child row naming a missing
