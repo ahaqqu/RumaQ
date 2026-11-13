@@ -143,6 +143,12 @@ type ReviewRow = {
   last_flagged_at: string
   run_started_at: string
   run_id?: string | null
+  // #626: the ITEM side's assigned category + taxonomy version, aliased off
+  // the price_products LEFT JOIN (a missing product row → both null). A
+  // taxonomy flag without its category was the issue's core complaint — the
+  // human was asked to look at nothing actionable.
+  item_category: string | null
+  item_category_version: string | null
   // The cached AI verdict (0038), aliased off the LEFT JOIN; every field is
   // null together when the item has never been evaluated.
   ai_verdict: string | null
@@ -167,6 +173,11 @@ export type ReviewItem = ReviewItemPair & {
   runStartedAt: string
   /** price_runs.id for the monitor deep-link; null when the run aged out. */
   runId: string | null
+  // #626: the item side's assigned category (+ taxonomy version) from
+  // price_products — the context a taxonomy row is missing on its own. Both
+  // null when the product row is gone.
+  itemCategory: string | null
+  itemCategoryVersion: string | null
   // Issue #380: the RIGHT side's evidence, enriched from the entry's latest
   // price_observations row at read time (pairs froze only the entry's
   // name/price/store). Null when the entry has no observation — or an old
@@ -249,6 +260,8 @@ function toReviewItem(row: ReviewRow): ReviewItem | null {
     lastFlaggedAt: row.last_flagged_at,
     runStartedAt: row.run_started_at,
     runId: row.run_id ?? null,
+    itemCategory: row.item_category ?? null,
+    itemCategoryVersion: row.item_category_version ?? null,
     // Filled in by enrichEntryEvidence right after the rows land; a path
     // that skips enrichment (or an entry with no observation) stays null.
     entryBrochureUrl: null,
@@ -365,10 +378,12 @@ function enrichEntryEvidence<T extends EvidenceCarrier>(
 const REVIEW_ROW_COLUMNS = `r.id, r.pair_data, r.status, r.decided_at, r.decided_by,
         r.decided_source, r.flag_count, r.first_flagged_at, r.last_flagged_at,
         r.run_started_at, p.id AS run_id,
+        pp.category AS item_category, pp.category_version AS item_category_version,
         v.verdict AS ai_verdict, v.confidence AS ai_confidence, v.reason AS ai_reason,
         v.model AS ai_model, v.human_agreement AS ai_human_agreement`
 
 const REVIEW_ROW_JOINS = `LEFT JOIN price_runs p ON p.run_started_at = r.run_started_at
+      LEFT JOIN price_products pp ON pp.product_key = r.item_product_key
       LEFT JOIN review_ai_verdicts v ON v.review_item_id = r.id`
 
 // The status/pendingByReason counts shared by the list route (#628) and the
@@ -434,8 +449,12 @@ export async function listReviewItems(
   } = {}
 ): Promise<ReviewListPage> {
   const status = options.status ?? 'pending'
-  // Absent reason = every reason; bound as NULL so one SQL shape serves both
-  // (the `? IS NULL` guard short-circuits the blob read entirely).
+  // #626: absent reason = the IDENTITY queue — every reason EXCEPT taxonomy.
+  // A taxonomy flag is a self-pair the identity workflow cannot act on
+  // (review-ai.ts skips it by design), and 600 of them drowning the match
+  // queue was the issue's whole point; the taxonomy page is the explicit
+  // `reason: 'taxonomy'` read. A malformed blob (json_valid → NULL) is not a
+  // taxonomy flag and stays in the identity queue (COALESCE → '').
   const reason = options.reason ?? null
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
   const offset = Math.min(Math.max(options.offset ?? 0, 0), Number.MAX_SAFE_INTEGER)
@@ -447,15 +466,20 @@ export async function listReviewItems(
          FROM match_review_items r
          ${REVIEW_ROW_JOINS}
          WHERE (? = 'all' OR r.status = ?)
-           AND (? IS NULL OR (CASE WHEN json_valid(r.pair_data)
-                                   THEN json_extract(r.pair_data, '$.reason') END) = ?)
+           AND (
+             (? IS NOT NULL AND (CASE WHEN json_valid(r.pair_data)
+                                     THEN json_extract(r.pair_data, '$.reason') END) = ?)
+             OR (? IS NULL AND COALESCE(
+                   (CASE WHEN json_valid(r.pair_data)
+                         THEN json_extract(r.pair_data, '$.reason') END), '') <> 'taxonomy')
+           )
          -- Pairs flagged by the same run share last_flagged_at; the natural
          -- key tie-break makes the total order deterministic so an offset
          -- page walk cannot skip/repeat tied rows across reads.
          ORDER BY r.last_flagged_at DESC, r.item_product_key ASC, r.entry_product_key ASC
          LIMIT ? OFFSET ?`
       )
-      .bind(status, status, reason, reason, limit, offset),
+      .bind(status, status, reason, reason, reason, limit, offset),
     db.prepare(`SELECT status, COUNT(*) AS count FROM match_review_items GROUP BY status`).bind(),
     // Issue #628: the exact pending split by reason. The alias cannot be
     // `reason` — that is a real column, and SQLite resolves a GROUP BY name
@@ -474,10 +498,15 @@ export async function listReviewItems(
       .prepare(
         `SELECT COUNT(*) AS count FROM match_review_items
          WHERE (? = 'all' OR status = ?)
-           AND (? IS NULL OR (CASE WHEN json_valid(pair_data)
-                                   THEN json_extract(pair_data, '$.reason') END) = ?)`
+           AND (
+             (? IS NOT NULL AND (CASE WHEN json_valid(pair_data)
+                                     THEN json_extract(pair_data, '$.reason') END) = ?)
+             OR (? IS NULL AND COALESCE(
+                   (CASE WHEN json_valid(pair_data)
+                         THEN json_extract(pair_data, '$.reason') END), '') <> 'taxonomy')
+           )`
       )
-      .bind(status, status, reason, reason),
+      .bind(status, status, reason, reason, reason),
   ])
 
   const items: ReviewItem[] = []
@@ -752,6 +781,53 @@ export async function undoReviewDecision(db: D1Database, id: string): Promise<Re
       .bind(id),
   ])
   return getReviewRow(db, id)
+}
+
+// ---------------------------------------------------------------------------
+// Taxonomy acknowledgement (#626). A taxonomy flag is a SELF-pair — the
+// category-quality signal the identity workflow cannot act on (review-ai.ts
+// skips it by design, and a "reject" on a pair whose sides are the same
+// product has no meaning). There is no category-edit path yet, so the honest
+// decision is an EXPLICIT ACKNOWLEDGEMENT: the human says "seen — the
+// assigned category stands". It records exactly like a manual verdict
+// (approved, decided_source='human', decided_by = the acting admin) through
+// one statement, and undoReviewDecision keeps working per row. Re-flags do
+// NOT reopen it: the ingest upsert never touches `status`, so an
+// acknowledged pair stays silent unless the classifier raises NEW evidence.
+export async function acknowledgePendingTaxonomy(
+  db: D1Database,
+  userId: string,
+  now: Date = new Date()
+): Promise<{ acknowledged: number; remaining: number }> {
+  const run = await db
+    .prepare(
+      `UPDATE match_review_items
+       SET status = 'approved', decided_at = ?, decided_by = ?, decided_source = 'human'
+       WHERE status = 'pending'
+         AND COALESCE(
+               (CASE WHEN json_valid(pair_data)
+                     THEN json_extract(pair_data, '$.reason') END), '') = 'taxonomy'`
+    )
+    .bind(now.toISOString(), userId)
+    .run()
+  const { results } = await db
+    .prepare(
+      `SELECT COUNT(*) AS count FROM match_review_items
+       WHERE status = 'pending'
+         AND COALESCE(
+               (CASE WHEN json_valid(pair_data)
+                     THEN json_extract(pair_data, '$.reason') END), '') = 'taxonomy'`
+    )
+    .bind()
+    .all<{ count: number }>()
+  return {
+    // D1 run() meta.changes; the node:sqlite adapter exposes the same field.
+    acknowledged:
+      (run as unknown as { meta?: { changes?: number } }).meta?.changes ??
+      (run as unknown as { changes?: number }).changes ??
+      0,
+    remaining: results?.[0]?.count ?? 0,
+  }
 }
 
 // ---------------------------------------------------------------------------

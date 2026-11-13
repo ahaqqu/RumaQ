@@ -92,3 +92,15 @@ Feature: Match review queue
     When the agent posts a run report without review pairs
     Then the response status should be 200
     And the review queue should be empty
+
+  Scenario: Taxonomy self-pairs leave the identity queue and acknowledge in bulk (#626)
+    Given I am authenticated as an admin
+    And the agent posted a run report carrying two identity pairs and two taxonomy self-pairs
+    When I read the review queue
+    Then the identity queue should list only the identity pairs
+    When I read the review queue filtered by taxonomy
+    Then the taxonomy page should list the self-pairs with the assigned category
+    When I acknowledge all pending taxonomy flags
+    Then the response should say two acknowledged and none remaining
+    When I read the review queue filtered by taxonomy again
+    Then the taxonomy page should list no pending self-pairs

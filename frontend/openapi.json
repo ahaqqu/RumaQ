@@ -2685,7 +2685,7 @@
     "/api/admin/review": {
       "get": {
         "operationId": "getApiAdminReview",
-        "description": "Match review queue: flagged candidate pairs with exact per-status counts and the pending split by flag reason (admin-only). Offset-paginated, newest flags first. `reason` narrows the page only — counts stay whole-queue.",
+        "description": "Match review queue: flagged candidate pairs with exact per-status counts and the pending split by flag reason (admin-only). Offset-paginated, newest flags first. `reason` narrows the page only — counts stay whole-queue. #626: the default page is the IDENTITY queue — taxonomy flags (self-pairs the identity workflow cannot act on) are excluded unless `reason=taxonomy` is requested explicitly; that page carries the item side's assigned category and taxonomy version.",
         "security": [
           {
             "cookieAuth": []
@@ -2768,6 +2768,12 @@
                           },
                           "itemStore": {
                             "type": "string"
+                          },
+                          "itemCategory": {
+                            "type": ["string", "null"]
+                          },
+                          "itemCategoryVersion": {
+                            "type": ["string", "null"]
                           },
                           "itemBrochureUrl": {
                             "type": ["string", "null"]
@@ -3312,6 +3318,12 @@
                         "itemStore": {
                           "type": "string"
                         },
+                        "itemCategory": {
+                          "type": ["string", "null"]
+                        },
+                        "itemCategoryVersion": {
+                          "type": ["string", "null"]
+                        },
                         "itemBrochureUrl": {
                           "type": ["string", "null"]
                         },
@@ -3484,6 +3496,12 @@
                         "itemStore": {
                           "type": "string"
                         },
+                        "itemCategory": {
+                          "type": ["string", "null"]
+                        },
+                        "itemCategoryVersion": {
+                          "type": ["string", "null"]
+                        },
                         "itemBrochureUrl": {
                           "type": ["string", "null"]
                         },
@@ -3609,6 +3627,45 @@
             "required": true
           }
         ]
+      }
+    },
+    "/api/admin/review/taxonomy/acknowledge": {
+      "post": {
+        "operationId": "postApiAdminReviewTaxonomyAcknowledge",
+        "description": "Acknowledge every PENDING taxonomy flag as the acting admin (admin-only): status -> approved, decided_source='human', decided_by = caller, decided_at = now. Taxonomy flags are self-pairs carrying a category-quality signal the identity workflow cannot act on (review-ai.ts skips them by design); this is an acknowledgement, not a category correction. Idempotent: a second call acknowledges nothing. Per-row undo stays available.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "acknowledged": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "remaining": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
       }
     },
     "/api/admin/products/duplicates": {

@@ -611,3 +611,96 @@ defineFeature(feature, (test) => {
     })
   })
 })
+
+// --- #626: taxonomy self-pairs leave the identity queue, acknowledge in bulk
+// Seeding is scenario-local through the test-only /api/__test/direct-sql
+// endpoint (products-rename.steps.js pattern).
+test('Taxonomy self-pairs leave the identity queue and acknowledge in bulk (#626)', ({
+  given,
+  and,
+  when,
+  then,
+}) => {
+  given('I am authenticated as an admin', async () => {
+    await ctx.resetAndSeed()
+    await ctx.authenticate()
+  })
+
+  and(
+    'the agent posted a run report carrying two identity pairs and two taxonomy self-pairs',
+    async () => {
+      // One product row so the taxonomy page can prove the #626 category
+      // join; the other self-pair stays product-less and must render nulls.
+      await ctx.sendRequestWithBody('POST', '/api/__test/direct-sql', {
+        sql: `INSERT INTO price_products (id, product_key, name, category, category_version)
+                VALUES ('pp-tax', 'tax-self-1----', 'Tax Self 1', 'makanan-minuman', 'v0.4')`,
+      })
+      expect(ctx.response.status, 'test-only direct-sql seed failed').toBe(200)
+      // A taxonomy flag is a SELF-pair: both sides are the same product.
+      const taxonomyPair = (key) => ({
+        ...pair(key, key, 'Tax Self'),
+        entryName: 'Tax Self',
+        entryStore: 'lotte-mart',
+        confidence: 0.42,
+        reason: 'taxonomy',
+      })
+      const pairs = [...TWO_PAIRS, taxonomyPair('tax-self-1----'), taxonomyPair('tax-self-2----')]
+      await postRunReport(ctx, runReport('2026-10-29T23:00:05Z', pairs))
+      expect(ctx.response.status).toBe(200)
+    }
+  )
+
+  when('I read the review queue', async () => {
+    await readQueue(ctx)
+  })
+
+  then('the identity queue should list only the identity pairs', () => {
+    // The default page excludes the self-pairs; the split still names them
+    // so the category backlog stays visible.
+    expect(ctx.queue.items.map((item) => item.reason)).toEqual(['price_ratio', 'price_ratio'])
+    expect(ctx.queue.filteredTotal).toBe(2)
+    expect(ctx.queue.counts.pendingByReason).toEqual({
+      price_ratio: 2,
+      verifier_unresolved: 0,
+      taxonomy: 2,
+    })
+  })
+
+  when('I read the review queue filtered by taxonomy', async () => {
+    await readQueue(ctx, '?reason=taxonomy')
+  })
+
+  then('the taxonomy page should list the self-pairs with the assigned category', () => {
+    const byKey = new Map(ctx.queue.items.map((item) => [item.itemProductKey, item]))
+    expect(byKey.size).toBe(2)
+    expect(byKey.get('tax-self-1----')).toMatchObject({
+      itemCategory: 'makanan-minuman',
+      itemCategoryVersion: 'v0.4',
+      aiVerdict: null,
+    })
+    expect(byKey.get('tax-self-2----')).toMatchObject({
+      itemCategory: null,
+      itemCategoryVersion: null,
+    })
+  })
+
+  when('I acknowledge all pending taxonomy flags', async () => {
+    await sendJson(ctx, 'POST', '/api/admin/review/taxonomy/acknowledge')
+  })
+
+  then('the response should say two acknowledged and none remaining', () => {
+    ctx.expectStatus(200)
+    expect(ctx.responseBody).toEqual({ acknowledged: 2, remaining: 0 })
+  })
+
+  when('I read the review queue filtered by taxonomy again', async () => {
+    await readQueue(ctx, '?reason=taxonomy')
+  })
+
+  then('the taxonomy page should list no pending self-pairs', () => {
+    expect(ctx.queue.items).toHaveLength(0)
+    expect(ctx.queue.filteredTotal).toBe(0)
+    // The whole-queue split moved with the acknowledgement.
+    expect(ctx.queue.counts.pendingByReason.taxonomy).toBe(0)
+  })
+})

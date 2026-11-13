@@ -6,6 +6,7 @@ import {
   recordReviewItems,
   listReviewItems,
   decideReviewItem,
+  acknowledgePendingTaxonomy,
   undoReviewDecision,
   exportReviewDecisions,
   fetchEntryEvidence,
@@ -28,6 +29,8 @@ type SqliteDb = {
   prepare(sql: string): {
     run(...params: unknown[]): unknown
     all(...params: unknown[]): Array<Record<string, unknown>>
+    // node:sqlite's single-row read; the #626 ack test's first() adapter uses it.
+    get(...params: unknown[]): Record<string, unknown> | undefined
   }
 }
 
@@ -228,6 +231,9 @@ describe('listReviewItems', () => {
     last_flagged_at: '2026-10-28T23:00:05Z',
     run_started_at: '2026-10-28T23:00:05Z',
     run_id: 'run-uuid-1',
+    // #626: the item side's assigned category, aliased off price_products.
+    item_category: 'makanan-minuman',
+    item_category_version: 'v0.4',
     ...over,
   })
 
@@ -261,6 +267,10 @@ describe('listReviewItems', () => {
       flagCount: 2,
       runId: 'run-uuid-1',
       decidedAt: null,
+      // #626: the category context rides every row (null when the product
+      // row is gone).
+      itemCategory: 'makanan-minuman',
+      itemCategoryVersion: 'v0.4',
     })
     expect(page.counts).toEqual({
       pending: 3,
@@ -278,10 +288,14 @@ describe('listReviewItems', () => {
     })
     await listReviewItems(db, { status: 'approved', limit: 10, offset: 25 })
     const [pageStmt, , reasonStmt, filteredStmt] = statements
-    // No reason = every reason: the same SQL shape with a NULL bind.
-    expect(pageStmt!.params).toEqual(['approved', 'approved', null, null, 10, 25])
-    expect(filteredStmt!.params).toEqual(['approved', 'approved', null, null])
+    // #626: no reason = the IDENTITY queue — the reason bind is threefold
+    // (present-match / absent-exclusion share one SQL shape).
+    expect(pageStmt!.params).toEqual(['approved', 'approved', null, null, null, 10, 25])
+    expect(filteredStmt!.params).toEqual(['approved', 'approved', null, null, null])
     expect(statements[0]!.sql).toContain('LEFT JOIN price_runs p ON p.run_started_at')
+    // #626: the category context rides the same joins.
+    expect(statements[0]!.sql).toContain('LEFT JOIN price_products pp ON pp.product_key')
+    expect(statements[0]!.sql).toContain("<> 'taxonomy'")
     expect(statements[0]!.sql).toContain('ORDER BY r.last_flagged_at DESC')
     // The exact pending split is its own whole-queue GROUP BY.
     expect(reasonStmt!.sql).toContain(`WHERE r.status = 'pending'`)
@@ -293,7 +307,7 @@ describe('listReviewItems', () => {
       batchResults: [{ results: [] }, { results: [] }, { results: [] }, { results: [] }],
     })
     await listReviewItems(db, { offset: Number.MAX_SAFE_INTEGER + 1 })
-    expect(statements[0]!.params[5]).toBe(Number.MAX_SAFE_INTEGER)
+    expect(statements[0]!.params[6]).toBe(Number.MAX_SAFE_INTEGER)
   })
 
   it('narrows the page and filteredTotal by reason, keeping the status counts whole (issue #628)', async () => {
@@ -316,10 +330,18 @@ describe('listReviewItems', () => {
       taxonomy: 4,
     })
     const [pageStmt, statusStmt, , filteredStmt] = statements
-    expect(pageStmt!.params).toEqual(['pending', 'pending', 'taxonomy', 'taxonomy', 50, 0])
+    expect(pageStmt!.params).toEqual([
+      'pending',
+      'pending',
+      'taxonomy',
+      'taxonomy',
+      'taxonomy',
+      50,
+      0,
+    ])
     expect(pageStmt!.sql).toContain(`json_extract(r.pair_data, '$.reason')`)
     // The reason filter reaches the total too, or "Showing X of Y" would lie.
-    expect(filteredStmt!.params).toEqual(['pending', 'pending', 'taxonomy', 'taxonomy'])
+    expect(filteredStmt!.params).toEqual(['pending', 'pending', 'taxonomy', 'taxonomy', 'taxonomy'])
     // The status GROUP BY is unsullied by the filter (no JSON in it at all).
     expect(statusStmt!.sql).not.toContain('json')
   })
@@ -779,12 +801,13 @@ describe('review routes', () => {
       .mockResolvedValue([{ results: [] }, { results: [] }, { results: [] }, { results: [] }])
     const res = await apiApp.request('/api/admin/review?reason=taxonomy', {}, env as never)
     expect(res.status).toBe(200)
-    // The page query's binds carry the reason twice (status guard + reason
-    // guard). find() skips requireAdmin's own user lookup binds.
+    // The page query's binds carry the reason three times (#626: the
+    // present-match / absent-exclusion pair of guards share one shape).
+    // find() skips requireAdmin's own user lookup binds.
     const pageBinds = env.DB.bind.mock.calls.find(
-      (call: unknown[]) => call.length === 6 && call[0] === 'pending'
+      (call: unknown[]) => call.length === 7 && call[0] === 'pending'
     )
-    expect(pageBinds).toEqual(['pending', 'pending', 'taxonomy', 'taxonomy', 50, 0])
+    expect(pageBinds).toEqual(['pending', 'pending', 'taxonomy', 'taxonomy', 'taxonomy', 50, 0])
   })
 
   it('rejects an unknown reason with 400 (issue #628)', async () => {
@@ -1032,29 +1055,96 @@ describe('listReviewItems — real-SQLite reason semantics (issue #628)', () => 
     expect(rejected.filteredTotal).toBe(0)
   })
 
-  it('leaves the no-reason read unchanged and tolerates the malformed blob', async () => {
+  it('#626: the default read is the IDENTITY queue — taxonomy excluded, malformed blob still tolerated', async () => {
     const db = sqliteD1Batch(freshDb())
     const page = await listReviewItems(db)
-    // Six pending rows exist; the corrupted one is dropped from the page by
-    // the pair parser, exactly as before issue #628.
-    expect(page.items.map((item) => item.id).sort()).toEqual([
-      'rev-p1',
-      'rev-p2',
-      'rev-t1',
-      'rev-t2',
-      'rev-v1',
-    ])
+    // The two taxonomy self-pairs are NOT in the default page anymore, and
+    // neither do they count in its filteredTotal — the corrupt blob, however,
+    // is not a taxonomy flag and stays (in SQL; the pair parser drops it from
+    // the rendered page exactly as before issue #628, so 4 counted → 3 shown).
+    expect(page.items.map((item) => item.id).sort()).toEqual(['rev-p1', 'rev-p2', 'rev-v1'])
     expect(page.counts).toEqual({
       pending: 6,
       approved: 1,
       rejected: 0,
+      // The split is whole-queue and still names the taxonomy backlog.
       pendingByReason: { price_ratio: 2, verifier_unresolved: 1, taxonomy: 2 },
     })
-    expect(page.filteredTotal).toBe(6)
+    expect(page.filteredTotal).toBe(4)
 
     // Filtering must not 500 on the corrupted row: it simply has no reason.
     const price = await listReviewItems(db, { reason: 'price_ratio' })
     expect(price.items.map((item) => item.id).sort()).toEqual(['rev-p1', 'rev-p2'])
     expect(price.filteredTotal).toBe(2)
+  })
+
+  it("#626: the taxonomy page carries the item side's assigned category + version", async () => {
+    const sqlite = freshDb()
+    // The seed helper derives the product key as `${id}----`; give rev-t1's
+    // item a real price_products row (category + 0030's version column) and
+    // leave rev-t2's missing — both shapes must render.
+    sqlite.exec(
+      `INSERT INTO price_products (id, product_key, name, category, category_version)
+       VALUES ('pp-t1', 'rev-t1----', 'Item rev-t1', 'makanan-minuman', 'v0.4')`
+    )
+    const page = await listReviewItems(sqliteD1Batch(sqlite), { reason: 'taxonomy' })
+    const byId = new Map(page.items.map((item) => [item.id, item]))
+    expect(byId.get('rev-t1')).toMatchObject({
+      itemCategory: 'makanan-minuman',
+      itemCategoryVersion: 'v0.4',
+    })
+    expect(byId.get('rev-t2')).toMatchObject({ itemCategory: null, itemCategoryVersion: null })
+  })
+
+  it('#626: acknowledgePendingTaxonomy decides every pending self-pair as the acting admin — idempotently', async () => {
+    const sqlite = freshDb()
+    const db = {
+      prepare: (sql: string) => ({
+        bind: (...params: unknown[]) => ({
+          all: async () => ({ results: sqlite.prepare(sql).all(...params) }),
+          run: async () => sqlite.prepare(sql).run(...params),
+          first: async () => sqlite.prepare(sql).get(...params) ?? null,
+        }),
+      }),
+      // undoReviewDecision writes through db.batch — same convention as the
+      // other adapters: each statement is already bound, run it.
+      batch: async (statements: Array<{ all: () => Promise<unknown> }>) =>
+        Promise.all(statements.map((statement) => statement.all())),
+    } as unknown as D1Database
+
+    const first = await acknowledgePendingTaxonomy(db, 'admin-1', new Date('2026-11-14T00:00:00Z'))
+    expect(first).toEqual({ acknowledged: 2, remaining: 0 })
+
+    const rows = sqlite
+      .prepare(`SELECT id, status, decided_at, decided_by, decided_source
+                FROM match_review_items ORDER BY id`)
+      .all() as Array<Record<string, string | null>>
+    const byId = new Map(rows.map((row) => [row.id as string, row]))
+    const acked = byId.get('rev-t1')!
+    expect(acked).toMatchObject({
+      status: 'approved',
+      decided_by: 'admin-1',
+      decided_source: 'human',
+      decided_at: '2026-11-14T00:00:00.000Z',
+    })
+    expect(byId.get('rev-t2')).toMatchObject({ status: 'approved', decided_source: 'human' })
+    // Nothing else moves: the price_ratio pair and the corrupt-blob row are
+    // not taxonomy flags.
+    expect(byId.get('rev-p1')).toMatchObject({ status: 'pending', decided_source: null })
+    expect(byId.get('rev-bad')).toMatchObject({ status: 'pending', decided_source: null })
+
+    // A second call is a visible no-op.
+    const second = await acknowledgePendingTaxonomy(db, 'admin-1')
+    expect(second).toEqual({ acknowledged: 0, remaining: 0 })
+
+    // Per-row undo stays available; the re-ack picks the row back up.
+    await undoReviewDecision(db, 'rev-t2')
+    const third = await acknowledgePendingTaxonomy(db, 'admin-9')
+    expect(third).toEqual({ acknowledged: 1, remaining: 0 })
+    expect(
+      sqlite
+        .prepare(`SELECT decided_by, decided_source FROM match_review_items WHERE id = 'rev-t2'`)
+        .get()
+    ).toMatchObject({ decided_by: 'admin-9', decided_source: 'human' })
   })
 })
