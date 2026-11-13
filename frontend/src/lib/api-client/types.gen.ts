@@ -1742,6 +1742,35 @@ export type PostApiAdminReviewEvaluateResponses = {
 
 export type PostApiAdminReviewEvaluateResponse = PostApiAdminReviewEvaluateResponses[keyof PostApiAdminReviewEvaluateResponses];
 
+export type GetApiAdminReviewQueueReportData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/admin/review/queue-report';
+};
+
+export type GetApiAdminReviewQueueReportErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Not an admin
+     */
+    403: unknown;
+};
+
+export type GetApiAdminReviewQueueReportResponses = {
+    /**
+     * OK
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type GetApiAdminReviewQueueReportResponse = GetApiAdminReviewQueueReportResponses[keyof GetApiAdminReviewQueueReportResponses];
+
 export type GetApiAdminReviewExportData = {
     body?: never;
     path?: never;

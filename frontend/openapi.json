@@ -3082,6 +3082,35 @@
         }
       }
     },
+    "/api/admin/review/queue-report": {
+      "get": {
+        "operationId": "getApiAdminReviewQueueReport",
+        "description": "Whole-queue aggregates for the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md): status counts with the pending split by reason, cached-verdict coverage, provider/model mix, confidence bands with the auto-eligible count (>= 0.8), and agreement/precision on already-decided items by band. Read-only. Admin session or the scoped review-script token (ahaqqu/RumaQ#656); the token acts as the deployment admin user.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
+      }
+    },
     "/api/admin/review/export": {
       "get": {
         "operationId": "getApiAdminReviewExport",
