@@ -82,6 +82,7 @@ import {
   postApiAdminProductsByProductKeyRename,
   postApiAdminReviewByIdDecision,
   postApiAdminReviewEvaluate,
+  postApiAdminReviewTaxonomyAcknowledge,
   postApiAdminScrape,
   postApiAiChat,
   postApiAiGeneratePersona,
@@ -722,6 +723,13 @@ export function evaluateReviewItems(limit: number): Promise<unknown> {
 
 export function undoReviewDecision(id: string): Promise<unknown> {
   return unwrap(deleteApiAdminReviewByIdDecision({ path: { id } }))
+}
+
+// #626: bulk acknowledgement of the taxonomy self-pairs — the explicit
+// "seen, the assigned category stands" decision. The backend records it as
+// a plain human verdict per row (per-row undo stays); there is no body.
+export function acknowledgeTaxonomy(): Promise<unknown> {
+  return unwrap(postApiAdminReviewTaxonomyAcknowledge())
 }
 
 // The export must bypass the typed client: it downloads a JSON attachment

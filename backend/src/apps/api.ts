@@ -78,6 +78,7 @@ import {
   recordReviewItems,
   listReviewItems,
   decideReviewItem,
+  acknowledgePendingTaxonomy,
   undoReviewDecision,
   exportReviewDecisions,
   fetchReviewQueueReport,
@@ -789,6 +790,10 @@ apiApp.use('/api/admin/review/mode', propsAuthMiddleware)
 // propsOrReviewScriptAuth falls back to the cookie path untouched.
 apiApp.use('/api/admin/review/evaluate', propsOrReviewScriptAuth)
 apiApp.use('/api/admin/review/queue-report', propsOrReviewScriptAuth)
+// #626: the taxonomy acknowledge is a STATIC path — registered before the
+// `:id/decision` line (which covers no subpaths anyway, but the static-first
+// discipline keeps every admin gate explicit per #292).
+apiApp.use('/api/admin/review/taxonomy/acknowledge', propsAuthMiddleware)
 apiApp.use('/api/admin/review/:id/decision', propsAuthMiddleware)
 // Canonical product admin (#423), plus alias decisions (#489): the same
 // per-path discipline as the review queue — the identity read, the rename, the
@@ -4535,6 +4540,11 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
     itemPrice: { type: 'integer' },
     itemEffectiveUnitPrice: { type: ['number', 'null'] },
     itemStore: { type: 'string' },
+    // #626: the item side's assigned category (+ taxonomy version) joined
+    // from price_products — the context a taxonomy row needs to be legible.
+    // Both null when the product row is gone.
+    itemCategory: { type: ['string', 'null'] },
+    itemCategoryVersion: { type: ['string', 'null'] },
     // Issue #380: the LEFT side's evidence, frozen in the pair blob (null
     // for pairs flagged before the fields existed — no backfill).
     itemBrochureUrl: { type: ['string', 'null'] },
@@ -4600,7 +4610,7 @@ apiApp.get(
   '/api/admin/review',
   describeRoute({
     description:
-      'Match review queue: flagged candidate pairs with exact per-status counts and the pending split by flag reason (admin-only). Offset-paginated, newest flags first. `reason` narrows the page only — counts stay whole-queue.',
+      "Match review queue: flagged candidate pairs with exact per-status counts and the pending split by flag reason (admin-only). Offset-paginated, newest flags first. `reason` narrows the page only — counts stay whole-queue. #626: the default page is the IDENTITY queue — taxonomy flags (self-pairs the identity workflow cannot act on) are excluded unless `reason=taxonomy` is requested explicitly; that page carries the item side's assigned category and taxonomy version.",
     security: [{ cookieAuth: [] }],
     parameters: [
       {
@@ -5079,6 +5089,47 @@ apiApp.delete(
       return c.json({ error: 'Review item not found' }, 404)
     }
     const res = c.json({ item })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+// #626: bulk taxonomy acknowledgement. A taxonomy flag is a SELF-pair the
+// identity workflow cannot act on — the admin's only honest action here is
+// "seen, the assigned category stands", and doing that 600+ times by hand is
+// exactly the friction the issue exists to remove. One statement decides
+// every pending taxonomy row as the acting admin (decided_source='human',
+// per-row undo stays available); the response says what happened, so a
+// second call is a visible no-op.
+apiApp.post(
+  '/api/admin/review/taxonomy/acknowledge',
+  describeRoute({
+    description:
+      "Acknowledge every PENDING taxonomy flag as the acting admin (admin-only): status -> approved, decided_source='human', decided_by = caller, decided_at = now. Taxonomy flags are self-pairs carrying a category-quality signal the identity workflow cannot act on (review-ai.ts skips them by design); this is an acknowledgement, not a category correction. Idempotent: a second call acknowledges nothing. Per-row undo stays available.",
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                acknowledged: { type: 'integer', minimum: 0 },
+                remaining: { type: 'integer', minimum: 0 },
+              },
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  async (c) => {
+    const result = await acknowledgePendingTaxonomy(c.env.DB, c.get('userId'))
+    const res = c.json(result)
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }
