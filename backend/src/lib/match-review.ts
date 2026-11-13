@@ -371,6 +371,39 @@ const REVIEW_ROW_COLUMNS = `r.id, r.pair_data, r.status, r.decided_at, r.decided
 const REVIEW_ROW_JOINS = `LEFT JOIN price_runs p ON p.run_started_at = r.run_started_at
       LEFT JOIN review_ai_verdicts v ON v.review_item_id = r.id`
 
+// The status/pendingByReason counts shared by the list route (#628) and the
+// scripted queue report (#656) — one owner for the vocabulary policy: every
+// reason present from the start (an absent reason counts 0, and the client
+// renders the split without existence checks), while a malformed blob (the
+// json_valid CASE yields NULL) or an unknown value is dropped rather than
+// widening the response vocabulary.
+function buildReviewCounts(
+  statusResult: { results?: unknown[] },
+  reasonResult: { results?: unknown[] }
+): ReviewCounts {
+  const counts: ReviewCounts = {
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
+  }
+  for (const row of (statusResult.results ?? []) as unknown as {
+    status: string
+    count: number
+  }[]) {
+    if (row.status === 'pending' || row.status === 'approved' || row.status === 'rejected') {
+      counts[row.status] = row.count
+    }
+  }
+  for (const row of (reasonResult.results ?? []) as unknown as {
+    flag_reason: string | null
+    count: number
+  }[]) {
+    if (isReviewReason(row.flag_reason)) counts.pendingByReason[row.flag_reason] = row.count
+  }
+  return counts
+}
+
 /**
  * One page of the review queue, newest flags first, plus the exact
  * per-status counts. Offset pagination on purpose: last_flagged_at mutates
@@ -462,31 +495,162 @@ export async function listReviewItems(
     )
   )
 
-  const counts: ReviewCounts = {
-    pending: 0,
-    approved: 0,
-    rejected: 0,
-    // Every reason present from the start: an absent reason counts 0, and the
-    // client renders the split without existence checks (issue #628).
-    pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
-  }
-  for (const row of (countResult.results ?? []) as unknown as { status: string; count: number }[]) {
-    if (row.status === 'pending' || row.status === 'approved' || row.status === 'rejected') {
-      counts[row.status] = row.count
-    }
-  }
-  for (const row of (reasonCountResult.results ?? []) as unknown as {
-    flag_reason: string | null
-    count: number
-  }[]) {
-    // A malformed blob yields a NULL reason (json_valid); an unknown value is
-    // not a reason this queue serves, so both are dropped rather than widening
-    // the response vocabulary.
-    if (isReviewReason(row.flag_reason)) counts.pendingByReason[row.flag_reason] = row.count
-  }
+  const counts = buildReviewCounts(countResult, reasonCountResult)
 
   const filteredRows = (filteredResult.results ?? []) as unknown as { count: number }[]
   return { items, counts, filteredTotal: filteredRows[0]?.count ?? 0 }
+}
+
+// The scripted queue report (ahaqqu/RumaQ#656) — the whole-queue aggregates
+// the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md) is decided from.
+// Read-only, one db.batch like listReviewItems. A confidence band is the
+// switch thresholds' vocabulary: < 0.6 untrusted, 0.6–0.8 inspect, >= 0.8 the
+// auto floor (REVIEW_AUTO_MIN_CONFIDENCE). `human_agreement` NULL means the
+// item was decided before its cached verdict existed — it counts toward
+// `decided` but neither agreed nor disagreed (no AI opinion to compare).
+export const REVIEW_CONFIDENCE_BANDS = ['<0.6', '0.6-0.8', '>=0.8'] as const
+export type ReviewConfidenceBand = (typeof REVIEW_CONFIDENCE_BANDS)[number]
+
+export type ReviewQueueReport = {
+  generatedAt: string
+  counts: ReviewCounts
+  ai: {
+    pendingWithVerdict: number
+    pendingWithoutVerdict: number
+    models: { provider: string | null; model: string | null; count: number }[]
+    confidenceBands: { band: ReviewConfidenceBand; count: number }[]
+    autoEligible: number
+  }
+  agreement: {
+    band: ReviewConfidenceBand
+    decided: number
+    agreed: number
+    disagreed: number
+    precision: number | null
+  }[]
+}
+
+const QUEUE_REPORT_BAND_CASE = `(CASE WHEN v.confidence < 0.6 THEN 0
+                WHEN v.confidence < 0.8 THEN 1
+                ELSE 2 END)`
+
+export async function fetchReviewQueueReport(db: D1Database): Promise<ReviewQueueReport> {
+  const [statusResult, reasonResult, coverageResult, modelResult, bandResult, agreementResult] =
+    await db.batch([
+      db.prepare(`SELECT status, COUNT(*) AS count FROM match_review_items GROUP BY status`).bind(),
+      db
+        .prepare(
+          `SELECT (CASE WHEN json_valid(r.pair_data)
+                        THEN json_extract(r.pair_data, '$.reason') END) AS flag_reason,
+                  COUNT(*) AS count
+           FROM match_review_items r
+           WHERE r.status = 'pending'
+           GROUP BY flag_reason`
+        )
+        .bind(),
+      db
+        .prepare(
+          `SELECT (v.review_item_id IS NULL) AS uncovered, COUNT(*) AS count
+           FROM match_review_items r
+           LEFT JOIN review_ai_verdicts v ON v.review_item_id = r.id
+           WHERE r.status = 'pending'
+           GROUP BY uncovered`
+        )
+        .bind(),
+      db
+        .prepare(
+          `SELECT v.provider AS provider, v.model AS model, COUNT(*) AS count
+           FROM match_review_items r
+           JOIN review_ai_verdicts v ON v.review_item_id = r.id
+           WHERE r.status = 'pending'
+           GROUP BY v.provider, v.model
+           ORDER BY count DESC, provider, model`
+        )
+        .bind(),
+      db
+        .prepare(
+          `SELECT ${QUEUE_REPORT_BAND_CASE} AS band, COUNT(*) AS count
+           FROM match_review_items r
+           JOIN review_ai_verdicts v ON v.review_item_id = r.id
+           WHERE r.status = 'pending'
+           GROUP BY band`
+        )
+        .bind(),
+      db
+        .prepare(
+          `SELECT ${QUEUE_REPORT_BAND_CASE} AS band,
+                  v.human_agreement AS agreement,
+                  COUNT(*) AS count
+           FROM match_review_items r
+           JOIN review_ai_verdicts v ON v.review_item_id = r.id
+           WHERE r.status != 'pending'
+           GROUP BY band, agreement`
+        )
+        .bind(),
+    ])
+
+  const counts = buildReviewCounts(statusResult, reasonResult)
+
+  let pendingWithVerdict = 0
+  let pendingWithoutVerdict = 0
+  for (const row of (coverageResult.results ?? []) as unknown as {
+    uncovered: number
+    count: number
+  }[]) {
+    if (row.uncovered) pendingWithoutVerdict += row.count
+    else pendingWithVerdict += row.count
+  }
+
+  const models = (modelResult.results ?? []) as unknown as {
+    provider: string | null
+    model: string | null
+    count: number
+  }[]
+
+  const bands: ReviewQueueReport['ai']['confidenceBands'] = REVIEW_CONFIDENCE_BANDS.map((band) => ({
+    band,
+    count: 0,
+  }))
+  for (const row of (bandResult.results ?? []) as unknown as { band: number; count: number }[]) {
+    const slot = bands[row.band]
+    if (slot) slot.count += row.count
+  }
+
+  const agreement: ReviewQueueReport['agreement'] = REVIEW_CONFIDENCE_BANDS.map((band) => ({
+    band,
+    decided: 0,
+    agreed: 0,
+    disagreed: 0,
+    precision: null,
+  }))
+  for (const row of (agreementResult.results ?? []) as unknown as {
+    band: number
+    agreement: string | null
+    count: number
+  }[]) {
+    const slot = agreement[row.band]
+    if (!slot) continue
+    slot.decided += row.count
+    if (row.agreement === 'agreed') slot.agreed += row.count
+    if (row.agreement === 'disagreed') slot.disagreed += row.count
+  }
+  for (const slot of agreement) {
+    const comparable = slot.agreed + slot.disagreed
+    slot.precision = comparable > 0 ? slot.agreed / comparable : null
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    counts,
+    ai: {
+      pendingWithVerdict,
+      pendingWithoutVerdict,
+      models,
+      confidenceBands: bands,
+      autoEligible: bands[2]?.count ?? 0,
+    },
+    agreement,
+  }
 }
 
 async function getReviewRow(db: D1Database, id: string): Promise<ReviewItem | null> {

@@ -3082,6 +3082,142 @@
         }
       }
     },
+    "/api/admin/review/queue-report": {
+      "get": {
+        "operationId": "getApiAdminReviewQueueReport",
+        "description": "Whole-queue aggregates for the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md): status counts with the pending split by reason, cached-verdict coverage, provider/model mix, confidence bands with the auto-eligible count (>= 0.8), and agreement/precision on already-decided items by band. Read-only. Admin session or the scoped review-script token (ahaqqu/RumaQ#656); the token acts as the deployment admin user.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "pending": {
+                          "type": "integer"
+                        },
+                        "approved": {
+                          "type": "integer"
+                        },
+                        "rejected": {
+                          "type": "integer"
+                        },
+                        "pendingByReason": {
+                          "type": "object",
+                          "properties": {
+                            "price_ratio": {
+                              "type": "integer"
+                            },
+                            "verifier_unresolved": {
+                              "type": "integer"
+                            },
+                            "taxonomy": {
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "ai": {
+                      "type": "object",
+                      "properties": {
+                        "pendingWithVerdict": {
+                          "type": "integer"
+                        },
+                        "pendingWithoutVerdict": {
+                          "type": "integer"
+                        },
+                        "models": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "provider": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "model": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        },
+                        "confidenceBands": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "band": {
+                                "type": "string",
+                                "enum": ["<0.6", "0.6-0.8", ">=0.8"]
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        },
+                        "autoEligible": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "agreement": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "band": {
+                            "type": "string",
+                            "enum": ["<0.6", "0.6-0.8", ">=0.8"]
+                          },
+                          "decided": {
+                            "type": "integer"
+                          },
+                          "agreed": {
+                            "type": "integer"
+                          },
+                          "disagreed": {
+                            "type": "integer"
+                          },
+                          "precision": {
+                            "type": "number",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
+      }
+    },
     "/api/admin/review/export": {
       "get": {
         "operationId": "getApiAdminReviewExport",

@@ -61,6 +61,21 @@ export type Env = {
      * Never enters the repo.
      */
     DOKUMENQ_APP_SECRET?: string
+    /**
+     * Review script token (ahaqqu/RumaQ#656) — bearer for the two scripted
+     * review surfaces: GET /api/admin/review/queue-report (read-only
+     * aggregates) and POST /api/admin/review/evaluate (assist-mode verdict
+     * fill acting as the deployment's admin user). Set OUT-OF-BAND on the api
+     * Worker only (`cf workers secrets update`), like HAQITA_INGEST_SECRET:
+     * never declared in cloudflare.config.ts, never enters the repo. A script
+     * exports it locally as RUMAQ_REVIEW_TOKEN; the two names are different
+     * on purpose — the Worker secret and the caller's env are not the same
+     * trust domain.
+     */
+    REVIEW_SCRIPT_TOKEN?: string
+    /** Rotation successor accepted alongside the primary during a secret
+     *  rotation window (same rule as HAQITA_INGEST_SECRET_NEXT). */
+    REVIEW_SCRIPT_TOKEN_NEXT?: string
     PAGES_ORIGIN?: string
     EMAIL_AUTH_ENABLED: string
     ASSETS: Fetcher

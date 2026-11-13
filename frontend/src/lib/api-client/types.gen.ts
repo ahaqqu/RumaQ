@@ -1742,6 +1742,66 @@ export type PostApiAdminReviewEvaluateResponses = {
 
 export type PostApiAdminReviewEvaluateResponse = PostApiAdminReviewEvaluateResponses[keyof PostApiAdminReviewEvaluateResponses];
 
+export type GetApiAdminReviewQueueReportData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/admin/review/queue-report';
+};
+
+export type GetApiAdminReviewQueueReportErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Not an admin
+     */
+    403: unknown;
+};
+
+export type GetApiAdminReviewQueueReportResponses = {
+    /**
+     * OK
+     */
+    200: {
+        generatedAt?: string;
+        counts?: {
+            pending?: number;
+            approved?: number;
+            rejected?: number;
+            pendingByReason?: {
+                price_ratio?: number;
+                verifier_unresolved?: number;
+                taxonomy?: number;
+            };
+        };
+        ai?: {
+            pendingWithVerdict?: number;
+            pendingWithoutVerdict?: number;
+            models?: Array<{
+                provider?: string;
+                model?: string;
+                count?: number;
+            }>;
+            confidenceBands?: Array<{
+                band?: '<0.6' | '0.6-0.8' | '>=0.8';
+                count?: number;
+            }>;
+            autoEligible?: number;
+        };
+        agreement?: Array<{
+            band?: '<0.6' | '0.6-0.8' | '>=0.8';
+            decided?: number;
+            agreed?: number;
+            disagreed?: number;
+            precision?: number;
+        }>;
+    };
+};
+
+export type GetApiAdminReviewQueueReportResponse = GetApiAdminReviewQueueReportResponses[keyof GetApiAdminReviewQueueReportResponses];
+
 export type GetApiAdminReviewExportData = {
     body?: never;
     path?: never;

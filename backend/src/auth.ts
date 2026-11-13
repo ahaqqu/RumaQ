@@ -1,5 +1,6 @@
 import { createMiddleware } from 'hono/factory'
 import { getCookie } from 'hono/cookie'
+import { timingSafeEqualStrings } from './lib/crypto.js'
 import type { Env } from './types.js'
 
 export function base64UrlEncode(buffer: ArrayBuffer | Uint8Array) {
@@ -194,4 +195,104 @@ export const propsAuthMiddleware = createMiddleware<Env>(async (c, next) => {
   c.set('userId', payload.sub)
   c.set('householdId', householdId)
   await next()
+})
+
+// Scripted review access (ahaqqu/RumaQ#656): the two review surfaces a local
+// script drives — GET /api/admin/review/queue-report (read-only aggregates)
+// and POST /api/admin/review/evaluate (assist-mode verdict fill) — accept a
+// dedicated bearer token INSTEAD of the admin session cookie. A script has no
+// browser: no cookie jar, and it sends no Origin/Referer, which is exactly the
+// caller class the CSRF guard already allows (lib/csrf.ts) — so a header-token
+// caller adds no CSRF surface. Comparison is timing-safe (lib/crypto.ts, the
+// same primitive the ingest channel uses); _NEXT rides during a rotation
+// window exactly like HAQITA_INGEST_SECRET_NEXT.
+type ReviewScriptTokenEnv = Pick<
+  Env['Bindings'],
+  'REVIEW_SCRIPT_TOKEN' | 'REVIEW_SCRIPT_TOKEN_NEXT'
+>
+
+function reviewScriptTokenCandidates(env: ReviewScriptTokenEnv): string[] {
+  return [env.REVIEW_SCRIPT_TOKEN, env.REVIEW_SCRIPT_TOKEN_NEXT].filter(
+    (secret): secret is string => typeof secret === 'string' && secret.length > 0
+  )
+}
+
+export async function matchesReviewScriptToken(
+  presented: string,
+  env: ReviewScriptTokenEnv
+): Promise<boolean> {
+  const candidates = reviewScriptTokenCandidates(env)
+  if (candidates.length === 0 || presented.length === 0) return false
+  // Every non-empty candidate is compared on every request — no precedence,
+  // no early exit — so a match on one secret cannot be timed apart from the
+  // other. Same discipline as the ingest channel (apps/api.ts).
+  let matched = false
+  for (const candidate of candidates) {
+    if (await timingSafeEqualStrings(presented, candidate)) matched = true
+  }
+  return matched
+}
+
+export function bearerTokenOf(c: {
+  req: { header(name: string): string | undefined }
+}): string | undefined {
+  try {
+    const header = c.req.header('Authorization') || ''
+    return header.startsWith('Bearer ') ? header.slice(7).trim() || undefined : undefined
+  } catch {
+    // c.req not available (test mock)
+    return undefined
+  }
+}
+
+// A presented-but-rejected script token must not fail silently (#451
+// discipline): the ingest-auth incidents (#425/#448) were undiagnosable
+// because the Worker never logged WHY a call was rejected. One structured
+// line per rejection — route + candidate count + token LENGTH only (never
+// the token's content), same shape as the ingest channel's ingest_401.
+function logReviewScriptTokenRejection(
+  c: {
+    req: { url: string; header(name: string): string | undefined }
+  },
+  tokenLength: number,
+  candidateCount: number
+): void {
+  console.log(
+    JSON.stringify({
+      evt: 'review_script_token_rejected',
+      route: new URL(c.req.url).pathname,
+      tokenLength,
+      candidates: candidateCount,
+      matched: false,
+      ray: c.req.header('cf-ray') ?? null,
+    })
+  )
+}
+
+// The script acts AS the deployment's admin user (is_admin = 1; one row in
+// practice, id order makes it deterministic if more ever exist): the AI access
+// resolution and audit columns (decided_by, decided_source = ai_assist) keep
+// working unchanged. Cookie sessions take the propsAuth path untouched — the
+// token never widens a cookie request, and requireAdmin still runs in the
+// route chain on both paths.
+export const propsOrReviewScriptAuth = createMiddleware<Env>(async (c, next) => {
+  const presented = bearerTokenOf(c)
+  if (presented && (await matchesReviewScriptToken(presented, c.env))) {
+    const admin = await c.env.DB.prepare(
+      'SELECT id FROM users WHERE is_admin = 1 ORDER BY id LIMIT 1'
+    ).first<{ id: string }>()
+    if (!admin) return c.json({ error: 'Forbidden' }, 403)
+    const row = await c.env.DB.prepare(ACTIVE_HOUSEHOLD_SQL)
+      .bind(admin.id, admin.id, admin.id)
+      .first<{ household_id: string | null; session_epoch: number | null }>()
+    if (!row?.household_id) return c.json({ error: 'Forbidden' }, 403)
+    c.set('userId', admin.id)
+    c.set('householdId', row.household_id)
+    await next()
+    return
+  }
+  if (presented) {
+    logReviewScriptTokenRejection(c, presented.length, reviewScriptTokenCandidates(c.env).length)
+  }
+  return propsAuthMiddleware(c, next)
 })

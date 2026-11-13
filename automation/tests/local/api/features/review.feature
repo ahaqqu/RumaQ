@@ -19,6 +19,17 @@ Feature: Match review queue
     When the agent posts a run report with a wrong bearer token
     Then the response status should be 401
 
+  Scenario: The review-script token reaches the queue report without a session
+    Given the API is running
+    When I read the queue report with the review-script token
+    Then the response status should be 200
+    And the queue report should carry the aggregate shape
+
+  Scenario: A wrong review-script token falls back to the cookie path
+    Given the API is running
+    When I read the queue report with a wrong review-script token
+    Then the response status should be 401
+
   Scenario: An invalid verdict is rejected
     Given I am authenticated as an admin
     And the agent posted a run report carrying two flagged pairs
