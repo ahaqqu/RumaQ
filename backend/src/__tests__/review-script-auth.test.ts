@@ -59,6 +59,8 @@ function createContext(env: Record<string, unknown>, authHeader?: string) {
     set,
     json,
     req: {
+      // The rejection-log helper (#451 discipline) reads the route pathname.
+      url: 'https://rumaq.test/api/admin/review/queue-report',
       header: vi.fn((name: string) =>
         name.toLowerCase() === 'authorization' ? authHeader : undefined
       ),
@@ -157,9 +159,23 @@ describe('propsOrReviewScriptAuth', () => {
   it('a wrong token falls through to the cookie path (401 without a session)', async () => {
     const env = { REVIEW_SCRIPT_TOKEN: 'tok-current' }
     const { c, next, json } = createContext(env, 'Bearer tok-wrong')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     await propsOrReviewScriptAuth(c, next)
     expect(next).not.toHaveBeenCalled()
     expect(json).toHaveBeenCalledWith({ error: 'Unauthorized' }, 401)
+    // #451 discipline: the rejection is one structured line, token LENGTH
+    // only — never the token's content.
+    expect(log).toHaveBeenCalledTimes(1)
+    const line = JSON.parse(log.mock.calls[0]?.[0] as string) as Record<string, unknown>
+    expect(line).toMatchObject({
+      evt: 'review_script_token_rejected',
+      route: '/api/admin/review/queue-report',
+      tokenLength: 'tok-wrong'.length,
+      candidates: 1,
+      matched: false,
+    })
+    expect(JSON.stringify(line)).not.toContain('tok-wrong')
+    log.mockRestore()
   })
 
   it('no token and no cookie: cookie path 401 (session middleware untouched)', async () => {

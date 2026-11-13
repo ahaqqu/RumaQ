@@ -211,18 +211,26 @@ type ReviewScriptTokenEnv = Pick<
   'REVIEW_SCRIPT_TOKEN' | 'REVIEW_SCRIPT_TOKEN_NEXT'
 >
 
+function reviewScriptTokenCandidates(env: ReviewScriptTokenEnv): string[] {
+  return [env.REVIEW_SCRIPT_TOKEN, env.REVIEW_SCRIPT_TOKEN_NEXT].filter(
+    (secret): secret is string => typeof secret === 'string' && secret.length > 0
+  )
+}
+
 export async function matchesReviewScriptToken(
   presented: string,
   env: ReviewScriptTokenEnv
 ): Promise<boolean> {
-  const candidates = [env.REVIEW_SCRIPT_TOKEN, env.REVIEW_SCRIPT_TOKEN_NEXT].filter(
-    (secret): secret is string => typeof secret === 'string' && secret.length > 0
-  )
+  const candidates = reviewScriptTokenCandidates(env)
   if (candidates.length === 0 || presented.length === 0) return false
+  // Every non-empty candidate is compared on every request — no precedence,
+  // no early exit — so a match on one secret cannot be timed apart from the
+  // other. Same discipline as the ingest channel (apps/api.ts).
+  let matched = false
   for (const candidate of candidates) {
-    if (await timingSafeEqualStrings(presented, candidate)) return true
+    if (await timingSafeEqualStrings(presented, candidate)) matched = true
   }
-  return false
+  return matched
 }
 
 export function bearerTokenOf(c: {
@@ -235,6 +243,30 @@ export function bearerTokenOf(c: {
     // c.req not available (test mock)
     return undefined
   }
+}
+
+// A presented-but-rejected script token must not fail silently (#451
+// discipline): the ingest-auth incidents (#425/#448) were undiagnosable
+// because the Worker never logged WHY a call was rejected. One structured
+// line per rejection — route + candidate count + token LENGTH only (never
+// the token's content), same shape as the ingest channel's ingest_401.
+function logReviewScriptTokenRejection(
+  c: {
+    req: { url: string; header(name: string): string | undefined }
+  },
+  tokenLength: number,
+  candidateCount: number
+): void {
+  console.log(
+    JSON.stringify({
+      evt: 'review_script_token_rejected',
+      route: new URL(c.req.url).pathname,
+      tokenLength,
+      candidates: candidateCount,
+      matched: false,
+      ray: c.req.header('cf-ray') ?? null,
+    })
+  )
 }
 
 // The script acts AS the deployment's admin user (is_admin = 1; one row in
@@ -258,6 +290,9 @@ export const propsOrReviewScriptAuth = createMiddleware<Env>(async (c, next) => 
     c.set('householdId', row.household_id)
     await next()
     return
+  }
+  if (presented) {
+    logReviewScriptTokenRejection(c, presented.length, reviewScriptTokenCandidates(c.env).length)
   }
   return propsAuthMiddleware(c, next)
 })

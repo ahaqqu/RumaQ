@@ -34,7 +34,7 @@ never committed, never echoed).
      provider/model mix (`ai.models`);
    - confidence distribution (`ai.confidenceBands`) and the auto-eligible
      count (`ai.autoEligible`, ≥ 0.8);
-   - **agreement** on already-decided items (`ai.agreement` — cached verdict
+   - **agreement** on already-decided items (`agreement` — cached verdict
      vs human decision by confidence band: `same`↔approved,
      `different`↔rejected). This is the precision proxy; it needs no new
      review work.
@@ -53,7 +53,9 @@ never committed, never echoed).
 Assist caches verdicts without deciding them, so a bigger cached-verdict set
 makes the agreement read stronger. `scripts/review-evaluate.sh --remote`
 prints a dry-run snapshot; `--apply` drains pending-without-verdict items in
-batches of 10, stopping on auth/quota (re-run to continue). It never decides.
+batches of 10, stopping on auth/quota (re-run to continue). It never decides
+in `assist`/`manual` — but in `auto` the server applies cached verdicts
+≥ 0.8, so drain **before** switching (each batch echoes the mode it ran in).
 
 ## Switch
 

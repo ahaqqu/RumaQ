@@ -17,7 +17,7 @@ case "${1:-}" in
 esac
 [ "${2:-}" = "--apply" ] && APPLY=1
 : "${RUMAQ_REVIEW_TOKEN:?export RUMAQ_REVIEW_TOKEN (the Worker's REVIEW_SCRIPT_TOKEN) — never committed, never echoed}"
-BASE="${RUMAQ_API_BASE:-https://rumaq.ahaqqu.com}"
+BASE="${RUMAQ_PROD_URL:-https://rumaq.ahaqqu.com}"
 
 if [ "$APPLY" -ne 1 ]; then
   echo "DRY RUN — nothing sent. Re-run with --apply to fill verdicts (assist mode)."

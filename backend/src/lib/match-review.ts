@@ -371,6 +371,39 @@ const REVIEW_ROW_COLUMNS = `r.id, r.pair_data, r.status, r.decided_at, r.decided
 const REVIEW_ROW_JOINS = `LEFT JOIN price_runs p ON p.run_started_at = r.run_started_at
       LEFT JOIN review_ai_verdicts v ON v.review_item_id = r.id`
 
+// The status/pendingByReason counts shared by the list route (#628) and the
+// scripted queue report (#656) — one owner for the vocabulary policy: every
+// reason present from the start (an absent reason counts 0, and the client
+// renders the split without existence checks), while a malformed blob (the
+// json_valid CASE yields NULL) or an unknown value is dropped rather than
+// widening the response vocabulary.
+function buildReviewCounts(
+  statusResult: { results?: unknown[] },
+  reasonResult: { results?: unknown[] }
+): ReviewCounts {
+  const counts: ReviewCounts = {
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
+  }
+  for (const row of (statusResult.results ?? []) as unknown as {
+    status: string
+    count: number
+  }[]) {
+    if (row.status === 'pending' || row.status === 'approved' || row.status === 'rejected') {
+      counts[row.status] = row.count
+    }
+  }
+  for (const row of (reasonResult.results ?? []) as unknown as {
+    flag_reason: string | null
+    count: number
+  }[]) {
+    if (isReviewReason(row.flag_reason)) counts.pendingByReason[row.flag_reason] = row.count
+  }
+  return counts
+}
+
 /**
  * One page of the review queue, newest flags first, plus the exact
  * per-status counts. Offset pagination on purpose: last_flagged_at mutates
@@ -462,28 +495,7 @@ export async function listReviewItems(
     )
   )
 
-  const counts: ReviewCounts = {
-    pending: 0,
-    approved: 0,
-    rejected: 0,
-    // Every reason present from the start: an absent reason counts 0, and the
-    // client renders the split without existence checks (issue #628).
-    pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
-  }
-  for (const row of (countResult.results ?? []) as unknown as { status: string; count: number }[]) {
-    if (row.status === 'pending' || row.status === 'approved' || row.status === 'rejected') {
-      counts[row.status] = row.count
-    }
-  }
-  for (const row of (reasonCountResult.results ?? []) as unknown as {
-    flag_reason: string | null
-    count: number
-  }[]) {
-    // A malformed blob yields a NULL reason (json_valid); an unknown value is
-    // not a reason this queue serves, so both are dropped rather than widening
-    // the response vocabulary.
-    if (isReviewReason(row.flag_reason)) counts.pendingByReason[row.flag_reason] = row.count
-  }
+  const counts = buildReviewCounts(countResult, reasonCountResult)
 
   const filteredRows = (filteredResult.results ?? []) as unknown as { count: number }[]
   return { items, counts, filteredTotal: filteredRows[0]?.count ?? 0 }
@@ -577,26 +589,7 @@ export async function fetchReviewQueueReport(db: D1Database): Promise<ReviewQueu
         .bind(),
     ])
 
-  const counts: ReviewCounts = {
-    pending: 0,
-    approved: 0,
-    rejected: 0,
-    pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
-  }
-  for (const row of (statusResult.results ?? []) as unknown as {
-    status: string
-    count: number
-  }[]) {
-    if (row.status === 'pending' || row.status === 'approved' || row.status === 'rejected') {
-      counts[row.status] = row.count
-    }
-  }
-  for (const row of (reasonResult.results ?? []) as unknown as {
-    flag_reason: string | null
-    count: number
-  }[]) {
-    if (isReviewReason(row.flag_reason)) counts.pendingByReason[row.flag_reason] = row.count
-  }
+  const counts = buildReviewCounts(statusResult, reasonResult)
 
   let pendingWithVerdict = 0
   let pendingWithoutVerdict = 0

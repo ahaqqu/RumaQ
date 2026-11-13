@@ -1765,7 +1765,38 @@ export type GetApiAdminReviewQueueReportResponses = {
      * OK
      */
     200: {
-        [key: string]: unknown;
+        generatedAt?: string;
+        counts?: {
+            pending?: number;
+            approved?: number;
+            rejected?: number;
+            pendingByReason?: {
+                price_ratio?: number;
+                verifier_unresolved?: number;
+                taxonomy?: number;
+            };
+        };
+        ai?: {
+            pendingWithVerdict?: number;
+            pendingWithoutVerdict?: number;
+            models?: Array<{
+                provider?: string;
+                model?: string;
+                count?: number;
+            }>;
+            confidenceBands?: Array<{
+                band?: '<0.6' | '0.6-0.8' | '>=0.8';
+                count?: number;
+            }>;
+            autoEligible?: number;
+        };
+        agreement?: Array<{
+            band?: '<0.6' | '0.6-0.8' | '>=0.8';
+            decided?: number;
+            agreed?: number;
+            disagreed?: number;
+            precision?: number;
+        }>;
     };
 };
 

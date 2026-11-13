@@ -81,6 +81,7 @@ import {
   undoReviewDecision,
   exportReviewDecisions,
   fetchReviewQueueReport,
+  REVIEW_CONFIDENCE_BANDS,
 } from '../lib/match-review.js'
 import {
   REVIEW_AUTO_MIN_CONFIDENCE,
@@ -4874,6 +4875,75 @@ apiApp.post(
   }
 )
 
+// Same discipline as REVIEW_MODE_RESPONSE_SCHEMA above: the queue-report
+// payload and its documented shape travel together, so the generated client
+// type carries the aggregates the switch checklist reads (counts.*, ai.*,
+// agreement[]) instead of a bare object.
+const REVIEW_QUEUE_REPORT_RESPONSE_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    generatedAt: { type: 'string', format: 'date-time' },
+    counts: {
+      type: 'object',
+      properties: {
+        pending: { type: 'integer' },
+        approved: { type: 'integer' },
+        rejected: { type: 'integer' },
+        pendingByReason: {
+          type: 'object',
+          properties: {
+            price_ratio: { type: 'integer' },
+            verifier_unresolved: { type: 'integer' },
+            taxonomy: { type: 'integer' },
+          },
+        },
+      },
+    },
+    ai: {
+      type: 'object',
+      properties: {
+        pendingWithVerdict: { type: 'integer' },
+        pendingWithoutVerdict: { type: 'integer' },
+        models: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              provider: { type: 'string', nullable: true } as any,
+              model: { type: 'string', nullable: true } as any,
+              count: { type: 'integer' },
+            },
+          },
+        },
+        confidenceBands: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              band: { type: 'string', enum: [...REVIEW_CONFIDENCE_BANDS] },
+              count: { type: 'integer' },
+            },
+          },
+        },
+        autoEligible: { type: 'integer' },
+      },
+    },
+    agreement: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          band: { type: 'string', enum: [...REVIEW_CONFIDENCE_BANDS] },
+          decided: { type: 'integer' },
+          agreed: { type: 'integer' },
+          disagreed: { type: 'integer' },
+          precision: { type: 'number', nullable: true } as any,
+        },
+      },
+    },
+  },
+}
+
 apiApp.get(
   '/api/admin/review/queue-report',
   describeRoute({
@@ -4883,7 +4953,7 @@ apiApp.get(
     responses: {
       200: {
         description: 'OK',
-        content: { 'application/json': { schema: { type: 'object' } } },
+        content: { 'application/json': { schema: REVIEW_QUEUE_REPORT_RESPONSE_SCHEMA } },
       },
       401: { description: 'Unauthorized' },
       403: { description: 'Not an admin' },

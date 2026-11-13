@@ -9,6 +9,9 @@ const feature = loadFeature('automation/tests/local/api/features/review.feature'
 
 // Mirrors HAQITA_INGEST_SECRET in automation/tests/support/worker-server.mjs.
 const INGEST_SECRET = 'test-ingest-secret'
+// Mirrors REVIEW_SCRIPT_TOKEN in automation/tests/support/worker-server.mjs
+// (#656): the scoped bearer for the two scripted review surfaces.
+const REVIEW_SCRIPT_TOKEN = 'test-review-script-token'
 const SECOND_USER_ID = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff'
 
 const pair = (itemKey, entryKey, name) => ({
@@ -145,6 +148,66 @@ defineFeature(feature, (test) => {
     when('the agent posts a run report with a wrong bearer token', async () => {
       await ctx.resetAndSeed()
       await postRunReport(ctx, runReport('2026-10-29T23:00:05Z', TWO_PAIRS), 'wrong-secret')
+    })
+
+    then('the response status should be 401', () => {
+      ctx.expectStatus(401)
+    })
+  })
+
+  test('The review-script token reaches the queue report without a session', ({
+    given,
+    when,
+    then,
+    and,
+  }) => {
+    given('the API is running', () => {})
+
+    when('I read the queue report with the review-script token', async () => {
+      ctx.response = await fetch(`${ctx.baseUrl}/api/admin/review/queue-report`, {
+        headers: { Authorization: `Bearer ${REVIEW_SCRIPT_TOKEN}` },
+      })
+      try {
+        ctx.responseBody = await ctx.response.json()
+      } catch {
+        ctx.responseBody = null
+      }
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and('the queue report should carry the aggregate shape', () => {
+      // The sections the switch checklist (docs/REVIEW-AUTO-MODE.md) reads.
+      // Aggregate values only — the suite shares one worker, so exact counts
+      // depend on scenario order.
+      expect(ctx.responseBody.counts).toMatchObject({
+        pendingByReason: expect.any(Object),
+      })
+      expect(ctx.responseBody.ai).toMatchObject({
+        pendingWithVerdict: expect.any(Number),
+        pendingWithoutVerdict: expect.any(Number),
+        confidenceBands: expect.any(Array),
+        autoEligible: expect.any(Number),
+      })
+      expect(ctx.responseBody.ai.confidenceBands).toHaveLength(3)
+      expect(Array.isArray(ctx.responseBody.agreement)).toBe(true)
+    })
+  })
+
+  test('A wrong review-script token falls back to the cookie path', ({ given, when, then }) => {
+    given('the API is running', () => {})
+
+    when('I read the queue report with a wrong review-script token', async () => {
+      ctx.response = await fetch(`${ctx.baseUrl}/api/admin/review/queue-report`, {
+        headers: { Authorization: `Bearer wrong-review-token` },
+      })
+      try {
+        ctx.responseBody = await ctx.response.json()
+      } catch {
+        ctx.responseBody = null
+      }
     })
 
     then('the response status should be 401', () => {

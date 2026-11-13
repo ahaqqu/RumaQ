@@ -14,7 +14,7 @@ case "${1:-}" in
   ;;
 esac
 : "${RUMAQ_REVIEW_TOKEN:?export RUMAQ_REVIEW_TOKEN (the Worker's REVIEW_SCRIPT_TOKEN) — never committed, never echoed}"
-BASE="${RUMAQ_API_BASE:-https://rumaq.ahaqqu.com}"
+BASE="${RUMAQ_PROD_URL:-https://rumaq.ahaqqu.com}"
 
 curl -fsS \
   -H "Authorization: Bearer ${RUMAQ_REVIEW_TOKEN}" \

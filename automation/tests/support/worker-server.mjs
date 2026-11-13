@@ -64,6 +64,8 @@ const mf = new Miniflare({
     WORKER_ENCRYPTION_KEY: 'a'.repeat(32),
     // Bearer secret for the internal price ingest endpoint (haqita PR1).
     HAQITA_INGEST_SECRET: 'test-ingest-secret',
+    // Bearer token for the two scripted review surfaces (#656).
+    REVIEW_SCRIPT_TOKEN: 'test-review-script-token',
     TEST_MODE: 'true',
     EMAIL_AUTH_ENABLED: 'true',
     // Rate-limit overrides are optional; newer Miniflare rejects undefined
