@@ -13,7 +13,9 @@ case "${1:-}" in
   exit 2
   ;;
 esac
-: "${RUMAQ_REVIEW_TOKEN:?export RUMAQ_REVIEW_TOKEN (the Worker's REVIEW_SCRIPT_TOKEN) — never committed, never echoed}"
+# No apostrophe inside the ${:?} word — bash parses quotes within parameter
+# expansions, so one stray ' swallows the rest of the file (ahaqqu/RumaQ#666).
+: "${RUMAQ_REVIEW_TOKEN:?export RUMAQ_REVIEW_TOKEN (the REVIEW_SCRIPT_TOKEN Worker secret) — never committed, never echoed}"
 BASE="${RUMAQ_PROD_URL:-https://rumaq.ahaqqu.com}"
 
 curl -fsS \

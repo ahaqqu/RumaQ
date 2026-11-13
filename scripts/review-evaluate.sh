@@ -16,7 +16,9 @@ case "${1:-}" in
   ;;
 esac
 [ "${2:-}" = "--apply" ] && APPLY=1
-: "${RUMAQ_REVIEW_TOKEN:?export RUMAQ_REVIEW_TOKEN (the Worker's REVIEW_SCRIPT_TOKEN) — never committed, never echoed}"
+# No apostrophe inside the ${:?} word — bash parses quotes within parameter
+# expansions, so one stray ' swallows the rest of the file (ahaqqu/RumaQ#666).
+: "${RUMAQ_REVIEW_TOKEN:?export RUMAQ_REVIEW_TOKEN (the REVIEW_SCRIPT_TOKEN Worker secret) — never committed, never echoed}"
 BASE="${RUMAQ_PROD_URL:-https://rumaq.ahaqqu.com}"
 
 if [ "$APPLY" -ne 1 ]; then
