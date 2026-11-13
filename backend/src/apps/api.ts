@@ -33,7 +33,7 @@ import {
 import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { isApiPath } from '../plugins/core-prefixes.js'
-import { propsAuthMiddleware } from '../auth.js'
+import { propsAuthMiddleware, propsOrReviewScriptAuth } from '../auth.js'
 import { timingSafeEqualStrings } from '../lib/crypto.js'
 import { runReportSchema, getPricesStatus } from '../lib/ingest.js'
 import {
@@ -80,6 +80,7 @@ import {
   decideReviewItem,
   undoReviewDecision,
   exportReviewDecisions,
+  fetchReviewQueueReport,
 } from '../lib/match-review.js'
 import {
   REVIEW_AUTO_MIN_CONFIDENCE,
@@ -783,7 +784,10 @@ apiApp.use('/api/admin/scrape/commands/:id/events', propsAuthMiddleware)
 apiApp.use('/api/admin/review', propsAuthMiddleware)
 apiApp.use('/api/admin/review/export', propsAuthMiddleware)
 apiApp.use('/api/admin/review/mode', propsAuthMiddleware)
-apiApp.use('/api/admin/review/evaluate', propsAuthMiddleware)
+// #656: the evaluate route also accepts the scoped review-script token —
+// propsOrReviewScriptAuth falls back to the cookie path untouched.
+apiApp.use('/api/admin/review/evaluate', propsOrReviewScriptAuth)
+apiApp.use('/api/admin/review/queue-report', propsOrReviewScriptAuth)
 apiApp.use('/api/admin/review/:id/decision', propsAuthMiddleware)
 // Canonical product admin (#423), plus alias decisions (#489): the same
 // per-path discipline as the review queue — the identity read, the rename, the
@@ -4865,6 +4869,29 @@ apiApp.post(
       mode,
       aiConfigured,
     })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+apiApp.get(
+  '/api/admin/review/queue-report',
+  describeRoute({
+    description:
+      'Whole-queue aggregates for the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md): status counts with the pending split by reason, cached-verdict coverage, provider/model mix, confidence bands with the auto-eligible count (>= 0.8), and agreement/precision on already-decided items by band. Read-only. Admin session or the scoped review-script token (ahaqqu/RumaQ#656); the token acts as the deployment admin user.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: { 'application/json': { schema: { type: 'object' } } },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  async (c) => {
+    const res = c.json(await fetchReviewQueueReport(c.env.DB))
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }

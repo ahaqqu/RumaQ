@@ -489,6 +489,177 @@ export async function listReviewItems(
   return { items, counts, filteredTotal: filteredRows[0]?.count ?? 0 }
 }
 
+// The scripted queue report (ahaqqu/RumaQ#656) — the whole-queue aggregates
+// the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md) is decided from.
+// Read-only, one db.batch like listReviewItems. A confidence band is the
+// switch thresholds' vocabulary: < 0.6 untrusted, 0.6–0.8 inspect, >= 0.8 the
+// auto floor (REVIEW_AUTO_MIN_CONFIDENCE). `human_agreement` NULL means the
+// item was decided before its cached verdict existed — it counts toward
+// `decided` but neither agreed nor disagreed (no AI opinion to compare).
+export const REVIEW_CONFIDENCE_BANDS = ['<0.6', '0.6-0.8', '>=0.8'] as const
+export type ReviewConfidenceBand = (typeof REVIEW_CONFIDENCE_BANDS)[number]
+
+export type ReviewQueueReport = {
+  generatedAt: string
+  counts: ReviewCounts
+  ai: {
+    pendingWithVerdict: number
+    pendingWithoutVerdict: number
+    models: { provider: string | null; model: string | null; count: number }[]
+    confidenceBands: { band: ReviewConfidenceBand; count: number }[]
+    autoEligible: number
+  }
+  agreement: {
+    band: ReviewConfidenceBand
+    decided: number
+    agreed: number
+    disagreed: number
+    precision: number | null
+  }[]
+}
+
+const QUEUE_REPORT_BAND_CASE = `(CASE WHEN v.confidence < 0.6 THEN 0
+                WHEN v.confidence < 0.8 THEN 1
+                ELSE 2 END)`
+
+export async function fetchReviewQueueReport(db: D1Database): Promise<ReviewQueueReport> {
+  const [statusResult, reasonResult, coverageResult, modelResult, bandResult, agreementResult] =
+    await db.batch([
+      db.prepare(`SELECT status, COUNT(*) AS count FROM match_review_items GROUP BY status`).bind(),
+      db
+        .prepare(
+          `SELECT (CASE WHEN json_valid(r.pair_data)
+                        THEN json_extract(r.pair_data, '$.reason') END) AS flag_reason,
+                  COUNT(*) AS count
+           FROM match_review_items r
+           WHERE r.status = 'pending'
+           GROUP BY flag_reason`
+        )
+        .bind(),
+      db
+        .prepare(
+          `SELECT (v.review_item_id IS NULL) AS uncovered, COUNT(*) AS count
+           FROM match_review_items r
+           LEFT JOIN review_ai_verdicts v ON v.review_item_id = r.id
+           WHERE r.status = 'pending'
+           GROUP BY uncovered`
+        )
+        .bind(),
+      db
+        .prepare(
+          `SELECT v.provider AS provider, v.model AS model, COUNT(*) AS count
+           FROM match_review_items r
+           JOIN review_ai_verdicts v ON v.review_item_id = r.id
+           WHERE r.status = 'pending'
+           GROUP BY v.provider, v.model
+           ORDER BY count DESC, provider, model`
+        )
+        .bind(),
+      db
+        .prepare(
+          `SELECT ${QUEUE_REPORT_BAND_CASE} AS band, COUNT(*) AS count
+           FROM match_review_items r
+           JOIN review_ai_verdicts v ON v.review_item_id = r.id
+           WHERE r.status = 'pending'
+           GROUP BY band`
+        )
+        .bind(),
+      db
+        .prepare(
+          `SELECT ${QUEUE_REPORT_BAND_CASE} AS band,
+                  v.human_agreement AS agreement,
+                  COUNT(*) AS count
+           FROM match_review_items r
+           JOIN review_ai_verdicts v ON v.review_item_id = r.id
+           WHERE r.status != 'pending'
+           GROUP BY band, agreement`
+        )
+        .bind(),
+    ])
+
+  const counts: ReviewCounts = {
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
+  }
+  for (const row of (statusResult.results ?? []) as unknown as {
+    status: string
+    count: number
+  }[]) {
+    if (row.status === 'pending' || row.status === 'approved' || row.status === 'rejected') {
+      counts[row.status] = row.count
+    }
+  }
+  for (const row of (reasonResult.results ?? []) as unknown as {
+    flag_reason: string | null
+    count: number
+  }[]) {
+    if (isReviewReason(row.flag_reason)) counts.pendingByReason[row.flag_reason] = row.count
+  }
+
+  let pendingWithVerdict = 0
+  let pendingWithoutVerdict = 0
+  for (const row of (coverageResult.results ?? []) as unknown as {
+    uncovered: number
+    count: number
+  }[]) {
+    if (row.uncovered) pendingWithoutVerdict += row.count
+    else pendingWithVerdict += row.count
+  }
+
+  const models = (modelResult.results ?? []) as unknown as {
+    provider: string | null
+    model: string | null
+    count: number
+  }[]
+
+  const bands: ReviewQueueReport['ai']['confidenceBands'] = REVIEW_CONFIDENCE_BANDS.map((band) => ({
+    band,
+    count: 0,
+  }))
+  for (const row of (bandResult.results ?? []) as unknown as { band: number; count: number }[]) {
+    const slot = bands[row.band]
+    if (slot) slot.count += row.count
+  }
+
+  const agreement: ReviewQueueReport['agreement'] = REVIEW_CONFIDENCE_BANDS.map((band) => ({
+    band,
+    decided: 0,
+    agreed: 0,
+    disagreed: 0,
+    precision: null,
+  }))
+  for (const row of (agreementResult.results ?? []) as unknown as {
+    band: number
+    agreement: string | null
+    count: number
+  }[]) {
+    const slot = agreement[row.band]
+    if (!slot) continue
+    slot.decided += row.count
+    if (row.agreement === 'agreed') slot.agreed += row.count
+    if (row.agreement === 'disagreed') slot.disagreed += row.count
+  }
+  for (const slot of agreement) {
+    const comparable = slot.agreed + slot.disagreed
+    slot.precision = comparable > 0 ? slot.agreed / comparable : null
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    counts,
+    ai: {
+      pendingWithVerdict,
+      pendingWithoutVerdict,
+      models,
+      confidenceBands: bands,
+      autoEligible: bands[2]?.count ?? 0,
+    },
+    agreement,
+  }
+}
+
 async function getReviewRow(db: D1Database, id: string): Promise<ReviewItem | null> {
   const row = await db
     .prepare(
