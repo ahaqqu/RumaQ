@@ -1021,7 +1021,11 @@ describe('taxonomy self-pairs are not identity-reviewed', () => {
 
   it('exposes aiVerdict: null for a taxonomy row in the queue', async () => {
     insertItem('tax-1', { reason: 'taxonomy', confidence: 0.42 })
-    const page = await listReviewItems(d1, { status: 'pending' })
+    // #626: taxonomy left the identity queue — the row is reachable through
+    // the explicit taxonomy page, still verdict-less by design.
+    const identity = await listReviewItems(d1, { status: 'pending' })
+    expect(identity.items).toHaveLength(0)
+    const page = await listReviewItems(d1, { status: 'pending', reason: 'taxonomy' })
     expect(page.items).toHaveLength(1)
     expect(page.items[0]?.aiVerdict).toBeNull()
   })

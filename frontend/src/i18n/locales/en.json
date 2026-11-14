@@ -963,7 +963,16 @@
     "aiTaxonomyExcluded": "No AI verdict for a category flag — the AI only judges product identity. This one is yours to decide.",
     "aiProvenanceHuman": "Decided by human",
     "aiProvenanceAssist": "Decided by human · AI assisted",
-    "aiProvenanceAuto": "Applied by AI · full auto"
+    "aiProvenanceAuto": "Applied by AI · full auto",
+    "taxonomyLead": "Category flags are self-pairs: both sides are the same product, so the identity AI always skips them. Acknowledging records \"seen — the assigned category stands\"; it does not correct the category.",
+    "taxonomyAck": "Acknowledge all pending ({{count}})",
+    "taxonomyAckWorking": "Recording…",
+    "taxonomyAckDone": "{{count}} category flags acknowledged.",
+    "taxonomyAckFailed": "Acknowledge failed — try again.",
+    "taxonomyAckConfirm": "Record \"the assigned category stands\" for all {{count}} pending category flags? Each row keeps a per-row undo; there is no bulk undo.",
+    "assignedCategory": "Assigned: {{category}} ({{version}})",
+    "assignedCategoryNoVersion": "Assigned: {{category}}",
+    "assignedCategoryHint": "Category assigned by the classifier; acknowledging keeps it."
   },
   "rename": {
     "action": "Rename",

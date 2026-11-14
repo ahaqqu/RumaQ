@@ -17,6 +17,7 @@ import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
 import { Button } from '../components/Button.jsx'
 import { ProductRenameForm } from '../components/ProductRenameForm.jsx'
+import { TaxonomyAckPanel } from '../components/TaxonomyAckPanel.jsx'
 import { formatPrice } from '../lib/pricesHelpers.js'
 import { cn } from '../lib/cn.js'
 import { IconWarning, IconReview, IconDownload, IconBolt } from '../components/icons.jsx'
@@ -473,6 +474,18 @@ function ReviewRow({
         <Chip variant="default">
           {t('review.flagPrefix')} {t(reasonKey(item.reason))}
         </Chip>
+        {/* #626: the taxonomy row's missing context — what the classifier
+            actually assigned, and the taxonomy version it came from. */}
+        {item.reason === TAXONOMY_REASON && item.itemCategory && (
+          <Chip variant="loc" title={t('review.assignedCategoryHint')}>
+            {item.itemCategoryVersion
+              ? t('review.assignedCategory', {
+                  category: item.itemCategory,
+                  version: item.itemCategoryVersion,
+                })
+              : t('review.assignedCategoryNoVersion', { category: item.itemCategory })}
+          </Chip>
+        )}
         <span>{t('review.flagCount', { count: item.flagCount })}</span>
         <span>·</span>
         <span>{formatClock(item.lastFlaggedAt, i18n.language)}</span>
@@ -829,6 +842,11 @@ export function AdminReview() {
           ))}
         </div>
       </div>
+
+      {/* #626: the taxonomy page's own surface — its lead line, its bulk
+          acknowledgement and its result states live in the panel; the
+          identity queue never shows these rows. */}
+      {reason === TAXONOMY_REASON && <TaxonomyAckPanel pendingCount={pendingByReason.taxonomy} />}
 
       {isLoading ? (
         <Panel>

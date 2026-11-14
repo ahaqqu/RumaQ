@@ -162,3 +162,18 @@ export function useUndoReview() {
     () => 'pending'
   )
 }
+
+// #626: bulk-acknowledge every pending taxonomy self-pair. No optimistic
+// write — the ack flips potentially hundreds of rows server-side, and the
+// response's acknowledged/remaining belongs to a refetch, not a guess.
+// Invalidating the ['review'] prefix refreshes the identity queue, the
+// taxonomy page and the whole-queue counts together.
+export function useAcknowledgeTaxonomy() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => acknowledgeTaxonomy(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['review'] })
+    },
+  })
+}

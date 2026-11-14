@@ -42,6 +42,13 @@ vi.mock('../lib/queries/review.js', () => ({
   useReviewItems: vi.fn(),
   useDecideReview: vi.fn(),
   useUndoReview: vi.fn(),
+  useAcknowledgeTaxonomy: vi.fn(() => ({
+    isPending: false,
+    isError: false,
+    isSuccess: false,
+    data: null,
+    mutate: vi.fn(),
+  })),
   useReviewMode: vi.fn(),
   useSetReviewMode: vi.fn(),
   useEvaluateReview: vi.fn(),

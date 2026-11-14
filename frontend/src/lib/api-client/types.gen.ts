@@ -1588,6 +1588,8 @@ export type GetApiAdminReviewResponses = {
             itemPrice?: number;
             itemEffectiveUnitPrice?: number | null;
             itemStore?: string;
+            itemCategory?: string | null;
+            itemCategoryVersion?: string | null;
             itemBrochureUrl?: string | null;
             itemSourceUrl?: string | null;
             entryProductKey?: string;
@@ -1869,6 +1871,8 @@ export type DeleteApiAdminReviewByIdDecisionResponses = {
             itemPrice?: number;
             itemEffectiveUnitPrice?: number | null;
             itemStore?: string;
+            itemCategory?: string | null;
+            itemCategoryVersion?: string | null;
             itemBrochureUrl?: string | null;
             itemSourceUrl?: string | null;
             entryProductKey?: string;
@@ -1951,6 +1955,8 @@ export type PostApiAdminReviewByIdDecisionResponses = {
             itemPrice?: number;
             itemEffectiveUnitPrice?: number | null;
             itemStore?: string;
+            itemCategory?: string | null;
+            itemCategoryVersion?: string | null;
             itemBrochureUrl?: string | null;
             itemSourceUrl?: string | null;
             entryProductKey?: string;
@@ -1987,6 +1993,36 @@ export type PostApiAdminReviewByIdDecisionResponses = {
 };
 
 export type PostApiAdminReviewByIdDecisionResponse = PostApiAdminReviewByIdDecisionResponses[keyof PostApiAdminReviewByIdDecisionResponses];
+
+export type PostApiAdminReviewTaxonomyAcknowledgeData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/admin/review/taxonomy/acknowledge';
+};
+
+export type PostApiAdminReviewTaxonomyAcknowledgeErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Not an admin
+     */
+    403: unknown;
+};
+
+export type PostApiAdminReviewTaxonomyAcknowledgeResponses = {
+    /**
+     * OK
+     */
+    200: {
+        acknowledged?: number;
+        remaining?: number;
+    };
+};
+
+export type PostApiAdminReviewTaxonomyAcknowledgeResponse = PostApiAdminReviewTaxonomyAcknowledgeResponses[keyof PostApiAdminReviewTaxonomyAcknowledgeResponses];
 
 export type GetApiAdminProductsDuplicatesData = {
     body?: never;
