@@ -630,9 +630,10 @@ defineFeature(feature, (test) => {
       async () => {
         // One product row so the taxonomy page can prove the #626 category
         // join; the other self-pair stays product-less and must render nulls.
+        // Miniflare's D1 exec is ONE statement per line (products-rename
+        // steps.js pattern) — the INSERT must not fold.
         await ctx.sendRequestWithBody('POST', '/api/__test/direct-sql', {
-          sql: `INSERT INTO price_products (id, product_key, name, category, category_version)
-                VALUES ('pp-tax', 'tax-self-1----', 'Tax Self 1', 'makanan-minuman', 'v0.4')`,
+          sql: `INSERT INTO price_products (id, product_key, name, category, category_version) VALUES ('pp-tax', 'tax-self-1----', 'Tax Self 1', 'makanan-minuman', 'v0.4');`,
         })
         expect(ctx.response.status, 'test-only direct-sql seed failed').toBe(200)
         // A taxonomy flag is a SELF-pair: both sides are the same product.
