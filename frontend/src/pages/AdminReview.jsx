@@ -7,7 +7,6 @@ import {
   useReviewItems,
   useDecideReview,
   useUndoReview,
-  useAcknowledgeTaxonomy,
   useReviewMode,
   useSetReviewMode,
   useEvaluateReview,
@@ -18,6 +17,7 @@ import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
 import { Button } from '../components/Button.jsx'
 import { ProductRenameForm } from '../components/ProductRenameForm.jsx'
+import { TaxonomyAckPanel } from '../components/TaxonomyAckPanel.jsx'
 import { formatPrice } from '../lib/pricesHelpers.js'
 import { cn } from '../lib/cn.js'
 import { IconWarning, IconReview, IconDownload, IconBolt } from '../components/icons.jsx'
@@ -591,9 +591,6 @@ export function AdminReview() {
     useReviewItems(status, reason)
   const decide = useDecideReview()
   const undo = useUndoReview()
-  // #626: the taxonomy page's bulk action — one confirm, one server round
-  // trip, per-row undo afterwards.
-  const acknowledge = useAcknowledgeTaxonomy()
   // Issue #484: the mode query is admin-gated up front (enabled:false keeps a
   // non-admin from ever issuing the request; the page itself returns the
   // forbidden state below).
@@ -668,16 +665,6 @@ export function AdminReview() {
   function handleModeChange(next) {
     if (next === mode || setMode.isPending) return
     setMode.mutate(next)
-  }
-
-  // #626: the bulk taxonomy acknowledgement. The confirm names the number and
-  // the undo shape honestly — the backend has no bulk undo, only per-row.
-  function handleAcknowledge() {
-    if (acknowledge.isPending) return
-    if (!window.confirm(t('review.taxonomyAckConfirm', { count: pendingByReason.taxonomy }))) {
-      return
-    }
-    acknowledge.mutate()
   }
 
   async function handleExport() {
@@ -856,42 +843,10 @@ export function AdminReview() {
         </div>
       </div>
 
-      {/* #626: the taxonomy page is a category-quality surface, not an
-          identity question — each row names its assigned category, and the
-          bulk action is the honest decision available (no category-edit path
-          yet). The identity queue never shows these rows. */}
-      {reason === TAXONOMY_REASON && (
-        <div className="mb-4 rounded-lg border border-border bg-surface-raised px-4 py-3">
-          <p className="text-xs leading-snug text-text-muted">{t('review.taxonomyLead')}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            {pendingByReason.taxonomy > 0 && (
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={acknowledge.isPending}
-                onClick={handleAcknowledge}
-              >
-                {t('review.taxonomyAck', { count: pendingByReason.taxonomy })}
-              </Button>
-            )}
-            {acknowledge.isPending && (
-              <span role="status" className="text-xs text-text-muted">
-                {t('review.taxonomyAckWorking')}
-              </span>
-            )}
-            {acknowledge.isSuccess && acknowledge.data?.acknowledged != null && (
-              <span role="status" className="text-xs text-text-muted">
-                {t('review.taxonomyAckDone', { count: acknowledge.data.acknowledged })}
-              </span>
-            )}
-            {acknowledge.isError && (
-              <span className="text-xs text-danger" role="alert">
-                {t('review.taxonomyAckFailed')}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
+      {/* #626: the taxonomy page's own surface — its lead line, its bulk
+          acknowledgement and its result states live in the panel; the
+          identity queue never shows these rows. */}
+      {reason === TAXONOMY_REASON && <TaxonomyAckPanel pendingCount={pendingByReason.taxonomy} />}
 
       {isLoading ? (
         <Panel>

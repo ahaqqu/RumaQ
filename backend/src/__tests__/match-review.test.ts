@@ -288,10 +288,10 @@ describe('listReviewItems', () => {
     })
     await listReviewItems(db, { status: 'approved', limit: 10, offset: 25 })
     const [pageStmt, , reasonStmt, filteredStmt] = statements
-    // #626: no reason = the IDENTITY queue — the reason bind is threefold
-    // (present-match / absent-exclusion share one SQL shape).
-    expect(pageStmt!.params).toEqual(['approved', 'approved', null, null, null, 10, 25])
-    expect(filteredStmt!.params).toEqual(['approved', 'approved', null, null, null])
+    // #626: no reason = the IDENTITY queue — the exclusion guard, and the
+    // fragment is picked on the reason's presence, so no reason binds at all.
+    expect(pageStmt!.params).toEqual(['approved', 'approved', 10, 25])
+    expect(filteredStmt!.params).toEqual(['approved', 'approved'])
     expect(statements[0]!.sql).toContain('LEFT JOIN price_runs p ON p.run_started_at')
     // #626: the category context rides the same joins.
     expect(statements[0]!.sql).toContain('LEFT JOIN price_products pp ON pp.product_key')
@@ -307,7 +307,7 @@ describe('listReviewItems', () => {
       batchResults: [{ results: [] }, { results: [] }, { results: [] }, { results: [] }],
     })
     await listReviewItems(db, { offset: Number.MAX_SAFE_INTEGER + 1 })
-    expect(statements[0]!.params[6]).toBe(Number.MAX_SAFE_INTEGER)
+    expect(statements[0]!.params[3]).toBe(Number.MAX_SAFE_INTEGER)
   })
 
   it('narrows the page and filteredTotal by reason, keeping the status counts whole (issue #628)', async () => {
@@ -330,18 +330,10 @@ describe('listReviewItems', () => {
       taxonomy: 4,
     })
     const [pageStmt, statusStmt, , filteredStmt] = statements
-    expect(pageStmt!.params).toEqual([
-      'pending',
-      'pending',
-      'taxonomy',
-      'taxonomy',
-      'taxonomy',
-      50,
-      0,
-    ])
+    expect(pageStmt!.params).toEqual(['pending', 'pending', 'taxonomy', 50, 0])
     expect(pageStmt!.sql).toContain(`json_extract(r.pair_data, '$.reason')`)
     // The reason filter reaches the total too, or "Showing X of Y" would lie.
-    expect(filteredStmt!.params).toEqual(['pending', 'pending', 'taxonomy', 'taxonomy', 'taxonomy'])
+    expect(filteredStmt!.params).toEqual(['pending', 'pending', 'taxonomy'])
     // The status GROUP BY is unsullied by the filter (no JSON in it at all).
     expect(statusStmt!.sql).not.toContain('json')
   })
@@ -801,13 +793,13 @@ describe('review routes', () => {
       .mockResolvedValue([{ results: [] }, { results: [] }, { results: [] }, { results: [] }])
     const res = await apiApp.request('/api/admin/review?reason=taxonomy', {}, env as never)
     expect(res.status).toBe(200)
-    // The page query's binds carry the reason three times (#626: the
-    // present-match / absent-exclusion pair of guards share one shape).
-    // find() skips requireAdmin's own user lookup binds.
+    // The page query's binds carry the reason once (#626: the guard fragment
+    // is picked on the reason's presence). find() skips requireAdmin's own
+    // user lookup binds.
     const pageBinds = env.DB.bind.mock.calls.find(
-      (call: unknown[]) => call.length === 7 && call[0] === 'pending'
+      (call: unknown[]) => call.length === 5 && call[0] === 'pending'
     )
-    expect(pageBinds).toEqual(['pending', 'pending', 'taxonomy', 'taxonomy', 'taxonomy', 50, 0])
+    expect(pageBinds).toEqual(['pending', 'pending', 'taxonomy', 50, 0])
   })
 
   it('rejects an unknown reason with 400 (issue #628)', async () => {

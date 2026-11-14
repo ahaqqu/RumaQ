@@ -386,6 +386,16 @@ const REVIEW_ROW_JOINS = `LEFT JOIN price_runs p ON p.run_started_at = r.run_sta
       LEFT JOIN price_products pp ON pp.product_key = r.item_product_key
       LEFT JOIN review_ai_verdicts v ON v.review_item_id = r.id`
 
+// The pair blob's flag reason, NULL when the blob is malformed — ONE owner of
+// the json_valid/json_extract plumbing, so every statement that must agree on
+// "what is a taxonomy flag" parses it identically: the page WHERE, the
+// filteredTotal WHERE, the pendingByReason GROUP BY and the bulk ack (#626).
+// `col` is qualified in the joined reads (r.pair_data) and bare in the
+// single-table count/ack statements.
+function pairReasonSql(col: string): string {
+  return `(CASE WHEN json_valid(${col}) THEN json_extract(${col}, '$.reason') END)`
+}
+
 // The status/pendingByReason counts shared by the list route (#628) and the
 // scripted queue report (#656) — one owner for the vocabulary policy: every
 // reason present from the start (an absent reason counts 0, and the client
@@ -456,6 +466,13 @@ export async function listReviewItems(
   // `reason: 'taxonomy'` read. A malformed blob (json_valid → NULL) is not a
   // taxonomy flag and stays in the identity queue (COALESCE → '').
   const reason = options.reason ?? null
+  // The reason guard takes one of two shapes: an explicit reason matches the
+  // blobs that name it (one bind); the absent reason IS the identity-queue
+  // exclusion (no bind). Building the fragment instead of binding `reason`
+  // three times keeps the bind sequences flat.
+  const reasonGuardSql = (col: string): string =>
+    reason ? `${pairReasonSql(col)} = ?` : `COALESCE(${pairReasonSql(col)}, '') <> 'taxonomy'`
+  const reasonBinds: unknown[] = reason ? [reason] : []
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
   const offset = Math.min(Math.max(options.offset ?? 0, 0), Number.MAX_SAFE_INTEGER)
 
@@ -466,28 +483,21 @@ export async function listReviewItems(
          FROM match_review_items r
          ${REVIEW_ROW_JOINS}
          WHERE (? = 'all' OR r.status = ?)
-           AND (
-             (? IS NOT NULL AND (CASE WHEN json_valid(r.pair_data)
-                                     THEN json_extract(r.pair_data, '$.reason') END) = ?)
-             OR (? IS NULL AND COALESCE(
-                   (CASE WHEN json_valid(r.pair_data)
-                         THEN json_extract(r.pair_data, '$.reason') END), '') <> 'taxonomy')
-           )
+           AND ${reasonGuardSql('r.pair_data')}
          -- Pairs flagged by the same run share last_flagged_at; the natural
          -- key tie-break makes the total order deterministic so an offset
          -- page walk cannot skip/repeat tied rows across reads.
          ORDER BY r.last_flagged_at DESC, r.item_product_key ASC, r.entry_product_key ASC
          LIMIT ? OFFSET ?`
       )
-      .bind(status, status, reason, reason, reason, limit, offset),
+      .bind(status, status, ...reasonBinds, limit, offset),
     db.prepare(`SELECT status, COUNT(*) AS count FROM match_review_items GROUP BY status`).bind(),
     // Issue #628: the exact pending split by reason. The alias cannot be
     // `reason` — that is a real column, and SQLite resolves a GROUP BY name
     // to the column over the output alias — so `flag_reason` it is.
     db
       .prepare(
-        `SELECT (CASE WHEN json_valid(r.pair_data)
-                      THEN json_extract(r.pair_data, '$.reason') END) AS flag_reason,
+        `SELECT ${pairReasonSql('r.pair_data')} AS flag_reason,
                 COUNT(*) AS count
          FROM match_review_items r
          WHERE r.status = 'pending'
@@ -498,15 +508,9 @@ export async function listReviewItems(
       .prepare(
         `SELECT COUNT(*) AS count FROM match_review_items
          WHERE (? = 'all' OR status = ?)
-           AND (
-             (? IS NOT NULL AND (CASE WHEN json_valid(pair_data)
-                                     THEN json_extract(pair_data, '$.reason') END) = ?)
-             OR (? IS NULL AND COALESCE(
-                   (CASE WHEN json_valid(pair_data)
-                         THEN json_extract(pair_data, '$.reason') END), '') <> 'taxonomy')
-           )`
+           AND ${reasonGuardSql('pair_data')}`
       )
-      .bind(status, status, reason, reason, reason),
+      .bind(status, status, ...reasonBinds),
   ])
 
   const items: ReviewItem[] = []
@@ -783,6 +787,14 @@ export async function undoReviewDecision(db: D1Database, id: string): Promise<Re
   return getReviewRow(db, id)
 }
 
+// D1's run() reports the affected-row count at meta.changes; the node:sqlite
+// adapter the real-SQLite tests run through exposes the same number flat. One
+// structural read covers both shapes.
+function statementChanges(run: unknown): number {
+  const meta = run as { meta?: { changes?: number }; changes?: number }
+  return meta.meta?.changes ?? meta.changes ?? 0
+}
+
 // ---------------------------------------------------------------------------
 // Taxonomy acknowledgement (#626). A taxonomy flag is a SELF-pair — the
 // category-quality signal the identity workflow cannot act on (review-ai.ts
@@ -799,33 +811,26 @@ export async function acknowledgePendingTaxonomy(
   userId: string,
   now: Date = new Date()
 ): Promise<{ acknowledged: number; remaining: number }> {
+  // The UPDATE and its remaining-count read name the same pending-taxonomy
+  // set through pairReasonSql — the ONE owner of the blob-reason expression,
+  // shared with the list reads, so the ack can never drift from what the
+  // taxonomy page shows.
+  const pendingTaxonomySql = `status = 'pending'
+         AND COALESCE(${pairReasonSql('pair_data')}, '') = 'taxonomy'`
   const run = await db
     .prepare(
       `UPDATE match_review_items
        SET status = 'approved', decided_at = ?, decided_by = ?, decided_source = 'human'
-       WHERE status = 'pending'
-         AND COALESCE(
-               (CASE WHEN json_valid(pair_data)
-                     THEN json_extract(pair_data, '$.reason') END), '') = 'taxonomy'`
+       WHERE ${pendingTaxonomySql}`
     )
     .bind(now.toISOString(), userId)
     .run()
   const { results } = await db
-    .prepare(
-      `SELECT COUNT(*) AS count FROM match_review_items
-       WHERE status = 'pending'
-         AND COALESCE(
-               (CASE WHEN json_valid(pair_data)
-                     THEN json_extract(pair_data, '$.reason') END), '') = 'taxonomy'`
-    )
+    .prepare(`SELECT COUNT(*) AS count FROM match_review_items WHERE ${pendingTaxonomySql}`)
     .bind()
     .all<{ count: number }>()
   return {
-    // D1 run() meta.changes; the node:sqlite adapter exposes the same field.
-    acknowledged:
-      (run as unknown as { meta?: { changes?: number } }).meta?.changes ??
-      (run as unknown as { changes?: number }).changes ??
-      0,
+    acknowledged: statementChanges(run),
     remaining: results?.[0]?.count ?? 0,
   }
 }
