@@ -139,7 +139,16 @@ When('I approve the flagged pair', async ({ page }) => {
 })
 
 Then('the pair shows the approved verdict', async ({ page }) => {
-  await expect(page.getByText('Approved').first()).toBeVisible()
+  // The decide mutation refetches on settle and the approved row leaves the
+  // still-active pending filter — a bare on-page assert races that refetch:
+  // once the row is gone, getByText('Approved').first() matches the
+  // "Approved N" count chip and the Undo button never reappears. The durable
+  // outcome is the row sitting in the Approved queue, so switch there before
+  // asserting (the same chip interaction the reload step and the AI-assist
+  // provenance step use). exact:true pins the filter chip — the count chip
+  // reads "Approved N", the row badge "✓ Approved".
+  await page.getByText('Approved', { exact: true }).click()
+  await expect(page.getByText('Matched item')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible()
 })
 
