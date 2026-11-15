@@ -855,7 +855,7 @@ describe('review routes', () => {
   // these mocked-DB tests pin the routing, validation and the envelope. --
 
   // prepare call order on the ids path: requireAdmin's admin lookup, the ids
-  // IN-list read, then (only when something was found) the evidence read.
+  // prefix read, then (only when something was found) the evidence read.
   function queueReportIdsEnv(inListResults: unknown[]) {
     const env = adminEnv()
     const inListBind = vi.fn().mockReturnThis()
@@ -917,11 +917,12 @@ describe('review routes', () => {
     ])
   })
 
-  it('queue-report 400s ids that are not 1-50 lowercase-hex tokens (#691)', async () => {
+  it('queue-report 400s ids that are neither short hex tokens nor lowercase UUIDs (#691)', async () => {
     const overMax = Array.from({ length: 51 }, (_, i) => i.toString(16).padStart(8, '0')).join(',')
     for (const ids of [
       'zzzz', // not hex
       'ABC123', // uppercase
+      'AA11AA11-1111-4111-8111-111111111111', // uppercase full UUID
       'aa11,,bb22', // empty token
       'aa11 bb22', // whitespace separator
       `${'f'.repeat(33)}`, // over the 32-char cap
@@ -939,21 +940,30 @@ describe('review routes', () => {
   it('queue-report ids mode returns per-id lookups in request order (#691)', async () => {
     const { env, inListBind } = queueReportIdsEnv([queueReportRow()])
     const res = await apiApp.request(
-      '/api/admin/review/queue-report?ids=bb22bb22,aa11aa11,deadbeef',
+      // Both accepted forms in one request: the 8-hex short id (resolved as a
+      // prefix of the row UUID) and a full lowercase UUID.
+      '/api/admin/review/queue-report?ids=bb22bb22,aa11aa11-1111-4111-8111-111111111111,deadbeef',
       {},
       env as never
     )
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
-    // The requested ids were bound verbatim into the IN-list (route order).
-    expect(inListBind).toHaveBeenCalledWith('bb22bb22', 'aa11aa11', 'deadbeef')
+    // Each requested id was bound verbatim as its LIKE prefix pattern, in
+    // route order — exact-or-prefix resolution (production rows are UUIDs,
+    // humans quote the card's short form).
+    expect(inListBind).toHaveBeenCalledWith(
+      'bb22bb22%',
+      'aa11aa11-1111-4111-8111-111111111111%',
+      'deadbeef%'
+    )
     const body = (await res.json()) as {
       items: Array<{ id: string; found: boolean; item: Record<string, unknown> | null }>
     }
     expect(Object.keys(body).sort()).toEqual(['items'])
+    // Entries echo the REQUESTED id verbatim — short or full UUID form.
     expect(body.items).toEqual([
       { id: 'bb22bb22', found: true, item: expect.any(Object) },
-      { id: 'aa11aa11', found: false, item: null },
+      { id: 'aa11aa11-1111-4111-8111-111111111111', found: false, item: null },
       { id: 'deadbeef', found: false, item: null },
     ])
     expect(body.items[0]!.item).toMatchObject({
@@ -975,7 +985,7 @@ describe('review routes', () => {
       env as never
     )
     expect(res.status).toBe(200)
-    expect(inListBind).toHaveBeenCalledWith('bb22bb22', 'aa11aa11')
+    expect(inListBind).toHaveBeenCalledWith('bb22bb22%', 'aa11aa11%')
     const body = (await res.json()) as { items: unknown[] }
     expect(body.items).toEqual([
       { id: 'bb22bb22', found: false, item: null },

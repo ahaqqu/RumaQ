@@ -1751,7 +1751,7 @@ export type GetApiAdminReviewQueueReportData = {
     path?: never;
     query?: {
         /**
-         * Comma-separated review-item ids (lowercase hex, 1-32 chars each, max 50). Absent = the whole-queue aggregate response (unchanged contract).
+         * Comma-separated review-item ids — 1-32 lowercase hex chars (the queue card short id, resolved as a prefix of the row UUID) or full lowercase UUIDs; max 50. Absent = the whole-queue aggregate response (unchanged contract).
          */
         ids?: string;
     };

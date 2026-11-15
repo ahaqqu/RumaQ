@@ -311,8 +311,12 @@ describe('fetchReviewQueueReport', () => {
 
 // #691 Phase A: the queue-report ids mode's per-item read. Real SQLite again:
 // the shape and the frozen-vs-CURRENT-evidence contrast are exactly what the
-// Phase B diagnosis compares, and the IN-list/enrichment SQL is
-// string-matching-fake-proof.
+// Phase B diagnosis compares, and the prefix-resolution/enrichment SQL is
+// string-matching-fake-proof. Rows are seeded with PRODUCTION-shaped ids —
+// the full ingest UUIDs (recordReviewItems binds crypto.randomUUID()) — and
+// requested through both forms humans actually hold: the queue card's 8-hex
+// short id (#aa11aa11) and the copy button's full UUID. Seeding 8-hex rows is
+// what masked the resolution bug this suite now pins.
 describe('fetchReviewItemsByIds (#691 Phase A)', () => {
   const PAIR_BLOB = JSON.stringify({
     itemProductKey: 'beras-ramos-5kg----5-kg',
@@ -334,22 +338,54 @@ describe('fetchReviewItemsByIds (#691 Phase A)', () => {
     reason: 'price_ratio',
   })
 
+  // Production-shaped row ids — the short forms the card renders are their
+  // first 8 hex chars.
+  const AA11 = 'aa11aa11-1111-4111-8111-111111111111'
+  const BB22 = 'bb22bb22-2222-4222-8222-222222222222'
+  const CC33 = 'cc33cc33-3333-4333-8333-333333333333'
+
+  function seedItem(
+    sqlite: SqliteDb,
+    id: string,
+    itemProductKey: string,
+    entryProductKey: string,
+    pairData: string,
+    status: string,
+    decidedAt: string | null,
+    decidedBy: string | null,
+    decidedSource: string | null
+  ): void {
+    sqlite
+      .prepare(
+        `INSERT INTO match_review_items
+           (id, item_product_key, entry_product_key, pair_data, reason, match_method,
+            confidence, run_started_at, first_flagged_at, last_flagged_at, status,
+            decided_at, decided_by, decided_source)
+         VALUES (?, ?, ?, ?,
+                 'price_ratio', 'exact', 0.9,
+                 '2026-11-13T00:00:00Z', '2026-11-13T00:00:00Z', '2026-11-13T00:00:00Z',
+                 ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        itemProductKey,
+        entryProductKey,
+        pairData,
+        status,
+        decidedAt,
+        decidedBy,
+        decidedSource
+      )
+  }
+
   function seedItems(sqlite: SqliteDb): void {
     applyRealMigrations(sqlite)
-    const insert = sqlite.prepare(
-      `INSERT INTO match_review_items
-         (id, item_product_key, entry_product_key, pair_data, reason, match_method,
-          confidence, run_started_at, first_flagged_at, last_flagged_at, status,
-          decided_at, decided_by, decided_source)
-       VALUES (?, ?, ?, ?,
-               'price_ratio', 'exact', 0.9,
-               '2026-11-13T00:00:00Z', '2026-11-13T00:00:00Z', '2026-11-13T00:00:00Z',
-               ?, ?, ?, ?)`
-    )
-    // aa11aa11 pending · bb22bb22 decided · cc33cc33 a corrupt legacy blob.
-    // Distinct (item, entry) pair keys — the table's natural key is UNIQUE.
-    insert.run(
-      'aa11aa11',
+    // aa11aa11-… pending · bb22bb22-… decided · cc33cc33-… a corrupt legacy
+    // blob. Distinct (item, entry) pair keys — the table's natural key is
+    // UNIQUE.
+    seedItem(
+      sqlite,
+      AA11,
       'beras-ramos-5kg----5-kg',
       'beras-ramos-5kg--ramos--5-kg',
       PAIR_BLOB,
@@ -358,8 +394,9 @@ describe('fetchReviewItemsByIds (#691 Phase A)', () => {
       null,
       null
     )
-    insert.run(
-      'bb22bb22',
+    seedItem(
+      sqlite,
+      BB22,
       'gula-pasir-1kg----1-kg',
       'gula-pasir-1kg--gulaku--1-kg',
       JSON.stringify({
@@ -376,8 +413,9 @@ describe('fetchReviewItemsByIds (#691 Phase A)', () => {
       'admin-1',
       'human'
     )
-    insert.run(
-      'cc33cc33',
+    seedItem(
+      sqlite,
+      CC33,
       'mi-instant----sesawi',
       'mi-instant--sesawi--63-g',
       '{not json',
@@ -416,16 +454,18 @@ describe('fetchReviewItemsByIds (#691 Phase A)', () => {
     return sqliteD1Of(sqlite)
   }
 
-  it('returns the card shape with CURRENT evidence for found ids, in requested order', async () => {
+  it('resolves 8-hex short ids to UUID rows — card shape with CURRENT evidence, in requested order', async () => {
     const lookups = await fetchReviewItemsByIds(freshDb(), ['bb22bb22', 'aa11aa11'])
     expect(lookups.map((entry) => entry.id)).toEqual(['bb22bb22', 'aa11aa11'])
+    // The resolved row surfaces its FULL ingest UUID in item.id — the
+    // disambiguation handle when a short prefix ever matched twice.
     // The decided row: full frozen shape. Its entry has NO observation, so
     // the evidence stays null (renders evidence-less, honestly).
     expect(lookups[0]).toMatchObject({
       id: 'bb22bb22',
       found: true,
       item: {
-        id: 'bb22bb22',
+        id: BB22,
         status: 'approved',
         decidedAt: '2026-11-13T01:00:00Z',
         decidedBy: 'admin-1',
@@ -453,7 +493,7 @@ describe('fetchReviewItemsByIds (#691 Phase A)', () => {
       id: 'aa11aa11',
       found: true,
       item: {
-        id: 'aa11aa11',
+        id: AA11,
         status: 'pending',
         itemProductKey: 'beras-ramos-5kg----5-kg',
         itemName: 'Beras Ramos 5 kg',
@@ -466,10 +506,33 @@ describe('fetchReviewItemsByIds (#691 Phase A)', () => {
     })
   })
 
-  it('reports unknown ids as found:false entries in place — never an error', async () => {
+  it('a requested full UUID resolves to the same row as its short prefix', async () => {
+    // The copy button form: the pattern can only match its own row.
+    const lookups = await fetchReviewItemsByIds(freshDb(), [BB22])
+    expect(lookups).toMatchObject([
+      { id: BB22, found: true, item: { id: BB22, status: 'approved' } },
+    ])
+  })
+
+  it('a prefix matching nothing stays found:false — distinct from a prefix matching one row', async () => {
+    // The regression this guards: aa11aa11 prefix-resolves a UUID row while
+    // deadbeef matches nothing — a short id must never read as "rows gone"
+    // when the row exists (the pre-review exact-IN-list failure).
     const lookups = await fetchReviewItemsByIds(freshDb(), ['aa11aa11', 'deadbeef'])
     expect(lookups[0]).toMatchObject({ id: 'aa11aa11', found: true })
     expect(lookups[1]).toEqual({ id: 'deadbeef', found: false, item: null })
+  })
+
+  it('a short id matching several rows resolves deterministically to the first id', async () => {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyRealMigrations(sqlite)
+    const AA11_TWIN = 'aa11aa11-9999-4999-8999-999999999999'
+    seedItem(sqlite, AA11, 'p-key-1', 'e-key-1', PAIR_BLOB, 'pending', null, null, null)
+    seedItem(sqlite, AA11_TWIN, 'p-key-2', 'e-key-2', PAIR_BLOB, 'pending', null, null, null)
+    const lookups = await fetchReviewItemsByIds(sqliteD1Of(sqlite), ['aa11aa11'])
+    expect(lookups).toEqual([
+      { id: 'aa11aa11', found: true, item: expect.objectContaining({ id: AA11 }) },
+    ])
   })
 
   it('reports a malformed pair blob as found:true with a null item', async () => {

@@ -3100,7 +3100,7 @@
     "/api/admin/review/queue-report": {
       "get": {
         "operationId": "getApiAdminReviewQueueReport",
-        "description": "Whole-queue aggregates for the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md): status counts with the pending split by reason, cached-verdict coverage, provider/model mix, confidence bands with the auto-eligible count (>= 0.8), and agreement/precision on already-decided items by band. Read-only. Admin session or the scoped review-script token (ahaqqu/RumaQ#656); the token acts as the deployment admin user. #691: with the optional `ids` query param (comma-separated review-item ids, <= 50, each <= 32 lowercase-hex chars) the response switches to per-ID inspection instead — `{ items: [{ id, found, item }] }` in request order, each `item` the exact queue-card shape with the CURRENT entry evidence alongside the frozen pair; unknown ids are `found: false` entries, not errors.",
+        "description": "Whole-queue aggregates for the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md): status counts with the pending split by reason, cached-verdict coverage, provider/model mix, confidence bands with the auto-eligible count (>= 0.8), and agreement/precision on already-decided items by band. Read-only. Admin session or the scoped review-script token (ahaqqu/RumaQ#656); the token acts as the deployment admin user. #691: with the optional `ids` query param (comma-separated review-item ids — the queue card 8-hex short id, resolved as a prefix, or the full UUID; <= 50) the response switches to per-ID inspection instead — `{ items: [{ id, found, item }] }` in request order, each `item` the exact queue-card shape with the CURRENT entry evidence alongside the frozen pair; unknown ids are `found: false` entries, not errors.",
         "security": [
           {
             "cookieAuth": []
@@ -3111,7 +3111,7 @@
             "in": "query",
             "name": "ids",
             "required": false,
-            "description": "Comma-separated review-item ids (lowercase hex, 1-32 chars each, max 50). Absent = the whole-queue aggregate response (unchanged contract).",
+            "description": "Comma-separated review-item ids — 1-32 lowercase hex chars (the queue card short id, resolved as a prefix of the row UUID) or full lowercase UUIDs; max 50. Absent = the whole-queue aggregate response (unchanged contract).",
             "schema": {
               "type": "string"
             }

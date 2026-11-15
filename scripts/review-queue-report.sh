@@ -37,7 +37,8 @@ fi
 : "${RUMAQ_REVIEW_TOKEN:?export RUMAQ_REVIEW_TOKEN (the REVIEW_SCRIPT_TOKEN Worker secret) — never committed, never echoed}"
 BASE="${RUMAQ_PROD_URL:-https://rumaq.ahaqqu.com}"
 
-# Ids are lowercase hex + commas — URL-safe as-is; the server validates.
+# Ids (the card's 8-hex short ids or full UUIDs) + commas are URL-safe
+# as-is; the server validates and resolves short ids as prefixes.
 IDS_QUERY=""
 if [ -n "$IDS" ]; then
   IDS_QUERY="?ids=${IDS}"
