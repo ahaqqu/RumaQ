@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 // AI PROVIDERS + AI CAPABILITIES (ahaqqu/RumaQ#523 P3, plan §4.4).
@@ -105,11 +105,16 @@ export function AiSettingsSection({ isOnline }) {
 
   // Hydrate the three rows from the server after every read. The capability
   // block is invalidated by each write, so this also resets the drafts to the
-  // saved state once a save settles.
-  useEffect(() => {
-    if (!capabilityData) return
+  // saved state once a save settles. The mirror runs during the render that
+  // first sees a new payload (the documented render-phase pattern, #686) —
+  // not as a setState-in-effect cascade. React Query's structural sharing
+  // keeps the payload reference stable across same-value refetches, so the
+  // reference compare tracks "the server answered something new" exactly.
+  const [mirroredCapabilities, setMirroredCapabilities] = useState(null)
+  if (capabilityData && capabilityData !== mirroredCapabilities) {
+    setMirroredCapabilities(capabilityData)
     setCapabilityDrafts(emptyCapabilityDrafts(capabilityData.capabilities))
-  }, [capabilityData])
+  }
 
   const openAdd = () => {
     setEditingId(null)

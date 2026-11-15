@@ -69,10 +69,15 @@ export default defineConfig({
       // Deliberately NOT enabled: typescript/no-floating-promises and
       // no-misused-promises were probed and are silent no-ops on this tree
       // (the type-aware path does not bind to the JS/JSX sources), so keeping
-      // them would pretend a guarantee that does not exist. The React-Compiler
-      // advisories (set-state-in-effect, purity, no-children-prop, refs) run
-      // by default as warnings — 10 pre-existing ones, non-blocking, tracked
-      // for a dedicated refactor pass.
+      // them would pretend a guarantee that does not exist.
+      // React-Compiler advisories (#686): the pre-existing warnings were
+      // resolved in the same pass, and the rules are pinned at error so the
+      // count cannot re-accumulate (they previously ran as default-on
+      // warnings).
+      'react/set-state-in-effect': 'error',
+      'react/purity': 'error',
+      'react/refs': 'error',
+      'react/no-children-prop': 'error',
     },
     overrides: [
       {

@@ -231,12 +231,18 @@ export function AppShell({ children }) {
   const title = currentNav ? t(currentNav.key) : t('nav.home')
   const isActive = (to) => pathname === to
 
+  // The date label is captured once per session (#686 purity): `new Date()`
+  // during render is impure and would let the label drift across midnight on
+  // whichever re-render happened to land on the other side. The frozen
+  // instant still re-formats on a language change, so the label translates
+  // in place.
+  const [sessionDate] = useState(() => new Date())
   const today = new Intl.DateTimeFormat(i18n.language, {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
     year: 'numeric',
-  }).format(new Date())
+  }).format(sessionDate)
 
   const renderNavItem = ({ id, key, Icon, to }) => (
     <NavItem key={id} to={to} active={isActive(to)}>
