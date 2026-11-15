@@ -386,9 +386,11 @@
     "planLeadNoKey": "Atur AI dulu, lalu AI menyusun rencana belanja dari stok yang menipis."
   },
   "catalog": {
-    "lead": "Alat QA ingesti dan identitas produk. Telusuri halaman brosur di balik harga berjalan, lalu cari, ganti nama, dan audit produk yang dihasilkannya.",
+    "lead": "Alat identitas produk untuk katalog. Cari, ganti nama, dan audit produk yang jadi rujukan harga.",
     "tabProducts": "Produk & identitas",
-    "tabBrochures": "Brosur",
+    "tabBrochuresQa": "QA Brosur",
+    "tabPromos": "Promo",
+    "brochuresQaLead": "QA ingesti untuk halaman brosur di balik harga saat ini.",
     "tabsLabel": "Bagian katalog",
     "forbidden": "Khusus admin",
     "forbiddenDesc": "Alat katalog hanya tersedia untuk administrator.",
@@ -485,7 +487,6 @@
     "dayAgo": "{{count}} hr lalu",
     "matched": "Cocok: {{count}}",
     "viewProducts": "Produk",
-    "viewPromos": "Promo",
     "promosLead": "Promo berjalan dari brosur mingguan, dikelompokkan per jenis.",
     "promosTotal": "{{count}} produk sedang promo",
     "promoTypeDiscountPct": "Diskon %",

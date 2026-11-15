@@ -4,10 +4,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { AdminCatalog } from './AdminCatalog.jsx'
 
-// The admin catalog (#631) is the home of the tools moved off /prices: the
-// Brochures ingestion-QA view and the Products lookup with rename,
-// duplicate-names, and alias-candidates. The route guard is the AdminPrices
-// pattern (useMe + unauthorized state; the APIs are already requireAdmin).
+// The admin catalog (#631, three sections since #673) is the home of the
+// tools moved off /prices: the Products lookup with rename, duplicate-names,
+// and alias-candidates; the Brochures QA ingestion view (#630); and the Promos
+// catalog (whose example click jumps into the user explorer). The route guard
+// is the AdminPrices pattern (useMe + unauthorized state; the APIs are already
+// requireAdmin).
 const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }))
 
 let mockHash = ''
@@ -31,6 +33,7 @@ vi.mock('../lib/queries/index.js', () => ({
   usePriceDetail: vi.fn(),
   usePriceBrochures: vi.fn(),
   useBrochureProducts: vi.fn(),
+  usePricePromos: vi.fn(),
 }))
 
 vi.mock('../lib/queries/me.js', () => ({ useMe: vi.fn() }))
@@ -54,6 +57,7 @@ import {
   usePriceDetail,
   usePriceBrochures,
   useBrochureProducts,
+  usePricePromos,
 } from '../lib/queries/index.js'
 import { useMe } from '../lib/queries/me.js'
 import {
@@ -120,6 +124,33 @@ const brochureCatalog = {
   ],
 }
 
+const promoCatalog = {
+  types: [
+    {
+      promo_type: 'discount_pct',
+      product_count: 2,
+      stores: { 'lotte-mart': 1, superindo: 1 },
+      example_products: [
+        {
+          product_key: OIL_KEY,
+          name: 'Minyak Goreng Bimoli',
+          brand: 'Bimoli',
+          unit: '1 L',
+          price: 21500,
+          effective_unit_price: 21500,
+        },
+      ],
+    },
+    {
+      promo_type: 'get_free',
+      product_count: 1,
+      stores: { superindo: 1 },
+      example_products: [],
+    },
+  ],
+  total: 3,
+}
+
 const detail = {
   product: { product_key: OIL_KEY, name: 'Minyak Goreng Bimoli' },
   current: [
@@ -183,6 +214,11 @@ describe('AdminCatalog', () => {
     vi.mocked(usePriceDetail).mockReturnValue({ data: detail, isLoading: false })
     vi.mocked(usePriceBrochures).mockReturnValue({
       data: brochureCatalog,
+      isLoading: false,
+      isError: false,
+    })
+    vi.mocked(usePricePromos).mockReturnValue({
+      data: promoCatalog,
       isLoading: false,
       isError: false,
     })
@@ -262,24 +298,28 @@ describe('AdminCatalog', () => {
     // The guard returns before either catalog read is mounted.
     expect(usePrices).not.toHaveBeenCalled()
     expect(usePriceBrochures).not.toHaveBeenCalled()
+    expect(usePricePromos).not.toHaveBeenCalled()
   })
 
   it('renders the Products tab with the moved admin tools by default', () => {
     const { container } = renderCatalog()
     expect(container.textContent).toContain('catalog.lead')
-    const [productsTab, brochuresTab] = tabs(container)
+    const [productsTab, qaTab, promosTab] = tabs(container)
     expect(productsTab.textContent).toBe('catalog.tabProducts')
     expect(productsTab.getAttribute('aria-pressed')).toBe('true')
-    expect(brochuresTab.textContent).toBe('catalog.tabBrochures')
-    expect(brochuresTab.getAttribute('aria-pressed')).toBe('false')
+    expect(qaTab.textContent).toBe('catalog.tabBrochuresQa')
+    expect(qaTab.getAttribute('aria-pressed')).toBe('false')
+    expect(promosTab.textContent).toBe('catalog.tabPromos')
+    expect(promosTab.getAttribute('aria-pressed')).toBe('false')
 
     // Product lookup + the identity/QA panels moved from the user page.
     expect(container.querySelector('input[type="search"]')).toBeTruthy()
     expect(container.textContent).toContain('Minyak Goreng Bimoli')
     expect(container.querySelector('[data-testid="duplicate-names-panel"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="alias-candidates-panel"]')).not.toBeNull()
-    // The Brochures read stays unmounted on this tab.
+    // The Brochures and promos reads stay unmounted on this tab.
     expect(usePriceBrochures).not.toHaveBeenCalled()
+    expect(usePricePromos).not.toHaveBeenCalled()
   })
 
   it('filters the catalog through the shared category picker (#632)', () => {
@@ -315,55 +355,107 @@ describe('AdminCatalog', () => {
     expect(container.querySelector('[data-testid="product-rename-form"]')).not.toBeNull()
   })
 
-  it('renders the Brochures tab from ?tab=brochures', () => {
-    mockTab = 'brochures'
+  it('renders the Brochures QA tab from ?tab=brochures-qa (#673)', () => {
+    mockTab = 'brochures-qa'
     const { container } = renderCatalog()
+    expect(container.textContent).toContain('catalog.brochuresQaLead')
     expect(container.textContent).toContain('Lotte Mart')
     expect(container.querySelector('input[type="search"]')).toBeNull()
     expect(container.querySelector('[data-testid="duplicate-names-panel"]')).toBeNull()
     // Tab state follows the search param.
-    expect(tabByText(container, 'catalog.tabBrochures').getAttribute('aria-pressed')).toBe('true')
+    expect(tabByText(container, 'catalog.tabBrochuresQa').getAttribute('aria-pressed')).toBe('true')
     expect(usePriceBrochures).toHaveBeenCalled()
   })
 
   it('selects a brochure and expands a row in place without navigating (#630)', () => {
-    mockTab = 'brochures'
+    mockTab = 'brochures-qa'
     const { container } = renderCatalog()
     fireEvent.click(container.querySelector('[data-testid="brochure-card"]'))
     expect(useBrochureProducts).toHaveBeenCalledWith(brochureUrl)
 
     fireEvent.click(container.querySelector('[data-testid="brochure-product-row"]'))
     expect(container.querySelector('[data-testid="brochure-product-metadata"]')).toBeTruthy()
-    // The QA view never leaves the admin area or the Brochures tab.
+    // The QA view never leaves the admin area or the Brochures QA tab.
     expect(navigateMock).not.toHaveBeenCalled()
     expect(mockHash).toBe('')
   })
 
+  it('renders the Promos tab from ?tab=promos with the moved promo cards (#673)', () => {
+    mockTab = 'promos'
+    const { container } = renderCatalog()
+    expect(container.textContent).toContain('prices.promosLead')
+    expect(container.textContent).toContain('prices.promoTypeDiscountPct')
+    expect(container.textContent).toContain('prices.promoTypeGetFree')
+    expect(container.textContent).toContain('prices.promosTotal')
+    expect(container.querySelector('input[type="search"]')).toBeNull()
+    expect(container.querySelector('[data-testid="duplicate-names-panel"]')).toBeNull()
+    // Tab state follows the search param.
+    expect(tabByText(container, 'catalog.tabPromos').getAttribute('aria-pressed')).toBe('true')
+    expect(usePricePromos).toHaveBeenCalled()
+  })
+
+  it('a promos example click jumps into the user explorer at #productKey', () => {
+    mockTab = 'promos'
+    const { container } = renderCatalog()
+    // Expand the Discount % card first — example rows live inside it.
+    fireEvent.click(clickable(container, 'prices.promoTypeDiscountPct'))
+    expect(container.textContent).toContain('prices.showExamples')
+    fireEvent.click(clickable(container, 'Minyak Goreng Bimoli'))
+    // The explorer is every household user's surface; the fresh /prices mount
+    // guarantees the unfiltered landing context while the hash expands the row.
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: '/prices',
+      search: {},
+      hash: OIL_KEY,
+    })
+  })
+
   it('switches tabs through the route search param', () => {
     const { container } = renderCatalog()
-    fireEvent.click(tabByText(container, 'catalog.tabBrochures'))
+    fireEvent.click(tabByText(container, 'catalog.tabBrochuresQa'))
     expect(navigateMock).toHaveBeenCalledWith({
       to: '/admin/catalog',
-      search: { tab: 'brochures' },
+      search: { tab: 'brochures-qa' },
       hash: '',
     })
 
-    mockTab = 'brochures'
-    const brochuresView = renderCatalog()
-    fireEvent.click(tabByText(brochuresView.container, 'catalog.tabProducts'))
+    mockTab = 'brochures-qa'
+    const qaView = renderCatalog()
+    fireEvent.click(tabByText(qaView.container, 'catalog.tabPromos'))
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: '/admin/catalog',
+      search: { tab: 'promos' },
+      hash: '',
+    })
+
+    mockTab = 'promos'
+    const promosView = renderCatalog()
+    fireEvent.click(tabByText(promosView.container, 'catalog.tabProducts'))
     expect(navigateMock).toHaveBeenLastCalledWith({ to: '/admin/catalog', search: {}, hash: '' })
   })
 
   it('opens and expands a #productKey deep link on the Products tab', () => {
-    mockTab = 'brochures'
+    mockTab = 'brochures-qa'
     mockHash = `#${OIL_KEY}`
     const { container } = renderCatalog()
-    // The hash wins over ?tab=brochures: the product detail is expanded.
+    // The hash wins over ?tab=brochures-qa: the product detail is expanded.
     expect(container.textContent).toContain('prices.currentPrices')
     expect(container.querySelector('input[type="search"]')).toBeTruthy()
     expect(container.querySelector('[data-testid="brochure-card"]')).toBeNull()
     expect(tabByText(container, 'catalog.tabProducts').getAttribute('aria-pressed')).toBe('true')
     // Applying the deep link never writes the hash back.
     expect(navigateMock).not.toHaveBeenCalled()
+  })
+
+  it('hard-removes the retired brochures tab value (#673)', () => {
+    mockTab = 'brochures'
+    const { container } = renderCatalog()
+    // ?tab=brochures is no longer a tab: the resolver falls back to Products
+    // and no QA surface mounts.
+    expect(container.textContent).toContain('catalog.lead')
+    expect(container.querySelector('input[type="search"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="brochure-card"]')).toBeNull()
+    expect(tabByText(container, 'catalog.tabProducts').getAttribute('aria-pressed')).toBe('true')
+    expect(usePriceBrochures).not.toHaveBeenCalled()
   })
 })

@@ -17,6 +17,10 @@ import {
   normalizeHash,
   resolvePriceView,
   resolveCatalogTab,
+  observedDateLabel,
+  PRICE_CATALOG_VIEWS,
+  PRICE_ROUTE_VIEWS,
+  ADMIN_CATALOG_TABS,
 } from './pricesHelpers.js'
 
 // Fixed instants: midday local so local-midnight normalization is exercised,
@@ -371,30 +375,64 @@ describe('effectivePrice', () => {
   })
 })
 
+describe('observedDateLabel', () => {
+  it('formats an observed date in the viewer language and passes junk through', () => {
+    // Re-homed from BrochuresView for the user gallery (#673): the QA view and
+    // the gallery must not drift on how an observed date reads.
+    expect(observedDateLabel('2026-10-29', 'en')).toBe('October 29, 2026')
+    expect(observedDateLabel('not-a-date', 'en')).toBe('not-a-date')
+    expect(observedDateLabel(null, 'en')).toBe(null)
+  })
+})
+
 describe('resolvePriceView', () => {
-  it('maps the remaining catalog views, defaults to products, and lets the hash win', () => {
+  it('maps the catalog views, defaults to products, and lets the hash win', () => {
     expect(resolvePriceView(undefined, '')).toBe('products')
-    expect(resolvePriceView('promos', '')).toBe('promos')
+    expect(resolvePriceView('brochures', '')).toBe('brochures')
+    expect(resolvePriceView('products', '')).toBe('products')
     expect(resolvePriceView('nonsense', '')).toBe('products')
-    // #631: Brochures moved to /admin/catalog — /prices falls back to
-    // Products for it instead of rendering the moved view.
-    expect(resolvePriceView('brochures', '')).toBe('products')
     // A #productKey deep link is the stronger intent (PM AC 7 / #293 AC 5):
     // the hash forces the Products view whatever ?view= says.
     expect(resolvePriceView('brochures', 'gula-pasir')).toBe('products')
     expect(resolvePriceView(undefined, 'gula-pasir')).toBe('products')
+  })
+
+  it('hard-removes the retired vocabulary (#673): promos is not recognized', () => {
+    // The promos view moved to /admin/catalog; the legacy ?view=promos value
+    // is not redirected or accepted — it silently falls back to Products.
+    expect(resolvePriceView('promos', '')).toBe('products')
+    expect(resolvePriceView('promos', 'gula-pasir')).toBe('products')
   })
 })
 
 describe('resolveCatalogTab', () => {
   it('maps the admin catalog tabs, defaults to products, and lets the hash win', () => {
     expect(resolveCatalogTab(undefined, '')).toBe('products')
-    expect(resolveCatalogTab('brochures', '')).toBe('brochures')
+    expect(resolveCatalogTab('brochures-qa', '')).toBe('brochures-qa')
+    expect(resolveCatalogTab('promos', '')).toBe('promos')
     expect(resolveCatalogTab('products', '')).toBe('products')
     expect(resolveCatalogTab('nonsense', '')).toBe('products')
-    // The brochure example jump and the retired /prices?view=brochures#key
-    // deep link both open the Products tab so the hash can expand the row.
-    expect(resolveCatalogTab('brochures', 'gula-pasir')).toBe('products')
+    // The promo example jump and a #productKey deep link both open the
+    // Products tab so the hash can expand the row.
+    expect(resolveCatalogTab('promos', 'gula-pasir')).toBe('products')
+    expect(resolveCatalogTab('brochures-qa', 'gula-pasir')).toBe('products')
     expect(resolveCatalogTab(undefined, 'gula-pasir')).toBe('products')
+  })
+
+  it('hard-removes the retired vocabulary (#673): the old brochures tab is not recognized', () => {
+    // The QA view was renamed to the brochures-qa tab; the legacy ?tab=
+    // brochures value is not redirected or accepted — it silently falls back
+    // to Products.
+    expect(resolveCatalogTab('brochures', '')).toBe('products')
+    expect(resolveCatalogTab('brochures', 'gula-pasir')).toBe('products')
+  })
+})
+
+describe('catalog vocabulary (#673)', () => {
+  it('browsing lives on /prices, QA + promos on the admin catalog', () => {
+    expect(PRICE_CATALOG_VIEWS).toEqual(['brochures'])
+    // No legacy acceptance: the route vocabulary is exactly the catalog's.
+    expect(PRICE_ROUTE_VIEWS).toBe(PRICE_CATALOG_VIEWS)
+    expect(ADMIN_CATALOG_TABS).toEqual(['products', 'brochures-qa', 'promos'])
   })
 })

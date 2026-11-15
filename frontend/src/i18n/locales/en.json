@@ -386,9 +386,11 @@
     "planLeadNoKey": "Set up AI first, then it will create a shopping plan from items running low."
   },
   "catalog": {
-    "lead": "Ingestion QA and product identity tools. Browse the brochure pages behind the current prices, then look up, rename, and audit the products they produce.",
+    "lead": "Product identity tools for the catalog. Look up, rename, and audit the products prices resolve to.",
     "tabProducts": "Products & identity",
-    "tabBrochures": "Brochures",
+    "tabBrochuresQa": "Brochures QA",
+    "tabPromos": "Promos",
+    "brochuresQaLead": "Ingestion QA for the brochure pages behind the current prices.",
     "tabsLabel": "Catalog sections",
     "forbidden": "Admins only",
     "forbiddenDesc": "The catalog tools are available to administrators.",
@@ -485,7 +487,6 @@
     "dayAgo": "{{count}}d ago",
     "matched": "Matched: {{count}}",
     "viewProducts": "Products",
-    "viewPromos": "Promos",
     "promosLead": "Current promotions from weekly brochures, grouped by deal type.",
     "promosTotal": "{{count}} products on promo",
     "promoTypeDiscountPct": "Discount %",

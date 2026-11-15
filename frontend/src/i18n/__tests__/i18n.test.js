@@ -440,11 +440,13 @@ describe('locale files', () => {
       }
     })
 
-    it('pins the tab labels', () => {
+    it('pins the tab labels (#673: three sections; the QA tab is named, not hidden)', () => {
       expect(en.catalog.tabProducts).toBe('Products & identity')
       expect(id.catalog.tabProducts).toBe('Produk & identitas')
-      expect(en.catalog.tabBrochures).toBe('Brochures')
-      expect(id.catalog.tabBrochures).toBe('Brosur')
+      expect(en.catalog.tabBrochuresQa).toBe('Brochures QA')
+      expect(id.catalog.tabBrochuresQa).toBe('QA Brosur')
+      expect(en.catalog.tabPromos).toBe('Promos')
+      expect(id.catalog.tabPromos).toBe('Promo')
     })
   })
 })

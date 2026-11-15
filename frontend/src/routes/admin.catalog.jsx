@@ -8,9 +8,11 @@ function RouteComponent() {
 }
 
 export const Route = createFileRoute('/admin/catalog')({
-  // ?tab=products|brochures selects the catalog section (issue #631); any
-  // other value or absence means Products. A #productKey hash overrides the
-  // tab (stronger intent) — enforced in the page shell.
+  // ?tab=products|brochures-qa|promos selects the catalog section (issue
+  // #673); any other value or absence means Products. The retired brochures
+  // tab value is not recognized — validateSearch drops it and the page
+  // silently lands on Products (hard removal, no redirects). A #productKey
+  // hash overrides the tab (stronger intent) — enforced in the page shell.
   validateSearch: ({ tab }) => ({
     tab: ADMIN_CATALOG_TABS.includes(tab) ? tab : undefined,
   }),

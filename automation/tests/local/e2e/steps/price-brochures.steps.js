@@ -7,10 +7,10 @@ const { Given, When, Then } = createBdd()
 
 // Fixtures pushed through the internal ingest endpoint like the promos suite;
 // the brochure object rides the internal PUT endpoint (issue #293). Since
-// #631 the surface lives on /admin/catalog?tab=brochures —
-// /prices?view=brochures only redirects here. Since #630 the view is a QA
-// browser: selecting a card opens the full product table and a row expands
-// its metadata in place (no jump into the products explorer).
+// #673 the user gallery lives on /prices?view=brochures — a lean browse-only
+// grid — while the #630 QA browser stays admin-side on
+// /admin/catalog?tab=brochures-qa: selecting a card opens the full product
+// table and a row expands its metadata in place.
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
 const INGEST_SECRET = 'test-ingest-secret'
 // A real 1x1 transparent PNG: the browser must be able to DECODE the served
@@ -97,14 +97,9 @@ Given('a brochure snapshot has been pushed with one image uploaded', async () =>
   }
 })
 
-Then('I should be on the admin catalog brochures tab', async ({ page }) => {
-  // The retired /prices?view=brochures deep link redirects an admin here.
-  await expect(page).toHaveURL(/\/admin\/catalog\?tab=brochures$/)
-})
-
-Then('the catalog tab row should be visible', async ({ page }) => {
-  await expect(page.getByText('Products & identity', { exact: true })).toBeVisible()
+Then('the prices segment row should be visible', async ({ page }) => {
   await expect(page.getByText('Brochures', { exact: true })).toBeVisible()
+  await expect(page.getByText('Products', { exact: true })).toBeVisible()
 })
 
 Then(/the brochure grid should show cards for "(.+)"/, async ({ page }, expected) => {
@@ -125,6 +120,17 @@ Then('the {string} card should show the uploaded brochure image', async ({ page 
   await expect
     .poll(() => img.evaluate((el) => (el.complete && el.naturalWidth > 0 ? 'loaded' : 'pending')))
     .toBe('loaded')
+})
+
+Then('the gallery should show no ingestion-QA metadata', async ({ page }) => {
+  // The lean user surface (#673): no review table, no metadata panel, and no
+  // QA labels — the payload still carries them; the gallery must not render
+  // any of it.
+  await expect(page.locator('#brochure-review')).toHaveCount(0)
+  await expect(page.locator('[data-testid="brochure-product-metadata"]')).toHaveCount(0)
+  await expect(page.getByText('Match confidence')).toHaveCount(0)
+  await expect(page.getByText('Observed date')).toHaveCount(0)
+  await expect(page.getByText('Scraped at')).toHaveCount(0)
 })
 
 When('I select the {string} brochure card', async ({ page }, store) => {
@@ -161,8 +167,9 @@ Then(
   }
 )
 
-Then('I should stay on the admin catalog brochures tab', async ({ page }) => {
-  await expect(page).toHaveURL(/\/admin\/catalog\?tab=brochures$/)
+Then('I should stay on the admin catalog brochures QA tab', async ({ page }) => {
+  await expect(page).toHaveURL(/\/admin\/catalog\?tab=brochures-qa$/)
+  await expect(page.getByText('Brochures QA', { exact: true })).toBeVisible()
   await expect(page.locator('#brochure-review')).toBeVisible()
 })
 
@@ -196,8 +203,8 @@ Then(
   }
 )
 
-Then('the brochures empty state should render with the tabs visible', async ({ page }) => {
+Then('the brochures empty state should render with the segments visible', async ({ page }) => {
   await expect(page.getByText('No brochures yet')).toBeVisible()
   await expect(page.getByText('Brochures', { exact: true })).toBeVisible()
-  await expect(page.getByText('Products & identity', { exact: true })).toBeVisible()
+  await expect(page.getByText('Products', { exact: true })).toBeVisible()
 })

@@ -12,7 +12,8 @@ const PATHS = {
   History: '/history',
   Settings: '/settings',
   Prices: '/prices',
-  'Prices promos': '/prices?view=promos',
+  'Prices brochures': '/prices?view=brochures',
+  'Prices promos': '/admin/catalog?tab=promos',
   'Admin catalog': '/admin/catalog',
 }
 
@@ -30,6 +31,7 @@ const READY = {
   History: (page) => page.getByLabel('Search items'),
   Settings: (page) => page.getByRole('heading', { name: 'Storage Locations' }),
   Prices: (page) => page.getByLabel('Search prices'),
+  'Prices brochures': null,
   'Prices promos': null,
   'Admin catalog': (page) => page.getByLabel('Search prices'),
 }
