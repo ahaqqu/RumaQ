@@ -331,7 +331,7 @@ export const postApiAdminReviewEvaluate = <ThrowOnError extends boolean = false>
 });
 
 /**
- * Whole-queue aggregates for the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md): status counts with the pending split by reason, cached-verdict coverage, provider/model mix, confidence bands with the auto-eligible count (>= 0.8), and agreement/precision on already-decided items by band. Read-only. Admin session or the scoped review-script token (ahaqqu/RumaQ#656); the token acts as the deployment admin user.
+ * Whole-queue aggregates for the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md): status counts with the pending split by reason, cached-verdict coverage, provider/model mix, confidence bands with the auto-eligible count (>= 0.8), and agreement/precision on already-decided items by band. Read-only. Admin session or the scoped review-script token (ahaqqu/RumaQ#656); the token acts as the deployment admin user. #691: with the optional `ids` query param (comma-separated review-item ids, <= 50, each <= 32 lowercase-hex chars) the response switches to per-ID inspection instead — `{ items: [{ id, found, item }] }` in request order, each `item` the exact queue-card shape with the CURRENT entry evidence alongside the frozen pair; unknown ids are `found: false` entries, not errors.
  */
 export const getApiAdminReviewQueueReport = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminReviewQueueReportData, ThrowOnError>): RequestResult<GetApiAdminReviewQueueReportResponses, GetApiAdminReviewQueueReportErrors, ThrowOnError> => (options?.client ?? client).get<GetApiAdminReviewQueueReportResponses, GetApiAdminReviewQueueReportErrors, ThrowOnError>({ url: '/api/admin/review/queue-report', ...options });
 

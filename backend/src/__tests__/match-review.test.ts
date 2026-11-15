@@ -849,6 +849,203 @@ describe('review routes', () => {
     )
     expect(res.status).toBe(404)
   })
+
+  // -- #691 Phase A: the queue-report's per-ID inspection mode. The item
+  // SHAPE itself is pinned on real SQLite in review-script-auth.test.ts;
+  // these mocked-DB tests pin the routing, validation and the envelope. --
+
+  // prepare call order on the ids path: requireAdmin's admin lookup, the ids
+  // IN-list read, then (only when something was found) the evidence read.
+  function queueReportIdsEnv(inListResults: unknown[]) {
+    const env = adminEnv()
+    const inListBind = vi.fn().mockReturnThis()
+    env.DB.prepare = vi
+      .fn()
+      .mockReturnValueOnce({
+        bind: vi.fn().mockReturnThis(),
+        first: vi.fn().mockResolvedValue({ email: 'admin@rumaq.dev', is_admin: 1 }),
+      })
+      .mockReturnValueOnce({
+        bind: inListBind,
+        all: vi.fn().mockResolvedValue({ results: inListResults }),
+      })
+      .mockReturnValueOnce({
+        bind: vi.fn().mockReturnThis(),
+        all: vi.fn().mockResolvedValue({ results: [] }),
+      })
+    return { env, inListBind }
+  }
+
+  it('queue-report without ids keeps the aggregate contract byte-for-byte (#691 pin)', async () => {
+    const env = adminEnv()
+    env.DB.batch = vi.fn().mockResolvedValue([
+      { results: [] }, // status counts
+      { results: [] }, // pending split by reason
+      { results: [] }, // verdict coverage
+      { results: [] }, // provider/model mix
+      { results: [] }, // confidence bands
+      { results: [] }, // agreement
+    ])
+    const res = await apiApp.request('/api/admin/review/queue-report', {}, env as never)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
+    const body = (await res.json()) as Record<string, unknown>
+    // The exact aggregate key set — the pre-#691 contract. A future field
+    // must extend this assertion deliberately, never leak in ids-only shape.
+    expect(Object.keys(body).sort()).toEqual(['agreement', 'ai', 'counts', 'generatedAt'])
+    expect(body.counts).toEqual({
+      pending: 0,
+      approved: 0,
+      rejected: 0,
+      pendingByReason: { price_ratio: 0, verifier_unresolved: 0, taxonomy: 0 },
+    })
+    expect(body.ai).toEqual({
+      pendingWithVerdict: 0,
+      pendingWithoutVerdict: 0,
+      models: [],
+      confidenceBands: [
+        { band: '<0.6', count: 0 },
+        { band: '0.6-0.8', count: 0 },
+        { band: '>=0.8', count: 0 },
+      ],
+      autoEligible: 0,
+    })
+    expect(body.agreement).toEqual([
+      { band: '<0.6', decided: 0, agreed: 0, disagreed: 0, precision: null },
+      { band: '0.6-0.8', decided: 0, agreed: 0, disagreed: 0, precision: null },
+      { band: '>=0.8', decided: 0, agreed: 0, disagreed: 0, precision: null },
+    ])
+  })
+
+  it('queue-report 400s ids that are not 1-50 lowercase-hex tokens (#691)', async () => {
+    const overMax = Array.from({ length: 51 }, (_, i) => i.toString(16).padStart(8, '0')).join(',')
+    for (const ids of [
+      'zzzz', // not hex
+      'ABC123', // uppercase
+      'aa11,,bb22', // empty token
+      'aa11 bb22', // whitespace separator
+      `${'f'.repeat(33)}`, // over the 32-char cap
+      overMax, // over the 50-id cap
+    ]) {
+      const res = await apiApp.request(
+        `/api/admin/review/queue-report?ids=${ids}`,
+        {},
+        adminEnv() as never
+      )
+      expect(res.status).toBe(400)
+    }
+  })
+
+  it('queue-report ids mode returns per-id lookups in request order (#691)', async () => {
+    const { env, inListBind } = queueReportIdsEnv([queueReportRow()])
+    const res = await apiApp.request(
+      '/api/admin/review/queue-report?ids=bb22bb22,aa11aa11,deadbeef',
+      {},
+      env as never
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
+    // The requested ids were bound verbatim into the IN-list (route order).
+    expect(inListBind).toHaveBeenCalledWith('bb22bb22', 'aa11aa11', 'deadbeef')
+    const body = (await res.json()) as {
+      items: Array<{ id: string; found: boolean; item: Record<string, unknown> | null }>
+    }
+    expect(Object.keys(body).sort()).toEqual(['items'])
+    expect(body.items).toEqual([
+      { id: 'bb22bb22', found: true, item: expect.any(Object) },
+      { id: 'aa11aa11', found: false, item: null },
+      { id: 'deadbeef', found: false, item: null },
+    ])
+    expect(body.items[0]!.item).toMatchObject({
+      id: 'bb22bb22',
+      status: 'pending',
+      itemName: 'Beras Ramos 5 kg',
+      // No observation rows in the evidence read → evidence stays null.
+      entryBrochureUrl: null,
+      entrySourceUrl: null,
+      entryObservedAt: null,
+    })
+  })
+
+  it('queue-report dedupes repeated ids — the response is a set in request order (#691)', async () => {
+    const { env, inListBind } = queueReportIdsEnv([])
+    const res = await apiApp.request(
+      '/api/admin/review/queue-report?ids=bb22bb22,bb22bb22,aa11aa11',
+      {},
+      env as never
+    )
+    expect(res.status).toBe(200)
+    expect(inListBind).toHaveBeenCalledWith('bb22bb22', 'aa11aa11')
+    const body = (await res.json()) as { items: unknown[] }
+    expect(body.items).toEqual([
+      { id: 'bb22bb22', found: false, item: null },
+      { id: 'aa11aa11', found: false, item: null },
+    ])
+  })
+})
+
+// A full queue-report row for the ids-mode route tests — the projection the
+// list/decide reads share (REVIEW_ROW_COLUMNS), with a parseable pair blob.
+function queueReportRow(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'bb22bb22',
+    pair_data: JSON.stringify(pair()),
+    status: 'pending',
+    decided_at: null,
+    decided_by: null,
+    decided_source: null,
+    flag_count: 1,
+    first_flagged_at: '2026-11-13T00:00:00Z',
+    last_flagged_at: '2026-11-13T00:00:00Z',
+    run_started_at: '2026-11-13T00:00:00Z',
+    run_id: null,
+    item_category: null,
+    item_category_version: null,
+    ai_verdict: null,
+    ai_confidence: null,
+    ai_reason: null,
+    ai_model: null,
+    ai_human_agreement: null,
+    ...over,
+  }
+}
+
+// #691 Phase A: the queue-report's published schema must carry BOTH modes —
+// the aggregate (the unchanged contract) and the ids inspection entries — so
+// the generated client documents the switch instead of a bare object.
+describe('queue-report ids-mode schema (#691 Phase A)', () => {
+  it('publishes the ids query param and the oneOf aggregate/inspection response', async () => {
+    const specs = (await generateSpecs(apiApp, {
+      documentation: { info: { title: 'RumaQ API', version: '0.1.0' } },
+    })) as Record<string, any>
+    const operation = specs.paths['/api/admin/review/queue-report'].get
+    const idsParam = (operation.parameters as Array<Record<string, any>>).find(
+      (param) => param.name === 'ids'
+    )
+    expect(idsParam).toMatchObject({ in: 'query', required: false, schema: { type: 'string' } })
+    const schema = operation.responses['200'].content['application/json'].schema
+    expect(schema.oneOf).toHaveLength(2)
+    const [aggregate, inspection] = schema.oneOf as Array<Record<string, any>>
+    expect(Object.keys(aggregate.properties).sort()).toEqual([
+      'agreement',
+      'ai',
+      'counts',
+      'generatedAt',
+    ])
+    const entry = inspection.properties.items.items
+    expect(Object.keys(entry.properties).sort()).toEqual(['found', 'id', 'item'])
+    // `item` is the queue card's schema by SPREAD (single-owned shape) —
+    // nullable because a found row can still carry a malformed blob.
+    expect(entry.properties.item.type).toEqual(['object', 'null'])
+    expect(entry.properties.item.properties).toEqual(
+      expect.objectContaining({
+        itemName: expect.any(Object),
+        entryObservedAt: expect.any(Object),
+        aiVerdict: expect.any(Object),
+      })
+    )
+    expect(operation.responses['400']).toBeDefined()
+  })
 })
 
 describe('runs ingest ride-along', () => {

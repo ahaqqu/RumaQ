@@ -713,6 +713,61 @@ export async function fetchReviewQueueReport(db: D1Database): Promise<ReviewQueu
   }
 }
 
+/**
+ * #691 Phase A: the per-ID inspection read behind the queue-report's optional
+ * `ids` query param — the manager's diagnosis tool compares a FROZEN pair
+ * against the entry's CURRENT evidence in one response. One IN-list read over
+ * the same projection and mapping the list/decide reads use
+ * (REVIEW_ROW_COLUMNS + toReviewItem) plus the same evidence enrichment, so
+ * the item shape cannot drift from the queue cards'. Entries come back in the
+ * REQUESTED order; an unknown id is a `found: false` entry, not an error (the
+ * tool must report the whole requested set). `item` is null when the row
+ * exists but its pair blob is malformed — "the row is there" and "the pair is
+ * renderable" are different facts, and a diagnosis tool wants both. Callers
+ * keep `ids` ≤ 50 (the route's cap; also far under D1's 100-bind cap, so one
+ * statement, no chunking).
+ */
+export type ReviewItemLookup = {
+  id: string
+  found: boolean
+  item: ReviewItem | null
+}
+
+export async function fetchReviewItemsByIds(
+  db: D1Database,
+  ids: string[]
+): Promise<ReviewItemLookup[]> {
+  if (ids.length === 0) return []
+  const { results } = await db
+    .prepare(
+      `SELECT ${REVIEW_ROW_COLUMNS}
+       FROM match_review_items r
+       ${REVIEW_ROW_JOINS}
+       WHERE r.id IN (${ids.map(() => '?').join(',')})`
+    )
+    .bind(...ids)
+    .all<ReviewRow>()
+  // Map VALUE null = found row with a malformed blob; missing KEY = unknown id.
+  const byId = new Map<string, ReviewItem | null>()
+  const items: ReviewItem[] = []
+  for (const row of (results ?? []) as unknown as ReviewRow[]) {
+    const item = toReviewItem(row)
+    byId.set(row.id, item)
+    if (item) items.push(item)
+  }
+  enrichEntryEvidence(
+    items,
+    await fetchEntryEvidence(
+      db,
+      items.map((i) => ({ productKey: i.entryProductKey, storeSlug: i.entryStore }))
+    )
+  )
+  return ids.map((id) => {
+    const item = byId.get(id)
+    return item === undefined ? { id, found: false, item: null } : { id, found: true, item }
+  })
+}
+
 async function getReviewRow(db: D1Database, id: string): Promise<ReviewItem | null> {
   const row = await db
     .prepare(

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { matchesReviewScriptToken, propsOrReviewScriptAuth } from '../auth.js'
-import { fetchReviewQueueReport } from '../lib/match-review.js'
+import { fetchReviewQueueReport, fetchReviewItemsByIds } from '../lib/match-review.js'
 // The queue-report aggregates run on real SQLite (node:sqlite — D1 is
 // SQLite) with the repo's migrations applied, same pattern as
 // match-review.test.ts: the band/precision math is SQL-adjacent enough that
@@ -306,5 +306,181 @@ describe('fetchReviewQueueReport', () => {
       { band: '0.6-0.8', decided: 1, agreed: 0, disagreed: 0, precision: null },
       { band: '>=0.8', decided: 1, agreed: 1, disagreed: 0, precision: 1 },
     ])
+  })
+})
+
+// #691 Phase A: the queue-report ids mode's per-item read. Real SQLite again:
+// the shape and the frozen-vs-CURRENT-evidence contrast are exactly what the
+// Phase B diagnosis compares, and the IN-list/enrichment SQL is
+// string-matching-fake-proof.
+describe('fetchReviewItemsByIds (#691 Phase A)', () => {
+  const PAIR_BLOB = JSON.stringify({
+    itemProductKey: 'beras-ramos-5kg----5-kg',
+    itemName: 'Beras Ramos 5 kg',
+    itemBrand: null,
+    itemUnit: '5 kg',
+    itemPrice: 89000,
+    itemEffectiveUnitPrice: 89000,
+    itemStore: 'lotte-mart',
+    entryProductKey: 'beras-ramos-5kg--ramos--5-kg',
+    entryName: 'Beras Ramos 5kg',
+    entryBrand: 'Ramos',
+    entryUnit: '5 kg',
+    entryPrice: 27000,
+    entryEffectiveUnitPrice: 27000,
+    entryStore: 'superindo',
+    matchMethod: 'exact',
+    confidence: 1,
+    reason: 'price_ratio',
+  })
+
+  function seedItems(sqlite: SqliteDb): void {
+    applyRealMigrations(sqlite)
+    const insert = sqlite.prepare(
+      `INSERT INTO match_review_items
+         (id, item_product_key, entry_product_key, pair_data, reason, match_method,
+          confidence, run_started_at, first_flagged_at, last_flagged_at, status,
+          decided_at, decided_by, decided_source)
+       VALUES (?, ?, ?, ?,
+               'price_ratio', 'exact', 0.9,
+               '2026-11-13T00:00:00Z', '2026-11-13T00:00:00Z', '2026-11-13T00:00:00Z',
+               ?, ?, ?, ?)`
+    )
+    // aa11aa11 pending · bb22bb22 decided · cc33cc33 a corrupt legacy blob.
+    // Distinct (item, entry) pair keys — the table's natural key is UNIQUE.
+    insert.run(
+      'aa11aa11',
+      'beras-ramos-5kg----5-kg',
+      'beras-ramos-5kg--ramos--5-kg',
+      PAIR_BLOB,
+      'pending',
+      null,
+      null,
+      null
+    )
+    insert.run(
+      'bb22bb22',
+      'gula-pasir-1kg----1-kg',
+      'gula-pasir-1kg--gulaku--1-kg',
+      JSON.stringify({
+        ...JSON.parse(PAIR_BLOB),
+        itemName: 'Gula Pasir 1 kg',
+        itemProductKey: 'gula-pasir-1kg----1-kg',
+        itemPrice: 18000,
+        entryProductKey: 'gula-pasir-1kg--gulaku--1-kg',
+        entryName: 'Gula Gulaku 1 kg',
+        entryPrice: 17500,
+      }),
+      'approved',
+      '2026-11-13T01:00:00Z',
+      'admin-1',
+      'human'
+    )
+    insert.run(
+      'cc33cc33',
+      'mi-instant----sesawi',
+      'mi-instant--sesawi--63-g',
+      '{not json',
+      'pending',
+      null,
+      null,
+      null
+    )
+
+    // The entry's CURRENT evidence at the frozen store — newer than the flag
+    // (2026-11-13) on purpose: the tool must show what the card renders NOW.
+    sqlite
+      .prepare(`INSERT INTO price_products (id, product_key, name)
+                VALUES ('prod-1', 'beras-ramos-5kg--ramos--5-kg', 'Beras Ramos')`)
+      .run()
+    sqlite
+      .prepare(`INSERT INTO price_sources (id, slug, name)
+                VALUES ('src-superindo', 'superindo', 'Superindo')`)
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO price_observations
+           (id, product_id, source_id, observed_date, price, match_confidence,
+            brochure_url, source_url, scraped_at)
+         VALUES ('obs-1', 'prod-1', 'src-superindo', '2026-11-14', 29000, 1.0,
+                 '/api/brochures/superindo/20261114/page-3.jpg',
+                 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+                 '2026-11-14T23:00:05Z')`
+      )
+      .run()
+  }
+
+  function freshDb(): D1Database {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    seedItems(sqlite)
+    return sqliteD1Of(sqlite)
+  }
+
+  it('returns the card shape with CURRENT evidence for found ids, in requested order', async () => {
+    const lookups = await fetchReviewItemsByIds(freshDb(), ['bb22bb22', 'aa11aa11'])
+    expect(lookups.map((entry) => entry.id)).toEqual(['bb22bb22', 'aa11aa11'])
+    // The decided row: full frozen shape. Its entry has NO observation, so
+    // the evidence stays null (renders evidence-less, honestly).
+    expect(lookups[0]).toMatchObject({
+      id: 'bb22bb22',
+      found: true,
+      item: {
+        id: 'bb22bb22',
+        status: 'approved',
+        decidedAt: '2026-11-13T01:00:00Z',
+        decidedBy: 'admin-1',
+        decidedSource: 'human',
+        aiVerdict: null,
+        flagCount: 1,
+        itemProductKey: 'gula-pasir-1kg----1-kg',
+        itemName: 'Gula Pasir 1 kg',
+        itemStore: 'lotte-mart',
+        itemPrice: 18000,
+        entryProductKey: 'gula-pasir-1kg--gulaku--1-kg',
+        entryName: 'Gula Gulaku 1 kg',
+        entryStore: 'superindo',
+        entryPrice: 17500,
+        reason: 'price_ratio',
+        matchMethod: 'exact',
+        entryBrochureUrl: null,
+        entrySourceUrl: null,
+        entryObservedAt: null,
+      },
+    })
+    // The pending beras row rides the CURRENT evidence — the 2026-11-14
+    // observation, newer than the 2026-11-13 flag: what the card renders NOW.
+    expect(lookups[1]).toMatchObject({
+      id: 'aa11aa11',
+      found: true,
+      item: {
+        id: 'aa11aa11',
+        status: 'pending',
+        itemProductKey: 'beras-ramos-5kg----5-kg',
+        itemName: 'Beras Ramos 5 kg',
+        entryProductKey: 'beras-ramos-5kg--ramos--5-kg',
+        entryStore: 'superindo',
+        entryBrochureUrl: '/api/brochures/superindo/20261114/page-3.jpg',
+        entrySourceUrl: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+        entryObservedAt: '2026-11-14',
+      },
+    })
+  })
+
+  it('reports unknown ids as found:false entries in place — never an error', async () => {
+    const lookups = await fetchReviewItemsByIds(freshDb(), ['aa11aa11', 'deadbeef'])
+    expect(lookups[0]).toMatchObject({ id: 'aa11aa11', found: true })
+    expect(lookups[1]).toEqual({ id: 'deadbeef', found: false, item: null })
+  })
+
+  it('reports a malformed pair blob as found:true with a null item', async () => {
+    // The row IS there — the diagnosis tool must see that distinct from an
+    // unknown id (which is found:false). toReviewItem drops the unparseable
+    // pair, so item is null while found stays true.
+    const lookups = await fetchReviewItemsByIds(freshDb(), ['cc33cc33'])
+    expect(lookups).toEqual([{ id: 'cc33cc33', found: true, item: null }])
+  })
+
+  it('an empty ids list returns an empty items array without querying', async () => {
+    expect(await fetchReviewItemsByIds(freshDb(), [])).toEqual([])
   })
 })
