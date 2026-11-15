@@ -340,7 +340,11 @@ export function AppShell({ children }) {
 
         {householdCard}
 
+        {/* role="region" is load-bearing: aria-label is naming-prohibited on
+            a role-less div (generic), so the label would never be announced
+            (axe aria-prohibited-attr, #676 review A1). */}
         <div
+          role="region"
           className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-8"
           tabIndex={0}
           aria-label={t('shell.menuRegion')}

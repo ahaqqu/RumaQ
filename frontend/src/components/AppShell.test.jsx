@@ -382,6 +382,9 @@ describe('AppShell', () => {
     expect(aside.className).toContain('min-h-0')
     const region = aside.querySelector('div[aria-label="Sidebar menu"]')
     expect(region).toBeTruthy()
+    // The role makes the label real — aria-label is naming-prohibited on a
+    // role-less div, so AT would never announce the region (#676 review A1).
+    expect(region.getAttribute('role')).toBe('region')
     expect(region.className).toContain('overflow-y-auto')
     expect(region.getAttribute('tabindex')).toBe('0')
     // Both nav groups live inside the region…
