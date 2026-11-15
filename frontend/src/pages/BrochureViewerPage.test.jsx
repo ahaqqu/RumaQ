@@ -90,6 +90,17 @@ describe('resolveBrochureViewerSearch — the /brochures/view validateSearch (#6
     ).toEqual({ store: 'tip-top', date: '20261201', file: 'HEMAT_E_20_(1)_DKI.jpg' })
   })
 
+  it('coerces the router JSON-parsed numeric date back to a string', () => {
+    // router-core's default search parser JSON-parses digit-leading values,
+    // so a deep link ?date=20261115 reaches validateSearch as a NUMBER — it
+    // must still validate (pinned by the E2E deep-link scenarios).
+    expect(
+      resolveBrochureViewerSearch({ store: 'lotte-mart', date: 20261115, file: 'page.jpg' })
+    ).toEqual({ store: 'lotte-mart', date: '20261115', file: 'page.jpg' })
+    // A non-integer number is not a digit round-trip — dropped.
+    expect(resolveBrochureViewerSearch({ ...VIEWER_SEARCH, date: 2026.1115 }).date).toBeUndefined()
+  })
+
   it('drops malformed or missing segments so the page never requests a 404 URL', () => {
     // Dashed date (the catalog's shape, not the URL's), store with spaces or
     // uppercase, filename with a slash or traversal, over-long filename,
@@ -111,7 +122,7 @@ describe('resolveBrochureViewerSearch — the /brochures/view validateSearch (#6
     expect(
       resolveBrochureViewerSearch({ ...VIEWER_SEARCH, file: `${'a'.repeat(201)}.jpg` }).file
     ).toBeUndefined()
-    expect(resolveBrochureViewerSearch({ store: 42, date: null, file: {} })).toEqual({
+    expect(resolveBrochureViewerSearch({ store: true, date: null, file: {} })).toEqual({
       store: undefined,
       date: undefined,
       file: undefined,

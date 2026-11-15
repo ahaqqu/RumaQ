@@ -269,22 +269,37 @@ const VIEWER_DATE_PATTERN = /^\d{8}$/
 const VIEWER_FILENAME_PATTERN = /^[A-Za-z0-9._()-]{1,200}$/
 const VIEWER_STORE_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
+// The router's default search parser JSON-parses digit-leading values
+// (router-core's jsonStart regex matches \d), so a deep link ?date=20261115
+// reaches validateSearch as a NUMBER. Normalize that round-trip back to a
+// string before validating — the segments must be strings to recompose the
+// brochure_url byte-exactly. (Non-numeric strings skip the parser and stay
+// strings.)
+function asSearchSegment(value) {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return String(value)
+  return undefined
+}
+
 // validateSearch for /brochures/view: keep well-shaped segments, drop
 // anything else (TanStack strips undefined values, so the page renders its
 // calm missing-brochure state instead of requesting a URL that must 404).
 export function resolveBrochureViewerSearch({ store, date, file } = {}) {
+  const rawStore = asSearchSegment(store)
+  const rawDate = asSearchSegment(date)
+  const rawFile = asSearchSegment(file)
   return {
     store:
-      typeof store === 'string' && store.length <= 100 && VIEWER_STORE_PATTERN.test(store)
-        ? store
+      rawStore !== undefined && rawStore.length <= 100 && VIEWER_STORE_PATTERN.test(rawStore)
+        ? rawStore
         : undefined,
-    date: typeof date === 'string' && VIEWER_DATE_PATTERN.test(date) ? date : undefined,
+    date: rawDate !== undefined && VIEWER_DATE_PATTERN.test(rawDate) ? rawDate : undefined,
     file:
-      typeof file === 'string' &&
-      file !== '.' &&
-      file !== '..' &&
-      VIEWER_FILENAME_PATTERN.test(file)
-        ? file
+      rawFile !== undefined &&
+      rawFile !== '.' &&
+      rawFile !== '..' &&
+      VIEWER_FILENAME_PATTERN.test(rawFile)
+        ? rawFile
         : undefined,
   }
 }
