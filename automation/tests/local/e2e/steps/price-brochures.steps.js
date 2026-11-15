@@ -272,16 +272,26 @@ Then('the viewer tab should render no app shell chrome', async () => {
 
 When('I share the brochure without a native share sheet', async () => {
   // This scenario is specifically the clipboard FALLBACK, so guarantee its
-  // premise: remove navigator.share (some headless builds expose it with no
-  // sheet UI behind it) and bring the viewer tab to front — a share click
-  // happens on a focused tab, and the async clipboard requires document
-  // focus. The grant makes writeText/readText actually work.
-  await viewerPage.bringToFront()
+  // premise: navigator.share is overridden with an own undefined property
+  // (some builds expose it with no sheet UI behind it). The harness also
+  // serves the app over plain http (TEST_BASE_URL=http://proxy:3000) — a
+  // NON-secure context, where the async Clipboard API does not exist at all
+  // (navigator.clipboard is undefined) — so a capturing stub stands in for
+  // it: the scenario pins that Share, with no native sheet, writes the deep
+  // link and shows the copied confirmation. The real-API behaviors — write
+  // success, and staying silent when no clipboard exists — are pinned in
+  // BrochureViewerPage.test.jsx.
   await viewerPage.evaluate(() => {
-    delete Object.getPrototypeOf(navigator).share
-    delete navigator.share
+    Object.defineProperty(navigator, 'share', { value: undefined, configurable: true })
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text) => {
+          window.__sharedLink = text
+        },
+      },
+    })
   })
-  await viewerPage.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await viewerPage.getByRole('button', { name: 'Share' }).click()
 })
 
@@ -289,10 +299,12 @@ Then(
   'the clipboard should hold the viewer link and the copied status should confirm it',
   async () => {
     await expect(viewerPage.getByRole('status')).toHaveText('Link copied')
-    const clipboard = await viewerPage.evaluate(() => navigator.clipboard.readText())
+    // The capturing clipboard stub (see the When step — the harness's plain-
+    // http origin has no real async clipboard) holds the written link.
+    const shared = await viewerPage.evaluate(() => window.__sharedLink)
     const [, ymd, file] = e2eBrochureKey().split('/')
-    expect(clipboard).toContain('/brochures/view?store=lotte-mart')
-    expect(clipboard).toContain(`date=${ymd}`)
-    expect(clipboard).toContain(`file=${file}`)
+    expect(shared).toContain('/brochures/view?store=lotte-mart')
+    expect(shared).toContain(`date=${ymd}`)
+    expect(shared).toContain(`file=${file}`)
   }
 )
