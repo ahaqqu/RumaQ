@@ -58,7 +58,11 @@ export function BrochureViewerPage() {
   const dateLabel = group
     ? observedDateLabel(group.observed_date, i18n.language)
     : viewerDateLabel(date, i18n.language)
-  const title = store ? `${storeName} · ${dateLabel}` : t('prices.viewerUnavailable')
+  // The title must agree with the body: the body renders the unavailable
+  // EmptyState whenever any segment was dropped by validateSearch, so gating
+  // the title on `store` alone would hang a dangling "Lotte Mart · " (or a
+  // complete-looking title) above a "no longer available" body.
+  const title = hasBrochure ? `${storeName} · ${dateLabel}` : t('prices.viewerUnavailable')
 
   // The shareable URL is the viewer deep link itself — absolute, so it works
   // from the share sheet, another device, or the clipboard.

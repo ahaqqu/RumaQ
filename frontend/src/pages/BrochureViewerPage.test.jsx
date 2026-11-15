@@ -200,6 +200,16 @@ describe('BrochureViewerPage — chrome-less render (#674)', () => {
     expect(container.querySelector('img')).toBeNull()
     expect(container.textContent).toContain('This brochure is no longer available.')
   })
+
+  it('the top bar agrees with the unavailable body when only some segments survive', () => {
+    // A hand-mangled URL (?store=… with date/file dropped by validateSearch)
+    // shows the unavailable EmptyState in the body — the title must say the
+    // same thing, not render a dangling "Lotte Mart · " separator above it.
+    searchState.search = { store: 'lotte-mart' }
+    const { container } = renderViewer()
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('h1').textContent).toBe('This brochure is no longer available.')
+  })
 })
 
 describe('BrochureViewerPage — share (#674)', () => {
