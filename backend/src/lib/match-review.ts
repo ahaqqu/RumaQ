@@ -179,10 +179,10 @@ export type ReviewItem = ReviewItemPair & {
   itemCategory: string | null
   itemCategoryVersion: string | null
   // The RIGHT side's evidence (#380, store-pinned). #691 RC3: frozen-FIRST —
-  // the pair blob carries the flag-time sighting and a non-null field here IS
-  // that frozen value; the read-time lookup fills only the fields an old
-  // (pre-#691) blob does not carry. Null when neither source has it — or the
-  // live one predates source_url (no backfill).
+  // on a blob that carries a field, that non-null value IS the flag-time
+  // sighting; on a pre-#691 blob every value here is the read-time lookup's
+  // (it fills what the blob does not carry). Null when neither source has
+  // it — or the live one predates source_url (no backfill).
   entryBrochureUrl: string | null
   entrySourceUrl: string | null
   entryObservedAt: string | null

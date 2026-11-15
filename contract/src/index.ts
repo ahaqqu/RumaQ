@@ -811,13 +811,19 @@ export const reviewItemPairSchema = strictObject({
   // prefer these per field and fall back to the read-time live lookup (#380)
   // only for the fields a pair does not carry, so a verdict stays
   // reproducible: the store's sighting advancing after flag time must not
-  // make the card contradict its own frozen snapshot. Additive-nullish
-  // (#294 pattern): pairs frozen before the fields exist do not carry them
-  // (no backfill — old rows ride live enrichment), and a NEW report hitting
-  // an OLD Worker fails loudly (Worker-first deploy order — pipeline emission
-  // rides pipeline #142, after this contract ships).
-  entryBrochureUrl: nullish(string()),
-  entrySourceUrl: nullish(string()),
+  // make the card contradict its own frozen snapshot. The two URL fields cap
+  // at their item-side twins' 500 — same producer, same value class (the
+  // brochure URL is the R2 object URL, ≈225 chars at the servable shape's
+  // worst case; source_url already caps 500 at observation ingest), so the
+  // bound re-states the producer's reality — the #142 emission rider must
+  // still truncate-or-null before emitting. entryObservedAt stays unbounded:
+  // a date has no meaningful length cap. Additive-nullish (#294 pattern):
+  // pairs frozen before the fields exist do not carry them (no backfill —
+  // old rows ride live enrichment), and a NEW report hitting an OLD Worker
+  // fails loudly (Worker-first deploy order — pipeline emission rides
+  // pipeline #142, after this contract ships).
+  entryBrochureUrl: nullish(pipe(string(), maxLength(500))),
+  entrySourceUrl: nullish(pipe(string(), maxLength(500))),
   entryObservedAt: nullish(string()),
   matchMethod: picklist(['exact', 'embedding', 'ai']),
   confidence: pipe(number(), minValue(0), maxValue(1)),
