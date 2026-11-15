@@ -30,6 +30,10 @@ Feature: Accessibility
     Given I am logged in as the seeded test user
     Then the "Prices" page should have no critical or serious axe violations
 
+  Scenario: Prices brochures view has no critical or serious violations
+    Given I am logged in as the seeded test user
+    Then the "Prices brochures" page should have no critical or serious axe violations
+
   Scenario: Prices promos view has no critical or serious violations
     Given I am logged in as the seeded test user
     Then the "Prices promos" page should have no critical or serious axe violations

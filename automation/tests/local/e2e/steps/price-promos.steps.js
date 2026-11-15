@@ -6,6 +6,8 @@ const { Given, When, Then } = createBdd()
 
 // Fixtures shared with the API feature suite (tests/support/price-fixtures.js),
 // pushed through the internal ingest endpoint like prices-explorer.steps.js.
+// Since #673 the promo catalog lives on /admin/catalog?tab=promos — an admin
+// surface whose example click jumps into the user explorer at /prices#key.
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
 const INGEST_SECRET = 'test-ingest-secret'
 
@@ -33,9 +35,9 @@ Given('a promo-free price snapshot has been pushed', async () => {
 // affordance; the label sits in the first .font-medium div inside.
 const promoCards = (page) => page.locator('button').filter({ hasText: 'Example products' })
 
-Then('the promos segment row should be visible', async ({ page }) => {
+Then('the promos tab row should be visible', async ({ page }) => {
   await expect(page.getByText('Promos', { exact: true })).toBeVisible()
-  await expect(page.getByText('Products', { exact: true })).toBeVisible()
+  await expect(page.getByText('Products & identity', { exact: true })).toBeVisible()
 })
 
 Then(/the promo cards should appear in order "(.+)"/, async ({ page }, expected) => {
@@ -68,14 +70,14 @@ Then(/I should land on the products view with "(.+)" expanded/, async ({ page },
   )
 })
 
-Then('the view param should be gone from the URL', async ({ page }) => {
+Then('the promos tab param should be gone from the URL', async ({ page }) => {
   // The jump navigates with search: {} — the hash deep link replaces the
-  // promos view instead of stacking on top of it.
-  await expect(page).not.toHaveURL(/view=promos/)
+  // promos tab instead of stacking on top of it.
+  await expect(page).not.toHaveURL(/tab=promos/)
 })
 
-Then('the promos empty state should render with the segment visible', async ({ page }) => {
+Then('the promos empty state should render with the tab visible', async ({ page }) => {
   await expect(page.getByText('No promos yet')).toBeVisible()
   await expect(page.getByText('Promos', { exact: true })).toBeVisible()
-  await expect(page.getByText('Products', { exact: true })).toBeVisible()
+  await expect(page.getByText('Products & identity', { exact: true })).toBeVisible()
 })

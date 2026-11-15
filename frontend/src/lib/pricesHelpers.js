@@ -210,21 +210,17 @@ export function formatPrice(amount) {
   }).format(amount)
 }
 
-// The end-user segments of /prices (issues #292/#631): ?view= selects one,
-// absence or any other value means the Products explorer. Brochures is no
-// longer a /prices view — it moved to /admin/catalog in #631.
-export const PRICE_CATALOG_VIEWS = ['promos']
+// The end-user segments of /prices (issues #292/#673): ?view= selects one,
+// absence or any other value means the Products explorer. Promos is no
+// longer a /prices view — it moved to /admin/catalog in #673, and the old
+// legacy vocabulary is hard-removed: no ?view= value is redirected, unknown
+// values are simply unrecognized (validateSearch drops them and the resolver
+// falls back to Products).
+export const PRICE_CATALOG_VIEWS = ['brochures']
 
-// #631: ?view=brochures is retired but still accepted by the route. The old
-// deep link redirects admins to the admin catalog's Brochures tab and falls
-// back to Products for everyone else, instead of 404ing. Kept out of
-// PRICE_CATALOG_VIEWS so the user page can never render the moved view again.
-export const LEGACY_BROCHURES_VIEW = 'brochures'
-
-// Every ?view= the /prices route accepts: rendered (promos) or redirected
-// (brochures). The route's validateSearch reads this, so an accepted legacy
-// value survives validation and the page shell can redirect on it.
-export const PRICE_ROUTE_VIEWS = [...PRICE_CATALOG_VIEWS, LEGACY_BROCHURES_VIEW]
+// Every ?view= the /prices route accepts. No legacy value: the route renders
+// exactly what the catalog offers and silently falls back for anything else.
+export const PRICE_ROUTE_VIEWS = PRICE_CATALOG_VIEWS
 
 // A #productKey hash is the stronger intent (deep link) and forces the
 // Products view regardless of ?view= (PM AC 7 / #293 AC 5).
@@ -233,16 +229,27 @@ export function resolvePriceView(view, hash) {
   return PRICE_CATALOG_VIEWS.includes(view) ? view : 'products'
 }
 
-// The two sections of the admin catalog (#631): Products is the admin-tools
+// The three sections of the admin catalog (#673): Products is the admin-tools
 // home (product lookup, rename, duplicate names, alias candidates); Brochures
-// is the ingestion-QA view moved off /prices. ?tab= selects one; absence or
-// any other value means Products. The retired /prices?view=brochures redirect
-// names the Brochures tab explicitly.
-export const ADMIN_CATALOG_TABS = ['products', 'brochures']
+// QA is the #630 ingestion-QA view; Promos is the promo catalog moved off
+// /prices. ?tab= selects one; absence or any other value means Products —
+// the silent fallback IS the hard-removal behavior for the retired brochures
+// tab value.
+export const ADMIN_CATALOG_TABS = ['products', 'brochures-qa', 'promos']
 
 // The hash is the stronger intent here too: a #productKey deep link opens the
 // Products tab so ProductsView's hash-apply effect can expand the product.
 export function resolveCatalogTab(tab, hash) {
   if (hash) return 'products'
   return ADMIN_CATALOG_TABS.includes(tab) ? tab : 'products'
+}
+
+// "29 October 2026" for an observed_date, in the viewer's language. Shared by
+// the admin QA view (BrochuresView keeps its own copy, unchanged) and the
+// user-facing gallery (#673) — the label contract must not drift between the
+// two surfaces.
+export function observedDateLabel(date, language) {
+  const parsed = new Date(`${date}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return date
+  return parsed.toLocaleDateString(language, { day: 'numeric', month: 'long', year: 'numeric' })
 }

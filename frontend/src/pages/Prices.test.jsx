@@ -20,7 +20,7 @@ vi.mock('../lib/queries/index.js', () => ({
   usePriceSources: vi.fn(),
   usePriceMeta: vi.fn(),
   usePriceDetail: vi.fn(),
-  usePricePromos: vi.fn(),
+  usePriceBrochures: vi.fn(),
 }))
 
 // #423: the expanded detail asks who is looking (the rename action is
@@ -32,7 +32,7 @@ import {
   usePriceSources,
   usePriceMeta,
   usePriceDetail,
-  usePricePromos,
+  usePriceBrochures,
 } from '../lib/queries/index.js'
 import { useMe } from '../lib/queries/me.js'
 
@@ -114,19 +114,6 @@ function renderPrices() {
   return utils
 }
 
-// The router mock cannot re-render on navigate — flip the mocked search
-// params through a rerender instead.
-function rerenderPrices(utils) {
-  utils.rerender(
-    React.createElement(
-      QueryClientProvider,
-      { client: utils._queryClient },
-      React.createElement(Prices, null)
-    )
-  )
-  return utils
-}
-
 // The suite's i18n mock returns raw keys, so assertions match keys and
 // un-translated data (product names, store names, prices). Filter chips are
 // spans, product rows are buttons — search both.
@@ -157,6 +144,11 @@ describe('Prices', () => {
       },
     })
     vi.mocked(usePriceDetail).mockReturnValue({ data: null, isLoading: false })
+    vi.mocked(usePriceBrochures).mockReturnValue({
+      data: { groups: [] },
+      isLoading: false,
+      isError: false,
+    })
     vi.mocked(usePrices).mockReturnValue({
       data: { items: mockItems, total: 3 },
       isLoading: false,
@@ -551,137 +543,76 @@ describe('Prices', () => {
     expect(container.textContent).not.toContain('prices.updated')
   })
 
-  // --- Promos view (issue #292) ---
+  // --- Brochures view (issue #673): the user gallery on /prices ---
 
-  describe('segmented Products|Promos view', () => {
-    const promoCatalog = {
-      types: [
+  describe('segmented Products|Brochures view', () => {
+    const brochureCatalog = {
+      groups: [
         {
-          promo_type: 'discount_pct',
+          source_slug: 'lotte-mart',
+          source_name: 'Lotte Mart',
+          brochure_url: '/api/brochures/lotte-mart/20261029/page_1_2ad1c95b.jpg',
+          observed_date: '2026-10-29',
           product_count: 2,
-          stores: { 'lotte-mart': 1, superindo: 1 },
-          example_products: [
-            {
-              product_key: OIL_KEY,
-              name: 'Minyak Goreng Bimoli',
-              brand: 'Bimoli',
-              unit: '1 L',
-              price: 21500,
-              effective_unit_price: 21500,
-            },
-          ],
-        },
-        {
-          promo_type: 'get_free',
-          product_count: 1,
-          stores: { superindo: 1 },
-          example_products: [],
         },
       ],
-      total: 3,
     }
 
     it('defaults to the products view with search and chips visible', () => {
       const { container } = renderPrices()
       expect(container.querySelector('input[type="search"]')).toBeTruthy()
-      expect(container.textContent).not.toContain('prices.promosLead')
-      expect(container.textContent).not.toContain('prices.viewPromos-pressed-anyway')
+      expect(container.textContent).not.toContain('prices.brochuresLead')
+      expect(container.textContent).not.toContain('prices.viewBrochures-pressed-anyway')
     })
 
-    it('?view=promos renders the promos view and hides products-only controls', () => {
-      mockView = 'promos'
-      vi.mocked(usePricePromos).mockReturnValue({
-        data: promoCatalog,
+    it('?view=brochures renders the gallery and hides products-only controls', () => {
+      mockView = 'brochures'
+      vi.mocked(usePriceBrochures).mockReturnValue({
+        data: brochureCatalog,
         isLoading: false,
         isError: false,
       })
       const { container } = renderPrices()
-      expect(container.textContent).toContain('prices.promosLead')
-      expect(container.textContent).toContain('prices.promoTypeDiscountPct')
-      expect(container.textContent).toContain('prices.promoTypeGetFree')
-      expect(container.textContent).toContain('prices.promosTotal')
+      expect(container.textContent).toContain('prices.brochuresLead')
+      expect(container.querySelector('[data-testid="brochure-card"]')).toBeTruthy()
       expect(container.querySelector('input[type="search"]')).toBeNull()
-      expect(container.querySelector('select')).toBeNull()
+      // The gallery owns its own filter selects; the explorer's are gone.
+      expect(container.querySelector('[data-testid="brochure-store-filter"]')).toBeTruthy()
       // Segment row stays visible in both views.
       expect(container.textContent).toContain('prices.viewProducts')
-      expect(container.textContent).toContain('prices.viewPromos')
+      expect(container.textContent).toContain('prices.viewBrochures')
     })
 
-    it('a hash present forces the products view even with view=promos', () => {
-      mockView = 'promos'
+    it('selecting a segment navigates with the view param', () => {
+      const { container } = renderPrices()
+      fireEvent.click(findClickable(container, 'prices.viewBrochures'))
+      expect(navigate).toHaveBeenCalledWith({
+        to: '/prices',
+        search: { view: 'brochures' },
+        hash: '',
+      })
+      fireEvent.click(findClickable(container, 'prices.viewProducts'))
+      expect(navigate).toHaveBeenCalledWith({ to: '/prices', search: {}, hash: '' })
+    })
+
+    it('a hash present forces the products view even with view=brochures', () => {
+      mockView = 'brochures'
       mockHash = `#${OIL_KEY}`
       const { container } = renderPrices()
       expect(container.textContent).toContain('prices.lead')
       expect(container.querySelector('input[type="search"]')).toBeTruthy()
-      expect(container.textContent).not.toContain('prices.promosLead')
-    })
-
-    it('clicking an example jumps: clears filters and deep-links the product', () => {
-      // The category picker (issue #373/#632) must be present to be primed.
-      vi.mocked(usePriceMeta).mockReturnValue({
-        data: {
-          latestScrapedAt: isoDaysFromNow(-5 * 60_000),
-          observationCount: 3,
-          categories: ['beras', 'minyak-goreng'],
-        },
-      })
-      const utils = renderPrices()
-      const { container } = utils
-      // Prime the shell's local filters through the products view first —
-      // the jump must clear exactly these. (Search is debounced into the
-      // query, so its clearing is asserted via the input value below.)
-      fireEvent.change(container.querySelector('input[type="search"]'), {
-        target: { value: 'minyak' },
-      })
-      fireEvent.click(findClickable(container, 'Lotte Mart'))
-      const categoryFilter = container.querySelector('[data-testid="prices-category-filter"]')
-      fireEvent.click(within(categoryFilter).getByRole('button', { name: /prices\.allCategories/ }))
-      fireEvent.click(within(categoryFilter).getByRole('option', { name: 'minyak-goreng' }))
-      expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
-        q: undefined,
-        source: 'lotte-mart',
-        category: 'minyak-goreng',
-        sort: 'cheapest',
-      })
-
-      mockView = 'promos'
-      vi.mocked(usePricePromos).mockReturnValue({
-        data: promoCatalog,
-        isLoading: false,
-        isError: false,
-      })
-      rerenderPrices(utils)
-      // Expand the Discount % card first — example rows live inside it.
-      fireEvent.click(findClickable(container, 'prices.promoTypeDiscountPct'))
-      expect(container.textContent).toContain('prices.showExamples')
-      fireEvent.click(findClickable(container, 'Minyak Goreng Bimoli'))
-      expect(navigate).toHaveBeenCalledWith({
-        to: '/prices',
-        search: {},
-        hash: OIL_KEY,
-        replace: false,
-      })
-      // The jump dropped the view param (hash wins) and cleared the local
-      // filters — the unfiltered products query is the landing context.
-      expect(mockHash).toBe(`#${OIL_KEY}`)
-      expect(container.querySelector('input[type="search"]').value).toBe('')
-      expect(vi.mocked(usePrices).mock.calls.at(-1)[0]).toEqual({
-        q: undefined,
-        source: null,
-        category: undefined,
-        sort: 'cheapest',
-      })
+      expect(container.textContent).not.toContain('prices.brochuresLead')
     })
   })
 
-  // --- Issue #631: Brochures and the admin tools moved to /admin/catalog ---
+  // --- Issue #673: promos and the admin tools live on /admin/catalog ---
 
   describe('admin surfaces removed from /prices', () => {
     it('renders no admin controls for an admin', () => {
       vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
       const { container } = renderPrices()
-      // Products + Promos only: no Brochures tab, no identity/QA panels.
-      expect(container.textContent).not.toContain('prices.viewBrochures')
+      // Products + Brochures only: no promos segment, no identity/QA panels.
+      expect(container.textContent).not.toContain('prices.viewPromos')
       expect(container.querySelector('[data-testid="duplicate-names-panel"]')).toBeNull()
       expect(container.querySelector('[data-testid="alias-candidates-panel"]')).toBeNull()
       // The expanded detail offers no rename action either.
@@ -692,7 +623,7 @@ describe('Prices', () => {
 
     it('renders no admin controls for a shopper', () => {
       const { container } = renderPrices()
-      expect(container.textContent).not.toContain('prices.viewBrochures')
+      expect(container.textContent).not.toContain('prices.viewPromos')
       expect(container.querySelector('[data-testid="duplicate-names-panel"]')).toBeNull()
       expect(container.querySelector('[data-testid="alias-candidates-panel"]')).toBeNull()
       fireEvent.click(findClickable(container, 'Minyak Goreng Bimoli'))
@@ -700,64 +631,23 @@ describe('Prices', () => {
     })
   })
 
-  describe('retired Brochures deep link (?view=brochures)', () => {
-    it('falls back to Products for a shopper without redirecting', () => {
-      mockView = 'brochures'
+  describe('retired promos deep link (?view=promos) — hard removal (#673)', () => {
+    it('silently lands on the Products default with no redirect', () => {
+      mockView = 'promos'
       const { container } = renderPrices()
       expect(container.querySelector('input[type="search"]')).toBeTruthy()
       expect(container.textContent).toContain('prices.lead')
-      expect(container.textContent).not.toContain('prices.brochuresLead')
+      expect(container.textContent).not.toContain('prices.promosLead')
       expect(navigate).not.toHaveBeenCalled()
     })
 
-    it('redirects an admin to the admin catalog Brochures tab', () => {
-      mockView = 'brochures'
-      vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
-      const { container } = renderPrices()
-      expect(navigate).toHaveBeenCalledWith({
-        to: '/admin/catalog',
-        search: { tab: 'brochures' },
-        hash: '',
-        replace: true,
-      })
-      // The moved view never flash-renders on /prices while redirecting.
-      expect(container.querySelector('input[type="search"]')).toBeNull()
-      expect(container.textContent).not.toContain('prices.brochuresLead')
-    })
-
-    it('keeps a #productKey hash on the admin redirect (the hash wins)', () => {
-      mockView = 'brochures'
-      mockHash = `#${OIL_KEY}`
-      vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
-      renderPrices()
-      expect(navigate).toHaveBeenCalledWith({
-        to: '/admin/catalog',
-        search: {},
-        hash: OIL_KEY,
-        replace: true,
-      })
-    })
-
-    it('waits for the identity before rendering Products while loading', () => {
-      // #631 review: the legacy link must not flash the explorer (and fire
-      // the price query) before we know whether this viewer is the admin who
-      // gets redirected or a shopper who falls back.
-      mockView = 'brochures'
-      vi.mocked(useMe).mockReturnValue({ data: undefined, isLoading: true })
-      const { container } = renderPrices()
-      expect(container.querySelector('input[type="search"]')).toBeNull()
-      expect(container.textContent).not.toContain('prices.lead')
-      expect(usePrices).not.toHaveBeenCalled()
-      expect(navigate).not.toHaveBeenCalled()
-    })
-
-    it('still lets a #productKey hash win over the retired view param', () => {
-      mockView = 'brochures'
+    it('a #productKey hash still wins over the retired value', () => {
+      mockView = 'promos'
       mockHash = `#${OIL_KEY}`
       const { container } = renderPrices()
       expect(container.textContent).toContain('prices.lead')
-      expect(container.textContent).not.toContain('prices.brochuresLead')
       expect(container.querySelector('input[type="search"]')).toBeTruthy()
+      expect(navigate).not.toHaveBeenCalled()
     })
   })
 
