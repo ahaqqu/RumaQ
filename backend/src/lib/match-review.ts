@@ -730,9 +730,7 @@ async function getReviewRow(db: D1Database, id: string): Promise<ReviewItem | nu
   // evidence shape the queue rows do.
   enrichEntryEvidence(
     [item],
-    await fetchEntryEvidence(db, [
-      { productKey: item.entryProductKey, storeSlug: item.entryStore },
-    ])
+    await fetchEntryEvidence(db, [{ productKey: item.entryProductKey, storeSlug: item.entryStore }])
   )
   return item
 }
