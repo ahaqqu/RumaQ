@@ -1,21 +1,21 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useApp } from '../context/AppContext.jsx'
-import { Plan } from '../pages/Plan.jsx'
-import { RouteError } from '../components/RouteError.jsx'
+import { useApp } from '../../context/AppContext.jsx'
+import { Home } from '../../pages/Home.jsx'
+import { RouteError } from '../../components/RouteError.jsx'
 
 function RouteComponent() {
   const navigate = useNavigate()
   const { setAssistantOpen } = useApp()
 
   return (
-    <Plan
-      askAssistant={() => setAssistantOpen(true)}
+    <Home
       setView={(view) => navigate({ to: `/${view === 'home' ? '' : view}` })}
+      askAssistant={() => setAssistantOpen(true)}
     />
   )
 }
 
-export const Route = createFileRoute('/plan')({
+export const Route = createFileRoute('/_app/')({
   component: RouteComponent,
   errorComponent: RouteError,
 })

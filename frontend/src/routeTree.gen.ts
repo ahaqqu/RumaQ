@@ -9,158 +9,164 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as AddRouteImport } from './routes/add'
-import { Route as CalendarRouteImport } from './routes/calendar'
-import { Route as DocumentsRouteImport } from './routes/documents'
-import { Route as HistoryRouteImport } from './routes/history'
-import { Route as HouseholdRouteImport } from './routes/household'
-import { Route as InventoryRouteImport } from './routes/inventory'
-import { Route as PlanRouteImport } from './routes/plan'
-import { Route as PricesRouteImport } from './routes/prices'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as TasksRouteImport } from './routes/tasks'
-import { Route as AdminAiUsageRouteImport } from './routes/admin.ai-usage'
-import { Route as AdminCatalogRouteImport } from './routes/admin.catalog'
-import { Route as AdminPricesRouteImport } from './routes/admin.prices'
-import { Route as AdminReviewRouteImport } from './routes/admin.review'
-import { Route as AdminScrapeRouteImport } from './routes/admin.scrape'
+import { Route as AppRouteImport } from './routes/_app'
+import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppAddRouteImport } from './routes/_app/add'
+import { Route as AppCalendarRouteImport } from './routes/_app/calendar'
+import { Route as AppDocumentsRouteImport } from './routes/_app/documents'
+import { Route as AppHistoryRouteImport } from './routes/_app/history'
+import { Route as AppHouseholdRouteImport } from './routes/_app/household'
+import { Route as AppInventoryRouteImport } from './routes/_app/inventory'
+import { Route as AppPlanRouteImport } from './routes/_app/plan'
+import { Route as AppPricesRouteImport } from './routes/_app/prices'
+import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppTasksRouteImport } from './routes/_app/tasks'
+import { Route as AppAdminAiUsageRouteImport } from './routes/_app/admin.ai-usage'
+import { Route as AppAdminCatalogRouteImport } from './routes/_app/admin.catalog'
+import { Route as AppAdminPricesRouteImport } from './routes/_app/admin.prices'
+import { Route as AppAdminReviewRouteImport } from './routes/_app/admin.review'
+import { Route as AppAdminScrapeRouteImport } from './routes/_app/admin.scrape'
 
-const IndexRoute = IndexRouteImport.update({
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const AddRoute = AddRouteImport.update({
+const AppAddRoute = AppAddRouteImport.update({
   id: '/add',
   path: '/add',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const CalendarRoute = CalendarRouteImport.update({
+const AppCalendarRoute = AppCalendarRouteImport.update({
   id: '/calendar',
   path: '/calendar',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const DocumentsRoute = DocumentsRouteImport.update({
+const AppDocumentsRoute = AppDocumentsRouteImport.update({
   id: '/documents',
   path: '/documents',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const HistoryRoute = HistoryRouteImport.update({
+const AppHistoryRoute = AppHistoryRouteImport.update({
   id: '/history',
   path: '/history',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const HouseholdRoute = HouseholdRouteImport.update({
+const AppHouseholdRoute = AppHouseholdRouteImport.update({
   id: '/household',
   path: '/household',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const InventoryRoute = InventoryRouteImport.update({
+const AppInventoryRoute = AppInventoryRouteImport.update({
   id: '/inventory',
   path: '/inventory',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const PlanRoute = PlanRouteImport.update({
+const AppPlanRoute = AppPlanRouteImport.update({
   id: '/plan',
   path: '/plan',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const PricesRoute = PricesRouteImport.update({
+const AppPricesRoute = AppPricesRouteImport.update({
   id: '/prices',
   path: '/prices',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const SettingsRoute = SettingsRouteImport.update({
+const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const TasksRoute = TasksRouteImport.update({
+const AppTasksRoute = AppTasksRouteImport.update({
   id: '/tasks',
   path: '/tasks',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const AdminAiUsageRoute = AdminAiUsageRouteImport.update({
+const AppAdminAiUsageRoute = AppAdminAiUsageRouteImport.update({
   id: '/admin/ai-usage',
   path: '/admin/ai-usage',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const AdminCatalogRoute = AdminCatalogRouteImport.update({
+const AppAdminCatalogRoute = AppAdminCatalogRouteImport.update({
   id: '/admin/catalog',
   path: '/admin/catalog',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const AdminPricesRoute = AdminPricesRouteImport.update({
+const AppAdminPricesRoute = AppAdminPricesRouteImport.update({
   id: '/admin/prices',
   path: '/admin/prices',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const AdminReviewRoute = AdminReviewRouteImport.update({
+const AppAdminReviewRoute = AppAdminReviewRouteImport.update({
   id: '/admin/review',
   path: '/admin/review',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
-const AdminScrapeRoute = AdminScrapeRouteImport.update({
+const AppAdminScrapeRoute = AppAdminScrapeRouteImport.update({
   id: '/admin/scrape',
   path: '/admin/scrape',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/add': typeof AddRoute
-  '/calendar': typeof CalendarRoute
-  '/documents': typeof DocumentsRoute
-  '/history': typeof HistoryRoute
-  '/household': typeof HouseholdRoute
-  '/inventory': typeof InventoryRoute
-  '/plan': typeof PlanRoute
-  '/prices': typeof PricesRoute
-  '/settings': typeof SettingsRoute
-  '/tasks': typeof TasksRoute
-  '/admin/ai-usage': typeof AdminAiUsageRoute
-  '/admin/catalog': typeof AdminCatalogRoute
-  '/admin/prices': typeof AdminPricesRoute
-  '/admin/review': typeof AdminReviewRoute
-  '/admin/scrape': typeof AdminScrapeRoute
+  '/': typeof AppIndexRoute
+  '/add': typeof AppAddRoute
+  '/calendar': typeof AppCalendarRoute
+  '/documents': typeof AppDocumentsRoute
+  '/history': typeof AppHistoryRoute
+  '/household': typeof AppHouseholdRoute
+  '/inventory': typeof AppInventoryRoute
+  '/plan': typeof AppPlanRoute
+  '/prices': typeof AppPricesRoute
+  '/settings': typeof AppSettingsRoute
+  '/tasks': typeof AppTasksRoute
+  '/admin/ai-usage': typeof AppAdminAiUsageRoute
+  '/admin/catalog': typeof AppAdminCatalogRoute
+  '/admin/prices': typeof AppAdminPricesRoute
+  '/admin/review': typeof AppAdminReviewRoute
+  '/admin/scrape': typeof AppAdminScrapeRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/add': typeof AddRoute
-  '/calendar': typeof CalendarRoute
-  '/documents': typeof DocumentsRoute
-  '/history': typeof HistoryRoute
-  '/household': typeof HouseholdRoute
-  '/inventory': typeof InventoryRoute
-  '/plan': typeof PlanRoute
-  '/prices': typeof PricesRoute
-  '/settings': typeof SettingsRoute
-  '/tasks': typeof TasksRoute
-  '/admin/ai-usage': typeof AdminAiUsageRoute
-  '/admin/catalog': typeof AdminCatalogRoute
-  '/admin/prices': typeof AdminPricesRoute
-  '/admin/review': typeof AdminReviewRoute
-  '/admin/scrape': typeof AdminScrapeRoute
+  '/add': typeof AppAddRoute
+  '/calendar': typeof AppCalendarRoute
+  '/documents': typeof AppDocumentsRoute
+  '/history': typeof AppHistoryRoute
+  '/household': typeof AppHouseholdRoute
+  '/inventory': typeof AppInventoryRoute
+  '/plan': typeof AppPlanRoute
+  '/prices': typeof AppPricesRoute
+  '/settings': typeof AppSettingsRoute
+  '/tasks': typeof AppTasksRoute
+  '/': typeof AppIndexRoute
+  '/admin/ai-usage': typeof AppAdminAiUsageRoute
+  '/admin/catalog': typeof AppAdminCatalogRoute
+  '/admin/prices': typeof AppAdminPricesRoute
+  '/admin/review': typeof AppAdminReviewRoute
+  '/admin/scrape': typeof AppAdminScrapeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/add': typeof AddRoute
-  '/calendar': typeof CalendarRoute
-  '/documents': typeof DocumentsRoute
-  '/history': typeof HistoryRoute
-  '/household': typeof HouseholdRoute
-  '/inventory': typeof InventoryRoute
-  '/plan': typeof PlanRoute
-  '/prices': typeof PricesRoute
-  '/settings': typeof SettingsRoute
-  '/tasks': typeof TasksRoute
-  '/admin/ai-usage': typeof AdminAiUsageRoute
-  '/admin/catalog': typeof AdminCatalogRoute
-  '/admin/prices': typeof AdminPricesRoute
-  '/admin/review': typeof AdminReviewRoute
-  '/admin/scrape': typeof AdminScrapeRoute
+  '/_app': typeof AppRouteWithChildren
+  '/_app/add': typeof AppAddRoute
+  '/_app/calendar': typeof AppCalendarRoute
+  '/_app/documents': typeof AppDocumentsRoute
+  '/_app/history': typeof AppHistoryRoute
+  '/_app/household': typeof AppHouseholdRoute
+  '/_app/inventory': typeof AppInventoryRoute
+  '/_app/plan': typeof AppPlanRoute
+  '/_app/prices': typeof AppPricesRoute
+  '/_app/settings': typeof AppSettingsRoute
+  '/_app/tasks': typeof AppTasksRoute
+  '/_app/': typeof AppIndexRoute
+  '/_app/admin/ai-usage': typeof AppAdminAiUsageRoute
+  '/_app/admin/catalog': typeof AppAdminCatalogRoute
+  '/_app/admin/prices': typeof AppAdminPricesRoute
+  '/_app/admin/review': typeof AppAdminReviewRoute
+  '/_app/admin/scrape': typeof AppAdminScrapeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -183,7 +189,6 @@ export interface FileRouteTypes {
     | '/admin/scrape'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/'
     | '/add'
     | '/calendar'
     | '/documents'
@@ -194,6 +199,7 @@ export interface FileRouteTypes {
     | '/prices'
     | '/settings'
     | '/tasks'
+    | '/'
     | '/admin/ai-usage'
     | '/admin/catalog'
     | '/admin/prices'
@@ -201,177 +207,195 @@ export interface FileRouteTypes {
     | '/admin/scrape'
   id:
     | '__root__'
-    | '/'
-    | '/add'
-    | '/calendar'
-    | '/documents'
-    | '/history'
-    | '/household'
-    | '/inventory'
-    | '/plan'
-    | '/prices'
-    | '/settings'
-    | '/tasks'
-    | '/admin/ai-usage'
-    | '/admin/catalog'
-    | '/admin/prices'
-    | '/admin/review'
-    | '/admin/scrape'
+    | '/_app'
+    | '/_app/add'
+    | '/_app/calendar'
+    | '/_app/documents'
+    | '/_app/history'
+    | '/_app/household'
+    | '/_app/inventory'
+    | '/_app/plan'
+    | '/_app/prices'
+    | '/_app/settings'
+    | '/_app/tasks'
+    | '/_app/'
+    | '/_app/admin/ai-usage'
+    | '/_app/admin/catalog'
+    | '/_app/admin/prices'
+    | '/_app/admin/review'
+    | '/_app/admin/scrape'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  AddRoute: typeof AddRoute
-  CalendarRoute: typeof CalendarRoute
-  DocumentsRoute: typeof DocumentsRoute
-  HistoryRoute: typeof HistoryRoute
-  HouseholdRoute: typeof HouseholdRoute
-  InventoryRoute: typeof InventoryRoute
-  PlanRoute: typeof PlanRoute
-  PricesRoute: typeof PricesRoute
-  SettingsRoute: typeof SettingsRoute
-  TasksRoute: typeof TasksRoute
-  AdminAiUsageRoute: typeof AdminAiUsageRoute
-  AdminCatalogRoute: typeof AdminCatalogRoute
-  AdminPricesRoute: typeof AdminPricesRoute
-  AdminReviewRoute: typeof AdminReviewRoute
-  AdminScrapeRoute: typeof AdminScrapeRoute
+  AppRoute: typeof AppRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_app/': {
+      id: '/_app/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/add': {
-      id: '/add'
+    '/_app/add': {
+      id: '/_app/add'
       path: '/add'
       fullPath: '/add'
-      preLoaderRoute: typeof AddRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppAddRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/calendar': {
-      id: '/calendar'
+    '/_app/calendar': {
+      id: '/_app/calendar'
       path: '/calendar'
       fullPath: '/calendar'
-      preLoaderRoute: typeof CalendarRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppCalendarRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/documents': {
-      id: '/documents'
+    '/_app/documents': {
+      id: '/_app/documents'
       path: '/documents'
       fullPath: '/documents'
-      preLoaderRoute: typeof DocumentsRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppDocumentsRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/history': {
-      id: '/history'
+    '/_app/history': {
+      id: '/_app/history'
       path: '/history'
       fullPath: '/history'
-      preLoaderRoute: typeof HistoryRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppHistoryRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/household': {
-      id: '/household'
+    '/_app/household': {
+      id: '/_app/household'
       path: '/household'
       fullPath: '/household'
-      preLoaderRoute: typeof HouseholdRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppHouseholdRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/inventory': {
-      id: '/inventory'
+    '/_app/inventory': {
+      id: '/_app/inventory'
       path: '/inventory'
       fullPath: '/inventory'
-      preLoaderRoute: typeof InventoryRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppInventoryRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/plan': {
-      id: '/plan'
+    '/_app/plan': {
+      id: '/_app/plan'
       path: '/plan'
       fullPath: '/plan'
-      preLoaderRoute: typeof PlanRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppPlanRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/prices': {
-      id: '/prices'
+    '/_app/prices': {
+      id: '/_app/prices'
       path: '/prices'
       fullPath: '/prices'
-      preLoaderRoute: typeof PricesRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppPricesRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/settings': {
-      id: '/settings'
+    '/_app/settings': {
+      id: '/_app/settings'
       path: '/settings'
       fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/tasks': {
-      id: '/tasks'
+    '/_app/tasks': {
+      id: '/_app/tasks'
       path: '/tasks'
       fullPath: '/tasks'
-      preLoaderRoute: typeof TasksRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppTasksRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/admin/ai-usage': {
-      id: '/admin/ai-usage'
+    '/_app/admin/ai-usage': {
+      id: '/_app/admin/ai-usage'
       path: '/admin/ai-usage'
       fullPath: '/admin/ai-usage'
-      preLoaderRoute: typeof AdminAiUsageRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppAdminAiUsageRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/admin/catalog': {
-      id: '/admin/catalog'
+    '/_app/admin/catalog': {
+      id: '/_app/admin/catalog'
       path: '/admin/catalog'
       fullPath: '/admin/catalog'
-      preLoaderRoute: typeof AdminCatalogRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppAdminCatalogRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/admin/prices': {
-      id: '/admin/prices'
+    '/_app/admin/prices': {
+      id: '/_app/admin/prices'
       path: '/admin/prices'
       fullPath: '/admin/prices'
-      preLoaderRoute: typeof AdminPricesRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppAdminPricesRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/admin/review': {
-      id: '/admin/review'
+    '/_app/admin/review': {
+      id: '/_app/admin/review'
       path: '/admin/review'
       fullPath: '/admin/review'
-      preLoaderRoute: typeof AdminReviewRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppAdminReviewRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/admin/scrape': {
-      id: '/admin/scrape'
+    '/_app/admin/scrape': {
+      id: '/_app/admin/scrape'
       path: '/admin/scrape'
       fullPath: '/admin/scrape'
-      preLoaderRoute: typeof AdminScrapeRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppAdminScrapeRouteImport
+      parentRoute: typeof AppRoute
     }
   }
 }
 
+interface AppRouteChildren {
+  AppAddRoute: typeof AppAddRoute
+  AppCalendarRoute: typeof AppCalendarRoute
+  AppDocumentsRoute: typeof AppDocumentsRoute
+  AppHistoryRoute: typeof AppHistoryRoute
+  AppHouseholdRoute: typeof AppHouseholdRoute
+  AppInventoryRoute: typeof AppInventoryRoute
+  AppPlanRoute: typeof AppPlanRoute
+  AppPricesRoute: typeof AppPricesRoute
+  AppSettingsRoute: typeof AppSettingsRoute
+  AppTasksRoute: typeof AppTasksRoute
+  AppIndexRoute: typeof AppIndexRoute
+  AppAdminAiUsageRoute: typeof AppAdminAiUsageRoute
+  AppAdminCatalogRoute: typeof AppAdminCatalogRoute
+  AppAdminPricesRoute: typeof AppAdminPricesRoute
+  AppAdminReviewRoute: typeof AppAdminReviewRoute
+  AppAdminScrapeRoute: typeof AppAdminScrapeRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppAddRoute: AppAddRoute,
+  AppCalendarRoute: AppCalendarRoute,
+  AppDocumentsRoute: AppDocumentsRoute,
+  AppHistoryRoute: AppHistoryRoute,
+  AppHouseholdRoute: AppHouseholdRoute,
+  AppInventoryRoute: AppInventoryRoute,
+  AppPlanRoute: AppPlanRoute,
+  AppPricesRoute: AppPricesRoute,
+  AppSettingsRoute: AppSettingsRoute,
+  AppTasksRoute: AppTasksRoute,
+  AppIndexRoute: AppIndexRoute,
+  AppAdminAiUsageRoute: AppAdminAiUsageRoute,
+  AppAdminCatalogRoute: AppAdminCatalogRoute,
+  AppAdminPricesRoute: AppAdminPricesRoute,
+  AppAdminReviewRoute: AppAdminReviewRoute,
+  AppAdminScrapeRoute: AppAdminScrapeRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  AddRoute: AddRoute,
-  CalendarRoute: CalendarRoute,
-  DocumentsRoute: DocumentsRoute,
-  HistoryRoute: HistoryRoute,
-  HouseholdRoute: HouseholdRoute,
-  InventoryRoute: InventoryRoute,
-  PlanRoute: PlanRoute,
-  PricesRoute: PricesRoute,
-  SettingsRoute: SettingsRoute,
-  TasksRoute: TasksRoute,
-  AdminAiUsageRoute: AdminAiUsageRoute,
-  AdminCatalogRoute: AdminCatalogRoute,
-  AdminPricesRoute: AdminPricesRoute,
-  AdminReviewRoute: AdminReviewRoute,
-  AdminScrapeRoute: AdminScrapeRoute,
+  AppRoute: AppRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

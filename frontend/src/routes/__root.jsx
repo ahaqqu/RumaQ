@@ -4,7 +4,6 @@ import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client
 import { PersonaProvider } from '../context/PersonaContext.jsx'
 import { PluginCatalogProvider } from '../plugins/context.jsx'
 import { AppProvider } from '../context/AppContext.jsx'
-import { AppShell } from '../components/AppShell.jsx'
 import { Login } from '../pages/Login.jsx'
 import { PwaUpdatePrompt } from '../components/PwaUpdatePrompt.jsx'
 import { RouteError } from '../components/RouteError.jsx'
@@ -41,9 +40,12 @@ function AuthGate() {
           auth branch — AppShell's nav filter and the plugin route gates read
           it from here. */}
       <PluginCatalogProvider>
-        <AppShell>
-          <Outlet />
-        </AppShell>
+        {/* #674: the shell is a route concern now — the pathless _app layout
+            route (routes/_app.jsx) wraps its children in AppShell, so this
+            gate only composes the providers above BOTH branches and the
+            chrome-less brochure viewer renders without the shell while still
+            inside the Login wall. */}
+        <Outlet />
       </PluginCatalogProvider>
     </PersonaProvider>
   )
