@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useHome, usePlans } from '../lib/queries/index.js'
 import { useMe } from '../lib/queries/me.js'
@@ -120,9 +121,13 @@ export function Home({ setView, askAssistant }) {
   const planStores = [...new Set(planItems.map((it) => it.store_label).filter(Boolean))]
 
   const firstName = (meData?.user?.name || '').split(' ').filter(Boolean)[0]
-  const greeting = firstName
-    ? `${t(getGreetingKey(new Date(), i18n.language))}, ${firstName}`
-    : t(getGreetingKey(new Date(), i18n.language))
+  // The greeting's time-of-day bucket is captured once at mount (#686 purity):
+  // `new Date()` during render is impure and would flip the bucket mid-session
+  // on an incidental re-render. The frozen instant still re-derives the key on
+  // a language change, so the greeting translates in place.
+  const [greetedAt] = useState(() => new Date())
+  const greetingKey = getGreetingKey(greetedAt, i18n.language)
+  const greeting = firstName ? `${t(greetingKey)}, ${firstName}` : t(greetingKey)
   // The spend card's month label is the household month (the window the
   // /api/home query cuts on, #554) — read off the WIB day grid, UTC-pinned so
   // the label cannot drift a month on a non-WIB device near month edges.

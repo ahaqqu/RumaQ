@@ -232,6 +232,12 @@ When('I open the brochure viewer deep link directly', async ({ page }) => {
   await viewerPage.getByTestId('viewer-topbar').waitFor({ state: 'visible', timeout: 15_000 })
 })
 
+// playwright-bdd requires the first (fixtures) argument to be an object
+// destructuring pattern and treats its keys as required fixtures; this step
+// asserts on the separate viewer tab carried in module state, so it declares
+// no fixtures — the empty pattern is the framework's way to skip the arg and
+// reach the {string} positional parameter.
+// eslint-disable-next-line no-empty-pattern
 Then('the viewer tab should render the full mode for {string}', async ({}, store) => {
   const viewer = viewerPage
   const topbar = viewer.getByTestId('viewer-topbar')

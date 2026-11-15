@@ -325,7 +325,7 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   // and correctable by a later manual fix. Only an alias id can be armed, never
   // a set: one row is armed at a time by construction, so the prompt can never
   // follow the cursor to another row.
-  const [armedAliasId, setArmedAliasId] = useState(null)
+  const [armedPrompt, setArmedPrompt] = useState(null)
   // The armed row's own Reject button, so cancelling can hand focus back to it,
   // and the node Cancel captured for that hand-back (the ref detaches with the
   // prompt, so the node is read while the prompt is still open).
@@ -355,10 +355,16 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   // refetch (and a remount/leave, which drops the state with the component)
   // disarms. `dataUpdatedAt` catches a re-read whose payload is unchanged
   // (React Query's structural sharing keeps the same `data` reference then);
-  // `identity` catches a payload that did move.
-  useEffect(() => {
-    setArmedAliasId(null)
-  }, [identity, identityQuery.dataUpdatedAt])
+  // `identity` catches a payload that did move. Both are snapshotted at arm
+  // time and compared during render (#686): the prompt is armed exactly while
+  // the evidence it was armed against is still on screen, without a
+  // setState-in-effect cascade to reset it.
+  const armedAliasId =
+    armedPrompt &&
+    armedPrompt.identity === identity &&
+    armedPrompt.dataUpdatedAt === identityQuery.dataUpdatedAt
+      ? armedPrompt.aliasId
+      : null
 
   // The prompt expires on its own. Every disarm rule (Cancel, another row, a
   // decision, the form's own Cancel, a re-read) only sets `armedAliasId` back to
@@ -366,7 +372,7 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   // timer never outlives its prompt, and unmounting the form drops it too.
   useEffect(() => {
     if (armedAliasId === null) return undefined
-    const expiry = setTimeout(() => setArmedAliasId(null), REJECT_ARM_TIMEOUT_MS)
+    const expiry = setTimeout(() => setArmedPrompt(null), REJECT_ARM_TIMEOUT_MS)
     return () => clearTimeout(expiry)
   }, [armedAliasId])
 
@@ -452,7 +458,7 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
     setNotice(null)
     // The form's own cancel leaves the surface (or resets it), so an armed
     // reject must not outlive it.
-    setArmedAliasId(null)
+    setArmedPrompt(null)
     onClose?.()
   }
 
@@ -501,7 +507,7 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
     // Every decision ends any armed prompt, whichever row owned it: the
     // rejected row is now being written, and a second row's prompt must not
     // survive an action that changes the list.
-    setArmedAliasId(null)
+    setArmedPrompt(null)
     setAliasNotice(null)
     setDecidingAliases((previous) => ({ ...previous, [alias.id]: action }))
     aliasDecision.mutate(
@@ -546,7 +552,13 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
   // nothing, so it must not discard the receipt of a decision already made.
   function armReject(alias) {
     if (!alias?.id || !isAdmin || decidingAliases[alias.id]) return
-    setArmedAliasId(alias.id)
+    // The snapshot below is the disarm key: a re-read that moves `identity`
+    // or `dataUpdatedAt` (see the derivation above) drops the prompt.
+    setArmedPrompt({
+      aliasId: alias.id,
+      identity,
+      dataUpdatedAt: identityQuery.dataUpdatedAt,
+    })
   }
 
   function disarmReject() {
@@ -554,7 +566,7 @@ export function ProductRenameForm({ productKey, onClose, isAdmin = false }) {
     // keyboard user would restart their walk through the page. The row's own
     // Reject button — the node that opened the prompt — takes it back instead.
     returnFocusRef.current = rejectTriggerRef.current
-    setArmedAliasId(null)
+    setArmedPrompt(null)
   }
 
   // Hands focus back once the prompt is gone. Only a Cancel sets the node, so a

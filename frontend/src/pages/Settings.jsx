@@ -138,6 +138,26 @@ export function Settings({ motion, setMotion }) {
     return () => i18n.off('languageChanged', handler)
   }, [])
 
+  // The persona draft follows the server payload (a refetch after a save
+  // resets an applied draft back to the saved state). The draft is editable
+  // state, so the mirror runs during the render that first sees a new
+  // payload — the documented render-phase pattern (#686) — instead of a
+  // setState-in-effect cascade. React Query's structural sharing keeps the
+  // payload reference stable across same-value refetches, so the reference
+  // compare tracks "the server answered something new" exactly.
+  const [mirroredSettings, setMirroredSettings] = useState(null)
+  if (settingsData && settingsData !== mirroredSettings) {
+    setMirroredSettings(settingsData)
+    setPersonaDraft((prev) => ({
+      userRole: settingsData.persona_user_role ?? prev.userRole,
+      aiRole: settingsData.persona_ai_role ?? prev.aiRole,
+      enabled: settingsData.persona_enabled ?? prev.enabled,
+    }))
+  }
+
+  // Motion lives in AppProvider (app-level state) and language in i18next
+  // (an external system), so this stays an effect: it only writes outside
+  // this component's own render.
   useEffect(() => {
     if (!settingsData) return
     if (settingsData.motion_preference) {
@@ -146,11 +166,6 @@ export function Settings({ motion, setMotion }) {
     if (settingsData.language) {
       i18n.changeLanguage(settingsData.language)
     }
-    setPersonaDraft((prev) => ({
-      userRole: settingsData.persona_user_role ?? prev.userRole,
-      aiRole: settingsData.persona_ai_role ?? prev.aiRole,
-      enabled: settingsData.persona_enabled ?? prev.enabled,
-    }))
   }, [settingsData, setMotion])
 
   const saveSettings = useCallback(

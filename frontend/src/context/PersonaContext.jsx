@@ -13,11 +13,27 @@ export function PersonaProvider({ children, initialPersona }) {
     return loaded
   })
 
-  useEffect(() => {
-    if (initialPersona) {
-      setPersonaState((prev) => ({ ...prev, ...initialPersona }))
-    }
-  }, [initialPersona])
+  // The server persona seed must win over localStorage exactly once per seed
+  // VALUE: at boot (the mount initializer above already merges it) and when
+  // the seed changes after mount — the login transition re-uses this provider
+  // slot, so the initializer does not re-run there. `initialPersona` is
+  // rebuilt inline by AuthGate on every render, so the sync compares the seed
+  // field-wise instead of by object identity: the roles are free-form strings
+  // (backend `optional(string())`, so `|` is legal input and a joined
+  // signature could collide), and unrelated re-renders (focus refetches) must
+  // not re-merge the seed over local persona edits, which the old
+  // setState-in-effect did on every AuthGate render (#686).
+  const [syncedSeed, setSyncedSeed] = useState(initialPersona)
+  const seedChanged =
+    initialPersona &&
+    (!syncedSeed ||
+      syncedSeed.userRole !== initialPersona.userRole ||
+      syncedSeed.aiRole !== initialPersona.aiRole ||
+      syncedSeed.enabled !== initialPersona.enabled)
+  if (seedChanged) {
+    setSyncedSeed(initialPersona)
+    setPersonaState((prev) => ({ ...prev, ...initialPersona }))
+  }
 
   const setPersona = (next) => {
     setPersonaState((prev) => {

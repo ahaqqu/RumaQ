@@ -152,12 +152,7 @@ function createQueryClient() {
 }
 
 function renderWithQuery(ui) {
-  return render(
-    React.createElement(QueryClientProvider, {
-      client: createQueryClient(),
-      children: ui,
-    })
-  )
+  return render(React.createElement(QueryClientProvider, { client: createQueryClient() }, ui))
 }
 
 function buttons(container) {

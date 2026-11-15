@@ -17,9 +17,13 @@ export function DocumentViewer({ documentId, file, onClose }) {
   const dialogRef = useRef(null)
   // The close callback is read from a ref so the focus contract below mounts
   // exactly once (the parent passes an inline handler that changes identity
-  // on every render).
+  // on every render). The ref is mirrored after each commit — never during
+  // render (#686) — and the Escape handler only reads it at event time, so
+  // the value it sees is always the latest committed prop.
   const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
+  useEffect(() => {
+    onCloseRef.current = onClose
+  })
 
   // Modal-dialog focus contract (the AppShell drawer pattern): focus enters
   // the panel when it opens, Tab stays inside it while the overlay occludes

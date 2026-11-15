@@ -28,6 +28,8 @@ High-level objectives and defaults for frontend work. Prefer these over one-off 
 - Use shared contexts only for cross-cutting client state that does not belong in server cache.
 - Invalidate server state after successful mutations.
 - Prefer optimistic updates (snapshot/rollback) for high-frequency mutations; reconcile by invalidating on settle.
+- To sync this component's own state with a new server payload, use the render-phase mirror — a guarded `if (payload !== mirrored)` during render that sets both the mirror and the draft — not a setState-in-effect cascade (`react/set-state-in-effect` is an error). Reference implementations: `PersonaContext.jsx` (seed sync), `Settings.jsx` (persona draft), `AiSettingsSection.jsx` (capability drafts).
+- Keep writes to external systems (other providers, i18next, the DOM) in effects; the render-phase mirror is only for the component's own state.
 
 ## Auth
 
