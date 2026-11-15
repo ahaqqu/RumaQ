@@ -58,13 +58,13 @@ A machine passes the gate only if it does one now: removes a bug class, collapse
 
 Under the `structure` lens, depth goes to the top 3 structural findings instead.
 
-Done when each kept machine has a before diagram, an after diagram, a transition table, a migration map, the proof that behaviour is unchanged, and the UX/DX/AX verdicts.
+Done when each kept machine has an `M<n>` ID, a before diagram, an after diagram, a transition table, a migration map, the proof that behaviour is unchanged, and the UX/DX/AX verdicts.
 
 ### 5. Reasons, docs, comments
 
 Follow [`references/comments-and-docs.md`](references/comments-and-docs.md). Judge every doc claim and comment on its reason and its action, not on its conformity to the project's own conventions.
 
-Done when every claim has a verdict — keep, rewrite, move, delete, or disagree — with the reason for the verdict.
+Done when every claim has an ID (`D<n>` for a doc claim, `C<n>` for a comment), a verdict — keep, rewrite, move, delete, or disagree — and the reason for the verdict.
 
 ### 6. Verification gap
 
@@ -79,12 +79,13 @@ Post the board in chat first. Then write `<docs>/audit-<YYYY-MM-DD>-<scope>.md` 
     # Audit — <scope> — <date>
     ## Verdict        one sentence per axis: UX, DX, AX
     ## Ledger         ID | file:line | finding | why | what instead
-    ## Machines       one board per machine
-    ## Docs           claim | reason, tested | verdict | replacement
+    ## Machines       M1 | machine | file:line (one board per machine)
+    ## Docs           D1 | file:line | claim | tested | verdict | replacement
+    ## Comments       C1 | file:line | claim | tested | verdict | replacement
     ## Verification   verdict + target + proof
     ## Issues         ID | title | recommendation next step
 
-Done when each finding has an ID, an issue title, and a recommendation next step (`implement`, `defer`, or `drop`).
+Done when each finding has an ID, an issue title, and a recommendation next step (`implement`, `defer`, or `drop`). Every ID used in the Ledger, Machines, Docs and Comments appears in the Issues table.
 
 ## Budgets
 
