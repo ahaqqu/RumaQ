@@ -4570,7 +4570,7 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
     // backfill). `kind` is the authority for the flag-kind chip; rulesCategory
     // is context and its presence does NOT imply 'disagreement'.
     kind: { type: ['string', 'null'], enum: ['low_confidence', 'disagreement', null] },
-    rulesCategory: { type: ['string', 'null'] },
+    rulesCategory: { type: ['string', 'null'], minLength: 1, maxLength: 64 },
     status: { type: 'string', enum: ['pending', 'approved', 'rejected'] },
     decidedAt: { type: ['string', 'null'] },
     decidedBy: { type: ['string', 'null'] },

@@ -831,8 +831,12 @@ export const reviewItemPairSchema = strictObject({
   // beside `kind` as context for the human (rules said this category while
   // the model said nothing/another). Null when the rules layer had no answer
   // — and its presence does NOT imply 'disagreement' (see `kind` above).
-  // Additive-nullish (#294 pattern), same deploy-order contract.
-  rulesCategory: nullish(string()),
+  // Bounded like `family` (thermos B1): both are producer-controlled slugs —
+  // this one is the sealed 49-slug taxonomy vocabulary (longest slug 23
+  // chars) — so the cap mirrors `family`'s slug cap; the field is frozen
+  // into the per-row pair blob, not a free-text note. Additive-nullish
+  // (#294 pattern), same deploy-order contract.
+  rulesCategory: nullish(pipe(string(), minLength(1), maxLength(64))),
 })
 
 export type ReviewItemPair = InferOutput<typeof reviewItemPairSchema>

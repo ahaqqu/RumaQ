@@ -2827,7 +2827,9 @@
                             "enum": ["low_confidence", "disagreement", null]
                           },
                           "rulesCategory": {
-                            "type": ["string", "null"]
+                            "type": ["string", "null"],
+                            "minLength": 1,
+                            "maxLength": 64
                           },
                           "status": {
                             "type": "string",
@@ -3383,7 +3385,9 @@
                           "enum": ["low_confidence", "disagreement", null]
                         },
                         "rulesCategory": {
-                          "type": ["string", "null"]
+                          "type": ["string", "null"],
+                          "minLength": 1,
+                          "maxLength": 64
                         },
                         "status": {
                           "type": "string",
@@ -3568,7 +3572,9 @@
                           "enum": ["low_confidence", "disagreement", null]
                         },
                         "rulesCategory": {
-                          "type": ["string", "null"]
+                          "type": ["string", "null"],
+                          "minLength": 1,
+                          "maxLength": 64
                         },
                         "status": {
                           "type": "string",

@@ -296,11 +296,16 @@ describe('ingestPayloadSchema', () => {
     expect(
       safeParse(reviewItemPairSchema, { ...pair, kind: null, rulesCategory: null }).success
     ).toBe(true)
-    // Out-of-domain kind, and rulesCategory only ever string|null.
+    // Out-of-domain kind, and rulesCategory only ever a bounded string|null
+    // (producer-controlled slug — capped like `family`, thermos B1).
     expect(
       safeParse(reviewItemPairSchema, { ...pair, kind: 'yolo', rulesCategory: 'snack' }).success
     ).toBe(false)
     expect(safeParse(reviewItemPairSchema, { ...pair, rulesCategory: 42 }).success).toBe(false)
+    expect(safeParse(reviewItemPairSchema, { ...pair, rulesCategory: '' }).success).toBe(false)
+    expect(
+      safeParse(reviewItemPairSchema, { ...pair, rulesCategory: 'x'.repeat(65) }).success
+    ).toBe(false)
   })
 
   it('accepts a store family on the payload (#626 part 2) and rejects junk', () => {
