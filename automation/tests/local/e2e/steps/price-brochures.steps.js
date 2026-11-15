@@ -271,8 +271,16 @@ Then('the viewer tab should render no app shell chrome', async () => {
 })
 
 When('I share the brochure without a native share sheet', async () => {
-  // Headless Linux Chromium has no navigator.share — the click exercises the
-  // clipboard fallback; the grant makes writeText/readText actually work.
+  // This scenario is specifically the clipboard FALLBACK, so guarantee its
+  // premise: remove navigator.share (some headless builds expose it with no
+  // sheet UI behind it) and bring the viewer tab to front — a share click
+  // happens on a focused tab, and the async clipboard requires document
+  // focus. The grant makes writeText/readText actually work.
+  await viewerPage.bringToFront()
+  await viewerPage.evaluate(() => {
+    delete Object.getPrototypeOf(navigator).share
+    delete navigator.share
+  })
   await viewerPage.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await viewerPage.getByRole('button', { name: 'Share' }).click()
 })
