@@ -4565,6 +4565,12 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
     matchMethod: { type: 'string', enum: ['exact', 'embedding', 'ai'] },
     confidence: { type: 'number' },
     reason: { type: 'string', enum: [...REVIEW_REASONS] },
+    // Issue #626 part 2: the flag kind + the rules classifier's answer, frozen
+    // in the pair blob (null for pairs flagged before the fields existed — no
+    // backfill). `kind` is the authority for the flag-kind chip; rulesCategory
+    // is context and its presence does NOT imply 'disagreement'.
+    kind: { type: ['string', 'null'], enum: ['low_confidence', 'disagreement', null] },
+    rulesCategory: { type: ['string', 'null'] },
     status: { type: 'string', enum: ['pending', 'approved', 'rejected'] },
     decidedAt: { type: ['string', 'null'] },
     decidedBy: { type: ['string', 'null'] },

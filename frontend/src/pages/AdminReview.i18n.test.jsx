@@ -430,4 +430,54 @@ describe('AdminReview — initialized i18n copy (issue #480)', () => {
       )
     })
   })
+
+  describe('issue #626 part 2 — flag kind chip', () => {
+    it('labels a disagreement in real copy with the rules category beside it', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        reviewData([
+          {
+            ...reviewItem,
+            reason: 'taxonomy',
+            kind: 'disagreement',
+            rulesCategory: 'makanan-minuman',
+          },
+        ])
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('Rules disagreed')
+      expect(container.textContent).toContain('makanan-minuman')
+      expect(container.textContent).not.toContain('Low confidence')
+    })
+
+    it('labels a rules-agreed low-confidence row without implying disagreement', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        reviewData([
+          {
+            ...reviewItem,
+            reason: 'taxonomy',
+            kind: 'low_confidence',
+            rulesCategory: 'snack',
+          },
+        ])
+      )
+      const { container } = renderAdmin()
+      // rulesCategory present but kind still says low confidence — the copy
+      // must never let the category's presence speak for the kind.
+      expect(container.textContent).toContain('Low confidence')
+      expect(container.textContent).toContain('snack')
+      expect(container.textContent).not.toContain('Rules disagreed')
+    })
+
+    it('renders no kind copy when the pair predates the fields', () => {
+      vi.mocked(useReviewItems).mockReturnValue(reviewData([{ ...reviewItem, reason: 'taxonomy' }]))
+      const { container } = renderAdmin()
+      expect(container.textContent).not.toContain('Rules disagreed')
+      expect(container.textContent).not.toContain('Low confidence')
+    })
+
+    it('carries real Indonesian kind copy', () => {
+      expect(id.review.kindLowConfidence).toBe('Keyakinan rendah')
+      expect(id.review.kindDisagreement).toBe('Aturan tidak sepakat')
+    })
+  })
 })

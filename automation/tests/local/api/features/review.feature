@@ -95,11 +95,11 @@ Feature: Match review queue
 
   Scenario: Taxonomy self-pairs leave the identity queue and acknowledge in bulk (#626)
     Given I am authenticated as an admin
-    And the agent posted a run report carrying two identity pairs and two taxonomy self-pairs
+    And the agent posted a run report carrying two identity pairs and two taxonomy self-pairs with kind and rules category
     When I read the review queue
     Then the identity queue should list only the identity pairs
     When I read the review queue filtered by taxonomy
-    Then the taxonomy page should list the self-pairs with the assigned category
+    Then the taxonomy page should list the self-pairs with the assigned category, kind, and rules category
     When I acknowledge all pending taxonomy flags
     Then the response should say two acknowledged and none remaining
     When I read the review queue filtered by taxonomy again

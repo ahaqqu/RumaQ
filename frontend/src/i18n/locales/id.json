@@ -978,7 +978,11 @@
     "taxonomyAckConfirm": "Catat \"kategori yang ditetapkan tetap\" untuk semua {{count}} penanda kategori tertunda? Setiap baris bisa dibatalkan satu per satu; tidak ada pembatalan massal.",
     "assignedCategory": "Ditetapkan: {{category}} ({{version}})",
     "assignedCategoryNoVersion": "Ditetapkan: {{category}}",
-    "assignedCategoryHint": "Kategori ditetapkan oleh classifier; menandai berarti kategori tetap."
+    "assignedCategoryHint": "Kategori ditetapkan oleh classifier; menandai berarti kategori tetap.",
+    "kindLowConfidence": "Keyakinan rendah",
+    "kindDisagreement": "Aturan tidak sepakat",
+    "kindHint": "Alasan klasifikasi ditandai: keyakinan model rendah, atau aturan dan model tidak sepakat. Kategori aturan hanya konteks.",
+    "rulesCategoryHint": "Jawaban classifier aturan saat penandaan — hanya konteks; chip jenis menjelaskan alasan penandaan."
   },
   "rename": {
     "action": "Ganti nama",

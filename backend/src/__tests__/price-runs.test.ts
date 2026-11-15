@@ -820,6 +820,15 @@ describe('verifier prompt identity (pipeline #83)', () => {
     expect(parsed.ai!.verifierPrompt).toEqual(verifierPrompt)
     // The identity rides next to the spend; both survive validation.
     expect(parsed.ai!.usage.verifier.calls).toBe(3)
+    // Issue #626 part 2: the fixture's taxonomy pair carries kind +
+    // rulesCategory; the strict pair schema accepts both (and the
+    // unknown-key fixture below still fails — strictness unchanged).
+    expect(parsed.match!.reviewItemPairs).toHaveLength(1)
+    expect(parsed.match!.reviewItemPairs![0]).toMatchObject({
+      reason: 'taxonomy',
+      kind: 'disagreement',
+      rulesCategory: 'makanan-minuman',
+    })
   })
 
   it('still accepts a report without the identity — additive, schemaVersion stays 1', () => {

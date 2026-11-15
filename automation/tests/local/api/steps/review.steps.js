@@ -626,7 +626,7 @@ defineFeature(feature, (test) => {
     })
 
     and(
-      'the agent posted a run report carrying two identity pairs and two taxonomy self-pairs',
+      'the agent posted a run report carrying two identity pairs and two taxonomy self-pairs with kind and rules category',
       async () => {
         // One product row so the taxonomy page can prove the #626 category
         // join; the other self-pair stays product-less and must render nulls.
@@ -637,14 +637,24 @@ defineFeature(feature, (test) => {
         })
         expect(ctx.response.status, 'test-only direct-sql seed failed').toBe(200)
         // A taxonomy flag is a SELF-pair: both sides are the same product.
-        const taxonomyPair = (key) => ({
+        const taxonomyPair = (key, kind, rulesCategory) => ({
           ...pair(key, key, 'Tax Self'),
           entryName: 'Tax Self',
           entryStore: 'lotte-mart',
           confidence: 0.42,
           reason: 'taxonomy',
+          // #626 part 2: both flag shapes are exercised end-to-end — the
+          // disagreement carries the rules answer; the low-confidence one has
+          // none (its presence never implies disagreement, `kind` is the
+          // authority).
+          kind,
+          rulesCategory,
         })
-        const pairs = [...TWO_PAIRS, taxonomyPair('tax-self-1----'), taxonomyPair('tax-self-2----')]
+        const pairs = [
+          ...TWO_PAIRS,
+          taxonomyPair('tax-self-1----', 'disagreement', 'makanan-minuman'),
+          taxonomyPair('tax-self-2----', 'low_confidence', null),
+        ]
         await postRunReport(ctx, runReport('2026-10-29T23:00:05Z', pairs))
         expect(ctx.response.status).toBe(200)
       }
@@ -670,19 +680,28 @@ defineFeature(feature, (test) => {
       await readQueue(ctx, '?reason=taxonomy')
     })
 
-    then('the taxonomy page should list the self-pairs with the assigned category', () => {
-      const byKey = new Map(ctx.queue.items.map((item) => [item.itemProductKey, item]))
-      expect(byKey.size).toBe(2)
-      expect(byKey.get('tax-self-1----')).toMatchObject({
-        itemCategory: 'makanan-minuman',
-        itemCategoryVersion: 'v0.4',
-        aiVerdict: null,
-      })
-      expect(byKey.get('tax-self-2----')).toMatchObject({
-        itemCategory: null,
-        itemCategoryVersion: null,
-      })
-    })
+    then(
+      'the taxonomy page should list the self-pairs with the assigned category, kind, and rules category',
+      () => {
+        const byKey = new Map(ctx.queue.items.map((item) => [item.itemProductKey, item]))
+        expect(byKey.size).toBe(2)
+        expect(byKey.get('tax-self-1----')).toMatchObject({
+          itemCategory: 'makanan-minuman',
+          itemCategoryVersion: 'v0.4',
+          aiVerdict: null,
+          // #626 part 2: the flag kind + rules answer rode the run report →
+          // pair blob → queue response end to end.
+          kind: 'disagreement',
+          rulesCategory: 'makanan-minuman',
+        })
+        expect(byKey.get('tax-self-2----')).toMatchObject({
+          itemCategory: null,
+          itemCategoryVersion: null,
+          kind: 'low_confidence',
+          rulesCategory: null,
+        })
+      }
+    )
 
     when('I acknowledge all pending taxonomy flags', async () => {
       await sendJson(ctx, 'POST', '/api/admin/review/taxonomy/acknowledge')

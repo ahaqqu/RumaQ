@@ -2822,6 +2822,13 @@
                             "type": "string",
                             "enum": ["price_ratio", "verifier_unresolved", "taxonomy"]
                           },
+                          "kind": {
+                            "type": ["string", "null"],
+                            "enum": ["low_confidence", "disagreement", null]
+                          },
+                          "rulesCategory": {
+                            "type": ["string", "null"]
+                          },
                           "status": {
                             "type": "string",
                             "enum": ["pending", "approved", "rejected"]
@@ -3371,6 +3378,13 @@
                           "type": "string",
                           "enum": ["price_ratio", "verifier_unresolved", "taxonomy"]
                         },
+                        "kind": {
+                          "type": ["string", "null"],
+                          "enum": ["low_confidence", "disagreement", null]
+                        },
+                        "rulesCategory": {
+                          "type": ["string", "null"]
+                        },
                         "status": {
                           "type": "string",
                           "enum": ["pending", "approved", "rejected"]
@@ -3548,6 +3562,13 @@
                         "reason": {
                           "type": "string",
                           "enum": ["price_ratio", "verifier_unresolved", "taxonomy"]
+                        },
+                        "kind": {
+                          "type": ["string", "null"],
+                          "enum": ["low_confidence", "disagreement", null]
+                        },
+                        "rulesCategory": {
+                          "type": ["string", "null"]
                         },
                         "status": {
                           "type": "string",

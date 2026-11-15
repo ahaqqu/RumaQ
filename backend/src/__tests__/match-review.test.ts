@@ -1119,6 +1119,44 @@ describe('listReviewItems — real-SQLite reason semantics (issue #628)', () => 
     expect(byId.get('rev-t2')).toMatchObject({ itemCategory: null, itemCategoryVersion: null })
   })
 
+  it('#626 part 2: kind/rulesCategory ride pair_data to the page; the join still owns the category', async () => {
+    const sqlite = freshDb()
+    // The join answers rev-t1's assigned category from price_products, while
+    // the blob carries a STALE same-named field — proving the overlay order
+    // keeps the join authoritative (Part 1's invariant) even as the NEW
+    // kind/rulesCategory names flow through parseReviewPair → toReviewItem.
+    sqlite.exec(
+      `INSERT INTO price_products (id, product_key, name, category, category_version)
+       VALUES ('pp-t1', 'rev-t1----', 'Item rev-t1', 'makanan-minuman', 'v0.4')`
+    )
+    const blob = {
+      ...pair({ reason: 'taxonomy', confidence: 0.42 }),
+      // NOT a contract field — only the spread order keeps this from leaking.
+      itemCategory: 'stale-blob-category',
+      kind: 'disagreement',
+      rulesCategory: 'minyak-goreng',
+    }
+    sqlite
+      .prepare('UPDATE match_review_items SET pair_data = ? WHERE id = ?')
+      .run(JSON.stringify(blob), 'rev-t1')
+
+    const page = await listReviewItems(sqliteD1Batch(sqlite), { reason: 'taxonomy' })
+    const byId = new Map(page.items.map((item) => [item.id, item]))
+    // The emitted fields survive parseReviewPair → toReviewItem untouched.
+    expect(byId.get('rev-t1')).toMatchObject({
+      kind: 'disagreement',
+      rulesCategory: 'minyak-goreng',
+    })
+    // Join precedence: a same-named blob field NEVER overrides the live join.
+    expect(byId.get('rev-t1')).toMatchObject({
+      itemCategory: 'makanan-minuman',
+      itemCategoryVersion: 'v0.4',
+    })
+    // An old row without the fields stays clean — no backfill, no fabrication.
+    expect(byId.get('rev-t2')!.kind).toBeUndefined()
+    expect(byId.get('rev-t2')!.rulesCategory).toBeUndefined()
+  })
+
   it('#626: acknowledgePendingTaxonomy decides every pending self-pair as the acting admin — idempotently', async () => {
     const sqlite = freshDb()
     const db = {

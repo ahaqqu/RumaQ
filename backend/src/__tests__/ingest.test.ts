@@ -253,6 +253,86 @@ describe('ingestPayloadSchema', () => {
     expect(safeParse(reviewItemPairSchema, pair).success).toBe(true)
     expect(safeParse(reviewItemPairSchema, { ...pair, reason: 'not-a-reason' }).success).toBe(false)
   })
+
+  // Issue #626 part 2: the flag kind + the rules classifier's answer ride the
+  // pair additively — old pairs (fields absent) validate; both emitted shapes
+  // validate; junk shapes fail loudly at the strict schema.
+  it('accepts kind/rulesCategory on review pairs (#626 part 2) and junk kinds still fail', () => {
+    const pair = {
+      itemProductKey: 'a--b--c',
+      itemName: 'A B C',
+      itemBrand: null,
+      itemUnit: null,
+      itemPrice: 10000,
+      itemEffectiveUnitPrice: null,
+      itemStore: 'lotte-mart',
+      entryProductKey: 'a--b--c',
+      entryName: 'A B C',
+      entryBrand: null,
+      entryUnit: null,
+      entryPrice: 10000,
+      entryEffectiveUnitPrice: null,
+      entryStore: 'lotte-mart',
+      matchMethod: 'ai',
+      confidence: 0.42,
+      reason: 'taxonomy',
+    } as const
+    // rulesCategory present with 'disagreement' — the rules answer differs.
+    expect(
+      safeParse(reviewItemPairSchema, {
+        ...pair,
+        kind: 'disagreement',
+        rulesCategory: 'makanan-minuman',
+      }).success
+    ).toBe(true)
+    // rulesCategory present with 'low_confidence' — the rules AGREED but the
+    // model was unsure; the combination is legal (classify.ts can emit it).
+    expect(
+      safeParse(reviewItemPairSchema, { ...pair, kind: 'low_confidence', rulesCategory: 'snack' })
+        .success
+    ).toBe(true)
+    // Both nullish: old pairs (no backfill) and pairs without a rules answer.
+    expect(safeParse(reviewItemPairSchema, pair).success).toBe(true)
+    expect(
+      safeParse(reviewItemPairSchema, { ...pair, kind: null, rulesCategory: null }).success
+    ).toBe(true)
+    // Out-of-domain kind, and rulesCategory only ever string|null.
+    expect(
+      safeParse(reviewItemPairSchema, { ...pair, kind: 'yolo', rulesCategory: 'snack' }).success
+    ).toBe(false)
+    expect(safeParse(reviewItemPairSchema, { ...pair, rulesCategory: 42 }).success).toBe(false)
+  })
+
+  it('accepts a store family on the payload (#626 part 2) and rejects junk', () => {
+    const base = samplePayload()
+    expect(base.success).toBe(true)
+    if (!base.success) return
+
+    const withFamily = safeParse(ingestPayloadSchema, {
+      ...base.output,
+      stores: [{ ...base.output.stores[0]!, family: 'lotte' }],
+    })
+    expect(withFamily.success).toBe(true)
+    if (!withFamily.success) return
+    expect(withFamily.output.stores[0]!.family).toBe('lotte')
+
+    // Old payloads (field absent) and explicit nulls both validate.
+    expect(samplePayload().success).toBe(true)
+    expect(
+      safeParse(ingestPayloadSchema, {
+        ...base.output,
+        stores: [{ ...base.output.stores[0]!, family: null }],
+      }).success
+    ).toBe(true)
+
+    for (const family of ['', 'x'.repeat(65), 42]) {
+      const result = safeParse(ingestPayloadSchema, {
+        ...base.output,
+        stores: [{ ...base.output.stores[0]!, family }],
+      })
+      expect(result.success).toBe(false)
+    }
+  })
 })
 
 describe('ingestPrices', () => {
@@ -282,6 +362,8 @@ describe('ingestPrices', () => {
     const storeStmt = executedBatches[0]![0]!
     expect(storeStmt.sql).toContain('ON CONFLICT(slug) DO UPDATE')
     expect(storeStmt.params).toContain('lotte-mart')
+    // #626 part 2: the family rides the store upsert — null for old payloads.
+    expect(storeStmt.params.at(-1)).toBeNull()
 
     const productStmts = executedBatches
       .flat()
@@ -302,6 +384,38 @@ describe('ingestPrices', () => {
     // The observation references the id generated for the insert — the id
     // map is complete without a second lookup.
     expect(observationStmts.flatMap((s) => s.params)).toContain(productStmts[0]!.params[0])
+  })
+
+  // Issue #626 part 2: the family is written with the store's metadata, and
+  // the COALESCE keeps an old scraper's null replay from erasing a value a
+  // newer payload already set (the taxo_version precedent).
+  it('persists the store family; an old replay (family null) never erases it', async () => {
+    const base = samplePayload()
+    expect(base.success).toBe(true)
+    if (!base.success) return
+    const { db, executedBatches } = createFakeDb([
+      { match: /^SELECT id, slug FROM price_sources/, rows: [] },
+      { match: /^SELECT id, product_key, category FROM price_products/, rows: [] },
+    ])
+
+    const stamped = safeParse(ingestPayloadSchema, {
+      ...base.output,
+      stores: [{ ...base.output.stores[0]!, family: 'lotte' }],
+    })
+    expect(stamped.success).toBe(true)
+    if (!stamped.success) return
+    await ingestPrices(db, stamped.output)
+
+    const storeStmt = executedBatches[0]![0]!
+    expect(storeStmt.sql).toContain('family = COALESCE(excluded.family, price_sources.family)')
+    expect(storeStmt.params.at(-1)).toBe('lotte')
+
+    // The old-scraper replay: field absent → bound as null, guarded by
+    // COALESCE at the SQL level.
+    executedBatches.length = 0
+    await ingestPrices(db, base.output)
+    expect(executedBatches[0]![0]!.params.at(-1)).toBeNull()
+    expect(executedBatches[0]![0]!.sql).toContain('COALESCE(excluded.family, price_sources.family)')
   })
 
   it('binds the member price beside the shelf price (#627)', async () => {

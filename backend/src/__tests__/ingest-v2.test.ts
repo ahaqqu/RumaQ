@@ -188,6 +188,38 @@ describe('ingestPricesV2', () => {
       ocr_model: 'gemini-3.8-flash',
       observed_date: '2026-11-05',
     })
+
+    // Issue #626 part 2: the shared valid fixture's store carries a family
+    // (the #25 grouping key) — it lands in price_sources with the metadata.
+    expect(sqlite.prepare('SELECT family FROM price_sources').get()).toEqual({
+      family: 'supermarket',
+    })
+  })
+
+  it("keeps a stored family when an old scraper's replay has none (#626 part 2)", async () => {
+    const { sqlite, db } = setup()
+    await ingestPricesV2(db, payload())
+
+    // An old payload predates the field: the store arrives with no family.
+    // The upsert must refresh the metadata but COALESCE the family back.
+    const oldReplay = parse(ingestPayloadV2Schema, {
+      schemaVersion: 2,
+      scrapedAt: '2026-11-06T23:00:05Z',
+      stores: [{ slug: 'superindo', name: 'Superindo', region: 'jakarta', website: null }],
+      items: [
+        {
+          productKey: fixture.items[0]!.productKey,
+          rawName: fixture.items[0]!.rawName,
+          storeSlug: 'superindo',
+          price: fixture.items[0]!.price,
+          matchConfidence: 1,
+        },
+      ],
+    })
+    await ingestPricesV2(db, oldReplay)
+    expect(sqlite.prepare('SELECT family FROM price_sources').get()).toEqual({
+      family: 'supermarket',
+    })
   })
 
   it('writes the member price beside the shelf price (#627)', async () => {
