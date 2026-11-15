@@ -1,6 +1,7 @@
 import { createBdd } from 'playwright-bdd'
 import { expect } from '@playwright/test'
 import { OIL_KEY, priceSnapshot } from '../../../support/price-fixtures.js'
+import { pushPriceSnapshot, pushRunReport, TEST_BASE_URL } from '../../../support/ingest.js'
 
 const { Given, When, Then } = createBdd()
 
@@ -12,8 +13,6 @@ const { Given, When, Then } = createBdd()
 // deterministic — a v2 price snapshot through the internal ingest endpoint and
 // a run report carrying one frozen review pair, the channel the real scraper
 // uses.
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
-const INGEST_SECRET = 'test-ingest-secret'
 
 // The shared v2 fixture seeds this product ("Minyak Goreng Bimoli") at two
 // stores; its row is what the catalog rename scenario opens.
@@ -40,17 +39,6 @@ const catalogSide = (page) => page.getByRole('group', { name: 'Catalog entry (la
 // (workers: 1), so one slot is enough — the same pattern admin-review.steps.js
 // uses for its export download.
 let renameSubject = null
-
-async function pushSnapshot(payload) {
-  const res = await fetch(`${BASE_URL}/api/internal/ingest/prices`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INGEST_SECRET}` },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) {
-    throw new Error(`price snapshot push failed: ${res.status} ${await res.text()}`)
-  }
-}
 
 // The canonical product behind the review pair, observed at both stores so the
 // row's frozen prices line up with real observations (the entry side's
@@ -132,11 +120,7 @@ async function pushReviewPair() {
     publish: null,
     error: null,
   }
-  const res = await fetch(`${BASE_URL}/api/internal/ingest/runs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INGEST_SECRET}` },
-    body: JSON.stringify(report),
-  })
+  const res = await pushRunReport(report)
   if (!res.ok) {
     throw new Error(`run report ingest failed: ${res.status} ${await res.text()}`)
   }
@@ -146,7 +130,7 @@ async function pushReviewPair() {
 // admin session the UI writes with — the read the form's optimistic version
 // comes from (admin-review.steps.js's export step uses the same channel).
 async function readIdentity(request, productKey) {
-  const res = await request.get(`${BASE_URL}/api/admin/products/${productKey}`)
+  const res = await request.get(`${TEST_BASE_URL}/api/admin/products/${productKey}`)
   if (res.status() !== 200) {
     throw new Error(`identity read failed: ${res.status()} ${await res.text()}`)
   }
@@ -180,11 +164,11 @@ async function submitRename(page, productKey, newName) {
 }
 
 Given('the price explorer holds a seeded product', async () => {
-  await pushSnapshot(priceSnapshot())
+  await pushPriceSnapshot(priceSnapshot())
 })
 
 Given('the review queue holds a flagged pair for a seeded product', async () => {
-  await pushSnapshot(reviewSnapshot())
+  await pushPriceSnapshot(reviewSnapshot())
   await pushReviewPair()
 })
 
@@ -225,7 +209,7 @@ When('I rename the seeded product through the admin API to {string}', async ({ p
     versionBefore: identity.product.metadataVersion,
   }
   const res = await page.request.post(
-    `${BASE_URL}/api/admin/products/${EXPLORER_PRODUCT_KEY}/rename`,
+    `${TEST_BASE_URL}/api/admin/products/${EXPLORER_PRODUCT_KEY}/rename`,
     { data: { canonicalName: newName, expectedMetadataVersion: renameSubject.versionBefore } }
   )
   if (res.status() !== 200) {

@@ -1,6 +1,7 @@
 import { createBdd } from 'playwright-bdd'
 import { expect } from '@playwright/test'
 import { TEST_PASSWORD } from './shared.steps.js'
+import { pushRunReport, TEST_BASE_URL } from '../../../support/ingest.js'
 
 const { Given, When, Then } = createBdd()
 
@@ -8,8 +9,6 @@ const { Given, When, Then } = createBdd()
 // bearer channel the real nightly reports on (issue #294).
 import { configureAi } from './ai-setup.js'
 
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
-const INGEST_SECRET = 'test-ingest-secret'
 // Mirrors the seed's pbkdf2 hash for password123 — same password, but the
 // seed grants it no is_admin flag, so the account exercises the 403 surface.
 const NON_ADMIN_EMAIL = 'second@rumaq.dev'
@@ -82,11 +81,7 @@ async function seedReviewPairs(pairs = [reviewPair]) {
     publish: null,
     error: null,
   }
-  const res = await fetch(`${BASE_URL}/api/internal/ingest/runs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INGEST_SECRET}` },
-    body: JSON.stringify(report),
-  })
+  const res = await pushRunReport(report)
   expect(res.status).toBe(200)
 }
 
@@ -104,7 +99,7 @@ Given('I am logged in as a non-admin user', async ({ page }) => {
   const seedHash =
     'pbkdf2_sha256$100000$pGW_FQUWkZ4LWR5SAXwDbg$eavlQExxmqixP0sIhu9HM8OIZqaxNm5ngKDMQd7Ge3s'
   const sql = `UPDATE users SET password_hash = '${seedHash}' WHERE email = '${NON_ADMIN_EMAIL}';`
-  const res = await fetch(`${BASE_URL}/api/__test/direct-sql`, {
+  const res = await fetch(`${TEST_BASE_URL}/api/__test/direct-sql`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sql }),
@@ -234,7 +229,7 @@ Then('the export body contains the decided row with schema 1', async ({ page }) 
   // browser context's cookie jar — page.request shares it, while the
   // isolated `request` fixture does not and 401s. Asserts the file's
   // CONTENT end to end.
-  const res = await page.request.get(`${BASE_URL}/api/admin/review/export`)
+  const res = await page.request.get(`${TEST_BASE_URL}/api/admin/review/export`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.schema).toBe(1)
@@ -305,7 +300,7 @@ const CACHED_VERDICT = {
 }
 
 async function seedCachedVerdict(page) {
-  const list = await page.request.get(`${BASE_URL}/api/admin/review`)
+  const list = await page.request.get(`${TEST_BASE_URL}/api/admin/review`)
   expect(list.status()).toBe(200)
   const body = await list.json()
   const itemId = body.items?.[0]?.id
@@ -318,7 +313,7 @@ async function seedCachedVerdict(page) {
     `('e2e-review-verdict', '${itemId}', '${CACHED_VERDICT.verdict}', ` +
     `${CACHED_VERDICT.confidence}, '${CACHED_VERDICT.reason}', ` +
     `'${CACHED_VERDICT.provider}', '${CACHED_VERDICT.model}', 'assist');`
-  const res = await fetch(`${BASE_URL}/api/__test/direct-sql`, {
+  const res = await fetch(`${TEST_BASE_URL}/api/__test/direct-sql`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sql }),
@@ -370,7 +365,7 @@ Then('the pair records AI-assisted provenance', async ({ page }) => {
 
   // And the same record through the API: the decision is D1-backed, not a
   // client-side decoration.
-  const res = await page.request.get(`${BASE_URL}/api/admin/review?status=approved`)
+  const res = await page.request.get(`${TEST_BASE_URL}/api/admin/review?status=approved`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.items).toHaveLength(1)
