@@ -10,6 +10,7 @@ import {
   useReviewMode,
   useSetReviewMode,
   useEvaluateReview,
+  useAcknowledgeTaxonomy,
   REVIEW_MODE_KEY,
 } from './review.js'
 import {
@@ -19,6 +20,7 @@ import {
   getReviewMode,
   setReviewMode,
   evaluateReviewItems,
+  acknowledgeTaxonomy,
 } from '../api'
 
 vi.mock('../api', () => ({
@@ -28,6 +30,7 @@ vi.mock('../api', () => ({
   getReviewMode: vi.fn(),
   setReviewMode: vi.fn(),
   evaluateReviewItems: vi.fn(),
+  acknowledgeTaxonomy: vi.fn(),
 }))
 
 function reviewItem(id, status = 'pending') {
@@ -335,5 +338,57 @@ describe('AI review mode and evaluation (issue #484)', () => {
     // The settle invalidation is what refetches the queue with the new
     // verdicts (and, in auto mode, the decisions the sweep applied).
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['review'] })
+  })
+})
+
+describe('useAcknowledgeTaxonomy (issue #626)', () => {
+  beforeEach(() => {
+    vi.mocked(acknowledgeTaxonomy).mockReset()
+  })
+
+  // Regression for the shipped bug: the hook called acknowledgeTaxonomy()
+  // WITHOUT importing it — a ReferenceError inside the mutationFn surfaced as
+  // "Acknowledge failed" in the UI with no request ever reaching the server
+  // (devtools: no network entry). TaxonomyAckPanel.test.jsx mocks this module
+  // wholesale, so only a test that loads the REAL module executes the wiring.
+  it('calls the acknowledge endpoint and surfaces the counts', async () => {
+    vi.mocked(acknowledgeTaxonomy).mockResolvedValue({ acknowledged: 2, remaining: 0 })
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const { result } = renderHook(() => useAcknowledgeTaxonomy(), {
+      wrapper: createWrapper(queryClient),
+    })
+    result.current.mutate()
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(acknowledgeTaxonomy).toHaveBeenCalledTimes(1)
+    expect(result.current.data).toEqual({ acknowledged: 2, remaining: 0 })
+  })
+
+  it('invalidates every review query on success — no optimistic write', async () => {
+    vi.mocked(acknowledgeTaxonomy).mockResolvedValue({ acknowledged: 622, remaining: 0 })
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    queryClient.setQueryData(
+      ['review', 'pending', null],
+      infiniteData([page([reviewItem('rev-1')], { pending: 1, approved: 0, rejected: 0 }, 1)])
+    )
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+    const { result } = renderHook(() => useAcknowledgeTaxonomy(), {
+      wrapper: createWrapper(queryClient),
+    })
+    result.current.mutate()
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['review'] })
+    // The row is untouched locally: the ack flips hundreds of rows server-side,
+    // and the response's acknowledged/remaining belongs to a refetch, not a
+    // guess — the cached page must still carry the pre-ack snapshot.
+    const row = queryClient
+      .getQueryData(['review', 'pending', null])
+      .pages[0].items.find((item) => item.id === 'rev-1')
+    expect(row.status).toBe('pending')
   })
 })
