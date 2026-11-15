@@ -10,7 +10,9 @@
 #      main — an ancestor of origin/main, or its PR is MERGED with the exact
 #      head commit (this repo squash-merges, so ancestry alone never fires) —
 #      AND, unprivileged, no root-owned files inside. A detached HEAD has no
-#      branch, so the branch-is-gone clause applies.
+#      branch, so the branch-is-gone clause applies. A tree sitting exactly at
+#      the current main tip is always kept: that is what a freshly created
+#      task worktree looks like before its first commit.
 #   2. ORPHAN directories (~/Projects/RumaQ-wt-* and ~/Projects/RumaQ.wt/*
 #      not registered in git): removed when verifiably clean or empty;
 #      reported otherwise. Directories that hold registered worktrees are
@@ -93,6 +95,7 @@ git worktree prune
 GH_OK=1
 command -v gh >/dev/null 2>&1 || GH_OK=0
 PRIMARY_BRANCH="$(git branch --show-current)"
+MAIN_TIP="$(git rev-parse "$MERGE_TARGET" 2>/dev/null)"
 
 MERGE_VIA=""
 # branch_merged <branch> <tip>: exit 0 when the branch work is provably in
@@ -169,17 +172,25 @@ decide_registered() {
     return
   fi
 
+  tip="$(git -C "$wt" rev-parse HEAD 2>/dev/null)" || tip=""
+  if [[ -z $tip ]]; then
+    RESULTS+=("keep|reg|$wt|unreadable HEAD|$kb")
+    return
+  fi
+  # A tree sitting exactly at the current main tip is what a freshly created
+  # task worktree looks like (worktree add -b ... origin/main, no commits
+  # yet); sweeping it would eat active work. Conservatively keep those even
+  # though the branch is technically fully merged.
+  if [[ $tip == "$MAIN_TIP" ]]; then
+    RESULTS+=("keep|reg|$wt|clean, sitting at the current main tip|$kb")
+    return
+  fi
   if [[ $ref == DETACHED ]]; then
     RESULTS+=("remove|reg|$wt|clean detached HEAD, branch gone|$kb")
     return
   fi
   if [[ $ref == "$PRIMARY_BRANCH" && -n $PRIMARY_BRANCH ]]; then
     RESULTS+=("keep|reg|$wt|branch checked out by the primary checkout|$kb")
-    return
-  fi
-  tip="$(git -C "$wt" rev-parse HEAD 2>/dev/null)" || tip=""
-  if [[ -z $tip ]]; then
-    RESULTS+=("keep|reg|$wt|unreadable HEAD|$kb")
     return
   fi
   if branch_merged "$ref" "$tip"; then
