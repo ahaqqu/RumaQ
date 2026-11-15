@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link, useMatches, useNavigate } from '@tanstack/react-router'
+import { Link, useLocation, useNavigate } from '@tanstack/react-router'
 import {
   IconHome,
   IconBox,
@@ -103,7 +103,12 @@ function LanguageSwitcher({ currentLang, onChange, ariaLabel }) {
 export function AppShell({ children }) {
   const { t, i18n } = useTranslation()
   const navigate = useNavigate()
-  const matches = useMatches()
+  // #674: the shell moved into the pathless _app layout route, so route IDs
+  // gained a /_app segment (/_app/prices) while fullPath stayed /prices. The
+  // title/active lookups therefore compare LOCATION PATHNAMES, not route IDs
+  // — exact-match-equivalent here because every nav target is a flat,
+  // param-less route.
+  const { pathname } = useLocation()
   const { aiKey, assistantOpen, setAssistantOpen } = useApp()
   const { data: me } = useMe()
   const { data: settings } = useSettings()
@@ -205,7 +210,6 @@ export function AppShell({ children }) {
     updateSettings.mutate({ language: lng })
   }
 
-  const currentRouteId = matches[matches.length - 1]?.routeId || '/'
   // The page-title lookup composes the UNfiltered plugin groups (see the
   // navAll comment above); core lists are never filtered, so the plugin
   // groups are the only difference from the render-site composition. The
@@ -223,9 +227,9 @@ export function AppShell({ children }) {
         ...pluginNavAll.admin,
       ]
     : [...NAV, ...pluginNavAll.main, ...HOUSEHOLD_NAV, ...pluginNavAll.household]
-  const currentNav = navItems.find((n) => n.to === currentRouteId)
+  const currentNav = navItems.find((n) => n.to === pathname)
   const title = currentNav ? t(currentNav.key) : t('nav.home')
-  const isActive = (to) => matches.some((m) => m.routeId === to)
+  const isActive = (to) => pathname === to
 
   const today = new Intl.DateTimeFormat(i18n.language, {
     weekday: 'long',
@@ -411,7 +415,7 @@ export function AppShell({ children }) {
               <BrandMark size={30} />
             </button>
             <h1 className="text-[22px]! font-semibold tracking-[-1px] text-text truncate">
-              {currentRouteId === '/' ? 'RumaQ' : title}
+              {pathname === '/' ? 'RumaQ' : title}
             </h1>
             <div className="flex-1" />
             <Link

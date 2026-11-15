@@ -245,11 +245,83 @@ export function resolveCatalogTab(tab, hash) {
 }
 
 // "29 October 2026" for an observed_date, in the viewer's language. Shared by
-// the admin QA view (BrochuresView keeps its own copy, unchanged) and the
-// user-facing gallery (#673) — the label contract must not drift between the
-// two surfaces.
+// the admin QA view and the user-facing gallery + viewer (#673/#674) — the
+// label contract must not drift between the surfaces.
 export function observedDateLabel(date, language) {
   const parsed = new Date(`${date}T00:00:00`)
   if (Number.isNaN(parsed.getTime())) return date
   return parsed.toLocaleDateString(language, { day: 'numeric', month: 'long', year: 'numeric' })
+}
+
+// ——— Brochure full-mode viewer (#674) ———
+
+/** The servable brochure_url shape (backend/src/lib/brochures.ts). */
+export const BROCHURE_URL_PREFIX = '/api/brochures/'
+
+// The /brochures/view deep link is structured (?store=&date=&file=) so each
+// segment validates independently and the image src recomposes the canonical
+// brochure_url byte-exactly — the catalog lookup for the title is then
+// exact-match. The patterns mirror the server's parseBrochureKey charset
+// (backend/src/lib/brochures.ts); the server additionally 404s unknown slugs
+// (SCRAPE_STORE_SLUGS) and impossible dates, so a well-shaped but unknown
+// link simply degrades to the viewer's in-frame fallback.
+const VIEWER_DATE_PATTERN = /^\d{8}$/
+const VIEWER_FILENAME_PATTERN = /^[A-Za-z0-9._()-]{1,200}$/
+const VIEWER_STORE_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+// The router's default search parser JSON-parses digit-leading values
+// (router-core's jsonStart regex matches \d), so a deep link ?date=20261115
+// reaches validateSearch as a NUMBER. Normalize that round-trip back to a
+// string before validating — the segments must be strings to recompose the
+// brochure_url byte-exactly. (Non-numeric strings skip the parser and stay
+// strings.)
+function asSearchSegment(value) {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return String(value)
+  return undefined
+}
+
+// validateSearch for /brochures/view: keep well-shaped segments, drop
+// anything else (TanStack strips undefined values, so the page renders its
+// calm missing-brochure state instead of requesting a URL that must 404).
+export function resolveBrochureViewerSearch({ store, date, file } = {}) {
+  const rawStore = asSearchSegment(store)
+  const rawDate = asSearchSegment(date)
+  const rawFile = asSearchSegment(file)
+  return {
+    store:
+      rawStore !== undefined && rawStore.length <= 100 && VIEWER_STORE_PATTERN.test(rawStore)
+        ? rawStore
+        : undefined,
+    date: rawDate !== undefined && VIEWER_DATE_PATTERN.test(rawDate) ? rawDate : undefined,
+    file:
+      rawFile !== undefined &&
+      rawFile !== '.' &&
+      rawFile !== '..' &&
+      VIEWER_FILENAME_PATTERN.test(rawFile)
+        ? rawFile
+        : undefined,
+  }
+}
+
+// Split a canonical brochure_url into its three segments, or null for
+// anything that is not the canonical shape. The gallery's View affordance
+// recomposes them into the viewer deep link.
+export function parseBrochureUrl(brochureUrl) {
+  if (typeof brochureUrl !== 'string' || !brochureUrl.startsWith(BROCHURE_URL_PREFIX)) return null
+  const segments = brochureUrl.slice(BROCHURE_URL_PREFIX.length).split('/')
+  if (segments.length !== 3 || segments.some((segment) => segment === '')) return null
+  const [store, date, file] = segments
+  return { store, date, file }
+}
+
+// The viewer deep link for a brochure_url, or null when the URL is not the
+// canonical shape (the card then renders no View affordance).
+export function brochureViewerUrl(brochureUrl) {
+  const parsed = parseBrochureUrl(brochureUrl)
+  if (!parsed) return null
+  const { store, date, file } = parsed
+  return `/brochures/view?store=${encodeURIComponent(store)}&date=${encodeURIComponent(
+    date
+  )}&file=${encodeURIComponent(file)}`
 }

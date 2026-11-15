@@ -1,18 +1,22 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { usePriceBrochures } from '../lib/queries/index.js'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
-import { Panel, PanelBody } from '../components/Panel.jsx'
+import { Panel } from '../components/Panel.jsx'
 import { Button } from '../components/Button.jsx'
-import { IconSearch, IconWarning } from '../components/icons.jsx'
-import { observedDateLabel } from '../lib/pricesHelpers.js'
+import { IconEye, IconSearch, IconWarning } from '../components/icons.jsx'
+import { brochureViewerUrl, observedDateLabel } from '../lib/pricesHelpers.js'
+import { useBrochureCatalogFilters } from './useBrochureCatalogFilters.js'
+import { BrochuresFilterPanel } from './BrochuresFilterPanel.jsx'
 
 // One gallery card (issue #673): the 3:4 frame is reserved up front (no
 // layout shift), the image is lazy, and a missing object degrades to a text
-// fallback in the same frame — never a broken-image glyph. Browse-only: no
-// selection affordances and none of the #630 QA fields; the full-mode viewer
-// link ships with #674.
-function UserBrochureCard({ group, dateLabel }) {
+// fallback in the same frame — never a broken-image glyph. Browse-only: the
+// card itself does nothing; the explicit View link (#674) opens the
+// full-mode viewer in a new tab (the session cookie is SameSite=Lax, so the
+// top-level blank navigation carries it — the AdminReview evidence-link
+// precedent).
+function UserBrochureCard({ group, dateLabel, viewerUrl }) {
   const { t } = useTranslation()
   const [failed, setFailed] = useState(false)
   return (
@@ -48,6 +52,18 @@ function UserBrochureCard({ group, dateLabel }) {
         <div className="text-xs text-text-muted">
           {t('prices.productsCount', { count: group.product_count })}
         </div>
+        {viewerUrl && (
+          <a
+            href={viewerUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1 inline-flex items-center gap-1 self-start rounded-sm text-xs font-semibold text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <IconEye size={14} className="shrink-0" />
+            {t('prices.viewerOpen')}
+            <span className="sr-only">— {group.source_name}</span>
+          </a>
+        )}
       </div>
     </div>
   )
@@ -57,51 +73,14 @@ function UserBrochureCard({ group, dateLabel }) {
 // filter the catalog by store and observed date, browse a responsive grid of
 // current brochure pages. Lean by design — no match/confidence columns, no
 // ingestion metadata, no per-brochure product table; that QA surface stays
-// admin-side on /admin/catalog's Brochures QA tab.
+// admin-side on /admin/catalog's Brochures QA tab. Filters and the grid
+// share the catalog-filter machinery with the QA view
+// (useBrochureCatalogFilters + BrochuresFilterPanel).
 export function BrochuresGallery() {
   const { t, i18n } = useTranslation()
   const { data, isLoading, isError } = usePriceBrochures()
-
-  const [store, setStore] = useState(null)
-  const [date, setDate] = useState(null)
-
-  // Memoized so the stores/dates/filtered memos keyed on `groups` keep a
-  // stable array identity between fetches (react-hooks/exhaustive-deps).
-  const groups = useMemo(() => data?.groups ?? [], [data])
-
-  // Options come from the unfiltered catalog so both filters remain
-  // composable after one is applied (picking a store must not erase the
-  // dates it still has).
-  const stores = useMemo(() => {
-    const seen = new Map()
-    for (const group of groups) {
-      if (!seen.has(group.source_slug)) seen.set(group.source_slug, group.source_name)
-    }
-    return [...seen.entries()].map(([slug, name]) => ({ slug, name }))
-  }, [groups])
-  const dates = useMemo(
-    () => [...new Set(groups.map((group) => group.observed_date))].sort().reverse(),
-    [groups]
-  )
-
-  const filtered = useMemo(
-    () =>
-      groups.filter(
-        (group) =>
-          (store == null || group.source_slug === store) &&
-          (date == null || group.observed_date === date)
-      ),
-    [groups, store, date]
-  )
-  const filteredProducts = useMemo(
-    () => filtered.reduce((sum, group) => sum + Number(group.product_count ?? 0), 0),
-    [filtered]
-  )
-
-  const resetFilters = () => {
-    setStore(null)
-    setDate(null)
-  }
+  const filters = useBrochureCatalogFilters(data)
+  const { groups, filtered, resetFilters } = filters
 
   if (isLoading) {
     return (
@@ -131,59 +110,7 @@ export function BrochuresGallery() {
 
   return (
     <div className="flex flex-col">
-      <Panel className="mb-5">
-        <PanelBody>
-          <div
-            className="flex flex-wrap items-end gap-4"
-            role="group"
-            aria-label={t('catalog.brochuresFilters')}
-            data-testid="brochure-filters"
-          >
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-text-muted">
-                {t('catalog.brochuresFilterStore')}
-              </span>
-              <select
-                data-testid="brochure-store-filter"
-                value={store ?? ''}
-                onChange={(event) => setStore(event.target.value || null)}
-                className="rounded-md border border-border bg-surface-raised px-2 py-1.5 text-sm outline-none focus:border-accent"
-              >
-                <option value="">{t('catalog.brochuresAllStores')}</option>
-                {stores.map((option) => (
-                  <option key={option.slug} value={option.slug}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-text-muted">
-                {t('catalog.brochuresFilterDate')}
-              </span>
-              <select
-                data-testid="brochure-date-filter"
-                value={date ?? ''}
-                onChange={(event) => setDate(event.target.value || null)}
-                className="rounded-md border border-border bg-surface-raised px-2 py-1.5 text-sm outline-none focus:border-accent"
-              >
-                <option value="">{t('catalog.brochuresAllDates')}</option>
-                {dates.map((option) => (
-                  <option key={option} value={option}>
-                    {observedDateLabel(option, i18n.language)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="ml-auto flex items-center gap-2 text-sm text-text-muted">
-              <span data-testid="brochures-summary">
-                {t('catalog.brochuresCount', { count: filtered.length })} ·{' '}
-                {t('prices.productsCount', { count: filteredProducts })}
-              </span>
-            </div>
-          </div>
-        </PanelBody>
-      </Panel>
+      <BrochuresFilterPanel filters={filters} />
 
       {filtered.length === 0 ? (
         <Panel>
@@ -208,6 +135,7 @@ export function BrochuresGallery() {
               key={group.brochure_url}
               group={group}
               dateLabel={observedDateLabel(group.observed_date, i18n.language)}
+              viewerUrl={brochureViewerUrl(group.brochure_url)}
             />
           ))}
         </div>

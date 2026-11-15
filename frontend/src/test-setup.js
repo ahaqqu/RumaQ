@@ -78,10 +78,16 @@ vi.mock('@tanstack/react-router', async () => {
   const actual = await vi.importActual('@tanstack/react-router')
   return {
     ...actual,
+    // AppShell reads the location pathname for its title/active lookups
+    // (#674); the router mock pins it to '/' like the useMatches mock below.
+    useLocation: () => ({ pathname: '/', search: '', hash: '' }),
     useMatches: () => [{ routeId: '/', pathname: '/' }],
     useNavigate: () => vi.fn(),
     Link: ({ children, to, className, ...props }) =>
       React.createElement('a', { ...props, className, href: to, 'data-testid': 'link' }, children),
-    Outlet: () => null,
+    // The REAL Outlet (not a null stub): since #674 the shell is a layout
+    // route, so App.test's real router needs Outlet to actually render the
+    // _app layout's child matches.
+    Outlet: (props) => React.createElement(actual.Outlet, props),
   }
 })

@@ -505,6 +505,10 @@
     "brochuresEmpty": "Belum ada brosur",
     "brochuresEmptyDesc": "Halaman brosur akan muncul di sini setelah scraping berikutnya memublikasikannya.",
     "brochureAlt": "Halaman brosur {{store}}",
+    "viewerOpen": "Lihat",
+    "viewerShare": "Bagikan",
+    "viewerLinkCopied": "Tautan disalin",
+    "viewerUnavailable": "Brosur ini sudah tidak tersedia.",
     "unitPrice": {
       "g": "{{price}}/kg",
       "ml": "{{price}}/L",

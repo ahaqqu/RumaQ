@@ -22,8 +22,9 @@ const PNG_BYTES = Buffer.from(
 
 // Today's date keys the uploaded object — fresh enough that no retention
 // sweep (grace = 14 days from the key date) can delete it mid-run even when
-// a later scenario's ingest fires.
-const e2eBrochureKey = () => {
+// a later scenario's ingest fires. Exported for the accessibility suite's
+// fixture-backed viewer scan (#674).
+export const e2eBrochureKey = () => {
   const now = new Date()
   const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
     now.getDate()
@@ -208,3 +209,102 @@ Then('the brochures empty state should render with the segments visible', async 
   await expect(page.getByText('Brochures', { exact: true })).toBeVisible()
   await expect(page.getByText('Products', { exact: true })).toBeVisible()
 })
+
+// ——— #674: the chrome-less full-mode viewer ———
+
+// The viewer tab is opened either as a real target=_blank popup from the
+// card's View link or via a direct deep-link goto. Scenarios run with
+// workers: 1 and each viewer scenario sets this through its When step
+// before any Then reads it.
+let viewerPage = null
+
+const e2eViewerPath = () => {
+  const [, ymd, file] = e2eBrochureKey().split('/')
+  return `/brochures/view?store=lotte-mart&date=${ymd}&file=${file}`
+}
+
+When('I open the {string} brochure viewer from its card', async ({ page }, store) => {
+  const card = page.locator('[data-testid="brochure-card"]').filter({ hasText: store }).first()
+  const [opened] = await Promise.all([
+    // target="_blank" opens a top-level blank navigation — the SameSite=Lax
+    // session cookie rides along, so the new tab authenticates itself.
+    page.context().waitForEvent('page'),
+    card.getByRole('link', { name: /View/ }).click(),
+  ])
+  viewerPage = opened
+  await viewerPage.getByTestId('viewer-topbar').waitFor({ state: 'visible', timeout: 15_000 })
+})
+
+When('I open the brochure viewer deep link directly', async ({ page }) => {
+  // A fresh page in the same (authenticated) context = the fresh-load path:
+  // the SPA boots straight into the deep link with no in-app navigation.
+  viewerPage = await page.context().newPage()
+  await viewerPage.goto(e2eViewerPath())
+  await viewerPage.getByTestId('viewer-topbar').waitFor({ state: 'visible', timeout: 15_000 })
+})
+
+Then('the viewer tab should render the full mode for {string}', async ({}, store) => {
+  const viewer = viewerPage
+  const topbar = viewer.getByTestId('viewer-topbar')
+  await expect(topbar).toBeVisible()
+  // Title "{store} · {observed date}" — the catalog-resolved source name and
+  // the shared date label (computed with the same ICU the browser uses).
+  const now = new Date()
+  const label = now.toLocaleDateString('en', { day: 'numeric', month: 'long', year: 'numeric' })
+  await expect(topbar.locator('h1')).toContainText(store)
+  await expect(topbar.locator('h1')).toContainText(label)
+  // The page image decodes through the authenticated proxy in the new tab.
+  const img = viewer.locator(`img[src="/api/brochures/${e2eBrochureKey()}"]`)
+  await expect(img).toHaveCount(1)
+  await expect
+    .poll(() => img.evaluate((el) => (el.complete && el.naturalWidth > 0 ? 'loaded' : 'pending')))
+    .toBe('loaded')
+})
+
+Then('the viewer tab should render no app shell chrome', async () => {
+  // Full mode = no left menu, no site header, no mobile tab bar — the route
+  // lives outside the _app layout, and nothing else may render them.
+  await expect(viewerPage.locator('aside')).toHaveCount(0)
+  await expect(viewerPage.locator('header')).toHaveCount(0)
+  await expect(viewerPage.locator('nav')).toHaveCount(0)
+  await expect(viewerPage.locator('[data-testid="household-card"]')).toHaveCount(0)
+})
+
+When('I share the brochure without a native share sheet', async () => {
+  // This scenario is specifically the clipboard FALLBACK, so guarantee its
+  // premise: navigator.share is overridden with an own undefined property
+  // (some builds expose it with no sheet UI behind it). The harness also
+  // serves the app over plain http (TEST_BASE_URL=http://proxy:3000) — a
+  // NON-secure context, where the async Clipboard API does not exist at all
+  // (navigator.clipboard is undefined) — so a capturing stub stands in for
+  // it: the scenario pins that Share, with no native sheet, writes the deep
+  // link and shows the copied confirmation. The real-API behaviors — write
+  // success, and staying silent when no clipboard exists — are pinned in
+  // BrochureViewerPage.test.jsx.
+  await viewerPage.evaluate(() => {
+    Object.defineProperty(navigator, 'share', { value: undefined, configurable: true })
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text) => {
+          window.__sharedLink = text
+        },
+      },
+    })
+  })
+  await viewerPage.getByRole('button', { name: 'Share' }).click()
+})
+
+Then(
+  'the clipboard should hold the viewer link and the copied status should confirm it',
+  async () => {
+    await expect(viewerPage.getByRole('status')).toHaveText('Link copied')
+    // The capturing clipboard stub (see the When step — the harness's plain-
+    // http origin has no real async clipboard) holds the written link.
+    const shared = await viewerPage.evaluate(() => window.__sharedLink)
+    const [, ymd, file] = e2eBrochureKey().split('/')
+    expect(shared).toContain('/brochures/view?store=lotte-mart')
+    expect(shared).toContain(`date=${ymd}`)
+    expect(shared).toContain(`file=${file}`)
+  }
+)

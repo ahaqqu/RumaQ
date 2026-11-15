@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Documents } from '../pages/Documents.jsx'
-import { RouteError } from '../components/RouteError.jsx'
-import { PluginGate } from '../plugins/PluginGate.jsx'
+import { Documents } from '../../pages/Documents.jsx'
+import { RouteError } from '../../components/RouteError.jsx'
+import { PluginGate } from '../../plugins/PluginGate.jsx'
 
 function RouteComponent() {
   // The documents route is plugin-owned (#436): a disabled household gets
@@ -15,7 +15,7 @@ function RouteComponent() {
   )
 }
 
-export const Route = createFileRoute('/documents')({
+export const Route = createFileRoute('/_app/documents')({
   component: RouteComponent,
   errorComponent: RouteError,
 })

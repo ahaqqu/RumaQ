@@ -55,16 +55,18 @@ vi.mock('../lib/queries/index.js', () => ({
   useHouseholds: vi.fn(),
 }))
 
-// The global test-setup pins useMatches to '/', but the page-title lookup
-// must be exercised on a plugin route (a deep link into a disabled plugin
-// shows the real page name, not the "Home" fallback). This file-local mock
-// overrides the setup's for this file, with a redirectable route id.
-const routerState = vi.hoisted(() => ({ routeId: '/' }))
+// The global test-setup pins the location pathname to '/', but the page-title
+// lookup must be exercised on a plugin route (a deep link into a disabled
+// plugin shows the real page name, not the "Home" fallback). This file-local
+// mock overrides the setup's for this file, with a redirectable pathname —
+// AppShell compares location pathnames since #674's _app layout refactor
+// (route IDs carry a /_app segment; fullPath does not).
+const routerState = vi.hoisted(() => ({ pathname: '/' }))
 vi.mock('@tanstack/react-router', async () => {
   const actual = await vi.importActual('@tanstack/react-router')
   return {
     ...actual,
-    useMatches: () => [{ routeId: routerState.routeId, pathname: routerState.routeId }],
+    useLocation: () => ({ pathname: routerState.pathname, search: '', hash: '' }),
     useNavigate: () => vi.fn(),
     Link: ({ children, to, className, ...props }) =>
       React.createElement('a', { ...props, className, href: to, 'data-testid': 'link' }, children),
@@ -93,7 +95,7 @@ function renderWithProviders(ui) {
 
 describe('AppShell', () => {
   beforeEach(() => {
-    routerState.routeId = '/'
+    routerState.pathname = '/'
     vi.mocked(useMe).mockReturnValue({
       data: { user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: null } },
       isLoading: false,
@@ -291,7 +293,7 @@ describe('AppShell', () => {
     // "Documents": the title lookup composes the UNfiltered catalog while
     // the nav renders the filtered one — the filtered lookup fell back to
     // "Home" here.
-    routerState.routeId = '/documents'
+    routerState.pathname = '/documents'
     vi.mocked(useMe).mockReturnValue({
       data: {
         user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: null },
@@ -304,6 +306,24 @@ describe('AppShell', () => {
     expect(container.textContent).not.toContain('Your household / Home')
     // The nav link itself stays filtered out of the sidebar.
     expect(container.querySelector('a[href="/documents"]')).toBeNull()
+  })
+
+  it('marks the active nav item from the location pathname (#674)', () => {
+    // The _app layout refactor gave route IDs a /_app segment (/_app/prices)
+    // while fullPath stayed /prices — the active lookup compares location
+    // pathnames, exact-match-equivalent for these flat, param-less routes.
+    routerState.pathname = '/prices'
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    expect(container.querySelector('a[href="/prices"]').getAttribute('aria-current')).toBe('page')
+    expect(container.querySelector('a[href="/inventory"]').getAttribute('aria-current')).toBeNull()
+
+    // Home stays active at '/' — the index route's id is not a literal '/'
+    // under the layout, so only the pathname comparison gets this right.
+    routerState.pathname = '/'
+    const homeView = renderWithProviders(React.createElement(AppShell, null, null))
+    expect(homeView.container.querySelector('a[href="/"]').getAttribute('aria-current')).toBe(
+      'page'
+    )
   })
 
   // #675: the desktop header right group ends with the identity chip — a pill

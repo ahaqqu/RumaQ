@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useApp } from '../context/AppContext.jsx'
-import { Settings } from '../pages/Settings.jsx'
-import { RouteError } from '../components/RouteError.jsx'
+import { useApp } from '../../context/AppContext.jsx'
+import { Settings } from '../../pages/Settings.jsx'
+import { RouteError } from '../../components/RouteError.jsx'
 
 function RouteComponent() {
   const { motion, setMotion } = useApp()
@@ -12,7 +12,7 @@ function RouteComponent() {
   return <Settings motion={motion} setMotion={setMotion} />
 }
 
-export const Route = createFileRoute('/settings')({
+export const Route = createFileRoute('/_app/settings')({
   component: RouteComponent,
   errorComponent: RouteError,
 })

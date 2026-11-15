@@ -1,12 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Household } from '../pages/Household.jsx'
-import { RouteError } from '../components/RouteError.jsx'
+import { Household } from '../../pages/Household.jsx'
+import { RouteError } from '../../components/RouteError.jsx'
 
 function RouteComponent() {
   return <Household />
 }
 
-export const Route = createFileRoute('/household')({
+export const Route = createFileRoute('/_app/household')({
   // ?code=XXXX comes from a shared invite link; the page pre-fills its join
   // input with it (the join itself stays an explicit click).
   validateSearch: ({ code }) => ({

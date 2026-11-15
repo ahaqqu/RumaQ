@@ -505,6 +505,10 @@
     "brochuresEmpty": "No brochures yet",
     "brochuresEmptyDesc": "Brochure pages will appear here after the next scrape publishes them.",
     "brochureAlt": "{{store}} brochure page",
+    "viewerOpen": "View",
+    "viewerShare": "Share",
+    "viewerLinkCopied": "Link copied",
+    "viewerUnavailable": "This brochure is no longer available.",
     "unitPrice": {
       "g": "{{price}}/kg",
       "ml": "{{price}}/L",

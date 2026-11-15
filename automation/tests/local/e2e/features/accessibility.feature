@@ -41,3 +41,8 @@ Feature: Accessibility
   Scenario: Admin catalog page has no critical or serious violations
     Given I am logged in as the seeded test user
     Then the "Admin catalog" page should have no critical or serious axe violations
+
+  Scenario: Brochure viewer page has no critical or serious violations
+    Given a brochure snapshot has been pushed with one image uploaded
+    And I am logged in as the seeded test user
+    Then the "Brochure viewer" page should have no critical or serious axe violations
