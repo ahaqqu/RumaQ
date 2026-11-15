@@ -245,9 +245,8 @@ export function resolveCatalogTab(tab, hash) {
 }
 
 // "29 October 2026" for an observed_date, in the viewer's language. Shared by
-// the admin QA view (BrochuresView keeps its own copy, unchanged) and the
-// user-facing gallery (#673) — the label contract must not drift between the
-// two surfaces.
+// the admin QA view and the user-facing gallery + viewer (#673/#674) — the
+// label contract must not drift between the surfaces.
 export function observedDateLabel(date, language) {
   const parsed = new Date(`${date}T00:00:00`)
   if (Number.isNaN(parsed.getTime())) return date
