@@ -978,7 +978,11 @@
     "taxonomyAckConfirm": "Record \"the assigned category stands\" for all {{count}} pending category flags? Each row keeps a per-row undo; there is no bulk undo.",
     "assignedCategory": "Assigned: {{category}} ({{version}})",
     "assignedCategoryNoVersion": "Assigned: {{category}}",
-    "assignedCategoryHint": "Category assigned by the classifier; acknowledging keeps it."
+    "assignedCategoryHint": "Category assigned by the classifier; acknowledging keeps it.",
+    "kindLowConfidence": "Low confidence",
+    "kindDisagreement": "Rules disagreed",
+    "kindHint": "Why the classification flagged: low model confidence, or the rules and model disagreed. The rules category is context only.",
+    "rulesCategoryHint": "The rules classifier's answer at flag time — context only; the kind chip says why the flag fired."
   },
   "rename": {
     "action": "Rename",

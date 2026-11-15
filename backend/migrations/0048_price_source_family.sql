@@ -1,0 +1,17 @@
+-- Retailer family, part 2 of issue #626 (contract + ingest side).
+--
+-- A grouping key over price_sources slugs: "lotte" ties lotte-mart to its
+-- wholesale sibling so cross-slug views (#25) can treat a retailer's stores
+-- as one family. RumaQ only accepts + persists the field here — no consumer
+-- on this side yet, by design (the first one arrives with #25).
+--
+-- Nullable with deliberately NO backfill: stores registered before this
+-- migration (and payloads from a scraper that does not send family yet)
+-- genuinely have no family — null means "stands alone", not a hidden group.
+-- The upserts COALESCE, so an old scraper's null replay never erases a
+-- family a newer payload already set.
+--
+-- Additive and Worker-first: the ingest contract accepts the field only
+-- after this column exists, and an old Worker rejects a payload carrying it
+-- (strictObject), so the Worker deploys before the pipeline starts sending.
+ALTER TABLE price_sources ADD COLUMN family TEXT;

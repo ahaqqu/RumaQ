@@ -486,6 +486,24 @@ function ReviewRow({
               : t('review.assignedCategoryNoVersion', { category: item.itemCategory })}
           </Chip>
         )}
+        {/* #626 part 2: WHY the flag fired — kind is the authority ('Rules
+            disagreed' vs 'Low confidence'); the pair carries it frozen. Old
+            pairs (and non-taxonomy reasons) have it nullish and render
+            nothing. rulesCategory is context text beside the chip, NEVER an
+            inference source: a rules-agreed result can still be low
+            confidence, so its presence implies nothing about the kind. */}
+        {item.kind && (
+          <>
+            <Chip variant="default" title={t('review.kindHint')}>
+              {item.kind === 'disagreement'
+                ? t('review.kindDisagreement')
+                : t('review.kindLowConfidence')}
+            </Chip>
+            {item.rulesCategory && (
+              <span title={t('review.rulesCategoryHint')}>{item.rulesCategory}</span>
+            )}
+          </>
+        )}
         <span>{t('review.flagCount', { count: item.flagCount })}</span>
         <span>·</span>
         <span>{formatClock(item.lastFlaggedAt, i18n.language)}</span>

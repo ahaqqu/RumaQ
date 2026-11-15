@@ -35,7 +35,34 @@
     "verifierSaturationErrors": 0,
     "verifierQuotaExhausted": false,
     "verifierBreakerTripped": false,
-    "verifierBudgetExhausted": false
+    "verifierBudgetExhausted": false,
+    "reviewItemPairs": [
+      {
+        "itemProductKey": "beras-ramos-5kg----5-kg",
+        "itemName": "Beras Ramos 5 kg",
+        "itemBrand": null,
+        "itemUnit": "5 kg",
+        "itemPrice": 27000,
+        "itemEffectiveUnitPrice": null,
+        "itemStore": "lotte-mart",
+        "itemBrochureUrl": null,
+        "itemSourceUrl": null,
+        "entryProductKey": "beras-ramos-5kg----5-kg",
+        "entryName": "Beras Ramos 5 kg",
+        "entryBrand": null,
+        "entryUnit": "5 kg",
+        "entryPrice": 27000,
+        "entryEffectiveUnitPrice": null,
+        "entryStore": "lotte-mart",
+        "matchMethod": "exact",
+        "confidence": 0.42,
+        "reason": "taxonomy",
+        "kind": "disagreement",
+        "rulesCategory": "makanan-minuman"
+      }
+    ],
+    "reviewItemsTotal": 1,
+    "reviewItemsTruncated": false
   },
   "publish": {
     "mode": "published",

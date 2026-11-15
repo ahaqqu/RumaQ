@@ -625,6 +625,58 @@ describe('AdminReview', () => {
     })
   })
 
+  describe('issue #626 part 2 — flag kind chip', () => {
+    it('renders the kind chip key with the rules category text beside it', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            {
+              ...reviewItem,
+              reason: 'taxonomy',
+              kind: 'disagreement',
+              rulesCategory: 'makanan-minuman',
+            },
+          ],
+        })
+      )
+      const { container } = renderAdmin()
+      // kind is the chip's authority; rulesCategory is context text.
+      expect(container.textContent).toContain('review.kindDisagreement')
+      expect(container.textContent).toContain('makanan-minuman')
+      expect(container.textContent).not.toContain('review.kindLowConfidence')
+    })
+
+    it('renders low confidence on a rules-agreed row (presence of rulesCategory implies nothing)', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            {
+              ...reviewItem,
+              reason: 'taxonomy',
+              kind: 'low_confidence',
+              rulesCategory: 'snack',
+            },
+          ],
+        })
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('review.kindLowConfidence')
+      expect(container.textContent).toContain('snack')
+      expect(container.textContent).not.toContain('review.kindDisagreement')
+    })
+
+    it('renders no kind chip when the pair predates the fields (nullish kind)', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [{ ...reviewItem, reason: 'taxonomy', kind: null, rulesCategory: null }],
+        })
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).not.toContain('review.kindDisagreement')
+      expect(container.textContent).not.toContain('review.kindLowConfidence')
+    })
+  })
+
   describe('issue #423 — canonical rename action', () => {
     function renameToggle(container) {
       return [...container.querySelectorAll('button')].find((button) =>

@@ -31,19 +31,25 @@ export async function ingestPrices(db: D1Database, payload: IngestPayload): Prom
     payload.stores.map((store) =>
       db
         .prepare(
-          `INSERT INTO price_sources (id, slug, name, kind, region, website, created_at)
-           VALUES (?, ?, ?, 'supermarket', ?, ?, datetime('now'))
+          `INSERT INTO price_sources (id, slug, name, kind, region, website, family, created_at)
+           VALUES (?, ?, ?, 'supermarket', ?, ?, ?, datetime('now'))
            ON CONFLICT(slug) DO UPDATE SET
              name = excluded.name,
              region = excluded.region,
-             website = excluded.website`
+             website = excluded.website,
+             -- COALESCE (issue #626 part 2): an old scraper's replay (family
+             -- null) must never erase a family a newer payload already set.
+             family = COALESCE(excluded.family, price_sources.family)`
         )
         .bind(
           crypto.randomUUID(),
           store.slug,
           store.name,
           store.region ?? 'jakarta',
-          store.website ?? null
+          store.website ?? null,
+          // Issue #626 part 2: the retailer family (#25's grouping key) —
+          // null for old payloads (additive field, no backfill).
+          store.family ?? null
         )
     )
   )

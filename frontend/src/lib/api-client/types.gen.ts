@@ -1605,6 +1605,8 @@ export type GetApiAdminReviewResponses = {
             matchMethod?: 'exact' | 'embedding' | 'ai';
             confidence?: number;
             reason?: 'price_ratio' | 'verifier_unresolved' | 'taxonomy';
+            kind?: 'low_confidence' | 'disagreement' | null;
+            rulesCategory?: string | null;
             status?: 'pending' | 'approved' | 'rejected';
             decidedAt?: string | null;
             decidedBy?: string | null;
@@ -1888,6 +1890,8 @@ export type DeleteApiAdminReviewByIdDecisionResponses = {
             matchMethod?: 'exact' | 'embedding' | 'ai';
             confidence?: number;
             reason?: 'price_ratio' | 'verifier_unresolved' | 'taxonomy';
+            kind?: 'low_confidence' | 'disagreement' | null;
+            rulesCategory?: string | null;
             status?: 'pending' | 'approved' | 'rejected';
             decidedAt?: string | null;
             decidedBy?: string | null;
@@ -1972,6 +1976,8 @@ export type PostApiAdminReviewByIdDecisionResponses = {
             matchMethod?: 'exact' | 'embedding' | 'ai';
             confidence?: number;
             reason?: 'price_ratio' | 'verifier_unresolved' | 'taxonomy';
+            kind?: 'low_confidence' | 'disagreement' | null;
+            rulesCategory?: string | null;
             status?: 'pending' | 'approved' | 'rejected';
             decidedAt?: string | null;
             decidedBy?: string | null;

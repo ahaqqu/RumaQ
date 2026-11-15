@@ -46,6 +46,14 @@ export const ingestStoreSchema = strictObject({
   name: pipe(string(), minLength(1)),
   region: nullish(string()),
   website: nullish(string()),
+  // Issue #626 part 2: the retailer family a store belongs to ("lotte" groups
+  // lotte-mart and its wholesale sibling; "supermarket" is the default when a
+  // store stands alone). A grouping key for cross-slug views — the first
+  // consumer arrives with issue #25 (store-group browsing), so RumaQ only
+  // accepts + persists it for now. Additive-nullish (#294 pattern): old
+  // payloads (no field) still validate; a NEW payload hitting an OLD Worker
+  // fails loudly (strictObject — Worker-first deploy order).
+  family: nullish(pipe(string(), minLength(1), maxLength(64))),
 })
 
 export const ingestItemSchema = strictObject({
@@ -807,6 +815,28 @@ export const reviewItemPairSchema = strictObject({
   // Additive: old scrapers' reports still validate; a new scraper's report
   // hitting an OLD Worker fails loudly (Worker-first deploy order).
   reason: picklist(['price_ratio', 'verifier_unresolved', 'taxonomy']),
+  // Issue #626 part 2: WHY the taxonomy flag fired — 'low_confidence' (the
+  // classifier's own confidence landed under the floor) or 'disagreement'
+  // (the rules classifier and the model disagreed). Today only taxonomy
+  // pairs carry it (null on every other pair). The pair's `reason` says a
+  // classification needs a human; `kind` says which of the two ways it
+  // tripped — the UI's authority for the flag-kind chip, so the display must
+  // NOT infer it from rulesCategory's presence (a rules-agreed result can
+  // still be low-confidence). Additive-nullish (#294 pattern): pairs frozen
+  // before the field exist do not carry it (no backfill — old rows stay
+  // null), and a NEW report hitting an OLD Worker fails loudly (Worker-first
+  // deploy order).
+  kind: nullish(picklist(['low_confidence', 'disagreement'])),
+  // Issue #626 part 2: the RULES classifier's answer at flag time, riding
+  // beside `kind` as context for the human (rules said this category while
+  // the model said nothing/another). Null when the rules layer had no answer
+  // — and its presence does NOT imply 'disagreement' (see `kind` above).
+  // Bounded like `family` (thermos B1): both are producer-controlled slugs —
+  // this one is the sealed 49-slug taxonomy vocabulary (longest slug 23
+  // chars) — so the cap mirrors `family`'s slug cap; the field is frozen
+  // into the per-row pair blob, not a free-text note. Additive-nullish
+  // (#294 pattern), same deploy-order contract.
+  rulesCategory: nullish(pipe(string(), minLength(1), maxLength(64))),
 })
 
 export type ReviewItemPair = InferOutput<typeof reviewItemPairSchema>
