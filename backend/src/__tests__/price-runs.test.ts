@@ -158,6 +158,37 @@ describe('runReportSchema', () => {
     ).toBe(false)
   })
 
+  it('bounds the frozen entry evidence like its item-side twins, and stays strict per pair (#691 RC3)', () => {
+    const withPairs = (over: Record<string, unknown>) => ({
+      ...sampleReport(),
+      match: { ...sampleReport().match!, reviewItemPairs: [{ ...sampleReviewPair(), ...over }] },
+    })
+    // Twin-consistency: the entry-side URL fields carry the item side's 500
+    // cap — exactly 500 passes, 501 rejects.
+    expect(
+      safeParse(runReportSchema, withPairs({ entryBrochureUrl: 'b'.repeat(500) })).success
+    ).toBe(true)
+    expect(safeParse(runReportSchema, withPairs({ entrySourceUrl: 's'.repeat(500) })).success).toBe(
+      true
+    )
+    expect(
+      safeParse(runReportSchema, withPairs({ entryBrochureUrl: 'b'.repeat(501) })).success
+    ).toBe(false)
+    expect(safeParse(runReportSchema, withPairs({ entrySourceUrl: 's'.repeat(501) })).success).toBe(
+      false
+    )
+    // Explicit nulls are valid (nullish, not just optional).
+    expect(
+      safeParse(
+        runReportSchema,
+        withPairs({ entryBrochureUrl: null, entrySourceUrl: null, entryObservedAt: null })
+      ).success
+    ).toBe(true)
+    // strictObject holds per pair — an unknown pair key still rejects (the
+    // additive fields must not have loosened the pair schema).
+    expect(safeParse(runReportSchema, withPairs({ entrySurprise: true })).success).toBe(false)
+  })
+
   it('rejects an over-cap pair array — the 200 transport cap is a checked boundary (thermos A4)', () => {
     const atCap = {
       ...sampleReport(),
@@ -828,6 +859,12 @@ describe('verifier prompt identity (pipeline #83)', () => {
       reason: 'taxonomy',
       kind: 'disagreement',
       rulesCategory: 'makanan-minuman',
+      // Issue #691 RC3: the flag-time entry evidence freezes into the pair
+      // and round-trips validation verbatim (additive-nullish — a report
+      // without the fields, like sampleReport()'s pair below, still parses).
+      entryBrochureUrl: '/api/brochures/lotte-mart/20261110/page-1.jpg',
+      entrySourceUrl: 'https://www.lottomart.co.id/promosi/katalog-roller-diskon/',
+      entryObservedAt: '2026-11-10',
     })
   })
 
