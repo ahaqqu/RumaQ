@@ -268,7 +268,7 @@ export function AppShell({ children }) {
   const householdCard = householdName ? (
     <Link
       to="/household"
-      className="block rounded-xl bg-surface-inset p-3 hover:bg-surface-sunken transition-colors"
+      className="block rounded-xl bg-surface-inset p-3 hover:bg-surface-sunken transition-colors shrink-0"
     >
       <div data-testid="household-card">
         <div className="text-[13px] font-semibold leading-[145%] text-text truncate">
@@ -283,38 +283,55 @@ export function AppShell({ children }) {
     </Link>
   ) : null
 
-  const accountBlock = user ? (
-    <div className="flex items-center gap-3">
+  // Desktop-header identity chip (#675): a pill link into Settings — where
+  // logout lives (Settings.jsx) — showing the avatar (or the person-icon
+  // tile fallback) plus the display name only. The email never renders in
+  // shell chrome; a user without a display name gets an icon-only chip so
+  // no email is ever rendered as a text fallback. No aria-label while the
+  // name is visible: the accessible name IS the visible text (WCAG 2.5.3,
+  // the #498 label-content-name-mismatch lesson).
+  const userChip = user ? (
+    <Link
+      to="/settings"
+      className={cn(
+        'flex items-center rounded-full text-text hover:bg-surface-inset transition-colors shrink-0',
+        user.name ? 'h-9 gap-2 pl-1 pr-3' : 'w-9 h-9 justify-center'
+      )}
+      aria-label={user.name ? undefined : t('nav.settings')}
+    >
       {user.picture && !imgError ? (
         <img
-          className="w-10 h-10 rounded-xl object-cover shrink-0"
+          className="w-7 h-7 rounded-full object-cover shrink-0"
           src={user.picture}
           alt=""
           onError={() => setImgError(true)}
         />
       ) : (
-        <div className="w-10 h-10 rounded-xl grid place-items-center bg-surface-inset text-text shrink-0">
-          <IconUserRound size={20} />
+        <div className="w-7 h-7 rounded-full grid place-items-center bg-surface-sunken text-text shrink-0">
+          <IconUserRound size={16} />
         </div>
       )}
-      <div className="min-w-0">
-        <div className="text-sm font-semibold leading-[145%] text-text truncate">
-          {user.name || user.email}
-        </div>
-        {user.name && (
-          <div className="text-xs leading-[145%] text-text-muted truncate">{user.email}</div>
-        )}
-      </div>
-    </div>
+      {user.name && (
+        <span className="text-sm font-medium leading-[145%] text-text truncate max-w-[128px]">
+          {user.name}
+        </span>
+      )}
+    </Link>
   ) : null
 
   return (
     <div className="grid min-h-dvh lg:grid-cols-[240px_1fr]">
       <aside
-        className="hidden lg:flex sticky top-0 h-dvh flex-col gap-8 p-6 bg-surface-raised border-r border-border"
+        className="hidden lg:flex sticky top-0 h-dvh min-h-0 flex-col gap-8 p-6 bg-surface-raised border-r border-border"
         aria-label={t('nav.mainNav')}
       >
-        <div className="flex items-center gap-2.5">
+        {/* #675: the aside is a grid item whose min-height:auto used to defeat
+            h-dvh once the menu outgrew the viewport — the box overflowed its
+            sticky slot and painted a white tail over the beige body. min-h-0
+            pins the box to exactly the viewport height; the brand row and the
+            household card stay pinned while the nav groups scroll in their own
+            region below. */}
+        <div className="flex items-center gap-2.5 shrink-0">
           <BrandMark size={36} />
           <div className="font-bold text-[27px] leading-[33px] tracking-[-1px] text-accent">
             RumaQ
@@ -323,23 +340,24 @@ export function AppShell({ children }) {
 
         {householdCard}
 
-        <nav className="flex flex-col gap-1.5" aria-label={t('nav.mainNav')}>
-          {sidebarMain.map(renderNavItem)}
-        </nav>
-
-        <div className="flex flex-col gap-4">
-          <div className="text-[10px] font-semibold leading-3 tracking-[1px] uppercase text-text-muted">
-            {t('nav.adminGroup')}
-          </div>
-          <nav className="flex flex-col gap-1.5" aria-label={t('nav.adminGroup')}>
-            {householdNav.map(renderNavItem)}
-            {adminNav.map(renderNavItem)}
+        <div
+          className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-8"
+          tabIndex={0}
+          aria-label={t('shell.menuRegion')}
+        >
+          <nav className="flex flex-col gap-1.5" aria-label={t('nav.mainNav')}>
+            {sidebarMain.map(renderNavItem)}
           </nav>
-        </div>
 
-        <div className="mt-auto flex flex-col gap-4">
-          <div className="h-px bg-border" aria-hidden="true" />
-          {accountBlock}
+          <div className="flex flex-col gap-4">
+            <div className="text-[10px] font-semibold leading-3 tracking-[1px] uppercase text-text-muted">
+              {t('nav.adminGroup')}
+            </div>
+            <nav className="flex flex-col gap-1.5" aria-label={t('nav.adminGroup')}>
+              {householdNav.map(renderNavItem)}
+              {adminNav.map(renderNavItem)}
+            </nav>
+          </div>
         </div>
       </aside>
 
@@ -372,6 +390,7 @@ export function AppShell({ children }) {
                   <IconReceipt size={19} /> {t('nav.addFromReceipt')}
                 </Button>
               </Link>
+              {userChip}
             </div>
           </div>
           {/* Mobile header: the brand mark is the drawer trigger (Google-
@@ -462,11 +481,6 @@ export function AppShell({ children }) {
                 {householdNav.map(renderDrawerItem)}
                 {adminNav.map(renderDrawerItem)}
               </nav>
-            </div>
-
-            <div className="mt-auto flex flex-col gap-4">
-              <div className="h-px bg-border" aria-hidden="true" />
-              {accountBlock}
             </div>
           </aside>
         </>
