@@ -271,21 +271,31 @@ function toReviewItem(row: ReviewRow): ReviewItem | null {
 }
 
 // ---------------------------------------------------------------------------
-// Entry-side evidence enrichment (issue #380): the review card's RIGHT side
-// must show what the catalog entry looked like when last seen — page image
-// (price_observations.brochure_url, the R2 object URL for brochure stores /
-// the listing page for catalog stores), retailer page (source_url, null for
-// rows ingested before the column) and observed_date. Keyed on the entry's
-// product key alone (the pair's B side is a canonical product, not a
-// product×store pair): latest observation across sources, ordered like the
-// prices read paths' LATEST_OBSERVATION_SUBQUERY (observed date, then scrape
-// time). Deliberately NO confidence floor — evidence for a human verdict
-// must not hide rows the explorer hides.
+// Entry-side evidence enrichment (issue #380, store-pinned per the owner's
+// production report 2026-11-15): the review card's RIGHT side must show ONE
+// coherent sighting of the catalog entry. The pair blob freezes the entry's
+// name/price/store at flag time — that snapshot is the price-ratio basis AND
+// the AI verdict's input — so the read-time evidence (page image
+// price_observations.brochure_url, the R2 object URL for brochure stores /
+// the listing page for catalog stores; retailer page source_url, null for
+// rows ingested before the column; observed_date) must come from the SAME
+// store: the entry's latest observation at the frozen entryStore, ordered
+// like the prices read paths' LATEST_OBSERVATION_SUBQUERY (observed date,
+// then scrape time). The original #380 lookup keyed on the product key alone
+// and took the latest observation across ALL sources — on a multi-store
+// canonical entry (the norm: the catalog merges one product across
+// retailers) a newer sighting from another store replaced the evidence while
+// the frozen label stayed, rendering e.g. an 'alfamart' card with a yogya
+// brochure page. Deliberately NO cross-store fallback — showing another
+// store's page would reintroduce the contradiction — and NO confidence
+// floor: evidence for a human verdict must not hide rows the explorer hides.
+// A frozen store with no surviving observation (renamed store, pre-0017
+// rows) simply renders evidence-less, which is honest.
 
 const ENTRY_EVIDENCE_CHUNK = 90
 
 type EntryEvidenceRow = {
-  product_key: string
+  evidence_key: string
   brochure_url: string | null
   source_url: string | null
   observed_date: string | null
@@ -297,47 +307,61 @@ type EntryEvidence = {
   entryObservedAt: string | null
 }
 
+/** One (entry product, frozen store) lookup pair — the map is keyed on the
+ * `productKey|storeSlug` composite both here and in enrichEntryEvidence. */
+export type EntryEvidenceLookup = { productKey: string; storeSlug: string }
+
+function evidenceKey(entry: EntryEvidenceLookup): string {
+  return `${entry.productKey}|${entry.storeSlug}`
+}
+
 /**
- * One chunked lookup per ≤90 entry keys (the ingest SELECT_IN_CHUNK budget —
- * D1 caps bound parameters per query at 100). A review page is ≤200 rows, so
- * this is at most 3 queries; an empty key list skips the round trip entirely.
- * Exported for the real-SQLite semantics test (the string-matching fake db
- * cannot pin ordering/tie-break behavior).
+ * One chunked lookup per ≤90 (entry, store) pairs (the ingest
+ * SELECT_IN_CHUNK budget — D1 caps bound parameters per query at 100). A
+ * review page is ≤200 rows, so this is at most 3 queries; an empty list
+ * skips the round trip entirely. Exported for the real-SQLite semantics test
+ * (the string-matching fake db cannot pin ordering/tie-break behavior).
  */
 export async function fetchEntryEvidence(
   db: D1Database,
-  keys: string[]
+  entries: EntryEvidenceLookup[]
 ): Promise<Map<string, EntryEvidence>> {
   const evidence = new Map<string, EntryEvidence>()
-  const unique = [...new Set(keys)]
-  for (let i = 0; i < unique.length; i += ENTRY_EVIDENCE_CHUNK) {
-    const chunk = unique.slice(i, i + ENTRY_EVIDENCE_CHUNK)
+  const unique = new Map<string, EntryEvidenceLookup>()
+  for (const entry of entries) unique.set(evidenceKey(entry), entry)
+  const pairs = [...unique.values()]
+  for (let i = 0; i < pairs.length; i += ENTRY_EVIDENCE_CHUNK) {
+    const chunk = pairs.slice(i, i + ENTRY_EVIDENCE_CHUNK)
     const placeholders = chunk.map(() => '?').join(',')
     const { results } = await db
       .prepare(
-        `SELECT p.product_key AS product_key,
+        `SELECT p.product_key || '|' || s.slug AS evidence_key,
                 o.brochure_url AS brochure_url,
                 o.source_url AS source_url,
                 o.observed_date AS observed_date
          FROM price_observations o
          JOIN price_products p ON p.id = o.product_id
-         WHERE p.product_key IN (${placeholders})
+         JOIN price_sources s ON s.id = o.source_id
+         WHERE (p.product_key || '|' || s.slug) IN (${placeholders})
            AND o.id = (
              SELECT o2.id FROM price_observations o2
              JOIN price_products p2 ON p2.id = o2.product_id
+             JOIN price_sources s2 ON s2.id = o2.source_id
              WHERE p2.product_key = p.product_key
-             -- Thermos A2 (issue #380): scraped_at binds per-payload, so two
-             -- sources observing the same entry on the same date tie EXACTLY
-             -- on (observed_date, scraped_at) — the final id tie-break pins
-             -- which one's evidence wins, deterministically on any engine.
+               AND s2.slug = s.slug
+             -- Same ordering as the prices read paths'
+             -- LATEST_OBSERVATION_SUBQUERY. Within one store the table's
+             -- UNIQUE(product_id, source_id, observed_date) already forbids
+             -- same-date ties, so observed_date DESC decides; scraped_at/id
+             -- stay as harmless parity with the unpinned ordering.
              ORDER BY o2.observed_date DESC, o2.scraped_at DESC, o2.id DESC
              LIMIT 1
            )`
       )
-      .bind(...chunk)
+      .bind(...chunk.map(evidenceKey))
       .all<EntryEvidenceRow>()
     for (const row of results ?? []) {
-      evidence.set(row.product_key, {
+      evidence.set(row.evidence_key, {
         entryBrochureUrl: row.brochure_url ?? null,
         entrySourceUrl: row.source_url ?? null,
         entryObservedAt: row.observed_date ?? null,
@@ -353,6 +377,7 @@ export async function fetchEntryEvidence(
 // export rows cannot silently diverge from the card's evidence shape.
 type EvidenceCarrier = {
   entryProductKey: string
+  entryStore: string
   entryBrochureUrl: string | null
   entrySourceUrl: string | null
   entryObservedAt: string | null
@@ -363,7 +388,9 @@ function enrichEntryEvidence<T extends EvidenceCarrier>(
   evidence: Map<string, EntryEvidence>
 ): void {
   for (const item of items) {
-    const found = evidence.get(item.entryProductKey)
+    // The carrier's field names differ from EntryEvidenceLookup's, so the
+    // composite is built inline instead of via evidenceKey().
+    const found = evidence.get(`${item.entryProductKey}|${item.entryStore}`)
     if (!found) continue
     item.entryBrochureUrl = found.entryBrochureUrl
     item.entrySourceUrl = found.entrySourceUrl
@@ -524,7 +551,7 @@ export async function listReviewItems(
     items,
     await fetchEntryEvidence(
       db,
-      items.map((i) => i.entryProductKey)
+      items.map((i) => ({ productKey: i.entryProductKey, storeSlug: i.entryStore }))
     )
   )
 
@@ -701,7 +728,12 @@ async function getReviewRow(db: D1Database, id: string): Promise<ReviewItem | nu
   if (!item) return null
   // Same enrichment as the list — the decide/undo response carries the same
   // evidence shape the queue rows do.
-  enrichEntryEvidence([item], await fetchEntryEvidence(db, [item.entryProductKey]))
+  enrichEntryEvidence(
+    [item],
+    await fetchEntryEvidence(db, [
+      { productKey: item.entryProductKey, storeSlug: item.entryStore },
+    ])
+  )
   return item
 }
 
@@ -944,7 +976,7 @@ async function listDecidedPage(db: D1Database, after: { decidedAt: string; id: s
   // queue rows (thermos B1).
   const evidence = await fetchEntryEvidence(
     db,
-    page.rows.map(({ row }) => row.entryProductKey)
+    page.rows.map(({ row }) => ({ productKey: row.entryProductKey, storeSlug: row.entryStore }))
   )
   enrichEntryEvidence(
     page.rows.map(({ row }) => row),
