@@ -86,6 +86,7 @@ function createFakeDb(
     /** Issue #380: observations answering the entry-evidence lookup. */
     observationRows?: Array<{
       product_key: string
+      store_slug: string
       brochure_url: string | null
       source_url: string | null
       observed_date: string
@@ -122,14 +123,18 @@ function createFakeDb(
             })
             return { results: filtered.slice(0, 200) }
           }
-          // Entry-evidence enrichment (issue #380): answer with the fixture
-          // rows whose product_key is in the bound IN-chunk.
-          if (sql.includes('FROM price_observations o') && sql.includes('p.product_key IN')) {
-            const keys = stmt.params as string[]
+          // Entry-evidence enrichment (issue #380, store-pinned): answer with
+          // the fixture rows whose (product_key, store_slug) composite is in
+          // the bound IN-chunk, shaped like the real query's rows.
+          if (
+            sql.includes('FROM price_observations o') &&
+            sql.includes("p.product_key || '|' || s.slug")
+          ) {
+            const composites = stmt.params as string[]
             return {
-              results: (config.observationRows ?? []).filter((row) =>
-                keys.includes(row.product_key)
-              ),
+              results: (config.observationRows ?? [])
+                .filter((row) => composites.includes(`${row.product_key}|${row.store_slug}`))
+                .map((row) => ({ ...row, evidence_key: `${row.product_key}|${row.store_slug}` })),
             }
           }
           return { results: [] }
@@ -395,6 +400,7 @@ describe('entry-side evidence enrichment (issue #380)', () => {
 
   const observation = {
     product_key: 'beras-ramos-5kg--ramos--5-kg',
+    store_slug: 'superindo',
     brochure_url: '/api/brochures/superindo/20261028/page-3.jpg',
     source_url: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
     observed_date: '2026-10-28',
@@ -451,6 +457,7 @@ describe('entry-side evidence enrichment (issue #380)', () => {
     )
     const observationRows = entries.map((key) => ({
       product_key: key,
+      store_slug: 'superindo',
       brochure_url: null,
       source_url: null,
       observed_date: '2026-10-28',
@@ -462,7 +469,9 @@ describe('entry-side evidence enrichment (issue #380)', () => {
     const page = await listReviewItems(db, { limit: 120 })
     expect(page.items).toHaveLength(120)
     const enrichment = statements.filter(
-      (s) => s.sql.includes('FROM price_observations o') && s.sql.includes('p.product_key IN')
+      (s) =>
+        s.sql.includes('FROM price_observations o') &&
+        s.sql.includes("p.product_key || '|' || s.slug")
     )
     expect(enrichment).toHaveLength(2) // 90 + 30
     expect(enrichment[0]!.params).toHaveLength(90)
@@ -645,6 +654,7 @@ describe('exportReviewDecisions', () => {
       observationRows: [
         {
           product_key: 'beras-ramos-5kg--ramos--5-kg',
+          store_slug: 'superindo',
           brochure_url: '/api/brochures/superindo/20261028/page-3.jpg',
           source_url: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
           observed_date: '2026-10-28',
@@ -892,15 +902,18 @@ describe('runs ingest ride-along', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Real-SQLite enrichment semantics (issue #380, thermos A2): the fake db
-// above matches SQL strings, so it cannot pin ORDER BY / tie-break behavior.
-// These run fetchEntryEvidence's REAL SQL through a minimal D1-shaped adapter
-// on node:sqlite, on the real migration chain.
-describe('fetchEntryEvidence — real-SQLite semantics (thermos A2)', () => {
-  it('picks the latest observation across sources and breaks an exact tie deterministically', async () => {
-    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+// Real-SQLite enrichment semantics (issue #380, thermos A2; store pinning
+// per the owner's 2026-11-15 production report): the fake db above matches
+// SQL strings, so it cannot pin ORDER BY / tie-break behavior. These run
+// fetchEntryEvidence's REAL SQL through a minimal D1-shaped adapter on
+// node:sqlite, on the real migration chain.
+describe('fetchEntryEvidence — real-SQLite semantics (thermos A2 + store pinning)', () => {
+  // One canonical entry sighted by TWO stores; the lotte-mart sighting is
+  // the newest overall. A key-only lookup (the pre-pinning #380 code) took
+  // that lotte-mart page for every request — the owner's report: an
+  // 'alfamart'-labelled card rendering another store's brochure.
+  async function seedTwoStoreEntry(sqlite: SqliteDb): Promise<void> {
     applyRealMigrations(sqlite)
-
     sqlite
       .prepare(
         `INSERT INTO price_products (id, product_key, name)
@@ -919,7 +932,7 @@ describe('fetchEntryEvidence — real-SQLite semantics (thermos A2)', () => {
           brochure_url, source_url, scraped_at)
        VALUES (?, 'prod-1', ?, ?, 27000, 1.0, ?, ?, ?)`
     )
-    // An older sighting first — it must lose to the 10-28 pair below.
+    // An older superindo sighting first — it must lose within its own store.
     insertObs.run(
       'obs-old',
       'src-superindo',
@@ -928,38 +941,56 @@ describe('fetchEntryEvidence — real-SQLite semantics (thermos A2)', () => {
       'https://old.example/',
       '2026-10-20T23:00:05Z'
     )
-    // An EXACT tie: same observed_date, same scraped_at (scraped_at binds
-    // per-payload — ingest.ts) from two different sources. The id tie-break
-    // pins the lexicographically-greatest id's evidence on any engine.
+    // The NEWEST sighting overall, from the other store — exactly the page
+    // the unpinned lookup rendered on the wrong card.
     insertObs.run(
-      'obs-a',
-      'src-superindo',
-      '2026-10-28',
-      '/api/brochures/superindo/20261028/a.jpg',
-      'https://a.example/',
-      '2026-10-28T23:00:05Z'
-    )
-    insertObs.run(
-      'obs-b',
+      'obs-lotte',
       'src-lotte-mart',
       '2026-10-28',
       '/api/brochures/lotte-mart/20261028/b.jpg',
       'https://b.example/',
       '2026-10-28T23:00:05Z'
     )
+    insertObs.run(
+      'obs-superindo',
+      'src-superindo',
+      '2026-10-26',
+      '/api/brochures/superindo/20261026/a.jpg',
+      'https://a.example/',
+      '2026-10-26T23:00:05Z'
+    )
+  }
 
-    const evidence = await fetchEntryEvidence(sqliteD1(sqlite), ['beras--ramos--5-kg'])
-    expect(evidence.get('beras--ramos--5-kg')).toEqual({
-      entryBrochureUrl: '/api/brochures/lotte-mart/20261028/b.jpg',
-      entrySourceUrl: 'https://b.example/',
-      entryObservedAt: '2026-10-28',
+  it('picks the latest observation from the FROZEN store — never another store page', async () => {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    await seedTwoStoreEntry(sqlite)
+
+    const evidence = await fetchEntryEvidence(sqliteD1(sqlite), [
+      { productKey: 'beras--ramos--5-kg', storeSlug: 'superindo' },
+    ])
+    expect(evidence.get('beras--ramos--5-kg|superindo')).toEqual({
+      entryBrochureUrl: '/api/brochures/superindo/20261026/a.jpg',
+      entrySourceUrl: 'https://a.example/',
+      entryObservedAt: '2026-10-26',
     })
+  })
+
+  it('returns nothing when the frozen store never sighted the entry — no cross-store fallback', async () => {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    await seedTwoStoreEntry(sqlite)
+
+    const evidence = await fetchEntryEvidence(sqliteD1(sqlite), [
+      { productKey: 'beras--ramos--5-kg', storeSlug: 'hydro' },
+    ])
+    expect(evidence.size).toBe(0)
   })
 
   it('returns nothing for an entry without observations', async () => {
     const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
     applyRealMigrations(sqlite)
-    const evidence = await fetchEntryEvidence(sqliteD1(sqlite), ['never-seen--null--1-kg'])
+    const evidence = await fetchEntryEvidence(sqliteD1(sqlite), [
+      { productKey: 'never-seen--null--1-kg', storeSlug: 'superindo' },
+    ])
     expect(evidence.size).toBe(0)
   })
 })
