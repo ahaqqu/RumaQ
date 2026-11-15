@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
 import { matchesReviewScriptToken, propsOrReviewScriptAuth } from '../auth.js'
-import { fetchReviewQueueReport } from '../lib/match-review.js'
+import { fetchReviewQueueReport, fetchReviewItemsByIds } from '../lib/match-review.js'
 // The queue-report aggregates run on real SQLite (node:sqlite — D1 is
 // SQLite) with the repo's migrations applied, same pattern as
 // match-review.test.ts: the band/precision math is SQL-adjacent enough that
@@ -306,5 +306,244 @@ describe('fetchReviewQueueReport', () => {
       { band: '0.6-0.8', decided: 1, agreed: 0, disagreed: 0, precision: null },
       { band: '>=0.8', decided: 1, agreed: 1, disagreed: 0, precision: 1 },
     ])
+  })
+})
+
+// #691 Phase A: the queue-report ids mode's per-item read. Real SQLite again:
+// the shape and the frozen-vs-CURRENT-evidence contrast are exactly what the
+// Phase B diagnosis compares, and the prefix-resolution/enrichment SQL is
+// string-matching-fake-proof. Rows are seeded with PRODUCTION-shaped ids —
+// the full ingest UUIDs (recordReviewItems binds crypto.randomUUID()) — and
+// requested through both forms humans actually hold: the queue card's 8-hex
+// short id (#aa11aa11) and the copy button's full UUID. Seeding 8-hex rows is
+// what masked the resolution bug this suite now pins.
+describe('fetchReviewItemsByIds (#691 Phase A)', () => {
+  const PAIR_BLOB = JSON.stringify({
+    itemProductKey: 'beras-ramos-5kg----5-kg',
+    itemName: 'Beras Ramos 5 kg',
+    itemBrand: null,
+    itemUnit: '5 kg',
+    itemPrice: 89000,
+    itemEffectiveUnitPrice: 89000,
+    itemStore: 'lotte-mart',
+    entryProductKey: 'beras-ramos-5kg--ramos--5-kg',
+    entryName: 'Beras Ramos 5kg',
+    entryBrand: 'Ramos',
+    entryUnit: '5 kg',
+    entryPrice: 27000,
+    entryEffectiveUnitPrice: 27000,
+    entryStore: 'superindo',
+    matchMethod: 'exact',
+    confidence: 1,
+    reason: 'price_ratio',
+  })
+
+  // Production-shaped row ids — the short forms the card renders are their
+  // first 8 hex chars.
+  const AA11 = 'aa11aa11-1111-4111-8111-111111111111'
+  const BB22 = 'bb22bb22-2222-4222-8222-222222222222'
+  const CC33 = 'cc33cc33-3333-4333-8333-333333333333'
+
+  function seedItem(
+    sqlite: SqliteDb,
+    id: string,
+    itemProductKey: string,
+    entryProductKey: string,
+    pairData: string,
+    status: string,
+    decidedAt: string | null,
+    decidedBy: string | null,
+    decidedSource: string | null
+  ): void {
+    sqlite
+      .prepare(
+        `INSERT INTO match_review_items
+           (id, item_product_key, entry_product_key, pair_data, reason, match_method,
+            confidence, run_started_at, first_flagged_at, last_flagged_at, status,
+            decided_at, decided_by, decided_source)
+         VALUES (?, ?, ?, ?,
+                 'price_ratio', 'exact', 0.9,
+                 '2026-11-13T00:00:00Z', '2026-11-13T00:00:00Z', '2026-11-13T00:00:00Z',
+                 ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        itemProductKey,
+        entryProductKey,
+        pairData,
+        status,
+        decidedAt,
+        decidedBy,
+        decidedSource
+      )
+  }
+
+  function seedItems(sqlite: SqliteDb): void {
+    applyRealMigrations(sqlite)
+    // aa11aa11-… pending · bb22bb22-… decided · cc33cc33-… a corrupt legacy
+    // blob. Distinct (item, entry) pair keys — the table's natural key is
+    // UNIQUE.
+    seedItem(
+      sqlite,
+      AA11,
+      'beras-ramos-5kg----5-kg',
+      'beras-ramos-5kg--ramos--5-kg',
+      PAIR_BLOB,
+      'pending',
+      null,
+      null,
+      null
+    )
+    seedItem(
+      sqlite,
+      BB22,
+      'gula-pasir-1kg----1-kg',
+      'gula-pasir-1kg--gulaku--1-kg',
+      JSON.stringify({
+        ...JSON.parse(PAIR_BLOB),
+        itemName: 'Gula Pasir 1 kg',
+        itemProductKey: 'gula-pasir-1kg----1-kg',
+        itemPrice: 18000,
+        entryProductKey: 'gula-pasir-1kg--gulaku--1-kg',
+        entryName: 'Gula Gulaku 1 kg',
+        entryPrice: 17500,
+      }),
+      'approved',
+      '2026-11-13T01:00:00Z',
+      'admin-1',
+      'human'
+    )
+    seedItem(
+      sqlite,
+      CC33,
+      'mi-instant----sesawi',
+      'mi-instant--sesawi--63-g',
+      '{not json',
+      'pending',
+      null,
+      null,
+      null
+    )
+
+    // The entry's CURRENT evidence at the frozen store — newer than the flag
+    // (2026-11-13) on purpose: the tool must show what the card renders NOW.
+    sqlite
+      .prepare(`INSERT INTO price_products (id, product_key, name)
+                VALUES ('prod-1', 'beras-ramos-5kg--ramos--5-kg', 'Beras Ramos')`)
+      .run()
+    sqlite
+      .prepare(`INSERT INTO price_sources (id, slug, name)
+                VALUES ('src-superindo', 'superindo', 'Superindo')`)
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO price_observations
+           (id, product_id, source_id, observed_date, price, match_confidence,
+            brochure_url, source_url, scraped_at)
+         VALUES ('obs-1', 'prod-1', 'src-superindo', '2026-11-14', 29000, 1.0,
+                 '/api/brochures/superindo/20261114/page-3.jpg',
+                 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+                 '2026-11-14T23:00:05Z')`
+      )
+      .run()
+  }
+
+  function freshDb(): D1Database {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    seedItems(sqlite)
+    return sqliteD1Of(sqlite)
+  }
+
+  it('resolves 8-hex short ids to UUID rows — card shape with CURRENT evidence, in requested order', async () => {
+    const lookups = await fetchReviewItemsByIds(freshDb(), ['bb22bb22', 'aa11aa11'])
+    expect(lookups.map((entry) => entry.id)).toEqual(['bb22bb22', 'aa11aa11'])
+    // The resolved row surfaces its FULL ingest UUID in item.id — the
+    // disambiguation handle when a short prefix ever matched twice.
+    // The decided row: full frozen shape. Its entry has NO observation, so
+    // the evidence stays null (renders evidence-less, honestly).
+    expect(lookups[0]).toMatchObject({
+      id: 'bb22bb22',
+      found: true,
+      item: {
+        id: BB22,
+        status: 'approved',
+        decidedAt: '2026-11-13T01:00:00Z',
+        decidedBy: 'admin-1',
+        decidedSource: 'human',
+        aiVerdict: null,
+        flagCount: 1,
+        itemProductKey: 'gula-pasir-1kg----1-kg',
+        itemName: 'Gula Pasir 1 kg',
+        itemStore: 'lotte-mart',
+        itemPrice: 18000,
+        entryProductKey: 'gula-pasir-1kg--gulaku--1-kg',
+        entryName: 'Gula Gulaku 1 kg',
+        entryStore: 'superindo',
+        entryPrice: 17500,
+        reason: 'price_ratio',
+        matchMethod: 'exact',
+        entryBrochureUrl: null,
+        entrySourceUrl: null,
+        entryObservedAt: null,
+      },
+    })
+    // The pending beras row rides the CURRENT evidence — the 2026-11-14
+    // observation, newer than the 2026-11-13 flag: what the card renders NOW.
+    expect(lookups[1]).toMatchObject({
+      id: 'aa11aa11',
+      found: true,
+      item: {
+        id: AA11,
+        status: 'pending',
+        itemProductKey: 'beras-ramos-5kg----5-kg',
+        itemName: 'Beras Ramos 5 kg',
+        entryProductKey: 'beras-ramos-5kg--ramos--5-kg',
+        entryStore: 'superindo',
+        entryBrochureUrl: '/api/brochures/superindo/20261114/page-3.jpg',
+        entrySourceUrl: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+        entryObservedAt: '2026-11-14',
+      },
+    })
+  })
+
+  it('a requested full UUID resolves to the same row as its short prefix', async () => {
+    // The copy button form: the pattern can only match its own row.
+    const lookups = await fetchReviewItemsByIds(freshDb(), [BB22])
+    expect(lookups).toMatchObject([
+      { id: BB22, found: true, item: { id: BB22, status: 'approved' } },
+    ])
+  })
+
+  it('a prefix matching nothing stays found:false — distinct from a prefix matching one row', async () => {
+    // The regression this guards: aa11aa11 prefix-resolves a UUID row while
+    // deadbeef matches nothing — a short id must never read as "rows gone"
+    // when the row exists (the pre-review exact-IN-list failure).
+    const lookups = await fetchReviewItemsByIds(freshDb(), ['aa11aa11', 'deadbeef'])
+    expect(lookups[0]).toMatchObject({ id: 'aa11aa11', found: true })
+    expect(lookups[1]).toEqual({ id: 'deadbeef', found: false, item: null })
+  })
+
+  it('a short id matching several rows resolves deterministically to the first id', async () => {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyRealMigrations(sqlite)
+    const AA11_TWIN = 'aa11aa11-9999-4999-8999-999999999999'
+    seedItem(sqlite, AA11, 'p-key-1', 'e-key-1', PAIR_BLOB, 'pending', null, null, null)
+    seedItem(sqlite, AA11_TWIN, 'p-key-2', 'e-key-2', PAIR_BLOB, 'pending', null, null, null)
+    const lookups = await fetchReviewItemsByIds(sqliteD1Of(sqlite), ['aa11aa11'])
+    expect(lookups).toEqual([
+      { id: 'aa11aa11', found: true, item: expect.objectContaining({ id: AA11 }) },
+    ])
+  })
+
+  it('reports a malformed pair blob as found:true with a null item', async () => {
+    // The row IS there — the diagnosis tool must see that distinct from an
+    // unknown id (which is found:false). toReviewItem drops the unparseable
+    // pair, so item is null while found stays true.
+    const lookups = await fetchReviewItemsByIds(freshDb(), ['cc33cc33'])
+    expect(lookups).toEqual([{ id: 'cc33cc33', found: true, item: null }])
+  })
+
+  it('an empty ids list returns an empty items array without querying', async () => {
+    expect(await fetchReviewItemsByIds(freshDb(), [])).toEqual([])
   })
 })

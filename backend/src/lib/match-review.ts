@@ -713,7 +713,90 @@ export async function fetchReviewQueueReport(db: D1Database): Promise<ReviewQueu
   }
 }
 
+/**
+ * #691 Phase A: the per-ID inspection read behind the queue-report's optional
+ * `ids` query param — the manager's diagnosis tool compares a FROZEN pair
+ * against the entry's CURRENT evidence in one response. Ids resolve
+ * EXACT-OR-PREFIX: rows are keyed by the ingest UUID, while the ids humans
+ * quote are the queue card's 8-hex short form (#42a3e6a8, the owner's #691
+ * report) — an exact IN-list would report every such request found:false, a
+ * false "rows gone" diagnosis. Each validated token therefore binds as ONE
+ * LIKE prefix pattern (hex/dash tokens cannot carry LIKE wildcards, and a
+ * full-UUID token's pattern can only match its own row); one bind per id, far
+ * under D1's 100-bind cap, so one statement. The mapping/enrichment is the
+ * shared hydrateReviewRows pipeline, so the item shape cannot drift from the
+ * decide/undo re-reads'. Entries come back in the REQUESTED order; a token
+ * matching no row is a `found: false` entry, not an error (the tool must
+ * report the whole requested set), and a token matching several rows resolves
+ * to the lexicographically-first id — visible in the returned item.id for
+ * disambiguation. `item` is null when the row exists but its pair blob is
+ * malformed — "the row is there" and "the pair is renderable" are different
+ * facts, and a diagnosis tool wants both.
+ */
+export type ReviewItemLookup = {
+  id: string
+  found: boolean
+  item: ReviewItem | null
+}
+
+export async function fetchReviewItemsByIds(
+  db: D1Database,
+  ids: string[]
+): Promise<ReviewItemLookup[]> {
+  if (ids.length === 0) return []
+  const { results } = await db
+    .prepare(
+      `SELECT ${REVIEW_ROW_COLUMNS}
+       FROM match_review_items r
+       ${REVIEW_ROW_JOINS}
+       WHERE ${ids.map(() => 'r.id LIKE ?').join(' OR ')}`
+    )
+    .bind(...ids.map((id) => `${id}%`))
+    .all<ReviewRow>()
+  const itemByRowId = await hydrateReviewRows(db, (results ?? []) as unknown as ReviewRow[])
+  return ids.map((id) => {
+    const matchId = [...itemByRowId.keys()]
+      .filter((rowId) => rowId.startsWith(id))
+      .sort()
+      .at(0)
+    if (matchId === undefined) return { id, found: false, item: null }
+    return { id, found: true, item: itemByRowId.get(matchId) ?? null }
+  })
+}
+
+// One hydration pipeline for BOTH review-row reads — toReviewItem plus the
+// entry evidence enrichment — so the decide/undo re-read and the per-ID
+// inspection render the identical card shape. Returns row-id → item (null
+// when the pair blob is malformed); parseable items get the CURRENT entry
+// evidence (fetchEntryEvidence, store-pinned) filled in.
+async function hydrateReviewRows(
+  db: D1Database,
+  rows: ReviewRow[]
+): Promise<Map<string, ReviewItem | null>> {
+  const itemByRowId = new Map<string, ReviewItem | null>()
+  const items: ReviewItem[] = []
+  for (const row of rows) {
+    const item = toReviewItem(row)
+    itemByRowId.set(row.id, item)
+    if (item) items.push(item)
+  }
+  enrichEntryEvidence(
+    items,
+    await fetchEntryEvidence(
+      db,
+      items.map((i) => ({ productKey: i.entryProductKey, storeSlug: i.entryStore }))
+    )
+  )
+  return itemByRowId
+}
+
 async function getReviewRow(db: D1Database, id: string): Promise<ReviewItem | null> {
+  // EXACT on purpose: this re-read renders the row the decide/undo UPDATE
+  // (also exact WHERE id = ?) just touched. Prefix resolution here would turn
+  // a short-id decision write into a silent no-op reported as success — the
+  // exact write matches nothing while this read finds a prefix neighbour.
+  // The inspection read (fetchReviewItemsByIds) resolves prefixes; the write
+  // path's re-read must not.
   const row = await db
     .prepare(
       `SELECT ${REVIEW_ROW_COLUMNS}
@@ -724,15 +807,8 @@ async function getReviewRow(db: D1Database, id: string): Promise<ReviewItem | nu
     .bind(id)
     .first<ReviewRow>()
   if (!row) return null
-  const item = toReviewItem(row)
-  if (!item) return null
-  // Same enrichment as the list — the decide/undo response carries the same
-  // evidence shape the queue rows do.
-  enrichEntryEvidence(
-    [item],
-    await fetchEntryEvidence(db, [{ productKey: item.entryProductKey, storeSlug: item.entryStore }])
-  )
-  return item
+  const items = await hydrateReviewRows(db, [row])
+  return items.get(row.id) ?? null
 }
 
 /**

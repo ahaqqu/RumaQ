@@ -20,6 +20,7 @@ import {
   pipe,
   regex,
   transform,
+  check,
   boolean,
 } from 'valibot'
 import {
@@ -82,6 +83,7 @@ import {
   undoReviewDecision,
   exportReviewDecisions,
   fetchReviewQueueReport,
+  fetchReviewItemsByIds,
   REVIEW_CONFIDENCE_BANDS,
 } from '../lib/match-review.js'
 import {
@@ -287,6 +289,32 @@ const reviewQuery = object({
       integer(),
       minValue(0),
       maxValue(Number.MAX_SAFE_INTEGER)
+    )
+  ),
+})
+
+// #691 Phase A: the queue-report's optional per-ID inspection query. Hono
+// delivers the raw comma-separated string, so split + dedupe + validate here.
+// Accepted id forms — the two the queue card itself shows — and ANYTHING else
+// (empty tokens, uppercase, whitespace) 400s with the valibot issue instead of
+// silently reading nothing:
+//   - 1-32 lowercase-hex chars: the card's short id (it renders the UUID's
+//     first 8 as #42a3e6a8) — resolved as a PREFIX of the row's ingest UUID;
+//   - a full lowercase UUID: the card copy button's form.
+// Unknown-but-well-formed ids are NOT a validation error: they come back as
+// `found: false` entries. Max 50 ids — one statement, far under D1's bind cap.
+const REVIEW_IDS_MAX = 50
+const REVIEW_ID_PATTERN =
+  /^[0-9a-f]{1,32}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const reviewIdsQuery = object({
+  ids: optional(
+    pipe(
+      string(),
+      transform((value) => [...new Set(value.split(','))]),
+      check(
+        (ids) => ids.length <= REVIEW_IDS_MAX && ids.every((id) => REVIEW_ID_PATTERN.test(id)),
+        `ids must be at most ${REVIEW_IDS_MAX} comma-separated review-item ids — 1-32 lowercase hex chars (the queue card's short id) or full lowercase UUIDs.`
+      )
     )
   ),
 })
@@ -4895,7 +4923,10 @@ apiApp.post(
 // Same discipline as REVIEW_MODE_RESPONSE_SCHEMA above: the queue-report
 // payload and its documented shape travel together, so the generated client
 // type carries the aggregates the switch checklist reads (counts.*, ai.*,
-// agreement[]) instead of a bare object.
+// agreement[]) instead of a bare object. #691 adds a second, request-shaped
+// mode: with `ids` the response is per-ID inspection entries instead, so the
+// 200 schema is a oneOf and the absence of `ids` keeps the aggregate shape
+// byte-compatible (pinned by the route test).
 const REVIEW_QUEUE_REPORT_RESPONSE_SCHEMA: OpenAPIV3_1.SchemaObject = {
   type: 'object',
   properties: {
@@ -4961,24 +4992,77 @@ const REVIEW_QUEUE_REPORT_RESPONSE_SCHEMA: OpenAPIV3_1.SchemaObject = {
   },
 }
 
+// #691 Phase A: the `ids` mode's response — one entry PER requested id, in
+// request order. Ids resolve exact-or-prefix: the card's 8-hex short form
+// matches the row whose ingest UUID starts with it; a token matching no row
+// is `found: false`. `item` is exactly the queue card's REVIEW_ITEM_SCHEMA
+// shape (frozen pair + row columns + the CURRENT entry evidence), null only
+// when the row exists but its pair blob is malformed. Spreading
+// REVIEW_ITEM_SCHEMA keeps the item shape single-owned — it cannot drift from
+// the list route's documented item.
+const REVIEW_QUEUE_REPORT_IDS_RESPONSE_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  required: ['items'],
+  properties: {
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'found'],
+        properties: {
+          id: { type: 'string' },
+          found: { type: 'boolean' },
+          item: { ...REVIEW_ITEM_SCHEMA, type: ['object', 'null'] },
+        },
+      },
+    },
+  },
+}
+
 apiApp.get(
   '/api/admin/review/queue-report',
   describeRoute({
     description:
-      'Whole-queue aggregates for the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md): status counts with the pending split by reason, cached-verdict coverage, provider/model mix, confidence bands with the auto-eligible count (>= 0.8), and agreement/precision on already-decided items by band. Read-only. Admin session or the scoped review-script token (ahaqqu/RumaQ#656); the token acts as the deployment admin user.',
+      'Whole-queue aggregates for the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md): status counts with the pending split by reason, cached-verdict coverage, provider/model mix, confidence bands with the auto-eligible count (>= 0.8), and agreement/precision on already-decided items by band. Read-only. Admin session or the scoped review-script token (ahaqqu/RumaQ#656); the token acts as the deployment admin user. #691: with the optional `ids` query param (comma-separated review-item ids — the queue card 8-hex short id, resolved as a prefix, or the full UUID; <= 50) the response switches to per-ID inspection instead — `{ items: [{ id, found, item }] }` in request order, each `item` the exact queue-card shape with the CURRENT entry evidence alongside the frozen pair; unknown ids are `found: false` entries, not errors.',
     security: [{ cookieAuth: [] }],
+    parameters: [
+      {
+        in: 'query',
+        name: 'ids',
+        required: false,
+        description:
+          'Comma-separated review-item ids — 1-32 lowercase hex chars (the queue card short id, resolved as a prefix of the row UUID) or full lowercase UUIDs; max 50. Absent = the whole-queue aggregate response (unchanged contract).',
+        schema: { type: 'string' },
+      },
+    ],
     responses: {
       200: {
         description: 'OK',
-        content: { 'application/json': { schema: REVIEW_QUEUE_REPORT_RESPONSE_SCHEMA } },
+        content: {
+          'application/json': {
+            schema: {
+              oneOf: [REVIEW_QUEUE_REPORT_RESPONSE_SCHEMA, REVIEW_QUEUE_REPORT_IDS_RESPONSE_SCHEMA],
+            },
+          },
+        },
+      },
+      400: {
+        description:
+          'Invalid ids query (non-hex, oversized, or more than 50 ids; absent ids is fine and keeps the aggregate response)',
       },
       401: { description: 'Unauthorized' },
       403: { description: 'Not an admin' },
     },
   }),
   requireAdmin,
+  sValidator('query', reviewIdsQuery),
   async (c) => {
-    const res = c.json(await fetchReviewQueueReport(c.env.DB))
+    const { ids } = c.req.valid('query')
+    const res = c.json(
+      ids
+        ? { items: await fetchReviewItemsByIds(c.env.DB, ids) }
+        : await fetchReviewQueueReport(c.env.DB)
+    )
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }

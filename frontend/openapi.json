@@ -3100,10 +3100,21 @@
     "/api/admin/review/queue-report": {
       "get": {
         "operationId": "getApiAdminReviewQueueReport",
-        "description": "Whole-queue aggregates for the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md): status counts with the pending split by reason, cached-verdict coverage, provider/model mix, confidence bands with the auto-eligible count (>= 0.8), and agreement/precision on already-decided items by band. Read-only. Admin session or the scoped review-script token (ahaqqu/RumaQ#656); the token acts as the deployment admin user.",
+        "description": "Whole-queue aggregates for the auto-mode switch checklist (docs/REVIEW-AUTO-MODE.md): status counts with the pending split by reason, cached-verdict coverage, provider/model mix, confidence bands with the auto-eligible count (>= 0.8), and agreement/precision on already-decided items by band. Read-only. Admin session or the scoped review-script token (ahaqqu/RumaQ#656); the token acts as the deployment admin user. #691: with the optional `ids` query param (comma-separated review-item ids — the queue card 8-hex short id, resolved as a prefix, or the full UUID; <= 50) the response switches to per-ID inspection instead — `{ items: [{ id, found, item }] }` in request order, each `item` the exact queue-card shape with the CURRENT entry evidence alongside the frozen pair; unknown ids are `found: false` entries, not errors.",
         "security": [
           {
             "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "description": "Comma-separated review-item ids — 1-32 lowercase hex chars (the queue card short id, resolved as a prefix of the row UUID) or full lowercase UUIDs; max 50. Absent = the whole-queue aggregate response (unchanged contract).",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3112,69 +3123,91 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "generatedAt": {
-                      "type": "string",
-                      "format": "date-time"
-                    },
-                    "counts": {
+                  "oneOf": [
+                    {
                       "type": "object",
                       "properties": {
-                        "pending": {
-                          "type": "integer"
+                        "generatedAt": {
+                          "type": "string",
+                          "format": "date-time"
                         },
-                        "approved": {
-                          "type": "integer"
-                        },
-                        "rejected": {
-                          "type": "integer"
-                        },
-                        "pendingByReason": {
+                        "counts": {
                           "type": "object",
                           "properties": {
-                            "price_ratio": {
+                            "pending": {
                               "type": "integer"
                             },
-                            "verifier_unresolved": {
+                            "approved": {
                               "type": "integer"
                             },
-                            "taxonomy": {
+                            "rejected": {
                               "type": "integer"
-                            }
-                          }
-                        }
-                      }
-                    },
-                    "ai": {
-                      "type": "object",
-                      "properties": {
-                        "pendingWithVerdict": {
-                          "type": "integer"
-                        },
-                        "pendingWithoutVerdict": {
-                          "type": "integer"
-                        },
-                        "models": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "provider": {
-                                "type": "string",
-                                "nullable": true
-                              },
-                              "model": {
-                                "type": "string",
-                                "nullable": true
-                              },
-                              "count": {
-                                "type": "integer"
+                            },
+                            "pendingByReason": {
+                              "type": "object",
+                              "properties": {
+                                "price_ratio": {
+                                  "type": "integer"
+                                },
+                                "verifier_unresolved": {
+                                  "type": "integer"
+                                },
+                                "taxonomy": {
+                                  "type": "integer"
+                                }
                               }
                             }
                           }
                         },
-                        "confidenceBands": {
+                        "ai": {
+                          "type": "object",
+                          "properties": {
+                            "pendingWithVerdict": {
+                              "type": "integer"
+                            },
+                            "pendingWithoutVerdict": {
+                              "type": "integer"
+                            },
+                            "models": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "provider": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "model": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "count": {
+                                    "type": "integer"
+                                  }
+                                }
+                              }
+                            },
+                            "confidenceBands": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "band": {
+                                    "type": "string",
+                                    "enum": ["<0.6", "0.6-0.8", ">=0.8"]
+                                  },
+                                  "count": {
+                                    "type": "integer"
+                                  }
+                                }
+                              }
+                            },
+                            "autoEligible": {
+                              "type": "integer"
+                            }
+                          }
+                        },
+                        "agreement": {
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -3183,46 +3216,194 @@
                                 "type": "string",
                                 "enum": ["<0.6", "0.6-0.8", ">=0.8"]
                               },
-                              "count": {
+                              "decided": {
                                 "type": "integer"
+                              },
+                              "agreed": {
+                                "type": "integer"
+                              },
+                              "disagreed": {
+                                "type": "integer"
+                              },
+                              "precision": {
+                                "type": "number",
+                                "nullable": true
                               }
                             }
                           }
-                        },
-                        "autoEligible": {
-                          "type": "integer"
                         }
                       }
                     },
-                    "agreement": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "band": {
-                            "type": "string",
-                            "enum": ["<0.6", "0.6-0.8", ">=0.8"]
-                          },
-                          "decided": {
-                            "type": "integer"
-                          },
-                          "agreed": {
-                            "type": "integer"
-                          },
-                          "disagreed": {
-                            "type": "integer"
-                          },
-                          "precision": {
-                            "type": "number",
-                            "nullable": true
+                    {
+                      "type": "object",
+                      "required": ["items"],
+                      "properties": {
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": ["id", "found"],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "found": {
+                                "type": "boolean"
+                              },
+                              "item": {
+                                "type": ["object", "null"],
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "itemProductKey": {
+                                    "type": "string"
+                                  },
+                                  "itemName": {
+                                    "type": "string"
+                                  },
+                                  "itemBrand": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "itemUnit": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "itemPrice": {
+                                    "type": "integer"
+                                  },
+                                  "itemEffectiveUnitPrice": {
+                                    "type": ["number", "null"]
+                                  },
+                                  "itemStore": {
+                                    "type": "string"
+                                  },
+                                  "itemCategory": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "itemCategoryVersion": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "itemBrochureUrl": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "itemSourceUrl": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "entryProductKey": {
+                                    "type": "string"
+                                  },
+                                  "entryName": {
+                                    "type": "string"
+                                  },
+                                  "entryBrand": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "entryUnit": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "entryPrice": {
+                                    "type": "integer"
+                                  },
+                                  "entryEffectiveUnitPrice": {
+                                    "type": ["number", "null"]
+                                  },
+                                  "entryStore": {
+                                    "type": "string"
+                                  },
+                                  "entryBrochureUrl": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "entrySourceUrl": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "entryObservedAt": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "matchMethod": {
+                                    "type": "string",
+                                    "enum": ["exact", "embedding", "ai"]
+                                  },
+                                  "confidence": {
+                                    "type": "number"
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": ["price_ratio", "verifier_unresolved", "taxonomy"]
+                                  },
+                                  "kind": {
+                                    "type": ["string", "null"],
+                                    "enum": ["low_confidence", "disagreement", null]
+                                  },
+                                  "rulesCategory": {
+                                    "type": ["string", "null"],
+                                    "minLength": 1,
+                                    "maxLength": 64
+                                  },
+                                  "status": {
+                                    "type": "string",
+                                    "enum": ["pending", "approved", "rejected"]
+                                  },
+                                  "decidedAt": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "decidedBy": {
+                                    "type": ["string", "null"]
+                                  },
+                                  "decidedSource": {
+                                    "type": ["string", "null"],
+                                    "enum": ["human", "ai_assist", "ai_auto", null]
+                                  },
+                                  "aiVerdict": {
+                                    "type": ["object", "null"],
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": ["same", "different"]
+                                      },
+                                      "confidence": {
+                                        "type": "number"
+                                      },
+                                      "reason": {
+                                        "type": ["string", "null"]
+                                      },
+                                      "model": {
+                                        "type": ["string", "null"]
+                                      },
+                                      "humanAgreement": {
+                                        "type": ["string", "null"],
+                                        "enum": ["agreed", "disagreed", null]
+                                      }
+                                    }
+                                  },
+                                  "flagCount": {
+                                    "type": "integer"
+                                  },
+                                  "firstFlaggedAt": {
+                                    "type": "string"
+                                  },
+                                  "lastFlaggedAt": {
+                                    "type": "string"
+                                  },
+                                  "runStartedAt": {
+                                    "type": "string"
+                                  },
+                                  "runId": {
+                                    "type": ["string", "null"]
+                                  }
+                                }
+                              }
+                            }
                           }
                         }
                       }
                     }
-                  }
+                  ]
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid ids query (non-hex, oversized, or more than 50 ids; absent ids is fine and keeps the aggregate response)"
           },
           "401": {
             "description": "Unauthorized"

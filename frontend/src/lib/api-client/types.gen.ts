@@ -1749,11 +1749,20 @@ export type PostApiAdminReviewEvaluateResponse = PostApiAdminReviewEvaluateRespo
 export type GetApiAdminReviewQueueReportData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Comma-separated review-item ids — 1-32 lowercase hex chars (the queue card short id, resolved as a prefix of the row UUID) or full lowercase UUIDs; max 50. Absent = the whole-queue aggregate response (unchanged contract).
+         */
+        ids?: string;
+    };
     url: '/api/admin/review/queue-report';
 };
 
 export type GetApiAdminReviewQueueReportErrors = {
+    /**
+     * Invalid ids query (non-hex, oversized, or more than 50 ids; absent ids is fine and keeps the aggregate response)
+     */
+    400: unknown;
     /**
      * Unauthorized
      */
@@ -1800,6 +1809,56 @@ export type GetApiAdminReviewQueueReportResponses = {
             agreed?: number;
             disagreed?: number;
             precision?: number;
+        }>;
+    } | {
+        items: Array<{
+            id: string;
+            found: boolean;
+            item?: {
+                id?: string;
+                itemProductKey?: string;
+                itemName?: string;
+                itemBrand?: string | null;
+                itemUnit?: string | null;
+                itemPrice?: number;
+                itemEffectiveUnitPrice?: number | null;
+                itemStore?: string;
+                itemCategory?: string | null;
+                itemCategoryVersion?: string | null;
+                itemBrochureUrl?: string | null;
+                itemSourceUrl?: string | null;
+                entryProductKey?: string;
+                entryName?: string;
+                entryBrand?: string | null;
+                entryUnit?: string | null;
+                entryPrice?: number;
+                entryEffectiveUnitPrice?: number | null;
+                entryStore?: string;
+                entryBrochureUrl?: string | null;
+                entrySourceUrl?: string | null;
+                entryObservedAt?: string | null;
+                matchMethod?: 'exact' | 'embedding' | 'ai';
+                confidence?: number;
+                reason?: 'price_ratio' | 'verifier_unresolved' | 'taxonomy';
+                kind?: 'low_confidence' | 'disagreement' | null;
+                rulesCategory?: string | null;
+                status?: 'pending' | 'approved' | 'rejected';
+                decidedAt?: string | null;
+                decidedBy?: string | null;
+                decidedSource?: 'human' | 'ai_assist' | 'ai_auto' | null;
+                aiVerdict?: {
+                    verdict?: 'same' | 'different';
+                    confidence?: number;
+                    reason?: string | null;
+                    model?: string | null;
+                    humanAgreement?: 'agreed' | 'disagreed' | null;
+                } | null;
+                flagCount?: number;
+                firstFlaggedAt?: string;
+                lastFlaggedAt?: string;
+                runStartedAt?: string;
+                runId?: string | null;
+            } | null;
         }>;
     };
 };

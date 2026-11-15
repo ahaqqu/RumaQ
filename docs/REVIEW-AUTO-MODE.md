@@ -48,6 +48,21 @@ never committed, never echoed).
    (`agreement[].decided`), spot-check 20 pending items (UI chips) and record
    the result before switching.
 
+## Per-ID inspection (#691)
+
+`scripts/review-queue-report.sh --remote --ids a1b2c3d4,e5f60718` switches the
+report to per-ID inspection: the response is
+`{ items: [{ id, found, item }] }` in request order, where each found `item`
+is the review card's exact shape (frozen pair + row columns) rendered next to
+the entry's CURRENT evidence (`item.entryBrochureUrl`, `item.entrySourceUrl`,
+`item.entryObservedAt` — the observation the card would show now, regardless
+of what was frozen at flag time). A frozen-vs-evidence mismatch is therefore a
+direct field comparison. Ids come in the forms the card itself shows: the
+8-hex short id (`#42a3e6a8` — resolved as a prefix of the row's ingest UUID)
+or the full UUID from the card's copy button. Unknown ids are `found: false`
+entries, not errors; malformed blobs are `found: true` with `item: null`. Max
+50 ids per call.
+
 ## Optional: drain the verdict backlog first
 
 Assist caches verdicts without deciding them, so a bigger cached-verdict set
