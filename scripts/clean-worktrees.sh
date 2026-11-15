@@ -10,13 +10,19 @@
 #      main — an ancestor of origin/main, or its PR is MERGED with the exact
 #      head commit (this repo squash-merges, so ancestry alone never fires) —
 #      AND, unprivileged, no root-owned files inside. A detached HEAD has no
-#      branch, so the branch-is-gone clause applies. A tree sitting exactly at
+#      branch for the PR oracle, so it is removed only when its HEAD commit is
+#      an ancestor of origin/main. The gh head match reads the branch head as
+#      GitHub sees it now: commits pushed to a branch after its merge make a
+#      worktree on them removable, though the branch ref keeps every commit
+#      reachable, so nothing is lost permanently. A tree sitting exactly at
 #      the current main tip is always kept: that is what a freshly created
 #      task worktree looks like before its first commit.
 #   2. ORPHAN directories (~/Projects/RumaQ-wt-* and ~/Projects/RumaQ.wt/*
-#      not registered in git): removed when verifiably clean or empty;
-#      reported otherwise. Directories that hold registered worktrees are
-#      never treated as orphans.
+#      not registered in git): a git repo inside is removed when clean AND
+#      every commit it holds locally — all branch tips plus a detached HEAD —
+#      is an ancestor of its own origin/main; empty remnants are removed;
+#      anything else is reported. Directories that hold registered worktrees
+#      are never treated as orphans.
 #   3. ROOT-OWNED remnants (the E2E runner writes automation/test-results
 #      under Docker as root): unremovable unprivileged, so they park the
 #      containing directory in the sudo class. The single documented owner
@@ -61,9 +67,13 @@ if [[ ${EUID} -eq 0 ]]; then
   # The sudo pass legitimately runs git and gh against the user-owned
   # checkout: silence the dubious-ownership refusal and reuse the invoking
   # user gh auth so the merge oracle keeps working in that single pass.
+  # GIT_OPTIONAL_LOCKS=0 stops status from refreshing user-owned index files
+  # as root: the sudo pass must not mint new root-owned files inside the
+  # checkout it is cleaning up.
   export GIT_CONFIG_COUNT=1
   export GIT_CONFIG_KEY_0=safe.directory
   export GIT_CONFIG_VALUE_0='*'
+  export GIT_OPTIONAL_LOCKS=0
   if [[ -n ${SUDO_USER:-} ]]; then
     sudo_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
     if [[ -n $sudo_home && -d $sudo_home/.config/gh ]]; then
@@ -109,6 +119,10 @@ branch_merged() {
     return 0
   fi
   if [[ $GH_OK -eq 1 ]]; then
+    # headRefOid is the branch head as GitHub sees it NOW, so a branch pushed
+    # after its merge satisfies this match too. The sweep of such a worktree
+    # loses nothing permanent — the branch ref keeps every commit reachable —
+    # but the directory goes; re-add it with git worktree add if needed.
     if pr="$(gh pr view "$branch" --json state,headRefOid,number --jq '[.state, .headRefOid, (.number | tostring)] | join(" ")' 2>/dev/null)" &&
       [[ -n $pr ]]; then
       state="${pr%% *}"
@@ -186,7 +200,14 @@ decide_registered() {
     return
   fi
   if [[ $ref == DETACHED ]]; then
-    RESULTS+=("remove|reg|$wt|clean detached HEAD, branch gone|$kb")
+    # No branch ref and no PR to ask: only ancestry proves a detached HEAD is
+    # in main. Removing an unmerged detached HEAD orphans its commits for the
+    # next git gc — git worktree remove does not check mergedness.
+    if git merge-base --is-ancestor "$tip" "$MERGE_TARGET" >/dev/null 2>&1; then
+      RESULTS+=("remove|reg|$wt|clean detached HEAD, ancestor of ${MERGE_TARGET}|$kb")
+    else
+      RESULTS+=("keep|reg|$wt|clean detached HEAD not merged|$kb")
+    fi
     return
   fi
   if [[ $ref == "$PRIMARY_BRANCH" && -n $PRIMARY_BRANCH ]]; then
@@ -216,6 +237,21 @@ done < <(git worktree list --porcelain | awk '
   END { if (path != "" && ref != "") print path "\t" ref }
 ')
 
+# orphan_repo_merged <dir>: every commit the unregistered repo holds locally —
+# each local branch tip plus a detached HEAD — is an ancestor of its own
+# origin/main. Ancestry against its own fetched remote proves the commits
+# exist upstream; the primary checkout's git knows nothing about an
+# unregistered repo's branches, so without that proof the directory is kept.
+orphan_repo_merged() {
+  local d=$1 target b
+  target="$(git -C "$d" rev-parse --verify --quiet refs/remotes/origin/main 2>/dev/null)" || return 1
+  while read -r b; do
+    git -C "$d" merge-base --is-ancestor "$b" "$target" >/dev/null 2>&1 || return 1
+  done < <(git -C "$d" for-each-ref --format='%(objectname)' refs/heads/)
+  git -C "$d" merge-base --is-ancestor HEAD "$target" >/dev/null 2>&1 || return 1
+  return 0
+}
+
 # Orphan candidates: RumaQ worktree-shaped directories that git no longer
 # knows about. Directories holding registered worktrees (for example the
 # RumaQ-wt-bulk parent) are excluded so their children classify themselves.
@@ -226,7 +262,11 @@ decide_orphan() {
   st="$(git -C "$dir" status --porcelain 2>/dev/null)" || st_ok=0
   if [[ $st_ok -eq 1 && $(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) == "$dir" ]]; then
     if [[ -z $st ]]; then
-      RESULTS+=("remove|orph|$dir|unregistered but clean|$kb")
+      if orphan_repo_merged "$dir"; then
+        RESULTS+=("remove|orph|$dir|unregistered but clean, branch work in its origin/main|$kb")
+      else
+        RESULTS+=("keep|orph|$dir|clean but local branch work not provably in its origin/main|$kb")
+      fi
     else
       RESULTS+=("keep|orph|$dir|dirty ($(printf '%s\n' "$st" | wc -l) changes)|$kb")
     fi
