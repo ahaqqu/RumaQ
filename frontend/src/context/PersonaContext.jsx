@@ -17,16 +17,21 @@ export function PersonaProvider({ children, initialPersona }) {
   // VALUE: at boot (the mount initializer above already merges it) and when
   // the seed changes after mount — the login transition re-uses this provider
   // slot, so the initializer does not re-run there. `initialPersona` is
-  // rebuilt inline by AuthGate on every render, so the sync is keyed on a
-  // value signature instead of object identity: unrelated re-renders (focus
-  // refetches) can no longer re-merge the seed over local persona edits,
-  // which the old setState-in-effect did on every AuthGate render (#686).
-  const personaSeedSignature = initialPersona
-    ? `${initialPersona.userRole}|${initialPersona.aiRole}|${initialPersona.enabled}`
-    : null
-  const [syncedSeedSignature, setSyncedSeedSignature] = useState(personaSeedSignature)
-  if (initialPersona && personaSeedSignature !== syncedSeedSignature) {
-    setSyncedSeedSignature(personaSeedSignature)
+  // rebuilt inline by AuthGate on every render, so the sync compares the seed
+  // field-wise instead of by object identity: the roles are free-form strings
+  // (backend `optional(string())`, so `|` is legal input and a joined
+  // signature could collide), and unrelated re-renders (focus refetches) must
+  // not re-merge the seed over local persona edits, which the old
+  // setState-in-effect did on every AuthGate render (#686).
+  const [syncedSeed, setSyncedSeed] = useState(initialPersona)
+  const seedChanged =
+    initialPersona &&
+    (!syncedSeed ||
+      syncedSeed.userRole !== initialPersona.userRole ||
+      syncedSeed.aiRole !== initialPersona.aiRole ||
+      syncedSeed.enabled !== initialPersona.enabled)
+  if (seedChanged) {
+    setSyncedSeed(initialPersona)
     setPersonaState((prev) => ({ ...prev, ...initialPersona }))
   }
 

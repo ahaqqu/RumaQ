@@ -101,3 +101,69 @@ describe('PersonaContext.regenerateCopy (#523 P5)', () => {
     )
   })
 })
+
+// The seed sync (#686): AuthGate rebuilds `initialPersona` inline on every
+// render, so the provider must merge the seed over localStorage exactly once
+// per seed VALUE — never on unrelated re-renders, which would revert local
+// persona edits the way the old setState-in-effect did.
+function SeedProbe() {
+  const { persona, setPersona } = usePersona()
+  return React.createElement(
+    'div',
+    null,
+    React.createElement('span', { 'data-testid': 'seed-user-role' }, persona.userRole),
+    React.createElement('span', { 'data-testid': 'seed-enabled' }, String(persona.enabled)),
+    React.createElement(
+      'button',
+      { 'data-testid': 'seed-edit', onClick: () => setPersona({ userRole: 'bendahara' }) },
+      'edit'
+    )
+  )
+}
+
+function renderSeededProvider(initialPersona) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  const seeded = (seed) =>
+    React.createElement(
+      QueryClientProvider,
+      { client },
+      React.createElement(PersonaProvider, { initialPersona: seed }, React.createElement(SeedProbe))
+    )
+  const view = render(seeded(initialPersona))
+  return { ...view, rerenderWith: (next) => view.rerender(seeded(next)) }
+}
+
+describe('PersonaProvider seed sync (#686)', () => {
+  const SEED = { enabled: true, userRole: 'raja', aiRole: 'prajurit' }
+
+  it('does not re-merge the seed on unrelated re-renders (local edits survive)', () => {
+    const { getByTestId, rerenderWith } = renderSeededProvider(SEED)
+    expect(getByTestId('seed-user-role').textContent).toBe('raja')
+
+    fireEvent.click(getByTestId('seed-edit'))
+    expect(getByTestId('seed-user-role').textContent).toBe('bendahara')
+
+    // AuthGate re-renders rebuild the seed object inline: a NEW object with
+    // the SAME values. The old identity-keyed effect merged on every such
+    // render (reverting the edit above); the field-wise sync must not.
+    rerenderWith({ ...SEED })
+    expect(getByTestId('seed-user-role').textContent).toBe('bendahara')
+    expect(savePersona).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-syncs the seed exactly when its value changes', () => {
+    const { getByTestId, rerenderWith } = renderSeededProvider(SEED)
+    expect(getByTestId('seed-user-role').textContent).toBe('raja')
+
+    rerenderWith({ enabled: false, userRole: 'ksatria', aiRole: 'pemimpin' })
+    expect(getByTestId('seed-user-role').textContent).toBe('ksatria')
+    expect(getByTestId('seed-enabled').textContent).toBe('false')
+
+    // The transition consumed the seed: a rebuilt object with the same values
+    // must not fire the sync again.
+    rerenderWith({ enabled: false, userRole: 'ksatria', aiRole: 'pemimpin' })
+    expect(getByTestId('seed-user-role').textContent).toBe('ksatria')
+  })
+})
