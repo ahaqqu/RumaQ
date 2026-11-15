@@ -606,7 +606,9 @@ export function AdminReview() {
   const [exportFailed, setExportFailed] = useState(false)
   const busy = decide.isPending || undo.isPending
   const savingItemId = decide.isPending ? decide.variables?.id : null
-  const items = data?.items ?? []
+  // Memoized so the waiting-for-AI memo keyed on `items` keeps a stable
+  // array identity between fetches (react-hooks/exhaustive-deps).
+  const items = useMemo(() => data?.items ?? [], [data])
   // `assist` mirrors the backend default while the mode query is in flight;
   // AI UI waits for real data (aiConfigured is a server answer, never assumed).
   const mode = modeQuery.data?.mode ?? DEFAULT_MODE

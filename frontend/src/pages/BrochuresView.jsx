@@ -395,7 +395,9 @@ export function BrochuresView() {
   const [date, setDate] = useState(null)
   const [selectedUrl, setSelectedUrl] = useState(null)
 
-  const groups = data?.groups ?? []
+  // Memoized so the stores/dates/filtered memos keyed on `groups` keep a
+  // stable array identity between fetches (react-hooks/exhaustive-deps).
+  const groups = useMemo(() => data?.groups ?? [], [data])
 
   // Options come from the unfiltered catalog so both filters remain
   // composable after one is applied (picking a store must not erase the

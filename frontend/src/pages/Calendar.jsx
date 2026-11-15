@@ -345,7 +345,9 @@ export function Calendar() {
   const active = householdsData?.households?.find((h) => h.is_active) ?? null
   const isOwner = active?.role === 'owner'
   const { data: membersData } = useHouseholdMembers(active?.id)
-  const members = membersData?.members ?? []
+  // Memoized so memos/effects keyed on `members` keep a stable array
+  // identity between fetches (react-hooks/exhaustive-deps).
+  const members = useMemo(() => membersData?.members ?? [], [membersData])
   const memberById = (id) => members.find((m) => m.id === id)
   const myMemberId = members.find((m) => m.user_id === me?.user?.id)?.id ?? null
 
@@ -358,7 +360,7 @@ export function Calendar() {
   })
   const monthWin = monthWindow(view.year, view.month)
   const { data: calendarData, isLoading: entriesLoading } = useCalendar(monthWin)
-  const entries = calendarData?.entries ?? []
+  const entries = useMemo(() => calendarData?.entries ?? [], [calendarData])
 
   // Selected day (defaults to today when it falls in the visible month,
   // otherwise the 1st).
