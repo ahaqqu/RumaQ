@@ -243,7 +243,7 @@ When('I open the brochure viewer deep link directly', async ({ page }) => {
   await viewerPage.getByTestId('viewer-topbar').waitFor({ state: 'visible', timeout: 15_000 })
 })
 
-Then('the viewer tab should render the full mode for {string}', async (_, store) => {
+Then('the viewer tab should render the full mode for {string}', async ({}, store) => {
   const viewer = viewerPage
   const topbar = viewer.getByTestId('viewer-topbar')
   await expect(topbar).toBeVisible()
