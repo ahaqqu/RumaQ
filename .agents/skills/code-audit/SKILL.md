@@ -82,9 +82,9 @@ Post the board in chat first. Then write `<docs>/audit-<YYYY-MM-DD>-<scope>.md` 
     ## Machines       one board per machine
     ## Docs           claim | reason, tested | verdict | replacement
     ## Verification   verdict + target + proof
-    ## Issues         ID | title | entry phase
+    ## Issues         ID | title | recommendation next step
 
-Done when each finding has an ID, an issue title, and a route (`implement`, `defer`, or `drop`).
+Done when each finding has an ID, an issue title, and a recommendation next step (`implement`, `defer`, or `drop`).
 
 ## Budgets
 
