@@ -971,7 +971,7 @@ export const runReportSchema = strictObject({
   // (`embedding_unavailable`, `publish_failed`; `store: null`). Empty/absent
   // on a clean run. The per-store copy stays authoritative for that store;
   // this is the summary a monitor banner reads. Cap: RUN_FAILURES_LIMIT —
-  // 9 stores max + 1 run-level entry fits with room, and the Worker rejects
+  // 10 stores max + 1 run-level entry fits with room, and the Worker rejects
   // an over-cap array instead of spending D1 budget on one request.
   failures: nullish(pipe(array(runFailureSchema), maxLength(RUN_FAILURES_LIMIT))),
   error: nullish(pipe(string(), maxLength(2000))),
@@ -996,6 +996,9 @@ export const SCRAPE_STORE_SLUGS = [
   'tip-top',
   'hari-hari',
   'yogya',
+  // Pipeline #25: lotte-grosir (wholesale catalog) — scraped as its own slug
+  // while lotte-mart goes dormant.
+  'lotte-grosir',
 ] as const
 
 export const scrapeCommandCreateSchema = strictObject({

@@ -604,6 +604,7 @@ describe('GET /api/admin/scrape/stores', () => {
       'tip-top',
       'hari-hari',
       'yogya',
+      'lotte-grosir',
     ])
   })
 })
