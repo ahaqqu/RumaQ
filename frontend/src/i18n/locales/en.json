@@ -25,7 +25,8 @@
     "documents": "Documents"
   },
   "shell": {
-    "yourHousehold": "Your household"
+    "yourHousehold": "Your household",
+    "menuRegion": "Sidebar menu"
   },
   "household": {
     "cardHint": "Your shared kitchen",

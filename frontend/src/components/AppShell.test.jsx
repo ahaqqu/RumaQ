@@ -306,19 +306,108 @@ describe('AppShell', () => {
     expect(container.querySelector('a[href="/documents"]')).toBeNull()
   })
 
-  it('renders the account block without a logout button (logout lives in Settings)', () => {
-    const { getByText, container } = renderWithProviders(React.createElement(AppShell, null, null))
-    expect(getByText('Alice').textContent).toBe('Alice')
+  // #675: the desktop header right group ends with the identity chip — a pill
+  // link into Settings (where logout lives) showing avatar-or-icon + display
+  // name only. The sidebar/drawer account blocks are gone.
+  it('renders the header user chip with the display name and no email anywhere', () => {
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    const chip = container.querySelector('header a[href="/settings"]')
+    expect(chip).toBeTruthy()
+    expect(chip.textContent).toContain('Alice')
+    expect(chip.querySelector('img')).toBeNull()
+    // The email disappears from ALL shell chrome (header, sidebar, drawer).
+    expect(container.textContent).not.toContain('a@b.com')
+    // Logout stays in Settings — the chip is its entry point, not a menu.
     expect(container.textContent).not.toContain('Logout')
   })
 
-  it('renders the user avatar image when a picture is available', () => {
+  it('orders the desktop header chip rightmost after Add-from-Receipt', () => {
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    // The desktop header is the `hidden lg:flex` div inside the header.
+    const rightGroup = container.querySelector('header .hidden').lastElementChild
+    const actions = [...rightGroup.children]
+    // Language switcher group → Add-from-Receipt → user chip (top-right).
+    expect(actions[0].getAttribute('role')).toBe('group')
+    expect(actions[1].getAttribute('href')).toBe('/add')
+    expect(actions[2].getAttribute('href')).toBe('/settings')
+  })
+
+  it('renders the user avatar inside the chip when a picture is available', () => {
     vi.mocked(useMe).mockReturnValue({
       data: { user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: 'https://x/y.png' } },
       isLoading: false,
     })
     const { container } = renderWithProviders(React.createElement(AppShell, null, null))
-    expect(container.querySelector('img[src="https://x/y.png"]')).toBeTruthy()
+    const chip = container.querySelector('header a[href="/settings"]')
+    expect(chip.querySelector('img[src="https://x/y.png"]')).toBeTruthy()
+    expect(chip.textContent).toContain('Alice')
+  })
+
+  it('falls back to the icon tile when the avatar picture fails to load', () => {
+    vi.mocked(useMe).mockReturnValue({
+      data: { user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: 'https://x/y.png' } },
+      isLoading: false,
+    })
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    const img = container.querySelector('header a[href="/settings"] img')
+    expect(img).toBeTruthy()
+    fireEvent.error(img)
+    const chip = container.querySelector('header a[href="/settings"]')
+    expect(chip.querySelector('img')).toBeNull()
+    expect(chip.querySelector('.bg-surface-sunken')).toBeTruthy()
+    // The display name survives the avatar fallback; still no email.
+    expect(chip.textContent).toContain('Alice')
+    expect(chip.textContent).not.toContain('a@b.com')
+  })
+
+  it('renders an icon-only chip with a Settings label when the user has no display name', () => {
+    vi.mocked(useMe).mockReturnValue({
+      data: { user: { id: 'u1', email: 'a@b.com', name: '', picture: null } },
+      isLoading: false,
+    })
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    const chip = container.querySelector('header a[href="/settings"]')
+    // No visible text exists, so the accessible name comes from the label —
+    // and no email is ever rendered as a text fallback.
+    expect(chip.getAttribute('aria-label')).toBe('Settings')
+    expect(chip.textContent.trim()).toBe('')
+    expect(chip.textContent).not.toContain('a@b.com')
+  })
+
+  it('scrolls the sidebar nav groups in their own focusable region (#675)', () => {
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    const aside = container.querySelector('aside[aria-label="Main navigation"]')
+    // min-h-0 overrides the grid-item content minimum so h-dvh holds exactly —
+    // the sticky box can no longer overflow onto the page body.
+    expect(aside.className).toContain('min-h-0')
+    const region = aside.querySelector('div[aria-label="Sidebar menu"]')
+    expect(region).toBeTruthy()
+    // The role makes the label real — aria-label is naming-prohibited on a
+    // role-less div, so AT would never announce the region (#676 review A1).
+    expect(region.getAttribute('role')).toBe('region')
+    expect(region.className).toContain('overflow-y-auto')
+    expect(region.getAttribute('tabindex')).toBe('0')
+    // Both nav groups live inside the region…
+    expect(region.querySelector('a[href="/prices"]')).toBeTruthy()
+    expect(region.querySelector('a[href="/household"]')).toBeTruthy()
+    // …while the brand row and the household card stay pinned above it.
+    expect(aside.firstElementChild.className).toContain('shrink-0')
+    expect(
+      aside
+        .querySelector('[data-testid="household-card"]')
+        .closest('div[aria-label="Sidebar menu"]')
+    ).toBeNull()
+  })
+
+  it('drops the account block from the mobile drawer (identity lives in the header chip)', () => {
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    fireEvent.click(container.querySelector('button[aria-label="Open menu"]'))
+    const drawer = container.querySelector('aside[role="dialog"]')
+    expect(drawer).toBeTruthy()
+    expect(drawer.textContent).not.toContain('Alice')
+    expect(drawer.textContent).not.toContain('a@b.com')
+    // Settings stays reachable from the drawer — the chip is desktop-only.
+    expect(drawer.querySelector('a[href="/settings"]')).toBeTruthy()
   })
 
   it('does not render the AI usage meter in the sidebar (it lives in the assistant)', () => {

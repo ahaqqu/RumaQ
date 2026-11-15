@@ -25,7 +25,8 @@
     "documents": "Dokumen"
   },
   "shell": {
-    "yourHousehold": "Rumah tangga kamu"
+    "yourHousehold": "Rumah tangga kamu",
+    "menuRegion": "Menu samping"
   },
   "household": {
     "cardHint": "Dapur bersama Anda",
