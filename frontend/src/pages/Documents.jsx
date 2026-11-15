@@ -389,7 +389,7 @@ export function Documents() {
   const activeId = active?.id
 
   const { data: membersData } = useHouseholdMembers(activeId)
-  const members = membersData?.members ?? []
+  const members = useMemo(() => membersData?.members ?? [], [membersData])
   const memberNameById = useMemo(() => {
     const map = new Map()
     for (const member of members) {

@@ -30,7 +30,10 @@ export function Inventory() {
   const { data: locationsData } = useLocations()
   const updateStock = useUpdateStock()
 
-  const rows = stockData?.stock ?? []
+  // Memoized like `locations` below: a stable identity between fetches, so the
+  // quantity callbacks keyed on `rows` don't rebuild every render
+  // (react-hooks/exhaustive-deps).
+  const rows = useMemo(() => stockData?.stock ?? [], [stockData])
   const locations = useMemo(() => locationsData?.locations ?? [], [locationsData])
 
   const handleSearch = useCallback((value) => {

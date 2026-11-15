@@ -32,7 +32,9 @@ export function History({ askAssistant }) {
   const patterns = usePurchasePatterns()
   const stores = useStores()
 
-  const purchases = history.data?.purchases ?? []
+  // Memoized so the groups memo keyed on `purchases` keeps a stable array
+  // identity between fetches (react-hooks/exhaustive-deps).
+  const purchases = useMemo(() => history.data?.purchases ?? [], [history.data])
   const monthTotals = history.data?.month_totals ?? []
   const avgPerMonth = history.data?.avg_per_month ?? 0
   const nextCursor = history.data?.next_cursor ?? null

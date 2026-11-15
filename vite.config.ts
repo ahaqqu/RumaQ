@@ -38,12 +38,41 @@ export default defineConfig({
       typeAware: true,
       typeCheck: true,
     },
-    plugins: ['import'],
+    plugins: ['import', 'react'],
+    // no-undef needs the runtime globals named: browser (frontend + jsdom
+    // tests), node (backend scripts, automation), builtin/es2026 (fetch,
+    // Response, URL, crypto, ...), vitest (the integration suite runs with
+    // globals:true, so expect/describe are real globals there).
+    env: {
+      browser: true,
+      node: true,
+      builtin: true,
+      es2026: true,
+      vitest: true,
+    },
     rules: {
       'import/no-default-export': 'error',
       'import/no-anonymous-default-export': 'error',
       // Treat unused identifiers as hard errors so CI blocks them.
       'no-unused-vars': 'error',
+      // The #668 class of bug shipped through this gap: a free identifier in a
+      // JS module (a called-but-never-imported function) loads fine, builds
+      // fine, and only ReferenceErrors in a real browser. TS files are already
+      // covered by typeCheck; this pins the same guarantee for .js/.jsx.
+      'no-undef': 'error',
+      // Strict === (null comparisons keep ==); probed firing and clean on the
+      // whole tree.
+      eqeqeq: ['error', 'always', { null: 'ignore' }],
+      // Hook wiring correctness (the panel hooks, optimistic mutations).
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'error',
+      // Deliberately NOT enabled: typescript/no-floating-promises and
+      // no-misused-promises were probed and are silent no-ops on this tree
+      // (the type-aware path does not bind to the JS/JSX sources), so keeping
+      // them would pretend a guarantee that does not exist. The React-Compiler
+      // advisories (set-state-in-effect, purity, no-children-prop, refs) run
+      // by default as warnings — 10 pre-existing ones, non-blocking, tracked
+      // for a dedicated refactor pass.
     },
     overrides: [
       {
