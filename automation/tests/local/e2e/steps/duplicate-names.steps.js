@@ -1,5 +1,6 @@
 import { createBdd } from 'playwright-bdd'
 import { expect } from '@playwright/test'
+import { pushPriceSnapshot } from '../../../support/ingest.js'
 
 const { Given, When, Then } = createBdd()
 
@@ -10,8 +11,6 @@ const { Given, When, Then } = createBdd()
 // endpoint through the real query hook. Seeding goes through the internal
 // ingest the scraper uses, so the group is formed by two real canonical
 // products — one store spelling each, differing only in case.
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
-const INGEST_SECRET = 'test-ingest-secret'
 
 const DUPLICATE_A = { key: 'duplikat--beras--a', name: 'Beras Ramos 5 kg' }
 const DUPLICATE_B = { key: 'duplikat--beras--b', name: 'beras ramos 5 kg' }
@@ -33,23 +32,12 @@ function duplicateSnapshot() {
   }
 }
 
-async function pushSnapshot(payload) {
-  const res = await fetch(`${BASE_URL}/api/internal/ingest/prices`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INGEST_SECRET}` },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) {
-    throw new Error(`price snapshot push failed: ${res.status} ${await res.text()}`)
-  }
-}
-
 const panel = (page) => page.getByTestId('duplicate-names-panel')
 
 Given(
   'the catalog holds two products sharing a name in different cases and one unique product',
   async () => {
-    await pushSnapshot(duplicateSnapshot())
+    await pushPriceSnapshot(duplicateSnapshot())
   }
 )
 

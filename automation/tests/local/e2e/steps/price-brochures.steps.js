@@ -1,6 +1,7 @@
 import { createBdd } from 'playwright-bdd'
 import { expect } from '@playwright/test'
 import { SUGAR_KEY } from '../../../support/price-fixtures.js'
+import { INGEST_SECRET, pushPriceSnapshot, TEST_BASE_URL } from '../../../support/ingest.js'
 import { assertNoCriticalOrSerious, scanPage } from './axe.js'
 
 const { Given, When, Then } = createBdd()
@@ -11,8 +12,6 @@ const { Given, When, Then } = createBdd()
 // grid — while the #630 QA browser stays admin-side on
 // /admin/catalog?tab=brochures-qa: selecting a card opens the full product
 // table and a row expands its metadata in place.
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
-const INGEST_SECRET = 'test-ingest-secret'
 // A real 1x1 transparent PNG: the browser must be able to DECODE the served
 // bytes — magic bytes alone are not enough for <img> to skip its error event.
 const PNG_BYTES = Buffer.from(
@@ -74,7 +73,7 @@ function e2eSnapshot(brochureKey, scrapedDate) {
 
 Given('a brochure snapshot has been pushed with one image uploaded', async () => {
   const key = e2eBrochureKey()
-  const put = await fetch(`${BASE_URL}/api/internal/brochures/${key}`, {
+  const put = await fetch(`${TEST_BASE_URL}/api/internal/brochures/${key}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'image/png',
@@ -85,17 +84,7 @@ Given('a brochure snapshot has been pushed with one image uploaded', async () =>
   if (!put.ok) {
     throw new Error(`brochure upload failed: ${put.status} ${await put.text()}`)
   }
-  const res = await fetch(`${BASE_URL}/api/internal/ingest/prices`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${INGEST_SECRET}`,
-    },
-    body: JSON.stringify(e2eSnapshot(key, e2eScrapedDate())),
-  })
-  if (!res.ok) {
-    throw new Error(`brochure snapshot push failed: ${res.status} ${await res.text()}`)
-  }
+  await pushPriceSnapshot(e2eSnapshot(key, e2eScrapedDate()), 'brochure snapshot push failed')
 })
 
 Then('the prices segment row should be visible', async ({ page }) => {

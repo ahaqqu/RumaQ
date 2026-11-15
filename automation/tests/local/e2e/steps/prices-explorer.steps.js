@@ -1,32 +1,17 @@
 import { createBdd } from 'playwright-bdd'
 import { expect } from '@playwright/test'
 import { priceSnapshot, promoSnapshot } from '../../../support/price-fixtures.js'
+import { pushPriceSnapshot } from '../../../support/ingest.js'
 
 const { Given, When, Then } = createBdd()
 
 // Fixtures are shared with the API feature suite (tests/support/
 // price-fixtures.js) and pushed through the internal ingest endpoint; the
 // test stack's compose env carries the matching HAQITA_INGEST_SECRET.
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
-const INGEST_SECRET = 'test-ingest-secret'
-
-async function pushSnapshot(payload) {
-  const res = await fetch(`${BASE_URL}/api/internal/ingest/prices`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${INGEST_SECRET}`,
-    },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) {
-    throw new Error(`price snapshot push failed: ${res.status} ${await res.text()}`)
-  }
-}
 
 Given('a price snapshot and a promo snapshot have been pushed', async () => {
-  await pushSnapshot(priceSnapshot())
-  await pushSnapshot(promoSnapshot())
+  await pushPriceSnapshot(priceSnapshot())
+  await pushPriceSnapshot(promoSnapshot())
 })
 
 // Every product row button carries the "Price history" affordance, which the

@@ -1,31 +1,16 @@
 import { createBdd } from 'playwright-bdd'
 import { expect } from '@playwright/test'
 import { bulkCatalogueSnapshot } from '../../../support/price-fixtures.js'
+import { pushPriceSnapshot } from '../../../support/ingest.js'
 
 const { Given, When, Then } = createBdd()
 
 // Fixtures shared with the API feature suite (tests/support/price-fixtures.js),
 // pushed through the internal ingest endpoint like price-promos.steps.js.
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
-const INGEST_SECRET = 'test-ingest-secret'
-
-async function pushSnapshot(payload) {
-  const res = await fetch(`${BASE_URL}/api/internal/ingest/prices`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${INGEST_SECRET}`,
-    },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) {
-    throw new Error(`price snapshot push failed: ${res.status} ${await res.text()}`)
-  }
-}
 
 // A 12-item catalogue makes /prices overflow even a short desktop viewport.
 Given('a tall price snapshot has been pushed', async () => {
-  await pushSnapshot(bulkCatalogueSnapshot(12))
+  await pushPriceSnapshot(bulkCatalogueSnapshot(12))
 })
 
 // #675 pre-fix: the sidebar was a sticky box whose grid-item min-height:auto

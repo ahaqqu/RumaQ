@@ -1,6 +1,7 @@
 import { createBdd } from 'playwright-bdd'
 import { expect } from '@playwright/test'
 import { bulkCatalogueSnapshot, SUGAR_KEY } from '../../../support/price-fixtures.js'
+import { pushPriceSnapshot } from '../../../support/ingest.js'
 
 const { Given, When, Then } = createBdd()
 
@@ -8,27 +9,11 @@ const { Given, When, Then } = createBdd()
 // pushed through the internal ingest endpoint like prices-explorer.steps.js.
 // Since #673 the promo catalog lives on /admin/catalog?tab=promos — an admin
 // surface whose example click jumps into the user explorer at /prices#key.
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
-const INGEST_SECRET = 'test-ingest-secret'
-
-async function pushSnapshot(payload) {
-  const res = await fetch(`${BASE_URL}/api/internal/ingest/prices`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${INGEST_SECRET}`,
-    },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) {
-    throw new Error(`price snapshot push failed: ${res.status} ${await res.text()}`)
-  }
-}
 
 Given('a promo-free price snapshot has been pushed', async () => {
   // Bulk catalogue items carry no promo_type/promo_label — the catalog's
   // empty-state fixture.
-  await pushSnapshot(bulkCatalogueSnapshot(3))
+  await pushPriceSnapshot(bulkCatalogueSnapshot(3))
 })
 
 // Promo card headers are the only buttons carrying the "Example products"
