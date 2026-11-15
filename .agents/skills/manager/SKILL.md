@@ -58,7 +58,7 @@ Already-researched/designed/approved work may skip completed phases — record w
 
 ## The pipeline
 
-Run each work unit through these 9 steps; skip only phases recorded as pre-completed:
+Run each work unit through these 9 steps; skip only phases recorded as pre-completed. Phases may be bulked into waves — several tickets sharing one phase execution, with each phase waving differently (see Wave execution):
 
 1. **Issue** — `gh issue create` with a self-contained body: summary, entry phase + rationale, scope, acceptance criteria, links to any repo artifacts (never reference paths outside the repo without inlining the content). Move the issue to the entry-phase board column.
 2. **Research** (features) — spawn a background research subagent (read-only) to produce a research doc: existing code paths, reusable patterns, risks, open questions. Manager reviews it into the issue.
@@ -71,6 +71,20 @@ Run each work unit through these 9 steps; skip only phases recorded as pre-compl
 9. **Complete** — anything discovered that needs implementing becomes a new GitHub issue (entry phase judged per Entry-point judgment) and the loop runs on it. Then `gh issue close` the original with a completion comment.
 
 Research/design/plan docs live in the manager's state directory, or under `docs/plan/` when they belong in-repo; always link or inline them from the issue.
+
+## Wave execution (bulking phases)
+
+Phases may run in WAVES: several tickets share one phase execution, and each phase may wave differently. Every ticket still traverses every phase — bulking changes the grouping, never the pipeline.
+
+- At the plan phase (or at intake when a ticket set is clear), the manager decides the wave structure per phase and records it in the state file AND a comment on every ticket in the wave: which tickets share research/design/plan, how implementation splits, what review/merge/QA cover. Re-planning mid-wave (a discovered dependency, a grown ticket) is allowed — record the re-plan before continuing.
+- DEPENDENCY FIRST: tickets with a hard dependency (overlapping files, contract/pipeline order, merge order, UI-on-data) may share research/design/plan but must sequence their implementation waves; only independent tickets may run implementation waves in parallel (within the subagent cap). Similarity/area decides bulking; dependency decides ordering.
+- Tickets entering at different phases (per Entry-point judgment) may still share later-phase waves.
+- Research/design/plan: one agent + one artifact set per phase for the whole wave, with a section per ticket; the manager reviews/reconciles as usual and posts the artifacts to every ticket in the wave.
+- Implementation: one PR per ticket on its own branch/worktree (pipeline step 5); implementation waves run in the recorded order, or parallel within the cap when independent.
+- Review: ONE wave covering every PR from ALL implementation waves of the group — dispatch only after ALL those PRs are open with CI green. One reviewer may review several PRs in one pass (findings fixed on-branch per PR); split reviewers only when the PR set spans unrelated repos or disjoint areas.
+- Merge: per PR (CI green, squash, serial for overlapping files) but only after the review wave returns clean for that PR.
+- QA/Verify: one wave over the deployed main containing all merged PRs — one verification pass / one tracking ticket, evidence comments per issue.
+- Board transitions happen per ticket as the wave reaches that phase; batch the gh calls.
 
 ## Async discipline
 
