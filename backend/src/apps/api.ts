@@ -4584,9 +4584,10 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
     entryPrice: { type: 'integer' },
     entryEffectiveUnitPrice: { type: ['number', 'null'] },
     entryStore: { type: 'string' },
-    // Issue #380: the RIGHT side's evidence, enriched at read time from the
-    // entry's latest observation at the frozen entryStore — the same store
-    // as the card's snapshot (pending AND decided rows).
+    // The RIGHT side's evidence, frozen-first since #691 RC3: the flag-time
+    // sighting rides the pair blob, and the read-time lookup at the frozen
+    // entryStore (#380) fills only the fields an old (pre-#691) blob does
+    // not carry (pending AND decided rows).
     entryBrochureUrl: { type: ['string', 'null'] },
     entrySourceUrl: { type: ['string', 'null'] },
     entryObservedAt: { type: ['string', 'null'] },

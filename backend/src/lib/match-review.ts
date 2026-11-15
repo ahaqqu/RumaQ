@@ -178,10 +178,11 @@ export type ReviewItem = ReviewItemPair & {
   // null when the product row is gone.
   itemCategory: string | null
   itemCategoryVersion: string | null
-  // Issue #380: the RIGHT side's evidence, enriched from the entry's latest
-  // price_observations row at read time (pairs froze only the entry's
-  // name/price/store). Null when the entry has no observation — or an old
-  // one that predates source_url (no backfill).
+  // The RIGHT side's evidence (#380, store-pinned). #691 RC3: frozen-FIRST —
+  // the pair blob carries the flag-time sighting and a non-null field here IS
+  // that frozen value; the read-time lookup fills only the fields an old
+  // (pre-#691) blob does not carry. Null when neither source has it — or the
+  // live one predates source_url (no backfill).
   entryBrochureUrl: string | null
   entrySourceUrl: string | null
   entryObservedAt: string | null
@@ -262,35 +263,42 @@ function toReviewItem(row: ReviewRow): ReviewItem | null {
     runId: row.run_id ?? null,
     itemCategory: row.item_category ?? null,
     itemCategoryVersion: row.item_category_version ?? null,
-    // Filled in by enrichEntryEvidence right after the rows land; a path
-    // that skips enrichment (or an entry with no observation) stays null.
-    entryBrochureUrl: null,
-    entrySourceUrl: null,
-    entryObservedAt: null,
+    // #691 RC3: the blob's frozen evidence wins per field (`?? null`
+    // normalizes old blobs, which lack the keys); enrichEntryEvidence fills
+    // only the fields still null right after the rows land.
+    entryBrochureUrl: pair.entryBrochureUrl ?? null,
+    entrySourceUrl: pair.entrySourceUrl ?? null,
+    entryObservedAt: pair.entryObservedAt ?? null,
   }
 }
 
 // ---------------------------------------------------------------------------
-// Entry-side evidence enrichment (issue #380, store-pinned per the owner's
-// production report 2026-11-15): the review card's RIGHT side must show ONE
-// coherent sighting of the catalog entry. The pair blob freezes the entry's
-// name/price/store at flag time — that snapshot is the price-ratio basis AND
-// the AI verdict's input — so the read-time evidence (page image
-// price_observations.brochure_url, the R2 object URL for brochure stores /
-// the listing page for catalog stores; retailer page source_url, null for
-// rows ingested before the column; observed_date) must come from the SAME
-// store: the entry's latest observation at the frozen entryStore, ordered
-// like the prices read paths' LATEST_OBSERVATION_SUBQUERY (observed date,
-// then scrape time). The original #380 lookup keyed on the product key alone
-// and took the latest observation across ALL sources — on a multi-store
-// canonical entry (the norm: the catalog merges one product across
-// retailers) a newer sighting from another store replaced the evidence while
-// the frozen label stayed, rendering e.g. an 'alfamart' card with a yogya
-// brochure page. Deliberately NO cross-store fallback — showing another
-// store's page would reintroduce the contradiction — and NO confidence
-// floor: evidence for a human verdict must not hide rows the explorer hides.
-// A frozen store with no surviving observation (renamed store, pre-0017
-// rows) simply renders evidence-less, which is honest.
+// Entry-side evidence (#380, store-pinned per the owner's production report
+// 2026-11-15; frozen-first per #691 RC3): the review card's RIGHT side must
+// show the ONE sighting the verdict was made from. The pair blob freezes the
+// entry's name/price/store at flag time — that snapshot is the price-ratio
+// basis AND the AI verdict's input — and since #691 RC3 it also freezes the
+// sighting's evidence itself (contract entryBrochureUrl/entrySourceUrl/
+// entryObservedAt), so a verdict stays REPRODUCIBLE: re-opening the card
+// months later shows what the flagger saw. Reads prefer the blob per field;
+// the read-time lookup below fills only the fields an old (pre-#691) blob
+// does not carry: price_observations.brochure_url (the R2 object URL for
+// brochure stores / the listing page for catalog stores), retailer page
+// source_url (null for rows ingested before the column), observed_date — the
+// entry's latest observation at the frozen entryStore, ordered like the
+// prices read paths' LATEST_OBSERVATION_SUBQUERY (observed date, then scrape
+// time). Live-only evidence was exactly what caused #691: the alfamart
+// campaign rotation advanced the store's sighting after flag time, so the
+// card rendered its FROZEN name/price next to LIVE evidence and contradicted
+// itself mid-review (the earlier #380 lookup had also keyed on the product
+// key alone, taking the latest observation across ALL sources of a
+// multi-store canonical entry — the norm — and swapping another store's page
+// onto the frozen label). Deliberately NO cross-store fallback — showing
+// another store's page would reintroduce the contradiction — and NO
+// confidence floor: evidence for a human verdict must not hide rows the
+// explorer hides. A pre-#691 blob whose frozen store has no surviving
+// observation (renamed store, pre-0017 rows) simply renders evidence-less,
+// which is honest.
 
 const ENTRY_EVIDENCE_CHUNK = 90
 
@@ -392,10 +400,22 @@ function enrichEntryEvidence<T extends EvidenceCarrier>(
     // composite is built inline instead of via evidenceKey().
     const found = evidence.get(`${item.entryProductKey}|${item.entryStore}`)
     if (!found) continue
-    item.entryBrochureUrl = found.entryBrochureUrl
-    item.entrySourceUrl = found.entrySourceUrl
-    item.entryObservedAt = found.entryObservedAt
+    // Per-field frozen-first (#691 RC3): a non-null field is the blob's
+    // flag-time sighting and is NEVER overwritten by the live lookup — live
+    // fills only what an old blob does not carry.
+    if (item.entryBrochureUrl === null) item.entryBrochureUrl = found.entryBrochureUrl
+    if (item.entrySourceUrl === null) item.entrySourceUrl = found.entrySourceUrl
+    if (item.entryObservedAt === null) item.entryObservedAt = found.entryObservedAt
   }
+}
+
+/** True when at least one evidence field is still null and only the live
+ * lookup can fill it — a fully-frozen item (#691 blob) skips its round trip
+ * entirely (enrichment could not change it anyway). */
+function needsEntryEvidenceLookup(item: EvidenceCarrier): boolean {
+  return (
+    item.entryBrochureUrl === null || item.entrySourceUrl === null || item.entryObservedAt === null
+  )
 }
 
 // One projection for BOTH reads of a review row — the list page and the
@@ -545,13 +565,16 @@ export async function listReviewItems(
     const item = toReviewItem(row)
     if (item) items.push(item)
   }
-  // Issue #380: the RIGHT side's evidence rides every list read — pending,
-  // decided, and `all` alike (after-the-fact review is the point).
+  // The RIGHT side's evidence rides every list read — pending, decided, and
+  // `all` alike (after-the-fact review is the point) — frozen-first (#691
+  // RC3): fully-frozen items skip the live lookup below.
   enrichEntryEvidence(
     items,
     await fetchEntryEvidence(
       db,
-      items.map((i) => ({ productKey: i.entryProductKey, storeSlug: i.entryStore }))
+      items
+        .filter(needsEntryEvidenceLookup)
+        .map((i) => ({ productKey: i.entryProductKey, storeSlug: i.entryStore }))
     )
   )
 
@@ -715,8 +738,9 @@ export async function fetchReviewQueueReport(db: D1Database): Promise<ReviewQueu
 
 /**
  * #691 Phase A: the per-ID inspection read behind the queue-report's optional
- * `ids` query param — the manager's diagnosis tool compares a FROZEN pair
- * against the entry's CURRENT evidence in one response. Ids resolve
+ * `ids` query param — the manager's diagnosis tool reads a FROZEN pair and
+ * its evidence in one response (frozen-first since RC3: the card's evidence
+ * fields ARE the flag-time sighting when the blob carries them). Ids resolve
  * EXACT-OR-PREFIX: rows are keyed by the ingest UUID, while the ids humans
  * quote are the queue card's 8-hex short form (#42a3e6a8, the owner's #691
  * report) — an exact IN-list would report every such request found:false, a
@@ -767,8 +791,9 @@ export async function fetchReviewItemsByIds(
 // One hydration pipeline for BOTH review-row reads — toReviewItem plus the
 // entry evidence enrichment — so the decide/undo re-read and the per-ID
 // inspection render the identical card shape. Returns row-id → item (null
-// when the pair blob is malformed); parseable items get the CURRENT entry
-// evidence (fetchEntryEvidence, store-pinned) filled in.
+// when the pair blob is malformed); parseable items carry their FROZEN
+// evidence (#691 RC3), with the store-pinned live lookup (fetchEntryEvidence)
+// filling only the fields an old blob does not carry.
 async function hydrateReviewRows(
   db: D1Database,
   rows: ReviewRow[]
@@ -784,7 +809,9 @@ async function hydrateReviewRows(
     items,
     await fetchEntryEvidence(
       db,
-      items.map((i) => ({ productKey: i.entryProductKey, storeSlug: i.entryStore }))
+      items
+        .filter(needsEntryEvidenceLookup)
+        .map((i) => ({ productKey: i.entryProductKey, storeSlug: i.entryStore }))
     )
   )
   return itemByRowId
@@ -963,10 +990,10 @@ export type ReviewExportRow = {
   matchMethod: string
   reason: string
   flagCount: number
-  // Issue #380: the entry-side evidence at export time, same shape as the
-  // queue rows — what the catalog side looked like when last seen. Additive
-  // on the rows; the envelope stays schema:1 (JSON consumers read what they
-  // know).
+  // The entry-side evidence, same shape as the queue rows — frozen-first
+  // since #691 RC3 (the blob's flag-time sighting; the live lookup fills
+  // only what an old blob does not carry). Additive on the rows; the
+  // envelope stays schema:1 (JSON consumers read what they know).
   entryBrochureUrl: string | null
   entrySourceUrl: string | null
   entryObservedAt: string | null
@@ -1004,10 +1031,11 @@ function toExportRow(row: ExportRow): ReviewExportRow | null {
     matchMethod: pair.matchMethod,
     reason: pair.reason,
     flagCount: row.flag_count,
-    // Filled per page by the enrichment below.
-    entryBrochureUrl: null,
-    entrySourceUrl: null,
-    entryObservedAt: null,
+    // #691 RC3: the blob's frozen evidence, like the queue rows; the per-page
+    // enrichment below fills only the fields still null.
+    entryBrochureUrl: pair.entryBrochureUrl ?? null,
+    entrySourceUrl: pair.entrySourceUrl ?? null,
+    entryObservedAt: pair.entryObservedAt ?? null,
   }
 }
 
@@ -1046,11 +1074,15 @@ async function listDecidedPage(db: D1Database, after: { decidedAt: string; id: s
     if (parsed) page.rows.push({ id: row.id, row: parsed })
   }
   // Issue #380: export rows carry the entry-side evidence too — per keyset
-  // page, so the stream's memory stays flat. Same enrichment helper as the
-  // queue rows (thermos B1).
+  // page, so the stream's memory stays flat. Same enrichment helper and the
+  // same frozen-first rule as the queue rows (thermos B1); fully-frozen rows
+  // skip the live lookup.
   const evidence = await fetchEntryEvidence(
     db,
-    page.rows.map(({ row }) => ({ productKey: row.entryProductKey, storeSlug: row.entryStore }))
+    page.rows
+      .map(({ row }) => row)
+      .filter(needsEntryEvidenceLookup)
+      .map((row) => ({ productKey: row.entryProductKey, storeSlug: row.entryStore }))
   )
   enrichEntryEvidence(
     page.rows.map(({ row }) => row),

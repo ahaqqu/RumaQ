@@ -805,6 +805,20 @@ export const reviewItemPairSchema = strictObject({
   entryPrice: pipe(number(), integer(), minValue(0)),
   entryEffectiveUnitPrice: nullish(number()),
   entryStore: pipe(string(), minLength(1)),
+  // Issue #691 RC3: the RIGHT side's evidence frozen at flag time — the SAME
+  // sighting the frozen entryName/entryPrice/entryStore came from (brochure
+  // page image URL, retailer campaign/listing page, observed date). Reads
+  // prefer these per field and fall back to the read-time live lookup (#380)
+  // only for the fields a pair does not carry, so a verdict stays
+  // reproducible: the store's sighting advancing after flag time must not
+  // make the card contradict its own frozen snapshot. Additive-nullish
+  // (#294 pattern): pairs frozen before the fields exist do not carry them
+  // (no backfill — old rows ride live enrichment), and a NEW report hitting
+  // an OLD Worker fails loudly (Worker-first deploy order — pipeline emission
+  // rides pipeline #142, after this contract ships).
+  entryBrochureUrl: nullish(string()),
+  entrySourceUrl: nullish(string()),
+  entryObservedAt: nullish(string()),
   matchMethod: picklist(['exact', 'embedding', 'ai']),
   confidence: pipe(number(), minValue(0), maxValue(1)),
   // Issue #373: 'taxonomy' flags a classification, not a match — the item and

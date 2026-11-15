@@ -10,6 +10,7 @@ import {
   undoReviewDecision,
   exportReviewDecisions,
   fetchEntryEvidence,
+  fetchReviewItemsByIds,
 } from '../lib/match-review.js'
 // The backend tsconfig pins `types` to @cloudflare/workers-types, so Node
 // builtin imports carry no declarations — same contained suppressions as
@@ -1199,6 +1200,144 @@ describe('fetchEntryEvidence — real-SQLite semantics (thermos A2 + store pinni
       { productKey: 'never-seen--null--1-kg', storeSlug: 'superindo' },
     ])
     expect(evidence.size).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Frozen entry evidence — blob-first semantics (#691 RC3, real SQLite): the
+// pair blob's flag-time sighting wins PER FIELD, and the store-pinned live
+// lookup (#380) fills only the fields an old (pre-#691) blob does not carry.
+// The seed's LIVE observation is NEWER than the frozen one on purpose — if
+// enrichment ever overwrote a frozen field, the live values would leak into
+// the assertions.
+describe('frozen entry evidence — blob-first semantics (#691 RC3)', () => {
+  const ENTRY_KEY = 'beras--ramos--5-kg'
+  const ENTRY_STORE = 'superindo'
+  const FROZEN = {
+    entryBrochureUrl: '/api/brochures/superindo/20261020/frozen.jpg',
+    entrySourceUrl: 'https://frozen.example/',
+    entryObservedAt: '2026-10-20',
+  }
+  const LIVE = {
+    entryBrochureUrl: '/api/brochures/superindo/20261026/a.jpg',
+    entrySourceUrl: 'https://a.example/',
+    entryObservedAt: '2026-10-26',
+  }
+
+  function freshSqlite(): SqliteDb {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyRealMigrations(sqlite)
+    sqlite
+      .prepare(`INSERT INTO price_products (id, product_key, name)
+               VALUES ('prod-1', ?, 'Beras Ramos')`)
+      .run(ENTRY_KEY)
+    sqlite
+      .prepare(`INSERT INTO price_sources (id, slug, name)
+               VALUES ('src-superindo', 'superindo', 'Superindo')`)
+      .run()
+    const insertObs = sqlite.prepare(
+      `INSERT INTO price_observations
+         (id, product_id, source_id, observed_date, price, match_confidence,
+          brochure_url, source_url, scraped_at)
+       VALUES (?, 'prod-1', 'src-superindo', ?, 27000, 1.0, ?, ?, ?)`
+    )
+    // The entry's store sighting TWICE: the frozen flag-time sighting and a
+    // newer one the campaign rotation produced after the flag (#691's
+    // contradiction source). The lookup takes the NEWEST (2026-10-26).
+    insertObs.run(
+      'obs-live',
+      '2026-10-26',
+      LIVE.entryBrochureUrl,
+      LIVE.entrySourceUrl,
+      '2026-10-26T23:00:05Z'
+    )
+    insertObs.run(
+      'obs-frozen',
+      '2026-10-20',
+      FROZEN.entryBrochureUrl,
+      FROZEN.entrySourceUrl,
+      '2026-10-20T23:00:05Z'
+    )
+    return sqlite
+  }
+
+  function insertReviewRow(sqlite: SqliteDb, id: string, blob: ReviewItemPair): void {
+    sqlite
+      .prepare(
+        `INSERT INTO match_review_items
+           (id, item_product_key, entry_product_key, pair_data, reason, match_method,
+            confidence, run_started_at, first_flagged_at, last_flagged_at, status)
+         VALUES (?, ?, ?, ?, 'price_ratio', 'exact', 0.9,
+                 '2026-10-20T23:00:05Z', '2026-10-20T23:00:05Z', '2026-10-20T23:00:05Z', 'pending')`
+      )
+      .run(id, `${id}----`, ENTRY_KEY, JSON.stringify(blob))
+  }
+
+  const frozenPair = (over: Partial<ReviewItemPair> = {}): ReviewItemPair =>
+    pair({ entryProductKey: ENTRY_KEY, entryStore: ENTRY_STORE, ...over })
+
+  it('an old-style blob (no evidence fields) rides the live lookup exactly as before', async () => {
+    const sqlite = freshSqlite()
+    insertReviewRow(sqlite, 'rev-old', frozenPair())
+    const page = await listReviewItems(sqliteD1Batch(sqlite))
+    expect(page.items).toHaveLength(1)
+    // The pre-#691 byte-compat pin: nulls projected by toReviewItem, filled
+    // by the store-pinned lookup — the newest sighting at the frozen store.
+    expect(page.items[0]).toMatchObject(LIVE)
+  })
+
+  it('a fully frozen blob wins per field — the NEWER live sighting is never applied', async () => {
+    const sqlite = freshSqlite()
+    insertReviewRow(sqlite, 'rev-frozen', frozenPair(FROZEN))
+    const page = await listReviewItems(sqliteD1Batch(sqlite))
+    expect(page.items[0]).toMatchObject(FROZEN)
+    // Explicit non-overwrite: not one live field leaked through.
+    expect(page.items[0]!.entryObservedAt).not.toBe(LIVE.entryObservedAt)
+    expect(page.items[0]!.entryBrochureUrl).not.toBe(LIVE.entryBrochureUrl)
+    expect(page.items[0]!.entrySourceUrl).not.toBe(LIVE.entrySourceUrl)
+  })
+
+  it('a partial blob freezes what it carries — live fills only the null fields', async () => {
+    const sqlite = freshSqlite()
+    insertReviewRow(
+      sqlite,
+      'rev-partial',
+      frozenPair({ entryBrochureUrl: FROZEN.entryBrochureUrl })
+    )
+    const page = await listReviewItems(sqliteD1Batch(sqlite))
+    expect(page.items[0]).toMatchObject({
+      entryBrochureUrl: FROZEN.entryBrochureUrl, // frozen wins
+      entrySourceUrl: LIVE.entrySourceUrl, // null → live fills
+      entryObservedAt: LIVE.entryObservedAt, // null → live fills
+    })
+  })
+
+  it('the decide re-read (hydrateReviewRows) applies the same frozen-first rule', async () => {
+    const sqlite = freshSqlite()
+    insertReviewRow(sqlite, 'rev-frozen', frozenPair(FROZEN))
+    // Same adapter shape as the #626 ack test: bound statements run in order,
+    // including through db.batch.
+    const db = {
+      prepare: (sql: string) => ({
+        bind: (...params: unknown[]) => ({
+          all: async () => ({ results: sqlite.prepare(sql).all(...params) }),
+          run: async () => sqlite.prepare(sql).run(...params),
+          first: async () => sqlite.prepare(sql).get(...params) ?? null,
+        }),
+      }),
+      batch: async (statements: Array<{ all: () => Promise<unknown> }>) =>
+        Promise.all(statements.map((statement) => statement.all())),
+    } as unknown as D1Database
+    const item = await decideReviewItem(db, 'rev-frozen', 'approved', 'admin-1')
+    expect(item).toMatchObject({ status: 'approved', ...FROZEN })
+  })
+
+  it('the per-ID inspection read applies the same frozen-first rule', async () => {
+    const sqlite = freshSqlite()
+    insertReviewRow(sqlite, 'rev-frozen', frozenPair(FROZEN))
+    const lookups = await fetchReviewItemsByIds(sqliteD1Batch(sqlite), ['rev-frozen'])
+    expect(lookups).toHaveLength(1)
+    expect(lookups[0]).toMatchObject({ found: true, item: FROZEN })
   })
 })
 

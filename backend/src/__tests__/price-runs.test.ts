@@ -828,6 +828,12 @@ describe('verifier prompt identity (pipeline #83)', () => {
       reason: 'taxonomy',
       kind: 'disagreement',
       rulesCategory: 'makanan-minuman',
+      // Issue #691 RC3: the flag-time entry evidence freezes into the pair
+      // and round-trips validation verbatim (additive-nullish — a report
+      // without the fields, like sampleReport()'s pair below, still parses).
+      entryBrochureUrl: '/api/brochures/lotte-mart/20261110/page-1.jpg',
+      entrySourceUrl: 'https://www.lottomart.co.id/promosi/katalog-roller-diskon/',
+      entryObservedAt: '2026-11-10',
     })
   })
 
