@@ -6,6 +6,7 @@ import {
   getReviewMode,
   setReviewMode,
   evaluateReviewItems,
+  acknowledgeTaxonomy,
 } from '../api'
 
 // Match review queue queries (issue #294). The list is a work queue that
