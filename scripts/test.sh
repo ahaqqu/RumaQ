@@ -56,6 +56,12 @@ case "$SUITE" in
     # so the fast mode cannot silently grow, shrink or lose a risk class.
     exec "$ROOT_DIR/scripts/test/e2e-smoke.sh" "$@"
     ;;
+  e2e-smoke-scope)
+    # Offline guard for the PR smoke's scope rule (#657 phase 2): docs,
+    # skills, Markdown and repo meta skip; app/automation/lockfile/unknown
+    # paths run, and an unavailable change set runs (fail safe).
+    exec "$ROOT_DIR/scripts/test/e2e-smoke-scope.sh" "$@"
+    ;;
   all)
     "$ROOT_DIR/scripts/test/deploy-secrets.sh" "$@"
     "$ROOT_DIR/scripts/test/worker-smoke-scope.sh" "$@"
@@ -64,6 +70,7 @@ case "$SUITE" in
     "$ROOT_DIR/scripts/test/price-freshness.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-stack.sh" "$@"
     "$ROOT_DIR/scripts/test/e2e-smoke.sh" "$@"
+    "$ROOT_DIR/scripts/test/e2e-smoke-scope.sh" "$@"
     "$ROOT_DIR/scripts/test/unit.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-local.sh" "$@"
     "$ROOT_DIR/scripts/test/automation-live.sh" "$@"
