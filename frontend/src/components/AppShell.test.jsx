@@ -308,6 +308,24 @@ describe('AppShell', () => {
     expect(container.querySelector('a[href="/documents"]')).toBeNull()
   })
 
+  it('marks the active nav item from the location pathname (#674)', () => {
+    // The _app layout refactor gave route IDs a /_app segment (/_app/prices)
+    // while fullPath stayed /prices — the active lookup compares location
+    // pathnames, exact-match-equivalent for these flat, param-less routes.
+    routerState.pathname = '/prices'
+    const { container } = renderWithProviders(React.createElement(AppShell, null, null))
+    expect(container.querySelector('a[href="/prices"]').getAttribute('aria-current')).toBe('page')
+    expect(container.querySelector('a[href="/inventory"]').getAttribute('aria-current')).toBeNull()
+
+    // Home stays active at '/' — the index route's id is not a literal '/'
+    // under the layout, so only the pathname comparison gets this right.
+    routerState.pathname = '/'
+    const homeView = renderWithProviders(React.createElement(AppShell, null, null))
+    expect(homeView.container.querySelector('a[href="/"]').getAttribute('aria-current')).toBe(
+      'page'
+    )
+  })
+
   // #675: the desktop header right group ends with the identity chip — a pill
   // link into Settings (where logout lives) showing avatar-or-icon + display
   // name only. The sidebar/drawer account blocks are gone.
