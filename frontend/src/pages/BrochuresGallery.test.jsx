@@ -214,15 +214,29 @@ describe('BrochuresGallery — a lean user surface (#673)', () => {
     expect(copy).not.toContain('Beras Pandan Wangi')
   })
 
-  it('cards are not selectable — no buttons, no expanded states, no View link yet', () => {
-    // #674 ships the View affordance; shipping it here would dangle a link to
-    // a route that does not exist yet.
+  it('carries an explicit View link per card that opens the full-mode viewer in a new tab (#674)', () => {
+    // The card itself stays inert; the View link recomposes the canonical
+    // brochure_url into the structured /brochures/view deep link and opens
+    // it as a top-level blank navigation (SameSite=Lax carries the session).
     const { container } = renderGallery()
+    const expectedHrefs = {
+      [BROCHURE_A]: '/brochures/view?store=lotte-mart&date=20261029&file=page_1_2ad1c95b.jpg',
+      [BROCHURE_B]: '/brochures/view?store=lotte-mart&date=20261028&file=page_2_ff00aa11.jpg',
+      [BROCHURE_C]: '/brochures/view?store=superindo&date=20261029&file=koran_a_1b2c3d4e.jpg',
+    }
     for (const card of cards(container)) {
       expect(card.tagName).toBe('DIV')
       expect(card.getAttribute('aria-expanded')).toBeNull()
       expect(card.querySelector('button')).toBeNull()
-      expect(card.querySelector('a')).toBeNull()
+      const link = card.querySelector('a')
+      expect(link).not.toBeNull()
+      expect(link.getAttribute('target')).toBe('_blank')
+      expect(link.getAttribute('rel')).toContain('noreferrer')
+      expect(link.textContent).toContain('View')
+    }
+    for (const [url, href] of Object.entries(expectedHrefs)) {
+      const card = cardFor(container, url)
+      expect(card.querySelector('a').getAttribute('href')).toBe(href)
     }
   })
 })

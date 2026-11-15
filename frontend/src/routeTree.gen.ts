@@ -21,6 +21,7 @@ import { Route as AppPlanRouteImport } from './routes/_app/plan'
 import { Route as AppPricesRouteImport } from './routes/_app/prices'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppTasksRouteImport } from './routes/_app/tasks'
+import { Route as BrochuresViewRouteImport } from './routes/brochures.view'
 import { Route as AppAdminAiUsageRouteImport } from './routes/_app/admin.ai-usage'
 import { Route as AppAdminCatalogRouteImport } from './routes/_app/admin.catalog'
 import { Route as AppAdminPricesRouteImport } from './routes/_app/admin.prices'
@@ -86,6 +87,11 @@ const AppTasksRoute = AppTasksRouteImport.update({
   path: '/tasks',
   getParentRoute: () => AppRoute,
 } as any)
+const BrochuresViewRoute = BrochuresViewRouteImport.update({
+  id: '/brochures/view',
+  path: '/brochures/view',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppAdminAiUsageRoute = AppAdminAiUsageRouteImport.update({
   id: '/admin/ai-usage',
   path: '/admin/ai-usage',
@@ -124,6 +130,7 @@ export interface FileRoutesByFullPath {
   '/prices': typeof AppPricesRoute
   '/settings': typeof AppSettingsRoute
   '/tasks': typeof AppTasksRoute
+  '/brochures/view': typeof BrochuresViewRoute
   '/admin/ai-usage': typeof AppAdminAiUsageRoute
   '/admin/catalog': typeof AppAdminCatalogRoute
   '/admin/prices': typeof AppAdminPricesRoute
@@ -141,6 +148,7 @@ export interface FileRoutesByTo {
   '/prices': typeof AppPricesRoute
   '/settings': typeof AppSettingsRoute
   '/tasks': typeof AppTasksRoute
+  '/brochures/view': typeof BrochuresViewRoute
   '/': typeof AppIndexRoute
   '/admin/ai-usage': typeof AppAdminAiUsageRoute
   '/admin/catalog': typeof AppAdminCatalogRoute
@@ -161,6 +169,7 @@ export interface FileRoutesById {
   '/_app/prices': typeof AppPricesRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/tasks': typeof AppTasksRoute
+  '/brochures/view': typeof BrochuresViewRoute
   '/_app/': typeof AppIndexRoute
   '/_app/admin/ai-usage': typeof AppAdminAiUsageRoute
   '/_app/admin/catalog': typeof AppAdminCatalogRoute
@@ -182,6 +191,7 @@ export interface FileRouteTypes {
     | '/prices'
     | '/settings'
     | '/tasks'
+    | '/brochures/view'
     | '/admin/ai-usage'
     | '/admin/catalog'
     | '/admin/prices'
@@ -199,6 +209,7 @@ export interface FileRouteTypes {
     | '/prices'
     | '/settings'
     | '/tasks'
+    | '/brochures/view'
     | '/'
     | '/admin/ai-usage'
     | '/admin/catalog'
@@ -218,6 +229,7 @@ export interface FileRouteTypes {
     | '/_app/prices'
     | '/_app/settings'
     | '/_app/tasks'
+    | '/brochures/view'
     | '/_app/'
     | '/_app/admin/ai-usage'
     | '/_app/admin/catalog'
@@ -228,6 +240,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
+  BrochuresViewRoute: typeof BrochuresViewRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -316,6 +329,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTasksRouteImport
       parentRoute: typeof AppRoute
     }
+    '/brochures/view': {
+      id: '/brochures/view'
+      path: '/brochures/view'
+      fullPath: '/brochures/view'
+      preLoaderRoute: typeof BrochuresViewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/admin/ai-usage': {
       id: '/_app/admin/ai-usage'
       path: '/admin/ai-usage'
@@ -396,6 +416,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
+  BrochuresViewRoute: BrochuresViewRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

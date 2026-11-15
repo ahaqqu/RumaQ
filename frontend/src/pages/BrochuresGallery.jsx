@@ -4,17 +4,19 @@ import { usePriceBrochures } from '../lib/queries/index.js'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel } from '../components/Panel.jsx'
 import { Button } from '../components/Button.jsx'
-import { IconSearch, IconWarning } from '../components/icons.jsx'
-import { observedDateLabel } from '../lib/pricesHelpers.js'
+import { IconEye, IconSearch, IconWarning } from '../components/icons.jsx'
+import { brochureViewerUrl, observedDateLabel } from '../lib/pricesHelpers.js'
 import { useBrochureCatalogFilters } from './useBrochureCatalogFilters.js'
 import { BrochuresFilterPanel } from './BrochuresFilterPanel.jsx'
 
 // One gallery card (issue #673): the 3:4 frame is reserved up front (no
 // layout shift), the image is lazy, and a missing object degrades to a text
-// fallback in the same frame — never a broken-image glyph. Browse-only: no
-// selection affordances; the View link opens the #674 full-mode viewer in a
-// new tab.
-function UserBrochureCard({ group, dateLabel }) {
+// fallback in the same frame — never a broken-image glyph. Browse-only: the
+// card itself does nothing; the explicit View link (#674) opens the
+// full-mode viewer in a new tab (the session cookie is SameSite=Lax, so the
+// top-level blank navigation carries it — the AdminReview evidence-link
+// precedent).
+function UserBrochureCard({ group, dateLabel, viewerUrl }) {
   const { t } = useTranslation()
   const [failed, setFailed] = useState(false)
   return (
@@ -50,6 +52,18 @@ function UserBrochureCard({ group, dateLabel }) {
         <div className="text-xs text-text-muted">
           {t('prices.productsCount', { count: group.product_count })}
         </div>
+        {viewerUrl && (
+          <a
+            href={viewerUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1 inline-flex items-center gap-1 self-start rounded-sm text-xs font-semibold text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <IconEye size={14} className="shrink-0" />
+            {t('prices.viewerOpen')}
+            <span className="sr-only">— {group.source_name}</span>
+          </a>
+        )}
       </div>
     </div>
   )
@@ -121,6 +135,7 @@ export function BrochuresGallery() {
               key={group.brochure_url}
               group={group}
               dateLabel={observedDateLabel(group.observed_date, i18n.language)}
+              viewerUrl={brochureViewerUrl(group.brochure_url)}
             />
           ))}
         </div>
