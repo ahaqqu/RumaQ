@@ -1,0 +1,79 @@
+name: PR E2E Smoke
+
+# The three @smoke scenarios (app boot + login, the one mutation via a
+# receipt scan, price ingest → sort) on every PR that can reach the app or
+# the automation harness (#657 phase 2). The nightly stays the completeness
+# gate — this is the fast critical-path signal, not coverage.
+#
+# Image reuse (#657 phase 2): pull-test-images.sh fetches main's digest-keyed
+# GHCR toolchain images when they exist and retags them to the local Compose
+# names; on a miss (fresh toolchain digest, private package, no network) it
+# fails open and Compose cold-builds exactly as it did before this workflow
+# existed. The expected wall is ~2-2.5 min warm, ~5.5 min cold.
+#
+# Scope lives inside the job (scripts/github/e2e-smoke-scope.sh), NOT in a
+# workflow-level paths: filter: a required check skipped by path filtering
+# can sit in Expected/Pending forever and block docs-only merges. Every PR
+# reports here; docs-only sets skip in ~10 s with a green check.
+#
+# Secret-free by design: this workflow runs untrusted PR code, so it gets
+# contents: read only — no Cloudflare secrets, no package token (the GHCR
+# images are public; MANUAL_ACTIONS Y covers the one-time visibility flip).
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    # 20 min is headroom for a cold runner; the readiness gate has its own
+    # budget (240 s below). A stuck job must fail in minutes, not the 6-hour
+    # default.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Decide whether the smoke is relevant
+        id: scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if bash ./scripts/github/e2e-smoke-scope.sh; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "PR E2E smoke: skipped for this change set"
+          fi
+
+      - uses: docker/setup-buildx-action@v4
+        if: steps.scope.outputs.run == 'true'
+
+      - name: Pull toolchain images from GHCR when they exist
+        if: steps.scope.outputs.run == 'true'
+        run: ./scripts/github/pull-test-images.sh
+        env:
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+
+      - name: Critical-path E2E smoke (@smoke)
+        if: steps.scope.outputs.run == 'true'
+        run: ./scripts/test.sh automation-local --smoke
+        env:
+          RUMAQ_READY_TIMEOUT: 240
+
+      - name: Upload smoke report
+        if: failure() && steps.scope.outputs.run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-e2e-smoke
+          # Per-run Playwright report + readiness diagnostics (#356); the
+          # parent directory covers both like the nightly's upload does.
+          path: automation/test-results/
+          if-no-files-found: ignore

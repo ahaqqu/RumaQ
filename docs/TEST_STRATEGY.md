@@ -199,21 +199,42 @@ the toolchain image build — the mode is a local/agent pre-PR signal, not a
 replacement for the nightly.
 
 The nightly `test-automation.yml` still runs **all 55 E2E scenarios and 156 API
-tests unfiltered**; the smoke is **not** a required PR gate. Phase 2 (a per-PR
-workflow) waits for toolchain image reuse: a cold Docker job is ~5–5.5 min for
-~3 s of tests (see ahaqqu/RumaQ#657).
+tests unfiltered**; the smoke is advisory until the owner makes the check
+required (ten green runs first, per #657).
 
-Add or remove a scenario by editing the `@smoke` line above its `Scenario:` in
-the existing feature file — the scenario stays in the full suite either way.
-`./scripts/test.sh e2e-smoke` is the offline guard (also run by
-`scripts/github/ci.sh`): it prints the selected set, pins 3–5 tagged scenarios,
-requires at least one in each anchor feature (`smoke`, `add-receipt`,
-`prices-explorer`), and rejects a tag on a Feature, Background, Scenario Outline
-or Examples line, so creep and accidental loss are visible in review. Adding a
-4th or 5th scenario requires stating the reason here and keeping warm execution
-at ≤ 10 s.
+### PR smoke workflow and GHCR image reuse (phase 2, #657)
+
+`pr-e2e-smoke.yml` runs `automation-local --smoke` on every PR (plus manual
+dispatch). Scope lives **inside** the job — `scripts/github/e2e-smoke-scope.sh`
+(offlined-tested by `./scripts/test.sh e2e-smoke-scope`, also run by
+`scripts/github/ci.sh`) skips only docs/skill/Markdown/meta change sets and
+runs everything else, unknown paths included. The rule is internal, not a
+workflow-level `paths:` filter, so a required check can never sit in
+Expected/Pending on a docs-only PR. The job is secret-free (`contents: read`):
+it executes untrusted PR code, so no Cloudflare secrets and no package token.
+
+The cold Docker build is borrowed, not repeated: a main-push workflow
+(`publish-test-images.yml`, `packages: write`) builds the three toolchain
+images for the current digest exactly as the runner does and pushes
+`ghcr.io/ahaqqu/rumaq-test-{api,web,test-runner}:<digest>`, skipping images
+that already exist (`buildx imagetools inspect`). CI jobs that would cold-build
+(the nightly and the PR smoke) first run `scripts/github/pull-test-images.sh`:
+same digest math (`automation/scripts/lib/stack.sh` — reused, never forked),
+pull-if-exists, retag to the local `rumaq-test-*:<digest>` names so Compose and
+`pull_policy: never` are untouched. The script is strictly **fail-open** — a
+miss (fresh digest not yet published, private package, no network) falls back
+to today's cold build and never fails the job. Expected wall: ~2–2.5 min warm
+versus ~5.5 cold. The GHCR packages are made public once by the owner
+(docs/MANUAL_ACTIONS.md) so PR jobs can pull anonymously.
 
 ### Image tags and manual pruning
+
+Local image tags are content-addressed (`rumaq-test-*:<digest>`); a
+lockfile/config change simply stops referencing the old tag. Nothing prunes
+automatically — removing a tag can race a parallel run still using it. On GHCR
+the digest-keyed tags accumulate metadata-only cost (layers are
+content-deduped); a periodic prune is a nice-to-have, not required. Prune
+locally when disk matters (no run in flight):
 
 Image tags are content-addressed and local-only (`rumaq-test-*:<digest>`); a
 lockfile/config change simply stops referencing the old tag. Nothing prunes

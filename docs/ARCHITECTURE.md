@@ -127,6 +127,8 @@ rumaq/
 │       ├── auto-merge-dependabot.yml  # Auto-merge patch/minor Dependabot PRs after CI
 │       ├── ci.yml                    # Unit tests + lint + audit
 │       ├── cleanup-branch.yml        # Deletes branch Worker on PR close
+│       ├── pr-e2e-smoke.yml          # PR critical-path E2E smoke (GHCR images, fail-open)
+│       ├── publish-test-images.yml   # Pushes digest-keyed toolchain images to GHCR on main
 │       ├── smoke.yml                 # Scheduled production smoke
 │       └── test-automation.yml       # Integration + E2E via Docker
 └── docs/

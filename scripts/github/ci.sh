@@ -31,6 +31,12 @@ echo "=== CI: fast E2E smoke subset guard (#657) ==="
 # silently grow, shrink or lose a risk class between reviews.
 "$ROOT_DIR/scripts/test.sh" e2e-smoke
 
+echo "=== CI: PR smoke scope guard (#657) ==="
+# Offline: the PR E2E smoke workflow skips docs/skill/Markdown/meta change
+# sets and runs everything else (fail safe). This guard pins that rule the
+# same way worker-smoke-scope is pinned.
+"$ROOT_DIR/scripts/test.sh" e2e-smoke-scope
+
 echo "=== CI: style check ==="
 bash "$ROOT_DIR/scripts/style.sh" --check
 
