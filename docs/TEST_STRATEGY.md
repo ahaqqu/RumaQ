@@ -25,6 +25,13 @@ change set, the decision is covered offline by
 `./scripts/test.sh unit-test-scope`, and an unavailable diff runs both suites
 — a wasted minute, never a regression that merges green.
 
+The change set itself comes from `scripts/github/changed-paths.sh`: a
+three-dot diff against the base branch's current tip, so a branch that is
+behind main reports only its own commits (a two-dot diff against the event's
+`base.sha` also lists everything main gained since, which ran every gate on a
+docs-only PR — #695). `./scripts/test.sh changed-paths` covers the resolver
+offline.
+
 ## Worker boot smoke (CI gate)
 
 `scripts/github/worker-boot-smoke.sh` builds the backend with the Cloudflare

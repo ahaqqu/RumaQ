@@ -62,8 +62,15 @@ case "$SUITE" in
     # paths run, and an unavailable change set runs (fail safe).
     exec "$ROOT_DIR/scripts/test/e2e-smoke-scope.sh" "$@"
     ;;
+  changed-paths)
+    # Offline guard for the change-set resolver: a PR behind its base must
+    # report only its own paths, and an unavailable base must stay unknown so
+    # the callers fail safe (#695).
+    exec "$ROOT_DIR/scripts/test/changed-paths.sh" "$@"
+    ;;
   all)
     "$ROOT_DIR/scripts/test/deploy-secrets.sh" "$@"
+    "$ROOT_DIR/scripts/test/changed-paths.sh" "$@"
     "$ROOT_DIR/scripts/test/worker-smoke-scope.sh" "$@"
     "$ROOT_DIR/scripts/test/lighthouse-scope.sh" "$@"
     "$ROOT_DIR/scripts/test/unit-test-scope.sh" "$@"
@@ -76,7 +83,7 @@ case "$SUITE" in
     "$ROOT_DIR/scripts/test/automation-live.sh" "$@"
     ;;
   *)
-    echo "Usage: $0 [unit|automation-local|automation-live|deploy|freshness|smoke-scope|lighthouse-scope|unit-test-scope|automation-stack|e2e-smoke|all]"
+    echo "Usage: $0 [unit|automation-local|automation-live|deploy|freshness|smoke-scope|lighthouse-scope|unit-test-scope|automation-stack|e2e-smoke|e2e-smoke-scope|changed-paths|all]"
     exit 1
     ;;
 esac
