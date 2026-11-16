@@ -121,7 +121,7 @@ type PriceRunRow = {
   run_started_at: string
   finished_at: string
   exit_code: number
-  // The CHECK (0046) keeps the column to exactly these two values — before it
+  // The CHECK (0049) keeps the column to exactly these two values — before it
   // existed (0010) there was no DB constraint and the ingest schema guarded
   // the only writer (audit C2). This narrowing is the read side trusting what
   // the schema now enforces.
