@@ -35,7 +35,7 @@
     "@axe-core/playwright": "^4.14.0",
     "@babel/parser": "^8.1.2",
     "@cucumber/cucumber": "^13.3.0",
-    "@playwright/test": "^1.65.0",
+    "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^5.1.0",
     "concurrently": "^10.0.7",
