@@ -6,21 +6,22 @@ import {
   createScrapeCommand,
   finishScrapeCommand,
   STALE_PENDING_AFTER_MS,
-  STALE_RUNNING_AFTER_MS,
+  STALE_SILENCE_AFTER_MS,
 } from '../lib/scrape.js'
 
 // Stateful in-memory D1 fake covering exactly the SQL shapes the scrape lib
 // emits (the ingest/price-runs fakes match static SELECTs; a command queue
-// needs mutations to be observable: claim flips, events dedupe, finishes
+// needs mutations to be observable: claim flips, events renew, finishes
 // guard). Unknown SQL throws loudly so lib drift fails tests, not silently.
 
 type CommandRow = {
   id: string
   stores: string
-  status: 'pending' | 'running' | 'success' | 'failed'
+  status: 'pending' | 'running' | 'success' | 'failed' | 'reaped'
   created_by: string
   created_at: string
   picked_up_at: string | null
+  heartbeat_at: string | null
   finished_at: string | null
   exit_code: number | null
   error: string | null
@@ -90,6 +91,7 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
         created_by: createdBy,
         created_at: createdAt,
         picked_up_at: null,
+        heartbeat_at: null,
         finished_at: null,
         exit_code: null,
         error: null,
@@ -124,27 +126,27 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
       }
       return []
     }
-    // --- stale reaper (create batch + claim sweep) ---
-    if (sql.includes("SET status = 'failed'") && sql.includes("WHERE status = 'running'")) {
-      const [error, finishedAt, staleBefore] = params as [string, string, string]
+    // --- reaper (create batch + claim sweep): silence for running, age for pending ---
+    if (sql.includes("SET status = 'reaped'") && sql.includes("WHERE status = 'running'")) {
+      const [error, finishedAt, silentBefore] = params as [string, string, string]
       for (const row of commands) {
-        const since = row.picked_up_at ?? row.created_at
-        if (row.status === 'running' && since < staleBefore) {
-          row.status = 'failed'
+        const since = row.heartbeat_at ?? row.picked_up_at ?? row.created_at
+        if (row.status === 'running' && since < silentBefore) {
+          row.status = 'reaped'
           row.finished_at = finishedAt
-          row.exit_code = 1
+          // NO exit_code: the run never finished (audit M1 — exit_code 1 was
+          // the old overloading).
           row.error = error
         }
       }
       return []
     }
-    if (sql.includes("SET status = 'failed'") && sql.includes("WHERE status = 'pending'")) {
+    if (sql.includes("SET status = 'reaped'") && sql.includes("WHERE status = 'pending'")) {
       const [error, finishedAt, staleBefore] = params as [string, string, string]
       for (const row of commands) {
         if (row.status === 'pending' && row.created_at < staleBefore) {
-          row.status = 'failed'
+          row.status = 'reaped'
           row.finished_at = finishedAt
-          row.exit_code = 1
           row.error = error
         }
       }
@@ -158,11 +160,12 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
       return oldest ? [oldest] : []
     }
     if (sql.includes('SET status = ') && sql.includes("WHERE id = ? AND status = 'pending'")) {
-      const [pickedUpAt, id] = params as [string, string]
+      const [pickedUpAt, heartbeatAt, id] = params as [string, string, string]
       const row = find(id)
       if (!row || row.status !== 'pending') return []
       row.status = 'running'
       row.picked_up_at = pickedUpAt
+      row.heartbeat_at = heartbeatAt
       return [{ id: row.id, stores: row.stores, created_at: row.created_at }]
     }
     // --- appendScrapeEvents / finishScrapeCommand guards ---
@@ -186,6 +189,15 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
         return [] // ON CONFLICT DO NOTHING
       }
       events.push({ command_id: commandId, seq, ts, level, message })
+      return []
+    }
+    // The lease renewal rides the events batch (2 params: ts, id) — matched
+    // BEFORE the finish UPDATE below (same "AND status = 'running'" shape).
+    if (sql.includes('SET heartbeat_at') && sql.includes("AND status = 'running'")) {
+      const [renewedAt, id] = params as [string, string]
+      const row = find(id)
+      if (!row || row.status !== 'running') return []
+      row.heartbeat_at = renewedAt
       return []
     }
     if (sql.includes('UPDATE scrape_commands') && sql.includes("AND status = 'running'")) {
@@ -308,6 +320,7 @@ function seedCommand(
     created_by: 'user-1',
     created_at: new Date().toISOString(),
     picked_up_at: null,
+    heartbeat_at: null,
     finished_at: null,
     exit_code: null,
     error: null,
@@ -434,13 +447,14 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
     expect(second.status).toBe(201)
   })
 
-  it('reaps a stale running command (no finish report) and creates the new one', async () => {
+  it('reaps a silent running command and creates the new one', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     try {
       const now = new Date('2026-11-09T12:00:00.000Z')
       vi.setSystemTime(now)
       const fake = createScrapeDb()
-      const pickedUpAt = new Date(now.getTime() - STALE_RUNNING_AFTER_MS - 60_000).toISOString()
+      // No heartbeat_at (pre-lease row): silence measures from picked_up_at.
+      const pickedUpAt = new Date(now.getTime() - STALE_SILENCE_AFTER_MS - 60_000).toISOString()
       seedCommand(fake, {
         id: 'stale-running',
         status: 'running',
@@ -453,10 +467,12 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
 
       const reaped = fake.commands.find((row) => row.id === 'stale-running')!
       expect(reaped).toMatchObject({
-        status: 'failed',
-        exit_code: 1,
-        // Exact audit string the admin history renders.
-        error: 'reaped: no finish report after 150 min (run deadline exceeded)',
+        status: 'reaped',
+        // The run never finished — there is no exit code (audit M1: the old
+        // failed + exit_code 1 overloading is gone).
+        exit_code: null,
+        // Exact string the admin history renders.
+        error: 'reaped: silent for 45 min (no heartbeat, events, or finish report)',
         finished_at: now.toISOString(),
         // Preserved: it still records when the agent claimed the run.
         picked_up_at: pickedUpAt,
@@ -508,7 +524,7 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
     }
   })
 
-  it('reaps a stale pending command (never picked up)', async () => {
+  it('reaps a stale pending command (never picked up) — unchanged by the lease', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     try {
       const now = new Date('2026-11-09T12:00:00.000Z')
@@ -525,8 +541,8 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
 
       const reaped = fake.commands.find((row) => row.id === 'stale-pending')!
       expect(reaped).toMatchObject({
-        status: 'failed',
-        exit_code: 1,
+        status: 'reaped',
+        exit_code: null,
         error: 'reaped: never picked up after 60 min',
         finished_at: now.toISOString(),
       })
@@ -546,8 +562,8 @@ describe('POST /api/admin/scrape (admin command queue)', () => {
       seedCommand(runningFake, {
         id: 'recent-running',
         status: 'running',
-        created_at: new Date(now.getTime() - STALE_RUNNING_AFTER_MS + 60_000).toISOString(),
-        picked_up_at: new Date(now.getTime() - STALE_RUNNING_AFTER_MS + 60_000).toISOString(),
+        created_at: new Date(now.getTime() - STALE_SILENCE_AFTER_MS + 60_000).toISOString(),
+        picked_up_at: new Date(now.getTime() - STALE_SILENCE_AFTER_MS + 60_000).toISOString(),
       })
       expect((await postScrape(runningFake.env())).status).toBe(409)
       expect(runningFake.commands[0]!.status).toBe('running')
@@ -801,6 +817,7 @@ describe('internal scrape routes (bearer channel)', () => {
       created_by: 'user-1',
       created_at: now, // datetime('now') resolution — two rows in one second are legal
       picked_up_at: null,
+      heartbeat_at: null,
       finished_at: null,
       exit_code: null,
       error: null,
@@ -814,7 +831,7 @@ describe('internal scrape routes (bearer channel)', () => {
     expect(claimed!.id).toBe('cmd-a')
   })
 
-  it('sweeps a stale running command to failed and reopens the queue', async () => {
+  it('sweeps a silent running command to reaped and reopens the queue', async () => {
     const fake = createScrapeDb()
     const env = fake.env()
     await apiApp.request(
@@ -826,16 +843,19 @@ describe('internal scrape routes (bearer channel)', () => {
       },
       env
     )
-    // Claim, then age the command past the running ceiling (150 min).
+    // Claim, then age the command's last report past the silence ceiling
+    // (45 min) — the agent stopped posting events and never finished, so
+    // heartbeat_at (the claim's stamp) is as stale as the pickup.
     await claimNextScrapeCommand(fake.db)
     const stale = fake.commands[0]!
     stale.picked_up_at = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+    stale.heartbeat_at = stale.picked_up_at
 
     const headers = { Authorization: 'Bearer ingest-secret' }
     await apiApp.request('/api/internal/scrape/next', { headers }, env)
-    expect(stale.status).toBe('failed')
-    expect(stale.error).toBe('reaped: no finish report after 150 min (run deadline exceeded)')
-    expect(stale.exit_code).toBe(1)
+    expect(stale.status).toBe('reaped')
+    expect(stale.error).toBe('reaped: silent for 45 min (no heartbeat, events, or finish report)')
+    expect(stale.exit_code).toBeNull()
     expect(stale.finished_at).not.toBeNull()
     // Queue is open again — a fresh command can now be created and claimed.
     const next = await apiApp.request(
@@ -848,6 +868,101 @@ describe('internal scrape routes (bearer channel)', () => {
       env
     )
     expect(next.status).toBe(201)
+  })
+
+  it('renews the lease on every events POST — a reporting run is never reaped', async () => {
+    const fake = createScrapeDb()
+    const env = fake.env()
+    await apiApp.request(
+      '/api/admin/scrape',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"stores":["superindo"]}',
+      },
+      env
+    )
+    const claimed = (await claimNextScrapeCommand(fake.db))!
+    const id = claimed.id
+    // Claimed over an hour ago (would exceed ANY total-age ceiling).
+    fake.commands[0]!.picked_up_at = new Date(Date.now() - 90 * 60 * 1000).toISOString()
+    fake.commands[0]!.heartbeat_at = new Date(Date.now() - 90 * 60 * 1000).toISOString()
+
+    const headers = { Authorization: 'Bearer ingest-secret', 'Content-Type': 'application/json' }
+    // Events arrive NOW — the renewal stamps heartbeat_at fresh.
+    const post = await apiApp.request(
+      `/api/internal/scrape/commands/${id}/events`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          events: [{ seq: 0, ts: new Date().toISOString(), level: 'info', message: 'still alive' }],
+        }),
+      },
+      env
+    )
+    expect(post.status).toBe(200)
+    expect(fake.commands[0]!.heartbeat_at).not.toBeNull()
+
+    // The poll that runs the reaper: a FRESH heartbeat keeps the row live
+    // despite the 90-minute total age (the old age-since-claim ceiling would
+    // have reaped it — the L1 coupling this machine removes).
+    const poll = await apiApp.request('/api/internal/scrape/next', { headers }, env)
+    expect(poll.status).toBe(200)
+    expect(fake.commands[0]!.status).toBe('running')
+    expect(fake.commands[0]!.finished_at).toBeNull()
+  })
+
+  it('a silent row reaps at the 45-minute silence boundary and a finish then answers 409', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const now = new Date('2026-11-09T12:00:00.000Z')
+      vi.setSystemTime(now)
+      const fake = createScrapeDb()
+      const env = fake.env()
+      await postScrape(env)
+      const claimed = (await claimNextScrapeCommand(fake.db))!
+      const headers = { Authorization: 'Bearer ingest-secret', 'Content-Type': 'application/json' }
+
+      // One minute BEFORE the silence ceiling: still live.
+      vi.setSystemTime(new Date(now.getTime() + STALE_SILENCE_AFTER_MS - 60_000))
+      const before = await apiApp.request('/api/internal/scrape/next', { headers }, env)
+      expect(before.status).toBe(200)
+      expect(fake.commands[0]!.status).toBe('running')
+
+      // One minute PAST it (silence measured from picked_up_at): the claim
+      // sweep reaps to the named state, exit_code untouched.
+      vi.setSystemTime(new Date(now.getTime() + STALE_SILENCE_AFTER_MS + 60_000))
+      await apiApp.request('/api/internal/scrape/next', { headers }, env)
+      expect(fake.commands[0]!.status).toBe('reaped')
+      expect(fake.commands[0]!.exit_code).toBeNull()
+
+      // The agent's finish arrives after the reap: 409 — the report is
+      // dropped, not silently ok'd (postJson gives up on the 4xx at once).
+      const finish = await apiApp.request(
+        `/api/internal/scrape/commands/${claimed.id}/finish`,
+        { method: 'POST', headers, body: JSON.stringify({ status: 'success', exitCode: 0 }) },
+        env
+      )
+      expect(finish.status).toBe(409)
+      expect(fake.commands[0]!.status).toBe('reaped')
+
+      // Late events are refused the same way.
+      const late = await apiApp.request(
+        `/api/internal/scrape/commands/${claimed.id}/events`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            events: [{ seq: 0, ts: now.toISOString(), level: 'info', message: 'late' }],
+          }),
+        },
+        env
+      )
+      expect(late.status).toBe(409)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('accepts events idempotently and 409s events for a terminal command', async () => {

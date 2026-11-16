@@ -20,6 +20,9 @@ const STATUS_DOT = {
   running: 'bg-accent',
   success: 'bg-ok',
   failed: 'bg-danger',
+  // The lease reaped this row (audit M1): the agent went silent — attention,
+  // but a distinct cause from `failed` (the run itself never reported).
+  reaped: 'bg-warn',
 }
 
 function statusKey(status) {
