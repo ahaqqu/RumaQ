@@ -202,7 +202,8 @@ function toTaskRow(row: Omit<TaskRow, 'needs_approval'> & { needs_approval: numb
   // and link-later (#397 attaches an account to the kid's member row) can
   // leave it stale in either direction, and a flag that lies would send the
   // approval flow after a task that no longer needs it. The live join is the
-  // truth; approveTask additionally re-checks it inside the guarded UPDATE.
+  // truth; approveTask re-checks the same join inside the guarded UPDATE —
+  // the stored column is never a predicate there (audit L8).
   const derived = row.assignee_member_id !== null && row.assignee_user_id === null
   return { ...row, needs_approval: derived }
 }
@@ -351,6 +352,11 @@ function deriveNeedsApproval(assignee: HouseholdMemberRef | null): boolean {
   return assignee !== null && assignee.user_id === null
 }
 
+/** The L9 refusal, verbatim at every write that would create the pair (the
+ * route tests pin the message). */
+const L9_GUARD_MESSAGE =
+  'A recurring task cannot be assigned to a profile-only member — it never rests in done, so the acknowledge step could never run'
+
 function insertAuditStatement(
   db: D1Database,
   args: { taskId: string; householdId: string; actorUserId: string; action: TaskAction }
@@ -444,6 +450,14 @@ export async function createTask(
   const caller = await requireCallerMember(db, args.householdId, args.userId)
   const taskId = crypto.randomUUID()
   const needsApproval = deriveNeedsApproval(args.assignee)
+  // Audit L9: a recurring task rolls forward and stays 'open', while approve
+  // requires 'done' — so the (recurrence, profile-only assignee) pair is a
+  // legal-looking row whose acknowledge step can never run. Refuse it at the
+  // write that would create it (M3's approval-per-completion redesign is
+  // deferred; this is the shipped-now guard).
+  if (args.recurrence !== null && needsApproval) {
+    throw new TaskValidationError(L9_GUARD_MESSAGE)
+  }
   await db.batch([
     db
       .prepare(
@@ -519,6 +533,21 @@ export async function updateTask(
   }
   if (args.patch.assignee !== undefined && task.status === 'done' && task.recurrence === null) {
     throw new TaskValidationError('A done task cannot be reassigned — assign a fresh task instead')
+  }
+
+  // Audit L9: refuse the (recurrence, profile-only assignee) pair on every
+  // path that would create it — assigning a profile-only member to a
+  // recurring task, or making a profile-only-assigned task recurring — same
+  // rule createTask enforces: the pair can never be acknowledged (approve
+  // requires 'done'; a recurring task rolls forward and stays 'open').
+  const nextRecurrence =
+    args.patch.recurrence !== undefined ? args.patch.recurrence : task.recurrence
+  const nextAssigneeProfileOnly =
+    args.patch.assignee !== undefined
+      ? args.patch.assignee !== null && args.patch.assignee.user_id === null
+      : task.assignee_member_id !== null && task.assignee_user_id === null
+  if (nextRecurrence !== null && nextAssigneeProfileOnly) {
+    throw new TaskValidationError(L9_GUARD_MESSAGE)
   }
 
   const updates: string[] = []
@@ -680,16 +709,18 @@ export async function completeTask(
 /**
  * Approve the completed task (the assigner's acknowledgment — pairs with the
  * future allowance ledger). Creator or owner, only while needs_approval holds
- * and the task is done; the derived flag (toTaskRow) and the done status are
- * checked, not just the column. Re-approval (e.g. by the other parent) is an
- * allowed, audit-recorded overwrite.
+ * and the task is done; the pre-check reads the DERIVED flag (toTaskRow) and
+ * the done status — never the stored column. Re-approval (e.g. by the other
+ * parent) is an allowed, audit-recorded overwrite.
  *
  * The UPDATE is GUARDED (the vault's addFileStatement pattern): it re-checks
- * status, the stored flag, AND the live assignee mode INSIDE the batch, so a
- * flag that went stale between the read and the write — the assignee's member
- * row was removed, or link-later (#397) attached an account to the kid —
- * matches no row instead of approving against the derived truth. changes === 0
- * surfaces as the typed 409.
+ * status AND the live assignee mode INSIDE the batch. The stored
+ * needs_approval column is deliberately NOT a predicate (0027:57-60 — the
+ * flag can go stale in either direction: member removal, or link-later #397
+ * attaching an account to the kid; audit L8 dropped it from both guards) —
+ * the EXISTS join is the truth, so a stale-but-correctly-derived row approves
+ * and a linked assignee can never pass. changes === 0 surfaces as the typed
+ * 409.
  */
 export async function approveTask(
   db: D1Database,
@@ -713,7 +744,7 @@ export async function approveTask(
       .prepare(
         `UPDATE household_tasks SET approved_by_member_id = ?, updated_at = datetime('now')
           WHERE id = ? AND household_id = ?
-            AND status = 'done' AND needs_approval = 1
+            AND status = 'done'
             AND EXISTS (
               SELECT 1 FROM household_members am
                WHERE am.id = household_tasks.assignee_member_id AND am.user_id IS NULL
@@ -728,7 +759,7 @@ export async function approveTask(
       actorUserId: args.userId,
       action: 'approve',
       guardSql:
-        "status = 'done' AND needs_approval = 1 AND EXISTS (" +
+        "status = 'done' AND EXISTS (" +
         'SELECT 1 FROM household_members am' +
         ' WHERE am.id = household_tasks.assignee_member_id AND am.user_id IS NULL)',
     }),

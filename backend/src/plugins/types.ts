@@ -181,6 +181,33 @@ export class PluginExportCursorError extends Error {
 }
 
 /**
+ * The purge chunk's typed refusal (P1R2-A5, PR #474 review): the chunk was
+ * called for a household whose enablement row exists but carries NO purge
+ * state — the owner's cancel lever (PURGE_CANCEL_SQL) fired mid-drain. The
+ * drain must STOP, not proceed: the nightly work-set query filters on
+ * pending/running, so a cancelled household leaves the work set (the healthy
+ * tick never reaches this) — this error covers the work-set-read →
+ * chunk-call race window and the dissolution drain's in-loop chunks, where
+ * proceeding would delete every remaining document past the cancel (the
+ * lever NULLs the cursor too, so the re-read starts from the oldest), then
+ * complete with NO receipt and spin forever (objects: 0, drained: false —
+ * the completion guard needs an active state to land 'done').
+ *
+ * Lives in the CONTRACT module (the PluginExportCursorError rationale): the
+ * plugin job throws it and core's tick must branch on it — core cannot
+ * import plugin-owned error classes (§4.1 boundary), and this module is the
+ * one shared surface both sides already import (audit C4).
+ */
+export class PluginPurgeCancelledError extends Error {
+  constructor(householdId: string) {
+    super(
+      `purge drain for documents/${householdId} was cancelled mid-drain (the enablement row has no active purge state) — the chunk refuses; remaining documents keep their rows and bytes, and no receipt exists`
+    )
+    this.name = 'PluginPurgeCancelledError'
+  }
+}
+
+/**
  * The per-plugin export job (ticket 6, #440): one archive of one
  * household's data. Read-only by design — it must never block on, gate, or
  * mutate the purge machinery (§3.4: export-then-purge are independent owner

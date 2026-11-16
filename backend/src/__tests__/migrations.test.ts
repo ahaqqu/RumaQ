@@ -4002,3 +4002,92 @@ describe('migration 0046: stock unique (household_id, item_id) (#551)', () => {
     expect(index.sql).toContain('UNIQUE')
   })
 })
+
+describe('migration 0046: price_runs.status CHECK (audit L3)', () => {
+  function preCheckDb(): Db {
+    // The production shape pre-0046: the full chain up to the last applied
+    // migration before the rebuild.
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0046')
+    )
+    return db
+  }
+
+  it('rebuilds the table around the status CHECK; existing rows survive verbatim (the 0036 pattern)', () => {
+    const db = preCheckDb()
+    db.prepare(
+      `INSERT INTO price_runs (id, run_started_at, finished_at, exit_code, status)
+       VALUES ('run-1', '2026-11-15T23:00:05Z', '2026-11-15T23:04:11Z', 0, 'success')`
+    ).run()
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0046_price_runs_status_check.sql'), 'utf8'))
+
+    const row = db.prepare('SELECT * FROM price_runs WHERE id = ?').get('run-1')
+    expect(row).toMatchObject({ id: 'run-1', status: 'success', exit_code: 0 })
+    // The monitor's seek survives the rebuild.
+    const indexes = db.prepare('PRAGMA index_list(price_runs)').all() as Array<{ name: string }>
+    expect(indexes.map((i) => i.name)).toContain('idx_price_runs_started')
+  })
+
+  it('the CHECK is a real constraint: an unknown status cannot land', () => {
+    const db = preCheckDb()
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0046_price_runs_status_check.sql'), 'utf8'))
+
+    // 'reaped' is scrape_commands' vocabulary (0012), not price_runs' — a
+    // hand-fixed value like this is exactly what the CHECK must refuse.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO price_runs (id, run_started_at, finished_at, exit_code, status)
+           VALUES ('run-x', '2026-11-16T23:00:05Z', '2026-11-16T23:04:11Z', 1, 'reaped')`
+        )
+        .run()
+    ).toThrow()
+    // Both contract-vocabulary values land.
+    db.prepare(
+      `INSERT INTO price_runs (id, run_started_at, finished_at, exit_code, status)
+       VALUES ('run-2', '2026-11-16T23:00:05Z', '2026-11-16T23:04:11Z', 1, 'success')`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_runs (id, run_started_at, finished_at, exit_code, status)
+       VALUES ('run-3', '2026-11-16T23:05:05Z', '2026-11-16T23:09:11Z', 1, 'failed')`
+    ).run()
+  })
+
+  it('a violating pre-existing row fails the migration loudly (the narrowing is enforced, not guessed)', () => {
+    const db = preCheckDb()
+    db.prepare(
+      `INSERT INTO price_runs (id, run_started_at, finished_at, exit_code, status)
+       VALUES ('run-bad', '2026-11-16T23:00:05Z', '2026-11-16T23:04:11Z', 1, 'hand-fixed')`
+    ).run()
+    expect(() =>
+      db.exec(readFileSync(join(MIGRATIONS_DIR, '0046_price_runs_status_check.sql'), 'utf8'))
+    ).toThrow()
+  })
+
+  it('keeps the full chain green on a fresh database', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(price_runs)').all() as Array<{ name: string }>
+    expect(columns.map((c) => c.name)).toEqual([
+      'id',
+      'run_started_at',
+      'finished_at',
+      'exit_code',
+      'status',
+      'stage',
+      'per_store',
+      'match_stats',
+      'publish_result',
+      'error',
+      'created_at',
+      'index_version',
+      'products_summary',
+      'ai_usage',
+      'failures',
+      'ai_prompt_identity',
+    ])
+  })
+})

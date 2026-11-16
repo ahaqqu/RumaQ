@@ -121,7 +121,11 @@ type PriceRunRow = {
   run_started_at: string
   finished_at: string
   exit_code: number
-  status: string
+  // The CHECK (0046) keeps the column to exactly these two values — before it
+  // existed (0010) there was no DB constraint and the ingest schema guarded
+  // the only writer (audit C2). This narrowing is the read side trusting what
+  // the schema now enforces.
+  status: 'success' | 'failed'
   stage: string | null
   per_store: string | null
   match_stats: string | null
@@ -142,13 +146,6 @@ function parseJson<T>(value: string | null): T | null {
     // A malformed blob must never break the whole monitor feed.
     return null
   }
-}
-
-/** The stored status as the monitor's two-value read: anything the ingest did
- * not record as `success` is a failure (the contract's picklist keeps the
- * column to exactly those two, so this is a narrowing, not a guess). */
-function runStatus(stored: string): PriceRun['status'] {
-  return stored === 'success' ? 'success' : 'failed'
 }
 
 /**
@@ -310,7 +307,7 @@ export async function listPriceRuns(
     runStartedAt: row.run_started_at,
     finishedAt: row.finished_at,
     exitCode: row.exit_code,
-    status: runStatus(row.status),
+    status: row.status,
     stage: row.stage,
     perStore: parseJson<Record<string, RunStoreSummary>>(row.per_store) ?? {},
     match: parseJson<RunMatchSummary>(row.match_stats),
@@ -375,7 +372,7 @@ export async function readFailedRunStreak(
 
   const runs: RunStreakFields[] = (results ?? []).map((row) => ({
     runStartedAt: row.run_started_at,
-    status: runStatus(row.status),
+    status: row.status,
     publish: parseJson<RunPublishSummary>(row.publish_result),
     failures: parseJson<RunFailure[]>(row.failures),
   }))
