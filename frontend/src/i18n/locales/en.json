@@ -584,6 +584,7 @@
     "scrapeNow": "Scrape Now",
     "statusFailed": "Failed",
     "statusPending": "Pending",
+    "statusReaped": "Reaped — agent silent",
     "statusRunning": "Running",
     "statusSuccess": "Success",
     "triggerTitle": "Trigger a scrape",
