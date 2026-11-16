@@ -4003,15 +4003,15 @@ describe('migration 0046: stock unique (household_id, item_id) (#551)', () => {
   })
 })
 
-describe('migration 0046: price_runs.status CHECK (audit L3)', () => {
+describe('migration 0049: price_runs.status CHECK (audit L3)', () => {
   function preCheckDb(): Db {
-    // The production shape pre-0046: the full chain up to the last applied
+    // The production shape pre-0049: the full chain up to the last applied
     // migration before the rebuild.
     const db = new DatabaseSync(':memory:') as unknown as Db
     db.exec('PRAGMA foreign_keys = ON')
     applyMigrations(
       db,
-      migrationFiles().filter((file: string) => file < '0046')
+      migrationFiles().filter((file: string) => file < '0049')
     )
     return db
   }
@@ -4022,7 +4022,7 @@ describe('migration 0046: price_runs.status CHECK (audit L3)', () => {
       `INSERT INTO price_runs (id, run_started_at, finished_at, exit_code, status)
        VALUES ('run-1', '2026-11-15T23:00:05Z', '2026-11-15T23:04:11Z', 0, 'success')`
     ).run()
-    db.exec(readFileSync(join(MIGRATIONS_DIR, '0046_price_runs_status_check.sql'), 'utf8'))
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0049_price_runs_status_check.sql'), 'utf8'))
 
     const row = db.prepare('SELECT * FROM price_runs WHERE id = ?').get('run-1')
     expect(row).toMatchObject({ id: 'run-1', status: 'success', exit_code: 0 })
@@ -4033,7 +4033,7 @@ describe('migration 0046: price_runs.status CHECK (audit L3)', () => {
 
   it('the CHECK is a real constraint: an unknown status cannot land', () => {
     const db = preCheckDb()
-    db.exec(readFileSync(join(MIGRATIONS_DIR, '0046_price_runs_status_check.sql'), 'utf8'))
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0049_price_runs_status_check.sql'), 'utf8'))
 
     // 'reaped' is scrape_commands' vocabulary (0012), not price_runs' — a
     // hand-fixed value like this is exactly what the CHECK must refuse.
@@ -4063,7 +4063,7 @@ describe('migration 0046: price_runs.status CHECK (audit L3)', () => {
        VALUES ('run-bad', '2026-11-16T23:00:05Z', '2026-11-16T23:04:11Z', 1, 'hand-fixed')`
     ).run()
     expect(() =>
-      db.exec(readFileSync(join(MIGRATIONS_DIR, '0046_price_runs_status_check.sql'), 'utf8'))
+      db.exec(readFileSync(join(MIGRATIONS_DIR, '0049_price_runs_status_check.sql'), 'utf8'))
     ).toThrow()
   })
 

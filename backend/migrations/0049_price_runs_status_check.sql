@@ -14,8 +14,8 @@
 -- hand-fixed one) fails the migration loudly, which is the point: the
 -- narrowing must be enforced, not guessed.
 --
--- NUMBERING NOTE: 0045 is applied (purchase_items.line_total); this file takes
--- the next free number, 0046. NEVER rename an applied migration: wrangler keys
+-- NUMBERING NOTE: 0048 is applied (price_sources.family); this file takes the
+-- next free number, 0049. NEVER rename an applied migration: wrangler keys
 -- its d1_migrations table by filename, so a rename re-runs the file.
 CREATE TABLE price_runs_new (
   id TEXT PRIMARY KEY,
