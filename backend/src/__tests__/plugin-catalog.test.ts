@@ -360,6 +360,9 @@ describe('plugin purge initiation route (#439)', () => {
           purge_state: 'pending',
           purge_requested_at: '2026-11-07 03:00:00',
           purge_completed_at: null,
+          // 0051 ships the column on every row — the fake must carry it or
+          // purgeInfoOf's required shape lies.
+          purge_cancelled_reason: null,
         }),
       ],
       [CATALOG_ROWS_ROUTE([]), FLAGS_ROUTE([])]
