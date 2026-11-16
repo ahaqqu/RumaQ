@@ -4245,6 +4245,16 @@ describe('migration 0051: purge cancelled state + receipt (audit M2/L4/C1)', () 
       `INSERT INTO household_plugins (household_id, plugin_id, status)
        VALUES ('h1', 'not-a-plugin', 'disabled')`
     ).run()
+    // A mid-drain row at migration time: the nightly's cursor and the row's
+    // settings must survive verbatim (a lost cursor degrades to a re-read —
+    // idempotent, but "verbatim" means verbatim; this row pins the rebuild's
+    // INSERT..SELECT list, which PRAGMA column names cannot see).
+    db.prepare(
+      `INSERT INTO household_plugins (household_id, plugin_id, status, config_json, purge_state,
+         purge_cursor, purge_requested_by, purge_requested_at)
+       VALUES ('h1', 'documents-running', 'enabled', '{"theme":"dark"}', 'running',
+         '{"created_at":"2026-11-15 08:00:00","id":"d-9"}', 'u-1', '2026-11-15 07:00:00')`
+    ).run()
     // The pre-change cancel lever's aftermath: a NULL resting row — the
     // withdrawal it performed left NO trace, which is exactly why the
     // migration map reports pre-change cancellations as `none`.
@@ -4253,8 +4263,54 @@ describe('migration 0051: purge cancelled state + receipt (audit M2/L4/C1)', () 
        VALUES ('a-1', 'h1', 'documents', 'u-1', 'plugin_purged')`
     ).run()
 
+    // Full-row snapshots BEFORE the rebuild: every column verbatim, NULLs
+    // included — a dropped or scrambled SELECT column must fail here.
+    const pluginsBefore = db
+      .prepare(
+        `SELECT household_id, plugin_id, status, config_json, updated_at, purge_state,
+                purge_cursor, purge_requested_by, purge_requested_at, purge_completed_at
+         FROM household_plugins ORDER BY plugin_id`
+      )
+      .all()
+    const auditBefore = db
+      .prepare(
+        `SELECT id, household_id, plugin_id, actor_user_id, action, created_at
+         FROM household_plugin_audit ORDER BY id`
+      )
+      .all()
+
     db.exec(readFileSync(join(MIGRATIONS_DIR, '0051_plugin_purge_cancelled.sql'), 'utf8'))
 
+    // The rebuild's only rewrite: the two NEW receipt columns land NULL on
+    // every legacy row (no legacy row can be `cancelled` — the map says
+    // "reported as none, never guessed").
+    expect(
+      db
+        .prepare(
+          `SELECT household_id, plugin_id, status, config_json, updated_at, purge_state,
+                  purge_cursor, purge_requested_by, purge_requested_at, purge_completed_at,
+                  purge_cancelled_by, purge_cancelled_reason
+           FROM household_plugins ORDER BY plugin_id`
+        )
+        .all()
+    ).toEqual(
+      pluginsBefore.map((row) => ({
+        ...row,
+        purge_cancelled_by: null,
+        purge_cancelled_reason: null,
+      }))
+    )
+    expect(
+      db
+        .prepare(
+          `SELECT id, household_id, plugin_id, actor_user_id, action, created_at
+           FROM household_plugin_audit ORDER BY id`
+        )
+        .all()
+    ).toEqual(auditBefore)
+
+    // The named outcomes the map targets (kept explicit for legibility — the
+    // snapshot above is the proof, these are its reading).
     expect(
       db.prepare('SELECT * FROM household_plugins WHERE plugin_id = ?').get('documents')
     ).toMatchObject({

@@ -111,18 +111,13 @@ function pluginPlanEntitled(): boolean {
 /** The 0035/0051 purge columns as the catalog's purge slice. A NULL
  * purge_state is the resting state — never requested — mapped to null. A
  * `cancelled` row carries the withdrawal receipt's reason (0051; audit L4). */
-function purgeInfoOf(row: {
-  purge_state: string | null
-  purge_requested_at: string | null
-  purge_completed_at: string | null
-  purge_cancelled_reason?: string | null
-}): PluginPurgeInfo | null {
+function purgeInfoOf(row: CatalogPurgeColumns): PluginPurgeInfo | null {
   if (!row.purge_state) return null
   return {
     state: row.purge_state as PluginPurgeStatus,
     requested_at: row.purge_requested_at,
     completed_at: row.purge_completed_at,
-    reason: row.purge_cancelled_reason ?? null,
+    reason: row.purge_cancelled_reason,
   }
 }
 
