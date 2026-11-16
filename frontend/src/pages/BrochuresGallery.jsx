@@ -6,6 +6,7 @@ import { Panel } from '../components/Panel.jsx'
 import { Button } from '../components/Button.jsx'
 import { IconEye, IconSearch, IconWarning } from '../components/icons.jsx'
 import { brochureViewerUrl, observedDateLabel } from '../lib/pricesHelpers.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { useBrochureCatalogFilters } from './useBrochureCatalogFilters.js'
 import { BrochuresFilterPanel } from './BrochuresFilterPanel.jsx'
 
@@ -78,7 +79,7 @@ function UserBrochureCard({ group, dateLabel, viewerUrl }) {
 // (useBrochureCatalogFilters + BrochuresFilterPanel).
 export function BrochuresGallery() {
   const { t, i18n } = useTranslation()
-  const { data, isLoading, isError } = usePriceBrochures()
+  const { data, isLoading, isError, error } = usePriceBrochures()
   const filters = useBrochureCatalogFilters(data)
   const { groups, filtered, resetFilters } = filters
 
@@ -92,7 +93,7 @@ export function BrochuresGallery() {
   if (isError) {
     return (
       <Panel>
-        <EmptyState icon={IconWarning} title={t('prices.noMatch')} desc={t('offline.banner')} />
+        <EmptyState icon={IconWarning} title={t('prices.noMatch')} desc={t(errorKindKey(error))} />
       </Panel>
     )
   }

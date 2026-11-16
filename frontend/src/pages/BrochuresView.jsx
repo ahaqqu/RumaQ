@@ -16,6 +16,7 @@ import {
   referencePrice,
 } from '../lib/pricesHelpers.js'
 import { cn } from '../lib/cn.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { useBrochureCatalogFilters } from './useBrochureCatalogFilters.js'
 import { BrochuresFilterPanel } from './BrochuresFilterPanel.jsx'
 
@@ -307,7 +308,7 @@ function BrochureProductsTable({ items, brochureDateLabel }) {
 // time with "Showing N of M" and a Load more action while pages remain.
 function BrochureReview({ group, dateLabel }) {
   const { t } = useTranslation()
-  const { data, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage } =
+  const { data, isLoading, isError, error, hasNextPage, fetchNextPage, isFetchingNextPage } =
     useBrochureProducts(group.brochure_url)
   const items = data?.items ?? []
   const total = data?.total ?? 0
@@ -343,7 +344,7 @@ function BrochureReview({ group, dateLabel }) {
             <EmptyState
               icon={IconWarning}
               title={t('catalog.brochuresProductsError')}
-              desc={t('offline.banner')}
+              desc={t(errorKindKey(error))}
             />
           </PanelBody>
         ) : items.length === 0 ? (
@@ -388,7 +389,7 @@ function BrochureReview({ group, dateLabel }) {
 // BrochuresFilterPanel).
 export function BrochuresView() {
   const { t, i18n } = useTranslation()
-  const { data, isLoading, isError } = usePriceBrochures()
+  const { data, isLoading, isError, error } = usePriceBrochures()
 
   const [selectedUrl, setSelectedUrl] = useState(null)
   const filters = useBrochureCatalogFilters(data)
@@ -409,7 +410,7 @@ export function BrochuresView() {
   if (isError) {
     return (
       <Panel>
-        <EmptyState icon={IconWarning} title={t('prices.noMatch')} desc={t('offline.banner')} />
+        <EmptyState icon={IconWarning} title={t('prices.noMatch')} desc={t(errorKindKey(error))} />
       </Panel>
     )
   }

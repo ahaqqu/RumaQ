@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { render, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
+import { ApiError } from '../lib/api'
 import { Plan } from './Plan.jsx'
 import { AppProvider } from '../context/AppContext.jsx'
 
@@ -441,5 +442,23 @@ describe('Plan', () => {
     const savedArg = saveMutateAsync.mock.calls[0][0]
     expect(Array.isArray(savedArg)).toBe(true)
     expect(savedArg[0]).toMatchObject({ name: 'Telur', qty: 10, unit: 'pcs' })
+  })
+
+  // L4 (audit): a failed plans query must paint the error surface, not fall
+  // through to the connect-key upsell or an empty planner. The description
+  // names the M1 outcome kind instead of calling every failure offline.
+  it('shows the error surface when the plans query fails', () => {
+    vi.mocked(usePlans).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError('Request failed: 500', 500),
+    })
+    const { container } = renderWithQuery(
+      React.createElement(Plan, { askAssistant: vi.fn(), setView: vi.fn() })
+    )
+    expect(container.textContent).toContain('error.title')
+    expect(container.textContent).toContain('error.http')
+    expect(container.textContent).not.toContain('plan.connectApiKey')
   })
 })

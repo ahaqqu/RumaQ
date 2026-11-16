@@ -113,8 +113,18 @@ import {
 
 client.setConfig({ credentials: 'include' })
 
+// The request outcome (audit 2026-11-16 M1): every failure `unwrap` can throw
+// carries the kind that explains WHY there is no data — an HTTP status from
+// the server, a transport failure (offline), or a request that never finished
+// (timeout/abort). Greppable: the error panels branch on this instead of
+// calling every failure "offline".
+export type ApiErrorKind = 'offline' | 'timeout' | 'http'
+
 export class ApiError extends Error {
   readonly status: number
+  // Which outcome the request met (see ApiErrorKind). HTTP failures keep the
+  // server's status; transport failures (offline / aborted) carry status 0.
+  readonly kind: ApiErrorKind
   // Seconds until a rate-limit window resets, when the server sent a
   // Retry-After header — surfaced so the UI can say when to come back
   // instead of inviting an immediate retry into the same window
@@ -130,13 +140,37 @@ export class ApiError extends Error {
     message: string,
     status: number,
     retryAfterSeconds: number | null = null,
-    body: unknown = undefined
+    body: unknown = undefined,
+    kind: ApiErrorKind = 'http'
   ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.kind = kind
     this.retryAfterSeconds = retryAfterSeconds
     this.body = body
+  }
+
+  // M1: classify a throw the generated client let escape — until this, a
+  // transport failure surfaced as a raw TypeError, so every
+  // `instanceof ApiError` branch silently missed it and pages painted their
+  // empty states. fetch rejects with TypeError on a network failure and with
+  // an AbortError/TimeoutError DOMException when the request was aborted or
+  // timed out (a DOMException is NOT an Error subclass in Node, so the name
+  // is read directly); anything else is an unknown throw, which maps to
+  // kind 'http' with status 0 — NEVER to offline (a lie about the device's
+  // connectivity would send the user hunting for a network problem they
+  // don't have).
+  static from(err: unknown): ApiError {
+    if (err instanceof ApiError) return err
+    const name = (err as { name?: string } | null)?.name
+    if (name === 'AbortError' || name === 'TimeoutError') {
+      return new ApiError('Request timed out', 0, null, err, 'timeout')
+    }
+    if (err instanceof TypeError) {
+      return new ApiError('Network request failed', 0, null, err, 'offline')
+    }
+    return new ApiError(err instanceof Error ? err.message : 'Request failed', 0, null, err, 'http')
   }
 }
 
@@ -151,12 +185,20 @@ function retryAfterFrom(response: Response): number | null {
 }
 
 async function unwrap<T>(resultPromise: Promise<unknown>): Promise<T> {
-  const result = (await resultPromise) as {
+  // M1: the generated client propagates a fetch-level failure as a REJECTION
+  // (TypeError offline, AbortError timeout) — without this catch it escaped
+  // as a raw TypeError no `instanceof ApiError` branch could represent.
+  let result: {
     data?: T
     error?: unknown
     // Optional: the generated client leaves it out when the request could not
     // be built at all (invalid body/headers), so there is no response to read.
     response?: Response
+  }
+  try {
+    result = (await resultPromise) as typeof result
+  } catch (err) {
+    throw ApiError.from(err)
   }
   if (!result.response) {
     throw new ApiError('Request failed: could not build request', 0, null, result.error)
@@ -203,16 +245,27 @@ export async function logout() {
   // carries the SameSite=Lax cookie) and is limited to clearing the cookie.
   // The typed client has no logout path (the backend registers it with `all`,
   // which the generated client does not emit), so this is a plain fetch.
+  let res: Response
   try {
-    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
-    window.location.href = '/'
+    res = await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
   } catch {
-    // POST unreachable (offline, proxy error): fall back to the GET navigation
-    // so the cookie is still cleared. The epoch bump is lost, so the token
-    // stays valid on other devices — the lesser evil versus a logout that
-    // silently leaves the session live.
+    // Transport-only fallback (audit C2): the POST was unreachable (offline,
+    // proxy error) — it can never have reached the server, so the GET
+    // navigation still clears the cookie. The epoch bump is lost, so the
+    // token stays valid on other devices — the lesser evil versus a logout
+    // that silently leaves the session live.
     window.location.href = '/api/auth/logout'
+    return
   }
+  // L1 (audit): fetch resolves on 403/500 too — a non-2xx POST did not log
+  // the session out, so navigating home would paint the logged-out shell
+  // while the cookie and session epoch survive. Treat it as a FAILED logout:
+  // stay put (the mutation errors, the caller's cache stays) and let the user
+  // retry. The GET fallback above is for transport failures only.
+  if (!res.ok) {
+    throw new ApiError(`Logout failed: ${res.status}`, res.status)
+  }
+  window.location.href = '/'
 }
 
 export async function emailAuthStatus(): Promise<{ enabled: boolean }> {

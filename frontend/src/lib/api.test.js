@@ -165,6 +165,47 @@ describe('api', () => {
     await expect(getMe()).rejects.toMatchObject({ status: 429, retryAfterSeconds: null })
   })
 
+  // M1 (audit 2026-11-16): transport failures used to escape `unwrap` as a raw
+  // TypeError no `instanceof ApiError` branch could represent — pages painted
+  // their empty states instead of an error. The classifier maps each outcome.
+  it('classifies a rejected fetch as an offline ApiError with status 0 (M1)', async () => {
+    clientMock.get.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await expect(getMe()).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'offline',
+      status: 0,
+    })
+  })
+
+  it('classifies an aborted request as timeout, never offline (M1)', async () => {
+    clientMock.get.mockRejectedValueOnce(
+      new DOMException('The operation was aborted.', 'AbortError')
+    )
+    await expect(getMe()).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'timeout',
+      status: 0,
+    })
+  })
+
+  it('labels a 500 http, not offline (M1)', async () => {
+    clientMock.get.mockResolvedValueOnce(fail({ error: 'Server error' }, 500))
+    await expect(getMe()).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'http',
+      status: 500,
+    })
+  })
+
+  it('maps an unknown throw to http with status 0, never offline (M1)', async () => {
+    clientMock.get.mockRejectedValueOnce(new Error('interceptor exploded'))
+    await expect(getMe()).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'http',
+      status: 0,
+    })
+  })
+
   it('login constructs correct redirect URL', () => {
     const origLocation = window.location
     const setter = vi.fn()
@@ -227,6 +268,33 @@ describe('api', () => {
     })
     await logout()
     expect(setter).toHaveBeenCalledWith('/api/auth/logout')
+    Object.defineProperty(window, 'location', {
+      value: origLocation,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  it('logout treats a non-2xx POST as a failed logout — throws, no navigation (L1)', async () => {
+    // fetch resolves on 403/500 too: the old code navigated home while the
+    // cookie and session epoch survived. The fallback GET is transport-only
+    // (audit C2) — a server-rejected POST must not take it.
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    const origLocation = window.location
+    const setter = vi.fn()
+    const mockLocation = {}
+    Object.defineProperty(mockLocation, 'href', { set: setter, get: () => '' })
+    Object.defineProperty(window, 'location', {
+      value: mockLocation,
+      configurable: true,
+      writable: true,
+    })
+    await expect(logout()).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'http',
+      status: 500,
+    })
+    expect(setter).not.toHaveBeenCalled()
     Object.defineProperty(window, 'location', {
       value: origLocation,
       configurable: true,

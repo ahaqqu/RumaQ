@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vite-plus/test'
 import { render, fireEvent, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
+import { ApiError } from '../lib/api'
 import { Inventory } from './Inventory.jsx'
+import { useStock } from '../lib/queries/index.js'
 
 const mockStock = [
   {
@@ -34,13 +36,13 @@ const mockLocations = [
 ]
 
 vi.mock('../lib/queries/index.js', () => ({
-  useStock: ({ location, q }) => {
+  useStock: vi.fn(({ location, q }) => {
     let filtered = [...mockStock]
     if (location)
       filtered = filtered.filter((s) => s.location === location || s.location_id === location)
     if (q) filtered = filtered.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()))
     return { data: { stock: filtered }, isLoading: false }
-  },
+  }),
   useUpdateStock: () => ({ mutate: vi.fn(), isPending: false }),
   useLocations: () => ({ data: { locations: mockLocations } }),
 }))
@@ -122,5 +124,22 @@ describe('Inventory', () => {
       fireEvent.click(chips[0])
       expect(chips[0].getAttribute('aria-pressed')).toBe('true')
     }
+  })
+
+  // L4 (audit): a failed stock query must paint the error surface, not the
+  // empty state — an unreachable server is not an empty pantry. The
+  // description names the M1 outcome kind instead of calling every failure
+  // offline.
+  it('shows the error surface when the stock query fails', () => {
+    vi.mocked(useStock).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError('Request failed: 500', 500),
+    })
+    const { container } = renderWithQuery(React.createElement(Inventory))
+    expect(container.textContent).toContain('error.title')
+    expect(container.textContent).toContain('error.http')
+    expect(container.textContent).not.toContain('inventory.noMatch')
   })
 })

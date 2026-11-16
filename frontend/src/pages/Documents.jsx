@@ -40,7 +40,9 @@ import {
   IconEye,
   IconCalendarBlank,
   IconSpark,
+  IconWarning,
 } from '../components/icons.jsx'
+import { errorKindKey } from '../lib/errorKind.js'
 
 // Error vocabulary mirrors the backend's documents app: the status picks the
 // copy, never the raw server string. A 415 means the bytes did not agree with
@@ -406,7 +408,12 @@ export function Documents() {
     () => ({ q: search.trim() || undefined, memberId: memberFilter ?? undefined }),
     [search, memberFilter]
   )
-  const { data: documentsData, isLoading: documentsLoading } = useDocuments(activeId ? filters : {})
+  const {
+    data: documentsData,
+    isLoading: documentsLoading,
+    isError: documentsError,
+    error: documentsQueryError,
+  } = useDocuments(activeId ? filters : {})
   const documents = (documentsData?.documents ?? []).filter((d) => d.household_id === activeId)
 
   // Due soon (#426) — derivation lives in DocumentExpiry.jsx (V2-B2); fed
@@ -892,6 +899,16 @@ export function Documents() {
         {documentsLoading ? (
           <PanelBody>
             <SkeletonRows n={3} />
+          </PanelBody>
+        ) : documentsError ? (
+          <PanelBody>
+            {/* L4 (audit): a failed query used to paint the empty state —
+                the user read their vault as having no documents. */}
+            <EmptyState
+              icon={IconWarning}
+              title={t('error.title')}
+              desc={t(errorKindKey(documentsQueryError))}
+            />
           </PanelBody>
         ) : documents.length === 0 ? (
           <PanelBody>

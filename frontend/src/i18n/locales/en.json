@@ -1082,6 +1082,12 @@
     "updated": "updated {{date}}",
     "truncated": "Some duplicate groups or products are not listed — the report is not complete."
   },
+  "error": {
+    "title": "Something went wrong",
+    "offline": "You're offline — check your connection, then try again.",
+    "timeout": "The request timed out — try again.",
+    "http": "The server had a problem — try again in a moment."
+  },
   "aliasBulk": {
     "title": "Alias candidates",
     "desc": "Candidates whose name exactly matches their product's canonical name are safe to approve in bulk. Whitespace, size, and wording variants stay for manual review.",

@@ -22,8 +22,10 @@ import {
   IconArrowLeft,
   IconArrowRight,
   IconKey,
+  IconWarning,
 } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { isoOf, nextBirthday, parseISO, todayISO } from '../lib/household-date.js'
 
 // Household calendar (ahaqqu/RumaQ#430): one shared family month view over the
@@ -359,7 +361,12 @@ export function Calendar() {
     month: Number(today.slice(5, 7)) - 1,
   })
   const monthWin = monthWindow(view.year, view.month)
-  const { data: calendarData, isLoading: entriesLoading } = useCalendar(monthWin)
+  const {
+    data: calendarData,
+    isLoading: entriesLoading,
+    isError: entriesError,
+    error: calendarQueryError,
+  } = useCalendar(monthWin)
   const entries = useMemo(() => calendarData?.entries ?? [], [calendarData])
 
   // Selected day (defaults to today when it falls in the visible month,
@@ -546,6 +553,22 @@ export function Calendar() {
       <div className="flex flex-col gap-6" aria-busy="true">
         <SkeletonRows n={4} />
       </div>
+    )
+  }
+
+  if (entriesError) {
+    // L4 (audit): a failed calendar query used to paint an empty month and an
+    // empty day list — the user read the household calendar as having nothing
+    // on it. The grid, the day list and the forms all read from the same
+    // query, so the error replaces the page.
+    return (
+      <Panel>
+        <EmptyState
+          icon={IconWarning}
+          title={t('error.title')}
+          desc={t(errorKindKey(calendarQueryError))}
+        />
+      </Panel>
     )
   }
 

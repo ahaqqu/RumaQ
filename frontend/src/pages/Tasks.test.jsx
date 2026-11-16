@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { render, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
+import { ApiError } from '../lib/api'
 import { Tasks } from './Tasks.jsx'
 
 vi.mock('../lib/queries/me.js', () => ({
@@ -18,10 +19,13 @@ vi.mock('../lib/queries/index.js', () => ({
 }))
 
 vi.mock('../lib/api', () => ({
+  // Shape-compatible with the real class (M1): kind rides the 5th arg so the
+  // errorKind mapping sees the same surface the page gets in production.
   ApiError: class ApiError extends Error {
-    constructor(message, status) {
+    constructor(message, status, retryAfterSeconds, body, kind = 'http') {
       super(message)
       this.status = status
+      this.kind = kind
     }
   },
 }))
@@ -411,5 +415,29 @@ describe('Tasks page', () => {
     const { container } = renderTasks()
     // The board renders two columns — both empty when the household has none.
     expect(container.textContent.split('tasks.emptyTitle').length - 1).toBe(2)
+  })
+
+  // L4 (audit): a failed query must paint the error surface, not the empty
+  // board — a failed fetch does not mean every task is done or deleted. The
+  // description names the M1 outcome kind instead of calling every failure
+  // offline.
+  it('shows the error surface when the tasks query fails', () => {
+    vi.mocked(useMe).mockReturnValue({ data: { user: { id: 'u1' } } })
+    vi.mocked(useHouseholds).mockReturnValue({ data: HOUSEHOLDS_OWNER, isLoading: false })
+    vi.mocked(useHouseholdMembers).mockReturnValue({ data: MEMBERS, isLoading: false })
+    vi.mocked(useTasks).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError('Request failed: 500', 500),
+    })
+    vi.mocked(useCreateTask).mockReturnValue(mutation())
+    vi.mocked(useUpdateTask).mockReturnValue(mutation())
+    vi.mocked(useDeleteTask).mockReturnValue(mutation())
+
+    const { container } = renderTasks()
+    expect(container.textContent).toContain('error.title')
+    expect(container.textContent).toContain('error.http')
+    expect(container.textContent).not.toContain('tasks.emptyTitle')
   })
 })

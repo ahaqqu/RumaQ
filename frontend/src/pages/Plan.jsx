@@ -14,8 +14,10 @@ import {
   IconKey,
   IconBolt,
   IconClose,
+  IconWarning,
 } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { Button } from '../components/Button.jsx'
 import { Chip } from '../components/Chip.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
@@ -78,7 +80,12 @@ export function Plan({ askAssistant, setView }) {
   const { persona } = usePersona()
   const { assistantProposal, setAssistantProposal } = useApp()
   const { data: settings, isLoading: settingsLoading } = useSettings()
-  const { data: plansData, isLoading: plansLoading } = usePlans('active')
+  const {
+    data: plansData,
+    isLoading: plansLoading,
+    isError: plansError,
+    error: plansQueryError,
+  } = usePlans('active')
   const generateMutation = useGeneratePlan()
   const saveMutation = useSavePlan()
   const updateItemMutation = useUpdatePlanItem()
@@ -160,6 +167,23 @@ export function Plan({ askAssistant, setView }) {
       <Panel>
         <SkeletonRows n={4} />
       </Panel>
+    )
+  }
+
+  if (plansError) {
+    // L4 (audit): a failed plans query used to fall through to the
+    // connect-key upsell or an empty planner — data absence, not failure.
+    return (
+      <>
+        {renderProposalBanner()}
+        <Panel>
+          <EmptyState
+            icon={IconWarning}
+            title={t('error.title')}
+            desc={t(errorKindKey(plansQueryError))}
+          />
+        </Panel>
+      </>
     )
   }
 
