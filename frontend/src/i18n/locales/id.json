@@ -354,6 +354,8 @@
     "selectStore": "Pilih toko...",
     "itemName": "Nama item",
     "keepNew": "— Item baru —",
+    "matchExistingItem": "Cocokkan ke item yang sudah ada",
+    "unit": "Satuan",
     "itemsRead_other": "{{count}} item terbaca",
     "stockAdded_other": "Stok bertambah {{count}} item"
   },
@@ -1081,6 +1083,11 @@
     "noStores": "Belum ada toko yang mengamati",
     "updated": "diperbarui {{date}}",
     "truncated": "Sebagian grup atau produk duplikat tidak ditampilkan — laporan belum lengkap."
+  },
+  "error": {
+    "title": "Terjadi kesalahan",
+    "desc": "Terjadi kendala. Coba lagi sebentar lagi.",
+    "retry": "Coba lagi"
   },
   "aliasBulk": {
     "title": "Alias kandidat",

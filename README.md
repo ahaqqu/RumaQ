@@ -23,14 +23,14 @@ Household shopping & inventory assistant. Snap a receipt — stock updates. Know
 
 ## For developers
 
-| Layer    | Technology                                                                                             |
-| -------- | ------------------------------------------------------------------------------------------------------ |
-| Frontend | React + Vite + TanStack Router + TanStack Query + Cloudflare Kumo UI → Cloudflare Worker static assets |
-| Backend  | Cloudflare Workers + Hono                                                                              |
-| Database | Cloudflare D1 (SQLite)                                                                                 |
-| Files    | Cloudflare R2                                                                                          |
-| Auth     | Google OAuth 2.0 + JWT                                                                                 |
-| AI       | BYO key proxied through the Worker                                                                     |
+| Layer    | Technology                                                                                                                       |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend | React + Vite + TanStack Router + TanStack Query + hand-rolled components on Kumo design tokens → Cloudflare Worker static assets |
+| Backend  | Cloudflare Workers + Hono                                                                                                        |
+| Database | Cloudflare D1 (SQLite)                                                                                                           |
+| Files    | Cloudflare R2                                                                                                                    |
+| Auth     | Google OAuth 2.0 + JWT                                                                                                           |
+| AI       | BYO key proxied through the Worker                                                                                               |
 
 ### Quick start
 

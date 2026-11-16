@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from '@tanstack/react-router'
-import { formatHouseholdMoney as formatRp } from '../lib/household-money.js'
+import { formatMoney as formatRp } from '../lib/money.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { personaText } from '../lib/persona.js'
 import { todayISO } from '../lib/household-date.js'
@@ -414,9 +414,9 @@ export function AddFromReceipt({ onDone }) {
                       value={selectedItemIds[it._id] || ''}
                       onChange={(e) => selectItemMatch(it._id, e.target.value || null)}
                       className="min-w-[120px]"
-                      aria-label="Match to existing item"
+                      aria-label={t('addReceipt.matchExistingItem')}
                     >
-                      <option value="">{t('addReceipt.keepNew') || '— New item —'}</option>
+                      <option value="">{t('addReceipt.keepNew')}</option>
                       {itemCatalog.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name}
@@ -428,7 +428,7 @@ export function AddFromReceipt({ onDone }) {
                       onChange={(e) => updateItem(it._id, 'name', e.target.value)}
                       aria-label={t('history.item')}
                       className="min-w-0"
-                      placeholder={t('addReceipt.itemName') || 'Item name'}
+                      placeholder={t('addReceipt.itemName')}
                     />
                     {needsPriceConfirm(it) && (
                       <div className="basis-full flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
@@ -456,7 +456,7 @@ export function AddFromReceipt({ onDone }) {
                   <input
                     value={it.unit}
                     onChange={(e) => updateItem(it._id, 'unit', e.target.value)}
-                    aria-label="Unit"
+                    aria-label={t('addReceipt.unit')}
                     className="w-[110px]"
                   />
                   <input

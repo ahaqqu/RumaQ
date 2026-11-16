@@ -37,8 +37,15 @@ export function useLogout() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async () => {
-      queryClient.clear()
       await apiLogout()
+    },
+    // L8 (audit): the cache was cleared BEFORE the request — a failed logout
+    // dropped the whole cache and the running mutation while the session
+    // stayed live. Clearing only on SUCCESS keeps the app intact until the
+    // logout actually happened (the transport fallback's GET navigation tears
+    // the page down anyway, and a 401 on the next boot already nulls ['me']).
+    onSuccess: () => {
+      queryClient.clear()
     },
   })
 }

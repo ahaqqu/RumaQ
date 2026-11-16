@@ -3,6 +3,7 @@
 // effective-price aggregates (291-design-pm.md §2, 291-design-arch.md §3.2).
 
 import { prettyPromoText } from './productDisplay.js'
+import { formatMoney } from './money.js'
 
 // "Save X%" only fires at ≥5% — sub-5% cross-store gaps (≈ Rp 400 on
 // Rp 20.000) badge half the catalog and devalue the badge (PM §3.2).
@@ -201,13 +202,11 @@ export function normalizeHash(rawHash) {
 
 // IDR display price — shared by the explorer and the promo catalog view
 // (issue #292) so both pages format identically (Intl id-ID uses an NBSP
-// between "Rp" and the amount).
+// between "Rp" and the amount). L9 (audit): this is the IDR-locked ALIAS of
+// the one household money formatter (lib/money.js) — the implementation
+// lives there, so the two formatters cannot drift again.
 export function formatPrice(amount) {
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0,
-  }).format(amount)
+  return formatMoney(amount)
 }
 
 // The end-user segments of /prices (issues #292/#673): ?view= selects one,

@@ -354,6 +354,8 @@
     "selectStore": "Select store...",
     "itemName": "Item name",
     "keepNew": "— New item —",
+    "matchExistingItem": "Match to existing item",
+    "unit": "Unit",
     "itemsRead_other": "{{count}} items read",
     "stockAdded_other": "Stock increased by {{count}} items"
   },
@@ -1081,6 +1083,11 @@
     "noStores": "No store observed yet",
     "updated": "updated {{date}}",
     "truncated": "Some duplicate groups or products are not listed — the report is not complete."
+  },
+  "error": {
+    "title": "Something went wrong",
+    "desc": "We hit a snag. Try again in a moment.",
+    "retry": "Retry"
   },
   "aliasBulk": {
     "title": "Alias candidates",

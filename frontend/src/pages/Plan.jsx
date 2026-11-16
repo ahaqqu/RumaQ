@@ -5,7 +5,7 @@ import { useSettings } from '../lib/queries/index.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { useApp } from '../context/AppContext.jsx'
 import { personaText } from '../lib/persona.js'
-import { formatHouseholdMoney as formatPrice } from '../lib/household-money.js'
+import { formatMoney as formatPrice } from '../lib/money.js'
 import { SkeletonRows, EmptyState } from '../components/ui.jsx'
 import {
   IconSpark,

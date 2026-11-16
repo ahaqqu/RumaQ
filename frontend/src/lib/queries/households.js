@@ -17,6 +17,12 @@ import { useMe } from './me.js'
 
 const HOUSEHOLDS_KEY = ['households']
 
+// L12 (audit): the member cache key is exported — ONE spelling. TanStack
+// fails quietly when a key shape changes and an invalidation no longer
+// matches, so every read, write and invalidation imports this instead of
+// respelling the literal (it was respelled six times).
+export const MEMBERS_KEY = (id) => ['household-members', id]
+
 // Switching the active household (or leaving one) changes what every
 // household-scoped view shows — inventory, plans, purchases, history, home —
 // so the settle hook invalidates the whole cache rather than enumerating keys.
@@ -100,7 +106,7 @@ export function useActivateHousehold() {
 
 export function useHouseholdMembers(id) {
   return useQuery({
-    queryKey: ['household-members', id],
+    queryKey: MEMBERS_KEY(id),
     queryFn: ({ signal }) => getHouseholdMembers(id, signal),
     enabled: Boolean(id),
   })
@@ -114,7 +120,7 @@ export function useUpdateHouseholdMember(id) {
   return useMutation({
     mutationFn: ({ memberId, payload }) => updateHouseholdMember(id, memberId, payload),
     onMutate: async ({ memberId, payload }) => {
-      const key = ['household-members', id]
+      const key = MEMBERS_KEY(id)
       await queryClient.cancelQueries({ queryKey: key })
       const previous = queryClient.getQueryData(key)
       queryClient.setQueryData(key, (old) =>
@@ -129,11 +135,11 @@ export function useUpdateHouseholdMember(id) {
     },
     onError: (_err, _vars, context) => {
       if (context?.previous !== undefined) {
-        queryClient.setQueryData(['household-members', id], context.previous)
+        queryClient.setQueryData(MEMBERS_KEY(id), context.previous)
       }
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['household-members', id] })
+      queryClient.invalidateQueries({ queryKey: MEMBERS_KEY(id) })
     },
   })
 }
@@ -146,7 +152,7 @@ export function useCreateHouseholdMember(id) {
     onSettled: () => {
       // The roster gains a row and the household's member_count grows.
       queryClient.invalidateQueries({ queryKey: HOUSEHOLDS_KEY })
-      queryClient.invalidateQueries({ queryKey: ['household-members', id] })
+      queryClient.invalidateQueries({ queryKey: MEMBERS_KEY(id) })
     },
   })
 }
@@ -158,7 +164,7 @@ export function useRemoveHouseholdMember() {
   return useMutation({
     mutationFn: ({ id, memberId }) => removeHouseholdMember(id, memberId),
     onMutate: async ({ id, memberId }) => {
-      const key = ['household-members', id]
+      const key = MEMBERS_KEY(id)
       await queryClient.cancelQueries({ queryKey: key })
       const previous = queryClient.getQueryData(key)
       queryClient.setQueryData(key, (old) =>
@@ -168,14 +174,14 @@ export function useRemoveHouseholdMember() {
     },
     onError: (_err, vars, context) => {
       if (context?.previous !== undefined) {
-        queryClient.setQueryData(['household-members', vars.id], context.previous)
+        queryClient.setQueryData(MEMBERS_KEY(vars.id), context.previous)
       }
     },
     onSettled: (_data, _err, vars) => {
       // Removing someone else changes only the roster and the list's member
       // counts — the caller's other cached data is untouched (review B6).
       queryClient.invalidateQueries({ queryKey: HOUSEHOLDS_KEY })
-      queryClient.invalidateQueries({ queryKey: ['household-members', vars.id] })
+      queryClient.invalidateQueries({ queryKey: MEMBERS_KEY(vars.id) })
       // The full sweep is for the rare case the caller removed a member
       // LINKED TO THEMSELVES (every household-scoped view just changed for
       // them). Profile-only members have no session to strand.

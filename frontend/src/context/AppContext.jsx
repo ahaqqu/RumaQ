@@ -2,16 +2,14 @@ import { createContext, useContext, useState, useEffect } from 'react'
 
 const AppContext = createContext(null)
 
-const AI_KEY_STORAGE_KEY = 'rumaq_ai_key'
+// L7 (audit 2026-11-16): the plaintext browser AI key is retired — nothing
+// reads or writes it anymore (the assistant derives "connected" from the
+// household's capability status alone, api.ts never carries key material),
+// so older builds' leftover secret is purged from JS-readable storage on
+// boot and must never be written again.
+const RETIRED_AI_KEY_STORAGE_KEY = 'rumaq_ai_key'
 
 export function AppProvider({ children }) {
-  const [aiKey, setAiKeyState] = useState(() => {
-    try {
-      return window.localStorage.getItem(AI_KEY_STORAGE_KEY) || null
-    } catch {
-      return null
-    }
-  })
   const [motion, setMotion] = useState('standard')
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantProposal, setAssistantProposal] = useState(null)
@@ -19,29 +17,24 @@ export function AppProvider({ children }) {
   // assistant consumes it when it opens and clears it right after.
   const [assistantSeed, setAssistantSeed] = useState(null)
 
-  const setAiKey = (value) => {
-    const next = value || null
-    setAiKeyState(next)
-    try {
-      if (next) {
-        window.localStorage.setItem(AI_KEY_STORAGE_KEY, next)
-      } else {
-        window.localStorage.removeItem(AI_KEY_STORAGE_KEY)
-      }
-    } catch {
-      // Storage may be disabled or full; in-memory state still works.
-    }
-  }
-
   useEffect(() => {
     document.documentElement.dataset.motion = motion
   }, [motion])
 
+  // C5 rides L7 (audit): the pre-split browser key path is removed now, not
+  // "until P5 removes that path" — the dot must claim connectivity only when
+  // the household's ai_status actually backs it.
+  useEffect(() => {
+    try {
+      window.localStorage.removeItem(RETIRED_AI_KEY_STORAGE_KEY)
+    } catch {
+      // Storage may be disabled; there is nothing to purge then.
+    }
+  }, [])
+
   return (
     <AppContext.Provider
       value={{
-        aiKey,
-        setAiKey,
         motion,
         setMotion,
         assistantOpen,

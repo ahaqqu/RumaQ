@@ -571,7 +571,9 @@ describe('AddFromReceipt', () => {
       ).toBeTruthy()
     )
 
-    const select = container.querySelector('select[aria-label="Match to existing item"]')
+    // L11/D3 (audit): the select's label is keyed now — the raw-key t() mock
+    // renders the key string.
+    const select = container.querySelector('select[aria-label="addReceipt.matchExistingItem"]')
     if (select) {
       fireEvent.change(select, { target: { value: 'i1' } })
       const nameInput = container.querySelector('input[aria-label="history.item"]')

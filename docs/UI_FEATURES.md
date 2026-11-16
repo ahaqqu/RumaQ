@@ -127,11 +127,11 @@ so you waste less food, shop in fewer trips, and spend less.
 ### States that carry meaning (not just polish)
 
 - **Urgency levels** on stock (ok → soon → critical) — the core signal of the app.
-- **Loading** for every async area; **empty** states that explain the next action (e.g. "scan your first receipt"); **error** with retry.
+- **Loading** for every async area; **empty** states that explain the next action (e.g. "scan your first receipt"); **error** where the page branches on a failed query (History, AdminReview, Documents, Tasks, Calendar, Home, Plan, Inventory, and the admin/prices/catalog panels) — the copy names the outcome kind (offline / timed out / server problem), not a blanket "offline"; no page offers a retry control.
 - **Offline mode:** the app is a PWA and works offline with cached data; changes made offline must survive and sync.
 - **Optimistic feedback:** quantity changes, check-offs, and decisions should feel instant.
 - **AI availability:** the app is usable with no AI configured (inventory works; AI features say to set AI up in Settings). Usage is recorded but never capped, so there is no quota-exhaustion state; provider failures surface as errors that name the capability to fix. There is no shared/server key, so no screen may imply one (no "platform key", no "unlimited on our key").
-- **Two languages** (EN/ID) for all text; admin sections hidden from normal users.
+- **Two languages** (EN/ID) for all text — including the crash screen and the receipt review labels, which were literal English until the 2026-11-17 audit fixes keyed them (`error.*`, `addReceipt.matchExistingItem`, `addReceipt.unit`); admin sections hidden from normal users.
 
 ### Hard functional flows to preserve
 

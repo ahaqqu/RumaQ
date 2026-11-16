@@ -41,7 +41,7 @@ High-level objectives and defaults for frontend work. Prefer these over one-off 
 
 ## Testing
 
-- Use the project's provider wrapper for component tests.
+- Providers are mocked globally in `src/test-setup.js`; call `render()` directly.
 - Keep tests close to the code they test.
 
 ## Quick-start checklist for new frontend changes
