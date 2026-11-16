@@ -17,6 +17,7 @@
 // this module is deliberately the thin seam that generalizes, not the
 // general machinery itself.
 
+import { PluginPurgeCancelledError } from '../plugins/types.js'
 import { pluginRegistrations } from '../plugins/registry.js'
 import { ENABLEMENT_UPSERT_SQL, PURGE_INITIATE_SQL } from './plugins.js'
 import { HOUSEHOLD_ENABLEMENT_ROWS_SQL, type EnablementSpec } from '../plugins/enablement.js'
@@ -76,7 +77,7 @@ export const PURGING_HOUSEHOLDS_SQL = `SELECT household_id
  * The drain's actor rides purge_requested_by when the drain is the first
  * requester (a dissolution is an owner-authorized act); an owner-initiated
  * request keeps its owner. A mid-drain CANCEL surfaces as the plugin job's
- * typed PluginPurgeCancelledError (plugins/documents/purge.ts) — it
+ * typed PluginPurgeCancelledError (plugins/types.ts) — it
  * propagates to the caller, because a household that cancelled does not
  * want its remaining documents erased; re-invoking the drain re-requests
  * the purge (an explicit caller decision), it never resumes silently.
@@ -151,10 +152,21 @@ export async function runPluginPurgeTick(
         objects += chunk.objects
         chunks += 1
       } catch (err) {
+        failed += 1
+        // Audit C4: branch BEFORE logging — the cancelled refusal is terminal,
+        // not retried. The owner's lever NULLed the state between the work-set
+        // read and this chunk call, so the household has LEFT the work set:
+        // nothing retries next tick, and "cancel via DELETE" is already done.
+        if (err instanceof PluginPurgeCancelledError) {
+          console.error(
+            `[plugin-purge] chunk refused for ${registration.manifest.id}/${householdId}: the drain was cancelled mid-drain — nothing retries (the household left the work set) and no receipt is written`,
+            err
+          )
+          continue
+        }
         // One poisoned household (a corrupted r2_key, say) must not take the
         // others' night down with it — the owner's cancel lever (the DELETE
         // endpoint) releases a drain that can never complete.
-        failed += 1
         console.error(
           `[plugin-purge] chunk failed for ${registration.manifest.id}/${householdId}; it retries next tick (cancel via DELETE /api/plugins/${registration.manifest.id}/purge)`,
           err

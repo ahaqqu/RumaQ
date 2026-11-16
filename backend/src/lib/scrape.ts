@@ -42,10 +42,18 @@ export class ScrapeNotFoundError extends Error {
  * `RUN_DEADLINE_MS` (90 min default, `groceries/scraper/src/deadlines.ts` in
  * RumaQ-pipeline) plus its 30 min post-deadline match/publish headroom
  * (`groceries/scraper/src/agent.ts` childTimeoutMs) — 120 min in the worst
- * case — then POSTs the terminal finish. 150 min is that ceiling plus 30 min
- * of slack for a slow finish POST, so a row running for MORE than 150 min
- * cannot belong to a live run. The comparison is strict (`age > ceiling`): a
- * row exactly at its ceiling is still live.
+ * case — then POSTs the terminal finish. 150 min is that DEFAULT ceiling plus
+ * 30 min of slack for a slow finish POST, so a row running for MORE than
+ * 150 min cannot belong to a live run at the defaults. The comparison is
+ * strict (`age > ceiling`): a row exactly at its ceiling is still live.
+ *
+ * The pipeline's deadline is ENV-CONFIGURABLE — `RUN_DEADLINE_MS` is a knob,
+ * not a constant (audit C3). Raising it past ~120 min total puts the agent's
+ * kill AFTER this reaper's fixed 150-min ceiling: the reaper fails a
+ * still-running row as stale and the agent's eventual finish report is then
+ * dropped against the reaped row (the monitor shows a failure the pipeline
+ * disagrees with). Keep `RUN_DEADLINE_MS` + headroom under the ceiling, or
+ * rename the coupling out (audit L1's lease redesign).
  *
  * A healthy agent polls every 15 s; an hour without a claim means the agent
  * (or the box) is down and the row will never be picked up.

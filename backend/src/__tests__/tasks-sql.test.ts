@@ -281,11 +281,14 @@ describe('household tasks semantics (real SQL)', () => {
     const { sqlite, d1 } = createDb()
     seed(sqlite)
 
+    // The assignee is LINKED (audit L9): the (recurring, profile-only
+    // assignee) pair is refused at create now — the roll-forward semantics
+    // under test here never depended on the assignee's mode.
     const daily = await createTask(d1, {
       householdId: 'h1',
       userId: 'u1',
       title: 'Kasih makan kucing',
-      assignee: (await getHouseholdMember(d1, 'h1', 'm-anak'))!,
+      assignee: (await getHouseholdMember(d1, 'h1', 'm-ayah'))!,
       dueDate: '2026-11-02',
       recurrence: 'daily',
     })
@@ -661,11 +664,14 @@ describe('household tasks semantics (real SQL)', () => {
     const { sqlite, d1 } = createDb()
     seed(sqlite)
 
+    // The assignee is LINKED (audit L9): the (recurring, profile-only
+    // assignee) pair is refused at create now — the optimistic-anchor
+    // semantics under test here never depended on the assignee's mode.
     const daily = await createTask(d1, {
       householdId: 'h1',
       userId: 'u1',
       title: 'Kasih makan kucing',
-      assignee: (await getHouseholdMember(d1, 'h1', 'm-anak'))!,
+      assignee: (await getHouseholdMember(d1, 'h1', 'm-ayah'))!,
       dueDate: '2026-11-02',
       recurrence: 'daily',
     })
@@ -796,6 +802,114 @@ describe('household tasks semantics (real SQL)', () => {
     const row = await freshRow(d1, kidTask.id)
     expect(row.approved_by_member_id).toBeNull()
     expect(row.needs_approval).toBe(false) // derived from the live join
+  })
+
+  it('approves on the live join alone: a stale stored needs_approval = 0 cannot block a real approval (audit L8)', async () => {
+    const { sqlite, d1 } = createDb()
+    seed(sqlite)
+
+    const kidTask = await createTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      title: 'Rapikan tempat tidur',
+      assignee: (await getHouseholdMember(d1, 'h1', 'm-anak'))!,
+      dueDate: null,
+      recurrence: null,
+    })
+    const done = await completeTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      task: await freshRow(d1, kidTask.id),
+      completedOn: '2026-11-06',
+    })
+
+    // The stored flag is the one thing 0027 says must never decide approval
+    // ("the approve flow must never trust it over the join"). Hand-corrupt it
+    // to 0 while the live join still says profile-only kid awaiting approval.
+    // The pre-read derives true from the join and the guarded UPDATE
+    // re-checks the SAME join (audit L8 dropped the flag predicate from both
+    // guards) — the approval lands. Before L8 this row answered 409.
+    sqlite.prepare('UPDATE household_tasks SET needs_approval = 0 WHERE id = ?').run(kidTask.id)
+    const task = await freshRow(d1, done.id)
+    expect(task.needs_approval).toBe(true) // derived, never read off the column
+
+    const approved = await approveTask(d1, { householdId: 'h1', userId: 'u1', task })
+    expect(approved.approved_by_member_id).toBe('m-ibu')
+    expect(auditActions(sqlite, kidTask.id).map((r) => r.action)).toEqual([
+      'create',
+      'complete',
+      'approve',
+    ])
+  })
+
+  it('refuses the (recurring, profile-only assignee) pair at create and on both edit paths (audit L9)', async () => {
+    const { sqlite, d1 } = createDb()
+    seed(sqlite)
+    const kid = (await getHouseholdMember(d1, 'h1', 'm-anak'))!
+
+    // Create: the pair is refused before any write — a recurring task rolls
+    // forward and stays 'open', approve requires 'done', so the acknowledge
+    // step could never run (M3's completion-row redesign is deferred; this is
+    // the shipped-now guard).
+    await expect(
+      createTask(d1, {
+        householdId: 'h1',
+        userId: 'u1',
+        title: 'Rapikan tempat tidur',
+        assignee: kid,
+        dueDate: null,
+        recurrence: 'daily',
+      })
+    ).rejects.toThrow('A recurring task cannot be assigned to a profile-only member')
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM household_tasks').get()).toMatchObject({
+      n: 0,
+    })
+    expect(auditCount(sqlite)).toBe(0)
+
+    // Assign path: a recurring task reassigned to the profile-only kid.
+    const recurring = await createTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      title: 'Sapu halaman',
+      assignee: (await getHouseholdMember(d1, 'h1', 'm-ayah'))!,
+      dueDate: null,
+      recurrence: 'daily',
+    })
+    await expect(
+      updateTask(d1, {
+        householdId: 'h1',
+        userId: 'u1',
+        task: await freshRow(d1, recurring.id),
+        patch: { assignee: kid },
+      })
+    ).rejects.toThrow('A recurring task cannot be assigned to a profile-only member')
+
+    // Recurrence path: the kid's one-shot task made recurring.
+    const kidTask = await createTask(d1, {
+      householdId: 'h1',
+      userId: 'u1',
+      title: 'Cuci piring',
+      assignee: kid,
+      dueDate: null,
+      recurrence: null,
+    })
+    await expect(
+      updateTask(d1, {
+        householdId: 'h1',
+        userId: 'u1',
+        task: await freshRow(d1, kidTask.id),
+        patch: { recurrence: 'weekly' },
+      })
+    ).rejects.toThrow('A recurring task cannot be assigned to a profile-only member')
+
+    // Nothing moved: the two created tasks keep their shapes and the audit
+    // trail holds exactly their two 'create' rows — a refused guard never
+    // writes (the thermos A1 discipline).
+    expect(auditCount(sqlite)).toBe(2)
+    const kept = await freshRow(d1, recurring.id)
+    expect(kept).toMatchObject({ recurrence: 'daily', assignee_member_id: 'm-ayah' })
+    const keptKid = await freshRow(d1, kidTask.id)
+    expect(keptKid).toMatchObject({ recurrence: null, assignee_member_id: 'm-anak' })
   })
 
   it('enforces the schema CHECKs and defaults (0027 backstops)', async () => {

@@ -154,6 +154,15 @@ const RECURRING_KID_TASK = {
   recurrence: 'daily',
 }
 
+// Audit L9's refused pair lives on the OTHER parent too: a recurring task
+// whose assignee is linked (legal today) becomes the pair the moment the kid
+// is assigned onto it.
+const RECURRING_AYAH_TASK = {
+  ...OPEN_TASK_AYAH,
+  id: 't6',
+  recurrence: 'daily',
+}
+
 describe('tasks routes', () => {
   let db!: FakeDb
 
@@ -517,6 +526,46 @@ describe('tasks routes', () => {
     )
     expect(res.status).toBe(400)
     // Nothing moved: no write, no audit row.
+    expect(db.log.some((e) => e.sql.startsWith('UPDATE household_tasks'))).toBe(false)
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_task_audit'))).toBe(false)
+  })
+
+  it('refuses the (recurring, profile-only assignee) pair at create and on both edit paths (audit L9)', async () => {
+    // Create: the pair is refused before any write — a recurring task rolls
+    // forward and never rests in done, so the acknowledge step could never run.
+    const createEnv = setup(null)
+    const createRes = await tasksApp.request(
+      '/api/tasks',
+      jsonRequest('POST', {
+        title: 'Rapikan tempat tidur',
+        assignee_member_id: 'm-anak',
+        recurrence: 'daily',
+      }),
+      createEnv
+    )
+    expect(createRes.status).toBe(400)
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_tasks'))).toBe(false)
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_task_audit'))).toBe(false)
+
+    // Assign path: the kid assigned onto an existing recurring task.
+    const assignEnv = setup(RECURRING_AYAH_TASK)
+    const assignRes = await tasksApp.request(
+      '/api/tasks/t6',
+      jsonRequest('PATCH', { assignee_member_id: 'm-anak' }),
+      assignEnv
+    )
+    expect(assignRes.status).toBe(400)
+    expect(db.log.some((e) => e.sql.startsWith('UPDATE household_tasks'))).toBe(false)
+    expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_task_audit'))).toBe(false)
+
+    // Recurrence path: the kid's one-shot task made recurring.
+    const recurEnv = setup(OPEN_TASK_KID)
+    const recurRes = await tasksApp.request(
+      '/api/tasks/t1',
+      jsonRequest('PATCH', { recurrence: 'weekly' }),
+      recurEnv
+    )
+    expect(recurRes.status).toBe(400)
     expect(db.log.some((e) => e.sql.startsWith('UPDATE household_tasks'))).toBe(false)
     expect(db.log.some((e) => e.sql.startsWith('INSERT INTO household_task_audit'))).toBe(false)
   })

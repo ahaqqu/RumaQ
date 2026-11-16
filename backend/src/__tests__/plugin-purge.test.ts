@@ -32,11 +32,8 @@ import { join, dirname } from 'node:path'
 // @ts-expect-error — no node types in this tsconfig
 import { fileURLToPath } from 'node:url'
 
-import {
-  createDocumentsPurgeJob,
-  documentPageSql,
-  PluginPurgeCancelledError,
-} from '../plugins/documents/purge.js'
+import { createDocumentsPurgeJob, documentPageSql } from '../plugins/documents/purge.js'
+import { PluginPurgeCancelledError } from '../plugins/types.js'
 import { addDocumentFile, createDocument } from '../plugins/documents/lib.js'
 import { PURGE_CANCEL_SQL, PURGE_INITIATE_SQL } from '../lib/plugins.js'
 import {
@@ -1191,10 +1188,15 @@ describe('documents purge job — the cancelled drain refuses its chunks (P1R2-A
     // h1's chunk refused (typed throw → isolated, logged, never fatal);
     // h2 still drained its chunk the same night.
     expect(night).toEqual({ objects: 1, chunks: 1, failed: 1 })
+    // The log names the CANCEL, not a retry (audit C4): the refused household
+    // has left the work set, so "it retries next tick" would be a lie — the
+    // tick branches on the typed refusal before logging.
+    expect(errorSpy).toHaveBeenCalledTimes(1)
     expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('chunk failed'),
+      expect.stringContaining('chunk refused'),
       expect.anything()
     )
+    expect(String(errorSpy.mock.calls[0]![0])).not.toContain('retries next tick')
     errorSpy.mockRestore()
     // h1 untouched past the cancel (2 documents, no receipt); h2's rows are
     // gone (its receipt lands on the next night's completion chunk, the
