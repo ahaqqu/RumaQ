@@ -28,6 +28,7 @@ S6 | scripts/cleanup-preview-workers.sh:4 | the manual sweep deletes every `ruma
 S7 | scripts/github/cleanup-branch.sh:1 | tracked `100644` while `.gitattributes:4` declares `mode=755` | a caller that executes it directly gets EACCES; cleanup-branch.yml:24 only works because it prefixes `bash` | `git update-index --chmod=+x` so the index matches the attribute
 S8 | scripts/clean-worktrees.sh:1 | `clean-worktrees.sh` and `generate-brand-icons.sh` have no caller and no doc pointer | the destructive one is discoverable only by `ls scripts/` | list operator entrypoints in AGENTS.md or a `scripts/README.md`
 S9 | scripts/lib/quiet.sh:19 | the failure summary greps a fixed pattern list; output that matches none prints only `FAIL <label>` | an agent must open the log to learn why, against the file's own reason | fall back to the last 20 lines when no pattern matches
+S10 | scripts/github/changed-paths.sh:24 | the PR path diffs `FETCH_HEAD..HEAD` against the event's `base.sha`, which can be the fork point rather than the base tip | a PR behind main inherits main's newer commits as "changed": on #695 three docs files became 21 paths and all four gates ran | three-dot against the base branch tip, deepening a shallow checkout to the merge base (PR #702)
 
 ## Machines
 
@@ -96,6 +97,7 @@ S6 | The preview sweep can delete an open PR's Worker | implement
 S7 | `cleanup-branch.sh` is 644 though the attribute says 755 | implement
 S8 | Two operator tools have no caller and no pointer | implement
 S9 | The quiet runner shows nothing for unmatched failures | implement
+S10 | A PR behind main makes every scope gate run | implement (PR #702)
 D1 | AGENTS.md mode=755 rule states the wrong consequence | implement
 D2 | AGENTS.md test entrypoint undercounts the suites | implement
 D3 | TEST_STRATEGY claims a guard command CI never runs | implement (S3)
