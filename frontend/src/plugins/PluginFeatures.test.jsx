@@ -333,6 +333,36 @@ describe('PluginFeatures — purge lifecycle (ticket 5, #439)', () => {
     const { container } = renderSection(true)
     await waitFor(() => expect(container.textContent).toContain('plugins.purge.stateDone'))
   })
+
+  it('names the withdrawal on a cancelled drain — and offers the danger action again (audit M2)', async () => {
+    vi.mocked(getPluginCatalog).mockResolvedValue({
+      plugins: [
+        documentsRow({
+          purge: {
+            state: 'cancelled',
+            requested_at: '2026-11-06 03:00:00',
+            completed_at: '2026-11-06 04:00:00',
+            reason: 'cancelled by owner',
+          },
+        }),
+      ],
+    })
+    const { container } = renderSection(true)
+    // The receipted withdrawal is named (audit C1's claim, now true).
+    await waitFor(() => expect(container.textContent).toContain('plugins.purge.stateCancelled'))
+    // `cancelled` is terminal, not draining: the danger action is back
+    // (re-initiating starts a new run), no cancel lever on a terminal row.
+    expect(
+      [...container.querySelectorAll('button')].some((b) =>
+        b.textContent.includes('plugins.purge.action')
+      )
+    ).toBe(true)
+    expect(
+      [...container.querySelectorAll('button')].some((b) =>
+        b.textContent.includes('plugins.purge.cancel')
+      )
+    ).toBe(false)
+  })
 })
 
 // The export surface (ticket 6, #440): owner-only ghost action ABOVE the

@@ -72,10 +72,11 @@ function createFakeDb(
       }
     },
     batch: async (stmts: unknown[]) => {
-      for (const stmt of stmts as Array<{ run: () => Promise<void> }>) {
-        await stmt.run()
+      const results = []
+      for (const stmt of stmts as Array<{ run: () => Promise<unknown> }>) {
+        results.push(await stmt.run())
       }
-      return []
+      return results
     },
   }
 }
@@ -119,10 +120,11 @@ const CATALOG_ROWS_ROUTE = (
     purge_state?: string | null
     purge_requested_at?: string | null
     purge_completed_at?: string | null
+    purge_cancelled_reason?: string | null
   }>
 ) =>
   [
-    /SELECT plugin_id, status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = \?/,
+    /SELECT plugin_id, status, purge_state, purge_requested_at, purge_completed_at, purge_cancelled_reason FROM household_plugins WHERE household_id = \?/,
     () => rows,
   ] as [RegExp, (params: unknown[]) => Row[]]
 
@@ -202,6 +204,7 @@ describe('plugin catalog routes (issue #437)', () => {
               purge_state: 'running',
               purge_requested_at: '2026-11-01 10:00:00',
               purge_completed_at: null,
+              purge_cancelled_reason: null,
             },
           ]),
           FLAGS_ROUTE([]),
@@ -218,7 +221,12 @@ describe('plugin catalog routes (issue #437)', () => {
       available: false,
       // Ticket 5 (#439): the drain window is reported honestly — the
       // write gate is refusing uploads server-side while this shows.
-      purge: { state: 'running', requested_at: '2026-11-01 10:00:00', completed_at: null },
+      purge: {
+        state: 'running',
+        requested_at: '2026-11-01 10:00:00',
+        completed_at: null,
+        reason: null,
+      },
     })
   })
 
@@ -339,7 +347,7 @@ describe('plugin purge initiation route (#439)', () => {
   // The read-back the answered posture carries (the marked row's truth).
   const PURGE_ROW_ROUTE = (row: Row | null) =>
     [
-      /SELECT status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = \? AND plugin_id = \?/,
+      /SELECT status, purge_state, purge_requested_at, purge_completed_at, purge_cancelled_reason FROM household_plugins WHERE household_id = \? AND plugin_id = \?/,
       () => row,
     ] as [RegExp, (params: unknown[]) => Row | null]
 
@@ -367,7 +375,12 @@ describe('plugin purge initiation route (#439)', () => {
     expect(body).toMatchObject({
       id: 'documents',
       enabled: true,
-      purge: { state: 'pending', requested_at: '2026-11-07 03:00:00', completed_at: null },
+      purge: {
+        state: 'pending',
+        requested_at: '2026-11-07 03:00:00',
+        completed_at: null,
+        reason: null,
+      },
     })
 
     // The write rode ONE batch: the row materialization (an absent row is
@@ -443,23 +456,36 @@ describe('plugin purge initiation route (#439)', () => {
   })
 })
 
-// The purge cancel route (P1-A3, PR #474 review): the owner's release lever
-// for a drain that can never complete. The lib's real-SQL semantics (state
-// back to NULL, gate released, part-way docs stay gone, no receipt) are
-// pinned in plugin-purge.test.ts; this file pins the HTTP surface.
-describe('plugin purge cancel route (#439 P1-A3)', () => {
+// The purge cancel route (P1-A3, PR #474 review; receipted by audit M2):
+// the owner's release lever for a drain that can never complete. The lib's
+// real-SQL semantics (terminal 'cancelled' state, gate released, part-way
+// docs stay gone, durable plugin_purge_cancelled receipt) are pinned in
+// plugin-purge.test.ts; this file pins the HTTP surface.
+describe('plugin purge cancel route (#439 P1-A3, receipted by audit M2)', () => {
   beforeEach(() => {
     resetRateLimit()
   })
 
   const PURGE_ROW_ROUTE = (row: Row | null) =>
     [
-      /SELECT status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = \? AND plugin_id = \?/,
+      /SELECT status, purge_state, purge_requested_at, purge_completed_at, purge_cancelled_reason FROM household_plugins WHERE household_id = \? AND plugin_id = \?/,
       () => row,
     ] as [RegExp, (params: unknown[]) => Row | null]
 
-  it('releases an in-flight drain and answers the resting posture', async () => {
-    const db = createFakeDb([MEMBERSHIP_ROUTE, PURGE_ROW_ROUTE(null)], [FLAGS_ROUTE([])])
+  it('receipts the withdrawal and answers the cancelled posture', async () => {
+    const db = createFakeDb(
+      [
+        MEMBERSHIP_ROUTE,
+        PURGE_ROW_ROUTE({
+          status: 'enabled',
+          purge_state: 'cancelled',
+          purge_requested_at: '2026-11-06 03:00:00',
+          purge_completed_at: '2026-11-06 04:00:00',
+          purge_cancelled_reason: 'cancelled by owner',
+        }),
+      ],
+      [FLAGS_ROUTE([])]
+    )
     const env = createEnv(db)
     const res = await pluginsApp.request(
       '/api/plugins/documents/purge',
@@ -468,13 +494,31 @@ describe('plugin purge cancel route (#439 P1-A3)', () => {
     )
     expect(res.status).toBe(200)
     const body = (await res.json()) as Record<string, unknown>
-    expect(body).toMatchObject({ id: 'documents', purge: null })
-    // One guarded UPDATE, no lifecycle receipt.
+    expect(body).toMatchObject({
+      id: 'documents',
+      purge: {
+        state: 'cancelled',
+        requested_at: '2026-11-06 03:00:00',
+        completed_at: '2026-11-06 04:00:00',
+        reason: 'cancelled by owner',
+      },
+    })
+    // One batch: the durable plugin_purge_cancelled receipt (audit C1 —
+    // the record a requested erasure was stopped, outliving the household)
+    // THEN the guarded receipt-writing UPDATE. The action rides the SQL
+    // literal; the params are (id, household, plugin, actor, guard-h, guard-p).
+    const audited = db.log.filter((entry) =>
+      entry.sql.startsWith('INSERT INTO household_plugin_audit')
+    )
+    expect(audited).toHaveLength(1)
+    expect(audited[0].sql).toContain("'plugin_purge_cancelled'")
+    expect(audited[0].params[0]).toBeTruthy()
+    expect(audited[0].params[1]).toBe('h1')
+    expect(audited[0].params[2]).toBe('documents')
+    expect(audited[0].params[3]).toBe('u1')
     const cancelled = db.log.filter((entry) => entry.sql.startsWith('UPDATE household_plugins'))
     expect(cancelled).toHaveLength(1)
-    expect(
-      db.log.filter((entry) => entry.sql.startsWith('INSERT INTO household_plugin_audit'))
-    ).toEqual([])
+    expect(cancelled[0].params).toEqual(['u1', 'cancelled by owner', 'h1', 'documents'])
   })
 
   it('answers 409 when no purge is in flight', async () => {

@@ -1634,8 +1634,9 @@ describe('migration 0028: household_plugins (#435)', () => {
     const db = new DatabaseSync(':memory:') as unknown as Db
     applyMigrations(db, migrationFiles())
     const columns = db.prepare('PRAGMA table_info(household_plugins)').all()
-    // 0035 appended the purge state machine (ticket 5 #439) after updated_at
-    // — ALTER TABLE ADD COLUMN order, never a rebuild (the additive chain).
+    // 0035 appended the purge state machine (ticket 5 #439) after updated_at;
+    // 0051 (audit M2) appended the withdrawal receipt after completed_at —
+    // ADD COLUMN order through 0035, then the 0051 rebuild kept the order.
     expect(columns.map((c: Record<string, unknown>) => c.name)).toEqual([
       'household_id',
       'plugin_id',
@@ -1647,6 +1648,8 @@ describe('migration 0028: household_plugins (#435)', () => {
       'purge_requested_by',
       'purge_requested_at',
       'purge_completed_at',
+      'purge_cancelled_by',
+      'purge_cancelled_reason',
     ])
     // Phase A ships ZERO rows — the manifest default covers every existing
     // household (no grandfathering backfill, plan §4.3).
@@ -1706,13 +1709,13 @@ describe('migration 0035: plugin purge state (#439)', () => {
 
   it('pins the ticket-5 statement vocabulary (the reads the catalog, gate and initiation run)', () => {
     expect(HOUSEHOLD_CATALOG_ROWS_SQL).toBe(
-      'SELECT plugin_id, status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = ?'
+      'SELECT plugin_id, status, purge_state, purge_requested_at, purge_completed_at, purge_cancelled_reason FROM household_plugins WHERE household_id = ?'
     )
     expect(PLUGIN_PURGE_STATE_SQL).toBe(
       'SELECT purge_state FROM household_plugins WHERE household_id = ? AND plugin_id = ?'
     )
     expect(PLUGIN_PURGE_ROW_SQL).toBe(
-      'SELECT status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = ? AND plugin_id = ?'
+      'SELECT status, purge_state, purge_requested_at, purge_completed_at, purge_cancelled_reason FROM household_plugins WHERE household_id = ? AND plugin_id = ?'
     )
     // The catalog/enablement advertisement statement is untouched — its own
     // pin lives in plugin-enablement.test.ts; this asserts the ticket-5
@@ -4020,5 +4023,131 @@ describe('migration 0049: price_runs.status CHECK (audit L3)', () => {
       'failures',
       'ai_prompt_identity',
     ])
+  })
+})
+
+describe('migration 0051: purge cancelled state + receipt (audit M2/L4/C1)', () => {
+  function preCancelDb(): Db {
+    // The production shape pre-0051: the full chain up to the last applied
+    // migration before the two rebuilds.
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0051')
+    )
+    return db
+  }
+
+  function seedHousehold(db: Db, id: string): void {
+    db.prepare('INSERT INTO users (id, email) VALUES (?, ?)').run(`u-${id}`, `${id}@b.com`)
+    db.prepare(`INSERT INTO households (id, name, created_by) VALUES (?, ?, ?)`).run(
+      id,
+      `Keluarga ${id}`,
+      `u-${id}`
+    )
+  }
+
+  it('copies every row verbatim: the old lever NULLed the state, so pre-change cancellations are unrecoverable — reported as none, never guessed', () => {
+    const db = preCancelDb()
+    seedHousehold(db, 'h1')
+    db.prepare(
+      `INSERT INTO household_plugins (household_id, plugin_id, status, purge_state,
+         purge_requested_by, purge_requested_at, purge_completed_at)
+       VALUES ('h1', 'documents', 'enabled', 'done', 'u-1', '2026-11-15 09:00:00', '2026-11-16 03:00:00')`
+    ).run()
+    db.prepare(
+      `INSERT INTO household_plugins (household_id, plugin_id, status)
+       VALUES ('h1', 'not-a-plugin', 'disabled')`
+    ).run()
+    // The pre-change cancel lever's aftermath: a NULL resting row — the
+    // withdrawal it performed left NO trace, which is exactly why the
+    // migration map reports pre-change cancellations as `none`.
+    db.prepare(
+      `INSERT INTO household_plugin_audit (id, household_id, plugin_id, actor_user_id, action)
+       VALUES ('a-1', 'h1', 'documents', 'u-1', 'plugin_purged')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0051_plugin_purge_cancelled.sql'), 'utf8'))
+
+    expect(
+      db.prepare('SELECT * FROM household_plugins WHERE plugin_id = ?').get('documents')
+    ).toMatchObject({
+      household_id: 'h1',
+      status: 'enabled',
+      purge_state: 'done',
+      purge_requested_by: 'u-1',
+      purge_requested_at: '2026-11-15 09:00:00',
+      purge_completed_at: '2026-11-16 03:00:00',
+      purge_cancelled_by: null,
+      purge_cancelled_reason: null,
+    })
+    expect(
+      db.prepare('SELECT * FROM household_plugins WHERE plugin_id = ?').get('not-a-plugin')
+    ).toMatchObject({ status: 'disabled', purge_state: null })
+    expect(
+      (db.prepare('SELECT COUNT(*) AS n FROM household_plugin_audit').get() as { n: number }).n
+    ).toBe(1)
+  })
+
+  it('widens both vocabularies: cancelled is representable, unknowns are not', () => {
+    const db = preCancelDb()
+    seedHousehold(db, 'h2')
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0051_plugin_purge_cancelled.sql'), 'utf8'))
+
+    const insert = db.prepare(
+      `INSERT INTO household_plugins (household_id, plugin_id, status, purge_state)
+       VALUES ('h2', 'documents', 'enabled', ?)`
+    )
+    insert.run('cancelled')
+    expect(() => insert.run('withdrawn')).toThrow()
+
+    const audit = db.prepare(
+      `INSERT INTO household_plugin_audit (id, household_id, plugin_id, actor_user_id, action)
+       VALUES ('a-x', 'h2', 'documents', 'u-2', ?)`
+    )
+    audit.run('plugin_purge_cancelled')
+    expect(() => audit.run('plugin_purge_withdrawn')).toThrow()
+  })
+
+  it('keeps the full chain green on a fresh database; both indexes survive the rebuilds', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(db, migrationFiles())
+
+    const columns = db.prepare('PRAGMA table_info(household_plugins)').all() as Array<{
+      name: string
+    }>
+    expect(columns.map((c) => c.name)).toEqual([
+      'household_id',
+      'plugin_id',
+      'status',
+      'config_json',
+      'updated_at',
+      'purge_state',
+      'purge_cursor',
+      'purge_requested_by',
+      'purge_requested_at',
+      'purge_completed_at',
+      'purge_cancelled_by',
+      'purge_cancelled_reason',
+    ])
+
+    const pluginIndexes = db.prepare('PRAGMA index_list(household_plugins)').all() as Array<{
+      name: string
+    }>
+    expect(pluginIndexes.map((i) => i.name)).toContain('idx_household_plugins_purging')
+    const auditIndexes = db.prepare('PRAGMA index_list(household_plugin_audit)').all() as Array<{
+      name: string
+    }>
+    expect(auditIndexes.map((i) => i.name)).toContain('idx_household_plugin_audit_household')
+
+    // The FK to households survives the rebuild (the cascade is the
+    // dissolution contract's precondition).
+    const fk = db.prepare('PRAGMA foreign_key_list(household_plugins)').all() as Array<{
+      table: string
+      on_delete: string
+    }>
+    expect(fk[0]).toMatchObject({ table: 'households', on_delete: 'CASCADE' })
   })
 })

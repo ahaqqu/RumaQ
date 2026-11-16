@@ -20,11 +20,12 @@
 
 import { ensureVaultKey, DOCUMENT_MAX_FILES } from './lib.js'
 import type { StorageAdapter } from '../../ports/storage/index.js'
+import { PURGE_ACTIVE_SQL } from '../enablement.js'
 import { PluginPurgeCancelledError, type PluginPurgeChunk, type PluginPurgeJob } from '../types.js'
 
-/** The purge state machine's row shape (migration 0035). */
+/** The purge state machine's row shape (migrations 0035 + 0051). */
 type PurgeStateRow = {
-  purge_state: 'pending' | 'running' | 'done' | null
+  purge_state: 'pending' | 'running' | 'done' | 'cancelled' | null
   purge_cursor: string | null
 }
 
@@ -146,8 +147,10 @@ function completionStatements(db: D1Database, householdId: string, pluginId: str
  SELECT ?, ?, ?,
         (SELECT purge_requested_by FROM household_plugins WHERE household_id = ? AND plugin_id = ?),
         'plugin_purged'
- WHERE (SELECT purge_state FROM household_plugins WHERE household_id = ? AND plugin_id = ?)
-         IN ('pending', 'running')
+ WHERE EXISTS (
+   SELECT 1 FROM household_plugins
+    WHERE household_id = ? AND plugin_id = ? AND ${PURGE_ACTIVE_SQL}
+ )
    AND ${zeroDocsLeft}`
       )
       .bind(
@@ -166,18 +169,18 @@ function completionStatements(db: D1Database, householdId: string, pluginId: str
         `UPDATE household_plugins
             SET purge_state = 'done', purge_cursor = NULL, purge_completed_at = datetime('now')
           WHERE household_id = ? AND plugin_id = ?
-            AND purge_state IN ('pending', 'running')
+            AND ${PURGE_ACTIVE_SQL}
             AND ${zeroDocsLeft}`
       )
       .bind(householdId, pluginId, householdId),
-    // The re-seek clearance: fires ONLY on the defeat path (pending/running
+    // The re-seek clearance: fires ONLY on the defeat path (active drain
     // with documents still present) — on a committed transition the cursor
     // is already NULL above, and a 'done' replay no-ops on the state guard.
     db
       .prepare(
         `UPDATE household_plugins SET purge_cursor = NULL
           WHERE household_id = ? AND plugin_id = ?
-            AND purge_state IN ('pending', 'running')`
+            AND ${PURGE_ACTIVE_SQL}`
       )
       .bind(householdId, pluginId),
     db
@@ -221,11 +224,16 @@ export function createDocumentsPurgeJob(storage: StorageAdapter): PluginPurgeJob
       // drain, nothing to receipt. The drain caller treats this as done.
       return { objects: 0, drained: true }
     }
-    // Row exists, no active state: the cancel lever fired mid-drain — the
-    // one state this job refuses (PluginPurgeCancelledError). 'done'
-    // is deliberately NOT refused: the nightly replay reads it as drained,
-    // and the dissolution flow re-enters 'pending' for new data.
-    if (stateRow.purge_state === null) {
+    // Row exists, no ACTIVE state: refuse. Two shapes reach here — a NULL
+    // state (a never-requested row fed a chunk; since audit M2 the cancel
+    // lever no longer produces one, but the dissolution cascade or a
+    // hand-rolled row still can) and 'cancelled' (0051): the lever landed
+    // its TERMINAL receipt state between this job's calls. Both refuse with
+    // the typed PluginPurgeCancelledError — proceeding would erase every
+    // remaining document past the owner's withdrawal. 'done' is deliberately
+    // NOT refused: the nightly replay reads it as drained, and the
+    // dissolution flow re-enters 'pending' for new data.
+    if (stateRow.purge_state === null || stateRow.purge_state === 'cancelled') {
       throw new PluginPurgeCancelledError(householdId)
     }
 
@@ -343,7 +351,7 @@ export function createDocumentsPurgeJob(storage: StorageAdapter): PluginPurgeJob
         .prepare(
           `UPDATE household_plugins SET purge_cursor = ?
             WHERE household_id = ? AND plugin_id = ?
-              AND purge_state IN ('pending', 'running')`
+              AND ${PURGE_ACTIVE_SQL}`
         )
         .bind(
           serializeCursor({

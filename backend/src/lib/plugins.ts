@@ -10,7 +10,12 @@
 import type { Env } from '../types.js'
 import { pluginManifestById, PLUGIN_MANIFESTS } from '../plugins/manifests.js'
 import type { PluginManifest } from '../plugins/types.js'
-import { HOUSEHOLD_CATALOG_ROWS_SQL, PLUGIN_PURGE_ROW_SQL } from '../plugins/enablement.js'
+import {
+  HOUSEHOLD_CATALOG_ROWS_SQL,
+  PLUGIN_PURGE_ROW_SQL,
+  PURGE_ACTIVE_SQL,
+  isPurgeActive,
+} from '../plugins/enablement.js'
 import { isPluginDeploymentAvailable } from '../plugins/flags.js'
 import { requireOwner } from './households.js'
 
@@ -19,15 +24,19 @@ export type PluginEnablementStatus = 'enabled' | 'disabled'
 /** Where a plugin's enablement state comes from (§4.3 truth table). */
 export type PluginEnablementSource = 'default' | 'household'
 
-/** The purge state machine (0035, §3.4): pending → running → done. */
-export type PluginPurgeStatus = 'pending' | 'running' | 'done'
+/** The purge state machine (0035 + 0051, §3.4): pending → running → done,
+ * with `cancelled` as the terminal withdrawal (audit M2) — re-initiating
+ * from it starts a new pending run. */
+export type PluginPurgeStatus = 'pending' | 'running' | 'done' | 'cancelled'
 
 /** The catalog's purge slice — null until the household ever requested a
- * purge (the zero-cost resting state; §3.2). */
+ * purge (the zero-cost resting state; §3.2). A `cancelled` row carries the
+ * withdrawal receipt: who pulled the lever, when, and why (audit L4). */
 export type PluginPurgeInfo = {
   state: PluginPurgeStatus
   requested_at: string | null
   completed_at: string | null
+  reason: string | null
 }
 
 /** One catalog row: the manifest's public slice plus every posture layer. */
@@ -99,19 +108,31 @@ function pluginPlanEntitled(): boolean {
   return true
 }
 
-/** The 0035 purge columns as the catalog's purge slice. A NULL purge_state
- * is the resting state — never requested — mapped to null. */
+/** The 0035/0051 purge columns as the catalog's purge slice. A NULL
+ * purge_state is the resting state — never requested — mapped to null. A
+ * `cancelled` row carries the withdrawal receipt's reason (0051; audit L4). */
 function purgeInfoOf(row: {
   purge_state: string | null
   purge_requested_at: string | null
   purge_completed_at: string | null
+  purge_cancelled_reason?: string | null
 }): PluginPurgeInfo | null {
   if (!row.purge_state) return null
   return {
     state: row.purge_state as PluginPurgeStatus,
     requested_at: row.purge_requested_at,
     completed_at: row.purge_completed_at,
+    reason: row.purge_cancelled_reason ?? null,
   }
+}
+
+/** The purge columns the catalog reads (one row shape for every reader that
+ * feeds purgeInfoOf). */
+type CatalogPurgeColumns = {
+  purge_state: string | null
+  purge_requested_at: string | null
+  purge_completed_at: string | null
+  purge_cancelled_reason: string | null
 }
 
 /**
@@ -124,13 +145,12 @@ export async function getPluginCatalog(
   env: Pick<Env['Bindings'], 'DB'>,
   householdId: string
 ): Promise<PluginCatalogEntry[]> {
-  const { results } = await env.DB.prepare(HOUSEHOLD_CATALOG_ROWS_SQL).bind(householdId).all<{
-    plugin_id: string
-    status: string
-    purge_state: string | null
-    purge_requested_at: string | null
-    purge_completed_at: string | null
-  }>()
+  const { results } = await env.DB.prepare(HOUSEHOLD_CATALOG_ROWS_SQL).bind(householdId).all<
+    {
+      plugin_id: string
+      status: string
+    } & CatalogPurgeColumns
+  >()
   const rows = new Map(results.map((row) => [row.plugin_id, row]))
 
   const entries: PluginCatalogEntry[] = []
@@ -190,32 +210,70 @@ WHERE COALESCE(
  * The purge initiation (ticket 5, #439): mark the drain 'pending', record
  * WHO typed the confirmation (the actor the completion receipt copies onto
  * the record that outlives the household — 0035's plain handles), and clear
- * any previous run's cursor/timestamps. NO bytes, NO rows, NO receipt move
- * here — the nightly chunk driver does the deleting (§3.4: "purge is a job,
- * not a request"; plugin_purged "written once, at completion — never at the
- * start"). The state guard (P1-A1 fix round, PR #474) keeps the marking
- * safe for EVERY caller: an already pending/running drain is never
- * clobbered (its cursor, actor and progress survive) — the endpoint
- * early-returns on that case, and the dissolution drain's
- * ensurePurgePending re-invocations must not reset an in-flight cursor.
+ * any previous run's cursor/timestamps — including a previous run's CANCEL
+ * receipt (0051): re-initiating from `cancelled` is a NEW run (audit M2's
+ * `cancelled | initiate` row); the durable history lives in the
+ * plugin_purge_cancelled audit receipt, not on this row. NO bytes, NO rows,
+ * NO receipt move here — the nightly chunk driver does the deleting (§3.4:
+ * "purge is a job, not a request"; plugin_purged "written once, at
+ * completion — never at the start"). The state guard (P1-A1 fix round, PR
+ * #474 review) keeps the marking safe for EVERY caller: an already
+ * pending/running drain is never clobbered (its cursor, actor and progress
+ * survive) — the endpoint early-returns on that case, and the dissolution
+ * drain's ensurePurgePending re-invocations must not reset an in-flight
+ * cursor. `cancelled` is terminal like `done`: a withdrawal releases the
+ * lever, and a fresh initiation starts over.
  */
 export const PURGE_INITIATE_SQL = `UPDATE household_plugins
 SET purge_state = 'pending', purge_cursor = NULL, purge_requested_by = ?,
-    purge_requested_at = datetime('now'), purge_completed_at = NULL
+    purge_requested_at = datetime('now'), purge_completed_at = NULL,
+    purge_cancelled_by = NULL, purge_cancelled_reason = NULL
 WHERE household_id = ? AND plugin_id = ?
-  AND (purge_state IS NULL OR purge_state = 'done')`
+  AND (purge_state IS NULL OR purge_state = 'done' OR purge_state = 'cancelled')`
 
 /**
- * The purge cancel (P1-A3, PR #474 review): back to the NULL resting state,
- * every purge column cleared — the write gate releases the moment this
- * commits. Guarded on an ACTIVE drain only: changes = 0 means nothing was
- * in flight (the caller answers the typed 409).
+ * The system cause the cancel receipt records (audit M2's "set completed_at,
+ * reason"): the lever takes no input, so the row carries the named cause —
+ * the same greppable-cause pattern as the scrape reaper's `reaped:` strings.
+ * A future auto-withdrawal (a policy lever, say) would write its own cause.
+ */
+export const PURGE_CANCELLED_REASON = 'cancelled by owner'
+
+/**
+ * The purge cancel (P1-A3 + audit M2/L4): the withdrawal is now a TERMINAL,
+ * RECEIPTED state — the write gate releases the moment this commits (the
+ * lever's whole point), but nothing is erased from the record anymore:
+ * `requested_by/at` are PRESERVED (they name the request being withdrawn),
+ * `completed_at` stamps the withdrawal, and the cancelling actor + the
+ * system cause land in the receipt columns. Guarded on an ACTIVE drain only
+ * (the one PURGE_ACTIVE_SQL predicate, audit L7): changes = 0 means nothing
+ * was in flight (the caller answers the typed 409).
  */
 export const PURGE_CANCEL_SQL = `UPDATE household_plugins
-SET purge_state = NULL, purge_cursor = NULL, purge_requested_by = NULL,
-    purge_requested_at = NULL, purge_completed_at = NULL
+SET purge_state = 'cancelled', purge_cursor = NULL, purge_completed_at = datetime('now'),
+    purge_cancelled_by = ?, purge_cancelled_reason = ?
 WHERE household_id = ? AND plugin_id = ?
-  AND purge_state IN ('pending', 'running')`
+  AND ${PURGE_ACTIVE_SQL}`
+
+/**
+ * The withdrawal's durable receipt (0051, audit C1): one
+ * `plugin_purge_cancelled` row in the lifecycle trail that outlives the
+ * household (0032's plain handles), actor = the cancelling owner. The
+ * EXISTS guard re-checks the ACTIVE state INSIDE the batch (the
+ * AUDIT_INSERT_SQL discipline): it must run BEFORE the cancel UPDATE in the
+ * same batch so it reads the row as committed pre-batch — the upsert-style
+ * state flip would make every withdrawal look like a no-op — and two
+ * concurrent cancels serialize into exactly one receipt (the loser's guard
+ * reads the committed 'cancelled' state and the UPDATE's changes = 0
+ * answers the typed 409).
+ */
+export const PURGE_CANCEL_AUDIT_SQL = `INSERT INTO household_plugin_audit (id, household_id, plugin_id, actor_user_id, action)
+SELECT ?, ?, ?, ?, 'plugin_purge_cancelled'
+WHERE EXISTS (
+  SELECT 1 FROM household_plugins
+   WHERE household_id = ? AND plugin_id = ?
+     AND ${PURGE_ACTIVE_SQL}
+)`
 
 /**
  * The owner-only enable/disable (§4.3: "a row per (household, plugin),
@@ -252,16 +310,15 @@ export async function setPluginEnablement(
   // check remains.
   await requireOwner(env.DB, args.householdId, args.userId)
 
-  // The catalog read (with the 0035 purge columns) serves BOTH the
+  // The catalog read (with the 0035/0051 purge columns) serves BOTH the
   // idempotency check and the returned posture — the toggle never touches
   // the purge columns, so its response reports their current truth.
-  const { results } = await env.DB.prepare(HOUSEHOLD_CATALOG_ROWS_SQL).bind(args.householdId).all<{
-    plugin_id: string
-    status: string
-    purge_state: string | null
-    purge_requested_at: string | null
-    purge_completed_at: string | null
-  }>()
+  const { results } = await env.DB.prepare(HOUSEHOLD_CATALOG_ROWS_SQL).bind(args.householdId).all<
+    {
+      plugin_id: string
+      status: string
+    } & CatalogPurgeColumns
+  >()
   const rows = new Map(results.map((row) => [row.plugin_id, row.status]))
   const current = resolveEnablement(manifest, rows)
   if ((current.enabled ? 'enabled' : 'disabled') === args.status) {
@@ -300,6 +357,7 @@ export async function setPluginEnablement(
         purge_state: null,
         purge_requested_at: null,
         purge_completed_at: null,
+        purge_cancelled_reason: null,
       }
     )
   )
@@ -340,19 +398,20 @@ export async function requestPluginPurge(
   // string is the deliberate act UU PDP erasure evidence can point to.
   if (args.confirm !== manifest.name) throw new PluginPurgeConfirmationError()
 
-  const { results } = await env.DB.prepare(HOUSEHOLD_CATALOG_ROWS_SQL).bind(args.householdId).all<{
-    plugin_id: string
-    status: string
-    purge_state: string | null
-    purge_requested_at: string | null
-    purge_completed_at: string | null
-  }>()
+  const { results } = await env.DB.prepare(HOUSEHOLD_CATALOG_ROWS_SQL).bind(args.householdId).all<
+    {
+      plugin_id: string
+      status: string
+    } & CatalogPurgeColumns
+  >()
   const existing = results.find((row) => row.plugin_id === manifest.id)
 
-  // Idempotent while a drain is in flight — and after 'done' with no new
-  // data a re-request simply re-enters 'pending' (the completion guard
-  // writes no second receipt for an empty drain).
-  if (existing?.purge_state === 'pending' || existing?.purge_state === 'running') {
+  // Idempotent while a drain is in flight (the one isPurgeActive predicate,
+  // audit L7) — and after 'done' OR 'cancelled' a re-request starts a NEW
+  // run (audit M2's terminal rows): 'done' re-enters 'pending' when no new
+  // data means the completion guard writes no second receipt; 'cancelled'
+  // re-enters 'pending' with a fresh receipt window.
+  if (existing !== undefined && isPurgeActive(existing.purge_state)) {
     return buildEntry(
       env,
       manifest,
@@ -386,12 +445,11 @@ export async function requestPluginPurge(
   // PK-prefix seek buys an honest payload over a guessed timestamp.
   const marked = await env.DB.prepare(PLUGIN_PURGE_ROW_SQL)
     .bind(args.householdId, manifest.id)
-    .first<{
-      status: string
-      purge_state: string | null
-      purge_requested_at: string | null
-      purge_completed_at: string | null
-    }>()
+    .first<
+      {
+        status: string
+      } & CatalogPurgeColumns
+    >()
 
   return buildEntry(
     env,
@@ -400,30 +458,40 @@ export async function requestPluginPurge(
       enabled: existing === undefined ? manifest.defaultEnabled : existing.status === 'enabled',
       source: existing === undefined ? 'default' : 'household',
     },
-    marked ? purgeInfoOf(marked) : { state: 'pending', requested_at: null, completed_at: null }
+    marked
+      ? purgeInfoOf(marked)
+      : { state: 'pending', requested_at: null, completed_at: null, reason: null }
   )
 }
 
 /**
- * The purge CANCEL (P1-A3, PR #474 review): the owner's release lever for a
- * drain that can never complete — one poisoned `r2_key` makes every chunk
- * that reaches its document throw forever (the same guard throws in the
- * user-facing delete paths, so the owner cannot even remove the poison
- * document to unblock the drain), and the write gate would refuse that
- * household's uploads indefinitely. Owner-only, like the initiation. One
- * GUARDED update returns the row to the NULL resting state and clears every
- * purge column: changes = 0 means nothing was in flight (state NULL or
- * 'done') — a typed 409, not a silent success. NOT audited as a lifecycle
- * receipt (the 0032 vocabulary is the closed enablement/purge domain and a
- * cancel moved no bytes — the legal story "no erasure occurred" needs no
- * receipt); the catalog's state line is the visible trace.
+ * The purge CANCEL (P1-A3, PR #474 review; audit M2/L4/C1): the owner's
+ * release lever for a drain that can never complete — one poisoned
+ * `r2_key` makes every chunk that reaches its document throw forever (the
+ * same guard throws in the user-facing delete paths, so the owner cannot
+ * even remove the poison document to unblock the drain), and the write gate
+ * would refuse that household's uploads indefinitely. Owner-only, like the
+ * initiation. One batch commits the withdrawal AND its receipt:
+ *
+ * - the audit receipt FIRST (the AUDIT_INSERT_SQL pattern — its in-batch
+ *   guard must read the row as committed pre-batch), as
+ *   `plugin_purge_cancelled` with the cancelling owner as actor: the one
+ *   record that a REQUESTED erasure was stopped, and by whom, outliving any
+ *   household cascade (0051; audit C1's "the catalog's state line is the
+ *   visible trace" was false because cancel erased the state — now the
+ *   state survives on the row AND the receipt outlives it),
+ * - then the GUARDED update (changes = 0 means nothing was in flight — a
+ *   typed 409, not a silent success).
  *
  * Mid-chunk semantics: a tick's in-flight chunk finishes its current batch
  * (bytes-before-rows held per document — deleted docs are fully gone), its
- * cursor/cursor-clear updates no-op on the state guard, and the completion
- * batch's receipt guard reads the NULL state and no-ops: a cancelled drain
- * stops with some documents purged, the rest intact with their bytes, and
- * no receipt — consistent from every angle.
+ * cursor/cursor-clear updates no-op on the state guard, the completion
+ * batch's receipt guard reads the no-longer-active state and no-ops, and
+ * the drain's next chunk refuses with PluginPurgeCancelledError (the one
+ * terminal state the documents job refuses besides a NULL row): a cancelled
+ * drain stops with some documents purged, the rest intact with their bytes,
+ * no plugin_purged receipt — and a named `cancelled` row plus a durable
+ * audit receipt instead of an erased record.
  */
 export async function cancelPluginPurge(
   env: Pick<Env['Bindings'], 'DB'>,
@@ -435,14 +503,29 @@ export async function cancelPluginPurge(
 
   await requireOwner(env.DB, args.householdId, args.userId)
 
-  const result = await env.DB.prepare(PURGE_CANCEL_SQL).bind(args.householdId, manifest.id).run()
-  const changes = (result as { meta?: { changes?: number } })?.meta?.changes
+  const results = await env.DB.batch([
+    env.DB.prepare(PURGE_CANCEL_AUDIT_SQL).bind(
+      crypto.randomUUID(),
+      args.householdId,
+      manifest.id,
+      args.userId,
+      args.householdId,
+      manifest.id
+    ),
+    env.DB.prepare(PURGE_CANCEL_SQL).bind(
+      args.userId,
+      PURGE_CANCELLED_REASON,
+      args.householdId,
+      manifest.id
+    ),
+  ])
+  const changes = (results[1] as { meta?: { changes?: number } })?.meta?.changes
   if ((changes ?? 0) === 0) {
     throw new PluginPurgeNotActiveError()
   }
 
-  // Read the released row back for the honest posture (same shape as the
-  // initiation's read-back).
+  // Read the withdrawn row back for the honest posture (same shape as the
+  // initiation's read-back) — the response CARRIES the withdrawal receipt.
   const released = await env.DB.prepare(PLUGIN_PURGE_ROW_SQL)
     .bind(args.householdId, manifest.id)
     .first<{
@@ -450,6 +533,7 @@ export async function cancelPluginPurge(
       purge_state: string | null
       purge_requested_at: string | null
       purge_completed_at: string | null
+      purge_cancelled_reason: string | null
     }>()
   return buildEntry(
     env,

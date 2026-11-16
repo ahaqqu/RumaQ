@@ -4503,21 +4503,25 @@ export type GetApiPluginsResponses = {
              */
             available: boolean;
             /**
-             * The purge state machine (ticket 5 #439, §3.4): pending → running → done, null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint
+             * The purge state machine (ticket 5 #439, §3.4; cancelled added by audit M2 — 0051): pending → running → done, with cancelled as the owner's terminal withdrawal; null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint; a cancelled row re-initiates into a new pending run
              */
             purge?: {
                 /**
-                 * pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed
+                 * pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed; cancelled = the owner withdrew the request (receipted, uploads resumed)
                  */
-                state: 'pending' | 'running' | 'done';
+                state: 'pending' | 'running' | 'done' | 'cancelled';
                 /**
                  * When the owner typed the confirmation (null if never requested)
                  */
                 requested_at: string | null;
                 /**
-                 * When the last purge finished (null until done)
+                 * When the last purge finished — or the withdrawal landed, for cancelled
                  */
                 completed_at: string | null;
+                /**
+                 * The withdrawal cause (cancelled rows only, e.g. "cancelled by owner"); null on pending/running/done
+                 */
+                reason: string | null;
             } | null;
         }>;
     };
@@ -4600,21 +4604,25 @@ export type PutApiPluginsByPluginIdEnablementResponses = {
          */
         available: boolean;
         /**
-         * The purge state machine (ticket 5 #439, §3.4): pending → running → done, null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint
+         * The purge state machine (ticket 5 #439, §3.4; cancelled added by audit M2 — 0051): pending → running → done, with cancelled as the owner's terminal withdrawal; null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint; a cancelled row re-initiates into a new pending run
          */
         purge?: {
             /**
-             * pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed
+             * pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed; cancelled = the owner withdrew the request (receipted, uploads resumed)
              */
-            state: 'pending' | 'running' | 'done';
+            state: 'pending' | 'running' | 'done' | 'cancelled';
             /**
              * When the owner typed the confirmation (null if never requested)
              */
             requested_at: string | null;
             /**
-             * When the last purge finished (null until done)
+             * When the last purge finished — or the withdrawal landed, for cancelled
              */
             completed_at: string | null;
+            /**
+             * The withdrawal cause (cancelled rows only, e.g. "cancelled by owner"); null on pending/running/done
+             */
+            reason: string | null;
         } | null;
     };
 };
@@ -4651,7 +4659,7 @@ export type DeleteApiPluginsByPluginIdPurgeErrors = {
 
 export type DeleteApiPluginsByPluginIdPurgeResponses = {
     /**
-     * OK — the drain was cancelled; the plugin's fresh posture comes back (purge null)
+     * OK — the drain was cancelled with its receipt; the plugin's fresh posture comes back (purge.state = 'cancelled')
      */
     200: {
         /**
@@ -4691,21 +4699,25 @@ export type DeleteApiPluginsByPluginIdPurgeResponses = {
          */
         available: boolean;
         /**
-         * The purge state machine (ticket 5 #439, §3.4): pending → running → done, null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint
+         * The purge state machine (ticket 5 #439, §3.4; cancelled added by audit M2 — 0051): pending → running → done, with cancelled as the owner's terminal withdrawal; null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint; a cancelled row re-initiates into a new pending run
          */
         purge?: {
             /**
-             * pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed
+             * pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed; cancelled = the owner withdrew the request (receipted, uploads resumed)
              */
-            state: 'pending' | 'running' | 'done';
+            state: 'pending' | 'running' | 'done' | 'cancelled';
             /**
              * When the owner typed the confirmation (null if never requested)
              */
             requested_at: string | null;
             /**
-             * When the last purge finished (null until done)
+             * When the last purge finished — or the withdrawal landed, for cancelled
              */
             completed_at: string | null;
+            /**
+             * The withdrawal cause (cancelled rows only, e.g. "cancelled by owner"); null on pending/running/done
+             */
+            reason: string | null;
         } | null;
     };
 };
@@ -4791,21 +4803,25 @@ export type PostApiPluginsByPluginIdPurgeResponses = {
          */
         available: boolean;
         /**
-         * The purge state machine (ticket 5 #439, §3.4): pending → running → done, null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint
+         * The purge state machine (ticket 5 #439, §3.4; cancelled added by audit M2 — 0051): pending → running → done, with cancelled as the owner's terminal withdrawal; null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint; a cancelled row re-initiates into a new pending run
          */
         purge?: {
             /**
-             * pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed
+             * pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed; cancelled = the owner withdrew the request (receipted, uploads resumed)
              */
-            state: 'pending' | 'running' | 'done';
+            state: 'pending' | 'running' | 'done' | 'cancelled';
             /**
              * When the owner typed the confirmation (null if never requested)
              */
             requested_at: string | null;
             /**
-             * When the last purge finished (null until done)
+             * When the last purge finished — or the withdrawal landed, for cancelled
              */
             completed_at: string | null;
+            /**
+             * The withdrawal cause (cancelled rows only, e.g. "cancelled by owner"); null on pending/running/done
+             */
+            reason: string | null;
         } | null;
     };
 };
