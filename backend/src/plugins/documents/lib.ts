@@ -21,7 +21,7 @@ import type { StorageAdapter } from '../../ports/storage/index.js'
 import { buildDocumentFileKey, isDocumentKey } from './keys.js'
 import { getMembership } from '../../lib/households.js'
 import { daysUntil, householdIsoDate } from '../../lib/document-expiry.js'
-import { resolvePluginPurgeActive } from '../enablement.js'
+import { PURGE_ACTIVE_SQL, resolvePluginPurgeActive } from '../enablement.js'
 
 export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
 
@@ -554,7 +554,7 @@ function insertDocumentStatement(
        WHERE NOT EXISTS (
          SELECT 1 FROM household_plugins
           WHERE household_id = ? AND plugin_id = ?
-            AND purge_state IN ('pending', 'running')
+            AND ${PURGE_ACTIVE_SQL}
        )`
     )
     .bind(
@@ -631,7 +631,7 @@ function addFileStatement(
          AND NOT EXISTS (
            SELECT 1 FROM household_plugins
             WHERE household_id = ? AND plugin_id = ?
-              AND purge_state IN ('pending', 'running')
+              AND ${PURGE_ACTIVE_SQL}
          )`
     )
     .bind(

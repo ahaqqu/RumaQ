@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vite-plus/test'
 import {
   PLUGIN_ENABLEMENT_SQL,
   HOUSEHOLD_ENABLEMENT_ROWS_SQL,
+  PURGE_ACTIVE_SQL,
+  isPurgeActive,
   resolvePluginEnabled,
   resolveEnabledPluginIds,
   type EnablementSpec,
@@ -149,5 +151,33 @@ describe('resolveEnabledPluginIds — the /api/me advertisement (§4.5)', () => 
       PLUGIN_MANIFESTS
     )
     expect(ids).toEqual(['documents'])
+  })
+})
+
+// Audit 2026-11-16 L7: the purge-active predicate lived respelled at 8
+// sites; M2 added a state to the column, which is exactly when a respelled
+// vocabulary misses a write path. The one PURGE_ACTIVE_SQL fragment (and its
+// TypeScript twin isPurgeActive) is the single definition — this pins the
+// fragment's TEXT (statements interpolate it verbatim, so the EXPLAIN-pinned
+// statements stay byte-identical) and the twin's truth table across the full
+// state vocabulary including the new 'cancelled' terminal.
+describe('the one purge-active predicate (audit L7)', () => {
+  it('is the exact fragment every active-guarded statement interpolates', () => {
+    expect(PURGE_ACTIVE_SQL).toBe(`purge_state IN ('pending', 'running')`)
+  })
+
+  it('isPurgeActive agrees with the fragment across the whole state vocabulary', () => {
+    // The drain window: exactly pending and running.
+    expect(isPurgeActive('pending')).toBe(true)
+    expect(isPurgeActive('running')).toBe(true)
+    // Terminal / resting — 'cancelled' deliberately releases the write gate
+    // (the lever's whole point) and the terminal rows never re-enter the
+    // work set.
+    expect(isPurgeActive('done')).toBe(false)
+    expect(isPurgeActive('cancelled')).toBe(false)
+    expect(isPurgeActive(null)).toBe(false)
+    expect(isPurgeActive(undefined)).toBe(false)
+    // A hand-fixed or future value can never count as active.
+    expect(isPurgeActive('withdrawn')).toBe(false)
   })
 })

@@ -237,6 +237,14 @@ const receiptRows = (sqlite: Db) =>
     )
     .all()
 
+const cancelReceiptRows = (sqlite: Db) =>
+  sqlite
+    .prepare(
+      `SELECT household_id, plugin_id, actor_user_id, action FROM household_plugin_audit
+        WHERE action = 'plugin_purge_cancelled' ORDER BY created_at, id`
+    )
+    .all()
+
 const docCount = (sqlite: Db, householdId: string) =>
   (
     sqlite
@@ -248,7 +256,7 @@ const purgeRow = (sqlite: Db, householdId: string) =>
   sqlite
     .prepare(
       `SELECT purge_state, purge_cursor, purge_requested_by, purge_requested_at,
-         purge_completed_at
+         purge_completed_at, purge_cancelled_by, purge_cancelled_reason
          FROM household_plugins WHERE household_id = ? AND plugin_id = 'documents'`
     )
     .get(householdId)
@@ -957,7 +965,7 @@ describe('plugin purge — the owner cancel lever (P1-A3)', () => {
     } as unknown as Parameters<typeof cancelPluginPurge>[0]
   }
 
-  it('cancels an in-flight drain back to the resting state and releases the write gate', async () => {
+  it('receipts the withdrawal: cancelled terminal with the receipt, gate released (audit M2/L4)', async () => {
     const { sqlite, d1 } = createDb()
     seedHousehold(sqlite, 'h1', 'Keluarga Putri')
     const { bucket, storage } = createDetectorStorage(sqlite)
@@ -984,23 +992,45 @@ describe('plugin purge — the owner cancel lever (P1-A3)', () => {
       userId: 'u-h1',
       pluginId: 'documents',
     })
-    expect(entry.purge).toBeNull()
+    // The catalog NAMES the withdrawal (audit C1's claim is now true):
+    // requested_at preserved, completed_at stamped, reason carried.
+    expect(entry.purge).toMatchObject({
+      state: 'cancelled',
+      completed_at: expect.any(String),
+      reason: 'cancelled by owner',
+    })
+    expect(entry.purge!.requested_at).not.toBeNull()
+    // The row's receipt: requester/actor SURVIVE (the old lever erased every
+    // provenance column), the cursor is gone, the withdrawal is stamped.
     expect(purgeRow(sqlite, 'h1')).toMatchObject({
-      purge_state: null,
+      purge_state: 'cancelled',
       purge_cursor: null,
-      purge_requested_by: null,
-      purge_requested_at: null,
-      purge_completed_at: null,
+      purge_requested_by: 'u-h1',
+      purge_requested_at: expect.any(String),
+      purge_completed_at: expect.any(String),
+      purge_cancelled_by: 'u-h1',
+      purge_cancelled_reason: 'cancelled by owner',
     })
     expect(await resolvePluginPurgeActive(d1, 'h1', 'documents')).toBe(false)
+    // The durable receipt rides the 0032 trail with the cancelling actor —
+    // the record that a REQUESTED erasure was stopped (it outlives the
+    // household; the enablement row itself dies in the cascade).
+    expect(cancelReceiptRows(sqlite)).toEqual([
+      {
+        household_id: 'h1',
+        plugin_id: 'documents',
+        actor_user_id: 'u-h1',
+        action: 'plugin_purge_cancelled',
+      },
+    ])
     // The already-processed document stays gone (bytes-before-rows held for
     // it); the rest is untouched — cancel deletes and restores NOTHING; NO
-    // receipt — nothing completed.
+    // plugin_purged receipt — nothing completed.
     expect(docCount(sqlite, 'h1')).toBe(2)
     expect(receiptRows(sqlite)).toEqual([])
   })
 
-  it('answers the typed 409 when nothing is in flight (state NULL or done)', async () => {
+  it('answers the typed 409 when nothing is in flight (state NULL, done, or cancelled)', async () => {
     const { sqlite } = createDb()
     seedHousehold(sqlite, 'h1', 'Keluarga Putri')
     const { bucket } = createDetectorStorage(sqlite)
@@ -1013,6 +1043,88 @@ describe('plugin purge — the owner cancel lever (P1-A3)', () => {
         pluginId: 'documents',
       })
     ).rejects.toBeInstanceOf(PluginPurgeNotActiveError)
+    expect(cancelReceiptRows(sqlite)).toEqual([])
+
+    // A cancelled withdrawal is TERMINAL (audit M2): cancelling it again is
+    // a 409 — and the batch's in-batch receipt guard (it reads the committed
+    // pre-batch state) writes NO second plugin_purge_cancelled row.
+    requestPurge(sqlite, 'h1', 'u-h1')
+    sqlite.prepare(PURGE_CANCEL_SQL).run('u-h1', 'cancelled by owner', 'h1', 'documents')
+    expect(purgeRow(sqlite, 'h1')).toMatchObject({ purge_state: 'cancelled' })
+    await expect(
+      cancelPluginPurge(cancelEnv(sqlite, bucket), {
+        householdId: 'h1',
+        userId: 'u-h1',
+        pluginId: 'documents',
+      })
+    ).rejects.toBeInstanceOf(PluginPurgeNotActiveError)
+    // The direct-SQL cancel wrote no audit row (that is the lib batch's job)
+    // and the refused second lever wrote neither a receipt nor a change.
+    expect(cancelReceiptRows(sqlite)).toEqual([])
+    expect(purgeRow(sqlite, 'h1')).toMatchObject({ purge_state: 'cancelled' })
+  })
+
+  it('re-initiating from cancelled starts a NEW pending run (audit M2: cancelled | initiate)', async () => {
+    const { sqlite, d1 } = createDb()
+    seedHousehold(sqlite, 'h1', 'Keluarga Putri')
+    const { bucket, storage } = createDetectorStorage(sqlite)
+    seedDocument(sqlite, {
+      householdId: 'h1',
+      documentId: 'd-old',
+      fileId: 'f-old',
+      createdAt: '2026-11-01 10:00:00',
+    })
+    requestPurge(sqlite, 'h1', 'u-h1')
+
+    // Withdraw through the REAL lever (batch: audit receipt + guarded
+    // update), then re-initiate through the EXACT initiation statement the
+    // owner-only endpoint runs (the M2 machine's cancelled → pending row).
+    await cancelPluginPurge(cancelEnv(sqlite, bucket), {
+      householdId: 'h1',
+      userId: 'u-h1',
+      pluginId: 'documents',
+    })
+    expect(purgeRow(sqlite, 'h1')).toMatchObject({ purge_state: 'cancelled' })
+    expect(cancelReceiptRows(sqlite)).toHaveLength(1)
+    requestPurge(sqlite, 'h1', 'u-h2')
+    expect(purgeRow(sqlite, 'h1')).toMatchObject({
+      purge_state: 'pending',
+      // A NEW run: the new requester's actor, the withdrawal receipt columns
+      // cleared — the durable history lives in the audit trail.
+      purge_requested_by: 'u-h2',
+      purge_cancelled_by: null,
+      purge_cancelled_reason: null,
+      purge_completed_at: null,
+    })
+
+    // The new run drains only the data that exists NOW: the cancelled run
+    // never deleted d-old, so it is still there and gets drained; a document
+    // created AFTER the re-initiation (post-cursor) stays out of this run's
+    // cursor order.
+    seedDocument(sqlite, {
+      householdId: 'h1',
+      documentId: 'd-new',
+      fileId: 'f-new',
+      createdAt: '2026-11-03 10:00:00',
+    })
+    const job = createDocumentsPurgeJob(storage)
+    let drained = false
+    for (;;) {
+      const chunk = await job({ db: d1, householdId: 'h1', maxObjects: 40 })
+      if (chunk.drained) {
+        drained = true
+        break
+      }
+      expect(chunk.drained).toBe(false)
+    }
+    expect(drained).toBe(true)
+    // BOTH documents are gone (the re-initiated run covers everything that
+    // existed when it drained), one plugin_purged receipt for the completed
+    // run, the earlier withdrawal receipt untouched by the new run.
+    expect(docCount(sqlite, 'h1')).toBe(0)
+    expect(receiptRows(sqlite)).toHaveLength(1)
+    expect(cancelReceiptRows(sqlite)).toHaveLength(1)
+    void bucket
   })
 
   it('a poisoned r2_key fails its household in ISOLATION — the tick logs it and the healthy household still drains', async () => {
@@ -1068,14 +1180,16 @@ describe('plugin purge — the owner cancel lever (P1-A3)', () => {
   })
 })
 
-// P1R2-A5 (PR #474 review): the cancel lever NULLs the enablement row's
-// purge_state mid-drain. A chunk called on that state must REFUSE with the
+// P1R2-A5 (PR #474 review), composed with audit M2 (0051): the cancel lever
+// lands the TERMINAL 'cancelled' state mid-drain (the old lever NULLed the
+// row; the withdrawal is now receipted — the refusal semantics are
+// unchanged). A chunk called on a non-active state must REFUSE with the
 // typed error — proceeding would erase every remaining document past the
-// cancel (the lever clears the cursor too, so the re-read starts from the
-// oldest), complete with NO receipt, and then spin forever (objects: 0,
-// drained: false — the completion guard needs an active state to land
-// 'done').
-describe('documents purge job — the cancelled drain refuses its chunks (P1R2-A5)', () => {
+// cancel (the lever clears the cursor too, so a resumed re-read would start
+// from the oldest), complete with NO plugin_purged receipt, and then spin
+// forever (objects: 0, drained: false — the completion guard needs an
+// active state to land 'done').
+describe('documents purge job — the cancelled drain refuses its chunks (P1R2-A5 × M2)', () => {
   it('cancel mid-drain → the next chunk throws the typed error; remaining documents and no-receipt hold', async () => {
     const { sqlite, d1 } = createDb()
     seedHousehold(sqlite, 'h1', 'Keluarga Putri')
@@ -1097,10 +1211,10 @@ describe('documents purge job — the cancelled drain refuses its chunks (P1R2-A
     requestPurge(sqlite, 'h1', 'u-h1')
 
     // Drain one document, then the owner cancels mid-drain (the REAL
-    // cancel SQL — state and cursor both back to the NULL resting state).
+    // cancel SQL — the terminal 'cancelled' receipt state, cursor cleared).
     const chunk1 = await job({ db: d1, householdId: 'h1', maxObjects: 20 })
     expect(chunk1).toEqual({ objects: 15, drained: false })
-    sqlite.prepare(PURGE_CANCEL_SQL).run('h1', 'documents')
+    sqlite.prepare(PURGE_CANCEL_SQL).run('u-h1', 'cancelled by owner', 'h1', 'documents')
 
     // The drain's next chunk call refuses with the typed error.
     await expect(job({ db: d1, householdId: 'h1', maxObjects: 20 })).rejects.toThrow(
@@ -1157,7 +1271,9 @@ describe('documents purge job — the cancelled drain refuses its chunks (P1R2-A
                 ...bound,
                 all: async () => {
                   const result = await bound.all()
-                  sqlite.prepare(PURGE_CANCEL_SQL).run('h1', 'documents')
+                  sqlite
+                    .prepare(PURGE_CANCEL_SQL)
+                    .run('u-h1', 'cancelled by owner', 'h1', 'documents')
                   return result
                 },
               }

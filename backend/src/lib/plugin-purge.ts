@@ -20,7 +20,11 @@
 import { PluginPurgeCancelledError } from '../plugins/types.js'
 import { pluginRegistrations } from '../plugins/registry.js'
 import { ENABLEMENT_UPSERT_SQL, PURGE_INITIATE_SQL } from './plugins.js'
-import { HOUSEHOLD_ENABLEMENT_ROWS_SQL, type EnablementSpec } from '../plugins/enablement.js'
+import {
+  HOUSEHOLD_ENABLEMENT_ROWS_SQL,
+  PURGE_ACTIVE_SQL,
+  type EnablementSpec,
+} from '../plugins/enablement.js'
 import type { Env } from '../types.js'
 
 /**
@@ -57,12 +61,15 @@ export const PURGE_TICK_OBJECT_BUDGET = 40
  * ONLY rows with a purge pending/running — ~always empty — so this seek is
  * an index seek against an (almost) empty structure, pinned by an EXPLAIN
  * in migrations.test.ts (the exact-statement pin — this constant IS what
- * ships). Per-plugin (plugin_id bound) because the registry hands out one
- * PluginPurgeJob per plugin; core routes, it does not fan out.
+ * ships). The active predicate is THE one PURGE_ACTIVE_SQL fragment
+ * (audit L7) — a cancelled drain ('cancelled', 0051) leaves the work set the
+ * moment the lever commits, exactly as the NULLed row used to. Per-plugin
+ * (plugin_id bound) because the registry hands out one PluginPurgeJob per
+ * plugin; core routes, it does not fan out.
  */
 export const PURGING_HOUSEHOLDS_SQL = `SELECT household_id
   FROM household_plugins
- WHERE plugin_id = ? AND purge_state IN ('pending', 'running')`
+ WHERE plugin_id = ? AND ${PURGE_ACTIVE_SQL}`
 
 /**
  * Mark (or confirm) a household's purge as requested, for the dissolution
@@ -80,7 +87,10 @@ export const PURGING_HOUSEHOLDS_SQL = `SELECT household_id
  * typed PluginPurgeCancelledError (plugins/types.ts) — it
  * propagates to the caller, because a household that cancelled does not
  * want its remaining documents erased; re-invoking the drain re-requests
- * the purge (an explicit caller decision), it never resumes silently.
+ * the purge (an explicit caller decision — audit M2's
+ * `cancelled | initiate → pending` row), it never resumes silently, and the
+ * cancelled run's receipt (0051) stays in the audit trail while the new run
+ * re-enters 'pending'.
  * Exported so tests pin the enablement resolution by the exact function
  * (the ENABLEMENT_UPSERT_SQL precedent).
  */
@@ -154,9 +164,10 @@ export async function runPluginPurgeTick(
       } catch (err) {
         failed += 1
         // Audit C4: branch BEFORE logging — the cancelled refusal is terminal,
-        // not retried. The owner's lever NULLed the state between the work-set
-        // read and this chunk call, so the household has LEFT the work set:
-        // nothing retries next tick, and "cancel via DELETE" is already done.
+        // not retried. The owner's lever landed the 'cancelled' terminal state
+        // (0051) between the work-set read and this chunk call, so the
+        // household has LEFT the work set: nothing retries next tick, and
+        // "cancel via DELETE" is already done.
         if (err instanceof PluginPurgeCancelledError) {
           console.error(
             `[plugin-purge] chunk refused for ${registration.manifest.id}/${householdId}: the drain was cancelled mid-drain — nothing retries (the household left the work set) and no receipt is written`,

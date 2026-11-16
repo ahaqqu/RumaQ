@@ -27,7 +27,7 @@ export const HOUSEHOLD_ENABLEMENT_ROWS_SQL =
  * as pinned (its consumers read two columns), and each read's shape is
  * pinned by its own test. */
 export const HOUSEHOLD_CATALOG_ROWS_SQL =
-  'SELECT plugin_id, status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = ?'
+  'SELECT plugin_id, status, purge_state, purge_requested_at, purge_completed_at, purge_cancelled_reason FROM household_plugins WHERE household_id = ?'
 
 /** The vault write-gate's read (ticket 5, #439): is a purge draining for
  * this (household, plugin)? A PK-prefix seek like PLUGIN_ENABLEMENT_SQL;
@@ -39,11 +39,31 @@ export const PLUGIN_PURGE_STATE_SQL =
  * enablement status AND the full purge slice for one (household, plugin) —
  * the PK-prefix seek, pinned in migrations.test.ts. */
 export const PLUGIN_PURGE_ROW_SQL =
-  'SELECT status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = ? AND plugin_id = ?'
+  'SELECT status, purge_state, purge_requested_at, purge_completed_at, purge_cancelled_reason FROM household_plugins WHERE household_id = ? AND plugin_id = ?'
 
 /** The manifest slice the resolver needs — the gate passes the full manifest,
  * tests pass the same two fields. */
 export type EnablementSpec = Pick<PluginManifest, 'id' | 'defaultEnabled'>
+
+/**
+ * THE one purge-active predicate (audit 2026-11-16 L7): the SQL fragment for
+ * "a drain is in flight" — every statement that must find the drain window
+ * interpolates THIS constant instead of respelling the vocabulary. Audit M2
+ * added a state to this column ('cancelled' — terminal, NOT active); with
+ * the predicate in one place, a write path cannot miss the new state: the
+ * work-set seek, the write gate, the cancel guard, the completion receipt
+ * guard, the cursor statements and the document INSERT guards all read the
+ * same definition. 'cancelled' deliberately stays OUT: the lever's whole
+ * point is releasing the write gate the moment it commits.
+ */
+export const PURGE_ACTIVE_SQL = `purge_state IN ('pending', 'running')`
+
+/** The TypeScript twin of PURGE_ACTIVE_SQL, for the callers that decide on a
+ * row read instead of inside a statement. Kept next to the SQL fragment so
+ * the two cannot drift — one is the executable truth, the other its shadow. */
+export function isPurgeActive(purgeState: string | null | undefined): boolean {
+  return purgeState === 'pending' || purgeState === 'running'
+}
 
 /**
  * §4.3 truth table — explicit rows always win; an absent row falls back to
@@ -103,7 +123,7 @@ export async function resolvePluginPurgeActive(
       .prepare(PLUGIN_PURGE_STATE_SQL)
       .bind(householdId, pluginId)
       .first<{ purge_state: string | null }>()
-    return row?.purge_state === 'pending' || row?.purge_state === 'running'
+    return isPurgeActive(row?.purge_state)
   } catch (err) {
     console.error(`[plugins] purge-state read failed for ${pluginId}; blocking writes`, err)
     return true

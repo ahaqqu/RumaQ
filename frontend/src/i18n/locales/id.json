@@ -860,6 +860,8 @@
       "stateRunning": "Penghapusan sedang berlangsung; unggahan dijeda sampai selesai.",
       "stateDone": "Semua data telah dihapus pada {{date}}.",
       "stateDonePlain": "Semua data telah dihapus.",
+      "stateCancelled": "Penghapusan dibatalkan pada {{date}} — data Anda yang tersisa tetap aman; Anda bisa memulainya lagi.",
+      "stateCancelledPlain": "Penghapusan dibatalkan — data Anda yang tersisa tetap aman.",
       "errorGeneric": "Tidak bisa memulai penghapusan. Coba lagi.",
       "cancel": "Batalkan penghapusan"
     }

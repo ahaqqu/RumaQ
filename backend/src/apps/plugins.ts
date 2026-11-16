@@ -112,14 +112,14 @@ const pluginCatalogEntrySchema: OpenAPIV3_1.SchemaObject = {
     purge: {
       type: ['object', 'null'],
       description:
-        'The purge state machine (ticket 5 #439, §3.4): pending → running → done, null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint',
-      required: ['state', 'requested_at', 'completed_at'],
+        "The purge state machine (ticket 5 #439, §3.4; cancelled added by audit M2 — 0051): pending → running → done, with cancelled as the owner's terminal withdrawal; null until the household ever requested a purge. The nightly chunk driver moves pending → running → done; initiation is the owner-only typed-confirmation endpoint; a cancelled row re-initiates into a new pending run",
+      required: ['state', 'requested_at', 'completed_at', 'reason'],
       properties: {
         state: {
           type: 'string',
-          enum: ['pending', 'running', 'done'],
+          enum: ['pending', 'running', 'done', 'cancelled'],
           description:
-            'pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed',
+            'pending = requested, waiting for the nightly drain; running = a drain chunk is in flight; done = last purge completed; cancelled = the owner withdrew the request (receipted, uploads resumed)',
         },
         requested_at: {
           type: ['string', 'null'],
@@ -127,7 +127,12 @@ const pluginCatalogEntrySchema: OpenAPIV3_1.SchemaObject = {
         },
         completed_at: {
           type: ['string', 'null'],
-          description: 'When the last purge finished (null until done)',
+          description: 'When the last purge finished — or the withdrawal landed, for cancelled',
+        },
+        reason: {
+          type: ['string', 'null'],
+          description:
+            'The withdrawal cause (cancelled rows only, e.g. "cancelled by owner"); null on pending/running/done',
         },
       },
     },
@@ -313,12 +318,12 @@ pluginsApp.delete(
   '/api/plugins/:pluginId/purge',
   describeRoute({
     description:
-      "Cancels one plugin's in-flight purge for the ACTIVE household (owner-only; non-owners get 403) — the release lever for a drain that can never complete (a corrupted storage key makes every chunk fail forever, and the write gate would otherwise refuse uploads indefinitely). Returns the row to the never-requested resting state and clears every purge column; the write gate releases immediately. Nothing is deleted or restored by this call: documents the drain already finished are gone (their bytes went first), the rest are untouched. A 409 means no purge is in flight.",
+      "Cancels one plugin's in-flight purge for the ACTIVE household (owner-only; non-owners get 403) — the release lever for a drain that can never complete (a corrupted storage key makes every chunk fail forever, and the write gate would otherwise refuse uploads indefinitely). The drain moves to the TERMINAL `cancelled` state with its receipt: requested_by/at are preserved, completed_at stamps the withdrawal, the cancelling owner and the cause are recorded on the row, and one `plugin_purge_cancelled` receipt lands in the lifecycle audit trail (0051, audit M2/L4/C1). The write gate releases immediately. Nothing is deleted or restored by this call: documents the drain already finished are gone (their bytes went first), the rest are untouched. A 409 means no purge is in flight. Re-initiating starts a new pending run.",
     security: [{ cookieAuth: [] }],
     responses: {
       200: {
         description:
-          "OK — the drain was cancelled; the plugin's fresh posture comes back (purge null)",
+          "OK — the drain was cancelled with its receipt; the plugin's fresh posture comes back (purge.state = 'cancelled')",
         content: {
           'application/json': {
             schema: pluginCatalogEntrySchema,

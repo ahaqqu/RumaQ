@@ -120,6 +120,21 @@ function PurgeState({ purge, isOwner, pluginId }) {
       </div>
     )
   }
+  // The withdrawal receipt (audit M2/L4): the cancelled terminal names the
+  // withdrawal — who asked is on the row; the owner sees it happened and
+  // that their remaining data was kept. `purgeDraining` is false here, so
+  // the danger action reappears (re-initiating starts a new run).
+  if (purge.state === 'cancelled') {
+    return (
+      <div className="mt-1.5 text-sm text-text-muted">
+        {purge.completed_at
+          ? t('plugins.purge.stateCancelled', {
+              date: new Date(purge.completed_at.replace(' ', 'T') + 'Z').toLocaleDateString(),
+            })
+          : t('plugins.purge.stateCancelledPlain')}
+      </div>
+    )
+  }
   return null
 }
 
