@@ -19,6 +19,15 @@ set -uo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root" || exit 0
 
+# Callers that already resolved the set (ci.sh, check.sh) export CHANGED_PATHS
+# so every gate below reads one answer instead of repeating the fetch. An
+# exported-but-empty value means "unknown", which the callers treat as fail
+# safe — the same contract as an empty stdout.
+if [ -n "${CHANGED_PATHS+x}" ]; then
+  printf '%s\n' "$CHANGED_PATHS"
+  exit 0
+fi
+
 base_sha=${PR_BASE_SHA:-}
 base=${GITHUB_BASE_REF:-}
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")

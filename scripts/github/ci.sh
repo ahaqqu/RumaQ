@@ -3,6 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 
+# Resolve the change set once: the gates below read CHANGED_PATHS instead of
+# repeating the fetch, and on a shallow checkout the first resolution is the
+# expensive one (it deepens to reach the merge base).
+CHANGED_PATHS=$(bash "$ROOT_DIR/scripts/github/changed-paths.sh" || true)
+export CHANGED_PATHS
+
 echo "=== CI: deploy secret guard (#456) ==="
 # Offline: asserts the CI deploy never writes the operator-owned
 # HAQITA_INGEST_SECRET and still manages exactly the four gateway secrets.
@@ -41,14 +47,24 @@ echo "=== CI: style check ==="
 bash "$ROOT_DIR/scripts/style.sh" --check
 
 echo "=== CI: docs check ==="
-bash "$ROOT_DIR/scripts/docs.sh"
-git diff --exit-code docs/API.md
+# The generated API docs depend on the backend routes, the contract and the
+# codegen tool; a change set outside them cannot alter the output.
+if bash "$ROOT_DIR/scripts/github/reaches.sh" api; then
+  bash "$ROOT_DIR/scripts/docs.sh"
+  git diff --exit-code docs/API.md
+else
+  echo "  skip  docs check for this change set"
+fi
 
 echo "=== CI: API client codegen check ==="
 # Regenerate the OpenAPI spec + typed client schema and fail on drift between
 # the backend routes and the committed frontend artifacts.
-bunx vp run api:codegen
-git diff --exit-code frontend/openapi.json frontend/src/lib/api-client
+if bash "$ROOT_DIR/scripts/github/reaches.sh" api; then
+  bunx vp run api:codegen
+  git diff --exit-code frontend/openapi.json frontend/src/lib/api-client
+else
+  echo "  skip  codegen check for this change set"
+fi
 
 echo "=== CI: frontend tests ==="
 # Scope: a change set that cannot reach the frontend suite skips it — docs,
@@ -72,13 +88,26 @@ else
 fi
 
 echo "=== CI: audit ==="
-bun audit --audit-level=critical
+# Only a manifest or lockfile change can alter the installed tree.
+if bash "$ROOT_DIR/scripts/github/reaches.sh" deps; then
+  bun audit --audit-level=critical
+else
+  echo "  skip  dependency audit for this change set"
+fi
 
 echo "=== CI: build ==="
-bash "$ROOT_DIR/scripts/build.sh"
+# Build only when something downstream can use the artifact: the Worker boot
+# smoke and the Lighthouse audit each have their own gate, so the build runs
+# whenever either of them will.
+if bash "$ROOT_DIR/scripts/github/worker-smoke-scope.sh" ||
+  bash "$ROOT_DIR/scripts/github/lighthouse-scope.sh"; then
+  bash "$ROOT_DIR/scripts/build.sh"
 
-echo "=== CI: bundle size budget ==="
-node "$ROOT_DIR/scripts/ci/bundle-budget.mjs"
+  echo "=== CI: bundle size budget ==="
+  node "$ROOT_DIR/scripts/ci/bundle-budget.mjs"
+else
+  echo "  skip  build and bundle budget for this change set"
+fi
 
 echo "=== CI: worker boot smoke (workerd) ==="
 # Boots the real bundle in workerd and asserts /api/health (#534). This lives
@@ -97,15 +126,18 @@ else
 fi
 
 echo "=== CI: validate Worker config ==="
-if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] &&
+  bash "$ROOT_DIR/scripts/github/worker-smoke-scope.sh"; then
   # Builds the Worker with backend/cloudflare.config.ts and runs cf's checks
   # without uploading (worker name/bindings are computed by the config).
   # cf deploy must run next to cloudflare.config.ts so it finds the project.
   cd "$ROOT_DIR/backend"
   node "$ROOT_DIR/node_modules/cf/bin/cf" deploy --dry-run
   cd "$ROOT_DIR"
-else
+elif [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
   echo "  skip  CLOUDFLARE_API_TOKEN not set — Worker config validation skipped."
+else
+  echo "  skip  change set cannot reach the Worker — config validation skipped."
 fi
 
 echo "=== CI: passed ==="

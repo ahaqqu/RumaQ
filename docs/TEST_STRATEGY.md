@@ -32,6 +32,16 @@ behind main reports only its own commits (a two-dot diff against the event's
 docs-only PR — #695). `./scripts/test.sh changed-paths` covers the resolver
 offline.
 
+The same change set also decides which _generators_ run. `scripts/github/
+reaches.sh api` gates the `docs/API.md` and typed-client regeneration (they
+depend on `backend/`, `contract/`, `tools/codegen/`, `scripts/docs.sh` and
+their manifests), and `reaches.sh deps` gates `bun audit` (manifests and
+`bun.lock` only); the build and bundle budget run whenever the Worker boot
+smoke or Lighthouse will. `ci.sh` and `scripts/check.sh` resolve the set once
+and export `CHANGED_PATHS`, so every gate reads one answer, and
+`./scripts/check.sh --all` forces the full local regeneration.
+`./scripts/test.sh reaches` covers the rules offline.
+
 ## Worker boot smoke (CI gate)
 
 `scripts/github/worker-boot-smoke.sh` builds the backend with the Cloudflare
