@@ -237,7 +237,7 @@ describe('plugin dispatch through the gateway (#435)', () => {
       [
         [
           // The ticket-5 catalog read (lib/plugins.ts) — the 0035 columns ride it.
-          /SELECT plugin_id, status, purge_state, purge_requested_at, purge_completed_at FROM household_plugins WHERE household_id = \?/,
+          /SELECT plugin_id, status, purge_state, purge_requested_at, purge_completed_at, purge_cancelled_reason FROM household_plugins WHERE household_id = \?/,
           () => [],
         ],
         DEPLOYMENT_FLAG_ROWS(FLAG_OFF),
