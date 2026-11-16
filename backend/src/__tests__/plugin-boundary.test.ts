@@ -42,6 +42,10 @@ const ALLOWED_CORE_IMPORTS_BY_PLUGIN: Readonly<Record<string, readonly string[]>
     // getMembership (§4.1 forbidden-3: household facts come from core helpers,
     // never SQL against core tables).
     'lib/households.ts',
+    // The shared onError factory (audit 2026-11-16 L11): every app — plugins
+    // included — mounts the same handler, so the vault's uncaught errors
+    // answer the same fixed-text shape as core's routes.
+    'lib/hono-error.ts',
     // Port #1 (§4.2): the StorageAdapter contract the registry injects.
     'ports/storage/index.ts',
     // The AI seam for the vault's expiry OCR (#433): the route resolves the
@@ -197,6 +201,7 @@ describe('plugin import boundary (#435)', () => {
         'lib/crypto.ts',
         'lib/zip.ts',
         'lib/households.ts',
+        'lib/hono-error.ts',
         'ports/storage/index.ts',
         'lib/ai/index.ts',
         'lib/document-ocr.ts',

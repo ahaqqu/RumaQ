@@ -39,6 +39,7 @@ import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { ipRateLimitMiddleware } from '../lib/rate-limit.js'
+import { createAppOnError } from '../lib/hono-error.js'
 import { isValidExpiryDate } from '../lib/document-expiry.js'
 import {
   CalendarForbiddenError,
@@ -171,21 +172,19 @@ const JSON_ERROR_RESPONSES = {
   404: { description: 'Event not found (unknown id, another household’s, or not visible to you)' },
 } as const
 
-const NO_CACHE = { 'Cache-Control': 'private, no-cache' }
-
 export const calendarApp = new Hono<Env>()
 
 calendarApp.use(logger())
 calendarApp.use('*', createCors())
 calendarApp.use('*', ipRateLimitMiddleware)
 
-calendarApp.onError((err, c) => {
-  if (err instanceof CalendarValidationError) return c.json({ error: err.message }, 400, NO_CACHE)
-  if (err instanceof CalendarNotFoundError) return c.json({ error: err.message }, 404, NO_CACHE)
-  if (err instanceof CalendarForbiddenError) return c.json({ error: err.message }, 403, NO_CACHE)
-  console.error(err)
-  return c.json({ error: 'Internal server error' }, 500, NO_CACHE)
-})
+calendarApp.onError(
+  createAppOnError([
+    [CalendarValidationError, 400, true],
+    [CalendarNotFoundError, 404, true],
+    [CalendarForbiddenError, 403, true],
+  ])
+)
 
 // apiApp.use(path) does not cover subpaths (#292 landmine) — every path gets
 // its own line here too, params after statics.

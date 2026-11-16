@@ -10,10 +10,9 @@ import { isApiPath } from './plugins/core-prefixes.js'
 import { deleteExpiredAiUsageEvents } from './lib/ai/usage.js'
 import { logDueDocumentReminders } from './lib/document-expiry.js'
 import { PURGE_TICK_OBJECT_BUDGET, runPluginPurgeTick } from './lib/plugin-purge.js'
-import { runPluginCronTasks } from './lib/plugin-cron.js'
 import { runReviewAiSweep } from './lib/review-ai.js'
 import { csrfOriginGuard } from './lib/csrf.js'
-import { PLUGIN_TASKS_CRON_SCHEDULE, REVIEW_AI_CRON_SCHEDULE } from './cron-schedules.js'
+import { REVIEW_AI_CRON_SCHEDULE } from './cron-schedules.js'
 
 const AUTH_ROUTES = new Set([
   '/api/auth/login',
@@ -144,7 +143,7 @@ export const gateway = {
     })
   },
 
-  // Cron dispatch (triggers.scheduled in cloudflare.config.ts — THREE
+  // Cron dispatch (triggers.scheduled in cloudflare.config.ts — TWO
   // schedules since the AI review sweep (#484), cron-schedules.ts carries the
   // strings and the budget rationale). Each trigger is its own invocation with
   // its own per-invocation subrequest cap, and the handler tells them apart
@@ -156,14 +155,7 @@ export const gateway = {
   //   channel); v2 dispatch rides this same sweep — and the plugin purge
   //   chunk driver (#439, ticket 5) rides the same tick: one budgeted chunk
   //   per in-flight drain per night (PURGE_TICK_OBJECT_BUDGET carries the
-  //   subrequest math). Worst case 48/50 with one purge-capable plugin —
-  //   which is exactly why plugin-declared tasks do NOT join this invocation.
-  //
-  //   PLUGIN_TASKS_CRON_SCHEDULE ('43 3 * * *') — the generalized handoff
-  //   (ticket 7, #441): every plugin-declared cron task, per-task and
-  //   per-household error-isolated (lib/plugin-cron.ts). No shipped plugin
-  //   declares a task yet, so this invocation is a no-op until the first
-  //   declaration lands.
+  //   subrequest math). Worst case 48/50 with one purge-capable plugin.
   //
   //   REVIEW_AI_CRON_SCHEDULE ('*/30 * * * *') — the AI match-review sweep
   //   (#484): lib/review-ai.ts's runReviewAiSweep, which is itself the mode
@@ -177,18 +169,6 @@ export const gateway = {
     env: Env['Bindings'],
     ctx: ExecutionContext
   ): Promise<void> {
-    if (controller.cron === PLUGIN_TASKS_CRON_SCHEDULE) {
-      ctx.waitUntil(
-        runPluginCronTasks(env).then((summary) => {
-          // The log line is the tick's artifact (the #353/#426/#439
-          // precedent); silent on a night with nothing declared.
-          if (summary.ran + summary.failed > 0) {
-            console.log(`[plugin-cron] tick: ${summary.ran} ran, ${summary.failed} failed`)
-          }
-        })
-      )
-      return
-    }
     if (controller.cron === REVIEW_AI_CRON_SCHEDULE) {
       ctx.waitUntil(
         runReviewAiSweep(env).catch((err: unknown) => {

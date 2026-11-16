@@ -34,6 +34,7 @@ import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { ipRateLimitMiddleware } from '../lib/rate-limit.js'
+import { createAppOnError } from '../lib/hono-error.js'
 import { householdIsoDate, isValidExpiryDate } from '../lib/document-expiry.js'
 import {
   TaskConflictError,
@@ -140,22 +141,20 @@ const JSON_ERROR_RESPONSES = {
   404: { description: 'Task not found' },
 } as const
 
-const NO_CACHE = { 'Cache-Control': 'private, no-cache' }
-
 export const tasksApp = new Hono<Env>()
 
 tasksApp.use(logger())
 tasksApp.use('*', createCors())
 tasksApp.use('*', ipRateLimitMiddleware)
 
-tasksApp.onError((err, c) => {
-  if (err instanceof TaskValidationError) return c.json({ error: err.message }, 400, NO_CACHE)
-  if (err instanceof TaskNotFoundError) return c.json({ error: err.message }, 404, NO_CACHE)
-  if (err instanceof TaskForbiddenError) return c.json({ error: err.message }, 403, NO_CACHE)
-  if (err instanceof TaskConflictError) return c.json({ error: err.message }, 409, NO_CACHE)
-  console.error(err)
-  return c.json({ error: 'Internal server error' }, 500, NO_CACHE)
-})
+tasksApp.onError(
+  createAppOnError([
+    [TaskValidationError, 400, true],
+    [TaskNotFoundError, 404, true],
+    [TaskForbiddenError, 403, true],
+    [TaskConflictError, 409, true],
+  ])
+)
 
 // apiApp.use(path) does not cover subpaths (#292 landmine) — every path gets
 // its own line here too, params after statics.

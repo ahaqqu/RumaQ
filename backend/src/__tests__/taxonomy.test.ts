@@ -1,15 +1,14 @@
 import { describe, it, expect } from 'vite-plus/test'
 import { safeParse } from 'valibot'
-import { ingestPayloadSchema, backfillCategoriesPayloadSchema } from '@rumaq/contract'
+import { backfillCategoriesPayloadSchema } from '@rumaq/contract'
 import { apiApp } from '../apps/api.js'
-import { ingestPrices } from '../lib/ingest.js'
 import { applyCategoryBackfill, listUncategorizedProducts } from '../lib/taxonomy-backfill.js'
 
 // The backend tsconfig pins `types` to @cloudflare/workers-types, so Node
 // builtin imports carry no declarations — same contained suppressions as
 // migrations.test.ts / match-review.test.ts. The taxonomy semantics below
-// (COALESCE stamp preservation, IS NULL category fill, idempotent backfill)
-// are real SQL behavior: they run against real SQLite (node:sqlite — D1 is
+// (NULL-category queueing, IS NULL-guarded writes, idempotent backfill) are
+// real SQL behavior: they run against real SQLite (node:sqlite — D1 is
 // SQLite), which the string-matching fake db cannot pin.
 // @ts-expect-error — no node types in this tsconfig
 import { DatabaseSync } from 'node:sqlite'
@@ -39,9 +38,9 @@ function applyRealMigrations(db: SqliteDb): void {
   }
 }
 
-// Minimal D1-shaped adapter over node:sqlite — the surface ingestPrices and
-// the backfill lib use (prepare → bind → all/first/run, plus batch, whose
-// results carry meta.changes so the backfill counters mean something).
+// Minimal D1-shaped adapter over node:sqlite — the surface the backfill lib
+// uses (prepare → bind → all/first/run, plus batch, whose results carry
+// meta.changes so the backfill counters mean something).
 function sqliteD1(db: SqliteDb): D1Database {
   const prepare = (sql: string) => ({
     sql,
@@ -73,137 +72,38 @@ function sqliteD1(db: SqliteDb): D1Database {
   } as unknown as D1Database
 }
 
-function payloadWith(items: Array<Record<string, unknown>>, scrapedAt = '2026-11-01T23:00:05Z') {
-  const parsed = safeParse(ingestPayloadSchema, {
-    schemaVersion: 1,
-    scrapedAt,
-    stores: [{ slug: 'lotte-mart', name: 'Lotte Mart', region: 'jakarta' }],
-    items: items.map((item) => ({
-      productKey: 'k',
-      name: 'N',
-      category: null,
-      storeSlug: 'lotte-mart',
-      price: 10000,
-      matchConfidence: 1,
-      ...item,
-    })),
-  })
-  if (!parsed.success) throw new Error(`fixture invalid: ${JSON.stringify(parsed.issues)}`)
-  return parsed.output
+// Audit L13 deleted the v1 ingest engine (ingestPrices) these tests used as
+// a fixture writer — the backfill tests need rows shaped right, not ingest
+// semantics, so they seed with direct SQL. Ids derive from the unique
+// product key; the observations ride one seeded source.
+function seedProduct(
+  sqlite: SqliteDb,
+  productKey: string,
+  name: string,
+  options: { category?: string; observedDates?: string[] } = {}
+): void {
+  sqlite
+    .prepare(
+      `INSERT INTO price_sources (id, slug, name) VALUES ('seed-source', 'lotte-mart', 'Lotte Mart')
+       ON CONFLICT(slug) DO NOTHING`
+    )
+    .run()
+  sqlite
+    .prepare(
+      `INSERT INTO price_products (id, product_key, name, category, first_seen_at, last_seen_at)
+       VALUES (?, ?, ?, ?, '2026-11-01', '2026-11-01')`
+    )
+    .run(`prod-${productKey}`, productKey, name, options.category ?? null)
+  for (const date of options.observedDates ?? []) {
+    sqlite
+      .prepare(
+        `INSERT INTO price_observations
+           (id, product_id, source_id, observed_date, price, match_confidence, scraped_at)
+         VALUES (?, ?, 'seed-source', ?, 10000, 1, '2026-11-01T23:00:05Z')`
+      )
+      .run(`obs-${productKey}-${date}`, `prod-${productKey}`, date)
+  }
 }
-
-describe('ingestPrices — taxonomy persistence (#373)', () => {
-  it('persists category on new products and stamps observations with taxoVersion', async () => {
-    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
-    applyRealMigrations(sqlite)
-    const db = sqliteD1(sqlite)
-
-    await ingestPrices(
-      db,
-      payloadWith([
-        {
-          productKey: 'beras--ramos--5-kg',
-          name: 'Beras Ramos 5kg',
-          category: 'beras',
-          taxoVersion: 'v0.2',
-        },
-      ])
-    )
-
-    const product = sqlite.prepare('SELECT * FROM price_products').get()
-    expect(product).toMatchObject({ category: 'beras' })
-    const observation = sqlite.prepare('SELECT * FROM price_observations').get()
-    expect(observation).toMatchObject({ taxo_version: 'v0.2' })
-  })
-
-  it('fills an existing product NULL category but never clobbers a present one', async () => {
-    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
-    applyRealMigrations(sqlite)
-    const db = sqliteD1(sqlite)
-
-    // First ingest: uncategorized (today's payloads — category null).
-    await ingestPrices(
-      db,
-      payloadWith([
-        { productKey: 'beras--ramos--5-kg', name: 'Beras Ramos 5kg' },
-        { productKey: 'gula--gulaku--1-kg', name: 'Gula Gulaku 1kg' },
-      ])
-    )
-    expect(sqlite.prepare('SELECT category FROM price_products').all()).toEqual([
-      { category: null },
-      { category: null },
-    ])
-
-    // Second ingest: the classifier now answers for one of the two.
-    await ingestPrices(
-      db,
-      payloadWith([
-        { productKey: 'beras--ramos--5-kg', name: 'Beras Ramos 5kg', category: 'beras' },
-        {
-          productKey: 'gula--gulaku--1-kg',
-          name: 'Gula Gulaku 1kg',
-          category: 'bumbu-bahan-masak',
-        },
-      ])
-    )
-    const byKey = Object.fromEntries(
-      sqlite
-        .prepare('SELECT product_key, category FROM price_products')
-        .all()
-        .map((r) => [r.product_key, r.category])
-    )
-    expect(byKey['beras--ramos--5-kg']).toBe('beras')
-    expect(byKey['gula--gulaku--1-kg']).toBe('bumbu-bahan-masak')
-
-    // A third ingest carrying a DIFFERENT category does not clobber: the
-    // column is fill-on-null at ingest — reclassification is the backfill's
-    // explicit job.
-    await ingestPrices(
-      db,
-      payloadWith([
-        { productKey: 'beras--ramos--5-kg', name: 'Beras Ramos 5kg', category: 'lainnya' },
-      ])
-    )
-    const beras = sqlite
-      .prepare("SELECT category FROM price_products WHERE product_key = 'beras--ramos--5-kg'")
-      .get()
-    expect(beras).toMatchObject({ category: 'beras' })
-  })
-
-  it('an old-shape replay never erases a taxonomy stamp (COALESCE)', async () => {
-    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
-    applyRealMigrations(sqlite)
-    const db = sqliteD1(sqlite)
-
-    const items = [
-      {
-        productKey: 'beras--ramos--5-kg',
-        name: 'Beras Ramos 5kg',
-        category: 'beras',
-        taxoVersion: 'v0.2',
-      },
-    ]
-    await ingestPrices(db, payloadWith(items))
-    expect(sqlite.prepare('SELECT taxo_version FROM price_observations').get()).toMatchObject({
-      taxo_version: 'v0.2',
-    })
-
-    // Same (product, source, observed_date) → the upsert's DO UPDATE path,
-    // now without taxoVersion/category (an old scraper replays the day).
-    const oldShape = payloadWith([{ productKey: 'beras--ramos--5-kg', name: 'Beras Ramos 5kg' }])
-    await ingestPrices(db, oldShape)
-
-    expect(sqlite.prepare('SELECT taxo_version FROM price_observations').get()).toMatchObject({
-      taxo_version: 'v0.2',
-    })
-    expect(sqlite.prepare('SELECT category FROM price_products').get()).toMatchObject({
-      category: 'beras',
-    })
-    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM price_observations').get()).toMatchObject({
-      n: 1,
-    })
-  })
-})
 
 describe('replay-backfill (#373)', () => {
   it('queues uncategorized products and stops once everything is classified', async () => {
@@ -211,14 +111,9 @@ describe('replay-backfill (#373)', () => {
     applyRealMigrations(sqlite)
     const db = sqliteD1(sqlite)
 
-    await ingestPrices(
-      db,
-      payloadWith([
-        { productKey: 'beras--ramos--5-kg', name: 'Beras Ramos 5kg' },
-        { productKey: 'gula--gulaku--1-kg', name: 'Gula Gulaku 1kg' },
-        { productKey: 'teh--sariwangi--25s', name: 'Teh Sariwangi', category: 'teh-kopi' },
-      ])
-    )
+    seedProduct(sqlite, 'beras--ramos--5-kg', 'Beras Ramos 5kg')
+    seedProduct(sqlite, 'gula--gulaku--1-kg', 'Gula Gulaku 1kg')
+    seedProduct(sqlite, 'teh--sariwangi--25s', 'Teh Sariwangi', { category: 'teh-kopi' })
 
     const page = await listUncategorizedProducts(db)
     expect(page.products.map((p) => p.productKey)).toEqual([
@@ -237,17 +132,10 @@ describe('replay-backfill (#373)', () => {
     applyRealMigrations(sqlite)
     const db = sqliteD1(sqlite)
 
-    await ingestPrices(
-      db,
-      payloadWith([
-        { productKey: 'beras--ramos--5-kg', name: 'Beras Ramos 5kg' },
-        {
-          productKey: 'gula--gulaku--1-kg',
-          name: 'Gula Gulaku 1kg',
-          category: 'bumbu-bahan-masak',
-        },
-      ])
-    )
+    seedProduct(sqlite, 'beras--ramos--5-kg', 'Beras Ramos 5kg')
+    seedProduct(sqlite, 'gula--gulaku--1-kg', 'Gula Gulaku 1kg', {
+      category: 'bumbu-bahan-masak',
+    })
 
     const parsed = safeParse(backfillCategoriesPayloadSchema, {
       schemaVersion: 1,
@@ -294,18 +182,9 @@ describe('replay-backfill (#373)', () => {
     applyRealMigrations(sqlite)
     const db = sqliteD1(sqlite)
 
-    await ingestPrices(
-      db,
-      payloadWith([{ productKey: 'beras--ramos--5-kg', name: 'Beras Ramos 5kg' }])
-    )
-    // A second observed date → a second observation row, both unstamped.
-    await ingestPrices(
-      db,
-      payloadWith(
-        [{ productKey: 'beras--ramos--5-kg', name: 'Beras Ramos 5kg' }],
-        '2026-11-02T23:00:05Z'
-      )
-    )
+    seedProduct(sqlite, 'beras--ramos--5-kg', 'Beras Ramos 5kg', {
+      observedDates: ['2026-11-01', '2026-11-02'],
+    })
     expect(
       sqlite
         .prepare('SELECT COUNT(*) AS n FROM price_observations WHERE taxo_version IS NULL')
@@ -373,10 +252,9 @@ describe('internal backfill routes (#373)', () => {
     applyRealMigrations(sqlite)
     const env = createEnv(sqliteD1(sqlite), 'secret-123')
 
-    await ingestPrices(
-      sqliteD1(sqlite),
-      payloadWith([{ productKey: 'beras--ramos--5-kg', name: 'Beras Ramos 5kg' }])
-    )
+    seedProduct(sqlite, 'beras--ramos--5-kg', 'Beras Ramos 5kg', {
+      observedDates: ['2026-11-01'],
+    })
 
     const queue = await apiApp.request(
       '/api/internal/prices/backfill/queue',

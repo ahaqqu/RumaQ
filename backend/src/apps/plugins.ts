@@ -21,6 +21,7 @@ import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { ipRateLimitMiddleware } from '../lib/rate-limit.js'
+import { createAppOnError } from '../lib/hono-error.js'
 import {
   PluginNotFoundError,
   PluginPurgeConfirmationError,
@@ -38,10 +39,6 @@ import {
   resolvePluginExport,
 } from '../lib/plugin-export.js'
 import { HouseholdNotFoundError, HouseholdForbiddenError } from '../lib/households.js'
-
-// Per-household fact — never cached at the edge (every other authenticated
-// response in the app carries the same directive).
-const NO_CACHE = { 'Cache-Control': 'private, no-cache' }
 
 const pluginParamsSchema = object({
   pluginId: pipe(string(), minLength(1), maxLength(64)),
@@ -158,28 +155,18 @@ pluginsApp.use('/api/plugins/:pluginId/enablement', propsAuthMiddleware)
 pluginsApp.use('/api/plugins/:pluginId/purge', propsAuthMiddleware)
 pluginsApp.use('/api/plugins/:pluginId/export', propsAuthMiddleware)
 
-pluginsApp.onError((err, c) => {
-  if (err instanceof HouseholdNotFoundError) return c.json({ error: err.message }, 404, NO_CACHE)
-  if (err instanceof HouseholdForbiddenError) return c.json({ error: err.message }, 403, NO_CACHE)
-  if (err instanceof PluginNotFoundError) return c.json({ error: err.message }, 404, NO_CACHE)
-  if (err instanceof PluginExportUnsupportedError) {
-    return c.json({ error: err.message }, 409, NO_CACHE)
-  }
-  if (err instanceof PluginExportCursorError) {
-    return c.json({ error: err.message }, 400, NO_CACHE)
-  }
-  if (err instanceof PluginPurgeUnsupportedError) {
-    return c.json({ error: err.message }, 409, NO_CACHE)
-  }
-  if (err instanceof PluginPurgeNotActiveError) {
-    return c.json({ error: err.message }, 409, NO_CACHE)
-  }
-  if (err instanceof PluginPurgeConfirmationError) {
-    return c.json({ error: err.message }, 400, NO_CACHE)
-  }
-  console.error(err)
-  return c.json({ error: 'Internal server error' }, 500, NO_CACHE)
-})
+pluginsApp.onError(
+  createAppOnError([
+    [HouseholdNotFoundError, 404, true],
+    [HouseholdForbiddenError, 403, true],
+    [PluginNotFoundError, 404, true],
+    [PluginExportUnsupportedError, 409, true],
+    [PluginExportCursorError, 400, true],
+    [PluginPurgeUnsupportedError, 409, true],
+    [PluginPurgeNotActiveError, 409, true],
+    [PluginPurgeConfirmationError, 400, true],
+  ])
+)
 
 pluginsApp.get(
   '/api/plugins',
