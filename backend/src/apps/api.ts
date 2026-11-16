@@ -616,10 +616,13 @@ apiApp.post(
     const commandId = c.req.param('id')
     try {
       // Only running→terminal; a repeated finish after a retry is a no-op.
+      // 409 when the row was reaped: the report is dropped (the agent went
+      // silent past the lease), and the agent must not read a phantom ok.
       await finishScrapeCommand(c.env.DB, commandId, c.req.valid('json'))
       return c.json({ ok: true })
     } catch (error) {
       if (error instanceof ScrapeNotFoundError) return c.json({ error: error.message }, 404)
+      if (error instanceof ScrapeConflictError) return c.json({ error: error.message }, 409)
       throw error
     }
   }

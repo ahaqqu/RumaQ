@@ -4022,3 +4022,188 @@ describe('migration 0049: price_runs.status CHECK (audit L3)', () => {
     ])
   })
 })
+
+describe('migration 0050: scrape command lease — heartbeat_at + reaped (audit M1)', () => {
+  function preLeaseDb(): Db {
+    // The production shape pre-0050: the full chain up to the last applied
+    // migration before the rebuild.
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0050')
+    )
+    return db
+  }
+
+  it('maps legacy `error LIKE reaped:%` rows to status reaped; every other row survives verbatim', () => {
+    const db = preLeaseDb()
+    const insert = db.prepare(
+      `INSERT INTO scrape_commands (id, stores, status, created_by, created_at, picked_up_at, finished_at, exit_code, error)
+       VALUES (?, ?, ?, 'admin-1', ?, ?, ?, ?, ?)`
+    )
+    // The old reaper's two terminal causes: status 'failed' with a reaped:
+    // error string — exactly what the migration map targets.
+    insert.run(
+      'cmd-old-running-reap',
+      '["superindo"]',
+      'failed',
+      '2026-11-15T10:00:00.000Z',
+      '2026-11-15T10:02:00.000Z',
+      '2026-11-15T12:32:00.000Z',
+      1,
+      'reaped: no finish report after 150 min (run deadline exceeded)'
+    )
+    insert.run(
+      'cmd-old-pending-reap',
+      '["astro"]',
+      'failed',
+      '2026-11-15T11:00:00.000Z',
+      null,
+      '2026-11-15T12:00:00.000Z',
+      1,
+      'reaped: never picked up after 60 min'
+    )
+    // A real agent-reported failure must NOT map.
+    insert.run(
+      'cmd-real-failure',
+      '["astro"]',
+      'failed',
+      '2026-11-15T12:00:00.000Z',
+      '2026-11-15T12:01:00.000Z',
+      '2026-11-15T12:40:00.000Z',
+      1,
+      'store failed: boom'
+    )
+    insert.run(
+      'cmd-success',
+      '["astro"]',
+      'success',
+      '2026-11-15T13:00:00.000Z',
+      null,
+      '2026-11-15T13:05:00.000Z',
+      0,
+      null
+    )
+    // Events ride the FK cascade — they must survive the parent rebuild.
+    const event = db.prepare(
+      `INSERT INTO scrape_run_events (command_id, seq, ts, level, message)
+       VALUES (?, ?, ?, 'info', ?)`
+    )
+    event.run('cmd-old-running-reap', 0, '2026-11-15T10:01:00.000Z', 'starting')
+    event.run('cmd-old-running-reap', 1, '2026-11-15T10:01:05.000Z', 'page 1')
+    event.run('cmd-success', 0, '2026-11-15T13:01:00.000Z', 'done')
+
+    // Full-row snapshots BEFORE the rebuild: the byte-identical claim is
+    // proven against every column, NULLs and timestamps included — a
+    // scrambled mirror SELECT (e.g. ts <-> level) must fail here, not pass.
+    const eventsBefore = db
+      .prepare(
+        `SELECT command_id, seq, ts, level, message FROM scrape_run_events
+         ORDER BY command_id, seq`
+      )
+      .all()
+    const commandsBefore = db
+      .prepare(
+        `SELECT id, stores, status, created_by, created_at, picked_up_at,
+                finished_at, exit_code, error, log_truncated
+         FROM scrape_commands ORDER BY id`
+      )
+      .all()
+    // The migration map's ONLY rewrite: `error LIKE 'reaped:%'` → reaped.
+    const expectedStatus = (row: Record<string, unknown>) =>
+      typeof row.error === 'string' && row.error.startsWith('reaped:') ? 'reaped' : row.status
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0050_scrape_command_lease.sql'), 'utf8'))
+
+    // The events return byte-identical — the whole table, not a spot-check.
+    expect(
+      db
+        .prepare(
+          `SELECT command_id, seq, ts, level, message FROM scrape_run_events
+           ORDER BY command_id, seq`
+        )
+        .all()
+    ).toEqual(eventsBefore)
+    // The parent rows survive verbatim too, with ONLY the status mapping
+    // applied: timestamps, NULLs (cmd-success's picked_up_at), exit_code and
+    // error — including the mapped rows' carried-over exit_code 1 + `reaped:`
+    // error, which the migration deliberately does not rewrite (history).
+    expect(
+      db
+        .prepare(
+          `SELECT id, stores, status, created_by, created_at, picked_up_at,
+                  finished_at, exit_code, error, log_truncated
+           FROM scrape_commands ORDER BY id`
+        )
+        .all()
+    ).toEqual(commandsBefore.map((row) => ({ ...row, status: expectedStatus(row) })))
+
+    // The named outcomes the map targets (kept explicit for legibility — the
+    // snapshot above is the proof, these are its reading).
+    expect(
+      db
+        .prepare('SELECT status, exit_code FROM scrape_commands WHERE id = ?')
+        .get('cmd-old-running-reap')
+    ).toMatchObject({ status: 'reaped', exit_code: 1 })
+    expect(
+      db
+        .prepare('SELECT status, exit_code FROM scrape_commands WHERE id = ?')
+        .get('cmd-old-pending-reap')
+    ).toMatchObject({ status: 'reaped', exit_code: 1 })
+    // The agent's own failure keeps its cause (never guessed into reaped).
+    expect(
+      db.prepare('SELECT status FROM scrape_commands WHERE id = ?').get('cmd-real-failure')
+    ).toMatchObject({ status: 'failed' })
+    expect(
+      (db.prepare('SELECT COUNT(*) AS n FROM scrape_run_events').get() as { n: number }).n
+    ).toBe(3)
+  })
+
+  it('the widened CHECK admits reaped and refuses an unknown status; heartbeat_at exists', () => {
+    const db = preLeaseDb()
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0050_scrape_command_lease.sql'), 'utf8'))
+
+    const columns = db.prepare('PRAGMA table_info(scrape_commands)').all() as Array<{
+      name: string
+    }>
+    expect(columns.map((c) => c.name)).toContain('heartbeat_at')
+
+    const insert = db.prepare(
+      `INSERT INTO scrape_commands (id, stores, status, created_by, created_at)
+       VALUES (?, ?, ?, 'admin-1', '2026-11-17T00:00:00.000Z')`
+    )
+    // The lease's named terminal state lands.
+    insert.run('cmd-reaped', '["astro"]', 'reaped')
+    // Unknown statuses stay unrepresentable.
+    expect(() => insert.run('cmd-bad', '["astro"]', 'stale')).toThrow()
+  })
+
+  it('keeps the full chain green on a fresh database', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(scrape_commands)').all() as Array<{
+      name: string
+    }>
+    expect(columns.map((c) => c.name)).toEqual([
+      'id',
+      'stores',
+      'status',
+      'created_by',
+      'created_at',
+      'picked_up_at',
+      'heartbeat_at',
+      'finished_at',
+      'exit_code',
+      'error',
+      'log_truncated',
+    ])
+    // The events FK still points at the rebuilt parent and still cascades.
+    const fk = db.prepare('PRAGMA foreign_key_list(scrape_run_events)').all() as Array<{
+      table: string
+      on_delete: string
+    }>
+    expect(fk[0]).toMatchObject({ table: 'scrape_commands', on_delete: 'CASCADE' })
+  })
+})

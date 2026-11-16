@@ -5,6 +5,14 @@ import type { ScrapeEvent } from '@rumaq/contract'
 // time (a FRESH pending/running command blocks new ones); the agent claims,
 // streams events, and posts a terminal finish. Timestamps are ISO strings so
 // they sort lexically — the same convention as price_runs.
+//
+// The command is a LEASE (audit 2026-11-16 M1): the claim stamps
+// heartbeat_at, every events POST renews it, and the reaper fires on SILENCE
+// — a run that keeps reporting is never reaped, however long it runs. A
+// silent run reaps to the named `reaped` state (never a `failed` — the run
+// did not fail, it vanished; exit_code stays NULL because no exit happened),
+// and a finish that lands after the reap answers 409: the report is dropped,
+// and the agent must know that instead of reading a phantom ok.
 
 /** The live command the queue is currently blocked by. */
 export type ActiveScrapeCommand = {
@@ -36,36 +44,36 @@ export class ScrapeNotFoundError extends Error {
 }
 
 /**
- * Stale ceilings — the one place both reapers (create and claim) read.
+ * The lease ceilings — the one place both reapers (create and claim) read.
  *
- * The VPS agent hard-kills a scrape child after the pipeline's
- * `RUN_DEADLINE_MS` (90 min default, `groceries/scraper/src/deadlines.ts` in
- * RumaQ-pipeline) plus its 30 min post-deadline match/publish headroom
- * (`groceries/scraper/src/agent.ts` childTimeoutMs) — 120 min in the worst
- * case — then POSTs the terminal finish. 150 min is that DEFAULT ceiling plus
- * 30 min of slack for a slow finish POST, so a row running for MORE than
- * 150 min cannot belong to a live run at the defaults. The comparison is
- * strict (`age > ceiling`): a row exactly at its ceiling is still live.
+ * RUNNING rows reap on SILENCE, not on age: the guard reads
+ * `coalesce(heartbeat_at, picked_up_at, created_at)`, which the claim stamps
+ * and every events POST renews. 45 min of silence means the agent stopped
+ * reporting — the run died, the box went down, or the process hangs without
+ * emitting events — and no finish report is coming. The comparison is strict
+ * (`silence > ceiling`): a row exactly at its ceiling is still live. NOTHING
+ * here depends on the pipeline's `RUN_DEADLINE_MS` (the audit C3 coupling —
+ * a live run of ANY age keeps renewing its heartbeat, so RumaQ can never
+ * reap a run the pipeline still considers alive; the pipeline's own
+ * child-kill remains the authority on how long a run may compute).
  *
- * The pipeline's deadline is ENV-CONFIGURABLE — `RUN_DEADLINE_MS` is a knob,
- * not a constant (audit C3). Raising it past ~120 min total puts the agent's
- * kill AFTER this reaper's fixed 150-min ceiling: the reaper fails a
- * still-running row as stale and the agent's eventual finish report is then
- * dropped against the reaped row (the monitor shows a failure the pipeline
- * disagrees with). Keep `RUN_DEADLINE_MS` + headroom under the ceiling, or
- * rename the coupling out (audit L1's lease redesign).
+ * The third COALESCE fallback (created_at) covers a hand-written 'running'
+ * row with no pickup and no heartbeat: the claim always sets both, but a bad
+ * row must not wedge the one-at-a-time queue forever.
  *
- * A healthy agent polls every 15 s; an hour without a claim means the agent
- * (or the box) is down and the row will never be picked up.
+ * A healthy agent polls every 15 s and posts events throughout the run; an
+ * hour without a claim means the agent (or the box) is down and a PENDING
+ * row will never be picked up — the pending reap keeps its age-from-create
+ * ceiling, which no heartbeat exists to renew.
  */
-const RUNNING_REAP_AFTER_MINUTES = 150
+const RUNNING_SILENCE_AFTER_MINUTES = 45
 const PENDING_REAP_AFTER_MINUTES = 60
 
 /** Exported for tests: the exact ceilings the reaper applies. */
-export const STALE_RUNNING_AFTER_MS = RUNNING_REAP_AFTER_MINUTES * 60 * 1000
+export const STALE_SILENCE_AFTER_MS = RUNNING_SILENCE_AFTER_MINUTES * 60 * 1000
 export const STALE_PENDING_AFTER_MS = PENDING_REAP_AFTER_MINUTES * 60 * 1000
 
-const RUNNING_REAP_ERROR = `reaped: no finish report after ${RUNNING_REAP_AFTER_MINUTES} min (run deadline exceeded)`
+const RUNNING_REAP_ERROR = `reaped: silent for ${RUNNING_SILENCE_AFTER_MINUTES} min (no heartbeat, events, or finish report)`
 const PENDING_REAP_ERROR = `reaped: never picked up after ${PENDING_REAP_AFTER_MINUTES} min`
 
 /** History cap — older commands (and their events) are pruned on create. */
@@ -74,7 +82,7 @@ const HISTORY_LIMIT = 50
 export type ScrapeCommandRow = {
   id: string
   stores: string[]
-  status: 'pending' | 'running' | 'success' | 'failed'
+  status: 'pending' | 'running' | 'success' | 'failed' | 'reaped'
   createdBy: string
   createdAt: string
   pickedUpAt: string | null
@@ -112,7 +120,10 @@ function toCommand(row: ScrapeCommandSqlRow): ScrapeCommandRow {
   return {
     id: row.id,
     stores: parseCommandStores(row.stores),
-    status: (row.status === 'running' || row.status === 'success' || row.status === 'failed'
+    status: (row.status === 'running' ||
+    row.status === 'success' ||
+    row.status === 'failed' ||
+    row.status === 'reaped'
       ? row.status
       : 'pending') as ScrapeCommandRow['status'],
     createdBy: row.created_by,
@@ -148,29 +159,35 @@ function changesOf(result: unknown): number {
 }
 
 /**
- * The two stale flips as prepared statements, so the create path can run them
+ * The two reaper flips as prepared statements, so the create path can run them
  * in the SAME batch as its guarded INSERT. Age comparisons are lexical (ISO
  * timestamps sort chronologically), the same convention as the rest of the
- * table.
+ * table. Both flip to the NAMED `reaped` state and leave `exit_code` alone —
+ * a reaped run never finished, so there is no exit code to record (the old
+ * `failed` + exit_code 1 overloading is what audit M1 replaces); the error
+ * string names the cause. `finished_at` stamps when the reaper closed the row.
  */
 function staleReapStatements(db: D1Database, now: string): D1PreparedStatement[] {
   const nowMs = Date.parse(now)
-  const runningBefore = new Date(nowMs - STALE_RUNNING_AFTER_MS).toISOString()
+  const silentBefore = new Date(nowMs - STALE_SILENCE_AFTER_MS).toISOString()
   const pendingBefore = new Date(nowMs - STALE_PENDING_AFTER_MS).toISOString()
   return [
-    // COALESCE covers a hand-written 'running' row with no picked_up_at: the
-    // claim always sets it, but a bad row must not wedge the queue forever.
+    // SILENCE reap: heartbeat_at (claim-stamped, events-renewed) with
+    // picked_up_at as the pre-lease fallback and created_at covering a
+    // hand-written row with neither. A run that reports ANY event is live —
+    // total age is irrelevant.
     db
       .prepare(
         `UPDATE scrape_commands
-         SET status = 'failed', exit_code = 1, error = ?, finished_at = ?
-         WHERE status = 'running' AND COALESCE(picked_up_at, created_at) < ?`
+         SET status = 'reaped', error = ?, finished_at = ?
+         WHERE status = 'running'
+           AND COALESCE(heartbeat_at, picked_up_at, created_at) < ?`
       )
-      .bind(RUNNING_REAP_ERROR, now, runningBefore),
+      .bind(RUNNING_REAP_ERROR, now, silentBefore),
     db
       .prepare(
         `UPDATE scrape_commands
-         SET status = 'failed', exit_code = 1, error = ?, finished_at = ?
+         SET status = 'reaped', error = ?, finished_at = ?
          WHERE status = 'pending' AND created_at < ?`
       )
       .bind(PENDING_REAP_ERROR, now, pendingBefore),
@@ -275,17 +292,18 @@ export async function claimNextScrapeCommand(db: D1Database): Promise<ClaimedCom
     .prepare(
       `SELECT id FROM scrape_commands WHERE status = 'pending' ORDER BY created_at, id LIMIT 1`
     )
+    .bind()
     .first<{ id: string }>()
   if (!oldest) return null
 
   const claimed = await db
     .prepare(
       `UPDATE scrape_commands
-       SET status = 'running', picked_up_at = ?
+       SET status = 'running', picked_up_at = ?, heartbeat_at = ?
        WHERE id = ? AND status = 'pending'
        RETURNING id, stores, created_at`
     )
-    .bind(new Date().toISOString(), oldest.id)
+    .bind(new Date().toISOString(), new Date().toISOString(), oldest.id)
     .first<{ id: string; stores: string; created_at: string }>()
   if (!claimed) return null
 
@@ -306,14 +324,22 @@ export async function appendScrapeEvents(
     .bind(commandId)
     .first<{ status: string }>()
   if (!command) throw new ScrapeNotFoundError()
-  if (command.status === 'success' || command.status === 'failed') {
+  // Every terminal state refuses events — `reaped` included: the agent's
+  // post-reap retries (postJson gives up on a 4xx immediately) must not
+  // append log lines to a row the reaper already closed.
+  if (command.status === 'success' || command.status === 'failed' || command.status === 'reaped') {
     throw new ScrapeConflictError(null, 'Command already finished')
   }
 
   // Idempotent by (command_id, seq): agent retries after a network error are
-  // safe, and a replayed batch cannot duplicate rows.
-  await db.batch(
-    events.map((event) =>
+  // safe, and a replayed batch cannot duplicate rows. The trailing UPDATE is
+  // the LEASE RENEWAL (audit M1's `running | event` row): every events POST
+  // pushes heartbeat_at to now, so a run that keeps logging is never reaped
+  // no matter how long it computes. Guarded on 'running' — a pending row has
+  // no lease yet (the claim stamps it), and the guard keeps a reap that
+  // committed between the SELECT and this batch from being resurrected.
+  await db.batch([
+    ...events.map((event) =>
       db
         .prepare(
           `INSERT INTO scrape_run_events (command_id, seq, ts, level, message)
@@ -321,8 +347,14 @@ export async function appendScrapeEvents(
            ON CONFLICT (command_id, seq) DO NOTHING`
         )
         .bind(commandId, event.seq, event.ts, event.level, event.message)
-    )
-  )
+    ),
+    db
+      .prepare(
+        `UPDATE scrape_commands SET heartbeat_at = ?
+         WHERE id = ? AND status = 'running'`
+      )
+      .bind(new Date().toISOString(), commandId),
+  ])
 }
 
 export type ScrapeFinishInput = {
@@ -332,34 +364,55 @@ export type ScrapeFinishInput = {
   logTruncated?: boolean | null
 }
 
-/** Only running→terminal; repeat finishes and unknown commands are no-ops. */
+/**
+ * Only running→terminal, decided in ONE batch: the guarded UPDATE and the
+ * follow-up SELECT share a transaction, so the classification below reads
+ * the post-UPDATE row — a reap that a concurrent create/claim sweep commits
+ * can be neither straddled nor resurrected (D1 serializes batches against
+ * the single SQLite writer). Either the UPDATE lands first (the report is
+ * the finish) or the reap did (the SELECT reads 'reaped' and the caller
+ * answers 409) — never a phantom ok. A repeat finish after success/failed
+ * no-ops through the same path (the agent's postJson retries must stay
+ * idempotent); the route maps the conflict to 409 and postJson gives up on
+ * the 4xx immediately (audit M1's finish-after-reap row).
+ */
 export async function finishScrapeCommand(
   db: D1Database,
   commandId: string,
   body: ScrapeFinishInput
 ): Promise<void> {
-  const command = await db
-    .prepare(`SELECT status FROM scrape_commands WHERE id = ?`)
-    .bind(commandId)
-    .first<{ status: string }>()
-  if (!command) throw new ScrapeNotFoundError()
-  if (command.status !== 'running') return
+  const results = await db.batch([
+    db
+      .prepare(
+        `UPDATE scrape_commands
+         SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_truncated = ?
+         WHERE id = ? AND status = 'running'`
+      )
+      .bind(
+        body.status,
+        new Date().toISOString(),
+        body.exitCode,
+        body.error ?? null,
+        body.logTruncated ? 1 : 0,
+        commandId
+      ),
+    db.prepare(`SELECT status FROM scrape_commands WHERE id = ?`).bind(commandId),
+  ])
 
-  await db
-    .prepare(
-      `UPDATE scrape_commands
-       SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_truncated = ?
-       WHERE id = ? AND status = 'running'`
+  // The UPDATE matched a running row: this report IS the finish. (The guard
+  // also makes a repeated finish a zero-change no-op — handled below.)
+  if (changesOf(results[0]) > 0) return
+
+  const status = (results[1]?.results?.[0] as { status?: string } | undefined)?.status
+  if (status === undefined) throw new ScrapeNotFoundError()
+  if (status === 'reaped') {
+    throw new ScrapeConflictError(
+      null,
+      'Command was reaped — the agent went silent and this finish is not accepted'
     )
-    .bind(
-      body.status,
-      new Date().toISOString(),
-      body.exitCode,
-      body.error ?? null,
-      body.logTruncated ? 1 : 0,
-      commandId
-    )
-    .run()
+  }
+  // 'pending'/'success'/'failed': nothing was running to finish — the same
+  // idempotent no-op the old read-first shape answered.
 }
 
 export async function listScrapeCommands(db: D1Database, limit = 20): Promise<ScrapeCommandRow[]> {

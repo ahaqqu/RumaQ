@@ -584,6 +584,7 @@
     "scrapeNow": "Scrape Sekarang",
     "statusFailed": "Gagal",
     "statusPending": "Menunggu",
+    "statusReaped": "Di reap — agen diam",
     "statusRunning": "Berjalan",
     "statusSuccess": "Berhasil",
     "triggerTitle": "Picu scrape",
