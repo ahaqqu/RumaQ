@@ -42,6 +42,20 @@ and export `CHANGED_PATHS`, so every gate reads one answer, and
 `./scripts/check.sh --all` forces the full local regeneration.
 `./scripts/test.sh reaches` covers the rules offline.
 
+### CI cost budget
+
+Measured on the docs-only PR #695 before the reach gates: `ci.sh` spent 19.6 s
+— guards 2.1 s, whole-tree style 4.6 s, docs + codegen 2.5 s, unit-scope
+resolution 2.7 s, audit 0.1 s, build + budget 3.3 s, Worker dry-run 2.1 s.
+A docs-only change set now skips docs, codegen, audit, build and the Worker
+dry-run (~8 s), and every gate reuses one resolution.
+
+What stays on every run, and why: the offline guard suites (they pin the rules
+themselves), the whole-tree `vp check` (Markdown formatting is real), and
+runner overhead (~25 s: boot, checkout, `bun install`, teardown). Add a new CI
+step behind a reach gate — `scripts/test/reaches.sh` is the template — rather
+than to the always-on list.
+
 ## Worker boot smoke (CI gate)
 
 `scripts/github/worker-boot-smoke.sh` builds the backend with the Cloudflare
