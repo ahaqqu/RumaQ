@@ -41,14 +41,12 @@ BEFORE (two shapes, one unhandled)         AFTER (one classifier)
 ok        -> data                          http    -> ApiError(status, retryAfter, message)
 4xx/5xx   -> ApiError(status, ...)         offline -> ApiError(0, null, offlineCopy)
 offline   -> TypeError  (uncaught)         timeout -> ApiError(0, null, timeoutCopy)
-aborted   -> AbortError (filtered)         aborted -> rethrow, never painted
 
 state   | event            | guard             | to      | effect
 idle    | request          | —                 | pending | isPending paints
 pending | response ok      | response.ok       | success | data, isError false
 pending | response 4xx/5xx | !response.ok      | http    | status + Retry-After kept
 pending | transport reject | not an ApiError   | offline | status 0, offline copy
-pending | abort            | signal.aborted    | idle    | never painted as an error
 ```
 
 Migration map: `unwrap` wraps its await in `try/catch` and throws `ApiError.from(err)`; the 12 `instanceof ApiError` branches keep working, and those needing `kind` gain it. An unknown throw maps to `kind: 'http', status: 0`, never to offline.
@@ -63,12 +61,10 @@ items[i].status = next                    items[i].status = next
 counts.pending  (unchanged)  <- lie       counts[from]--, counts[to]++, filteredTotal--
 filteredTotal   (unchanged)  <- lie       decidedBy = caller, decidedAt = none
 chip contradicts rows until settle        chip and rows agree from the first frame
-
 from    | event  | guard                | to       | effect
 pending | decide | item.id === vars.id  | approved | row flips, counts move, actor set
 pending | undo   | item.id === vars.id  | pending  | row returns, counts return
 any     | reject | onError has snapshot | previous | full snapshot restore
-any     | settle | invalidate review   | server   | server state wins
 ```
 
 Migration map: one `patchReviewCaches(queryClient, vars)` used by decide and undo; it already loops every filter key, so a page without counts is unchanged.
@@ -83,13 +79,10 @@ hydrating   -> null                        hydrating     -> shell + skeleton (ca
 authed      -> app                         authenticated -> app
 anon        -> Login                       anonymous     -> Login
 unreachable -> Login (wrong)               unreachable   -> shell + "can't reach the server"
-
 state       | event            | guard                   | to
 hydrating   | persisted cache  | PersistQueryClient      | authenticated | anonymous
 hydrating   | /api/me resolves | me?.user                | authenticated
 hydrating   | /api/me rejects  | MeError, retry: false   | unreachable
-unreachable | retry            | refetch                 | authenticated | anonymous
-anonymous   | login            | —                       | authenticated
 ```
 
 Migration map: `me.js` returns null on 401 (anonymous) and throws otherwise (unknown); the gate maps `isError && !isLoading` to `unreachable`. The persisted cache shape does not change.
@@ -119,10 +112,10 @@ C6 | frontend/src/lib/queries/review.js:100 | every `['review']` query invalidat
 ## Verification
 
 `neither`. The harness reaches the surface (Vitest + jsdom + Testing Library, 74 files / 986 cases,
-`frontend-dom` for the client), so no new tooling is owed. What is missing is one test matrix the
-harness already supports: mount each page with a rejected query and assert the error surface, plus
-a single test for the boot gate's `unreachable` state (target `__root.jsx:18`). Both are ordinary
-tests; the audit's ledger is what says which pages are unpainted.
+`frontend-dom` for the client), so no new tooling is owed; what is missing is a test matrix it
+already supports — mount each page with a rejected query and assert the error surface, plus one
+test for the gate's `unreachable` state (target `__root.jsx:18`). The ledger says which pages are
+unpainted; the tests would keep them painted.
 
 ## Issues
 
