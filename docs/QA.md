@@ -34,7 +34,7 @@ Playwright/Chromium toolchain image and later runs reuse it (see
 
 Runs are also resource-bounded (ahaqqu/RumaQ#589): every Compose service has
 explicit CPU/memory caps sized from kernel-measured peaks (api 1.0 CPU / 768m,
-web 1.0 / 768m, proxy 0.25 / 128m, test-runner 2.0 CPU / 2g with a 1g
+web 1.0 / 1536m, proxy 0.25 / 128m, test-runner 2.0 CPU / 2g with a 1g
 `/dev/shm`), so a run throttles instead of saturating the host — safe to run
 alongside other work.
 
