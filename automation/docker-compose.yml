@@ -85,8 +85,16 @@ services:
       rumaq.automation.checkout: '${RUMAQ_CHECKOUT_PATH:-unknown}'
       rumaq.automation.run: '${RUMAQ_RUN_ID:-manual}'
     # nginx + a container-start SPA build over a read-only source mount.
+    # Measured (kernel memory.peak, #690): the container-start SPA build peaks
+    # at 0.85-1.09 GB (anon ~0.7-0.75 GB of bun/vite heap, node_modules file
+    # cache on top). 768m sat BELOW that peak: the cgroup ran pinned at the cap
+    # (767/768 MB observed) through the build's tail, so whether the kernel
+    # OOM-killed the container (exit 137, ~9 s after start, right after the
+    # build had printed completion) was a per-run coin flip on fresh CI runners.
+    # 1536m = worst measured peak + ~40% headroom; the #589 bounding still
+    # holds (summed caps across services stay ~4.4 GB on a 16 GB runner).
     cpus: 1.0
-    mem_limit: 768m
+    mem_limit: 1536m
     environment:
       - RUMAQ_BUILD_CACHE=${RUMAQ_BUILD_CACHE:-1}
     volumes:
