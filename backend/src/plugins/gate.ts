@@ -18,10 +18,7 @@ import type { Env } from '../types.js'
 import { pluginManifestById, type PluginId } from './manifests.js'
 import { resolvePluginEnabled } from './enablement.js'
 import { isPluginDeploymentAvailable } from './flags.js'
-
-// Per-household fact — never cached at the edge (every other authenticated
-// response in the app carries the same directive).
-const NO_CACHE = { 'Cache-Control': 'private, no-cache' }
+import { NO_CACHE } from '../lib/request.js'
 
 /**
  * One gate per plugin, installed on every path pattern the plugin's auth

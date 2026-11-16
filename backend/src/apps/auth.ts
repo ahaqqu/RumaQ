@@ -6,6 +6,7 @@ import { createCors } from '../cors.js'
 import { signJwt, verifyJwt, verifyPassword, base64UrlEncode, randomState } from '../auth.js'
 import { isRateLimited, getClientIp, getLoginRateLimitConfig } from '../lib/rate-limit.js'
 import { getRequestOrigin } from '../lib/request.js'
+import { createAppOnError } from '../lib/hono-error.js'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -46,6 +47,12 @@ const oauthRedirectUri = (c: Context<Env>) => `${getRequestOrigin(c.req)}/api/au
 const authApp = new Hono<Env>()
 
 authApp.use('*', createCors())
+
+// The shared fixed-text fallback (audit L11): auth returned Hono's default
+// 500 ("text/plain;charset=UTF-8 Internal Server Error") on any uncaught
+// error — the one app that answered a different error shape. No typed
+// mappings: auth's expected failures are returned inline as c.json bodies.
+authApp.onError(createAppOnError())
 
 authApp.get(
   '/openapi.json',

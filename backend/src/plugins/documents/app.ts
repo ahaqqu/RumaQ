@@ -43,6 +43,7 @@ import type { Env } from '../../types.js'
 import { createCors } from '../../cors.js'
 import { propsAuthMiddleware } from '../../auth.js'
 import { ipRateLimitMiddleware, isRateLimited } from '../../lib/rate-limit.js'
+import { createAppOnError } from '../../lib/hono-error.js'
 import { pluginGate } from '../gate.js'
 import type { PluginDeps, PluginRegistration } from '../types.js'
 import { documentsManifest } from './manifest.js'
@@ -86,7 +87,6 @@ import {
 } from './lib.js'
 import { resolvePluginPurgeActive } from '../enablement.js'
 
-const NO_CACHE = { 'Cache-Control': 'private, no-cache' }
 // Byte bodies are session-scoped secrets: the browser must not memoize them
 // anywhere (docs/ARCHITECTURE.md §10 — no public object URLs, ever).
 const NO_STORE = { 'Cache-Control': 'private, no-store' }
@@ -407,21 +407,20 @@ export function createDocumentsPlugin(deps: PluginDeps): PluginRegistration {
   documentsApp.use('*', createCors())
   documentsApp.use('*', ipRateLimitMiddleware)
 
-  documentsApp.onError((err, c) => {
-    if (err instanceof DocumentValidationError) return c.json({ error: err.message }, 400)
-    if (err instanceof DocumentTooLargeError) return c.json({ error: err.message }, 413)
-    if (err instanceof DocumentUnsupportedTypeError) return c.json({ error: err.message }, 415)
-    if (err instanceof DocumentTooManyFilesError) {
-      return c.json({ error: err.message }, 409, NO_CACHE)
-    }
-    if (err instanceof DocumentPurgeActiveError) {
-      return c.json({ error: err.message }, 409, NO_CACHE)
-    }
-    if (err instanceof DocumentNotFoundError) return c.json({ error: err.message }, 404, NO_CACHE)
-    if (err instanceof DocumentForbiddenError) return c.json({ error: err.message }, 403, NO_CACHE)
-    console.error(err)
-    return c.json({ error: 'Internal server error' }, 500, NO_CACHE)
-  })
+  // The upload-shape errors (400/413/415) carry no cache directive here —
+  // the pre-refactor headers, kept exactly (the shared 500 fallback always
+  // adds NO_CACHE).
+  documentsApp.onError(
+    createAppOnError([
+      [DocumentValidationError, 400],
+      [DocumentTooLargeError, 413],
+      [DocumentUnsupportedTypeError, 415],
+      [DocumentTooManyFilesError, 409, true],
+      [DocumentPurgeActiveError, 409, true],
+      [DocumentNotFoundError, 404, true],
+      [DocumentForbiddenError, 403, true],
+    ])
+  )
 
   // apiApp.use(path) does not cover subpaths (#292 landmine) — every pattern
   // gets its own registration, for auth AND the gate alike.

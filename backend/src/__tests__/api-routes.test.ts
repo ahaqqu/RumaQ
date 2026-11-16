@@ -1233,6 +1233,34 @@ describe('api routes more branches', () => {
     expect(res.status).toBe(500)
   })
 
+  // Audit 2026-11-16 L10: the shared onError (lib/hono-error.ts) must return
+  // FIXED text on an uncaught error and log it server-side — the api app used
+  // to echo `err.message` (D1/SQL text reaching clients). Pinned on the api
+  // app because it is the app the audit flagged.
+  it('an uncaught error answers fixed text and logs, never echoes err.message (audit L10)', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
+    env.DB.first = vi.fn().mockRejectedValue(new Error('SQLITE_ERROR: no such table: plan_items'))
+    const res = await apiApp.request(
+      '/api/plans/pl1/items/i1',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'bought' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env
+    )
+
+    expect(res.status).toBe(500)
+    expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
+    const body = await res.json()
+    expect(body).toEqual({ error: 'Internal server error' })
+    expect(JSON.stringify(body)).not.toContain('SQLITE_ERROR')
+    expect(consoleError).toHaveBeenCalledTimes(1)
+    expect(consoleError.mock.calls[0]![0]).toBeInstanceOf(Error)
+    consoleError.mockRestore()
+  })
+
   it('/api/purchases filters by store, date, q and cursor', async () => {
     const env = createMockEnv({ props: { userId: 'u1', householdId: 'h1' } })
     env.DB.all = vi

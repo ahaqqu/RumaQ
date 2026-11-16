@@ -4,27 +4,26 @@
 // learn which schedule fired). Plain string constants, import-free, so both
 // bundles can carry them without dragging a module graph along.
 //
-// THREE schedules (two since ticket 7, #441; the AI review sweep #484 added
-// the third, and it is not a nightly tick — it runs every 30 minutes). The
-// split is a hard subrequest constraint, not taste: the Workers free plan caps
-// EVERY invocation (fetch AND scheduled) at 50 subrequests, and the core
-// nightly tick's worst case is already 48/50 with ONE purge-capable plugin
-// (plugin-purge.ts's accounting: 40 object deletes + 5 chunk statements + 1
-// work-set seek + 2 sibling sweeps). Plugin-declared tasks and the AI review
-// sweep each get their OWN invocation — each cron trigger fires a separate
-// scheduled event with a fresh per-invocation cap (multiple triggers per
-// Worker are first-class config; the free plan allows three) — so the
-// workloads never compete for the same budget. The two nightly ticks stay
+// TWO schedules (the AI review sweep #484 is the second, and it is not a
+// nightly tick — it runs every 30 minutes). The split is a hard subrequest
+// constraint, not taste: the Workers free plan caps EVERY invocation (fetch
+// AND scheduled) at 50 subrequests, and the core nightly tick's worst case is
+// already 48/50 with ONE purge-capable plugin (plugin-purge.ts's accounting:
+// 40 object deletes + 5 chunk statements + 1 work-set seek + 2 sibling
+// sweeps). The AI review sweep gets its OWN invocation — each cron trigger
+// fires a separate scheduled event with a fresh per-invocation cap — so the
+// workloads never compete for the same budget. The nightly tick stays
 // off-peak UTC, like the original single trigger was.
+//
+// Audit 2026-11-16 L14 deleted the third schedule (ticket 7's #441
+// plugin-tasks handoff, lib/plugin-cron.ts): no manifest ever declared a cron
+// task, so the nightly invocation was a no-op and the whole seam — driver,
+// trigger, manifest field, validation — was dead code. The seam returns with
+// the first real scheduled task.
 
 /** The core nightly tick (#353 usage retention, #426 expiry sweep, #439
  * purge chunks) — the original schedule, unchanged. */
 export const CORE_CRON_SCHEDULE = '17 3 * * *'
-
-/** The plugin-tasks invocation (ticket 7, #441): gateway.scheduled dispatches
- * every plugin-declared cron task (lib/plugin-cron.ts) here, isolated from
- * the core tick's budget. */
-export const PLUGIN_TASKS_CRON_SCHEDULE = '43 3 * * *'
 
 /** The AI match-review sweep (#484, backend PR 1): every 30 minutes,
  * gateway.scheduled evaluates a bounded batch of pending review items and

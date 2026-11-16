@@ -163,11 +163,15 @@ describe('receipts missing-binding failover (vault port-contract parity, V1-A1)'
     }
   })
 
-  it('the GET route still answers (500, typed refusal surfaced) under the missing-binding failover', async () => {
+  it('the GET route still answers (500, refusal logged server-side) under the missing-binding failover', async () => {
     // The vault's parity shape: a mis-wired deployment must never crash the
     // worker or fall over as an opaque TypeError — the refusal surfaces at the
     // first call that would have touched the binding, through the same
-    // onError contract every api route answers with.
+    // onError contract every api route answers with. Since audit L10 the
+    // client body is FIXED text — the binding name is infrastructure detail
+    // that used to leak through `err.message` — and the typed refusal goes to
+    // the server log instead.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { env } = createEnv({ RECEIPTS: undefined as unknown as MockEnv['RECEIPTS'] })
     // Well-shaped own-household key so the route reaches the adapter and its
     // typed refusal (the key-shape re-check, #548 R549-B1, must pass first).
@@ -176,6 +180,10 @@ describe('receipts missing-binding failover (vault port-contract parity, V1-A1)'
     })
     const res = await apiApp.request('/api/purchases/p1/receipt', {}, env)
     expect(res.status).toBe(500)
-    expect(((await res.json()) as { error: string }).error).toContain("'RECEIPTS'")
+    expect(((await res.json()) as { error: string }).error).toBe('Internal server error')
+    expect(consoleError.mock.calls.some((call) => String(call[0]).includes("'RECEIPTS'"))).toBe(
+      true
+    )
+    consoleError.mockRestore()
   })
 })

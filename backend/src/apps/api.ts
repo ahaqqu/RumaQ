@@ -124,6 +124,7 @@ import { requireAdmin } from '../lib/admin.js'
 import { groundPlanItem } from '../lib/grounding.js'
 import { escapeLike } from '../lib/sql.js'
 import { ipRateLimitMiddleware } from '../lib/rate-limit.js'
+import { createAppOnError } from '../lib/hono-error.js'
 import { resolveEnabledPluginIds } from '../plugins/enablement.js'
 import { PLUGIN_MANIFESTS } from '../plugins/manifests.js'
 import { lineTotalOf, purchaseTotalOf } from '../lib/purchases.js'
@@ -410,11 +411,7 @@ apiApp.use('*', (c, next) => {
   return ipRateLimitMiddleware(c, next)
 })
 
-apiApp.onError((err, c) => {
-  console.error(err)
-  c.res.headers.set('Cache-Control', 'private, no-cache')
-  return c.json({ error: err.message || 'Internal server error' }, 500)
-})
+apiApp.onError(createAppOnError())
 
 apiApp.get(
   '/api/openapi.json',
@@ -523,8 +520,8 @@ apiApp.post('/api/internal/ingest/prices', requireIngestSecret, async (c) => {
 // caches it locally; this endpoint never reads observations or prices.
 // A stored row that cannot satisfy the contract is a typed failure: the log
 // carries the offending product, the client gets a stable data-free body
-// (contract §7 — never the valibot/internal message, the generic onError
-// path would echo err.message).
+// (contract §7 — never the valibot/internal message; the generic onError
+// path answers the same fixed text).
 apiApp.get('/api/internal/canonical-index', requireIngestSecret, async (c) => {
   try {
     const index = await getCanonicalIndex(c.env.DB)

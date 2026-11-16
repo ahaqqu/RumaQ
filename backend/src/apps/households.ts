@@ -22,6 +22,7 @@ import type { Env } from '../types.js'
 import { createCors } from '../cors.js'
 import { propsAuthMiddleware } from '../auth.js'
 import { ipRateLimitMiddleware, isRateLimited } from '../lib/rate-limit.js'
+import { createAppOnError } from '../lib/hono-error.js'
 import {
   HouseholdNotFoundError,
   HouseholdForbiddenError,
@@ -157,26 +158,26 @@ const inviteSchema: OpenAPIV3_1.SchemaObject = {
 const JOIN_RATE_WINDOW_MS = 60_000
 const JOIN_RATE_MAX = 10
 
-const NO_CACHE = { 'Cache-Control': 'private, no-cache' }
-
 export const householdsApp = new Hono<Env>()
 
 householdsApp.use(logger())
 householdsApp.use('*', createCors())
 householdsApp.use('*', ipRateLimitMiddleware)
 
-householdsApp.onError((err, c) => {
-  if (err instanceof HouseholdNotFoundError) return c.json({ error: err.message }, 404)
-  if (err instanceof HouseholdForbiddenError) return c.json({ error: err.message }, 403)
-  if (err instanceof LastOwnerError) return c.json({ error: err.message }, 409)
-  if (err instanceof InvalidInviteError) return c.json({ error: err.message }, 400)
-  // Link-later (#397): the owner marked an invite for something that cannot
-  // be attached later (400), or two redeemers raced for one target (409).
-  if (err instanceof InvalidInviteTargetError) return c.json({ error: err.message }, 400)
-  if (err instanceof InviteTargetConflictError) return c.json({ error: err.message }, 409)
-  console.error(err)
-  return c.json({ error: 'Internal server error' }, 500, NO_CACHE)
-})
+// The typed 4xx answers carry no cache directive here — the pre-refactor
+// headers, kept exactly (the shared 500 fallback always adds NO_CACHE).
+householdsApp.onError(
+  createAppOnError([
+    [HouseholdNotFoundError, 404],
+    [HouseholdForbiddenError, 403],
+    [LastOwnerError, 409],
+    [InvalidInviteError, 400],
+    // Link-later (#397): the owner marked an invite for something that cannot
+    // be attached later (400), or two redeemers raced for one target (409).
+    [InvalidInviteTargetError, 400],
+    [InviteTargetConflictError, 409],
+  ])
+)
 
 // apiApp.use(path) does not cover subpaths (#292 landmine) — every path gets
 // its own line here too, params after statics.

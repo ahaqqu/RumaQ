@@ -52,3 +52,9 @@ export function getRequestOrigin(source: RequestOriginSource): string {
 
   return url.origin
 }
+
+/** The cache directive every per-household (authenticated or error) response
+ * carries — private so no shared cache stores it, no-cache so the edge still
+ * revalidates. ONE definition (audit D5): the apps and the plugin gate each
+ * declared an identical local constant. */
+export const NO_CACHE = { 'Cache-Control': 'private, no-cache' } as const
