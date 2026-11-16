@@ -4094,36 +4094,67 @@ describe('migration 0050: scrape command lease — heartbeat_at + reaped (audit 
     event.run('cmd-old-running-reap', 1, '2026-11-15T10:01:05.000Z', 'page 1')
     event.run('cmd-success', 0, '2026-11-15T13:01:00.000Z', 'done')
 
+    // Full-row snapshots BEFORE the rebuild: the byte-identical claim is
+    // proven against every column, NULLs and timestamps included — a
+    // scrambled mirror SELECT (e.g. ts <-> level) must fail here, not pass.
+    const eventsBefore = db
+      .prepare(
+        `SELECT command_id, seq, ts, level, message FROM scrape_run_events
+         ORDER BY command_id, seq`
+      )
+      .all()
+    const commandsBefore = db
+      .prepare(
+        `SELECT id, stores, status, created_by, created_at, picked_up_at,
+                finished_at, exit_code, error, log_truncated
+         FROM scrape_commands ORDER BY id`
+      )
+      .all()
+    // The migration map's ONLY rewrite: `error LIKE 'reaped:%'` → reaped.
+    const expectedStatus = (row: Record<string, unknown>) =>
+      typeof row.error === 'string' && row.error.startsWith('reaped:') ? 'reaped' : row.status
+
     db.exec(readFileSync(join(MIGRATIONS_DIR, '0050_scrape_command_lease.sql'), 'utf8'))
 
+    // The events return byte-identical — the whole table, not a spot-check.
     expect(
-      db.prepare('SELECT status FROM scrape_commands WHERE id = ?').get('cmd-old-running-reap')
-    ).toMatchObject({ status: 'reaped' })
+      db
+        .prepare(
+          `SELECT command_id, seq, ts, level, message FROM scrape_run_events
+           ORDER BY command_id, seq`
+        )
+        .all()
+    ).toEqual(eventsBefore)
+    // The parent rows survive verbatim too, with ONLY the status mapping
+    // applied: timestamps, NULLs (cmd-success's picked_up_at), exit_code and
+    // error — including the mapped rows' carried-over exit_code 1 + `reaped:`
+    // error, which the migration deliberately does not rewrite (history).
     expect(
-      db.prepare('SELECT status FROM scrape_commands WHERE id = ?').get('cmd-old-pending-reap')
-    ).toMatchObject({ status: 'reaped' })
+      db
+        .prepare(
+          `SELECT id, stores, status, created_by, created_at, picked_up_at,
+                  finished_at, exit_code, error, log_truncated
+           FROM scrape_commands ORDER BY id`
+        )
+        .all()
+    ).toEqual(commandsBefore.map((row) => ({ ...row, status: expectedStatus(row) })))
+
+    // The named outcomes the map targets (kept explicit for legibility — the
+    // snapshot above is the proof, these are its reading).
+    expect(
+      db
+        .prepare('SELECT status, exit_code FROM scrape_commands WHERE id = ?')
+        .get('cmd-old-running-reap')
+    ).toMatchObject({ status: 'reaped', exit_code: 1 })
+    expect(
+      db
+        .prepare('SELECT status, exit_code FROM scrape_commands WHERE id = ?')
+        .get('cmd-old-pending-reap')
+    ).toMatchObject({ status: 'reaped', exit_code: 1 })
     // The agent's own failure keeps its cause (never guessed into reaped).
     expect(
-      db.prepare('SELECT * FROM scrape_commands WHERE id = ?').get('cmd-real-failure')
-    ).toMatchObject({
-      status: 'failed',
-      exit_code: 1,
-      error: 'store failed: boom',
-    })
-    expect(
-      db.prepare('SELECT * FROM scrape_commands WHERE id = ?').get('cmd-success')
-    ).toMatchObject({
-      status: 'success',
-      exit_code: 0,
-    })
-    // The run logs survive the parent-table rebuild (the mirror-restore).
-    const events = db
-      .prepare('SELECT seq, message FROM scrape_run_events WHERE command_id = ? ORDER BY seq')
-      .all('cmd-old-running-reap') as Array<{ seq: number; message: string }>
-    expect(events).toEqual([
-      { seq: 0, message: 'starting' },
-      { seq: 1, message: 'page 1' },
-    ])
+      db.prepare('SELECT status FROM scrape_commands WHERE id = ?').get('cmd-real-failure')
+    ).toMatchObject({ status: 'failed' })
     expect(
       (db.prepare('SELECT COUNT(*) AS n FROM scrape_run_events').get() as { n: number }).n
     ).toBe(3)

@@ -21,6 +21,14 @@
 -- `status = 'reaped'`. Any other row keeps its status verbatim — the 0012
 -- CHECK guaranteed one of pending/running/success/failed, all still valid.
 --
+-- The mapped rows keep EVERY column verbatim, `exit_code = 1` included: the
+-- old reaper stamped it, and a migration does not rewrite history. So a
+-- LEGACY reaped row may carry exit_code 1 (the admin history prints it) —
+-- the "reaped rows have no exit code" invariant holds for NEW reaps only,
+-- which always leave the column alone. The error string survives the same
+-- way (`reaped: no finish report after 150 min ...`) and is what the admin
+-- history shows as the cause.
+--
 -- SQLite cannot ALTER a CHECK, so the table rebuilds around the widened one
 -- (the 0049 price_runs precedent). scrape_run_events REFERENCES
 -- scrape_commands(id) ON DELETE CASCADE, so dropping the parent would

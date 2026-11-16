@@ -268,18 +268,25 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
       await Promise.resolve()
       return statements.map((statement) => {
         const before = commands.length
+        // Real D1 reports per-statement changes; the writes whose counts the
+        // lib reads are the guarded INSERT (0 = conflict) and the finish
+        // UPDATE (0 = the row was not running). An UPDATE's mutation is
+        // detected by row snapshot — the routes mutate rows in place.
+        const rowsBefore = statement.sql.startsWith('UPDATE scrape_commands')
+          ? JSON.stringify(commands)
+          : ''
         const results = handle(statement.sql, statement.params) as unknown[]
+        const changes =
+          statement.sql.includes('INSERT INTO scrape_commands') && commands.length > before
+            ? 1
+            : statement.sql.startsWith('UPDATE scrape_commands') &&
+                JSON.stringify(commands) !== rowsBefore
+              ? 1
+              : 0
         return {
           success: true,
           results,
-          // Real D1 reports per-statement changes; the guarded INSERT is the
-          // one write whose count the lib reads (0 = conflict).
-          meta: {
-            changes:
-              statement.sql.includes('INSERT INTO scrape_commands') && commands.length > before
-                ? 1
-                : 0,
-          },
+          meta: { changes },
         }
       })
     },

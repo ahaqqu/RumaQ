@@ -365,46 +365,54 @@ export type ScrapeFinishInput = {
 }
 
 /**
- * Only running→terminal. A repeat finish after a successful one is a no-op
- * (the agent's postJson retries must stay idempotent); a finish after a REAP
- * answers 409 — the reaper closed the row, this report is DROPPED, and the
- * agent must learn that instead of reading a phantom ok (audit M1's
- * finish-after-reap row). The route maps the conflict to 409; postJson gives
- * up on the 4xx immediately.
+ * Only running→terminal, decided in ONE batch: the guarded UPDATE and the
+ * follow-up SELECT share a transaction, so the classification below reads
+ * the post-UPDATE row — a reap that a concurrent create/claim sweep commits
+ * can be neither straddled nor resurrected (D1 serializes batches against
+ * the single SQLite writer). Either the UPDATE lands first (the report is
+ * the finish) or the reap did (the SELECT reads 'reaped' and the caller
+ * answers 409) — never a phantom ok. A repeat finish after success/failed
+ * no-ops through the same path (the agent's postJson retries must stay
+ * idempotent); the route maps the conflict to 409 and postJson gives up on
+ * the 4xx immediately (audit M1's finish-after-reap row).
  */
 export async function finishScrapeCommand(
   db: D1Database,
   commandId: string,
   body: ScrapeFinishInput
 ): Promise<void> {
-  const command = await db
-    .prepare(`SELECT status FROM scrape_commands WHERE id = ?`)
-    .bind(commandId)
-    .first<{ status: string }>()
-  if (!command) throw new ScrapeNotFoundError()
-  if (command.status === 'reaped') {
+  const results = await db.batch([
+    db
+      .prepare(
+        `UPDATE scrape_commands
+         SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_truncated = ?
+         WHERE id = ? AND status = 'running'`
+      )
+      .bind(
+        body.status,
+        new Date().toISOString(),
+        body.exitCode,
+        body.error ?? null,
+        body.logTruncated ? 1 : 0,
+        commandId
+      ),
+    db.prepare(`SELECT status FROM scrape_commands WHERE id = ?`).bind(commandId),
+  ])
+
+  // The UPDATE matched a running row: this report IS the finish. (The guard
+  // also makes a repeated finish a zero-change no-op — handled below.)
+  if (changesOf(results[0]) > 0) return
+
+  const status = (results[1]?.results?.[0] as { status?: string } | undefined)?.status
+  if (status === undefined) throw new ScrapeNotFoundError()
+  if (status === 'reaped') {
     throw new ScrapeConflictError(
       null,
       'Command was reaped — the agent went silent and this finish is not accepted'
     )
   }
-  if (command.status !== 'running') return
-
-  await db
-    .prepare(
-      `UPDATE scrape_commands
-       SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_truncated = ?
-       WHERE id = ? AND status = 'running'`
-    )
-    .bind(
-      body.status,
-      new Date().toISOString(),
-      body.exitCode,
-      body.error ?? null,
-      body.logTruncated ? 1 : 0,
-      commandId
-    )
-    .run()
+  // 'pending'/'success'/'failed': nothing was running to finish — the same
+  // idempotent no-op the old read-first shape answered.
 }
 
 export async function listScrapeCommands(db: D1Database, limit = 20): Promise<ScrapeCommandRow[]> {
