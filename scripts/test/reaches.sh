@@ -24,16 +24,38 @@ fail() {
 }
 
 # expect <name> <api|deps> <run|skip> <path>...
+# Asserts the verdict WORD — stdout's first token with exit 0 (audit M1) —
+# not an exit code: skip is a verdict now, not a non-zero exit.
 expect() {
-  local name=$1 target=$2 want=$3 code=0 got
+  local name=$1 target=$2 want=$3 out got
   shift 3
-  printf '%s\n' "$@" | bash "$REACHES" "$target" --from-stdin >/dev/null 2>&1 || code=$?
-  got=run
-  [ "$code" -ne 0 ] && got=skip
+  if out="$(printf '%s\n' "$@" | bash "$REACHES" "$target" --from-stdin 2>/dev/null)"; then
+    case "$out" in
+      run*) got=run ;;
+      skip*) got=skip ;;
+      *) got="bad-verdict:${out%%[[:space:]]*}" ;;
+    esac
+  else
+    got=error
+  fi
   if [ "$got" = "$want" ]; then
     pass "$name"
   else
     fail "$name (want $want, got $got)"
+  fi
+}
+
+# expect_error <name> <gate args>... — a gate that cannot decide exits
+# non-zero and prints NO verdict, so a caller consuming the word fails the
+# job instead of skipping (audit M1).
+expect_error() {
+  local name=$1 out code=0
+  shift
+  out="$(bash "$REACHES" "$@" 2>/dev/null </dev/null)" || code=$?
+  if [ "$code" -ne 0 ] && [ -z "$out" ]; then
+    pass "$name"
+  else
+    fail "$name (exit $code, stdout: ${out:-<empty>})"
   fi
 }
 
@@ -53,6 +75,10 @@ expect 'deps: docs skip'                deps skip docs/API.md
 expect 'unknown path runs api'          api run  tools/whatever/x.ts
 expect 'empty set runs api'             api run  ''
 expect 'empty set runs deps'            deps run ''
+
+# --- the verdict protocol itself (audit M1) ---
+expect_error 'bad target errors' bad-target
+expect_error 'bad flag errors'   api --bogus
 
 if [ "$failures" -eq 0 ]; then
   echo 'artifact reach: ok'

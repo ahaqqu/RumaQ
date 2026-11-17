@@ -12,32 +12,13 @@
 # --from-stdin takes the path list from stdin, which the offline guard test
 # uses and a shell can use to check a hypothetical change set. Without it the
 # list comes from changed-paths.sh, which carries the change-set resolution.
+#
+# The verdict protocol is lib/scope-verdict.sh: stdout "run|skip <why>",
+# exit 0; an error prints no verdict and exits non-zero (audit M1).
 set -uo pipefail
 
-root="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$root" || exit 0
+. "$(cd "$(dirname "$0")" && pwd)/lib/scope-verdict.sh"
 
-# Paths that cannot change what the smoke exercises (app boot, receipt scan
-# flow, price sort). Deliberately narrower than worker-smoke-scope's: the
-# automation harness IS under test here, so automation/ runs.
-skippable='^(docs/|\.agents/|.*\.md$|LICENSE$|\.gitignore$|\.github/ISSUE_TEMPLATE/|\.github/PULL_REQUEST_TEMPLATE)'
-
-if [ "${1:-}" = "--from-stdin" ]; then
-  changed=$(cat)
-else
-  changed=$(bash "$root/scripts/github/changed-paths.sh")
-fi
-
-if [ -z "$(printf '%s' "$changed" | tr -d '[:space:]')" ]; then
-  echo "e2e-smoke: no change set available — running (fail safe)"
-  exit 0
-fi
-
-if printf '%s\n' "$changed" | grep -v '^[[:space:]]*$' | grep -qvE "$skippable"; then
-  echo "e2e-smoke: a changed path can reach the smoke — running"
-  exit 0
-fi
-
-echo "e2e-smoke: change set is docs, skills, Markdown, or repo meta — skipped"
-printf '%s\n' "$changed" | grep -v '^[[:space:]]*$' | head -5 | sed 's/^/  /'
-exit 1
+scope_gate_main e2e-smoke e2e-smoke \
+  "change set is docs, skills, Markdown, or repo meta" \
+  "a changed path can reach the smoke" "$@"

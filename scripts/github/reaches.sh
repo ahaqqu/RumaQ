@@ -9,10 +9,18 @@
 # workspace or an unavailable change set runs it (fail safe — a wasted second,
 # never a missed drift). --from-stdin reads the path list from stdin, which the
 # offline guard uses.
+#
+# The verdict protocol is lib/scope-verdict.sh: stdout "run|skip <why>",
+# exit 0; an error prints no verdict and exits non-zero (audit M1). The policy
+# stays inline: this gate triggers on positive generator inputs, not on a
+# skip set, so the skippable-paths.txt table does not shape it.
 set -uo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$root" || exit 0
+cd "$root" || {
+  echo "reaches: cannot enter the repository root" >&2
+  exit 3
+}
 
 target=${1:-}
 shift || true
@@ -39,29 +47,33 @@ case "$target" in
     ;;
 esac
 
-if [ "${1:-}" = "--from-stdin" ]; then
-  changed=$(cat)
-else
-  changed=$(bash "$root/scripts/github/changed-paths.sh")
-fi
+case "${1:-}" in
+  '') changed=$(bash "$root/scripts/github/changed-paths.sh") ;;
+  --from-stdin) changed=$(cat) ;;
+  *)
+    echo "reaches: unknown argument $1 — usage: [--from-stdin]" >&2
+    exit 2
+    ;;
+esac
 
 paths=$(printf '%s\n' "$changed" | sed '/^[[:space:]]*$/d')
 
 if [ -z "$paths" ]; then
-  echo "reach($target): no change set available — running (fail safe)"
+  echo "run reach($target): no change set available — running (fail safe)"
   exit 0
 fi
 
 if printf '%s\n' "$paths" | grep -qE "$inputs"; then
-  echo "reach($target): a changed path can reach $label — running"
+  echo "run reach($target): a changed path can reach $label"
   exit 0
 fi
 
 # Outside the known non-feeding workspaces is treated as an input: fail safe.
 if [ -n "$skippable" ] && printf '%s\n' "$paths" | grep -qvE "$skippable"; then
-  echo "reach($target): a changed path is outside the known skip set — running"
+  echo "run reach($target): a changed path is outside the known skip set"
   exit 0
 fi
 
-echo "reach($target): change set cannot reach $label — skipped"
-exit 1
+echo "skip reach($target): change set cannot reach $label"
+printf '%s\n' "$paths" | head -5 | sed 's/^/  /' >&2
+exit 0

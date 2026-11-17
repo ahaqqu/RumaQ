@@ -1,0 +1,67 @@
+# The skippable-path table for the change-set scope gates (audit S5): one
+# place to add a path class so all four gates see it, instead of the set
+# living as a case in one gate, a case in another and two regexes in the rest.
+#
+#   <target>  <run|skip>  <ERE matched against each changed path>
+#
+# A gate consults only its target's rows, in file order: the first row whose
+# pattern matches a path decides that path — skip means the path cannot reach
+# the gate, run means it can (the parity and build-script edges). A path
+# matching no row reaches the gate: the failure mode must be a wasted minute,
+# never a regression that merges green, so a suite skips only when EVERY
+# changed path matches a skip row.
+#
+# Targets: unit/frontend and unit/backend (unit-test-scope.sh), lighthouse
+# (lighthouse-scope.sh), worker-smoke (worker-smoke-scope.sh), e2e-smoke
+# (e2e-smoke-scope.sh). The policy rationale lives in each gate's header; the
+# offline guard suites (./scripts/test.sh unit-test-scope, lighthouse-scope,
+# smoke-scope, e2e-smoke-scope) pin this table through the gates. reaches.sh
+# keeps its own policy: it triggers on positive generator inputs, not on a
+# skip set.
+
+# unit-test-scope — the frontend suite tests frontend/src (and
+# frontend-dom); the backend suite tests backend/src with contract/.
+unit/frontend run   ^backend/src/plugins/
+unit/frontend skip  ^docs/
+unit/frontend skip  ^\.agents/
+unit/frontend skip  ^automation/
+unit/frontend skip  \.md$
+unit/frontend skip  ^backend/
+unit/frontend skip  ^contract/
+unit/frontend skip  ^tools/
+
+unit/backend skip   ^docs/
+unit/backend skip   ^\.agents/
+unit/backend skip   ^automation/
+unit/backend skip   \.md$
+unit/backend skip   ^frontend/
+unit/backend skip   ^tools/
+
+# lighthouse-scope — Lighthouse audits frontend/dist, built by
+# scripts/build.sh (the exception inside scripts/).
+lighthouse run      ^scripts/build\.sh$
+lighthouse skip     ^docs/
+lighthouse skip     ^\.agents/
+lighthouse skip     ^automation/
+lighthouse skip     \.md$
+lighthouse skip     ^backend/
+lighthouse skip     ^tools/
+lighthouse skip     ^contract/
+lighthouse skip     ^scripts/
+
+# worker-smoke-scope — the Worker bundle is built by `vp build backend`;
+# docs, a skill, an automation test or Markdown cannot change it.
+worker-smoke skip   ^docs/
+worker-smoke skip   ^\.agents/
+worker-smoke skip   ^automation/
+worker-smoke skip   \.md$
+
+# e2e-smoke-scope — narrower than worker-smoke: the automation harness IS
+# under test here, and repo meta beyond .md files runs (fail safe).
+e2e-smoke skip      ^docs/
+e2e-smoke skip      ^\.agents/
+e2e-smoke skip      \.md$
+e2e-smoke skip      ^LICENSE$
+e2e-smoke skip      ^\.gitignore$
+e2e-smoke skip      ^\.github/ISSUE_TEMPLATE/
+e2e-smoke skip      ^\.github/PULL_REQUEST_TEMPLATE

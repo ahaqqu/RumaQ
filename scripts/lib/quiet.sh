@@ -19,7 +19,14 @@ q_run() {
     return 0
   fi
   printf '  FAIL  %s  (%s)\n' "$label" "$log"
-  grep -aE 'FAIL |✗|×|AssertionError|Error:|^diff --git|not ok' "$log" 2>/dev/null \
-    | head -40 | sed 's/^/        /'
+  # The lines that name the problem. The pattern list is a best effort —
+  # output that matches none of it must still say why: fall back to the
+  # log's tail instead of leaving only the FAIL line (audit S9).
+  summary=$(grep -aE 'FAIL |✗|×|AssertionError|Error:|^diff --git|not ok' "$log" 2>/dev/null | head -40 || true)
+  if [ -n "$summary" ]; then
+    printf '%s\n' "$summary" | sed 's/^/        /' || true
+  else
+    tail -20 "$log" 2>/dev/null | sed 's/^/        /' || true
+  fi
   return "$code"
 }

@@ -26,16 +26,38 @@ fail() {
 }
 
 # expect <name> <run|skip> <path>...
+# Asserts the verdict WORD — stdout's first token with exit 0 (audit M1) —
+# not an exit code: skip is a verdict now, not a non-zero exit.
 expect() {
-  local name=$1 want=$2 code=0 got
+  local name=$1 want=$2 out got
   shift 2
-  printf '%s\n' "$@" | bash "$SCOPE" --from-stdin >/dev/null 2>&1 || code=$?
-  got=run
-  [ "$code" -ne 0 ] && got=skip
+  if out="$(printf '%s\n' "$@" | bash "$SCOPE" --from-stdin 2>/dev/null)"; then
+    case "$out" in
+      run*) got=run ;;
+      skip*) got=skip ;;
+      *) got="bad-verdict:${out%%[[:space:]]*}" ;;
+    esac
+  else
+    got=error
+  fi
   if [ "$got" = "$want" ]; then
     pass "$name"
   else
     fail "$name (want $want, got $got)"
+  fi
+}
+
+# expect_error <name> <gate args>... — a gate that cannot decide exits
+# non-zero and prints NO verdict, so a caller consuming the word fails the
+# job instead of skipping (audit M1).
+expect_error() {
+  local name=$1 out code=0
+  shift
+  out="$(bash "$SCOPE" "$@" 2>/dev/null </dev/null)" || code=$?
+  if [ "$code" -ne 0 ] && [ -z "$out" ]; then
+    pass "$name"
+  else
+    fail "$name (exit $code, stdout: ${out:-<empty>})"
   fi
 }
 
@@ -61,6 +83,9 @@ expect 'unknown path runs'      run  LICENSE
 expect 'frontend beside docs runs' run docs/API.md frontend/src/App.tsx
 expect 'mixed runs'             run  docs/API.md scripts/build.sh
 expect 'empty set runs'         run  ''
+
+# --- the verdict protocol itself (audit M1) ---
+expect_error 'bad flag errors' --bogus
 
 if [ "$failures" -eq 0 ]; then
   echo 'lighthouse-scope: ok'
