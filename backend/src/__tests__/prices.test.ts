@@ -899,13 +899,22 @@ describe('GET /api/admin/prices/promos/review', () => {
       50,
       0,
     ])
-    expect(pageCall.sql).toContain('promo_label LIKE ?')
-    expect(pageCall.sql).toContain('name LIKE ?')
-    expect(pageCall.sql).toContain('brand LIKE ?')
-    expect(pageCall.sql).toContain('source_slug = ?')
+    // Table-qualified columns: the CTE's bare output names are not the WHERE
+    // scope — unqualified `name` is ambiguous between p.name and s.name (a
+    // run-time D1 error the fake DB cannot throw; the automation fixture
+    // caught exactly that shape).
+    expect(pageCall.sql).toContain('o.promo_label LIKE ?')
+    expect(pageCall.sql).toContain('p.name LIKE ?')
+    expect(pageCall.sql).toContain('p.brand LIKE ?')
+    expect(pageCall.sql).toContain('s.slug = ?')
     expect(pageCall.sql).toContain(
       'ORDER BY source_slug ASC, name COLLATE NOCASE ASC, product_key ASC, observed_date DESC'
     )
+    // The filters EXTEND the CTE's single WHERE with AND clauses — a second
+    // WHERE is a run-time D1 syntax error the fake DB cannot throw (caught by
+    // the automation fixture once already).
+    expect(pageCall.sql).not.toContain('WHERE (o.promo_label LIKE ?')
+    expect(pageCall.sql).not.toContain('WHERE s.slug = ?')
     // The filters ride the count too — the total describes the filtered set.
     const totalCall = prepareCalls.find((call) => call.sql.includes('-- promos-review: total'))!
     expect(totalCall.params).toEqual([

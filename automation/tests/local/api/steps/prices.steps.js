@@ -871,4 +871,151 @@ defineFeature(feature, (test) => {
       expect(ctx.responseBody).toEqual({ types: [], total: 0 })
     })
   })
+
+  // --- Promo review (issue #717) ---
+
+  test('Promo review requires an admin (#717)', ({ given, and, when, then }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a valid price snapshot has been pushed', async () => {
+      await pushJsonSnapshot(priceSnapshot())
+      ctx.expectStatus(200)
+    })
+
+    when(/I send an unauthenticated GET request to (\S+)/, async (path) => {
+      const saved = ctx.headers
+      ctx.headers = { ...ctx.headers } // no Cookie → unauthenticated
+      delete ctx.headers.Cookie
+      await ctx.sendRequest('GET', path)
+      ctx.headers = saved
+    })
+
+    then('the response status should be 401', () => {
+      ctx.expectStatus(401)
+    })
+  })
+
+  test('Promo review lists every promo row with its verbatim label (#717)', ({
+    given,
+    and,
+    when,
+    then,
+  }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a valid price snapshot has been pushed', async () => {
+      await pushJsonSnapshot(priceSnapshot())
+      ctx.expectStatus(200)
+    })
+
+    and('I am authenticated as a test user', async () => {
+      await ctx.authenticate()
+    })
+
+    when('I request the promo review', async () => {
+      await ctx.sendRequest('GET', '/api/admin/prices/promos/review')
+      // Stash the body: the row-parity step later fires an explorer request
+      // that overwrites ctx.responseBody.
+      ctx.promoReviewBody = ctx.responseBody
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and('the promo review response should be private and no-cache', () => {
+      expect(ctx.response.headers.get('Cache-Control')).toBe('private, no-cache')
+    })
+
+    and('the promo review should list one row per promo-evidence observation', async () => {
+      // The review shares the explorer's current-set predicate: its rows are
+      // exactly the explorer's promo-evidence rows (latest observation per
+      // (product, source) at or above the confidence floor).
+      await ctx.sendRequest('GET', '/api/prices')
+      const evidenceRows = ctx.responseBody.items.filter(hasPromoEvidence)
+      expect(ctx.promoReviewBody.total).toBe(evidenceRows.length)
+      expect(ctx.promoReviewBody.items).toHaveLength(evidenceRows.length)
+    })
+
+    and(/the promo review labels should be exactly "(.+)"/, (expected) => {
+      const labels = ctx.promoReviewBody.items.map((row) => row.promo_label).sort()
+      expect(labels).toEqual(expected.split(',').sort())
+    })
+  })
+
+  test('Promo review filters by store and search text (#717)', ({ given, and, when, then }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a valid price snapshot has been pushed', async () => {
+      await pushJsonSnapshot(priceSnapshot())
+      ctx.expectStatus(200)
+    })
+
+    and('I am authenticated as a test user', async () => {
+      await ctx.authenticate()
+    })
+
+    when(/I request the promo review with source "(.+)"/, async (source) => {
+      await ctx.sendRequest('GET', `/api/admin/prices/promos/review?source=${source}`)
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and(/every promo review row should be from store "(.+)"/, (slug) => {
+      expect(ctx.responseBody.items.length).toBeGreaterThan(0)
+      for (const row of ctx.responseBody.items) {
+        expect(row.source_slug).toBe(slug)
+      }
+    })
+
+    when(/I request the promo review with q "(.+)"/, async (q) => {
+      await ctx.sendRequest('GET', `/api/admin/prices/promos/review?q=${encodeURIComponent(q)}`)
+    })
+
+    then('the response status should still be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and(/the promo review labels should all contain "(.+)"/, (needle) => {
+      expect(ctx.responseBody.items.length).toBeGreaterThan(0)
+      for (const row of ctx.responseBody.items) {
+        expect(row.promo_label).toContain(needle)
+      }
+    })
+  })
+
+  test('Promo review is empty without promo observations (#717)', ({ given, and, when, then }) => {
+    given('the database has seed data', async () => {
+      await ctx.resetAndSeed()
+    })
+
+    and('a bulk catalogue of 3 single-source products has been pushed', async () => {
+      await pushJsonSnapshot(bulkCatalogueSnapshot(3))
+      ctx.expectStatus(200)
+    })
+
+    and('I am authenticated as a test user', async () => {
+      await ctx.authenticate()
+    })
+
+    when('I request the promo review', async () => {
+      await ctx.sendRequest('GET', '/api/admin/prices/promos/review')
+    })
+
+    then('the response status should be 200', () => {
+      ctx.expectStatus(200)
+    })
+
+    and('the promo review should have no rows', () => {
+      expect(ctx.responseBody).toEqual({ items: [], total: 0 })
+    })
+  })
 })

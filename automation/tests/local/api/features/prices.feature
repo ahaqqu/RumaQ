@@ -168,3 +168,38 @@ Feature: Price data ingest and explorer
     When I request the promo catalog
     Then the response status should be 200
     And the promo catalog should have no groups
+
+  Scenario: Promo review requires an admin (#717)
+    Given the database has seed data
+    And a valid price snapshot has been pushed
+    When I send an unauthenticated GET request to /api/admin/prices/promos/review
+    Then the response status should be 401
+
+  Scenario: Promo review lists every promo row with its verbatim label (#717)
+    Given the database has seed data
+    And a valid price snapshot has been pushed
+    And I am authenticated as a test user
+    When I request the promo review
+    Then the response status should be 200
+    And the promo review response should be private and no-cache
+    And the promo review should list one row per promo-evidence observation
+    And the promo review labels should be exactly "Diskon 15%,Diskon 15%,Beli 1 gratis 1,Beli 2 gratis 1"
+
+  Scenario: Promo review filters by store and search text (#717)
+    Given the database has seed data
+    And a valid price snapshot has been pushed
+    And I am authenticated as a test user
+    When I request the promo review with source "superindo"
+    Then the response status should be 200
+    And every promo review row should be from store "superindo"
+    When I request the promo review with q "Diskon"
+    Then the response status should still be 200
+    And the promo review labels should all contain "Diskon"
+
+  Scenario: Promo review is empty without promo observations (#717)
+    Given the database has seed data
+    And a bulk catalogue of 3 single-source products has been pushed
+    And I am authenticated as a test user
+    When I request the promo review
+    Then the response status should be 200
+    And the promo review should have no rows

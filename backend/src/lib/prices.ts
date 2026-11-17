@@ -305,20 +305,26 @@ export async function getPromoReviewPage(
   const boundedOffset = Math.min(Math.max(Math.trunc(offset), 0), Number.MAX_SAFE_INTEGER)
   const order = PROMO_REVIEW_ORDERS[sort] ?? PROMO_REVIEW_ORDERS.date!
 
+  // The filters EXTEND the CTE's existing WHERE (LATEST_OBSERVATION_PREDICATE
+  // + PROMO_EVIDENCE) with AND clauses — a second WHERE would be a syntax
+  // error D1 only surfaces at run time (the unit fake does not parse SQL,
+  // which is exactly what the automation fixture caught). Columns stay
+  // table-qualified because the CTE's bare output names are not the WHERE
+  // scope: unqualified `name` is ambiguous between p.name and s.name.
   const filters: string[] = []
   const params: unknown[] = []
   if (q) {
     filters.push(
-      `(promo_label LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR brand LIKE ? ESCAPE '\\')`
+      `(o.promo_label LIKE ? ESCAPE '\\' OR p.name LIKE ? ESCAPE '\\' OR p.brand LIKE ? ESCAPE '\\')`
     )
     const pattern = `%${escapeLike(q)}%`
     params.push(pattern, pattern, pattern)
   }
   if (source) {
-    filters.push('source_slug = ?')
+    filters.push('s.slug = ?')
     params.push(source)
   }
-  const where = filters.length > 0 ? ` WHERE ${filters.join(' AND ')}` : ''
+  const where = filters.length > 0 ? ` AND ${filters.join(' AND ')}` : ''
 
   const [pageResult, totalResult] = await db.batch([
     db
