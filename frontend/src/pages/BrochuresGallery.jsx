@@ -74,8 +74,10 @@ function UserBrochureCard({ group, dateLabel, viewerUrl }) {
 // filter the catalog by store and observed date, browse a responsive grid of
 // current brochure pages. Lean by design — no match/confidence columns, no
 // ingestion metadata, no per-brochure product table; that QA surface stays
-// admin-side on /admin/catalog's Brochures QA tab. Filters and the grid
-// share the catalog-filter machinery with the QA view
+// admin-side on /admin/catalog's Brochures QA tab (whose cards open the same
+// viewer with ?admin=true, #716). The View link's viewer shows the
+// brochure's items as a lean table with no admin affordances (#716). Filters
+// and the grid share the catalog-filter machinery with the QA view
 // (useBrochureCatalogFilters + BrochuresFilterPanel).
 export function BrochuresGallery() {
   const { t, i18n } = useTranslation()

@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSearch } from '@tanstack/react-router'
 import { usePriceBrochures } from '../lib/queries/index.js'
+import { useMe } from '../lib/queries/me.js'
 import { Button } from '../components/Button.jsx'
 import { EmptyState } from '../components/EmptyState.jsx'
 import { BrandMark, IconSearch } from '../components/icons.jsx'
 import { BROCHURE_URL_PREFIX, observedDateLabel } from '../lib/pricesHelpers.js'
+import { cn } from '../lib/cn.js'
+import { BrochureReview } from './BrochureReview.jsx'
 
 // The URL segment is 'YYYYMMDD'; the shared label contract expects
 // 'YYYY-MM-DD', so bridge before formatting (the catalog's observed_date
@@ -27,13 +30,26 @@ function prettifySlug(slug) {
 }
 
 // The chrome-less full-mode brochure viewer (#674): a slim top bar (RumaQ
-// logo + the brochure title + Share) and the page image below it, phone-first
-// full width. No AppShell chrome renders here — the route sits outside the
-// _app layout — but the page is still Login-walled (the image proxy and the
-// catalog are session-authenticated).
+// logo + the brochure title + Share), the page image below it, and — since
+// #716 — the brochure's items panel under the image. The panel's variant
+// follows the SURFACE that opened the tab AND the viewer's identity (the
+// #673 enforcement idiom — "only /admin/catalog passes isAdmin"): the
+// /admin/catalog brochures-qa card composes ?admin=true and an admin session
+// gets the QA table with expandable ingestion metadata; everything else —
+// /prices?view=brochures, a shared plain link, a hand-typed ?admin=true by a
+// non-admin — stays items-only (lean variant, no admin affordances).
+// No AppShell chrome renders here — the route sits outside the _app layout —
+// but the page is still Login-walled (the image proxy and the catalog are
+// session-authenticated).
 export function BrochureViewerPage() {
   const { t, i18n } = useTranslation()
-  const { store, date, file } = useSearch({ strict: false })
+  const { store, date, file, admin } = useSearch({ strict: false })
+  // Identity gate on the QA variant: the flag alone marks which surface
+  // opened the tab; only an admin session may render QA affordances (#673).
+  // AuthGate has already resolved `me` before this page renders (it gates on
+  // the same ['me'] query), so this read is cache-only — no variant flash.
+  const { data: me } = useMe()
+  const adminMode = admin === 'true' && me?.user?.isAdmin === true
   // Same query key as the gallery: the title resolves from TanStack cache
   // when navigating in-app and from the persisted query cache on a cold
   // deep-link load; while it loads (or offline/errored) the title falls back
@@ -58,6 +74,19 @@ export function BrochureViewerPage() {
   const dateLabel = group
     ? observedDateLabel(group.observed_date, i18n.language)
     : viewerDateLabel(date, i18n.language)
+  // The items panel shares BrochureReview with the admin QA tab; the
+  // viewer's group is synthesized from the URL segments (the image src IS
+  // the canonical brochure_url) so the panel works while the catalog is still
+  // resolving — the head count then falls back to the items query's total.
+  const reviewGroup = useMemo(
+    () => ({
+      brochure_url: imageSrc,
+      source_name: storeName,
+      product_count: group?.product_count ?? null,
+      observed_date: group?.observed_date ?? null,
+    }),
+    [imageSrc, storeName, group]
+  )
   // The title must agree with the body: the body renders the unavailable
   // EmptyState whenever any segment was dropped by validateSearch, so gating
   // the title on `store` alone would hang a dangling "Lotte Mart · " (or a
@@ -154,6 +183,22 @@ export function BrochureViewerPage() {
           </div>
         )}
       </div>
+
+      {hasBrochure && (
+        // #716: the brochure's items under the image. The QA variant gets the
+        // wider column (matching the top bar) so the admin table scrolls
+        // less; the lean variant keeps the image column.
+        <div
+          data-testid="viewer-items"
+          className={cn('w-full mx-auto px-4 pb-10', adminMode ? 'max-w-[720px]' : 'max-w-[560px]')}
+        >
+          <BrochureReview
+            group={reviewGroup}
+            dateLabel={dateLabel}
+            variant={adminMode ? 'qa' : 'lean'}
+          />
+        </div>
+      )}
     </div>
   )
 }

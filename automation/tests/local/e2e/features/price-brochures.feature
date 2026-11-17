@@ -4,9 +4,11 @@ Feature: User brochure gallery and the admin QA tab
   none of the ingestion-QA fields (issue #673). Each card carries an
   explicit View link (#674) that opens the chrome-less full-mode viewer in a
   new browser tab: no left menu, no site header, just the RumaQ logo, the
-  brochure title, a Share button, and the page image. The #630 QA browser
-  stays admin-side as the /admin/catalog Brochures QA tab: selecting a card
-  opens the full product table and a row expands its metadata in place. One
+  brochure title, a Share button, the page image, and the brochure's items
+  as a lean items-only table (#716). The #630 QA browser stays admin-side as
+  the /admin/catalog Brochures QA tab: since #716 clicking a card opens the
+  SAME viewer in a NEW tab with ?admin=true, where the items table gains the
+  QA columns and each row expands its ingestion metadata in place. One
   fixture image is uploaded through the internal PUT endpoint; the other
   card's object is deliberately never uploaded so the fallback block can be
   asserted.
@@ -32,16 +34,25 @@ Feature: User brochure gallery and the admin QA tab
     When I navigate to "/prices?view=brochures#gula-pasir--gulaku--1-kg"
     Then I should land on the products view with "Gula Pasir Gulaku 1 kg" expanded
 
-  Scenario: The admin Brochures QA tab reviews products and metadata in place
+  Scenario: The prices viewer shows the brochure's items only (#716)
+    Given a brochure snapshot has been pushed with one image uploaded
+    And I am logged in as the seeded test user
+    When I navigate to "/prices?view=brochures"
+    And I open the "Lotte Mart" brochure viewer from its card
+    Then the viewer tab should render the full mode for "Lotte Mart"
+    And the viewer tab should show the items list with "Gula Pasir Gulaku 1 kg" and no QA affordances
+
+  Scenario: The admin Brochures QA card opens the QA viewer in a new tab (#716)
     Given a brochure snapshot has been pushed with one image uploaded
     And I am logged in as the seeded test user
     When I navigate to "/admin/catalog?tab=brochures-qa"
-    And I select the "Lotte Mart" brochure card
-    Then the brochure review should show "Gula Pasir Gulaku 1 kg"
-    And I expand the "Gula Pasir Gulaku 1 kg" product row
+    And I open the "Lotte Mart" brochure viewer from its QA card
+    Then the viewer tab should render the full mode for "Lotte Mart"
+    And the viewer tab should render the QA items table with "Gula Pasir Gulaku 1 kg"
+    And I expand the "Gula Pasir Gulaku 1 kg" product row in the viewer
     Then the ingestion metadata should show the product key, store, and brochure URL
-    And the brochure QA view should have no critical or serious axe violations
-    And I should stay on the admin catalog brochures QA tab
+    And the viewer tab should have no critical or serious axe violations
+    And I should stay on the admin catalog brochures QA tab without an in-place review
 
   Scenario: Empty brochure catalog renders the gallery empty state
     Given a promo-free price snapshot has been pushed

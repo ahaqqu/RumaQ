@@ -283,10 +283,18 @@ function asSearchSegment(value) {
 // validateSearch for /brochures/view: keep well-shaped segments, drop
 // anything else (TanStack strips undefined values, so the page renders its
 // calm missing-brochure state instead of requesting a URL that must 404).
-export function resolveBrochureViewerSearch({ store, date, file } = {}) {
+//
+// ?admin=true marks the viewer link as opened from the admin QA surface
+// (issue #716): the card on /admin/catalog's brochures-qa tab composes it.
+// The viewer additionally gates the QA variant on the session's isAdmin (the
+// #673 identity rule — see BrochureViewerPage), so the flag alone never
+// renders QA affordances. The Share button composes the plain viewer link
+// without the flag.
+export function resolveBrochureViewerSearch({ store, date, file, admin } = {}) {
   const rawStore = asSearchSegment(store)
   const rawDate = asSearchSegment(date)
   const rawFile = asSearchSegment(file)
+  const rawAdmin = asSearchSegment(admin)
   return {
     store:
       rawStore !== undefined && rawStore.length <= 100 && VIEWER_STORE_PATTERN.test(rawStore)
@@ -300,6 +308,7 @@ export function resolveBrochureViewerSearch({ store, date, file } = {}) {
       VIEWER_FILENAME_PATTERN.test(rawFile)
         ? rawFile
         : undefined,
+    admin: rawAdmin === 'true' ? 'true' : undefined,
   }
 }
 
@@ -315,12 +324,14 @@ export function parseBrochureUrl(brochureUrl) {
 }
 
 // The viewer deep link for a brochure_url, or null when the URL is not the
-// canonical shape (the card then renders no View affordance).
-export function brochureViewerUrl(brochureUrl) {
+// canonical shape (the card then renders no View affordance). { admin: true }
+// appends ?admin=true marking the admin QA surface (issue #716) — the viewer
+// still gates the QA variant on the session's isAdmin (#673).
+export function brochureViewerUrl(brochureUrl, { admin = false } = {}) {
   const parsed = parseBrochureUrl(brochureUrl)
   if (!parsed) return null
   const { store, date, file } = parsed
   return `/brochures/view?store=${encodeURIComponent(store)}&date=${encodeURIComponent(
     date
-  )}&file=${encodeURIComponent(file)}`
+  )}&file=${encodeURIComponent(file)}${admin ? '&admin=true' : ''}`
 }
