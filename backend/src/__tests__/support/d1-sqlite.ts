@@ -53,15 +53,21 @@ export function createD1Adapter(sqlite: Db, guard?: (sql: string) => void): D1Da
   return {
     prepare: (sql: string) => {
       guard?.(sql)
+      const statement = (params: unknown[]) => ({
+        first: async <T>() => (sqlite.prepare(sql).get(...params) as T | undefined) ?? null,
+        all: async <T>() => ({ results: sqlite.prepare(sql).all(...params) as T[] }),
+        run: async () => runBound(sql, params),
+        // The batch() form of a bound statement — not part of the D1 surface
+        // every production driver touches, but batch() must accept it.
+        batchResult: async () => batchResult(sql, params),
+      })
       return {
-        bind: (...params: unknown[]) => ({
-          first: async <T>() => (sqlite.prepare(sql).get(...params) as T | undefined) ?? null,
-          all: async <T>() => ({ results: sqlite.prepare(sql).all(...params) as T[] }),
-          run: async () => runBound(sql, params),
-          // The batch() form of this bound statement — not part of the D1
-          // surface the production code touches.
-          batchResult: async () => batchResult(sql, params),
-        }),
+        bind: (...params: unknown[]) => statement(params),
+        // D1 also accepts the bind-less form directly (the ingest's
+        // `UPDATE canonical_index_state SET version = version + 1` rides one
+        // in batch, and the version read calls .first() on a bare prepare),
+        // so the unbound statement carries the same surface.
+        ...statement([]),
       }
     },
     batch: async (stmts: Array<{ batchResult: () => Promise<unknown> }>) => {
