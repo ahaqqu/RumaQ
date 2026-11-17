@@ -64,6 +64,19 @@ scope_gate_main() {
     return 0
   fi
 
+  # The table decides from here on: a table the gate cannot read is a gate
+  # that cannot decide — the machine table's error row, not a silent
+  # fail-safe run (audit M1).
+  if [ ! -r "$SCOPE_TABLE" ]; then
+    printf '%s: skippable-path table is missing or unreadable: %s\n' "$label" "$SCOPE_TABLE" >&2
+    exit 3
+  fi
+
+  if [ -z "$(printf '%s' "$changed" | tr -d '[:space:]')" ]; then
+    printf 'run %s: no change set available — running (fail safe)\n' "$label"
+    return 0
+  fi
+
   local skipped=true
   while IFS= read -r path; do
     [ -z "$path" ] && continue

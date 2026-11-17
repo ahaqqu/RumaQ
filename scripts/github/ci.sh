@@ -15,16 +15,20 @@ export CHANGED_PATHS
 # scope_gate prints the gate's reason line to the log and echoes only the
 # verdict word.
 scope_gate() {
-  local gate=$1 out
+  local gate=$1 out verdict
   shift
   out="$(bash "$ROOT_DIR/scripts/github/$gate" "$@")" || {
     echo "  scope gate $gate errored — failing the job" >&2
     return 1
   }
-  case "$out" in
-    run* | skip*)
+  # The verdict is the WORD (first token), matched exactly: a stray line
+  # before the verdict or a typo'd word ("runner") must fail the job, never
+  # fall through a caller's case as neither run nor skip.
+  verdict=${out%%[[:space:]]*}
+  case "$verdict" in
+    run | skip)
       printf '  %s\n' "$out" >&2
-      printf '%s\n' "${out%%[[:space:]]*}"
+      printf '%s\n' "$verdict"
       ;;
     *)
       echo "  scope gate $gate printed no verdict: $out" >&2

@@ -24,16 +24,19 @@ fail() {
 }
 
 # expect <name> <run|skip> <path>...
-# Asserts the verdict WORD — stdout's first token with exit 0 (audit M1) —
-# not an exit code: skip is a verdict now, not a non-zero exit.
+# Asserts the verdict WORD — stdout's first token with exit 0, matched
+# exactly (audit M1) — not an exit code: skip is a verdict now, not a
+# non-zero exit, and a typo'd word is an error, not a run.
 expect() {
   local name=$1 want=$2 out got
   shift 2
   if out="$(printf '%s\n' "$@" | bash "$SCOPE" --from-stdin 2>/dev/null)"; then
-    case "$out" in
-      run*) got=run ;;
-      skip*) got=skip ;;
-      *) got="bad-verdict:${out%%[[:space:]]*}" ;;
+    # The verdict is the WORD (first token), matched exactly, the same way
+    # every production consumer reads it (audit M1).
+    got=${out%%[[:space:]]*}
+    case "$got" in
+      run | skip) ;;
+      *) got="bad-verdict:$got" ;;
     esac
   else
     got=error

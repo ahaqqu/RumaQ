@@ -60,11 +60,12 @@ jobs:
             exit 1
           }
           echo "lighthouse-scope: $verdict"
-          case "$verdict" in
-            run*)
+          verdict_word="${verdict%%[[:space:]]*}"
+          case "$verdict_word" in
+            run)
               echo "run=true" >> "$GITHUB_OUTPUT"
               ;;
-            skip*)
+            skip)
               echo "run=false" >> "$GITHUB_OUTPUT"
               echo "Lighthouse CI: skipped for this change set"
               ;;

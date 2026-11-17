@@ -28,17 +28,20 @@ fail() {
   failures=$((failures + 1))
 }
 
-# expect <suite> <name> <run|skip> <path>...
-# Asserts the verdict WORD — stdout's first token with exit 0 (audit M1) —
-# not an exit code: skip is a verdict now, not a non-zero exit.
+# expect <name> <run|skip> <path>...
+# Asserts the verdict WORD — stdout's first token with exit 0, matched
+# exactly (audit M1) — not an exit code: skip is a verdict now, not a
+# non-zero exit, and a typo'd word is an error, not a run.
 expect() {
   local suite=$1 name=$2 want=$3 out got
   shift 3
   if out="$(printf '%s\n' "$@" | bash "$SCOPE" "$suite" --from-stdin 2>/dev/null)"; then
-    case "$out" in
-      run*) got=run ;;
-      skip*) got=skip ;;
-      *) got="bad-verdict:${out%%[[:space:]]*}" ;;
+    # The verdict is the WORD (first token), matched exactly, the same way
+    # every production consumer reads it (audit M1).
+    got=${out%%[[:space:]]*}
+    case "$got" in
+      run | skip) ;;
+      *) got="bad-verdict:$got" ;;
     esac
   else
     got=error
@@ -105,6 +108,23 @@ expect backend 'empty set runs'         run  ''
 # --- the verdict protocol itself (audit M1) ---
 expect_error 'bad suite errors' bad-suite
 expect_error 'bad flag errors'  frontend --bogus
+
+# expect_error against an unreadable skippable table — the machine table's
+# error row ("bad list"): the gate must fail, never fall back to a silent
+# run. Pins scope_gate_main for all four gates, which share this table.
+skippable_table="$ROOT_DIR/scripts/github/skippable-paths.txt"
+mv "$skippable_table" "$skippable_table.offline-guard"
+out=''
+code=0
+# A non-empty change set: the empty-set fail-safe runs before the table is
+# consulted, so only a real decision exercises the unreadable-table error.
+out="$(printf 'backend/src/apps/api.ts\n' | bash "$SCOPE" frontend --from-stdin 2>/dev/null)" || code=$?
+mv "$skippable_table.offline-guard" "$skippable_table"
+if [ "$code" -ne 0 ] && [ -z "$out" ]; then
+  pass 'unreadable table errors'
+else
+  fail "unreadable table errors (exit $code, stdout: ${out:-<empty>})"
+fi
 
 if [ "$failures" -eq 0 ]; then
   echo 'unit-test-scope: ok'
