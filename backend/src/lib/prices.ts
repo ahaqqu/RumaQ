@@ -284,11 +284,16 @@ const PROMO_REVIEW_BASE = `WITH base AS (
 
 // Sort orders the owner flips between while spotting chip classes (issue
 // #717): `date` fronts the latest scrape run, `store` groups one store's
-// items, `name` groups one item across stores.
+// items, `name` groups one item across stores. Every chain ends on a column
+// that is unique per row — rows are one per (product, source), so
+// (product_key, source_slug) closes the chain. Without the final source_slug
+// tiebreak the `name` order can tie two stores of one product on the same
+// observed_date, and OFFSET paging then skips/duplicates a row at page
+// boundaries.
 const PROMO_REVIEW_ORDERS: Record<string, string> = {
   date: 'observed_date DESC, source_slug ASC, name COLLATE NOCASE ASC, product_key ASC',
   store: 'source_slug ASC, name COLLATE NOCASE ASC, product_key ASC, observed_date DESC',
-  name: 'name COLLATE NOCASE ASC, product_key ASC, observed_date DESC',
+  name: 'name COLLATE NOCASE ASC, product_key ASC, observed_date DESC, source_slug ASC',
 }
 
 /**

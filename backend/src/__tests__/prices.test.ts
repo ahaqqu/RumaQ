@@ -933,6 +933,20 @@ describe('GET /api/admin/prices/promos/review', () => {
     expect(bigLimit.status).toBe(400)
   })
 
+  it('closes the name sort with the per-row-unique source tiebreak', async () => {
+    // Rows are one per (product, source): two stores of one product share
+    // name, product_key and often observed_date. Without the trailing
+    // source_slug, OFFSET paging can skip or duplicate a row at a page
+    // boundary exactly there.
+    const { env, prepareCalls } = createPricesEnv({ promoReviewPage: [] })
+    await apiApp.request('/api/admin/prices/promos/review?sort=name', {}, env)
+
+    const pageCall = prepareCalls.find((call) => call.sql.includes('-- promos-review: page'))!
+    expect(pageCall.sql).toContain(
+      'ORDER BY name COLLATE NOCASE ASC, product_key ASC, observed_date DESC, source_slug ASC'
+    )
+  })
+
   it('declares the response schema in the OpenAPI spec', async () => {
     const specs = (await generateSpecs(apiApp, {
       documentation: { info: { title: 'RumaQ API', version: '0.1.0' } },
