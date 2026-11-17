@@ -39,7 +39,7 @@
     "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^5.1.0",
     "concurrently": "^10.0.7",
-    "hono-openapi": "^1.5.0",
+    "hono-openapi": "^1.6.0",
     "husky": "^9.1.7",
     "jest-cucumber": "^4.5.0",
     "miniflare": "^4.20260730.0",
