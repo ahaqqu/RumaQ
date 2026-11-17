@@ -284,12 +284,12 @@ function asSearchSegment(value) {
 // anything else (TanStack strips undefined values, so the page renders its
 // calm missing-brochure state instead of requesting a URL that must 404).
 //
-// ?admin=true switches the items panel into the admin QA variant (issue
-// #716): the link from /admin/catalog's brochures-qa tab composes it, so the
-// SURFACE decides the affordance — from prices the same viewer stays
-// items-only. It is a presentation flag only: the items endpoint ships the
-// same fields to every entitled user, and the Share button composes the
-// plain viewer link without it.
+// ?admin=true marks the viewer link as opened from the admin QA surface
+// (issue #716): the card on /admin/catalog's brochures-qa tab composes it.
+// The viewer additionally gates the QA variant on the session's isAdmin (the
+// #673 identity rule — see BrochureViewerPage), so the flag alone never
+// renders QA affordances. The Share button composes the plain viewer link
+// without the flag.
 export function resolveBrochureViewerSearch({ store, date, file, admin } = {}) {
   const rawStore = asSearchSegment(store)
   const rawDate = asSearchSegment(date)
@@ -325,7 +325,8 @@ export function parseBrochureUrl(brochureUrl) {
 
 // The viewer deep link for a brochure_url, or null when the URL is not the
 // canonical shape (the card then renders no View affordance). { admin: true }
-// appends ?admin=true so the viewer renders the QA items panel (issue #716).
+// appends ?admin=true marking the admin QA surface (issue #716) — the viewer
+// still gates the QA variant on the session's isAdmin (#673).
 export function brochureViewerUrl(brochureUrl, { admin = false } = {}) {
   const parsed = parseBrochureUrl(brochureUrl)
   if (!parsed) return null

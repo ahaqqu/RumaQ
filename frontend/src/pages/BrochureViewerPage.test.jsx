@@ -38,7 +38,10 @@ vi.mock('../lib/queries/index.js', () => ({
   useBrochureProducts: vi.fn(),
 }))
 
+vi.mock('../lib/queries/me.js', () => ({ useMe: vi.fn() }))
+
 import { usePriceBrochures, useBrochureProducts } from '../lib/queries/index.js'
+import { useMe } from '../lib/queries/me.js'
 
 // The viewer reads the route's validated search params; the test pins them
 // here instead of booting a router (the same idiom as AppShell.test.jsx's
@@ -204,6 +207,7 @@ describe('BrochureViewerPage — chrome-less render (#674)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     searchState.search = VIEWER_SEARCH
+    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
     vi.mocked(usePriceBrochures).mockReturnValue({ data: { groups } })
     vi.mocked(useBrochureProducts).mockReturnValue(productPage())
   })
@@ -284,6 +288,7 @@ describe('BrochureViewerPage — share (#674)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     searchState.search = VIEWER_SEARCH
+    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
     vi.mocked(usePriceBrochures).mockReturnValue({ data: { groups } })
     vi.mocked(useBrochureProducts).mockReturnValue(productPage())
   })
@@ -359,6 +364,7 @@ describe('BrochureViewerPage — items panel, prices mode (#716)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     searchState.search = VIEWER_SEARCH
+    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
     vi.mocked(usePriceBrochures).mockReturnValue({ data: { groups } })
     vi.mocked(useBrochureProducts).mockReturnValue(productPage())
   })
@@ -446,6 +452,7 @@ describe('BrochureViewerPage — items panel, admin mode ?admin=true (#716)', ()
   beforeEach(() => {
     vi.clearAllMocks()
     searchState.search = { ...VIEWER_SEARCH, admin: 'true' }
+    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: true } } })
     vi.mocked(usePriceBrochures).mockReturnValue({ data: { groups } })
     vi.mocked(useBrochureProducts).mockReturnValue(productPage())
   })
@@ -470,6 +477,21 @@ describe('BrochureViewerPage — items panel, admin mode ?admin=true (#716)', ()
       'Products ingested from the Lotte Mart brochure of October 28, 2026'
     )
     expect(text(container.querySelector('#brochure-review'))).toContain('7 products')
+  })
+
+  it('degrades a hand-typed ?admin=true by a non-admin to the lean panel (#673)', () => {
+    // The flag marks which surface opened the tab; only an admin session may
+    // render the QA affordances (the ProductsView "only /admin/catalog passes
+    // isAdmin" idiom). The items data is entitlement-gated, not admin-gated —
+    // so the non-admin still gets the same items, lean.
+    vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
+    const { container } = renderViewer()
+    const headers = [...container.querySelectorAll('thead th')].map((th) => th.textContent)
+    expect(headers).toEqual(['Product', 'Unit', 'Price', 'Promo'])
+    expect(container.querySelector('button[aria-expanded]')).toBeNull()
+    expect(container.querySelector('[data-testid="viewer-items"]').className).toContain(
+      'max-w-[560px]'
+    )
   })
 
   it('expands a row into the full ingestion metadata and closes it again', () => {

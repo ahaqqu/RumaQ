@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSearch } from '@tanstack/react-router'
 import { usePriceBrochures } from '../lib/queries/index.js'
+import { useMe } from '../lib/queries/me.js'
 import { Button } from '../components/Button.jsx'
 import { EmptyState } from '../components/EmptyState.jsx'
 import { BrandMark, IconSearch } from '../components/icons.jsx'
@@ -31,16 +32,24 @@ function prettifySlug(slug) {
 // The chrome-less full-mode brochure viewer (#674): a slim top bar (RumaQ
 // logo + the brochure title + Share), the page image below it, and — since
 // #716 — the brochure's items panel under the image. The panel's variant
-// follows the SURFACE that opened the tab: the /admin/catalog brochures-qa
-// card composes ?admin=true and gets the QA table with expandable ingestion
-// metadata; from /prices?view=brochures the same viewer stays items-only
-// (lean variant, no admin affordances). No AppShell chrome renders here —
-// the route sits outside the _app layout — but the page is still
-// Login-walled (the image proxy and the catalog are session-authenticated).
+// follows the SURFACE that opened the tab AND the viewer's identity (the
+// #673 enforcement idiom — "only /admin/catalog passes isAdmin"): the
+// /admin/catalog brochures-qa card composes ?admin=true and an admin session
+// gets the QA table with expandable ingestion metadata; everything else —
+// /prices?view=brochures, a shared plain link, a hand-typed ?admin=true by a
+// non-admin — stays items-only (lean variant, no admin affordances).
+// No AppShell chrome renders here — the route sits outside the _app layout —
+// but the page is still Login-walled (the image proxy and the catalog are
+// session-authenticated).
 export function BrochureViewerPage() {
   const { t, i18n } = useTranslation()
   const { store, date, file, admin } = useSearch({ strict: false })
-  const adminMode = admin === 'true'
+  // Identity gate on the QA variant: the flag alone marks which surface
+  // opened the tab; only an admin session may render QA affordances (#673).
+  // AuthGate has already resolved `me` before this page renders (it gates on
+  // the same ['me'] query), so this read is cache-only — no variant flash.
+  const { data: me } = useMe()
+  const adminMode = admin === 'true' && me?.user?.isAdmin === true
   // Same query key as the gallery: the title resolves from TanStack cache
   // when navigating in-app and from the persisted query cache on a cold
   // deep-link load; while it loads (or offline/errored) the title falls back

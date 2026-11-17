@@ -130,8 +130,9 @@ function BrochureProductMetadata({ product, brochureDateLabel }) {
 // /prices viewer's items-only panel — keeps the shopper columns (name, unit,
 // price, promo) and drops the QA ones (effective unit price, category, match)
 // together with the expand affordance, matching the #673 lean-by-design rule
-// that the user surface renders none of the ingestion fields.
-function BrochureProductsTable({ items, brochureDateLabel, variant = 'qa' }) {
+// that the user surface renders none of the ingestion fields. The default is
+// 'lean' so a future caller that forgets the prop can never leak QA columns.
+function BrochureProductsTable({ items, brochureDateLabel, variant = 'lean' }) {
   const { t } = useTranslation()
   // One expanded metadata panel at a time keeps the table scannable; the
   // toggle button in the first cell is the keyboard path (the row click is a
@@ -301,8 +302,9 @@ function BrochureProductsTable({ items, brochureDateLabel, variant = 'qa' }) {
 // "Showing N of M" and a Load more action while pages remain. The head count
 // prefers the catalog group's product_count (instant on the QA tab) and falls
 // back to the query total once it loads (the viewer may render before the
-// catalog has resolved).
-export function BrochureReview({ group, dateLabel, variant = 'qa' }) {
+// catalog has resolved). The variant defaults to 'lean' (#673): the QA table
+// must be opted into explicitly, never arrived at by forgetting a prop.
+export function BrochureReview({ group, dateLabel, variant = 'lean' }) {
   const { t } = useTranslation()
   const { data, isLoading, isError, error, hasNextPage, fetchNextPage, isFetchingNextPage } =
     useBrochureProducts(group.brochure_url)

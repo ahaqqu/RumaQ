@@ -127,8 +127,9 @@ Then('the gallery should show no ingestion-QA metadata', async ({ page }) => {
 
 // ——— #716: both surfaces select through the viewer's items panel ———
 
-// The admin QA card is itself the link: it composes ?admin=true so the
-// viewer renders the QA items table. The click opens a top-level blank
+// The admin QA card is itself the link: it composes ?admin=true and the
+// admin session (the seeded user) satisfies the viewer's identity gate, so
+// the new tab renders the QA items table. The click opens a top-level blank
 // navigation — the SameSite=Lax session cookie rides along, so the new tab
 // authenticates itself (the gallery View-link precedent).
 When('I open the {string} brochure viewer from its QA card', async ({ page }, store) => {
@@ -136,8 +137,8 @@ When('I open the {string} brochure viewer from its QA card', async ({ page }, st
   const [opened] = await Promise.all([page.context().waitForEvent('page'), card.click()])
   viewerPage = opened
   await viewerPage.getByTestId('viewer-topbar').waitFor({ state: 'visible', timeout: 15_000 })
-  // The admin flag is on the deep link the card composed — it is what turns
-  // the items panel into the QA variant.
+  // The admin flag is on the deep link the card composed — with the seeded
+  // admin session it turns the items panel into the QA variant.
   await expect(viewerPage).toHaveURL(/\/brochures\/view\?.*&admin=true$/)
 })
 
