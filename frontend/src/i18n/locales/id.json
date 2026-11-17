@@ -354,6 +354,8 @@
     "selectStore": "Pilih toko...",
     "itemName": "Nama item",
     "keepNew": "— Item baru —",
+    "matchExistingItem": "Cocokkan ke item yang sudah ada",
+    "unit": "Satuan",
     "itemsRead_other": "{{count}} item terbaca",
     "stockAdded_other": "Stok bertambah {{count}} item"
   },
@@ -1084,6 +1086,8 @@
   },
   "error": {
     "title": "Terjadi kesalahan",
+    "desc": "Terjadi kendala. Coba lagi sebentar lagi.",
+    "retry": "Coba lagi",
     "offline": "Anda sedang offline — periksa koneksi Anda, lalu coba lagi.",
     "timeout": "Permintaan kehabisan waktu — coba lagi.",
     "http": "Server mengalami masalah — coba lagi beberapa saat lagi."

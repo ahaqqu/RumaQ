@@ -51,7 +51,7 @@ function classifyError(err) {
   return { kind: 'other', message: msg }
 }
 
-export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
+export function Assistant({ open, onOpen, onClose, onNavigate }) {
   const { t } = useTranslation()
   const [input, setInput] = useState('')
   const [reply, setReply] = useState(null)
@@ -63,11 +63,11 @@ export function Assistant({ open, onOpen, onClose, aiKey, onNavigate }) {
 
   // #523 P3: connectivity is the household's capability status, not the retired
   // `has_ai_key` / `server_ai_available` fields (the columns are gone and the
-  // platform key is retired — D8). A key held in the browser from before the
-  // provider split still counts until P5 removes that path.
+  // platform key is retired — D8). The pre-split browser key path is gone too
+  // (audit L7/C5): a stale localStorage secret must not light the dot for a
+  // request that would never carry it.
   // Chat is a reasoning call (#523 P4): gate on that capability alone.
-  const hasBackendKey = isAiConfigured(settings?.ai_status, 'reasoning')
-  const isConnected = Boolean(aiKey) || hasBackendKey
+  const isConnected = isAiConfigured(settings?.ai_status, 'reasoning')
 
   // Shared metering model; null while the usage query loads — the status dot
   // still shows (connected is known), just without a usage count. No limit

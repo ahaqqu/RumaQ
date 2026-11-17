@@ -5,10 +5,10 @@ The test and check scripts print failures only. The full output is written to
 
 ## Unit test
 
-| Location                          | Runner | Environment | Coverage                                                    |
-| --------------------------------- | ------ | ----------- | ----------------------------------------------------------- |
-| `frontend/src/**/*.test.{js,jsx}` | Vitest | jsdom       | 50/50/50/50                                                 |
-| `backend/src/**/*.test.ts`        | Vitest | Node        | 50/50/50/50 (real SQLite (node:sqlite), migrations applied) |
+| Location                          | Runner | Environment                                                                          | Coverage                                                    |
+| --------------------------------- | ------ | ------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `frontend/src/**/*.test.{js,jsx}` | Vitest | jsdom — two projects: `frontend` (vmThreads) and `frontend-dom` (forks, api.test.js) | 50/50/50/50                                                 |
+| `backend/src/**/*.test.ts`        | Vitest | Node                                                                                 | 50/50/50/50 (real SQLite (node:sqlite), migrations applied) |
 
 ```
 ./scripts/test.sh unit

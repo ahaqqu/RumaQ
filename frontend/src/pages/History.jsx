@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { formatHouseholdMoney as formatRp } from '../lib/household-money.js'
+import { formatMoney as formatRp } from '../lib/money.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { personaText } from '../lib/persona.js'
 import { IconSpark } from '../components/icons.jsx'

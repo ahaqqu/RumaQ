@@ -109,7 +109,7 @@ export function AppShell({ children }) {
   // — exact-match-equivalent here because every nav target is a flat,
   // param-less route.
   const { pathname } = useLocation()
-  const { aiKey, assistantOpen, setAssistantOpen } = useApp()
+  const { assistantOpen, setAssistantOpen } = useApp()
   const { data: me } = useMe()
   const { data: settings } = useSettings()
   const updateSettings = useUpdateSettings()
@@ -539,7 +539,6 @@ export function AppShell({ children }) {
         open={assistantOpen}
         onOpen={() => setAssistantOpen(true)}
         onClose={() => setAssistantOpen(false)}
-        aiKey={aiKey}
         onNavigate={(view) => navigate({ to: `/${view === 'home' ? '' : view}` })}
       />
     </div>
