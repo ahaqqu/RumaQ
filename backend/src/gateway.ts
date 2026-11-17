@@ -12,6 +12,8 @@ import { logDueDocumentReminders } from './lib/document-expiry.js'
 import { PURGE_TICK_OBJECT_BUDGET, runPluginPurgeTick } from './lib/plugin-purge.js'
 import { runReviewAiSweep } from './lib/review-ai.js'
 import { csrfOriginGuard } from './lib/csrf.js'
+import { INTERNAL_ERROR_BODY } from './lib/hono-error.js'
+import { NO_CACHE } from './lib/request.js'
 import { REVIEW_AI_CRON_SCHEDULE } from './cron-schedules.js'
 
 const AUTH_ROUTES = new Set([
@@ -42,105 +44,142 @@ function missingSecrets(env: Env['Bindings']): string[] {
   return missing
 }
 
+async function dispatch(
+  request: Request,
+  env: Env['Bindings'],
+  ctx: ExecutionContext
+): Promise<Response> {
+  const missing = missingSecrets(env)
+  if (missing.length > 0) {
+    return new Response(
+      JSON.stringify({
+        error: `Worker misconfigured; missing required secrets: ${missing.join(', ')}`,
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    )
+  }
+
+  const url = new URL(request.url)
+  const path = url.pathname
+
+  if (isApiPath(path)) {
+    // CSRF (ahaqqu/RumaQ#528): reject a cross-origin state-changing browser
+    // request before ANY app handler runs. This is the single choke point —
+    // every domain app and plugin dispatched below (and CachedApi) is behind
+    // it, so a new app cannot ship an unguarded write. Policy and
+    // exemptions live in lib/csrf.ts.
+    const csrfRejection = csrfOriginGuard(request, env)
+    if (csrfRejection) return csrfRejection
+
+    if (AUTH_ROUTES.has(path)) {
+      const adjustedUrl = new URL(request.url)
+      adjustedUrl.pathname = path.replace(/^\/api\/auth/, '')
+      const adjustedRequest = new Request(adjustedUrl.toString(), request)
+      return authApp.fetch(adjustedRequest, env, ctx)
+    }
+
+    // Household member management (ahaqqu/RumaQ#331) is its own domain app
+    // (backend conventions: one app per domain) — dispatched before the
+    // general apiApp fallthrough. Core domain, not a plugin: enablement is
+    // not a household choice here.
+    if (path === '/api/households' || path.startsWith('/api/households/')) {
+      return householdsApp.fetch(request, env, ctx)
+    }
+
+    // Household tasks (ahaqqu/RumaQ#429) — same domain-app pattern.
+    if (path === '/api/tasks' || path.startsWith('/api/tasks/')) {
+      return tasksApp.fetch(request, env, ctx)
+    }
+
+    // Household calendar (ahaqqu/RumaQ#430) — core domain, NOT a plugin:
+    // the shared family calendar (stored events + derive-on-read document
+    // deadlines) is a household fixture like tasks, not an enablement
+    // choice. One app, one prefix: /api/calendar serves the view union,
+    // /api/calendar/events the stored-event CRUD.
+    if (path === '/api/calendar' || path.startsWith('/api/calendar/')) {
+      return calendarApp.fetch(request, env, ctx)
+    }
+
+    // Plugin settings catalog (ahaqqu/RumaQ#437, plugin architecture §4.5):
+    // the CORE-owned enablement surface — household_plugins CRUD + the
+    // lifecycle audit. Deliberately NOT a plugin and dispatched AHEAD of the
+    // registry's prefix matching: it must answer even when every plugin is
+    // disabled, because it is the thing that re-enables them. This block —
+    // like every core dispatch above — is one of CORE_GATEWAY_PREFIXES
+    // (plugins/core-prefixes.ts): validatePluginManifests rejects any
+    // manifest claiming one of these prefixes, so matchPlugin below can
+    // never shadow a core app. Keep the two in lockstep when adding one.
+    if (path === '/api/plugins' || path.startsWith('/api/plugins/')) {
+      return pluginsApp.fetch(request, env, ctx)
+    }
+
+    // Plugin dispatch (ahaqqu/RumaQ#435, plugin architecture §4.3): the
+    // registry owns plugin prefixes (documents registered first). Dispatch
+    // stays path-only and boundary-aware (`path === p ||
+    // path.startsWith(p + '/')`) — the household-aware enablement gate
+    // installs after auth INSIDE each plugin app, where the household is
+    // actually known.
+    const plugin = matchPlugin(path, env)
+    if (plugin) {
+      return plugin.app.fetch(request, env, ctx)
+    }
+
+    // Production dispatches through the CachedApi entrypoint via ctx.exports
+    // (same script, extra entrypoint). Only the LOOKUP is guarded: a
+    // dispatch failure must propagate to the boundary in `fetch` — swallowing
+    // it here used to fall through to a SECOND apiApp dispatch, silently
+    // re-running the request's side effects before the eventual escape.
+    let cachedApi:
+      | { fetch: (request: Request, env: Env['Bindings']) => Promise<Response> }
+      | undefined
+    try {
+      const exports = ctx.exports as Record<string, unknown> | undefined
+      cachedApi = exports?.CachedApi as typeof cachedApi
+    } catch {
+      // ctx.exports not available (Miniflare / test mode)
+      cachedApi = undefined
+    }
+    if (cachedApi) {
+      return cachedApi.fetch(request, env)
+    }
+    return apiApp.fetch(request, env, ctx)
+  }
+
+  if (env.ASSETS) {
+    return env.ASSETS.fetch(request)
+  }
+
+  return new Response(JSON.stringify({ error: 'Not found' }), {
+    status: 404,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
 export const gateway = {
   async fetch(request: Request, env: Env['Bindings'], ctx: ExecutionContext): Promise<Response> {
-    const missing = missingSecrets(env)
-    if (missing.length > 0) {
-      return new Response(
-        JSON.stringify({
-          error: `Worker misconfigured; missing required secrets: ${missing.join(', ')}`,
-        }),
-        {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      )
+    // The dispatch boundary (2026-11-17 nightly publish incident): the apps'
+    // Hono `onError` handlers answer typed JSON 500s, but a rejection that
+    // escapes the dispatch itself used to reject `fetch` outright, and
+    // Cloudflare answered the scraper with the generic "Worker threw
+    // exception" HTML page (error 1101) — the pipeline's failure report then
+    // carried 400 characters of HTML instead of the one message naming the
+    // fault. This boundary is the last line of defense: a dispatch rejection
+    // becomes a typed, data-free JSON 500 whose cause is on the server log
+    // (Workers Logs keeps console.error), never an escaping Worker exception.
+    try {
+      return await dispatch(request, env, ctx)
+    } catch (error) {
+      console.error('[gateway] dispatch failed', error)
+      // Same body/header convention as the apps' shared onError fallback
+      // (lib/hono-error.ts): the constants, not a drifted copy of them.
+      return new Response(JSON.stringify({ error: INTERNAL_ERROR_BODY }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...NO_CACHE },
+      })
     }
-
-    const url = new URL(request.url)
-    const path = url.pathname
-
-    if (isApiPath(path)) {
-      // CSRF (ahaqqu/RumaQ#528): reject a cross-origin state-changing browser
-      // request before ANY app handler runs. This is the single choke point —
-      // every domain app and plugin dispatched below (and CachedApi) is behind
-      // it, so a new app cannot ship an unguarded write. Policy and
-      // exemptions live in lib/csrf.ts.
-      const csrfRejection = csrfOriginGuard(request, env)
-      if (csrfRejection) return csrfRejection
-
-      if (AUTH_ROUTES.has(path)) {
-        const adjustedUrl = new URL(request.url)
-        adjustedUrl.pathname = path.replace(/^\/api\/auth/, '')
-        const adjustedRequest = new Request(adjustedUrl.toString(), request)
-        return authApp.fetch(adjustedRequest, env, ctx)
-      }
-
-      // Household member management (ahaqqu/RumaQ#331) is its own domain app
-      // (backend conventions: one app per domain) — dispatched before the
-      // general apiApp fallthrough. Core domain, not a plugin: enablement is
-      // not a household choice here.
-      if (path === '/api/households' || path.startsWith('/api/households/')) {
-        return householdsApp.fetch(request, env, ctx)
-      }
-
-      // Household tasks (ahaqqu/RumaQ#429) — same domain-app pattern.
-      if (path === '/api/tasks' || path.startsWith('/api/tasks/')) {
-        return tasksApp.fetch(request, env, ctx)
-      }
-
-      // Household calendar (ahaqqu/RumaQ#430) — core domain, NOT a plugin:
-      // the shared family calendar (stored events + derive-on-read document
-      // deadlines) is a household fixture like tasks, not an enablement
-      // choice. One app, one prefix: /api/calendar serves the view union,
-      // /api/calendar/events the stored-event CRUD.
-      if (path === '/api/calendar' || path.startsWith('/api/calendar/')) {
-        return calendarApp.fetch(request, env, ctx)
-      }
-
-      // Plugin settings catalog (ahaqqu/RumaQ#437, plugin architecture §4.5):
-      // the CORE-owned enablement surface — household_plugins CRUD + the
-      // lifecycle audit. Deliberately NOT a plugin and dispatched AHEAD of the
-      // registry's prefix matching: it must answer even when every plugin is
-      // disabled, because it is the thing that re-enables them. This block —
-      // like every core dispatch above — is one of CORE_GATEWAY_PREFIXES
-      // (plugins/core-prefixes.ts): validatePluginManifests rejects any
-      // manifest claiming one of these prefixes, so matchPlugin below can
-      // never shadow a core app. Keep the two in lockstep when adding one.
-      if (path === '/api/plugins' || path.startsWith('/api/plugins/')) {
-        return pluginsApp.fetch(request, env, ctx)
-      }
-
-      // Plugin dispatch (ahaqqu/RumaQ#435, plugin architecture §4.3): the
-      // registry owns plugin prefixes (documents registered first). Dispatch
-      // stays path-only and boundary-aware (`path === p ||
-      // path.startsWith(p + '/')`) — the household-aware enablement gate
-      // installs after auth INSIDE each plugin app, where the household is
-      // actually known.
-      const plugin = matchPlugin(path, env)
-      if (plugin) {
-        return plugin.app.fetch(request, env, ctx)
-      }
-
-      try {
-        const exports = ctx.exports as Record<string, unknown> | undefined
-        if (exports?.CachedApi) {
-          return (exports.CachedApi as { fetch: Function }).fetch(request, env)
-        }
-      } catch {
-        // ctx.exports not available (Miniflare / test mode)
-      }
-      return apiApp.fetch(request, env, ctx)
-    }
-
-    if (env.ASSETS) {
-      return env.ASSETS.fetch(request)
-    }
-
-    return new Response(JSON.stringify({ error: 'Not found' }), {
-      status: 404,
-      headers: { 'Content-Type': 'application/json' },
-    })
   },
 
   // Cron dispatch (triggers.scheduled in cloudflare.config.ts — TWO
