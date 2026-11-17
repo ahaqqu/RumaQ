@@ -7,11 +7,9 @@ import { Button } from '../components/Button.jsx'
 import { Badge } from '../components/Badge.jsx'
 import { IconSearch, IconWarning } from '../components/icons.jsx'
 import { brandSuffix, prettyName, prettyUnit } from '../lib/productDisplay.js'
-import { formatPrice, promoChipClass } from '../lib/pricesHelpers.js'
-import { cn } from '../lib/cn.js'
+import { formatPrice, promoChipClass, splitPromoChips } from '../lib/pricesHelpers.js'
 import { errorKindKey } from '../lib/errorKind.js'
-
-const NONE = '—'
+import { NONE, MetadataDl, MetaField, confidenceLabel, displayValue } from './QaMetadata.jsx'
 
 // i18n key per chip class — presentation-only tags over the verbatim chip
 // text (issue #717): the OCR-QA report's promo-semantics families
@@ -48,34 +46,14 @@ function useDebouncedValue(value, delayMs) {
   return debounced
 }
 
-function displayValue(value) {
-  if (value == null) return NONE
-  const text = String(value)
-  return text === '' ? NONE : text
-}
-
-function confidenceLabel(value) {
-  if (value == null || Number.isNaN(Number(value))) return NONE
-  return `${Math.round(Number(value) * 100)}%`
-}
-
-// The verbatim chips of one row: the exact '; '-split of the scraped
-// promo_label — casing and whitespace untouched, footnotes kept (issue #717:
-// the owner reviews the pipeline's raw output, so nothing is normalized or
-// dropped here; this is deliberately NOT the shopper-facing promoBadges
+// The verbatim chips of one row: the shared '; '-wire-format split
+// (splitPromoChips) — casing and spacing untouched, footnotes kept (issue
+// #717: the owner reviews the pipeline's raw output, so nothing is normalized
+// or dropped here; this is deliberately NOT the shopper-facing promoBadges
 // chain, which title-cases and hides footnote markers).
-function reviewChips(label) {
-  const raw = typeof label === 'string' ? label.trim() : ''
-  if (!raw) return []
-  return raw
-    .split(';')
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-}
-
 function PromoChips({ label, type }) {
   const { t } = useTranslation()
-  const chips = reviewChips(label)
+  const chips = splitPromoChips(label)
   if (chips.length === 0) {
     // A type with no label still counts as promo evidence — show the parsed
     // type so the row never renders an empty promo column.
@@ -101,25 +79,13 @@ function PromoChips({ label, type }) {
   )
 }
 
-function MetaField({ label, value, mono = false }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs font-medium text-text-muted">{label}</dt>
-      <dd className={cn('mt-0.5 break-words text-sm', mono && 'font-mono text-xs')}>{value}</dd>
-    </div>
-  )
-}
-
 // The expanded metadata for one review row — every field the endpoint ships,
 // verbatim (the BrochureReview #630 affordance). Product name and unit stay
 // as ingested; the chips live in the row above them.
 function PromoReviewMetadata({ item }) {
   const { t } = useTranslation()
   return (
-    <dl
-      className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-3"
-      data-testid="promo-review-metadata"
-    >
+    <MetadataDl testId="promo-review-metadata">
       <MetaField label={t('catalog.metaProductKey')} value={displayValue(item.product_key)} mono />
       <MetaField label={t('catalog.metaName')} value={displayValue(item.name)} />
       <MetaField label={t('catalog.metaBrand')} value={displayValue(item.brand)} />
@@ -155,7 +121,7 @@ function PromoReviewMetadata({ item }) {
         mono
       />
       <MetaField label={t('catalog.metaScrapedAt')} value={displayValue(item.scraped_at)} mono />
-    </dl>
+    </MetadataDl>
   )
 }
 

@@ -16,19 +16,7 @@ import {
 } from '../lib/pricesHelpers.js'
 import { cn } from '../lib/cn.js'
 import { errorKindKey } from '../lib/errorKind.js'
-
-const NONE = '—'
-
-function displayValue(value) {
-  if (value == null) return NONE
-  const text = String(value)
-  return text === '' ? NONE : text
-}
-
-function confidenceLabel(value) {
-  if (value == null || Number.isNaN(Number(value))) return NONE
-  return `${Math.round(Number(value) * 100)}%`
-}
+import { NONE, MetadataDl, MetaField, confidenceLabel, displayValue } from './QaMetadata.jsx'
 
 // Per-variant copy for the brochure items panel (issue #716): 'qa' is the
 // admin ingestion table (every column, expandable rows with the full metadata
@@ -49,15 +37,6 @@ const VARIANT_KEYS = {
   },
 }
 
-function MetaField({ label, value, mono = false }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs font-medium text-text-muted">{label}</dt>
-      <dd className={cn('mt-0.5 break-words text-sm', mono && 'font-mono text-xs')}>{value}</dd>
-    </div>
-  )
-}
-
 // The inline QA panel for one ingestion row (issue #630): every field the
 // backend ships, verbatim. Product name and unit stay as ingested (not the
 // display-normalized form) — this panel is the ground truth for ingestion
@@ -65,10 +44,7 @@ function MetaField({ label, value, mono = false }) {
 function BrochureProductMetadata({ product, brochureDateLabel }) {
   const { t } = useTranslation()
   return (
-    <dl
-      className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-3"
-      data-testid="brochure-product-metadata"
-    >
+    <MetadataDl testId="brochure-product-metadata">
       <MetaField
         label={t('catalog.metaProductKey')}
         value={displayValue(product.product_key)}
@@ -121,7 +97,7 @@ function BrochureProductMetadata({ product, brochureDateLabel }) {
         mono
       />
       <MetaField label={t('catalog.metaScrapedAt')} value={displayValue(product.scraped_at)} mono />
-    </dl>
+    </MetadataDl>
   )
 }
 
