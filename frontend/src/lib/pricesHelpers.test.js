@@ -18,6 +18,7 @@ import {
   resolvePriceView,
   resolveCatalogTab,
   observedDateLabel,
+  brochureViewerUrl,
   PRICE_CATALOG_VIEWS,
   PRICE_ROUTE_VIEWS,
   ADMIN_CATALOG_TABS,
@@ -434,5 +435,35 @@ describe('catalog vocabulary (#673)', () => {
     // No legacy acceptance: the route vocabulary is exactly the catalog's.
     expect(PRICE_ROUTE_VIEWS).toBe(PRICE_CATALOG_VIEWS)
     expect(ADMIN_CATALOG_TABS).toEqual(['products', 'brochures-qa', 'promos'])
+  })
+})
+
+describe('brochureViewerUrl (#674/#716)', () => {
+  const BROCHURE = '/api/brochures/lotte-mart/20261028/page_1_2ad1c95b.jpg'
+
+  it('composes the structured viewer deep link from a canonical brochure_url', () => {
+    expect(brochureViewerUrl(BROCHURE)).toBe(
+      '/brochures/view?store=lotte-mart&date=20261028&file=page_1_2ad1c95b.jpg'
+    )
+  })
+
+  it('appends ?admin=true only for the admin-surfaced link (#716)', () => {
+    // The admin QA card composes the flag so the viewer renders the QA items
+    // panel; the prices View link stays plain — the flag never rides by
+    // default.
+    expect(brochureViewerUrl(BROCHURE, { admin: true })).toBe(
+      '/brochures/view?store=lotte-mart&date=20261028&file=page_1_2ad1c95b.jpg&admin=true'
+    )
+    expect(brochureViewerUrl(BROCHURE, { admin: false })).toBe(brochureViewerUrl(BROCHURE))
+    expect(brochureViewerUrl(BROCHURE, {})).toBe(brochureViewerUrl(BROCHURE))
+  })
+
+  it('returns null for a non-canonical url in both modes', () => {
+    expect(brochureViewerUrl('/api/brochures/lotte-mart/20261028')).toBeNull()
+    expect(brochureViewerUrl('https://elsewhere/brochures/a/b/c.jpg')).toBeNull()
+    expect(brochureViewerUrl('/api/brochures/lotte-mart/20261028/c/d.jpg')).toBeNull()
+    expect(
+      brochureViewerUrl('/api/brochures/lotte-mart/20261028/c/d.jpg', { admin: true })
+    ).toBeNull()
   })
 })

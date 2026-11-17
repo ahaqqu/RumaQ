@@ -10,8 +10,10 @@ const { Given, When, Then } = createBdd()
 // the brochure object rides the internal PUT endpoint (issue #293). Since
 // #673 the user gallery lives on /prices?view=brochures — a lean browse-only
 // grid — while the #630 QA browser stays admin-side on
-// /admin/catalog?tab=brochures-qa: selecting a card opens the full product
-// table and a row expands its metadata in place.
+// /admin/catalog?tab=brochures-qa. Since #716 both surfaces select through
+// the chrome-less viewer in a NEW tab: prices' View link composes the plain
+// deep link (items-only table), the admin QA card composes ?admin=true (the
+// QA table whose rows expand their ingestion metadata).
 // A real 1x1 transparent PNG: the browser must be able to DECODE the served
 // bytes — magic bytes alone are not enough for <img> to skip its error event.
 const PNG_BYTES = Buffer.from(
@@ -123,29 +125,49 @@ Then('the gallery should show no ingestion-QA metadata', async ({ page }) => {
   await expect(page.getByText('Scraped at')).toHaveCount(0)
 })
 
-When('I select the {string} brochure card', async ({ page }, store) => {
+// ——— #716: both surfaces select through the viewer's items panel ———
+
+// The admin QA card is itself the link: it composes ?admin=true so the
+// viewer renders the QA items table. The click opens a top-level blank
+// navigation — the SameSite=Lax session cookie rides along, so the new tab
+// authenticates itself (the gallery View-link precedent).
+When('I open the {string} brochure viewer from its QA card', async ({ page }, store) => {
   const card = page.locator('[data-testid="brochure-card"]').filter({ hasText: store }).first()
-  await card.click()
-  await expect(card).toHaveAttribute('aria-expanded', 'true')
+  const [opened] = await Promise.all([page.context().waitForEvent('page'), card.click()])
+  viewerPage = opened
+  await viewerPage.getByTestId('viewer-topbar').waitFor({ state: 'visible', timeout: 15_000 })
+  // The admin flag is on the deep link the card composed — it is what turns
+  // the items panel into the QA variant.
+  await expect(viewerPage).toHaveURL(/\/brochures\/view\?.*&admin=true$/)
 })
 
-Then('the brochure review should show {string}', async ({ page }, name) => {
-  const review = page.locator('#brochure-review')
+// eslint-disable-next-line no-empty-pattern
+Then('the viewer tab should render the QA items table with {string}', async ({}, name) => {
+  const review = viewerPage.locator('#brochure-review')
   await expect(review).toBeVisible()
   await expect(review.getByText(name, { exact: false }).first()).toBeVisible()
   await expect(review.locator('[data-testid="brochure-product-row"]')).toHaveCount(1)
+  // The QA columns are back on this variant — they are absent in the lean one.
+  await expect(review.getByText('Effective unit price')).toBeVisible()
+  await expect(review.getByText('Match', { exact: true })).toBeVisible()
+  await expect(viewerPage.locator('[data-testid="brochure-product-metadata"]')).toHaveCount(0)
 })
 
-When('I expand the {string} product row', async ({ page }, name) => {
-  const row = page.locator('[data-testid="brochure-product-row"]').filter({ hasText: name }).first()
+// eslint-disable-next-line no-empty-pattern
+When('I expand the {string} product row in the viewer', async ({}, name) => {
+  const row = viewerPage
+    .locator('[data-testid="brochure-product-row"]')
+    .filter({ hasText: name })
+    .first()
   await row.click()
-  await expect(page.locator('[data-testid="brochure-product-metadata"]')).toBeVisible()
+  await expect(viewerPage.locator('[data-testid="brochure-product-metadata"]')).toBeVisible()
 })
 
 Then(
   'the ingestion metadata should show the product key, store, and brochure URL',
-  async ({ page }) => {
-    const panel = page.locator('[data-testid="brochure-product-metadata"]')
+  // eslint-disable-next-line no-empty-pattern
+  async () => {
+    const panel = viewerPage.locator('[data-testid="brochure-product-metadata"]')
     // The row's full provenance, not a narrow summary: key, store, brochure
     // object URL, and the QA field labels are all present.
     await expect(panel).toContainText(SUGAR_KEY)
@@ -157,25 +179,41 @@ Then(
   }
 )
 
-Then('I should stay on the admin catalog brochures QA tab', async ({ page }) => {
-  await expect(page).toHaveURL(/\/admin\/catalog\?tab=brochures-qa$/)
-  await expect(page.getByText('Brochures QA', { exact: true })).toBeVisible()
-  await expect(page.locator('#brochure-review')).toBeVisible()
+Then('the viewer tab should have no critical or serious axe violations', async () => {
+  // Scans the state no static page path reaches: the full product table and
+  // the expanded metadata panel in the viewer tab (issue #630 through #716).
+  await expect(viewerPage.locator('[data-testid="brochure-product-metadata"]')).toBeVisible()
+  assertNoCriticalOrSerious((await scanPage(viewerPage).analyze()).violations)
 })
 
-Then('the brochure QA view should have no critical or serious axe violations', async ({ page }) => {
-  // Scans the state no static page path reaches: the grid, the full product
-  // table, and the expanded metadata panel (issue #630).
-  await expect(page.locator('[data-testid="brochure-card"]').first()).toBeVisible()
-  await expect(page.locator('#brochure-review')).toBeVisible()
-  await expect(page.locator('[data-testid="brochure-product-metadata"]')).toBeVisible()
-  // The promo cell is what caught the danger-token contrast regression: pin
-  // it so a future fixture change cannot silently scan an empty badge.
-  const promo = page.locator('[data-testid="brochure-product-row"]').getByText('Diskon 5%').first()
-  await expect(promo).toBeVisible()
-  await promo.scrollIntoViewIfNeeded()
-  assertNoCriticalOrSerious((await scanPage(page).analyze()).violations)
-})
+Then(
+  'I should stay on the admin catalog brochures QA tab without an in-place review',
+  async ({ page }) => {
+    // The original tab never navigates; the review now lives in the new tab,
+    // so nothing in-place renders below the grid.
+    await expect(page).toHaveURL(/\/admin\/catalog\?tab=brochures-qa$/)
+    await expect(page.getByText('Brochures QA', { exact: true })).toBeVisible()
+    await expect(page.locator('#brochure-review')).toHaveCount(0)
+  }
+)
+
+Then(
+  'the viewer tab should show the items list with {string} and no QA affordances',
+  // eslint-disable-next-line no-empty-pattern
+  async ({}, name) => {
+    const review = viewerPage.locator('#brochure-review')
+    await expect(review).toBeVisible()
+    await expect(review.getByText(name, { exact: false }).first()).toBeVisible()
+    // Lean variant: the shopper columns only — no QA headers, no expand, no
+    // metadata panel (#673's rule applied to the viewer's items panel).
+    await expect(review.getByText('Effective unit price')).toHaveCount(0)
+    await expect(review.getByText('Match', { exact: true })).toHaveCount(0)
+    await expect(
+      review.locator('[data-testid="brochure-product-row"] button[aria-expanded]')
+    ).toHaveCount(0)
+    await expect(viewerPage.locator('[data-testid="brochure-product-metadata"]')).toHaveCount(0)
+  }
+)
 
 Then(
   'the {string} card should render the fallback block instead of a broken image',

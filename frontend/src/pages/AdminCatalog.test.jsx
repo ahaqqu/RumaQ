@@ -367,15 +367,22 @@ describe('AdminCatalog', () => {
     expect(usePriceBrochures).toHaveBeenCalled()
   })
 
-  it('selects a brochure and expands a row in place without navigating (#630)', () => {
+  it('links the brochure card into the admin viewer in a new tab (#716)', () => {
     mockTab = 'brochures-qa'
     const { container } = renderCatalog()
-    fireEvent.click(container.querySelector('[data-testid="brochure-card"]'))
-    expect(useBrochureProducts).toHaveBeenCalledWith(brochureUrl)
-
-    fireEvent.click(container.querySelector('[data-testid="brochure-product-row"]'))
-    expect(container.querySelector('[data-testid="brochure-product-metadata"]')).toBeTruthy()
-    // The QA view never leaves the admin area or the Brochures QA tab.
+    const card = container.querySelector('[data-testid="brochure-card"]')
+    // The card itself is the link: ?admin=true switches the viewer's items
+    // panel into the QA variant with the expandable metadata rows.
+    expect(card.tagName).toBe('A')
+    expect(card.getAttribute('target')).toBe('_blank')
+    expect(card.getAttribute('rel')).toBe('noreferrer')
+    expect(card.getAttribute('href')).toBe(
+      '/brochures/view?store=lotte-mart&date=20261029&file=page_1_2ad1c95b.jpg&admin=true'
+    )
+    // The QA affordances moved into the new tab — the tab itself renders no
+    // items table and never navigates the admin area.
+    expect(container.querySelector('[data-testid="brochure-product-row"]')).toBeNull()
+    expect(useBrochureProducts).not.toHaveBeenCalled()
     expect(navigateMock).not.toHaveBeenCalled()
     expect(mockHash).toBe('')
   })

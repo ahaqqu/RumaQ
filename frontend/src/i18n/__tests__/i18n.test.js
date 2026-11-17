@@ -455,7 +455,9 @@ describe('locale files', () => {
 // and full-metadata labels are part of the admin surface. The catalog
 // namespace parity/translation tests above already cover every key; these
 // pins name the contract so a copy change is deliberate and the count keys
-// resolve through the real plural machinery.
+// resolve through the real plural machinery. (#716: the in-place review is
+// gone — brochuresSelectHint/brochuresSelected retired with it; the review
+// copy lives in the viewer's items panel now.)
 describe('catalog brochure QA (#630)', () => {
   const REQUIRED_KEYS = [
     'brochuresFilters',
@@ -465,7 +467,6 @@ describe('catalog brochure QA (#630)', () => {
     'brochuresAllDates',
     'brochuresCount_one',
     'brochuresCount_other',
-    'brochuresSelectHint',
     'brochuresReviewTitle',
     'brochuresReviewAria',
     'brochuresShowing',
@@ -477,7 +478,6 @@ describe('catalog brochure QA (#630)', () => {
     'brochuresFilteredEmpty',
     'brochuresFilteredEmptyDesc',
     'brochuresResetFilters',
-    'brochuresSelected',
     'brochuresColumnName',
     'brochuresColumnUnit',
     'brochuresColumnPrice',

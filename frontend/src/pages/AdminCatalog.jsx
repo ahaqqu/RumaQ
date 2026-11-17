@@ -24,10 +24,12 @@ const LEAD_KEY_BY_TAB = {
 //   admins) plus the duplicate-names report and alias-candidates action,
 //   reusing ProductsView with adminTools. A #productKey deep link opens this
 //   section and expands/scrolls the product (ProductsView owns that effect).
-// - Brochures QA — the #630 ingestion-QA browser: store/date filters, a
-//   multi-column brochure grid, and an in-place review section with every
-//   product and its full ingestion metadata. The user-facing /prices gallery
-//   renders none of these QA fields.
+// - Brochures QA — the #630 ingestion-QA browser: store/date filters and a
+//   multi-column brochure grid. Since #716 a card opens the chrome-less
+//   viewer in a NEW tab with ?admin=true, where every product and its full
+//   ingestion metadata render in the QA items table (the former in-place
+//   review moved there). The user-facing /prices gallery renders none of
+//   these QA fields.
 // - Promos — the promo catalog moved off /prices in #673 (fixed group order,
 //   per-source badges, expandable ≤5 examples). Clicking an example jumps to
 //   /prices#productKey: the explorer is every household user's surface (admins
