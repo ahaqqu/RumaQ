@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
-import { renderHook, waitFor } from '@testing-library/react'
+import { renderHook, waitFor, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import {
@@ -408,6 +408,49 @@ describe('useDecideReview / useUndoReview', () => {
       expect(first.counts.approved).toBe(1)
       expect(first.counts.pendingByReason.price_ratio).toBe(2)
       expect(first.filteredTotal).toBe(2)
+    })
+
+    // review A2: a double-click inside the optimistic window re-fires the
+    // same decision while the cache already reads nextStatus — the derived
+    // slices must not move again, or filteredTotal double-decrements until
+    // the settle refetch.
+    it('a re-fired identical decision does not double-move the derived slices', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      })
+      seedSlices(queryClient)
+      let resolveRequest
+      vi.mocked(decideReviewItem).mockReturnValue(
+        new Promise((resolve) => {
+          resolveRequest = resolve
+        })
+      )
+      const { result } = renderHook(() => useDecideReview(), {
+        wrapper: createWrapper(queryClient),
+      })
+      result.current.mutate({ id: 'rev-1', decision: 'approved' })
+      await waitFor(() => {
+        const pending = queryClient.getQueryData(['review', 'pending', null])
+        expect(pending.pages[0].counts.pending).toBe(1)
+      })
+
+      // The row now reads approved in the cache; the second, identical
+      // mutate is a no-op on every derived slice.
+      result.current.mutate({ id: 'rev-1', decision: 'approved' })
+      await act(async () => {})
+
+      const pending = queryClient.getQueryData(['review', 'pending', null])
+      const first = pending.pages[0]
+      expect(first.items.find((item) => item.id === 'rev-1').status).toBe('approved')
+      expect(first.counts.pending).toBe(1)
+      expect(first.counts.approved).toBe(2)
+      expect(first.counts.pendingByReason.price_ratio).toBe(1)
+      expect(first.filteredTotal).toBe(1)
+      const approved = queryClient.getQueryData(['review', 'approved', null])
+      expect(approved.pages[0].filteredTotal).toBe(2)
+
+      resolveRequest({ item: reviewItem('rev-1', 'approved') })
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
     })
   })
 })

@@ -3,6 +3,7 @@ import { render, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { Settings } from './Settings.jsx'
+import { ApiError } from '../lib/api'
 import { usePersona } from '../context/PersonaContext.jsx'
 
 const mockLocations = [
@@ -110,13 +111,20 @@ vi.mock('../lib/persona.js', () => ({
 }))
 
 const logoutMutate = vi.fn()
+// Configurable per test: the failed-logout surface (L1) reads isError/error.
+const logoutState = { isError: false, error: null }
 
 vi.mock('../lib/queries/me.js', () => ({
   useMe: () => ({
     data: { user: { id: 'u1', email: 'a@b.com', name: 'Alice', picture: null } },
     isLoading: false,
   }),
-  useLogout: () => ({ mutate: logoutMutate, isPending: false }),
+  useLogout: () => ({
+    mutate: logoutMutate,
+    isPending: false,
+    isError: logoutState.isError,
+    error: logoutState.error,
+  }),
 }))
 
 vi.mock('../lib/queries/index.js', () => ({
@@ -750,5 +758,22 @@ describe('Settings', () => {
     expect(getByText('Alice')).toBeTruthy()
     fireEvent.click(getByText('nav.logout'))
     expect(logoutMutate).toHaveBeenCalled()
+  })
+
+  // L1 (audit) + review: a non-2xx logout throws instead of navigating —
+  // the failure must surface here, or the click looks dead while the
+  // session quietly survives. A failed logout is always kind 'http' (the
+  // transport path navigates instead of erroring), so the M1 kind copy fits.
+  it('surfaces a failed logout instead of staying silent', () => {
+    logoutState.isError = true
+    logoutState.error = new ApiError('Logout failed: 500', 500)
+    try {
+      const { container } = renderWithQuery(React.createElement(Settings, baseProps))
+      expect(container.textContent).toContain('error.http')
+      expect(container.querySelector('[role="alert"]')).toBeTruthy()
+    } finally {
+      logoutState.isError = false
+      logoutState.error = null
+    }
   })
 })

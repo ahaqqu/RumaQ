@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vite-plus/test'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vite-plus/test'
 import {
+  ApiError,
+  transportFetch,
   getMe,
   getStock,
   getHealth,
@@ -165,11 +167,78 @@ describe('api', () => {
     await expect(getMe()).rejects.toMatchObject({ status: 429, retryAfterSeconds: null })
   })
 
-  // M1 (audit 2026-11-16): transport failures used to escape `unwrap` as a raw
-  // TypeError no `instanceof ApiError` branch could represent — pages painted
-  // their empty states instead of an error. The classifier maps each outcome.
-  it('classifies a rejected fetch as an offline ApiError with status 0 (M1)', async () => {
+  // M1 (audit 2026-11-16) + review A1: the offline/timeout kinds belong to
+  // the TRANSPORT boundary (transportFetch, wired as the client's fetch) —
+  // only a rejection that came out of fetch itself is honestly an offline
+  // outcome. These tests stub globalThis.fetch to exercise that boundary.
+  describe('transportFetch classifies fetch-level rejections (M1/review A1)', () => {
+    const origFetch = globalThis.fetch
+    afterEach(() => {
+      globalThis.fetch = origFetch
+    })
+
+    it("labels fetch's own TypeError offline with status 0", async () => {
+      globalThis.fetch = vi.fn().mockRejectedValueOnce(new TypeError('fetch failed'))
+      await expect(transportFetch('https://rumaq.test/x')).rejects.toMatchObject({
+        name: 'ApiError',
+        kind: 'offline',
+        status: 0,
+      })
+    })
+
+    it('labels an aborted fetch timeout, never offline', async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValueOnce(new DOMException('The operation was aborted.', 'AbortError'))
+      await expect(transportFetch('https://rumaq.test/x')).rejects.toMatchObject({
+        name: 'ApiError',
+        kind: 'timeout',
+        status: 0,
+      })
+    })
+
+    it('labels an AbortSignal.timeout rejection (TimeoutError) timeout', async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValueOnce(new DOMException('The operation timed out.', 'TimeoutError'))
+      await expect(transportFetch('https://rumaq.test/x')).rejects.toMatchObject({
+        name: 'ApiError',
+        kind: 'timeout',
+        status: 0,
+      })
+    })
+
+    it('passes a resolved response through untouched', async () => {
+      const response = new Response(null, { status: 200 })
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(response)
+      await expect(transportFetch('https://rumaq.test/x')).resolves.toBe(response)
+    })
+
+    // The setConfig wiring itself (client.setConfig({ fetch: transportFetch }))
+    // is not assertable through the client mock — api.ts's import-time
+    // side effects do not land on the per-file mock registry (vmThreads
+    // shares the module registry across a worker's file batch; see the
+    // frontend project comment in vite.config.ts). The boundary behavior is
+    // pinned above; the one-line wiring is checked by review.
+  })
+
+  // A rejection that reaches `unwrap` as a raw TypeError is a BUG-shaped
+  // throw (request building, body parsing) — the transport boundary already
+  // classified fetch's own failures, so offline would be a lie about the
+  // device's connectivity. It maps to http/0 instead.
+  it('labels a bug-shaped TypeError http with status 0, never offline (M1/review A1)', async () => {
     clientMock.get.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await expect(getMe()).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'http',
+      status: 0,
+    })
+  })
+
+  it('passes a transport-classified ApiError through unwrap untouched (M1/review A1)', async () => {
+    clientMock.get.mockRejectedValueOnce(
+      new ApiError('Network request failed', 0, null, undefined, 'offline')
+    )
     await expect(getMe()).rejects.toMatchObject({
       name: 'ApiError',
       kind: 'offline',
@@ -177,7 +246,10 @@ describe('api', () => {
     })
   })
 
-  it('classifies an aborted request as timeout, never offline (M1)', async () => {
+  // An abort can also surface AFTER fetch resolved — the signal firing
+  // mid-body-read rejects the response parse with the same DOMException, so
+  // unwrap's catch keeps the name check for it.
+  it('classifies a post-fetch abort as timeout, never offline (M1)', async () => {
     clientMock.get.mockRejectedValueOnce(
       new DOMException('The operation was aborted.', 'AbortError')
     )

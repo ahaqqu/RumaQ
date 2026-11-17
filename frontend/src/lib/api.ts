@@ -111,8 +111,6 @@ import {
   putApiPluginsByPluginIdEnablement,
 } from './api-client/index.js'
 
-client.setConfig({ credentials: 'include' })
-
 // The request outcome (audit 2026-11-16 M1): every failure `unwrap` can throw
 // carries the kind that explains WHY there is no data — an HTTP status from
 // the server, a transport failure (offline), or a request that never finished
@@ -151,28 +149,46 @@ export class ApiError extends Error {
     this.body = body
   }
 
-  // M1: classify a throw the generated client let escape — until this, a
-  // transport failure surfaced as a raw TypeError, so every
-  // `instanceof ApiError` branch silently missed it and pages painted their
-  // empty states. fetch rejects with TypeError on a network failure and with
-  // an AbortError/TimeoutError DOMException when the request was aborted or
-  // timed out (a DOMException is NOT an Error subclass in Node, so the name
-  // is read directly); anything else is an unknown throw, which maps to
-  // kind 'http' with status 0 — NEVER to offline (a lie about the device's
-  // connectivity would send the user hunting for a network problem they
-  // don't have).
+  // M1 (review A1): classify a throw that reached unwrap() WITHOUT passing
+  // the transport boundary — transportFetch already labels fetch's own
+  // rejections before they get here. A post-fetch abort (the signal firing
+  // while the response body is read) rejects the body parse with the same
+  // AbortError/TimeoutError DOMException, so the name is read directly (its
+  // prototype chain differs across runtimes); anything else is a bug-shaped
+  // throw — Request construction, an interceptor, body serialization — and
+  // maps to kind 'http' with status 0, NEVER to offline (a lie about the
+  // device's connectivity would send the user hunting for a network problem
+  // they don't have).
   static from(err: unknown): ApiError {
     if (err instanceof ApiError) return err
     const name = (err as { name?: string } | null)?.name
     if (name === 'AbortError' || name === 'TimeoutError') {
       return new ApiError('Request timed out', 0, null, err, 'timeout')
     }
-    if (err instanceof TypeError) {
-      return new ApiError('Network request failed', 0, null, err, 'offline')
-    }
     return new ApiError(err instanceof Error ? err.message : 'Request failed', 0, null, err, 'http')
   }
 }
+
+// The transport boundary (review A1): the generated client calls this instead
+// of globalThis.fetch (setConfig below), so ONLY a rejection that came out of
+// fetch itself can be labelled offline/timeout. Everything the client does
+// around that call — building the Request, interceptors, body serialization,
+// response parsing — rejects the very same SDK promise, and a bug there (a
+// TypeError from bad request options) must never borrow the offline kind. At
+// this boundary every rejection IS a transport failure (DNS failure, refused
+// connection, offline, CORS block — fetch cannot separate them, they all
+// reject with TypeError), so one honest copy stands for all of them.
+export function transportFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return globalThis.fetch(input, init).catch((err: unknown) => {
+    const name = (err as { name?: string } | null)?.name
+    if (name === 'AbortError' || name === 'TimeoutError') {
+      throw new ApiError('Request timed out', 0, null, err, 'timeout')
+    }
+    throw new ApiError('Network request failed', 0, null, err, 'offline')
+  })
+}
+
+client.setConfig({ credentials: 'include', fetch: transportFetch })
 
 // The Retry-After header the 429 responses send (upload and OCR limiters,
 // documents.ts / documents-ocr.ts): plain seconds. HTTP-date forms do not

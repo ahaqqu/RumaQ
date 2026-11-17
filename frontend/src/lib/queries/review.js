@@ -161,6 +161,13 @@ export function patchReviewCaches(queryClient, vars, nextStatus) {
     if (fromStatus) break
   }
 
+  // The derived slices only move when the row actually changes list. A
+  // re-fired identical mutation (a double-click inside the optimistic
+  // window, before the re-render disables the buttons) finds the row already
+  // in nextStatus — moving the counts again would double-decrement
+  // filteredTotal and clamp counts until the settle refetch.
+  const flips = fromStatus !== null && fromStatus !== nextStatus
+
   for (const [key, value] of queryClient.getQueriesData({ queryKey: ['review'] })) {
     previous.set(key, value)
     queryClient.setQueryData(key, (data) => {
@@ -172,7 +179,7 @@ export function patchReviewCaches(queryClient, vars, nextStatus) {
       const [, listStatus, listReason] = key
       const rowMatchesReason = !listReason || rowReason === null || rowReason === listReason
       const totalDelta =
-        listStatus === 'all' || !fromStatus
+        listStatus === 'all' || !flips
           ? 0
           : listStatus === fromStatus && rowMatchesReason
             ? -1
@@ -183,7 +190,7 @@ export function patchReviewCaches(queryClient, vars, nextStatus) {
         ...data,
         pages: data.pages.map((page) => {
           let counts = page.counts
-          if (counts && fromStatus) {
+          if (counts && flips) {
             counts = bumpCount(counts, fromStatus, -1)
             counts = bumpCount(counts, nextStatus, 1)
             if (fromStatus === 'pending') counts = bumpPendingByReason(counts, rowReason, -1)
