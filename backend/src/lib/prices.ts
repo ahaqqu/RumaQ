@@ -4,6 +4,8 @@
 // the views by construction — the two endpoints cannot drift apart on which
 // observations count as "current".
 
+import { escapeLike } from './sql.js'
+
 // Observations below the ingest confidence floor are hidden from the
 // explorer and the catalog; 0.55–0.85 rows are returned flagged.
 export const PRICE_MIN_CONFIDENCE = 0.55
@@ -216,4 +218,166 @@ export async function listPriceCategories(db: D1Database): Promise<string[]> {
     )
     .all<{ category: string }>()
   return (results ?? []).map((row) => row.category)
+}
+
+// --- Promo review page (issue #717) ---
+
+// One row of the admin promo-review list: the verbatim scraped chips ride in
+// promo_label (the pipeline joins the OCR promo[] array with '; '), the
+// pipeline's own parsed class in promo_type. Everything else is the offer
+// context the owner reviews the chips against (price, period, provenance).
+export type PromoReviewRow = {
+  product_key: string
+  name: string
+  brand: string | null
+  unit: string | null
+  source_slug: string
+  source_name: string
+  observed_date: string
+  price: number
+  member_price: number | null
+  effective_unit_price: number | null
+  promo_type: string | null
+  promo_label: string | null
+  valid_from: string | null
+  valid_until: string | null
+  match_method: string | null
+  match_confidence: number
+  brochure_url: string | null
+  scraped_at: string
+}
+
+export type PromoReviewPage = {
+  items: PromoReviewRow[]
+  total: number
+}
+
+export type PromoReviewOptions = {
+  /** Substring match over the promo label and the product name/brand. */
+  q?: string
+  /** Exact source-slug filter. */
+  source?: string
+  sort?: 'date' | 'store' | 'name'
+  limit?: number
+  offset?: number
+}
+
+export const PROMO_REVIEW_DEFAULT_LIMIT = 50
+export const PROMO_REVIEW_MAX_LIMIT = 200
+
+// The same current-observation set as the promo catalog above
+// (LATEST_OBSERVATION_PREDICATE + PROMO_EVIDENCE): rows the catalog's counts
+// already summarize, now listed one per (product, source) with the raw label.
+// A shared base CTE keeps the count and the page on the identical filtered
+// set, so `total` always describes what the list pages through.
+const PROMO_REVIEW_BASE = `WITH base AS (
+  SELECT p.product_key, p.name, p.brand, p.unit,
+         s.slug AS source_slug, s.name AS source_name,
+         o.observed_date, o.price, o.member_price, o.effective_unit_price,
+         o.promo_type, o.promo_label, o.valid_from, o.valid_until,
+         o.match_method, o.match_confidence, o.brochure_url, o.scraped_at
+  FROM price_observations o
+  JOIN price_products p ON p.id = o.product_id
+  JOIN price_sources s ON s.id = o.source_id
+  WHERE ${LATEST_OBSERVATION_PREDICATE}
+    AND ${PROMO_EVIDENCE}`
+
+// Sort orders the owner flips between while spotting chip classes (issue
+// #717): `date` fronts the latest scrape run, `store` groups one store's
+// items, `name` groups one item across stores. Every chain ends on a column
+// that is unique per row — rows are one per (product, source), so
+// (product_key, source_slug) closes the chain. Without the final source_slug
+// tiebreak the `name` order can tie two stores of one product on the same
+// observed_date, and OFFSET paging then skips/duplicates a row at page
+// boundaries.
+const PROMO_REVIEW_ORDERS: Record<string, string> = {
+  date: 'observed_date DESC, source_slug ASC, name COLLATE NOCASE ASC, product_key ASC',
+  store: 'source_slug ASC, name COLLATE NOCASE ASC, product_key ASC, observed_date DESC',
+  name: 'name COLLATE NOCASE ASC, product_key ASC, observed_date DESC, source_slug ASC',
+}
+
+/**
+ * One page of the admin promo-review list (issue #717): current promo-evidence
+ * observations with the verbatim promo_label, paginated with an exact total
+ * over the same filtered set. Two bound statements in one DB.batch (page +
+ * count); callers validate/normalize the options before this point.
+ */
+export async function getPromoReviewPage(
+  db: D1Database,
+  { q, source, sort = 'date', limit = PROMO_REVIEW_DEFAULT_LIMIT, offset = 0 }: PromoReviewOptions
+): Promise<PromoReviewPage> {
+  const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), PROMO_REVIEW_MAX_LIMIT)
+  const boundedOffset = Math.min(Math.max(Math.trunc(offset), 0), Number.MAX_SAFE_INTEGER)
+  const order = PROMO_REVIEW_ORDERS[sort] ?? PROMO_REVIEW_ORDERS.date!
+
+  // The filters EXTEND the CTE's existing WHERE (LATEST_OBSERVATION_PREDICATE
+  // + PROMO_EVIDENCE) with AND clauses — a second WHERE would be a syntax
+  // error D1 only surfaces at run time (the unit fake does not parse SQL,
+  // which is exactly what the automation fixture caught). Columns stay
+  // table-qualified because the CTE's bare output names are not the WHERE
+  // scope: unqualified `name` is ambiguous between p.name and s.name.
+  const filters: string[] = []
+  const params: unknown[] = []
+  if (q) {
+    filters.push(
+      `(o.promo_label LIKE ? ESCAPE '\\' OR p.name LIKE ? ESCAPE '\\' OR p.brand LIKE ? ESCAPE '\\')`
+    )
+    const pattern = `%${escapeLike(q)}%`
+    params.push(pattern, pattern, pattern)
+  }
+  if (source) {
+    filters.push('s.slug = ?')
+    params.push(source)
+  }
+  const where = filters.length > 0 ? ` AND ${filters.join(' AND ')}` : ''
+
+  const [pageResult, totalResult] = await db.batch([
+    db
+      .prepare(`-- promos-review: page
+${PROMO_REVIEW_BASE}${where}
+)
+SELECT product_key, name, brand, unit,
+       source_slug, source_name,
+       observed_date, price, member_price, effective_unit_price,
+       promo_type, promo_label, valid_from, valid_until,
+       match_method, match_confidence, brochure_url, scraped_at
+FROM base
+ORDER BY ${order}
+LIMIT ? OFFSET ?`)
+      .bind(...params, boundedLimit, boundedOffset),
+    db
+      .prepare(`-- promos-review: total
+${PROMO_REVIEW_BASE}${where}
+)
+SELECT COUNT(*) AS total FROM base`)
+      .bind(...params),
+  ])
+
+  const pageRows = (pageResult as { results?: Array<Record<string, unknown>> }).results ?? []
+  const total = Number(
+    (totalResult as { results?: Array<{ total: number }> }).results?.[0]?.total ?? 0
+  )
+
+  const items: PromoReviewRow[] = pageRows.map((row) => ({
+    product_key: String(row.product_key),
+    name: String(row.name),
+    brand: (row.brand as string | null) ?? null,
+    unit: (row.unit as string | null) ?? null,
+    source_slug: String(row.source_slug),
+    source_name: String(row.source_name),
+    observed_date: String(row.observed_date),
+    price: Number(row.price),
+    member_price: (row.member_price as number | null) ?? null,
+    effective_unit_price: (row.effective_unit_price as number | null) ?? null,
+    promo_type: (row.promo_type as string | null) ?? null,
+    promo_label: (row.promo_label as string | null) ?? null,
+    valid_from: (row.valid_from as string | null) ?? null,
+    valid_until: (row.valid_until as string | null) ?? null,
+    match_method: (row.match_method as string | null) ?? null,
+    match_confidence: Number(row.match_confidence),
+    brochure_url: (row.brochure_url as string | null) ?? null,
+    scraped_at: String(row.scraped_at),
+  }))
+
+  return { items, total }
 }

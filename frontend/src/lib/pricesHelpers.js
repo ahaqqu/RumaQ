@@ -90,6 +90,36 @@ export function isFootnoteLabel(label) {
   return (label ?? '').trim().toLowerCase().startsWith('*harga')
 }
 
+// ——— Promo chip classes (issue #717) ———
+// Presentation-only labels over the verbatim chip text: the OCR-QA report's
+// promo-semantics families (ahaqqu/RumaQ-pipeline#164 F3/F4/F5 — dated promo
+// prices, quantity limits, buy-get, conditional multi-buy) surfaced as class
+// tags so the owner can review which chips belong to which family and decide
+// how each should be handled. Nothing derives pricing behavior from these —
+// the chip text itself is always rendered verbatim (no casing/whitespace
+// normalization on the review surface).
+
+// One class per chip segment; first match wins. Vocabulary is the observed
+// brochure Indonesian (issue #717's sampled chips) plus the English BOGO
+// phrasing the OCR prompt licenses ('BUY 1 GET 1'), matched case-insensitively.
+export function promoChipClass(text) {
+  const s = (text ?? '').toLowerCase()
+  if (s.includes('harga promo')) return 'dated'
+  if (
+    (s.includes('beli') && (s.includes('gratis') || s.includes('free'))) ||
+    (s.includes('buy') && s.includes('get'))
+  ) {
+    return 'bogo'
+  }
+  if (/beli\s*\d/.test(s)) return 'multiBuy'
+  if (/(^|\s)maks\.?\s/.test(s)) return 'limit'
+  if (s.includes('diskon') || s.includes('%')) return 'discount'
+  if (s.includes('harga mulai') || s.includes('harga spesial') || s.includes('harga khusus')) {
+    return 'priceLabel'
+  }
+  return 'other'
+}
+
 const PROMO_TONE_RULES = [
   { tone: 'danger', match: (s) => s.includes('diskon') || s.includes('%') },
   { tone: 'ok', match: (s) => s.includes('gratis') || s.includes('free') },

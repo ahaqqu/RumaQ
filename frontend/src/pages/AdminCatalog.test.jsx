@@ -7,7 +7,8 @@ import { AdminCatalog } from './AdminCatalog.jsx'
 // The admin catalog (#631, three sections since #673) is the home of the
 // tools moved off /prices: the Products lookup with rename, duplicate-names,
 // and alias-candidates; the Brochures QA ingestion view (#630); and the Promos
-// catalog (whose example click jumps into the user explorer). The route guard
+// tab — since #717 the chip-review surface (default) plus the promo catalog
+// (whose example click jumps into the user explorer). The route guard
 // is the AdminPrices pattern (useMe + unauthorized state; the APIs are already
 // requireAdmin).
 const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }))
@@ -34,6 +35,7 @@ vi.mock('../lib/queries/index.js', () => ({
   usePriceBrochures: vi.fn(),
   useBrochureProducts: vi.fn(),
   usePricePromos: vi.fn(),
+  usePromoReview: vi.fn(),
 }))
 
 vi.mock('../lib/queries/me.js', () => ({ useMe: vi.fn() }))
@@ -58,6 +60,7 @@ import {
   usePriceBrochures,
   useBrochureProducts,
   usePricePromos,
+  usePromoReview,
 } from '../lib/queries/index.js'
 import { useMe } from '../lib/queries/me.js'
 import {
@@ -151,6 +154,31 @@ const promoCatalog = {
   total: 3,
 }
 
+// The promo review rows (issue #717): one per (product, store) with the
+// verbatim '; '-joined chips.
+const promoReviewRows = [
+  {
+    product_key: OIL_KEY,
+    name: 'Minyak Goreng Bimoli 1 L',
+    brand: 'Bimoli',
+    unit: '1 L',
+    source_slug: 'lotte-mart',
+    source_name: 'Lotte Mart',
+    observed_date: '2026-10-29',
+    price: 21500,
+    member_price: null,
+    effective_unit_price: null,
+    promo_type: 'discount_pct',
+    promo_label: 'DISKON 20%; Harga Spesial',
+    valid_from: '2026-10-29',
+    valid_until: '2026-11-04',
+    match_method: 'exact',
+    match_confidence: 1,
+    brochure_url: brochureUrl,
+    scraped_at: '2026-10-29T23:00:05Z',
+  },
+]
+
 const detail = {
   product: { product_key: OIL_KEY, name: 'Minyak Goreng Bimoli' },
   current: [
@@ -221,6 +249,14 @@ describe('AdminCatalog', () => {
       data: promoCatalog,
       isLoading: false,
       isError: false,
+    })
+    vi.mocked(usePromoReview).mockReturnValue({
+      data: { items: promoReviewRows, total: promoReviewRows.length },
+      isLoading: false,
+      isError: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
     })
     vi.mocked(useBrochureProducts).mockReturnValue({
       data: {
@@ -299,6 +335,7 @@ describe('AdminCatalog', () => {
     expect(usePrices).not.toHaveBeenCalled()
     expect(usePriceBrochures).not.toHaveBeenCalled()
     expect(usePricePromos).not.toHaveBeenCalled()
+    expect(usePromoReview).not.toHaveBeenCalled()
   })
 
   it('renders the Products tab with the moved admin tools by default', () => {
@@ -387,23 +424,41 @@ describe('AdminCatalog', () => {
     expect(mockHash).toBe('')
   })
 
-  it('renders the Promos tab from ?tab=promos with the moved promo cards (#673)', () => {
+  it('renders the Promos tab from ?tab=promos with the Review surface by default (#717)', () => {
     mockTab = 'promos'
     const { container } = renderCatalog()
+    expect(container.textContent).toContain('catalog.promosReviewLead')
+    // The review table lists the verbatim chips per row; the class tags ride
+    // beneath them (the #717 review is the tab's purpose, so it mounts first).
+    expect(container.textContent).toContain('DISKON 20%')
+    expect(container.textContent).toContain('Harga Spesial')
+    expect(container.querySelector('[data-testid="promo-review-row"]')).not.toBeNull()
+    expect(container.textContent).toContain('catalog.promosViewReview')
+    expect(container.textContent).toContain('catalog.promosViewCatalog')
+    // The catalog read stays unmounted while Review is active.
+    expect(usePricePromos).not.toHaveBeenCalled()
+    expect(usePromoReview).toHaveBeenCalled()
+  })
+
+  it('switches the promos tab to the moved promo cards (#673) through the sub-view', () => {
+    mockTab = 'promos'
+    const { container } = renderCatalog()
+    fireEvent.click(clickable(container, 'catalog.promosViewCatalog'))
     expect(container.textContent).toContain('prices.promosLead')
     expect(container.textContent).toContain('prices.promoTypeDiscountPct')
     expect(container.textContent).toContain('prices.promoTypeGetFree')
     expect(container.textContent).toContain('prices.promosTotal')
-    expect(container.querySelector('input[type="search"]')).toBeNull()
-    expect(container.querySelector('[data-testid="duplicate-names-panel"]')).toBeNull()
-    // Tab state follows the search param.
-    expect(tabByText(container, 'catalog.tabPromos').getAttribute('aria-pressed')).toBe('true')
+    // The sub-view is local state: the review table and the catalog cards
+    // never mount together.
+    expect(container.querySelector('[data-testid="promo-review-row"]')).toBeNull()
     expect(usePricePromos).toHaveBeenCalled()
   })
 
   it('a promos example click jumps into the user explorer at #productKey', () => {
     mockTab = 'promos'
     const { container } = renderCatalog()
+    // The example cards live in the Catalog sub-view.
+    fireEvent.click(clickable(container, 'catalog.promosViewCatalog'))
     // Expand the Discount % card first — example rows live inside it.
     fireEvent.click(clickable(container, 'prices.promoTypeDiscountPct'))
     expect(container.textContent).toContain('prices.showExamples')

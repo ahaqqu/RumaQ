@@ -8,13 +8,18 @@ import { Chip } from '../components/Chip.jsx'
 import { ProductsView } from './ProductsView.jsx'
 import { BrochuresView } from './BrochuresView.jsx'
 import { PromosView } from './PromosView.jsx'
+import { PromosReview } from './PromosReview.jsx'
 import { resolveCatalogTab } from '../lib/pricesHelpers.js'
 import { IconWarning } from '../components/icons.jsx'
 
-// Lead copy per catalog tab; the Products home keeps catalog.lead.
+// Lead copy per catalog tab; the Products home keeps catalog.lead. The promos
+// tab switches its lead with the sub-view below (issue #717).
 const LEAD_KEY_BY_TAB = {
   'brochures-qa': 'catalog.brochuresQaLead',
-  promos: 'prices.promosLead',
+}
+const PROMOS_LEAD_BY_VIEW = {
+  review: 'catalog.promosReviewLead',
+  catalog: 'prices.promosLead',
 }
 
 // The admin catalog (issue #673): the home of the admin/QA tools that used to
@@ -30,11 +35,16 @@ const LEAD_KEY_BY_TAB = {
 //   ingestion metadata render in the QA items table (the former in-place
 //   review moved there). The user-facing /prices gallery renders none of
 //   these QA fields.
-// - Promos — the promo catalog moved off /prices in #673 (fixed group order,
-//   per-source badges, expandable ≤5 examples). Clicking an example jumps to
-//   /prices#productKey: the explorer is every household user's surface (admins
-//   included), and the fresh /prices mount guarantees the unfiltered landing
-//   context while ProductsView's hash-apply effect expands the product.
+// - Promos — two sub-views (#717): Review (the default) lists every current
+//   promo-evidence observation per item with its VERBATIM scraped chips so
+//   the owner can review whether promos are captured correctly and decide
+//   how each chip class should be handled; Catalog is the promo catalog
+//   moved off /prices in #673 (fixed group order, per-source badges,
+//   expandable ≤5 examples). Clicking a catalog example jumps to
+//   /prices#productKey: the explorer is every household user's surface
+//   (admins included), and the fresh /prices mount guarantees the unfiltered
+//   landing context while ProductsView's hash-apply effect expands the
+//   product.
 //
 // ?tab= selects the section; the retired ?tab=brochures value is not
 // recognized — validateSearch drops it and the page lands on Products (hard
@@ -52,10 +62,12 @@ export function AdminCatalog() {
   const activeTab = resolveCatalogTab(tab, location.hash)
 
   // Search text and the source/category filters live here (not inside
-  // ProductsView) so they survive a tab switch.
+  // ProductsView) so they survive a tab switch. The promos sub-view is local
+  // state: Review is the owner's ask (#717), Catalog stays reachable.
   const [search, setSearch] = useState('')
   const [source, setSource] = useState(null)
   const [category, setCategory] = useState(null)
+  const [promosView, setPromosView] = useState('review')
 
   if (!isAdmin) {
     return (
@@ -73,12 +85,17 @@ export function AdminCatalog() {
     navigate({ to: '/admin/catalog', search: next === 'products' ? {} : { tab: next }, hash: '' })
   }
 
+  const leadKey =
+    activeTab === 'products'
+      ? 'catalog.lead'
+      : activeTab === 'promos'
+        ? PROMOS_LEAD_BY_VIEW[promosView]
+        : LEAD_KEY_BY_TAB[activeTab]
+
   return (
     <>
       <div className="mb-6">
-        <p className="text-md text-text-muted leading-snug max-w-[62ch]">
-          {activeTab === 'products' ? t('catalog.lead') : t(LEAD_KEY_BY_TAB[activeTab])}
-        </p>
+        <p className="text-md text-text-muted leading-snug max-w-[62ch]">{t(leadKey)}</p>
       </div>
 
       <div
@@ -120,9 +137,36 @@ export function AdminCatalog() {
       ) : activeTab === 'brochures-qa' ? (
         <BrochuresView />
       ) : (
-        <PromosView
-          onJump={(productKey) => navigate({ to: '/prices', search: {}, hash: productKey })}
-        />
+        <>
+          <div
+            className="flex flex-wrap gap-2 mb-5"
+            role="group"
+            aria-label={t('catalog.promosViewsLabel')}
+            data-testid="promos-views"
+          >
+            <Chip
+              variant="filter"
+              pressed={promosView === 'review'}
+              onClick={() => setPromosView('review')}
+            >
+              {t('catalog.promosViewReview')}
+            </Chip>
+            <Chip
+              variant="filter"
+              pressed={promosView === 'catalog'}
+              onClick={() => setPromosView('catalog')}
+            >
+              {t('catalog.promosViewCatalog')}
+            </Chip>
+          </div>
+          {promosView === 'review' ? (
+            <PromosReview />
+          ) : (
+            <PromosView
+              onJump={(productKey) => navigate({ to: '/prices', search: {}, hash: productKey })}
+            />
+          )}
+        </>
       )}
     </>
   )

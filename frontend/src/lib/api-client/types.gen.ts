@@ -2676,6 +2676,71 @@ export type GetApiPricesPromosResponses = {
 
 export type GetApiPricesPromosResponse = GetApiPricesPromosResponses[keyof GetApiPricesPromosResponses];
 
+export type GetApiAdminPricesPromosReviewData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Substring match over promo_label, product name and brand.
+         */
+        q?: string;
+        /**
+         * Exact source-slug filter.
+         */
+        source?: string;
+        sort?: 'date' | 'store' | 'name';
+        limit?: number;
+        offset?: number;
+    };
+    url: '/api/admin/prices/promos/review';
+};
+
+export type GetApiAdminPricesPromosReviewErrors = {
+    /**
+     * Invalid query parameter
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Not an admin
+     */
+    403: unknown;
+};
+
+export type GetApiAdminPricesPromosReviewResponses = {
+    /**
+     * OK
+     */
+    200: {
+        items: Array<{
+            product_key: string;
+            name: string;
+            brand: string | null;
+            unit: string | null;
+            source_slug: string;
+            source_name: string;
+            observed_date: string;
+            price: number;
+            member_price: number | null;
+            effective_unit_price: number | null;
+            promo_type: string | null;
+            promo_label: string | null;
+            valid_from: string | null;
+            valid_until: string | null;
+            match_method: string | null;
+            match_confidence: number;
+            brochure_url: string | null;
+            scraped_at: string;
+        }>;
+        total: number;
+    };
+};
+
+export type GetApiAdminPricesPromosReviewResponse = GetApiAdminPricesPromosReviewResponses[keyof GetApiAdminPricesPromosReviewResponses];
+
 export type GetApiPricesBrochuresData = {
     body?: never;
     path?: never;

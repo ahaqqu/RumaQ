@@ -20,9 +20,41 @@ Given('a promo-free price snapshot has been pushed', async () => {
 // affordance; the label sits in the first .font-medium div inside.
 const promoCards = (page) => page.locator('button').filter({ hasText: 'Example products' })
 
+// The promos tab's sub-views (issue #717): Review (default) is the chip
+// review table, Catalog holds the #673 promo-type cards.
+When('I open the promos {string} sub-view', async ({ page }, name) => {
+  await page.locator('[data-testid="promos-views"] button').filter({ hasText: name }).click()
+})
+
 Then('the promos tab row should be visible', async ({ page }) => {
   await expect(page.getByText('Promos', { exact: true })).toBeVisible()
   await expect(page.getByText('Products & identity', { exact: true })).toBeVisible()
+})
+
+Then('the promo review table should list {int} rows', async ({ page }, count) => {
+  await expect(page.getByTestId('promo-review-row')).toHaveCount(count)
+})
+
+Then(/the "(.+)" promo chip should render verbatim/, async ({ page }, chip) => {
+  await expect(
+    page.getByTestId('promo-review-chip').filter({ hasText: chip }).first()
+  ).toBeVisible()
+})
+
+Then(/the "(.+)" promo chip should not render/, async ({ page }, chip) => {
+  // Nothing in the review invents chips: a text that no fixture row scraped
+  // must not appear (the class tags live in a separate testid).
+  await expect(page.getByTestId('promo-review-chip').filter({ hasText: chip })).toHaveCount(0)
+})
+
+Then(/the promo review should tag the "(.+)" class/, async ({ page }, tag) => {
+  await expect(
+    page.getByTestId('promo-review-chip-classes').filter({ hasText: tag }).first()
+  ).toBeVisible()
+})
+
+When('I select {string} in the promo review store filter', async ({ page }, store) => {
+  await page.getByTestId('promo-review-store-filter').selectOption({ label: store })
 })
 
 Then(/the promo cards should appear in order "(.+)"/, async ({ page }, expected) => {
@@ -59,6 +91,12 @@ Then('the promos tab param should be gone from the URL', async ({ page }) => {
   // The jump navigates with search: {} — the hash deep link replaces the
   // promos tab instead of stacking on top of it.
   await expect(page).not.toHaveURL(/tab=promos/)
+})
+
+Then('the promo review empty state should render with the tab visible', async ({ page }) => {
+  await expect(page.getByText('No promo rows yet')).toBeVisible()
+  await expect(page.getByText('Promos', { exact: true })).toBeVisible()
+  await expect(page.getByText('Products & identity', { exact: true })).toBeVisible()
 })
 
 Then('the promos empty state should render with the tab visible', async ({ page }) => {

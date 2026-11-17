@@ -16,6 +16,11 @@ function createPricesEnv(
     promoSources?: FakeRow[]
     promoExamples?: FakeRow[]
     promoTotal?: FakeRow[]
+    /** Issue #717: rows answering the promo-review page/total batch. */
+    promoReviewPage?: FakeRow[]
+    promoReviewTotal?: FakeRow[]
+    /** Issue #717: set false to answer requireAdmin's users row with 0. */
+    admin?: boolean
     /** Issue #373: rows answering the meta endpoint's DISTINCT categories. */
     categories?: FakeRow[]
   },
@@ -51,6 +56,11 @@ function createPricesEnv(
           if (sql.includes('MAX(observed_date)')) {
             return rows.status === undefined ? null : rows.status
           }
+          // requireAdmin's per-request gate (lib/admin.ts); the row rides a
+          // canned is_admin so admin-gated prices routes can be exercised.
+          if (sql.includes('SELECT is_admin FROM users')) {
+            return { is_admin: rows.admin === false ? 0 : 1 }
+          }
           return null
         },
         async run() {
@@ -78,6 +88,12 @@ function createPricesEnv(
         }
         if (stmt.sql.includes('-- promos: total')) {
           return { results: rows.promoTotal ?? [], success: true }
+        }
+        if (stmt.sql.includes('-- promos-review: page')) {
+          return { results: rows.promoReviewPage ?? [], success: true }
+        }
+        if (stmt.sql.includes('-- promos-review: total')) {
+          return { results: rows.promoReviewTotal ?? [], success: true }
         }
         return { success: true }
       })
@@ -778,6 +794,169 @@ describe('GET /api/prices/promos', () => {
 
     const totalCall = prepareCalls.find((call) => call.sql.includes('-- promos: total'))!
     expect(totalCall.sql).toContain('COUNT(DISTINCT p.product_key)')
+  })
+})
+
+// Issue #717: the admin promo-review read — one page of current
+// promo-evidence observations with the verbatim promo_label. The lib pins the
+// same current-set predicate as the promo catalog; the route is requireAdmin.
+describe('GET /api/admin/prices/promos/review', () => {
+  const reviewRow = {
+    product_key: 'indomie--mi-instant--69-gr',
+    name: 'INDOMIE MI INSTANT SOTO MIE 69GR',
+    brand: 'Indomie',
+    unit: '69 GR',
+    source_slug: 'superindo',
+    source_name: 'Superindo',
+    observed_date: '2026-11-17',
+    price: 111900,
+    member_price: null,
+    effective_unit_price: null,
+    promo_type: 'multi_price',
+    promo_label: 'Harga Promo 16, 18,19 NOV 44.900; Maks. 4 krt',
+    valid_from: null,
+    valid_until: null,
+    match_method: 'ai',
+    match_confidence: 0.9,
+    brochure_url: 'https://www.superindo.co.id/promo',
+    scraped_at: '2026-11-17T23:00:05Z',
+  }
+
+  it('requires authentication and admin', async () => {
+    const unauth = createPricesEnv({ promoReviewPage: [reviewRow] }, { authenticated: false })
+    const unauthRes = await apiApp.request('/api/admin/prices/promos/review', {}, unauth.env)
+    expect(unauthRes.status).toBe(401)
+
+    const nonAdmin = createPricesEnv({ promoReviewPage: [reviewRow], admin: false })
+    const nonAdminRes = await apiApp.request('/api/admin/prices/promos/review', {}, nonAdmin.env)
+    expect(nonAdminRes.status).toBe(403)
+  })
+
+  it('returns one page of verbatim rows with the exact total', async () => {
+    const { env } = createPricesEnv({
+      promoReviewPage: [reviewRow],
+      promoReviewTotal: [{ total: 1 }],
+    })
+    const res = await apiApp.request('/api/admin/prices/promos/review', {}, env)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      items: Array<{ product_key: string; promo_label: string; price: number }>
+      total: number
+    }
+    expect(body.items).toHaveLength(1)
+    expect(body.items[0]!.product_key).toBe(reviewRow.product_key)
+    // The label ships exactly as scraped — casing, spacing and punctuation
+    // untouched (the owner reviews the pipeline's raw output).
+    expect(body.items[0]!.promo_label).toBe(reviewRow.promo_label)
+    expect(body.items[0]!.price).toBe(111900)
+    expect(body.total).toBe(1)
+  })
+
+  it('pins the shared current-set predicate and evidence filter in the base CTE', async () => {
+    const { env, prepareCalls } = createPricesEnv({ promoReviewPage: [] })
+    await apiApp.request('/api/admin/prices/promos/review', {}, env)
+
+    const pageCall = prepareCalls.find((call) => call.sql.includes('-- promos-review: page'))!
+    expect(pageCall.sql).toContain(LATEST_OBSERVATION_PREDICATE)
+    expect(pageCall.sql).toContain(
+      "o.promo_type IS NOT NULL OR (o.promo_label IS NOT NULL AND o.promo_label <> '')"
+    )
+    // Count and page share one filtered base set, so the total always
+    // describes what the list pages through.
+    const totalCall = prepareCalls.find((call) => call.sql.includes('-- promos-review: total'))!
+    expect(totalCall.sql).toContain('COUNT(*) AS total FROM base')
+    expect(totalCall.sql).toContain(LATEST_OBSERVATION_PREDICATE)
+  })
+
+  it('binds defaults: limit 50, offset 0, newest-first sort', async () => {
+    const { env, prepareCalls } = createPricesEnv({ promoReviewPage: [] })
+    await apiApp.request('/api/admin/prices/promos/review', {}, env)
+
+    const pageCall = prepareCalls.find((call) => call.sql.includes('-- promos-review: page'))!
+    expect(pageCall.params).toEqual([50, 0])
+    expect(pageCall.sql).toContain(
+      'ORDER BY observed_date DESC, source_slug ASC, name COLLATE NOCASE ASC, product_key ASC'
+    )
+  })
+
+  it('filters by promo/item text (escaped LIKE) and store, and flips the sort', async () => {
+    const { env, prepareCalls } = createPricesEnv({ promoReviewPage: [] })
+    await apiApp.request(
+      '/api/admin/prices/promos/review?q=Harga%20Promo_100%25&source=superindo&sort=store',
+      {},
+      env
+    )
+
+    const pageCall = prepareCalls.find((call) => call.sql.includes('-- promos-review: page'))!
+    // % and _ are escaped so the owner's text is a literal substring, never a
+    // wildcard pattern (same discipline as the explorer's q filter); spaces
+    // pass through unescaped like every LIKE in the codebase.
+    expect(pageCall.params).toEqual([
+      '%Harga Promo\\_100\\%%',
+      '%Harga Promo\\_100\\%%',
+      '%Harga Promo\\_100\\%%',
+      'superindo',
+      50,
+      0,
+    ])
+    // Table-qualified columns: the CTE's bare output names are not the WHERE
+    // scope — unqualified `name` is ambiguous between p.name and s.name (a
+    // run-time D1 error the fake DB cannot throw; the automation fixture
+    // caught exactly that shape).
+    expect(pageCall.sql).toContain('o.promo_label LIKE ?')
+    expect(pageCall.sql).toContain('p.name LIKE ?')
+    expect(pageCall.sql).toContain('p.brand LIKE ?')
+    expect(pageCall.sql).toContain('s.slug = ?')
+    expect(pageCall.sql).toContain(
+      'ORDER BY source_slug ASC, name COLLATE NOCASE ASC, product_key ASC, observed_date DESC'
+    )
+    // The filters EXTEND the CTE's single WHERE with AND clauses — a second
+    // WHERE is a run-time D1 syntax error the fake DB cannot throw (caught by
+    // the automation fixture once already).
+    expect(pageCall.sql).not.toContain('WHERE (o.promo_label LIKE ?')
+    expect(pageCall.sql).not.toContain('WHERE s.slug = ?')
+    // The filters ride the count too — the total describes the filtered set.
+    const totalCall = prepareCalls.find((call) => call.sql.includes('-- promos-review: total'))!
+    expect(totalCall.params).toEqual([
+      '%Harga Promo\\_100\\%%',
+      '%Harga Promo\\_100\\%%',
+      '%Harga Promo\\_100\\%%',
+      'superindo',
+    ])
+  })
+
+  it('rejects an unknown sort and an over-max limit with 400', async () => {
+    const { env } = createPricesEnv({ promoReviewPage: [] })
+    const badSort = await apiApp.request('/api/admin/prices/promos/review?sort=cheap', {}, env)
+    expect(badSort.status).toBe(400)
+    const bigLimit = await apiApp.request('/api/admin/prices/promos/review?limit=201', {}, env)
+    expect(bigLimit.status).toBe(400)
+  })
+
+  it('closes the name sort with the per-row-unique source tiebreak', async () => {
+    // Rows are one per (product, source): two stores of one product share
+    // name, product_key and often observed_date. Without the trailing
+    // source_slug, OFFSET paging can skip or duplicate a row at a page
+    // boundary exactly there.
+    const { env, prepareCalls } = createPricesEnv({ promoReviewPage: [] })
+    await apiApp.request('/api/admin/prices/promos/review?sort=name', {}, env)
+
+    const pageCall = prepareCalls.find((call) => call.sql.includes('-- promos-review: page'))!
+    expect(pageCall.sql).toContain(
+      'ORDER BY name COLLATE NOCASE ASC, product_key ASC, observed_date DESC, source_slug ASC'
+    )
+  })
+
+  it('declares the response schema in the OpenAPI spec', async () => {
+    const specs = (await generateSpecs(apiApp, {
+      documentation: { info: { title: 'RumaQ API', version: '0.1.0' } },
+    })) as Record<string, any>
+    const operation = specs.paths['/api/admin/prices/promos/review'].get
+    expect(operation).toBeDefined()
+    const schema = operation.responses['200'].content['application/json'].schema
+    expect(schema.properties.items.items.properties).toHaveProperty('promo_label')
+    expect(schema.properties.items.items.properties).toHaveProperty('promo_type')
+    expect(schema.properties.items.items.required).toContain('scraped_at')
   })
 })
 
