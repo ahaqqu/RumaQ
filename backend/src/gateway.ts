@@ -12,6 +12,8 @@ import { logDueDocumentReminders } from './lib/document-expiry.js'
 import { PURGE_TICK_OBJECT_BUDGET, runPluginPurgeTick } from './lib/plugin-purge.js'
 import { runReviewAiSweep } from './lib/review-ai.js'
 import { csrfOriginGuard } from './lib/csrf.js'
+import { INTERNAL_ERROR_BODY } from './lib/hono-error.js'
+import { NO_CACHE } from './lib/request.js'
 import { REVIEW_AI_CRON_SCHEDULE } from './cron-schedules.js'
 
 const AUTH_ROUTES = new Set([
@@ -171,9 +173,11 @@ export const gateway = {
       return await dispatch(request, env, ctx)
     } catch (error) {
       console.error('[gateway] dispatch failed', error)
-      return new Response(JSON.stringify({ error: 'Internal server error' }), {
+      // Same body/header convention as the apps' shared onError fallback
+      // (lib/hono-error.ts): the constants, not a drifted copy of them.
+      return new Response(JSON.stringify({ error: INTERNAL_ERROR_BODY }), {
         status: 500,
-        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-cache' },
+        headers: { 'Content-Type': 'application/json', ...NO_CACHE },
       })
     }
   },
