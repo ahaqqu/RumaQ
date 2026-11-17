@@ -46,7 +46,10 @@ import {
   LATEST_OBSERVATION_SUBQUERY,
   LATEST_OBSERVATION_PREDICATE,
   PAYABLE_PRICE_SQL,
+  PROMO_REVIEW_DEFAULT_LIMIT,
+  PROMO_REVIEW_MAX_LIMIT,
   getPromoCatalog,
+  getPromoReviewPage,
   listPriceCategories,
 } from '../lib/prices.js'
 import { applyCategoryBackfill, listUncategorizedProducts } from '../lib/taxonomy-backfill.js'
@@ -804,6 +807,10 @@ apiApp.use('/api/prices/promos', requirePricesEntitlement('prices.explore'))
 apiApp.use('/api/prices/brochures', requirePricesEntitlement('prices.explore'))
 apiApp.use('/api/prices/brochures/products', requirePricesEntitlement('prices.explore'))
 apiApp.use('/api/admin/price-runs', propsAuthMiddleware)
+// Promo review (issue #717): the admin read over current promo-evidence
+// observations — a static path with no subpaths, one line per the #292
+// per-path discipline.
+apiApp.use('/api/admin/prices/promos/review', propsAuthMiddleware)
 apiApp.use('/api/admin/ai/usage', propsAuthMiddleware)
 apiApp.use('/api/admin/scrape', propsAuthMiddleware)
 apiApp.use('/api/admin/scrape/stores', propsAuthMiddleware)
@@ -6136,6 +6143,166 @@ apiApp.get(
   async (c) => {
     const catalog = await getPromoCatalog(c.env.DB)
     const res = c.json(catalog)
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+// --- Promo review (issue #717) ---
+// The admin review surface behind /admin/catalog?tab=promos (Review): the
+// current promo-evidence observations, one row per (product, source), each
+// with the VERBATIM promo_label (the pipeline's '; '-joined OCR promo chips)
+// beside the parsed promo_type and the offer context. Read-only presentation
+// data — grouping/filtering happens in the UI; what any chip class means for
+// pricing stays an owner decision, nothing here changes capture or calc.
+const PROMO_REVIEW_ROW_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    product_key: { type: 'string' },
+    name: { type: 'string' },
+    brand: { type: ['string', 'null'] } as any,
+    unit: { type: ['string', 'null'] } as any,
+    source_slug: { type: 'string' },
+    source_name: { type: 'string' },
+    observed_date: { type: 'string' },
+    price: { type: 'number' },
+    member_price: { type: ['number', 'null'] } as any,
+    effective_unit_price: { type: ['number', 'null'] } as any,
+    promo_type: { type: ['string', 'null'] } as any,
+    promo_label: { type: ['string', 'null'] } as any,
+    valid_from: { type: ['string', 'null'] } as any,
+    valid_until: { type: ['string', 'null'] } as any,
+    match_method: { type: ['string', 'null'] } as any,
+    match_confidence: { type: 'number' },
+    brochure_url: { type: ['string', 'null'] } as any,
+    scraped_at: { type: 'string' },
+  },
+  required: [
+    'product_key',
+    'name',
+    'brand',
+    'unit',
+    'source_slug',
+    'source_name',
+    'observed_date',
+    'price',
+    'member_price',
+    'effective_unit_price',
+    'promo_type',
+    'promo_label',
+    'valid_from',
+    'valid_until',
+    'match_method',
+    'match_confidence',
+    'brochure_url',
+    'scraped_at',
+  ],
+}
+
+const promoReviewQuery = object({
+  // Substring over the verbatim promo label and the product name/brand — the
+  // "pull one chip class by its prefix" filter (e.g. 'Harga Promo', 'Maks.').
+  q: optional(pipe(string(), maxLength(100))),
+  source: optional(pipe(string(), maxLength(100))),
+  sort: optional(picklist(['date', 'store', 'name'])),
+  limit: optional(
+    pipe(
+      string(),
+      transform(Number),
+      number(),
+      integer(),
+      minValue(1),
+      maxValue(PROMO_REVIEW_MAX_LIMIT)
+    )
+  ),
+  // Upper bound: a syntactically valid integer such as 1e19 passes minValue
+  // but is outside SQLite's int64 range, and D1 throws a datatype mismatch
+  // when it is bound as OFFSET (a 500, not the documented 400). Cap at the
+  // largest exactly-representable JS integer, which is inside int64.
+  offset: optional(
+    pipe(
+      string(),
+      transform(Number),
+      number(),
+      integer(),
+      minValue(0),
+      maxValue(Number.MAX_SAFE_INTEGER)
+    )
+  ),
+})
+
+apiApp.get(
+  '/api/admin/prices/promos/review',
+  describeRoute({
+    description:
+      'Admin promo review (issue #717): current promo-evidence observations, one row per product per store with the verbatim promo_label beside the parsed promo_type, filterable by store and by promo/product text, paginated with an exact total. Read-only — never writes and never bumps the canonical index version.',
+    security: [{ cookieAuth: [] }],
+    parameters: [
+      {
+        in: 'query',
+        name: 'q',
+        required: false,
+        description: 'Substring match over promo_label, product name and brand.',
+        schema: { type: 'string', maxLength: 100 },
+      },
+      {
+        in: 'query',
+        name: 'source',
+        required: false,
+        description: 'Exact source-slug filter.',
+        schema: { type: 'string', maxLength: 100 },
+      },
+      {
+        in: 'query',
+        name: 'sort',
+        required: false,
+        schema: { type: 'string', enum: ['date', 'store', 'name'], default: 'date' },
+      },
+      {
+        in: 'query',
+        name: 'limit',
+        required: false,
+        schema: {
+          type: 'integer',
+          minimum: 1,
+          maximum: PROMO_REVIEW_MAX_LIMIT,
+          default: PROMO_REVIEW_DEFAULT_LIMIT,
+        },
+      },
+      {
+        in: 'query',
+        name: 'offset',
+        required: false,
+        schema: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      },
+    ],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                items: { type: 'array', items: PROMO_REVIEW_ROW_SCHEMA },
+                total: { type: 'integer' },
+              },
+              required: ['items', 'total'],
+            },
+          },
+        },
+      },
+      400: { description: 'Invalid query parameter' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  sValidator('query', promoReviewQuery),
+  async (c) => {
+    const { q, source, sort, limit, offset } = c.req.valid('query')
+    const page = await getPromoReviewPage(c.env.DB, { q, source, sort, limit, offset })
+    const res = c.json(page)
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }

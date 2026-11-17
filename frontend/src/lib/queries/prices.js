@@ -5,6 +5,7 @@ import {
   getPriceDetail,
   getPriceRuns,
   getPromos,
+  getPromoReview,
   getBrochures,
   getBrochureProducts,
 } from '../api'
@@ -76,6 +77,41 @@ export function useBrochureProducts(brochureUrl) {
         signal
       ),
     enabled: Boolean(brochureUrl),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((sum, page) => sum + (page?.items?.length ?? 0), 0)
+      const total = lastPage?.total ?? 0
+      return loaded < total ? loaded : undefined
+    },
+    select: (data) => ({
+      items: (data.pages ?? []).flatMap((page) => page?.items ?? []),
+      total: (data.pages ?? [])[0]?.total ?? 0,
+    }),
+    staleTime: 1000 * 60 * 5,
+  })
+}
+
+// One page of the admin promo-review list (issue #717): every current
+// promo-evidence observation with its verbatim chips, 50 rows at a time.
+// Offset append ("Load more"), identical to the per-brochure QA list; the
+// exact total rides every page, so the first page's value stays stable while
+// pages append.
+export const PROMO_REVIEW_PAGE_SIZE = 50
+
+export function usePromoReview({ q, source, sort } = {}) {
+  return useInfiniteQuery({
+    queryKey: ['prices', 'promos', 'review', q ?? '', source ?? '', sort ?? 'date'],
+    queryFn: ({ signal, pageParam }) =>
+      getPromoReview(
+        {
+          q: q || undefined,
+          source: source || undefined,
+          sort,
+          limit: PROMO_REVIEW_PAGE_SIZE,
+          offset: pageParam,
+        },
+        signal
+      ),
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
       const loaded = allPages.reduce((sum, page) => sum + (page?.items?.length ?? 0), 0)

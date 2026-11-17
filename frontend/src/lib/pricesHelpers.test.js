@@ -8,6 +8,7 @@ import {
   showsMemberPrice,
   promoBadges,
   promoTone,
+  promoChipClass,
   isFootnoteLabel,
   countdownState,
   relativeAge,
@@ -465,5 +466,50 @@ describe('brochureViewerUrl (#674/#716)', () => {
     expect(
       brochureViewerUrl('/api/brochures/lotte-mart/20261028/c/d.jpg', { admin: true })
     ).toBeNull()
+  })
+})
+
+// Issue #717: the promo chip classes are presentation-only labels over the
+// verbatim chip text — the OCR-QA report's F3/F4/F5 families surfaced so the
+// owner can review which family a chip belongs to. No pricing behavior rides
+// on them.
+describe('promoChipClass (#717)', () => {
+  it('classifies the sampled production chips', () => {
+    // F4: date-ranged promo price.
+    expect(promoChipClass('HARGA PROMO 16, 18,19 NOV 44.900')).toBe('dated')
+    expect(promoChipClass('Harga Promo 16 - 19 Nov 44.900')).toBe('dated')
+    // Per-transaction quantity limits (Maks. N Pck/Bag/Pch/Btl/krt).
+    expect(promoChipClass('Maks. 4 Pck')).toBe('limit')
+    expect(promoChipClass('Maks. 4 Bag')).toBe('limit')
+    expect(promoChipClass('Maks. 2 Pch')).toBe('limit')
+    expect(promoChipClass('Maks. 4 Btl')).toBe('limit')
+    expect(promoChipClass('maks. 4 krt')).toBe('limit')
+    // F3: buy-get blocks that did land.
+    expect(promoChipClass('BELI 1 GRATIS 1')).toBe('bogo')
+    expect(promoChipClass('Beli 2 Gratis 2')).toBe('bogo')
+    expect(promoChipClass('Buy 1 Get 1')).toBe('bogo')
+    // F5: conditional multi-buy price (Beli 2 harga satuan).
+    expect(promoChipClass('Beli 2 harga satuan 25.900')).toBe('multiBuy')
+    // Discount chips.
+    expect(promoChipClass('Diskon 20%')).toBe('discount')
+    expect(promoChipClass('DISKON 50%')).toBe('discount')
+    expect(promoChipClass('Special 30% off')).toBe('discount')
+    // Context-only price labels.
+    expect(promoChipClass('Harga Spesial')).toBe('priceLabel')
+    expect(promoChipClass('Harga Mulai 12.000')).toBe('priceLabel')
+    expect(promoChipClass('Harga Khusus')).toBe('priceLabel')
+    // Everything else stays unclassified — verbatim text is the review input.
+    expect(promoChipClass('Super Promo!')).toBe('other')
+    expect(promoChipClass('MyYOGYA')).toBe('other')
+    expect(promoChipClass('LOTTE MART Point SPECIAL PRICE')).toBe('other')
+    expect(promoChipClass('')).toBe('other')
+    expect(promoChipClass(null)).toBe('other')
+  })
+
+  it('classifies case-insensitively and keeps first-match priority', () => {
+    // bogo wins over multiBuy: a beli-N with gratis is the buy-get family.
+    expect(promoChipClass('BELI 2 GRATIS 1')).toBe('bogo')
+    // harga promo wins over the discount tokens a dated chip may carry.
+    expect(promoChipClass('Harga Promo Diskon 20%')).toBe('dated')
   })
 })

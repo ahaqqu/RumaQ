@@ -9,6 +9,7 @@
  */
 import { client } from './api-client/client.gen.js'
 import type {
+  GetApiAdminPricesPromosReviewResponse,
   GetApiAdminReviewData,
   GetApiPricesBrochuresProductsResponse,
   PostApiAdminScrapeData,
@@ -27,6 +28,7 @@ import {
   deleteApiTasksById,
   getApiAdminAiUsage,
   getApiAdminPriceRuns,
+  getApiAdminPricesPromosReview,
   getApiAdminProductsAliasesCandidates,
   getApiAdminProductsByProductKey,
   getApiAdminProductsDuplicates,
@@ -671,6 +673,29 @@ export function getBrochureProducts(
 
 export function getPriceDetail(productKey: string, signal?: AbortSignal): Promise<unknown> {
   return unwrap(getApiPricesByProductKey({ path: { productKey }, signal }))
+}
+
+// Admin promo review (issue #717) — one page of the per-item promo-chip list
+// behind /admin/catalog?tab=promos: every current promo-evidence observation
+// with its VERBATIM promo_label (the pipeline's '; '-joined OCR chips). The
+// generated OpenAPI response is the single source for the field set.
+export type PromoReviewItem = GetApiAdminPricesPromosReviewResponse['items'][number]
+
+export type PromoReviewSort = 'date' | 'store' | 'name'
+
+export function getPromoReview(
+  {
+    q,
+    source,
+    sort,
+    limit,
+    offset,
+  }: { q?: string; source?: string; sort?: PromoReviewSort; limit?: number; offset?: number } = {},
+  signal?: AbortSignal
+): Promise<GetApiAdminPricesPromosReviewResponse> {
+  return unwrap<GetApiAdminPricesPromosReviewResponse>(
+    getApiAdminPricesPromosReview({ query: { q, source, sort, limit, offset }, signal })
+  )
 }
 
 export function getPriceRuns(signal?: AbortSignal): Promise<unknown> {
