@@ -8,6 +8,7 @@ import {
   useTriggerScrape,
   ACTIVE_STATUSES,
 } from '../lib/queries/index.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
@@ -252,7 +253,7 @@ function CommandRow({ command }) {
   )
 }
 
-function HistoryPanel({ commands, isLoading, isError }) {
+function HistoryPanel({ commands, isLoading, isError, error }) {
   const { t } = useTranslation()
   return (
     <Panel>
@@ -267,7 +268,11 @@ function HistoryPanel({ commands, isLoading, isError }) {
         </PanelBody>
       ) : isError ? (
         <PanelBody>
-          <EmptyState icon={IconWarning} title={t('scrape.loadError')} desc={t('offline.banner')} />
+          <EmptyState
+            icon={IconWarning}
+            title={t('scrape.loadError')}
+            desc={t(errorKindKey(error))}
+          />
         </PanelBody>
       ) : commands.length === 0 ? (
         <PanelBody>
@@ -294,7 +299,7 @@ export function AdminScrape() {
   const { t } = useTranslation()
   const { data: me } = useMe()
   const isAdmin = me?.user?.isAdmin === true
-  const { data, isLoading, isError } = useScrapeCommands()
+  const { data, isLoading, isError, error } = useScrapeCommands()
   const commands = data?.commands ?? []
   const activeCommand = commands.find((command) => ACTIVE_STATUSES.has(command.status))
 
@@ -318,7 +323,7 @@ export function AdminScrape() {
 
       <TriggerPanel activeCommand={activeCommand} />
       {activeCommand && <ActiveRunCard command={activeCommand} />}
-      <HistoryPanel commands={commands} isLoading={isLoading} isError={isError} />
+      <HistoryPanel commands={commands} isLoading={isLoading} isError={isError} error={error} />
     </>
   )
 }

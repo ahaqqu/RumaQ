@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import { PromosView } from './PromosView.jsx'
 import { formatPrice } from '../lib/pricesHelpers.js'
+import { ApiError } from '../lib/api'
 
 vi.mock('react-i18next', async () => {
   const { mockReactI18next } = await import('../test-i18n.js')
@@ -278,14 +279,21 @@ describe('PromosView', () => {
     expect(container.textContent).not.toContain('prices.promosTotal')
   })
 
-  it('renders the offline banner on error and skeletons while loading', () => {
+  it('renders the M1-kind error copy on error and skeletons while loading', () => {
     vi.mocked(usePricePromos).mockReturnValue({ isLoading: true })
     const loading = renderPromos()
     expect(loading.container.textContent).not.toContain('prices.promosEmpty')
 
-    vi.mocked(usePricePromos).mockReturnValue({ isError: true, isLoading: false })
+    // L5 (audit): a 500 must not read as "offline" — the description is the
+    // M1-kind copy (error.http), never the offline banner.
+    vi.mocked(usePricePromos).mockReturnValue({
+      isError: true,
+      isLoading: false,
+      error: new ApiError('Request failed: 500', 500),
+    })
     const errored = renderPromos()
     expect(errored.container.textContent).toContain('prices.noMatch')
-    expect(errored.container.textContent).toContain('offline.banner')
+    expect(errored.container.textContent).toContain('error.http')
+    expect(errored.container.textContent).not.toContain('offline.banner')
   })
 })

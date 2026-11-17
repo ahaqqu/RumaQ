@@ -19,6 +19,7 @@ import { Button } from '../components/Button.jsx'
 import { ProductRenameForm } from '../components/ProductRenameForm.jsx'
 import { TaxonomyAckPanel } from '../components/TaxonomyAckPanel.jsx'
 import { formatPrice } from '../lib/pricesHelpers.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { cn } from '../lib/cn.js'
 import { IconWarning, IconReview, IconDownload, IconBolt } from '../components/icons.jsx'
 
@@ -605,7 +606,7 @@ export function AdminReview() {
   // Issue #628: null = every reason (the "All" chip), so the default queue
   // read is byte-for-byte the pre-filter request.
   const [reason, setReason] = useState(null)
-  const { data, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage } =
+  const { data, isLoading, isError, error, hasNextPage, fetchNextPage, isFetchingNextPage } =
     useReviewItems(status, reason)
   const decide = useDecideReview()
   const undo = useUndoReview()
@@ -874,7 +875,7 @@ export function AdminReview() {
         </Panel>
       ) : isError ? (
         <Panel>
-          <EmptyState icon={IconWarning} title={t('monitor.error')} desc={t('offline.banner')} />
+          <EmptyState icon={IconWarning} title={t('monitor.error')} desc={t(errorKindKey(error))} />
         </Panel>
       ) : total === 0 ? (
         <Panel>

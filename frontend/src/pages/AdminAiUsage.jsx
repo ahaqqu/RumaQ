@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMe } from '../lib/queries/me.js'
 import { useAdminAiUsage } from '../lib/queries/index.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
 import { Button } from '../components/Button.jsx'
@@ -51,7 +52,7 @@ export function AdminAiUsage() {
   const { data: me } = useMe()
   const isAdmin = me?.user?.isAdmin === true
   const [range, setRange] = useState('24h')
-  const { data, isLoading, isError } = useAdminAiUsage(range)
+  const { data, isLoading, isError, error } = useAdminAiUsage(range)
 
   if (!isAdmin) {
     return (
@@ -109,7 +110,7 @@ export function AdminAiUsage() {
             <EmptyState
               icon={IconWarning}
               title={t('aiUsage.loadError')}
-              desc={t('offline.banner')}
+              desc={t(errorKindKey(error))}
             />
           ) : (
             <div className="flex flex-wrap gap-3">
@@ -144,7 +145,7 @@ export function AdminAiUsage() {
               <EmptyState
                 icon={IconWarning}
                 title={t('aiUsage.loadError')}
-                desc={t('offline.banner')}
+                desc={t(errorKindKey(error))}
               />
             </div>
           ) : users.length === 0 ? (

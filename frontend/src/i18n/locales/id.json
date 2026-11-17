@@ -1082,6 +1082,12 @@
     "updated": "diperbarui {{date}}",
     "truncated": "Sebagian grup atau produk duplikat tidak ditampilkan — laporan belum lengkap."
   },
+  "error": {
+    "title": "Terjadi kesalahan",
+    "offline": "Anda sedang offline — periksa koneksi Anda, lalu coba lagi.",
+    "timeout": "Permintaan kehabisan waktu — coba lagi.",
+    "http": "Server mengalami masalah — coba lagi beberapa saat lagi."
+  },
   "aliasBulk": {
     "title": "Alias kandidat",
     "desc": "Kandidat yang namanya persis sama dengan nama kanonik produknya aman disetujui sekaligus. Varian spasi, ukuran, dan penulisan tetap untuk ditinjau manual.",

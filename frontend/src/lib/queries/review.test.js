@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
-import { renderHook, waitFor } from '@testing-library/react'
+import { renderHook, waitFor, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 import {
@@ -269,6 +269,189 @@ describe('useDecideReview / useUndoReview', () => {
     const row = queryClient.getQueryData(['review', 'all']).pages[0].items[0]
     expect(row.status).toBe('rejected')
     expect(row.decidedSource).toBe('human')
+  })
+
+  // M2 (audit): the optimistic write used to move the row only — the header
+  // painted counts and filteredTotal from the same cache, so the pending
+  // badge contradicted the visible rows until the settle refetch, and
+  // `decidedBy: null` blanked the actor chip. These assertions run on the
+  // OPTIMISTIC FRAME (the decision promise is held open) — they fail on the
+  // base implementation, which only flips the row.
+  describe('optimistic frame patches the derived slices (M2/L6)', () => {
+    const COUNTS = {
+      pending: 2,
+      approved: 1,
+      rejected: 0,
+      pendingByReason: { price_ratio: 2, verifier_unresolved: 0, taxonomy: 0 },
+    }
+    const FLAGGED = { ...reviewItem('rev-1'), reason: 'price_ratio' }
+
+    function seedSlices(queryClient) {
+      queryClient.setQueryData(
+        ['review', 'pending', null],
+        infiniteData([page([FLAGGED, reviewItem('rev-2')], COUNTS, 2)])
+      )
+      // The approved list does not contain the row yet, but its badge reads
+      // the same whole-queue counts and its filteredTotal grows by one when
+      // the row enters it.
+      queryClient.setQueryData(
+        ['review', 'approved', null],
+        infiniteData([page([reviewItem('rev-3', 'approved')], COUNTS, 1)])
+      )
+      // The caller's identity, for the actor stamp.
+      queryClient.setQueryData(['me'], { user: { id: 'user-9' } })
+    }
+
+    it('moves counts, pendingByReason, filteredTotal and stamps the caller on the optimistic frame', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      })
+      seedSlices(queryClient)
+      let resolveRequest
+      vi.mocked(decideReviewItem).mockReturnValue(
+        new Promise((resolve) => {
+          resolveRequest = resolve
+        })
+      )
+      const { result } = renderHook(() => useDecideReview(), {
+        wrapper: createWrapper(queryClient),
+      })
+      result.current.mutate({ id: 'rev-1', decision: 'approved' })
+
+      await waitFor(() => {
+        const pending = queryClient.getQueryData(['review', 'pending', null])
+        const first = pending.pages[0]
+        expect(first.items.find((item) => item.id === 'rev-1').status).toBe('approved')
+        // counts[from]--, counts[to]++ ...
+        expect(first.counts.pending).toBe(1)
+        expect(first.counts.approved).toBe(2)
+        expect(first.counts.pendingByReason.price_ratio).toBe(1)
+        expect(first.filteredTotal).toBe(1)
+        // ... the actor is the CALLER, not null.
+        const row = first.items.find((item) => item.id === 'rev-1')
+        expect(row.decidedBy).toBe('user-9')
+        expect(row.decidedSource).toBe('human')
+        expect(row.decidedAt).not.toBeNull()
+      })
+      // The entry whose list the row ENTERS gains the row in its total —
+      // even though the row itself is not (yet) among its items.
+      const approved = queryClient.getQueryData(['review', 'approved', null])
+      expect(approved.pages[0].filteredTotal).toBe(2)
+      expect(approved.pages[0].counts.pending).toBe(1)
+      expect(approved.pages[0].counts.approved).toBe(2)
+
+      resolveRequest({ item: reviewItem('rev-1', 'approved') })
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    })
+
+    it('undo restores the counts and clears the actor', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      })
+      seedSlices(queryClient)
+      // Start from the post-decide shape: the row decided. The seeded counts
+      // must be internally consistent — pending 1 means the price_ratio split
+      // moved down with it.
+      const decidedCounts = {
+        ...COUNTS,
+        pending: 1,
+        approved: 2,
+        pendingByReason: { ...COUNTS.pendingByReason, price_ratio: 1 },
+      }
+      queryClient.setQueryData(
+        ['review', 'pending', null],
+        infiniteData([
+          page(
+            [{ ...FLAGGED, status: 'approved', decidedBy: 'user-9' }, reviewItem('rev-2')],
+            decidedCounts,
+            1
+          ),
+        ])
+      )
+      vi.mocked(undoReviewDecision).mockResolvedValue({ item: reviewItem('rev-1') })
+      const { result } = renderHook(() => useUndoReview(), {
+        wrapper: createWrapper(queryClient),
+      })
+      result.current.mutate({ id: 'rev-1' })
+
+      await waitFor(() => {
+        const pending = queryClient.getQueryData(['review', 'pending', null])
+        const first = pending.pages[0]
+        const row = first.items.find((item) => item.id === 'rev-1')
+        expect(row.status).toBe('pending')
+        expect(first.counts.pending).toBe(2)
+        expect(first.counts.approved).toBe(1)
+        expect(first.counts.pendingByReason.price_ratio).toBe(2)
+        expect(first.filteredTotal).toBe(2)
+        expect(row.decidedBy).toBeNull()
+        expect(row.decidedSource).toBeNull()
+        expect(row.decidedAt).toBeNull()
+      })
+    })
+
+    it('rolls the derived slices back with the row when the decide fails', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      })
+      seedSlices(queryClient)
+      vi.mocked(decideReviewItem).mockRejectedValue(new Error('boom'))
+      const { result } = renderHook(() => useDecideReview(), {
+        wrapper: createWrapper(queryClient),
+      })
+      result.current.mutate({ id: 'rev-1', decision: 'approved' })
+
+      await waitFor(() => expect(result.current.isError).toBe(true))
+      const pending = queryClient.getQueryData(['review', 'pending', null])
+      const first = pending.pages[0]
+      expect(first.items.find((item) => item.id === 'rev-1').status).toBe('pending')
+      expect(first.counts.pending).toBe(2)
+      expect(first.counts.approved).toBe(1)
+      expect(first.counts.pendingByReason.price_ratio).toBe(2)
+      expect(first.filteredTotal).toBe(2)
+    })
+
+    // review A2: a double-click inside the optimistic window re-fires the
+    // same decision while the cache already reads nextStatus — the derived
+    // slices must not move again, or filteredTotal double-decrements until
+    // the settle refetch.
+    it('a re-fired identical decision does not double-move the derived slices', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      })
+      seedSlices(queryClient)
+      let resolveRequest
+      vi.mocked(decideReviewItem).mockReturnValue(
+        new Promise((resolve) => {
+          resolveRequest = resolve
+        })
+      )
+      const { result } = renderHook(() => useDecideReview(), {
+        wrapper: createWrapper(queryClient),
+      })
+      result.current.mutate({ id: 'rev-1', decision: 'approved' })
+      await waitFor(() => {
+        const pending = queryClient.getQueryData(['review', 'pending', null])
+        expect(pending.pages[0].counts.pending).toBe(1)
+      })
+
+      // The row now reads approved in the cache; the second, identical
+      // mutate is a no-op on every derived slice.
+      result.current.mutate({ id: 'rev-1', decision: 'approved' })
+      await act(async () => {})
+
+      const pending = queryClient.getQueryData(['review', 'pending', null])
+      const first = pending.pages[0]
+      expect(first.items.find((item) => item.id === 'rev-1').status).toBe('approved')
+      expect(first.counts.pending).toBe(1)
+      expect(first.counts.approved).toBe(2)
+      expect(first.counts.pendingByReason.price_ratio).toBe(1)
+      expect(first.filteredTotal).toBe(1)
+      const approved = queryClient.getQueryData(['review', 'approved', null])
+      expect(approved.pages[0].filteredTotal).toBe(2)
+
+      resolveRequest({ item: reviewItem('rev-1', 'approved') })
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    })
   })
 })
 

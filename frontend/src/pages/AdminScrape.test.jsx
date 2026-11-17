@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { render, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
+import { ApiError } from '../lib/api'
 import { AdminScrape } from './AdminScrape.jsx'
 
 vi.mock('../lib/queries/me.js', () => ({
@@ -252,11 +253,15 @@ describe('AdminScrape', () => {
       data: undefined,
       isLoading: false,
       isError: true,
+      // L5 (audit): a 500 must not read as "offline" — the description is the
+      // M1-kind copy (error.http), never the offline banner.
+      error: new ApiError('Request failed: 500', 500),
     })
     const { container } = renderAdmin()
     // A 5xx must not read as "no data" — its own title, not scrape.noCommands.
     expect(container.textContent).toContain('scrape.loadError')
-    expect(container.textContent).toContain('offline.banner')
+    expect(container.textContent).toContain('error.http')
+    expect(container.textContent).not.toContain('offline.banner')
     expect(container.textContent).not.toContain('scrape.noCommands')
   })
 })

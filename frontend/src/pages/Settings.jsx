@@ -27,6 +27,7 @@ import {
   useUsage,
 } from '../lib/queries/index.js'
 import { useMe, useLogout } from '../lib/queries/me.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { Button } from '../components/Button.jsx'
 import { Panel } from '../components/Panel.jsx'
 import { useOnlineStatus } from '../lib/useOnlineStatus.js'
@@ -534,6 +535,14 @@ export function Settings({ motion, setMotion }) {
               <IconLogout size={16} /> {t('nav.logout')}
             </button>
           </div>
+          {logout.isError && (
+            // L1 (audit): a non-2xx logout throws instead of navigating, so
+            // the failure needs a surface — without it the click would look
+            // dead while the session quietly survives.
+            <p className="mt-2 text-xs text-danger" role="alert">
+              {t(errorKindKey(logout.error))}
+            </p>
+          )}
         </Panel>
       </section>
     </>
