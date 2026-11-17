@@ -11,7 +11,7 @@
 - When the request concerns DokumenQ, AutQ, or ahaqqu/vps, execute it in that repo under its `AGENTS.md`; RumaQ remains the conversation home. When work is orchestrated by the manager, follow `.agents/skills/manager/SKILL.md`.
 - When a change touches both sides (contract/ here + pipeline consumption), ship the RumaQ PR first, then `./scripts/sync-contract.sh <sha>` in a pipeline PR.
 - When writing automation (automation-local/live), target the app only — the scraper has no harness in this repo.
-- `scripts/test.sh` is the single entrypoint for all tests (unit, automation-local, automation-live). Run `./scripts/test.sh unit frontend` etc.
+- `scripts/test.sh` is the single entrypoint for all tests: the dev suites (unit, automation-local, automation-live) plus the offline CI guards (deploy, freshness, smoke-scope, lighthouse-scope, unit-test-scope, automation-stack, e2e-smoke, e2e-smoke-scope, changed-paths, reaches). Run `./scripts/test.sh unit frontend` etc.
 - When installing dependencies in a worktree or fresh clone, run `bun install` — never `npm install` or `npm ci`: bun hardlinks from its global cache, so sibling worktrees share inodes instead of copying.
 - `scripts/docs.sh` generates API documentation.
 - `scripts/github/` contains scripts used only by GitHub Actions, not for local developer use.
@@ -23,7 +23,7 @@
 - When data or behaviour has no live users (unshipped features, internal-only tables), prefer the simplest destructive change — no backward-compatibility migration, dual-write window, or compatibility shim; breaking changes are acceptable.
 - When asked to implement a phase or feature, read the matching `docs/plan/*.md` first and check open GitHub Issues and the Delivery Kanban board for current status.
 - Before merging a PR, ensure the GitHub Action succeeds.
-- When creating new shell scripts, add them to `.gitattributes` with `mode=755` — otherwise CI will fail with `Permission denied`.
+- When creating new shell scripts, add them to `.gitattributes` with `mode=755` and commit the executable bit (`git update-index --chmod=+x` — the attribute alone does not set it): a missing bit fails a direct `./script.sh` run with `Permission denied`, while `bash script.sh` callers still work.
 - When asked to update this file, use format: "When <condition>, <action>", keep it concise and clear.
 - Follow `docs/FRONTEND_CONVENTIONS.md` for frontend coding conventions.
 - Follow `docs/BACKEND_CONVENTIONS.md` for backend coding conventions.

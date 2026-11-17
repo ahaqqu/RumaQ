@@ -9,7 +9,7 @@
 # on anything unknown: the failure mode is a wasted minute, never a regression
 # that merges green.
 #
-# Cross-workspace edges the rules must honor:
+# Cross-workspace edges the rules must honor (see skippable-paths.txt):
 #   - frontend/src/plugins/registry.test.js imports backend's
 #     plugins/manifests.js directly (plugin parity, plan §4.3), so
 #     backend/src/plugins/ runs the frontend suite even though the rest of
@@ -23,69 +23,23 @@
 # --from-stdin takes the path list from stdin, which the offline guard test
 # uses and a shell can use to check a hypothetical change set. Without it the
 # list comes from changed-paths.sh, which carries the change-set resolution.
+#
+# The verdict protocol is lib/scope-verdict.sh: stdout "run|skip <why>",
+# exit 0; an error prints no verdict and exits non-zero (audit M1).
 set -uo pipefail
 
-root="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$root" || exit 0
-
 suite=${1:-}
-if [ "$suite" != frontend ] && [ "$suite" != backend ]; then
-  echo "unit-test-scope: suite must be 'frontend' or 'backend'" >&2
-  exit 2
-fi
+case "$suite" in
+  frontend | backend) ;;
+  *)
+    echo "unit-test-scope: suite must be 'frontend' or 'backend'" >&2
+    exit 2
+    ;;
+esac
+shift || true
 
-# True when the path cannot reach the suite's tests.
-cannot_reach() {
-  case "$1" in
-    docs/* | .agents/* | automation/* | *.md) return 0 ;;
-    frontend/*)
-      # No backend test reads frontend files.
-      [ "$suite" = backend ] && return 0
-      return 1
-      ;;
-    backend/*)
-      # The frontend parity test imports backend/src/plugins/manifests.js.
-      case "$1" in backend/src/plugins/*) return 1 ;; esac
-      [ "$suite" = frontend ] && return 0
-      return 1
-      ;;
-    contract/*)
-      # Backend tests import contract/; the frontend suite does not.
-      [ "$suite" = frontend ] && return 0
-      return 1
-      ;;
-    tools/*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+. "$(cd "$(dirname "$0")" && pwd)/lib/scope-verdict.sh"
 
-if [ "${2:-}" = "--from-stdin" ]; then
-  changed=$(cat)
-else
-  changed=$(bash "$root/scripts/github/changed-paths.sh")
-fi
-
-if [ -z "$(printf '%s' "$changed" | tr -d '[:space:]')" ]; then
-  echo "unit-test-scope($suite): no change set available — running (fail safe)"
-  exit 0
-fi
-
-skipped=true
-while IFS= read -r path; do
-  [ -z "$path" ] && continue
-  if ! cannot_reach "$path"; then
-    skipped=false
-    break
-  fi
-done <<EOF
-$changed
-EOF
-
-if [ "$skipped" = true ]; then
-  echo "unit-test-scope($suite): change set cannot reach the $suite suite — skipped"
-  printf '%s\n' "$changed" | grep -v '^[[:space:]]*$' | head -5 | sed 's/^/  /'
-  exit 1
-fi
-
-echo "unit-test-scope($suite): a changed path can reach the $suite suite — running"
-exit 0
+scope_gate_main "unit/$suite" "unit-test-scope($suite)" \
+  "change set cannot reach the $suite suite" \
+  "a changed path can reach the $suite suite" "$@"

@@ -26,9 +26,24 @@ if [ "${1:-}" = "--all" ]; then
   force=true
 fi
 
-if ! $force && ! bash scripts/github/reaches.sh api; then
-  echo "check: change set cannot reach docs/API.md or the client — skipped (use --all to force)"
-  exit 0
+# reaches.sh answers run|skip on stdout; an errored gate must fail the check,
+# never read as a skip (audit M1).
+if ! $force; then
+  reach_verdict=$(bash scripts/github/reaches.sh api) || {
+    echo "check: reaches.sh errored — failing the check" >&2
+    exit 1
+  }
+  case "$reach_verdict" in
+    run*) ;;
+    skip*)
+      echo "check: change set cannot reach docs/API.md or the client — skipped (use --all to force)"
+      exit 0
+      ;;
+    *)
+      echo "check: unknown reach verdict: $reach_verdict" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 failures=0

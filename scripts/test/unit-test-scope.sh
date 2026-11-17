@@ -28,17 +28,42 @@ fail() {
   failures=$((failures + 1))
 }
 
-# expect <suite> <name> <run|skip> <path>...
+# expect <name> <run|skip> <path>...
+# Asserts the verdict WORD — stdout's first token with exit 0, matched
+# exactly (audit M1) — not an exit code: skip is a verdict now, not a
+# non-zero exit, and a typo'd word is an error, not a run.
 expect() {
-  local suite=$1 name=$2 want=$3 code=0 got
+  local suite=$1 name=$2 want=$3 out got
   shift 3
-  printf '%s\n' "$@" | bash "$SCOPE" "$suite" --from-stdin >/dev/null 2>&1 || code=$?
-  got=run
-  [ "$code" -ne 0 ] && got=skip
+  if out="$(printf '%s\n' "$@" | bash "$SCOPE" "$suite" --from-stdin 2>/dev/null)"; then
+    # The verdict is the WORD (first token), matched exactly, the same way
+    # every production consumer reads it (audit M1).
+    got=${out%%[[:space:]]*}
+    case "$got" in
+      run | skip) ;;
+      *) got="bad-verdict:$got" ;;
+    esac
+  else
+    got=error
+  fi
   if [ "$got" = "$want" ]; then
     pass "$name"
   else
     fail "$name (want $want, got $got)"
+  fi
+}
+
+# expect_error <name> <gate args>... — the protocol case the contract exists
+# for: a gate that cannot decide (bad usage) exits non-zero and prints NO
+# verdict, so a caller consuming the word fails the job instead of skipping.
+expect_error() {
+  local name=$1 out code=0
+  shift
+  out="$(bash "$SCOPE" "$@" 2>/dev/null </dev/null)" || code=$?
+  if [ "$code" -ne 0 ] && [ -z "$out" ]; then
+    pass "$name"
+  else
+    fail "$name (exit $code, stdout: ${out:-<empty>})"
   fi
 }
 
@@ -79,6 +104,27 @@ expect backend 'lockfile runs'          run  bun.lock
 expect backend 'test config runs'       run  vite.config.ts
 expect backend 'test runner runs'       run  scripts/test/unit.sh
 expect backend 'empty set runs'         run  ''
+
+# --- the verdict protocol itself (audit M1) ---
+expect_error 'bad suite errors' bad-suite
+expect_error 'bad flag errors'  frontend --bogus
+
+# expect_error against an unreadable skippable table — the machine table's
+# error row ("bad list"): the gate must fail, never fall back to a silent
+# run. Pins scope_gate_main for all four gates, which share this table.
+skippable_table="$ROOT_DIR/scripts/github/skippable-paths.txt"
+mv "$skippable_table" "$skippable_table.offline-guard"
+out=''
+code=0
+# A non-empty change set: the empty-set fail-safe runs before the table is
+# consulted, so only a real decision exercises the unreadable-table error.
+out="$(printf 'backend/src/apps/api.ts\n' | bash "$SCOPE" frontend --from-stdin 2>/dev/null)" || code=$?
+mv "$skippable_table.offline-guard" "$skippable_table"
+if [ "$code" -ne 0 ] && [ -z "$out" ]; then
+  pass 'unreadable table errors'
+else
+  fail "unreadable table errors (exit $code, stdout: ${out:-<empty>})"
+fi
 
 if [ "$failures" -eq 0 ]; then
   echo 'unit-test-scope: ok'

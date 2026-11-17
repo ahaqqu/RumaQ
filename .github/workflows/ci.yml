@@ -45,20 +45,35 @@ jobs:
       # most scripts) skips the audit. The gate lives here, not in ci.sh,
       # because only PR CI runs Lighthouse — the main-push ci job in
       # deploy.yml never does. The rule is offline-tested in
-      # scripts/test/lighthouse-scope.sh and it fails safe: an unavailable
-      # change set runs the audit.
+      # scripts/test/lighthouse-scope.sh (run in ci.sh, audit S3) and it
+      # fails safe: an unavailable change set runs the audit. The verdict is
+      # consumed as a word, not an exit code: an errored gate fails the step
+      # instead of reading as a skip (audit M1).
       - id: lighthouse-scope
         name: Check if Lighthouse CI is needed
         env:
           # Exact base tree for the change-set diff (changed-paths.sh).
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          if bash ./scripts/github/lighthouse-scope.sh; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "Lighthouse CI: skipped for this change set"
-          fi
+          verdict="$(bash ./scripts/github/lighthouse-scope.sh)" || {
+            echo "lighthouse-scope gate errored"
+            exit 1
+          }
+          echo "lighthouse-scope: $verdict"
+          verdict_word="${verdict%%[[:space:]]*}"
+          case "$verdict_word" in
+            run)
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              ;;
+            skip)
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "Lighthouse CI: skipped for this change set"
+              ;;
+            *)
+              echo "unknown lighthouse-scope verdict: $verdict"
+              exit 1
+              ;;
+          esac
 
       - name: Lighthouse CI (performance + accessibility budgets)
         if: steps.lighthouse-scope.outputs.run == 'true'

@@ -9,30 +9,13 @@
 # --from-stdin takes the path list from stdin, which the offline guard test
 # uses and a shell can use to check a hypothetical change set. Without it the
 # list comes from changed-paths.sh, which carries the change-set resolution.
+#
+# The verdict protocol is lib/scope-verdict.sh: stdout "run|skip <why>",
+# exit 0; an error prints no verdict and exits non-zero (audit M1).
 set -uo pipefail
 
-root="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$root" || exit 0
+. "$(cd "$(dirname "$0")" && pwd)/lib/scope-verdict.sh"
 
-# Paths that cannot change the bundle built by `vp build backend`.
-skippable='^(docs/|\.agents/|automation/|.*\.md$)'
-
-if [ "${1:-}" = "--from-stdin" ]; then
-  changed=$(cat)
-else
-  changed=$(bash "$root/scripts/github/changed-paths.sh")
-fi
-
-if [ -z "$(printf '%s' "$changed" | tr -d '[:space:]')" ]; then
-  echo "worker-smoke: no change set available — running (fail safe)"
-  exit 0
-fi
-
-if printf '%s\n' "$changed" | grep -v '^[[:space:]]*$' | grep -qvE "$skippable"; then
-  echo "worker-smoke: a changed path can reach the Worker bundle — running"
-  exit 0
-fi
-
-echo "worker-smoke: change set is docs, skills, tests, or Markdown — skipped"
-printf '%s\n' "$changed" | grep -v '^[[:space:]]*$' | head -5 | sed 's/^/  /'
-exit 1
+scope_gate_main worker-smoke worker-smoke \
+  "change set is docs, skills, tests, or Markdown" \
+  "a changed path can reach the Worker bundle" "$@"
