@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { render, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
+import { ApiError } from '../lib/api'
 import { Home } from './Home.jsx'
 import { useHome, usePlans } from '../lib/queries/index.js'
 import { useMe } from '../lib/queries/me.js'
@@ -205,5 +206,24 @@ describe('Home', () => {
     vi.mocked(useHome).mockReturnValue({ data: undefined, isLoading: true })
     const { queryByTestId } = renderHome()
     expect(queryByTestId('home-greeting')).toBeNull()
+  })
+
+  // L4 (audit): a failed home query used to paint zeros — no stock, no spend,
+  // nothing needs attention — which reads as data, not failure. The
+  // description names the M1 outcome kind instead of calling every failure
+  // offline.
+  it('shows the error surface when the home query fails', () => {
+    vi.mocked(useHome).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError('Request failed: 500', 500),
+    })
+    const { container } = renderHome()
+    // This suite resolves real en.json copy (its react-i18next mock), so the
+    // assertions read the sentences, not the keys.
+    expect(container.textContent).toContain('Something went wrong')
+    expect(container.textContent).toContain('The server had a problem')
+    expect(container.textContent).not.toContain('home.allSafe')
   })
 })

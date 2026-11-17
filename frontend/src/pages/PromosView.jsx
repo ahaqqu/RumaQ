@@ -7,6 +7,7 @@ import { Badge } from '../components/Badge.jsx'
 import { IconSearch, IconWarning } from '../components/icons.jsx'
 import { brandSuffix, prettyName, prettyUnit } from '../lib/productDisplay.js'
 import { cn } from '../lib/cn.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import {
   displayPrice,
   formatPrice,
@@ -120,7 +121,7 @@ function PromoCard({ group, sourceNames, expanded, onToggle, onJump }) {
 // multi-expand, example click jumps into the Products explorer.
 export function PromosView({ onJump }) {
   const { t } = useTranslation()
-  const { data, isLoading, isError } = usePricePromos()
+  const { data, isLoading, isError, error } = usePricePromos()
   const { data: sources } = usePriceSources()
   // Multi-expand (independent Set): opening one group must not collapse
   // another — a catalog is browse-oriented (PM §2).
@@ -153,7 +154,11 @@ export function PromosView({ onJump }) {
         </Panel>
       ) : isError ? (
         <Panel>
-          <EmptyState icon={IconWarning} title={t('prices.noMatch')} desc={t('offline.banner')} />
+          <EmptyState
+            icon={IconWarning}
+            title={t('prices.noMatch')}
+            desc={t(errorKindKey(error))}
+          />
         </Panel>
       ) : groups.length === 0 ? (
         <Panel>

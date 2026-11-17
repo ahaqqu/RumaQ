@@ -1087,7 +1087,10 @@
   "error": {
     "title": "Something went wrong",
     "desc": "We hit a snag. Try again in a moment.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "offline": "You're offline — check your connection, then try again.",
+    "timeout": "The request timed out — try again.",
+    "http": "The server had a problem — try again in a moment."
   },
   "aliasBulk": {
     "title": "Alias candidates",

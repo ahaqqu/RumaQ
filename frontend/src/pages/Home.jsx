@@ -8,12 +8,19 @@ import { personaText } from '../lib/persona.js'
 import { formatPrice } from '../lib/pricesHelpers.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { useApp } from '../context/AppContext.jsx'
-import { IconSprout, IconCheck, IconArrowRight, IconLeaf } from '../components/icons.jsx'
+import {
+  IconSprout,
+  IconCheck,
+  IconArrowRight,
+  IconLeaf,
+  IconWarning,
+} from '../components/icons.jsx'
 import { Badge } from '../components/Badge.jsx'
 import { Panel } from '../components/Panel.jsx'
 import { EmptyState } from '../components/EmptyState.jsx'
 import { SkeletonRows } from '../components/Skeleton.jsx'
 import { Button } from '../components/Button.jsx'
+import { errorKindKey } from '../lib/errorKind.js'
 
 // Assistant seed prompt for the recipe card bridge (#332 replaces this with a
 // dedicated recipe-search endpoint later).
@@ -106,7 +113,7 @@ export function Home({ setView, askAssistant }) {
   const { t, i18n } = useTranslation()
   const { persona } = usePersona()
   const { setAssistantSeed } = useApp()
-  const { data, isLoading } = useHome()
+  const { data, isLoading, isError, error } = useHome()
   const { data: meData } = useMe()
   const { data: plansData } = usePlans('active')
 
@@ -145,6 +152,16 @@ export function Home({ setView, askAssistant }) {
     return (
       <Panel>
         <SkeletonRows n={4} />
+      </Panel>
+    )
+  }
+
+  if (isError) {
+    // L4 (audit): a failed home query used to paint zeros — no stock, no
+    // spend, nothing needs attention — which reads as data, not failure.
+    return (
+      <Panel>
+        <EmptyState icon={IconWarning} title={t('error.title')} desc={t(errorKindKey(error))} />
       </Panel>
     )
   }

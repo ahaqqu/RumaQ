@@ -13,6 +13,7 @@ import { AliasCandidatesPanel } from '../components/AliasCandidatesPanel.jsx'
 import { DuplicateNamesPanel } from '../components/DuplicateNamesPanel.jsx'
 import { IconSearch, IconWarning, IconClock } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { brandSuffix, prettyName, prettyUnit } from '../lib/productDisplay.js'
 import {
   buildFooterStats,
@@ -280,7 +281,7 @@ export function ProductsView({
   const [expandedKey, setExpandedKey] = useState(null)
   const debouncedSearch = useDebouncedValue(search.trim(), 300)
 
-  const { data, isLoading, isError } = usePrices({
+  const { data, isLoading, isError, error } = usePrices({
     q: debouncedSearch || undefined,
     source,
     category: category ?? undefined,
@@ -406,7 +407,11 @@ export function ProductsView({
         </Panel>
       ) : isError ? (
         <Panel>
-          <EmptyState icon={IconWarning} title={t('prices.noMatch')} desc={t('offline.banner')} />
+          <EmptyState
+            icon={IconWarning}
+            title={t('prices.noMatch')}
+            desc={t(errorKindKey(error))}
+          />
         </Panel>
       ) : products.length === 0 ? (
         <Panel>

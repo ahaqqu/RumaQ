@@ -21,8 +21,10 @@ import {
   IconCheck,
   IconCalendarBlank,
   IconRefresh,
+  IconWarning,
 } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { parseISO, todayISO } from '../lib/household-date.js'
 
 // Household tasks (ahaqqu/RumaQ#429): per-member family task assignments.
@@ -287,9 +289,12 @@ export function Tasks() {
   // View toggle: the per-member "My tasks" list or the household board. Both
   // read the same endpoint; the filter rides the query key.
   const [view, setView] = useState('board')
-  const { data: tasksData, isLoading: tasksLoading } = useTasks(
-    view === 'mine' ? { mine: '1', status: 'all' } : {}
-  )
+  const {
+    data: tasksData,
+    isLoading: tasksLoading,
+    isError: tasksError,
+    error: tasksQueryError,
+  } = useTasks(view === 'mine' ? { mine: '1', status: 'all' } : {})
   const tasks = tasksData?.tasks ?? []
   const openTasks = tasks.filter((task) => task.status === 'open')
   const doneTasks = tasks.filter((task) => task.status === 'done')
@@ -486,6 +491,18 @@ export function Tasks() {
         <Panel>
           <PanelBody aria-busy="true">
             <SkeletonRows n={3} />
+          </PanelBody>
+        </Panel>
+      ) : tasksError ? (
+        <Panel>
+          {/* L4 (audit): a failed query used to paint the empty board — the
+              user read every task as done-or-deleted. */}
+          <PanelBody>
+            <EmptyState
+              icon={IconWarning}
+              title={t('error.title')}
+              desc={t(errorKindKey(tasksQueryError))}
+            />
           </PanelBody>
         </Panel>
       ) : view === 'mine' ? (

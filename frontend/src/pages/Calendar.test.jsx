@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { render, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
+import { ApiError } from '../lib/api'
 import { Calendar } from './Calendar.jsx'
 import { nextBirthday } from '../lib/household-date.js'
 
@@ -19,10 +20,13 @@ vi.mock('../lib/queries/index.js', () => ({
 }))
 
 vi.mock('../lib/api', () => ({
+  // Shape-compatible with the real class (M1): kind rides the 5th arg so the
+  // errorKind mapping sees the same surface the page gets in production.
   ApiError: class ApiError extends Error {
-    constructor(message, status) {
+    constructor(message, status, retryAfterSeconds, body, kind = 'http') {
       super(message)
       this.status = status
+      this.kind = kind
     }
   },
 }))
@@ -500,5 +504,23 @@ describe('Calendar page', () => {
     fireEvent.change(titleInput, { target: { value: 'X' } })
     fireEvent.click(findButton(container, 'calendar.create'))
     await waitFor(() => expect(container.textContent).toContain('calendar.errorGeneric'))
+  })
+
+  // L4 (audit): a failed calendar query used to paint an empty month and an
+  // empty day list — the user read the calendar as having nothing on it. The
+  // description names the M1 outcome kind instead of calling every failure
+  // offline.
+  it('shows the error surface when the calendar query fails', () => {
+    useCalendar.mockImplementation(() => ({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError('Network request failed', 0, null, undefined, 'offline'),
+    }))
+    const { container } = renderCalendar()
+    expect(container.textContent).toContain('error.title')
+    expect(container.textContent).toContain('error.offline')
+    expect(container.textContent).not.toContain('calendar.emptyDayTitle')
+    expect(container.querySelector('[data-testid="day-list"]')).toBeNull()
   })
 })

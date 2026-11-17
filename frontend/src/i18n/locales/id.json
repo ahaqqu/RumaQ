@@ -1087,7 +1087,10 @@
   "error": {
     "title": "Terjadi kesalahan",
     "desc": "Terjadi kendala. Coba lagi sebentar lagi.",
-    "retry": "Coba lagi"
+    "retry": "Coba lagi",
+    "offline": "Anda sedang offline — periksa koneksi Anda, lalu coba lagi.",
+    "timeout": "Permintaan kehabisan waktu — coba lagi.",
+    "http": "Server mengalami masalah — coba lagi beberapa saat lagi."
   },
   "aliasBulk": {
     "title": "Alias kandidat",

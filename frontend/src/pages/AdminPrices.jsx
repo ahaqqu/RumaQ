@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Link, useSearch } from '@tanstack/react-router'
 import { useMe } from '../lib/queries/me.js'
 import { usePriceRuns } from '../lib/queries/index.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { EmptyState, SkeletonRows } from '../components/ui.jsx'
 import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
@@ -379,7 +380,7 @@ export function AdminPrices() {
   const { t } = useTranslation()
   const { data: me } = useMe()
   const isAdmin = me?.user?.isAdmin === true
-  const { data, isLoading, isError } = usePriceRuns()
+  const { data, isLoading, isError, error } = usePriceRuns()
   // ?run=<id> from the review queue's "View run" link.
   const { run: runParam } = useSearch({ strict: false }) ?? {}
 
@@ -407,7 +408,7 @@ export function AdminPrices() {
         </Panel>
       ) : isError ? (
         <Panel>
-          <EmptyState icon={IconWarning} title={t('monitor.error')} desc={t('offline.banner')} />
+          <EmptyState icon={IconWarning} title={t('monitor.error')} desc={t(errorKindKey(error))} />
         </Panel>
       ) : (data?.runs ?? []).length === 0 ? (
         <Panel>

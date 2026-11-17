@@ -4,8 +4,9 @@ import { LocChip, TimeSignal, EmptyState, SkeletonRows } from '../components/ui.
 import { useStock, useUpdateStock, useLocations } from '../lib/queries/index.js'
 import { usePersona } from '../context/PersonaContext.jsx'
 import { personaText } from '../lib/persona.js'
-import { IconSearch, IconBox, IconPlus, IconMinus } from '../components/icons.jsx'
+import { IconSearch, IconBox, IconPlus, IconMinus, IconWarning } from '../components/icons.jsx'
 import { cn } from '../lib/cn.js'
+import { errorKindKey } from '../lib/errorKind.js'
 import { Panel } from '../components/Panel.jsx'
 
 function getDaysUntil(expiryDate) {
@@ -23,7 +24,12 @@ export function Inventory() {
   const searchTimer = useRef(null)
   const [debouncedQ, setDebouncedQ] = useState('')
 
-  const { data: stockData, isLoading } = useStock({
+  const {
+    data: stockData,
+    isLoading,
+    isError,
+    error,
+  } = useStock({
     location: loc === 'all' ? undefined : loc,
     q: debouncedQ || undefined,
   })
@@ -107,6 +113,10 @@ export function Inventory() {
       <Panel>
         {isLoading ? (
           <SkeletonRows n={5} />
+        ) : isError ? (
+          /* L4 (audit): a failed stock query used to paint the empty state —
+              the user read their inventory as having no rows. */
+          <EmptyState icon={IconWarning} title={t('error.title')} desc={t(errorKindKey(error))} />
         ) : rows.length === 0 ? (
           <EmptyState
             icon={IconBox}

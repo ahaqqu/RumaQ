@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { render, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
+import { ApiError } from '../lib/api'
 import { BrochuresGallery } from './BrochuresGallery.jsx'
 
 // Render the REAL English copy (the BrochuresView.test.jsx idiom) so the
@@ -257,15 +258,19 @@ describe('BrochuresGallery — loading, empty, error', () => {
     expect(cards(container)).toHaveLength(0)
   })
 
-  it('renders the offline pattern when the catalog fails', () => {
+  it('renders the error pattern when the catalog fails', () => {
+    // L5 (audit): a failed catalog used to read as "offline" — a 500 now says
+    // the server had a problem, fed by the M1 classifier's kind.
     vi.mocked(usePriceBrochures).mockReturnValue({
       data: undefined,
       isLoading: false,
       isError: true,
+      error: new ApiError('Request failed: 500', 500),
     })
     const { container } = renderGallery()
     expect(text(container)).toContain('No matching prices')
-    expect(text(container)).toContain("You're offline")
+    expect(text(container)).toContain('The server had a problem')
+    expect(text(container)).not.toContain("You're offline")
   })
 
   it('keeps the empty catalog state', () => {

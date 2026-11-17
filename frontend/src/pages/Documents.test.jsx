@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { render, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
+import { ApiError } from '../lib/api'
 import { Documents } from './Documents.jsx'
 
 // jsdom has no object URL machinery — the viewer turns fetched blobs into
@@ -37,10 +38,13 @@ vi.mock('../lib/queries/index.js', () => ({
 }))
 
 vi.mock('../lib/api', () => ({
+  // Shape-compatible with the real class (M1): kind rides the 5th arg so the
+  // errorKind mapping sees the same surface the page gets in production.
   ApiError: class ApiError extends Error {
-    constructor(message, status) {
+    constructor(message, status, retryAfterSeconds, body, kind = 'http') {
       super(message)
       this.status = status
+      this.kind = kind
     }
   },
   DOCUMENT_MAX_BYTES: 10 * 1024 * 1024,
@@ -558,6 +562,22 @@ describe('Documents', () => {
     const { container } = renderDocuments()
     expect(container.textContent).toContain('documents.emptyTitle')
     expect(container.textContent).toContain('documents.emptyDesc')
+  })
+
+  // L4 (audit): a failed query must paint the error surface, not the empty
+  // state — an offline vault is not an empty vault. The description names the
+  // M1 outcome kind instead of calling every failure offline.
+  it('shows the error surface when the documents query fails', () => {
+    vi.mocked(useDocuments).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError('Network request failed', 0, null, undefined, 'offline'),
+    })
+    const { container } = renderDocuments()
+    expect(container.textContent).toContain('error.title')
+    expect(container.textContent).toContain('error.offline')
+    expect(container.textContent).not.toContain('documents.emptyTitle')
   })
 })
 

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vite-plus/test'
 import { render, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
+import { ApiError } from '../lib/api'
 import { AdminPrices } from './AdminPrices.jsx'
 
 // The page reads ?run= via useSearch (issue #294 deep link); the global
@@ -194,11 +195,15 @@ describe('AdminPrices', () => {
       data: undefined,
       isLoading: false,
       isError: true,
+      // L5 (audit): a 500 must not read as "offline" — the description is the
+      // M1-kind copy (error.http), never the offline banner.
+      error: new ApiError('Request failed: 500', 500),
     })
     const { container } = renderAdmin()
     // A 5xx must not read as "no data" — its own title, not monitor.noRuns.
     expect(container.textContent).toContain('monitor.error')
-    expect(container.textContent).toContain('offline.banner')
+    expect(container.textContent).toContain('error.http')
+    expect(container.textContent).not.toContain('offline.banner')
     expect(container.textContent).not.toContain('monitor.noRuns')
   })
 
