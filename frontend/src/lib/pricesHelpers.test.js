@@ -9,6 +9,7 @@ import {
   promoBadges,
   promoTone,
   promoChipClass,
+  splitPromoChips,
   isFootnoteLabel,
   countdownState,
   relativeAge,
@@ -228,6 +229,51 @@ describe('promo evidence and badges', () => {
   it('renders no badge without any promo fields', () => {
     expect(promoBadges(null, null)).toEqual([])
     expect(promoBadges(undefined, undefined)).toEqual([])
+  })
+})
+
+describe('splitPromoChips', () => {
+  it('splits the "; "-joined wire format into the raw chip segments', () => {
+    expect(splitPromoChips('DISKON 50%; PROMO 1 HARI!')).toEqual(['DISKON 50%', 'PROMO 1 HARI!'])
+    // Without the space after ';' too — the split is on ';', not '; '.
+    expect(splitPromoChips('GRATIS ONGKIR;BELI 2 DAPAT 1')).toEqual([
+      'GRATIS ONGKIR',
+      'BELI 2 DAPAT 1',
+    ])
+  })
+
+  it('trims only the whitespace the join injected, leaving chip text verbatim', () => {
+    expect(splitPromoChips(' ; DISKON 5% ; ')).toEqual(['DISKON 5%'])
+    // Casing, inner spacing and footnote markers are the caller's concern —
+    // promoBadges pretty-cases and drops footnotes, the review renders raw.
+    expect(splitPromoChips('*Harga khusus; BELI 2 GRATIS 1')).toEqual([
+      '*Harga khusus',
+      'BELI 2 GRATIS 1',
+    ])
+  })
+
+  it('yields no chips for a non-string, empty, or separator-only label', () => {
+    expect(splitPromoChips(null)).toEqual([])
+    expect(splitPromoChips(undefined)).toEqual([])
+    expect(splitPromoChips('')).toEqual([])
+    expect(splitPromoChips('  ')).toEqual([])
+    expect(splitPromoChips('; ; ')).toEqual([])
+  })
+
+  it('re-splits a chip whose own text contains a semicolon (documented caveat, #721 C1)', () => {
+    // The pipeline does not sanitize ';' out of OCR chip text, so this is a
+    // boundary redraw, not data loss — the full label stays visible in the
+    // review metadata.
+    expect(splitPromoChips('Beli 2; gratis 1')).toEqual(['Beli 2', 'gratis 1'])
+  })
+
+  it('is the split promoBadges consumes — footnotes survive the split itself', () => {
+    const label = 'DISKON 20%; *Harga khusus; GRATIS 1'
+    expect(splitPromoChips(label)).toEqual(['DISKON 20%', '*Harga khusus', 'GRATIS 1'])
+    expect(promoBadges(label, null)).toEqual([
+      { text: 'Diskon 20%', tone: 'danger' },
+      { text: 'Gratis 1', tone: 'ok' },
+    ])
   })
 })
 

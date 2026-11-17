@@ -135,21 +135,36 @@ export function promoTone(label) {
   return 'muted'
 }
 
+// The wire format of promo_label: the pipeline packs a brochure's promo chips
+// into one semicolon-joined string and clamps it to 200 (RumaQ-pipeline
+// publish/payload.ts joins with '; '; OCR parse keeps any non-empty text).
+// splitPromoChips is the one shared split over that wire format, consumed by
+// both the shopper-facing promoBadges chain and the admin review surface
+// (issue #721 review B2).
+//
+// CAVEAT — the separator is NOT collision-free by pipeline construction
+// (issue #721 review C1, accepted): normalizePromo does not sanitize ';' out
+// of chip text, so a chip whose own text contains a semicolon re-splits into
+// two chips. Acceptable because every character still renders (trim removes
+// only whitespace the join itself injected) and the complete un-split label
+// stays visible verbatim in the review metadata; the real fix is
+// pipeline/contract-side (sanitize at publish, or a structured promo[] array).
+export function splitPromoChips(label) {
+  const raw = typeof label === 'string' ? label.trim() : ''
+  if (!raw) return []
+  return raw
+    .split(';')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+}
+
 // [{ text, tone }] for an offer's promo fields — promo_label first,
 // promo_type as fallback text. Brochure labels pack several offers into one
 // semicolon-joined string ("DISKON 50%;PROMO 1 HARI!"), so each non-empty,
 // non-footnote segment becomes its own badge with its own tone (issue #633).
 export function promoBadges(label, type) {
-  const rawLabel = typeof label === 'string' ? label.trim() : ''
-  if (!rawLabel) {
-    return type ? [{ text: type, tone: promoTone(type) }] : []
-  }
-
-  const rawSegments = rawLabel
-    .split(';')
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-  // A label of only separators is no label at all — keep the type fallback.
+  const rawSegments = splitPromoChips(label)
+  // No label — or a label of only separators — keeps the type fallback.
   if (rawSegments.length === 0) {
     return type ? [{ text: type, tone: promoTone(type) }] : []
   }
