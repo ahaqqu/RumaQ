@@ -1,4 +1,10 @@
-import type { ReviewItemPair } from '@rumaq/contract'
+import { TAXONOMY_BUCKETS, TAXONOMY_VERSION, type ReviewItemPair } from '@rumaq/contract'
+import {
+  indexBumpStatement,
+  normalizeReason,
+  ProductNotFoundError,
+  type CategorySource,
+} from './canonical-products.js'
 
 // Storage + queries for the match review queue (issue #294, docs/294-design.md
 // §2/§3/§4). One row per flagged candidate pair; display fields ride the
@@ -149,6 +155,10 @@ type ReviewRow = {
   // human was asked to look at nothing actionable.
   item_category: string | null
   item_category_version: string | null
+  // #728: the category's provenance ('human' = an admin override; NULL =
+  // pipeline-assigned, the pre-0052 rows included). Tolerated as string from
+  // the DB, narrowed below.
+  item_category_source: string | null
   // The cached AI verdict (0038), aliased off the LEFT JOIN; every field is
   // null together when the item has never been evaluated.
   ai_verdict: string | null
@@ -178,6 +188,11 @@ export type ReviewItem = ReviewItemPair & {
   // null when the product row is gone.
   itemCategory: string | null
   itemCategoryVersion: string | null
+  // #728: who wrote that category — 'human' is the override marker the card
+  // renders as a chip (also on a re-flagged row, which is what keeps a
+  // pending flag sitting on a corrected category legible); null =
+  // pipeline-assigned.
+  itemCategorySource: CategorySource | null
   // The RIGHT side's evidence (#380, store-pinned). #691 RC3: frozen-FIRST —
   // on a blob that carries a field, that non-null value IS the flag-time
   // sighting; on a pre-#691 blob every value here is the read-time lookup's
@@ -229,6 +244,12 @@ function toDecisionSource(value: string | null): ReviewDecisionSource | null {
   return value === 'human' || value === 'ai_assist' || value === 'ai_auto' ? value : null
 }
 
+// #728: narrow the category provenance to the 0052 CHECK vocabulary — anything
+// else (a row predating the column read through a stale statement) is null.
+function toCategorySource(value: string | null): CategorySource | null {
+  return value === 'pipeline' || value === 'human' ? value : null
+}
+
 function toCachedVerdict(row: ReviewRow): CachedReviewVerdict | null {
   if (row.ai_verdict !== 'same' && row.ai_verdict !== 'different') return null
   return {
@@ -263,6 +284,7 @@ function toReviewItem(row: ReviewRow): ReviewItem | null {
     runId: row.run_id ?? null,
     itemCategory: row.item_category ?? null,
     itemCategoryVersion: row.item_category_version ?? null,
+    itemCategorySource: toCategorySource(row.item_category_source ?? null),
     // #691 RC3: the blob's frozen evidence wins per field (`?? null`
     // normalizes old blobs, which lack the keys); enrichEntryEvidence fills
     // only the fields still null right after the rows land.
@@ -426,6 +448,7 @@ const REVIEW_ROW_COLUMNS = `r.id, r.pair_data, r.status, r.decided_at, r.decided
         r.decided_source, r.flag_count, r.first_flagged_at, r.last_flagged_at,
         r.run_started_at, p.id AS run_id,
         pp.category AS item_category, pp.category_version AS item_category_version,
+        pp.category_source AS item_category_source,
         v.verdict AS ai_verdict, v.confidence AS ai_confidence, v.reason AS ai_reason,
         v.model AS ai_model, v.human_agreement AS ai_human_agreement`
 
@@ -966,6 +989,200 @@ export async function acknowledgePendingTaxonomy(
     acknowledged: statementChanges(run),
     remaining: results?.[0]?.count ?? 0,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Human category override (#728). The #626 ack is "seen — the assigned
+// category stands"; this is the act the issue adds: the admin SETS the
+// category. The write follows the 0037 rename-receipt rails, adapted per the
+// reconciled design: the override binds to the product ROW the flag names
+// (price_products.id — product keys derive from raw names and a #21 re-key
+// must never orphan the override), stamps `category_source='human'` and the
+// sealed `TAXONOMY_VERSION`, appends one price_product_category_audit
+// receipt, bumps the canonical index once (the corrected category rides back
+// to the pipeline within its ≤48 h cached-index window), and settles the
+// flag decided_source='human' exactly like acknowledgePendingTaxonomy — all
+// inside ONE db.batch, every statement after the guarded UPDATE gated on the
+// state it produced, so a stale request writes nothing at all.
+//
+// The sealed vocabulary is the authority: the category MUST be one of the
+// contract's TAXONOMY_BUCKETS (the pipeline's frozen 49-slug list). Strictness
+// is not pedantry — a stray slug permanently pollutes the explorer filter
+// domain (SELECT DISTINCT category) and can 500 the whole canonical index
+// parse (maxLength(50)), which is why the pipeline treats an out-of-domain
+// answer as a hard failure too.
+//
+// Deliberately NO flag-settle breadth beyond the opened flag (owner decision
+// 2026-11-19): a product re-flagged tomorrow lands as a NEW row whose settle
+// is the admin's next action; the card's itemCategorySource='human' chip
+// explains it.
+// ---------------------------------------------------------------------------
+
+export class CategoryUnknownError extends Error {
+  constructor(readonly category: string) {
+    super(`Category '${category}' is not in the sealed taxonomy vocabulary`)
+    this.name = 'CategoryUnknownError'
+  }
+}
+
+export class CategoryUnchangedError extends Error {
+  constructor(readonly category: string) {
+    super('Category already matches; confirming is the acknowledgement path')
+    this.name = 'CategoryUnchangedError'
+  }
+}
+
+/** The from-value CAS lost — the category moved since the card was read. */
+export class StaleCategoryError extends Error {
+  constructor(readonly category: string) {
+    super('Category changed since it was read; refresh and retry')
+    this.name = 'StaleCategoryError'
+  }
+}
+
+/** The review row the override addresses does not exist, or is not renderable. */
+export class ReviewItemNotFoundError extends Error {
+  constructor(readonly reviewItemId: string) {
+    super(`Review item '${reviewItemId}' not found`)
+    this.name = 'ReviewItemNotFoundError'
+  }
+}
+
+type OverrideCategoryInput = {
+  reviewItemId: string
+  category: string
+  actorUserId: string
+  reason?: string | null
+  now?: Date
+}
+
+/**
+ * The product-side facts an override needs, read before the batch. The
+ * product row resolves through the flag's item_product_key column; the pair
+ * blob must parse (the queue card renders FROM it, and overriding a flag
+ * whose context cannot be shown is a zombie path — 404 either way).
+ */
+type OverrideSourceRow = {
+  item_product_key: string
+}
+
+type OverrideProductRow = {
+  id: string
+  product_key: string
+  category: string | null
+  category_version: string | null
+  metadata_version: number
+}
+
+// The batch surface narrowed once (canonical-products.ts's BatchResult, kept
+// local: match-review.ts owns no other call site that reads meta.changes —
+// statementChanges covers the .run() shape instead).
+type BatchRunResult = { results?: unknown[]; meta?: { changes?: number } }
+
+export async function overrideTaxonomyCategory(
+  db: D1Database,
+  input: OverrideCategoryInput
+): Promise<ReviewItem | null> {
+  if (!(TAXONOMY_BUCKETS as readonly string[]).includes(input.category)) {
+    throw new CategoryUnknownError(input.category)
+  }
+  const reason = normalizeReason(input.reason)
+
+  const source = await db
+    .prepare('SELECT item_product_key, pair_data FROM match_review_items WHERE id = ?')
+    .bind(input.reviewItemId)
+    .first<OverrideSourceRow & { pair_data: string }>()
+  if (!source || parseReviewPair(source.pair_data) === null) {
+    throw new ReviewItemNotFoundError(input.reviewItemId)
+  }
+
+  const product = await db
+    .prepare(
+      `SELECT id, product_key, category, category_version, metadata_version FROM price_products
+       WHERE product_key = ?`
+    )
+    .bind(source.item_product_key)
+    .first<OverrideProductRow>()
+  if (!product) throw new ProductNotFoundError(source.item_product_key)
+
+  // Confirming the assigned category is the ack's job (#626): the override is
+  // a CHANGE, so a same-value request is a 400, not a silent re-write.
+  if (product.category === input.category) {
+    throw new CategoryUnchangedError(input.category)
+  }
+
+  const now = (input.now ?? new Date()).toISOString()
+  const auditId = crypto.randomUUID()
+  const nextVersion = product.metadata_version + 1
+
+  // One D1 batch (one transaction — statements see each other's writes):
+  //   (1) guarded product UPDATE — the FROM-VALUE CAS (`category IS ?`,
+  //       NULL-safe). The review card carries no expectedMetadataVersion, so
+  //       the from-value plays the role the rename gives to the version: a
+  //       concurrent category write 0-rows this update. A concurrent RENAME
+  //       (bumps the version, never the category) composes fine.
+  //   (2) gated receipt — the category/version/updated_at triple can only be
+  //       produced by statement (1) in this batch, so a stale request inserts
+  //       nothing (and therefore cannot bump the index or settle the flag).
+  //   (3) index bump, gated on the receipt (indexBumpStatement).
+  //   (4) flag settle, gated on the receipt AND the pending status — decided
+  //       rows keep their decision while the category still moves (fixing the
+  //       catalog on a decided row is legitimate; the card renders them).
+  const results = (await db.batch([
+    db
+      .prepare(
+        `UPDATE price_products
+         SET category = ?, category_version = ?, category_source = 'human',
+             metadata_version = metadata_version + 1, updated_at = ?
+         WHERE id = ? AND category IS ?`
+      )
+      .bind(input.category, TAXONOMY_VERSION, now, product.id, product.category),
+    db
+      .prepare(
+        `INSERT INTO price_product_category_audit
+           (id, product_id, product_key, actor_user_id, action, old_category,
+            old_category_version, new_category, new_category_version, reason,
+            review_item_id, metadata_version_before, metadata_version_after,
+            reverts_audit_id, created_at)
+         SELECT ?, ?, ?, ?, 'set', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?
+         FROM price_products p
+         WHERE p.id = ? AND p.category = ? AND p.metadata_version = ? AND p.updated_at = ?`
+      )
+      .bind(
+        auditId,
+        product.id,
+        product.product_key,
+        input.actorUserId,
+        product.category,
+        product.category_version,
+        input.category,
+        TAXONOMY_VERSION,
+        reason,
+        input.reviewItemId,
+        product.metadata_version,
+        nextVersion,
+        now,
+        product.id,
+        input.category,
+        nextVersion,
+        now
+      ),
+    indexBumpStatement(db, auditId, 'price_product_category_audit'),
+    db
+      .prepare(
+        `UPDATE match_review_items
+         SET status = 'approved', decided_at = ?, decided_by = ?, decided_source = 'human'
+         WHERE id = ? AND status = 'pending'
+           AND EXISTS (SELECT 1 FROM price_product_category_audit WHERE id = ?)`
+      )
+      .bind(now, input.actorUserId, input.reviewItemId, auditId),
+  ])) as unknown as BatchRunResult[]
+
+  if ((results[0]?.meta?.changes ?? 0) !== 1) {
+    throw new StaleCategoryError(input.category)
+  }
+
+  return getReviewRow(db, input.reviewItemId)
 }
 
 // ---------------------------------------------------------------------------

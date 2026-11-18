@@ -25,6 +25,8 @@ import {
 } from 'valibot'
 import {
   SCRAPE_STORE_SLUGS,
+  TAXONOMY_BUCKETS,
+  TAXONOMY_VERSION,
   backfillCategoriesPayloadSchema,
   scrapeCommandCreateSchema,
   scrapeEventsPostSchema,
@@ -79,14 +81,19 @@ import {
 import { recordRunReport, listPriceRuns, readFailedRunStreak } from '../lib/price-runs.js'
 import {
   REVIEW_REASONS,
-  recordReviewItems,
-  listReviewItems,
-  decideReviewItem,
+  CategoryUnchangedError,
+  CategoryUnknownError,
+  ReviewItemNotFoundError,
+  StaleCategoryError,
   acknowledgePendingTaxonomy,
-  undoReviewDecision,
+  decideReviewItem,
   exportReviewDecisions,
-  fetchReviewQueueReport,
   fetchReviewItemsByIds,
+  fetchReviewQueueReport,
+  listReviewItems,
+  overrideTaxonomyCategory,
+  recordReviewItems,
+  undoReviewDecision,
   REVIEW_CONFIDENCE_BANDS,
 } from '../lib/match-review.js'
 import {
@@ -121,6 +128,7 @@ import {
   getProductIdentity,
   rejectAlias,
   renameProduct,
+  revertProductCategory,
   revertProductRename,
 } from '../lib/canonical-products.js'
 import { requireAdmin } from '../lib/admin.js'
@@ -388,6 +396,40 @@ const productRenameSchema = object({
 })
 
 const productRevertSchema = object({
+  reason: optional(
+    pipe(
+      string(),
+      maxLength(200),
+      regex(NO_CONTROL_CHARS, 'Reason must not contain control characters.')
+    )
+  ),
+})
+
+// #728: the category override's body. The sealed-vocabulary membership is
+// checked by the lib against the contract's TAXONOMY_BUCKETS (400
+// category_unknown) — the wire schema here enforces only the shape the
+// canonical index can carry (maxLength(50), no control characters), so a
+// validation rejection and a vocabulary rejection answer different errors.
+const categoryOverrideSchema = object({
+  category: pipe(
+    string(),
+    minLength(1),
+    maxLength(50),
+    regex(NO_CONTROL_CHARS, 'Category must not contain control characters.')
+  ),
+  reason: optional(
+    pipe(
+      string(),
+      maxLength(200),
+      regex(NO_CONTROL_CHARS, 'Reason must not contain control characters.')
+    )
+  ),
+})
+
+// #728: the category revert's CAS — the identity read is the source of truth,
+// exactly the rename form's expectedMetadataVersion.
+const productCategoryRevertSchema = object({
+  expectedMetadataVersion: pipe(number(), integer(), minValue(0)),
   reason: optional(
     pipe(
       string(),
@@ -829,7 +871,12 @@ apiApp.use('/api/admin/review/queue-report', propsOrReviewScriptAuth)
 // `:id/decision` line (which covers no subpaths anyway, but the static-first
 // discipline keeps every admin gate explicit per #292).
 apiApp.use('/api/admin/review/taxonomy/acknowledge', propsAuthMiddleware)
+// #728: the sealed bucket vocabulary is a STATIC path like the acknowledge,
+// and the override route is session-admin only (no #656 script-token path —
+// a catalog write whose receipt must name a human).
+apiApp.use('/api/admin/review/taxonomy/buckets', propsAuthMiddleware)
 apiApp.use('/api/admin/review/:id/decision', propsAuthMiddleware)
+apiApp.use('/api/admin/review/:id/category', propsAuthMiddleware)
 // Canonical product admin (#423), plus alias decisions (#489): the same
 // per-path discipline as the review queue — the identity read, the rename, the
 // revert, and each alias decision get a line (#292: a use-line does not cover
@@ -839,6 +886,7 @@ apiApp.use('/api/admin/review/:id/decision', propsAuthMiddleware)
 // path wins.
 apiApp.use('/api/admin/products/:productKey', propsAuthMiddleware)
 apiApp.use('/api/admin/products/:productKey/rename', propsAuthMiddleware)
+apiApp.use('/api/admin/products/:productKey/category', propsAuthMiddleware)
 apiApp.use('/api/admin/products/:productKey/audit/:auditId/revert', propsAuthMiddleware)
 apiApp.use('/api/admin/products/:productKey/aliases/:aliasId/approve', propsAuthMiddleware)
 apiApp.use('/api/admin/products/:productKey/aliases/:aliasId/reject', propsAuthMiddleware)
@@ -4577,9 +4625,12 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
     itemStore: { type: 'string' },
     // #626: the item side's assigned category (+ taxonomy version) joined
     // from price_products — the context a taxonomy row needs to be legible.
-    // Both null when the product row is gone.
+    // Both null when the product row is gone. #728 adds the provenance: the
+    // card's 'Human override' marker chip keys off 'human' (null =
+    // pipeline-assigned, the pre-0052 rows included).
     itemCategory: { type: ['string', 'null'] },
     itemCategoryVersion: { type: ['string', 'null'] },
+    itemCategorySource: { type: ['string', 'null'], enum: ['pipeline', 'human', null] },
     // Issue #380: the LEFT side's evidence, frozen in the pair blob (null
     // for pairs flagged before the fields existed — no backfill).
     itemBrochureUrl: { type: ['string', 'null'] },
@@ -5234,6 +5285,154 @@ apiApp.post(
   }
 )
 
+// #728: the sealed 49-bucket vocabulary the override picker validates against.
+// The frontend never imports @rumaq/contract (hand-written api.ts wrappers on
+// a generated client), so the list rides this response — served straight from
+// the contract constants, ONE source of truth, and `version` names the sealed
+// taxonomy the slugs were frozen at. A taxonomy bump (v0.5+) is a coordinated
+// contract change; this route's payload moves with it without a code change.
+apiApp.get(
+  '/api/admin/review/taxonomy/buckets',
+  describeRoute({
+    description:
+      'The sealed taxonomy vocabulary (admin-only): the bucket slugs a category override may set, verbatim from @rumaq/contract TAXONOMY_BUCKETS, plus the TAXONOMY_VERSION they were frozen at. StaleTime-forever server state — the list only changes with a taxonomy version bump.',
+    security: [{ cookieAuth: [] }],
+    responses: {
+      200: {
+        description: 'OK',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                version: { type: 'string' },
+                buckets: { type: 'array', items: { type: 'string' } },
+              },
+              required: ['version', 'buckets'],
+            },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+    },
+  }),
+  requireAdmin,
+  (c) => {
+    const res = c.json({ version: TAXONOMY_VERSION, buckets: [...TAXONOMY_BUCKETS] })
+    res.headers.set('Cache-Control', 'private, no-cache')
+    return res
+  }
+)
+
+// #728: the human category override. ONE round trip does the whole act (the
+// lib owns the rules, canonical-products.ts owns the sibling revert):
+// guarded product UPDATE (from-value CAS) -> gated receipt -> gated canonical
+// index bump -> flag settle decided_source='human', one db.batch. The route is
+// session-admin only by owner decision — a catalog write whose receipt names
+// actor_user_id must be stampable by a human, never the #656 scripted
+// operator identity.
+apiApp.post(
+  '/api/admin/review/:id/category',
+  describeRoute({
+    description:
+      "Set the flagged product's category from the sealed bucket vocabulary (admin-only): writes price_products.category (+ category_version = the sealed TAXONOMY_VERSION, category_source = 'human'), appends one price_product_category_audit receipt, bumps the canonical index version once, and settles THIS flag approved with decided_source='human' when it is still pending (a decided flag keeps its decision — fixing the catalog there is legitimate). The choice must be in the sealed TAXONOMY_BUCKETS. Not settled: other pending flags for the same product.",
+    security: [{ cookieAuth: [] }],
+    parameters: [
+      {
+        in: 'path',
+        name: 'id',
+        required: true,
+        schema: { type: 'string', maxLength: 100 },
+      },
+    ],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['category'],
+            properties: {
+              category: { type: 'string', minLength: 1, maxLength: 50 },
+              reason: { type: 'string', maxLength: 200 },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'OK — the re-read review row (decided state on a settled flag)',
+        content: {
+          'application/json': {
+            schema: { type: 'object', properties: { item: REVIEW_ITEM_SCHEMA } },
+          },
+        },
+      },
+      400: {
+        description:
+          'category_unknown (not in the sealed vocabulary) or category_unchanged (confirming is the ack path), or a validation error',
+        content: {
+          'application/json': {
+            schema: { type: 'object', properties: { error: { type: 'string' } } },
+          },
+        },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      404: {
+        description: 'Unknown review item (or unrenderable pair), or the product row is gone',
+      },
+      409: {
+        description: 'stale_category: the category changed since the card was read (CAS lost)',
+        content: {
+          'application/json': {
+            schema: { type: 'object', properties: { error: { type: 'string' } } },
+          },
+        },
+      },
+    },
+  }),
+  requireAdmin,
+  sValidator('json', categoryOverrideSchema),
+  async (c) => {
+    const { category, reason } = c.req.valid('json')
+    try {
+      const item = await overrideTaxonomyCategory(c.env.DB, {
+        reviewItemId: c.req.param('id'),
+        category,
+        actorUserId: c.get('userId'),
+        reason: reason ?? null,
+      })
+      if (!item) return c.json({ error: 'Review item not found' }, 404)
+      const res = c.json({ item })
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (error) {
+      if (error instanceof ReviewItemNotFoundError) {
+        return c.json({ error: 'Review item not found' }, 404)
+      }
+      if (error instanceof ProductNotFoundError) {
+        return c.json({ error: 'Product not found' }, 404)
+      }
+      if (error instanceof CategoryUnknownError) {
+        return c.json({ error: 'category_unknown' }, 400)
+      }
+      if (error instanceof CategoryUnchangedError) {
+        return c.json({ error: 'category_unchanged' }, 400)
+      }
+      if (error instanceof InvalidReasonError) {
+        return c.json({ error: error.message }, 400)
+      }
+      if (error instanceof StaleCategoryError) {
+        return c.json({ error: 'stale_category' }, 409)
+      }
+      throw error
+    }
+  }
+)
+
 // ---------------------------------------------------------------------------
 // Admin canonical product rename/revert (#423, pipeline contract v2). The
 // backend owns price_products.name, so a rename is a label fix: product_key
@@ -5252,6 +5451,11 @@ const PRODUCT_SCHEMA: OpenAPIV3_1.SchemaObject = {
     brand: { type: ['string', 'null'] },
     unit: { type: ['string', 'null'] },
     status: { type: 'string', enum: ['canonical', 'provisional', 'needs_review'] },
+    // #728: the assigned category, the taxonomy version it came from, and the
+    // provenance (null = pipeline-assigned; 'human' = an admin override).
+    category: { type: ['string', 'null'] },
+    categoryVersion: { type: ['string', 'null'] },
+    categorySource: { type: ['string', 'null'], enum: ['pipeline', 'human', null] },
     metadataVersion: { type: 'integer', minimum: 1 },
     firstSeenAt: { type: ['string', 'null'] },
     lastSeenAt: { type: ['string', 'null'] },
@@ -5310,6 +5514,29 @@ const PRODUCT_AUDIT_SCHEMA: OpenAPIV3_1.SchemaObject = {
   },
 }
 
+// #728: one category receipt as the identity payload carries it, and the 200
+// body of the category revert (the restored product row, the receipt tail,
+// and the index version the revert left behind). Declared BEFORE
+// PRODUCT_IDENTITY_SCHEMA, whose initializer references it.
+const CATEGORY_AUDIT_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    action: { type: 'string', enum: ['set', 'revert'] },
+    oldCategory: { type: ['string', 'null'] },
+    oldCategoryVersion: { type: ['string', 'null'] },
+    newCategory: { type: ['string', 'null'] },
+    newCategoryVersion: { type: ['string', 'null'] },
+    reason: { type: ['string', 'null'] },
+    actorUserId: { type: 'string' },
+    reviewItemId: { type: ['string', 'null'] },
+    metadataVersionBefore: { type: 'integer' },
+    metadataVersionAfter: { type: 'integer' },
+    revertsAuditId: { type: ['string', 'null'] },
+    createdAt: { type: 'string' },
+  },
+}
+
 const PRODUCT_IDENTITY_SCHEMA: OpenAPIV3_1.SchemaObject = {
   type: 'object',
   properties: {
@@ -5323,6 +5550,9 @@ const PRODUCT_IDENTITY_SCHEMA: OpenAPIV3_1.SchemaObject = {
       },
     },
     audit: { type: 'array', items: PRODUCT_AUDIT_SCHEMA },
+    // #728: the category receipt tail, newest first — the shared override
+    // form derives its revert affordance from it.
+    categoryAudit: { type: 'array', items: CATEGORY_AUDIT_SCHEMA },
   },
 }
 
@@ -5350,6 +5580,17 @@ const PRODUCT_MUTATION_SCHEMA: OpenAPIV3_1.SchemaObject = {
     product: PRODUCT_SCHEMA,
     warnings: { type: 'array', items: SIMILAR_NAME_WARNING_SCHEMA },
     audit: { type: 'array', items: PRODUCT_AUDIT_SCHEMA },
+    indexVersion: { type: 'integer', minimum: 0 },
+  },
+}
+
+// #728: the category revert's 200 body (the schema pair above; declared
+// before PRODUCT_IDENTITY_SCHEMA for its initializer).
+const CATEGORY_MUTATION_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: 'object',
+  properties: {
+    product: PRODUCT_SCHEMA,
+    categoryAudit: { type: 'array', items: CATEGORY_AUDIT_SCHEMA },
     indexVersion: { type: 'integer', minimum: 0 },
   },
 }
@@ -5749,6 +5990,83 @@ apiApp.post(
       }
       if (error instanceof AuditNotFoundError) {
         return c.json({ error: 'Audit entry not found' }, 404)
+      }
+      if (error instanceof StaleRevertError) {
+        return c.json({ error: 'stale_revert' }, 409)
+      }
+      if (error instanceof InvalidReasonError) {
+        return c.json({ error: error.message }, 400)
+      }
+      throw error
+    }
+  }
+)
+
+// #728: the category revert — the compensating receipt for the LATEST
+// unreverted category override (old/new swapped, reverts_audit_id set), the
+// rename revert's exact division of labor: the expectedMetadataVersion CAS is
+// the primary guard, the unique partial index is the storage backstop. Never
+// touches flag rows — the flag decision and the catalog state are separately
+// auditable facts, linked by the 'set' receipt's reviewItemId. Session-admin
+// only, like every product-surface write.
+apiApp.delete(
+  '/api/admin/products/:productKey/category',
+  describeRoute({
+    description:
+      "Revert the LATEST unreverted category override (admin-only): restores the receipt's previous category (which may be NULL — the next publish's WHERE category IS NULL fill re-proposes by design), recomputes category_source (an earlier unreverted set keeps it 'human', else NULL), appends the compensating revert receipt, and bumps the canonical index version once. An expectedMetadataVersion mismatch is 409 stale_product; an older/already-compensated override is 409 stale_revert. Never touches flag rows.",
+    security: [{ cookieAuth: [] }],
+    parameters: [PRODUCT_KEY_PARAMETER],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['expectedMetadataVersion'],
+            properties: {
+              expectedMetadataVersion: { type: 'integer', minimum: 0 },
+              reason: { type: 'string', maxLength: 200 },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'OK',
+        content: { 'application/json': { schema: CATEGORY_MUTATION_SCHEMA } },
+      },
+      400: { description: 'Validation error (invalid body or reason)' },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Not an admin' },
+      404: { description: 'Unknown product' },
+      409: {
+        description:
+          'stale_product (CAS lost — re-read the identity) or stale_revert (the latest set was already compensated, or is no longer the latest)',
+        content: { 'application/json': { schema: { type: 'object' } } },
+      },
+    },
+  }),
+  requireAdmin,
+  sValidator('json', productCategoryRevertSchema),
+  async (c) => {
+    const body = c.req.valid('json')
+    try {
+      const result = await revertProductCategory(c.env.DB, {
+        productKey: c.req.param('productKey'),
+        expectedMetadataVersion: body.expectedMetadataVersion,
+        actorUserId: c.get('userId'),
+        reason: body.reason ?? null,
+      })
+      const res = c.json(result)
+      res.headers.set('Cache-Control', 'private, no-cache')
+      return res
+    } catch (error) {
+      if (error instanceof ProductNotFoundError) {
+        return c.json({ error: 'Product not found' }, 404)
+      }
+      if (error instanceof StaleProductError) {
+        return c.json({ error: 'stale_product', current: error.current }, 409)
       }
       if (error instanceof StaleRevertError) {
         return c.json({ error: 'stale_revert' }, 409)

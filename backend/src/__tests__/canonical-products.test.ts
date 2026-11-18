@@ -17,6 +17,7 @@ import {
   getProductIdentity,
   rejectAlias,
   renameProduct,
+  revertProductCategory,
   revertProductRename,
 } from '../lib/canonical-products.js'
 import { getCanonicalIndex } from '../lib/ingest-v2.js'
@@ -1943,5 +1944,277 @@ describe('countAliasCandidates / bulkApproveExactNameAliases — real-SQLite sem
     ).toBe('candidate')
     expect(aliasAuditRows(sqlite)).toEqual([])
     expect(indexVersion(sqlite)).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Category revert (ahaqqu/RumaQ#728) — real-SQLite semantics. The override
+// write itself is pinned in match-review.test.ts (it addresses the review
+// row); this block pins the product-surface compensation: latest-unreverted-
+// set-only, the CAS, the category_source recompute, and the identity read's
+// categoryAudit tail.
+// ---------------------------------------------------------------------------
+
+function insertCategoryAudit(
+  sqlite: SqliteDb,
+  over: {
+    id: string
+    /** The receipt's product handle; defaults to the suite's 'prod-1'. */
+    productId?: string
+    action?: 'set' | 'revert'
+    oldCategory?: string | null
+    oldVersion?: string | null
+    newCategory?: string | null
+    newVersion?: string | null
+    reason?: string | null
+    reviewItemId?: string | null
+    before: number
+    after: number
+    revertsAuditId?: string | null
+    createdAt?: string
+  }
+): void {
+  sqlite
+    .prepare(
+      `INSERT INTO price_product_category_audit
+         (id, product_id, product_key, actor_user_id, action, old_category,
+          old_category_version, new_category, new_category_version, reason,
+          review_item_id, metadata_version_before, metadata_version_after,
+          reverts_audit_id, created_at)
+       VALUES (?, ?, 'beras--ramos--5-kg', 'admin-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      over.id,
+      over.productId ?? 'prod-1',
+      over.action ?? 'set',
+      // `=== undefined` on purpose: an EXPLICIT null (the revert-to-null and
+      // uncategorized-from cases) must survive, only an omitted key defaults.
+      over.oldCategory === undefined ? 'snack' : over.oldCategory,
+      over.oldVersion === undefined ? 'v0.3' : over.oldVersion,
+      over.newCategory === undefined ? 'beras' : over.newCategory,
+      over.newVersion === undefined ? 'v0.4' : over.newVersion,
+      over.reason === undefined ? null : over.reason,
+      over.reviewItemId === undefined ? null : over.reviewItemId,
+      over.before,
+      over.after,
+      over.revertsAuditId ?? null,
+      over.createdAt ?? '2026-11-19 06:00:00'
+    )
+}
+
+function categoryAuditRows(sqlite: SqliteDb) {
+  return sqlite
+    .prepare('SELECT * FROM price_product_category_audit ORDER BY metadata_version_after')
+    .all()
+}
+
+describe('revertProductCategory — real-SQLite semantics (#728)', () => {
+  const REVERT_AT = new Date('2026-11-19T07:00:00.000Z')
+
+  // The post-override state the revert compensates: the admin set 'beras'
+  // (metadata 1 → 2) over the pipeline's 'snack' (v0.3).
+  function seedOverridden(sqlite: SqliteDb): void {
+    insertProduct(sqlite)
+    sqlite
+      .prepare(
+        `UPDATE price_products
+         SET category = 'beras', category_version = 'v0.4', category_source = 'human',
+             metadata_version = 2
+         WHERE id = 'prod-1'`
+      )
+      .run()
+    insertCategoryAudit(sqlite, {
+      id: 'cat-set-1',
+      oldCategory: 'snack',
+      oldVersion: 'v0.3',
+      newCategory: 'beras',
+      newVersion: 'v0.4',
+      before: 1,
+      after: 2,
+    })
+  }
+
+  it('restores the previous category, appends the compensating receipt, bumps the index once', async () => {
+    const sqlite = freshDb()
+    seedOverridden(sqlite)
+    const result = await revertProductCategory(sqliteD1(sqlite), {
+      productKey: 'beras--ramos--5-kg',
+      expectedMetadataVersion: 2,
+      actorUserId: 'admin-2',
+      reason: 'wrong call',
+      now: REVERT_AT,
+    })
+    expect(result.product).toMatchObject({
+      category: 'snack',
+      categoryVersion: 'v0.3',
+      categorySource: null,
+      metadataVersion: 3,
+    })
+    expect(result.indexVersion).toBe(1)
+
+    const receipts = categoryAuditRows(sqlite)
+    expect(receipts).toHaveLength(2)
+    expect(receipts[1]).toMatchObject({
+      id: expect.any(String),
+      product_id: 'prod-1',
+      action: 'revert',
+      // Old/new swapped with the compensated set.
+      old_category: 'beras',
+      old_category_version: 'v0.4',
+      new_category: 'snack',
+      new_category_version: 'v0.3',
+      reason: 'wrong call',
+      reverts_audit_id: 'cat-set-1',
+      actor_user_id: 'admin-2',
+      metadata_version_before: 2,
+      metadata_version_after: 3,
+    })
+  })
+
+  it('recomputes category_source: an earlier unreverted set keeps it human', async () => {
+    const sqlite = freshDb()
+    seedOverridden(sqlite)
+    // An earlier override (null → snack) is still unreverted, so reverting
+    // the LATEST set leaves the catalog human-set.
+    insertCategoryAudit(sqlite, {
+      id: 'cat-set-0',
+      oldCategory: null,
+      oldVersion: null,
+      newCategory: 'snack',
+      newVersion: 'v0.3',
+      before: 0,
+      after: 1,
+      createdAt: '2026-11-18 06:00:00',
+    })
+    const result = await revertProductCategory(sqliteD1(sqlite), {
+      productKey: 'beras--ramos--5-kg',
+      expectedMetadataVersion: 2,
+      actorUserId: 'admin-2',
+    })
+    expect(result.product).toMatchObject({
+      category: 'snack',
+      categoryVersion: 'v0.3',
+      categorySource: 'human',
+    })
+  })
+
+  it('restores NULL for a set whose from-value was uncategorized (revert-to-null receipt)', async () => {
+    const sqlite = freshDb()
+    insertProduct(sqlite)
+    sqlite
+      .prepare(
+        `UPDATE price_products
+         SET category = 'beras', category_version = 'v0.4', category_source = 'human',
+             metadata_version = 2
+         WHERE id = 'prod-1'`
+      )
+      .run()
+    insertCategoryAudit(sqlite, {
+      id: 'cat-set-null',
+      oldCategory: null,
+      oldVersion: null,
+      newCategory: 'beras',
+      newVersion: 'v0.4',
+      before: 1,
+      after: 2,
+    })
+    const result = await revertProductCategory(sqliteD1(sqlite), {
+      productKey: 'beras--ramos--5-kg',
+      expectedMetadataVersion: 2,
+      actorUserId: 'admin-2',
+    })
+    // The row goes back to "no category" — the next publish's
+    // `WHERE category IS NULL` fill re-proposes, by design.
+    expect(result.product).toMatchObject({
+      category: null,
+      categoryVersion: null,
+      categorySource: null,
+    })
+    expect(categoryAuditRows(sqlite)[1]).toMatchObject({
+      action: 'revert',
+      old_category: 'beras',
+      new_category: null,
+    })
+  })
+
+  it('409s stale_product on a CAS miss before writing anything', async () => {
+    const sqlite = freshDb()
+    seedOverridden(sqlite)
+    await expect(
+      revertProductCategory(sqliteD1(sqlite), {
+        productKey: 'beras--ramos--5-kg',
+        expectedMetadataVersion: 1,
+        actorUserId: 'admin-2',
+      })
+    ).rejects.toMatchObject({ name: 'StaleProductError' })
+    expect(categoryAuditRows(sqlite)).toHaveLength(1)
+    expect(indexVersion(sqlite)).toBe(0)
+  })
+
+  it('409s stale_revert when the latest set is no longer the live write', async () => {
+    const sqlite = freshDb()
+    seedOverridden(sqlite)
+    // A concurrent rename bumped the version after the override: the set is
+    // historical, and a revert would compensate a write that no longer
+    // produced the current state.
+    sqlite
+      .prepare(
+        `UPDATE price_products SET name = 'Beras Ramos Premium', metadata_version = 3 WHERE id = 'prod-1'`
+      )
+      .run()
+    await expect(
+      revertProductCategory(sqliteD1(sqlite), {
+        productKey: 'beras--ramos--5-kg',
+        expectedMetadataVersion: 3,
+        actorUserId: 'admin-2',
+      })
+    ).rejects.toMatchObject({ name: 'StaleRevertError' })
+    expect(categoryAuditRows(sqlite)).toHaveLength(1)
+  })
+
+  it('409s stale_revert on a second compensation (every set reverts once)', async () => {
+    const sqlite = freshDb()
+    seedOverridden(sqlite)
+    const db = sqliteD1(sqlite)
+    await revertProductCategory(db, {
+      productKey: 'beras--ramos--5-kg',
+      expectedMetadataVersion: 2,
+      actorUserId: 'admin-2',
+    })
+    // The compensated set is gone from the unreverted set; the next attempt
+    // finds nothing to compensate.
+    await expect(
+      revertProductCategory(db, {
+        productKey: 'beras--ramos--5-kg',
+        expectedMetadataVersion: 3,
+        actorUserId: 'admin-2',
+      })
+    ).rejects.toMatchObject({ name: 'StaleRevertError' })
+    expect(categoryAuditRows(sqlite)).toHaveLength(2)
+    expect(indexVersion(sqlite)).toBe(1)
+  })
+
+  it('carries the category receipt tail on the identity read, newest first', async () => {
+    const sqlite = freshDb()
+    seedOverridden(sqlite)
+    insertCategoryAudit(sqlite, {
+      id: 'cat-set-2',
+      oldCategory: 'beras',
+      oldVersion: 'v0.4',
+      newCategory: 'buah',
+      newVersion: 'v0.4',
+      before: 2,
+      after: 3,
+      createdAt: '2026-11-19 08:00:00',
+    })
+    const identity = await getProductIdentity(sqliteD1(sqlite), 'beras--ramos--5-kg')
+    expect(identity?.product).toMatchObject({
+      category: 'beras',
+      categoryVersion: 'v0.4',
+      categorySource: 'human',
+    })
+    expect(identity?.categoryAudit.map((row) => row.id)).toEqual(['cat-set-2', 'cat-set-1'])
+    // The rename audit stays a separate, unchanged trail.
+    expect(identity?.audit).toEqual([])
   })
 })

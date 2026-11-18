@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
-import { reviewItemPairSchema, type ReviewItemPair } from '@rumaq/contract'
+import {
+  TAXONOMY_BUCKETS,
+  TAXONOMY_VERSION,
+  reviewItemPairSchema,
+  type ReviewItemPair,
+} from '@rumaq/contract'
 import { generateSpecs } from 'hono-openapi'
 import { apiApp } from '../apps/api.js'
 import {
@@ -11,6 +16,7 @@ import {
   exportReviewDecisions,
   fetchEntryEvidence,
   fetchReviewItemsByIds,
+  overrideTaxonomyCategory,
 } from '../lib/match-review.js'
 // The backend tsconfig pins `types` to @cloudflare/workers-types, so Node
 // builtin imports carry no declarations — same contained suppressions as
@@ -28,7 +34,9 @@ import { fileURLToPath } from 'node:url'
 type SqliteDb = {
   exec(sql: string): void
   prepare(sql: string): {
-    run(...params: unknown[]): unknown
+    // node:sqlite's run info carries `changes`; the #728 override adapter
+    // reads it to mirror D1's meta.changes.
+    run(...params: unknown[]): { changes?: number | bigint }
     all(...params: unknown[]): Array<Record<string, unknown>>
     // node:sqlite's single-row read; the #626 ack test's first() adapter uses it.
     get(...params: unknown[]): Record<string, unknown> | undefined
@@ -740,6 +748,11 @@ describe('review routes', () => {
       ['/api/admin/review/evaluate', { method: 'POST' }],
       ['/api/admin/review/rev-1/decision', { method: 'POST' }],
       ['/api/admin/review/rev-1/decision', { method: 'DELETE' }],
+      // #728: the override is a catalog write — the chain gates it like the
+      // decision routes; the vocabulary read is admin-only server state.
+      ['/api/admin/review/taxonomy/buckets', {}],
+      ['/api/admin/review/rev-1/category', { method: 'POST' }],
+      ['/api/admin/products/beras/category', { method: 'DELETE' }],
     ]
     for (const [path, init] of paths) {
       const res = await apiApp.request(path, init, { props: undefined } as never)
@@ -764,6 +777,9 @@ describe('review routes', () => {
       ['/api/admin/review/evaluate', { method: 'POST' }],
       ['/api/admin/review/rev-1/decision', { method: 'POST' }],
       ['/api/admin/review/rev-1/decision', { method: 'DELETE' }],
+      ['/api/admin/review/taxonomy/buckets', {}],
+      ['/api/admin/review/rev-1/category', { method: 'POST' }],
+      ['/api/admin/products/beras/category', { method: 'DELETE' }],
     ]
     for (const [path, init] of paths) {
       const res = await apiApp.request(path, init, nonAdmin as never)
@@ -992,6 +1008,46 @@ describe('review routes', () => {
       { id: 'bb22bb22', found: false, item: null },
       { id: 'aa11aa11', found: false, item: null },
     ])
+  })
+
+  // #728: the override route's HTTP contract. The write semantics live in the
+  // real-SQLite block above; these pin the error mapping and the vocabulary
+  // route (the picker's data source).
+  it('override rejects a body without a category with 400', async () => {
+    const res = await apiApp.request(
+      '/api/admin/review/rev-1/category',
+      { method: 'POST', body: JSON.stringify({}), headers: { 'Content-Type': 'application/json' } },
+      adminEnv() as never
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('override answers 400 category_unknown for a slug outside the sealed vocabulary', async () => {
+    const res = await apiApp.request(
+      '/api/admin/review/rev-1/category',
+      {
+        method: 'POST',
+        body: JSON.stringify({ category: 'beras-ramos' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      adminEnv() as never
+    )
+    // The lib validates BEFORE any read/write, so the mock env's empty results
+    // never matter — the vocabulary is the first gate.
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'category_unknown' })
+  })
+
+  it('serves the sealed vocabulary from the contract constants', async () => {
+    const res = await apiApp.request('/api/admin/review/taxonomy/buckets', {}, adminEnv() as never)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
+    const body = (await res.json()) as { version: string; buckets: string[] }
+    expect(body.version).toBe(TAXONOMY_VERSION)
+    // The sealed list is the contract's own array, verbatim — one source.
+    expect(body.buckets).toEqual([...TAXONOMY_BUCKETS])
+    expect(body.buckets).toHaveLength(49)
+    expect(new Set(body.buckets).size).toBe(49)
   })
 })
 
@@ -1553,5 +1609,371 @@ describe('listReviewItems — real-SQLite reason semantics (issue #628)', () => 
         .prepare(`SELECT decided_by, decided_source FROM match_review_items WHERE id = 'rev-t2'`)
         .get()
     ).toMatchObject({ decided_by: 'admin-9', decided_source: 'human' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Human category override (#728) — real-SQLite semantics. The batch's
+// guarded UPDATE → gated receipt → gated bump → gated settle chain (and its
+// all-or-nothing failure) is the feature's whole correctness story, so these
+// run on the real migration chain, not the string-matching fake.
+// ---------------------------------------------------------------------------
+
+// A full D1-shaped adapter over node:sqlite (the canonical-products.test.ts
+// one): first/all/run plus a batch that mirrors D1's transaction — the CAS
+// race and unique-index tests rely on a failed statement rolling the batch
+// back. `beforeBatch` is the seam a concurrent writer commits through.
+class OverrideStatement {
+  constructor(
+    private readonly sqlite: SqliteDb,
+    readonly sql: string,
+    readonly params: unknown[] = []
+  ) {}
+
+  bind(...params: unknown[]): OverrideStatement {
+    return new OverrideStatement(this.sqlite, this.sql, params)
+  }
+
+  async first<T>(): Promise<T | null> {
+    return (this.sqlite.prepare(this.sql).get(...this.params) ?? null) as T | null
+  }
+
+  async all<T>(): Promise<{ results: T[] }> {
+    return { results: this.sqlite.prepare(this.sql).all(...this.params) as T[] }
+  }
+
+  async run(): Promise<{ success: true; meta: { changes: number } }> {
+    const info = this.sqlite.prepare(this.sql).run(...this.params)
+    return { success: true, meta: { changes: Number(info?.changes ?? 0) } }
+  }
+}
+
+function runOverrideBatch(sqlite: SqliteDb, statement: OverrideStatement) {
+  if (/^\s*(SELECT|WITH|PRAGMA)\b/i.test(statement.sql)) {
+    return {
+      results: sqlite.prepare(statement.sql).all(...statement.params),
+      success: true,
+      meta: { changes: 0 },
+    }
+  }
+  const info = sqlite.prepare(statement.sql).run(...statement.params)
+  return { results: [], success: true, meta: { changes: Number(info?.changes ?? 0) } }
+}
+
+function overrideD1(sqlite: SqliteDb, options: { beforeBatch?: () => void } = {}): D1Database {
+  let fired = false
+  return {
+    prepare: (sql: string) => new OverrideStatement(sqlite, sql),
+    batch: async (statements: OverrideStatement[]) => {
+      if (!fired) {
+        fired = true
+        options.beforeBatch?.()
+      }
+      sqlite.exec('BEGIN')
+      try {
+        const results = statements.map((statement) => runOverrideBatch(sqlite, statement))
+        sqlite.exec('COMMIT')
+        return results
+      } catch (error) {
+        sqlite.exec('ROLLBACK')
+        throw error
+      }
+    },
+  } as unknown as D1Database
+}
+
+describe('overrideTaxonomyCategory — real-SQLite semantics (#728)', () => {
+  const PRODUCT_KEY = 'beras-ramos-5kg----5-kg'
+  const OVERRIDE_AT = new Date('2026-11-19T06:00:00.000Z')
+
+  function seed(sqlite: SqliteDb, over: { pairData?: string; status?: string } = {}): void {
+    sqlite
+      .prepare(
+        `INSERT INTO price_products
+           (id, product_key, name, category, category_version, metadata_version,
+            first_seen_at, last_seen_at, updated_at)
+         VALUES ('pp-1', ?, 'Beras Ramos 5 kg', 'snack', 'v0.3', 1,
+                 '2026-11-01T00:00:00Z', '2026-11-07T00:00:00Z', '2026-11-01T00:00:00Z')`
+      )
+      .run(PRODUCT_KEY)
+    sqlite
+      .prepare(
+        `INSERT INTO match_review_items
+           (id, item_product_key, entry_product_key, pair_data, reason, match_method,
+            confidence, run_started_at, first_flagged_at, last_flagged_at, flag_count, status)
+         VALUES ('rev-1', ?, 'beras-ramos-5kg--ramos--5-kg', ?, 'taxonomy', 'exact', 0.42,
+                 '2026-11-18T23:00:05Z', '2026-11-18T23:00:05Z', '2026-11-18T23:00:05Z', 1, ?)`
+      )
+      .run(
+        PRODUCT_KEY,
+        over.pairData ?? JSON.stringify(pair({ reason: 'taxonomy', confidence: 0.42 })),
+        over.status ?? 'pending'
+      )
+  }
+
+  function freshSqlite(over: { pairData?: string; status?: string } = {}): SqliteDb {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyRealMigrations(sqlite)
+    seed(sqlite, over)
+    return sqlite
+  }
+
+  function receiptRows(sqlite: SqliteDb) {
+    return sqlite.prepare('SELECT * FROM price_product_category_audit').all()
+  }
+
+  function indexVersion(sqlite: SqliteDb): number {
+    return Number(
+      sqlite.prepare('SELECT version FROM canonical_index_state WHERE id = 1').get()?.version
+    )
+  }
+
+  it('writes the category with provenance, appends one receipt, bumps the index, settles the flag — one batch', async () => {
+    const sqlite = freshSqlite()
+    const item = await overrideTaxonomyCategory(overrideD1(sqlite), {
+      reviewItemId: 'rev-1',
+      category: 'beras',
+      actorUserId: 'admin-1',
+      reason: '  rules head was right  ',
+      now: OVERRIDE_AT,
+    })
+    expect(item).toMatchObject({
+      id: 'rev-1',
+      status: 'approved',
+      decidedAt: '2026-11-19T06:00:00.000Z',
+      decidedBy: 'admin-1',
+      decidedSource: 'human',
+      itemCategory: 'beras',
+      itemCategoryVersion: TAXONOMY_VERSION,
+      itemCategorySource: 'human',
+    })
+
+    // The canonical row: the column IS the override surface (no shadow store),
+    // stamped with the sealed version it was validated against.
+    const product = sqlite
+      .prepare(
+        'SELECT category, category_version, category_source, metadata_version FROM price_products WHERE id = ?'
+      )
+      .get('pp-1') as Record<string, unknown>
+    expect(product).toEqual({
+      category: 'beras',
+      category_version: TAXONOMY_VERSION,
+      category_source: 'human',
+      metadata_version: 2,
+    })
+
+    // The receipt: who/when/from → to, the flag link, the version pair.
+    const receipts = receiptRows(sqlite)
+    expect(receipts).toHaveLength(1)
+    expect(receipts[0]).toMatchObject({
+      product_id: 'pp-1',
+      product_key: PRODUCT_KEY,
+      actor_user_id: 'admin-1',
+      action: 'set',
+      old_category: 'snack',
+      old_category_version: 'v0.3',
+      new_category: 'beras',
+      new_category_version: TAXONOMY_VERSION,
+      reason: 'rules head was right',
+      review_item_id: 'rev-1',
+      metadata_version_before: 1,
+      metadata_version_after: 2,
+      reverts_audit_id: null,
+    })
+
+    // Exactly one canonical-index bump — the pipeline picks the corrected
+    // category up within its ≤48 h cached-index window.
+    expect(indexVersion(sqlite)).toBe(1)
+  })
+
+  it('rejects a slug outside the sealed vocabulary before touching anything', async () => {
+    const sqlite = freshSqlite()
+    // 'beras-ramos' is not a bucket — and the pipeline treats an
+    // out-of-domain answer as a hard failure for the same reason: a stray
+    // slug pollutes the filter domain permanently.
+    await expect(
+      overrideTaxonomyCategory(overrideD1(sqlite), {
+        reviewItemId: 'rev-1',
+        category: 'beras-ramos',
+        actorUserId: 'admin-1',
+      })
+    ).rejects.toMatchObject({ name: 'CategoryUnknownError' })
+    expect(receiptRows(sqlite)).toEqual([])
+    expect(indexVersion(sqlite)).toBe(0)
+    expect(
+      sqlite
+        .prepare('SELECT category, metadata_version FROM price_products WHERE id = ?')
+        .get('pp-1')
+    ).toMatchObject({ category: 'snack', metadata_version: 1 })
+    expect(
+      sqlite.prepare('SELECT status FROM match_review_items WHERE id = ?').get('rev-1')
+    ).toMatchObject({ status: 'pending' })
+  })
+
+  it('answers category_unchanged without writing — confirming is the ack path', async () => {
+    const sqlite = freshSqlite()
+    await expect(
+      overrideTaxonomyCategory(overrideD1(sqlite), {
+        reviewItemId: 'rev-1',
+        category: 'snack',
+        actorUserId: 'admin-1',
+      })
+    ).rejects.toMatchObject({ name: 'CategoryUnchangedError' })
+    expect(receiptRows(sqlite)).toEqual([])
+    expect(indexVersion(sqlite)).toBe(0)
+    expect(
+      sqlite.prepare('SELECT status FROM match_review_items WHERE id = ?').get('rev-1')
+    ).toMatchObject({ status: 'pending' })
+  })
+
+  it('loses the from-value CAS cleanly: no receipt, no bump, no settle', async () => {
+    const sqlite = freshSqlite()
+    const db = overrideD1(sqlite, {
+      // A concurrent category write commits between the card's read and the
+      // batch: statement (1) must 0-row, and everything gated on it must
+      // follow. The flag stays pending — intent is atomic.
+      beforeBatch: () =>
+        sqlite
+          .prepare(
+            `UPDATE price_products
+             SET category = 'buah', category_version = 'v0.4',
+                 metadata_version = 2, updated_at = '2026-11-19T05:00:00.000Z'
+             WHERE id = 'pp-1'`
+          )
+          .run(),
+    })
+    await expect(
+      overrideTaxonomyCategory(db, {
+        reviewItemId: 'rev-1',
+        category: 'beras',
+        actorUserId: 'admin-1',
+        now: OVERRIDE_AT,
+      })
+    ).rejects.toMatchObject({ name: 'StaleCategoryError' })
+    expect(receiptRows(sqlite)).toEqual([])
+    expect(indexVersion(sqlite)).toBe(0)
+    expect(
+      sqlite
+        .prepare('SELECT status, decided_source FROM match_review_items WHERE id = ?')
+        .get('rev-1')
+    ).toMatchObject({ status: 'pending', decided_source: null })
+    // The concurrent write stands untouched (a stale request writes NOTHING).
+    expect(
+      sqlite.prepare('SELECT category FROM price_products WHERE id = ?').get('pp-1')
+    ).toMatchObject({ category: 'buah' })
+  })
+
+  it('moves the category on a decided flag while its decision stands', async () => {
+    const sqlite = freshSqlite({ status: 'approved' })
+    sqlite
+      .prepare(
+        `UPDATE match_review_items
+         SET decided_at = '2026-11-18T07:00:00.000Z', decided_by = 'admin-2',
+             decided_source = 'ai_assist'
+         WHERE id = 'rev-1'`
+      )
+      .run()
+
+    const item = await overrideTaxonomyCategory(overrideD1(sqlite), {
+      reviewItemId: 'rev-1',
+      category: 'beras',
+      actorUserId: 'admin-1',
+      now: OVERRIDE_AT,
+    })
+    // The catalog fix is legitimate on a decided row; the settle's
+    // status='pending' guard leaves the existing decision alone.
+    expect(item).toMatchObject({
+      status: 'approved',
+      decidedBy: 'admin-2',
+      decidedSource: 'ai_assist',
+      itemCategory: 'beras',
+      itemCategorySource: 'human',
+    })
+    expect(receiptRows(sqlite)).toHaveLength(1)
+    expect(indexVersion(sqlite)).toBe(1)
+  })
+
+  it('404s an unknown review item, an unrenderable pair blob, and a gone product row', async () => {
+    const missing = freshSqlite()
+    await expect(
+      overrideTaxonomyCategory(overrideD1(missing), {
+        reviewItemId: 'rev-none',
+        category: 'beras',
+        actorUserId: 'admin-1',
+      })
+    ).rejects.toMatchObject({ name: 'ReviewItemNotFoundError' })
+
+    const malformed = freshSqlite({ pairData: '{not json' })
+    await expect(
+      overrideTaxonomyCategory(overrideD1(malformed), {
+        reviewItemId: 'rev-1',
+        category: 'beras',
+        actorUserId: 'admin-1',
+      })
+    ).rejects.toMatchObject({ name: 'ReviewItemNotFoundError' })
+    expect(receiptRows(malformed)).toEqual([])
+
+    // The flag names a key with no product row: the queue card renders it
+    // category-less, and there is nothing to override.
+    const noProduct = new DatabaseSync(':memory:') as unknown as SqliteDb
+    applyRealMigrations(noProduct)
+    noProduct
+      .prepare(
+        `INSERT INTO match_review_items
+           (id, item_product_key, entry_product_key, pair_data, reason, match_method,
+            confidence, run_started_at, first_flagged_at, last_flagged_at, flag_count, status)
+         VALUES ('rev-1', 'gone--key--1-kg', 'gone--key--1-kg', ?, 'taxonomy', 'exact', 0.4,
+                 '2026-11-18T23:00:05Z', '2026-11-18T23:00:05Z', '2026-11-18T23:00:05Z', 1, 'pending')`
+      )
+      .run(JSON.stringify(pair({ reason: 'taxonomy', itemProductKey: 'gone--key--1-kg' })))
+    await expect(
+      overrideTaxonomyCategory(overrideD1(noProduct), {
+        reviewItemId: 'rev-1',
+        category: 'beras',
+        actorUserId: 'admin-1',
+      })
+    ).rejects.toMatchObject({ name: 'ProductNotFoundError' })
+  })
+
+  it('normalizes the reason and rejects a control-character one', async () => {
+    const sqlite = freshSqlite()
+    await overrideTaxonomyCategory(overrideD1(sqlite), {
+      reviewItemId: 'rev-1',
+      category: 'beras',
+      actorUserId: 'admin-1',
+      reason: '',
+    })
+    expect(receiptRows(sqlite)[0]).toMatchObject({ reason: null })
+
+    const second = freshSqlite()
+    await expect(
+      overrideTaxonomyCategory(overrideD1(second), {
+        reviewItemId: 'rev-1',
+        category: 'beras',
+        actorUserId: 'admin-1',
+        reason: 'wrong\u0000reason',
+      })
+    ).rejects.toMatchObject({ name: 'InvalidReasonError' })
+    expect(receiptRows(second)).toEqual([])
+  })
+
+  it('surfaces itemCategorySource on the queue read after an override', async () => {
+    const sqlite = freshSqlite()
+    await overrideTaxonomyCategory(overrideD1(sqlite), {
+      reviewItemId: 'rev-1',
+      category: 'beras',
+      actorUserId: 'admin-1',
+    })
+    // The override settles the flag (approved), so the read is the approved
+    // page — the join carries the new provenance on every status.
+    const page = await listReviewItems(sqliteD1Batch(sqlite), {
+      status: 'approved',
+      reason: 'taxonomy',
+    })
+    expect(page.items[0]).toMatchObject({
+      id: 'rev-1',
+      itemCategory: 'beras',
+      itemCategorySource: 'human',
+    })
   })
 })

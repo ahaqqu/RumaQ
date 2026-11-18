@@ -6,6 +6,14 @@
 // needs a pipeline PR. The pipeline picks the new name up on its next run from
 // the bumped `canonical_index_state`.
 //
+// The category revert (ahaqqu/RumaQ#728) rides the same rails for
+// price_products.category: an admin override writes the column with a
+// price_product_category_audit receipt (the 0037 pattern), and reverting
+// appends a compensating 'revert' receipt for the LATEST unreverted 'set'.
+// The override itself (the taxonomy-review-side write that settles a flag)
+// lives in lib/match-review.ts — it is the review row that addresses it — but
+// both writes share this module's one-batch discipline and indexBumpStatement.
+//
 // Settled decisions (issue #423 owner sign-off — do not re-litigate):
 // - Rename keeps `status = provisional`. Promoting an identity to `canonical`
 //   is a separate action, not a side effect of a label fix.
@@ -130,11 +138,21 @@ type CanonicalProductDto = {
   brand: string | null
   unit: string | null
   status: ProductStatus
+  // #728: the assigned category + the taxonomy version it came from, and the
+  // provenance stamp (NULL = pipeline-assigned; 'human' = set by an override).
+  // Additive on every payload that carries the product DTO (identity read and
+  // mutation results).
+  category: string | null
+  categoryVersion: string | null
+  categorySource: CategorySource | null
   metadataVersion: number
   firstSeenAt: string | null
   lastSeenAt: string | null
   updatedAt: string | null
 }
+
+/** Who wrote the category — the 0052 CHECK vocabulary; NULL = pipeline-assigned. */
+export type CategorySource = 'pipeline' | 'human'
 
 type ProductAliasDto = {
   id: string
@@ -164,11 +182,37 @@ type ProductAuditDto = {
   createdAt: string
 }
 
+/**
+ * One category receipt (#728) as the identity payload carries it: who set the
+ * category and from what, newest first, capped at AUDIT_PAGE like the rename
+ * audit. `revertsAuditId` is set on a compensating 'revert' row; the revert
+ * affordance derives from the LATEST receipt only.
+ */
+type CategoryAuditDto = {
+  id: string
+  action: 'set' | 'revert'
+  oldCategory: string | null
+  oldCategoryVersion: string | null
+  newCategory: string | null
+  newCategoryVersion: string | null
+  reason: string | null
+  actorUserId: string
+  /** The flag the override settled; null on a product-surface edit. */
+  reviewItemId: string | null
+  metadataVersionBefore: number
+  metadataVersionAfter: number
+  revertsAuditId: string | null
+  createdAt: string
+}
+
 type ProductIdentity = {
   product: CanonicalProductDto
   aliases: ProductAliasDto[]
   stats: ProductStatsDto
   audit: ProductAuditDto[]
+  // #728: the category receipt tail, newest first — the shared override form
+  // derives the revert affordance from it (the rename audit's exact role).
+  categoryAudit: CategoryAuditDto[]
 }
 
 /**
@@ -235,6 +279,27 @@ type RevertProductRenameInput = {
   auditId: string
   actorUserId: string
   reason?: string | null
+}
+
+type RevertProductCategoryInput = {
+  productKey: string
+  expectedMetadataVersion: number
+  actorUserId: string
+  reason?: string | null
+  /** Injectable for tests; defaults to now. */
+  now?: Date
+}
+
+/**
+ * The committed category revert (#728): the product row (with its restored
+ * category + recomputed source), the receipt tail, and the index version the
+ * revert left behind. Shaped like ProductMutationResult but with the CATEGORY
+ * audit — the rename surfaces stay untouched.
+ */
+type CategoryMutationResult = {
+  product: CanonicalProductDto
+  categoryAudit: CategoryAuditDto[]
+  indexVersion: number
 }
 
 type AliasDecisionInput = {
@@ -384,10 +449,45 @@ type ProductRow = {
   brand: string | null
   unit: string | null
   status: ProductStatus
+  category: string | null
+  category_version: string | null
+  // Tolerated as string from the DB, narrowed by toProduct (the 0052 CHECK
+  // admits only 'pipeline'/'human', but a row written before 0052 is NULL).
+  category_source: string | null
   metadata_version: number
   first_seen_at: string | null
   last_seen_at: string | null
   updated_at: string | null
+}
+
+type CategoryAuditRow = {
+  id: string
+  product_id: string
+  product_key: string
+  actor_user_id: string
+  action: 'set' | 'revert'
+  old_category: string | null
+  old_category_version: string | null
+  new_category: string | null
+  new_category_version: string | null
+  reason: string | null
+  review_item_id: string | null
+  metadata_version_before: number
+  metadata_version_after: number
+  reverts_audit_id: string | null
+  created_at: string
+}
+
+/** The latest unreverted 'set' the revert compensates (linear history). */
+type CategoryRevertTargetRow = {
+  id: string
+  product_id: string
+  action: 'set' | 'revert'
+  old_category: string | null
+  old_category_version: string | null
+  new_category: string | null
+  new_category_version: string | null
+  metadata_version_after: number
 }
 
 type AliasRow = {
@@ -432,15 +532,23 @@ type RevertTargetRow = {
 // every call site.
 type BatchResult = { results?: unknown[]; meta?: { changes?: number } }
 
-const PRODUCT_COLUMNS = `id, product_key, name, brand, unit, status, metadata_version,
-  first_seen_at, last_seen_at, updated_at`
+const PRODUCT_COLUMNS = `id, product_key, name, brand, unit, status, category, category_version,
+  category_source, metadata_version, first_seen_at, last_seen_at, updated_at`
 
 const ALIAS_COLUMNS = `id, name, store_slug, status, source, first_seen_at, last_seen_at`
 
 const AUDIT_COLUMNS = `id, product_id, product_key, actor_user_id, action, old_name, new_name,
   reason, metadata_version_before, metadata_version_after, reverts_audit_id, created_at`
 
+const CATEGORY_AUDIT_COLUMNS = `id, product_id, product_key, actor_user_id, action,
+  old_category, old_category_version, new_category, new_category_version, reason,
+  review_item_id, metadata_version_before, metadata_version_after, reverts_audit_id, created_at`
+
 const AUDIT_ORDER = 'ORDER BY created_at DESC, metadata_version_after DESC'
+
+function toCategorySource(value: string | null): CategorySource | null {
+  return value === 'pipeline' || value === 'human' ? value : null
+}
 
 function toProduct(row: ProductRow): CanonicalProductDto {
   return {
@@ -450,6 +558,9 @@ function toProduct(row: ProductRow): CanonicalProductDto {
     brand: row.brand,
     unit: row.unit,
     status: row.status,
+    category: row.category,
+    categoryVersion: row.category_version,
+    categorySource: toCategorySource(row.category_source),
     metadataVersion: row.metadata_version,
     firstSeenAt: row.first_seen_at,
     lastSeenAt: row.last_seen_at,
@@ -484,6 +595,24 @@ function toAudit(row: AuditRow): ProductAuditDto {
   }
 }
 
+function toCategoryAudit(row: CategoryAuditRow): CategoryAuditDto {
+  return {
+    id: row.id,
+    action: row.action,
+    oldCategory: row.old_category,
+    oldCategoryVersion: row.old_category_version,
+    newCategory: row.new_category,
+    newCategoryVersion: row.new_category_version,
+    reason: row.reason,
+    actorUserId: row.actor_user_id,
+    reviewItemId: row.review_item_id,
+    metadataVersionBefore: row.metadata_version_before,
+    metadataVersionAfter: row.metadata_version_after,
+    revertsAuditId: row.reverts_audit_id,
+    createdAt: row.created_at,
+  }
+}
+
 async function readProductByKey(db: D1Database, productKey: string): Promise<ProductRow | null> {
   return (
     (await db
@@ -503,6 +632,85 @@ async function readRevertTarget(db: D1Database, auditId: string): Promise<Revert
       .bind(auditId)
       .first<RevertTargetRow>()) ?? null
   )
+}
+
+/**
+ * The latest unreverted 'set' receipt for one product (#728) — the category
+ * revert's linear-history target, addressed by product (the route takes no
+ * audit id: only the LATEST set is compensable, so the write resolves it).
+ * "Unreverted" is structural (no compensating row names it); "latest" is by
+ * `metadata_version_after`, strictly increasing per product because every
+ * audited write bumps the version — the 0037 revert's exact rule.
+ */
+async function readCategoryRevertTarget(
+  db: D1Database,
+  productId: string
+): Promise<CategoryRevertTargetRow | null> {
+  return (
+    (await db
+      .prepare(
+        `SELECT a.id, a.product_id, a.action, a.old_category, a.old_category_version,
+                a.new_category, a.new_category_version, a.metadata_version_after
+         FROM price_product_category_audit a
+         WHERE a.product_id = ? AND a.action = 'set'
+           AND NOT EXISTS (SELECT 1 FROM price_product_category_audit r WHERE r.reverts_audit_id = a.id)
+         ORDER BY a.metadata_version_after DESC
+         LIMIT 1`
+      )
+      .bind(productId)
+      .first<CategoryRevertTargetRow>()) ?? null
+  )
+}
+
+/**
+ * Whether an EARLIER unreverted 'set' exists for the product — the revert's
+ * `category_source` recompute: the catalog stays human-set when it does, else
+ * it returns to pipeline-assigned (NULL). Safe to run pre-batch: the revert's
+ * metadata_version CAS is the whole concurrency guard, and any concurrent
+ * audited write 0-rows the guarded UPDATE, no-ops the batch, and surfaces as
+ * 409 stale_product — the pre-batch answer can never be committed stale.
+ */
+async function hasEarlierUnrevertedSet(
+  db: D1Database,
+  productId: string,
+  exceptAuditId: string
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS hit FROM price_product_category_audit a
+       WHERE a.product_id = ? AND a.action = 'set' AND a.id <> ?
+         AND NOT EXISTS (SELECT 1 FROM price_product_category_audit r WHERE r.reverts_audit_id = a.id)
+       LIMIT 1`
+    )
+    .bind(productId, exceptAuditId)
+    .first<{ hit: number }>()
+  return row != null
+}
+
+/** Reads back the committed category revert (product + receipt tail + index). */
+async function readCategoryMutationResult(
+  db: D1Database,
+  productId: string
+): Promise<CategoryMutationResult> {
+  const [productResult, auditResult, stateResult] = (await db.batch([
+    db.prepare(`SELECT ${PRODUCT_COLUMNS} FROM price_products WHERE id = ?`).bind(productId),
+    db
+      .prepare(
+        `SELECT ${CATEGORY_AUDIT_COLUMNS} FROM price_product_category_audit
+         WHERE product_id = ? ${AUDIT_ORDER} LIMIT ${AUDIT_PAGE}`
+      )
+      .bind(productId),
+    db.prepare('SELECT version FROM canonical_index_state WHERE id = 1'),
+  ])) as unknown as BatchResult[]
+
+  const row = productResult?.results?.[0] as ProductRow | undefined
+  if (!row) throw new ProductNotFoundError(productId)
+  const state = stateResult?.results?.[0] as { version?: number } | undefined
+  return {
+    product: toProduct(row),
+    categoryAudit: ((auditResult?.results ?? []) as CategoryAuditRow[]).map(toCategoryAudit),
+    indexVersion: Number(state?.version ?? 0),
+  }
 }
 
 /**
@@ -559,8 +767,12 @@ function normalizeCanonicalName(raw: string): string {
   return normalized
 }
 
-/** Optional audit reason: trimmed, bounded, and control-character free. */
-function normalizeReason(raw: string | null | undefined): string | null {
+/**
+ * Optional audit reason: trimmed, bounded, and control-character free.
+ * Exported for the category override (#728) — the receipt's one free-text
+ * field has ONE normalization rule across both receipt tables.
+ */
+export function normalizeReason(raw: string | null | undefined): string | null {
   if (raw == null) return null
   if (CONTROL_CHARS.test(raw)) {
     throw new InvalidReasonError('Reason must not contain control characters.')
@@ -706,14 +918,15 @@ async function findSimilarNames(
  *
  * `auditTable` is a closed union, never caller text — rename/revert gate on
  * `price_product_audit`, an alias approval on `price_product_alias_audit`
- * (#489). The alias endpoint imports this helper instead of inlining the SQL:
+ * (#489), and the category override/revert on `price_product_category_audit`
+ * (#728). The alias endpoint imports this helper instead of inlining the SQL:
  * an approved alias that lands without the pipeline seeing the bumped version
  * is invisible until some later canonical write happens to bump it.
  */
 export function indexBumpStatement(
   db: D1Database,
   auditId: string,
-  auditTable: 'price_product_audit' | 'price_product_alias_audit'
+  auditTable: 'price_product_audit' | 'price_product_alias_audit' | 'price_product_category_audit'
 ): D1PreparedStatement {
   return db
     .prepare(
@@ -753,42 +966,53 @@ async function readMutationResult(
 }
 
 /**
- * Admin product detail: canonical row, every alias with its id (candidate,
- * approved, and rejected — the id is what the approve/reject routes take),
- * observation stats, and the last 10 audit rows newest first. One batch so the
- * four reads see the same snapshot; null when the productKey is unknown.
+ * Admin product detail: canonical row (with the category + its provenance,
+ * #728), every alias with its id (candidate, approved, and rejected — the id
+ * is what the approve/reject routes take), observation stats, and the last 10
+ * rows of BOTH receipt trails (rename and category) newest first. One batch so
+ * the five reads see the same snapshot; null when the productKey is unknown.
  */
 export async function getProductIdentity(
   db: D1Database,
   productKey: string
 ): Promise<ProductIdentity | null> {
-  const [productResult, aliasResult, statsResult, auditResult] = (await db.batch([
-    db
-      .prepare(`SELECT ${PRODUCT_COLUMNS} FROM price_products WHERE product_key = ?`)
-      .bind(productKey),
-    db
-      .prepare(
-        `SELECT ${ALIAS_COLUMNS}
+  const [productResult, aliasResult, statsResult, auditResult, categoryAuditResult] =
+    (await db.batch([
+      db
+        .prepare(`SELECT ${PRODUCT_COLUMNS} FROM price_products WHERE product_key = ?`)
+        .bind(productKey),
+      db
+        .prepare(
+          `SELECT ${ALIAS_COLUMNS}
          FROM price_product_aliases
          WHERE product_id = (SELECT id FROM price_products WHERE product_key = ?)
          ORDER BY store_slug COLLATE NOCASE, name COLLATE NOCASE`
-      )
-      .bind(productKey),
-    db
-      .prepare(
-        `SELECT COUNT(*) AS observations, COUNT(DISTINCT source_id) AS stores
+        )
+        .bind(productKey),
+      db
+        .prepare(
+          `SELECT COUNT(*) AS observations, COUNT(DISTINCT source_id) AS stores
          FROM price_observations
          WHERE product_id = (SELECT id FROM price_products WHERE product_key = ?)`
-      )
-      .bind(productKey),
-    db
-      .prepare(
-        `SELECT ${AUDIT_COLUMNS} FROM price_product_audit
+        )
+        .bind(productKey),
+      db
+        .prepare(
+          `SELECT ${AUDIT_COLUMNS} FROM price_product_audit
          WHERE product_id = (SELECT id FROM price_products WHERE product_key = ?)
          ${AUDIT_ORDER} LIMIT ${AUDIT_PAGE}`
-      )
-      .bind(productKey),
-  ])) as unknown as BatchResult[]
+        )
+        .bind(productKey),
+      // #728: the category receipt tail — the override panel's revert block and
+      // the product surface's history read (the rename audit's exact role).
+      db
+        .prepare(
+          `SELECT ${CATEGORY_AUDIT_COLUMNS} FROM price_product_category_audit
+         WHERE product_id = (SELECT id FROM price_products WHERE product_key = ?)
+         ${AUDIT_ORDER} LIMIT ${AUDIT_PAGE}`
+        )
+        .bind(productKey),
+    ])) as unknown as BatchResult[]
 
   const row = productResult?.results?.[0] as ProductRow | undefined
   if (!row) return null
@@ -802,6 +1026,9 @@ export async function getProductIdentity(
     aliases: ((aliasResult?.results ?? []) as AliasRow[]).map(toAlias),
     stats: { observations: Number(stats.observations), stores: Number(stats.stores) },
     audit: ((auditResult?.results ?? []) as AuditRow[]).map(toAudit),
+    categoryAudit: ((categoryAuditResult?.results ?? []) as CategoryAuditRow[]).map(
+      toCategoryAudit
+    ),
   }
 }
 
@@ -1192,6 +1419,140 @@ export async function revertProductRename(
   if ((results[0]?.meta?.changes ?? 0) !== 1) throw new StaleRevertError()
 
   return readMutationResult(db, product.id, [])
+}
+
+/**
+ * Revert an admin category override (#728) by appending a compensating
+ * `revert` receipt for the LATEST unreverted 'set' (old/new swapped,
+ * `reverts_audit_id` pointing at the set). Receipts are append-only; nothing
+ * is updated or deleted. The route takes NO audit id — only the latest set is
+ * compensable, so the write resolves it (the rename revert is audit-addressed
+ * because its UI renders a specific history row; the category panel derives
+ * the same latest-only rule from the shared identity read).
+ *
+ * "Latest" is checked structurally, twice:
+ * - the target's `metadata_version_after` must equal the product's current
+ *   `metadata_version` AND its `new_category` must be the live category
+ *   (NULL-safe — an override onto an uncategorized product is legal), so a
+ *   newer override/rename makes the target historical (409 stale_revert);
+ * - `expectedMetadataVersion` is the client's CAS (the identity read is the
+   source of truth), mismatched → 409 stale_product before any write.
+ *
+ * A second compensation for the same set is 409 stale_revert — the CAS is the
+ * primary guard and the unique partial index `idx_ppcat_audit_revert_once` is
+ * the storage backstop, the 0037 division of labor. The receipt NEVER touches
+ * flag rows: the flag decision and the catalog state are separately auditable
+ * facts, linked only by the 'set' receipt's `review_item_id`.
+ *
+ * `category_source` is recomputed, not restored: an earlier unreverted 'set'
+ * leaves the catalog human-set ('human'); otherwise it returns to
+ * pipeline-assigned (NULL — and the next publish's `WHERE category IS NULL`
+ * fill may re-propose, which is convergence by design).
+ */
+export async function revertProductCategory(
+  db: D1Database,
+  input: RevertProductCategoryInput
+): Promise<CategoryMutationResult> {
+  const reason = normalizeReason(input.reason)
+  const product = await readProductByKey(db, input.productKey)
+  if (!product) throw new ProductNotFoundError(input.productKey)
+
+  if (product.metadata_version !== input.expectedMetadataVersion) {
+    throw new StaleProductError({
+      name: product.name,
+      metadataVersion: product.metadata_version,
+    })
+  }
+
+  const target = await readCategoryRevertTarget(db, product.id)
+  if (
+    !target ||
+    target.metadata_version_after !== product.metadata_version ||
+    target.new_category !== product.category
+  ) {
+    throw new StaleRevertError()
+  }
+
+  const restoreSource = await hasEarlierUnrevertedSet(db, product.id, target.id)
+
+  const now = (input.now ?? new Date()).toISOString()
+  const revertAuditId = crypto.randomUUID()
+  const nextVersion = product.metadata_version + 1
+
+  let results: BatchResult[]
+  try {
+    results = (await db.batch([
+      // 1. Guarded restore of the previous category. The metadata_version CAS
+      // is the concurrency guard; the receipt's old/new ride the target.
+      db
+        .prepare(
+          `UPDATE price_products
+           SET category = ?, category_version = ?, category_source = ?,
+               metadata_version = metadata_version + 1, updated_at = ?
+           WHERE id = ? AND metadata_version = ?`
+        )
+        .bind(
+          target.old_category,
+          target.old_category_version,
+          restoreSource ? 'human' : null,
+          now,
+          product.id,
+          product.metadata_version
+        ),
+      // 2. Compensating receipt, gated on the restored row — the
+      // version/category/updated_at triple can only be produced by statement 1
+      // in this batch, so a stale request inserts nothing (and therefore
+      // cannot bump the index in statement 3). `category IS ?` keeps the gate
+      // NULL-safe for a revert-to-uncategorized.
+      db
+        .prepare(
+          `INSERT INTO price_product_category_audit
+             (id, product_id, product_key, actor_user_id, action, old_category,
+              old_category_version, new_category, new_category_version, reason,
+              review_item_id, metadata_version_before, metadata_version_after,
+              reverts_audit_id, created_at)
+           SELECT ?, ?, ?, ?, 'revert', ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?
+           FROM price_products p
+           WHERE p.id = ? AND p.metadata_version = ? AND p.category IS ? AND p.updated_at = ?`
+        )
+        .bind(
+          revertAuditId,
+          product.id,
+          product.product_key,
+          input.actorUserId,
+          target.new_category,
+          target.new_category_version,
+          target.old_category,
+          target.old_category_version,
+          reason,
+          product.metadata_version,
+          nextVersion,
+          target.id,
+          now,
+          product.id,
+          nextVersion,
+          target.old_category,
+          now
+        ),
+      // 3. Exactly one canonical-index bump per committed revert receipt —
+      // the pipeline must see the restored category within its ≤48 h window.
+      indexBumpStatement(db, revertAuditId, 'price_product_category_audit'),
+    ])) as unknown as BatchResult[]
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/unique/i.test(message) && message.includes('reverts_audit_id')) {
+      throw new StaleRevertError()
+    }
+    throw error
+  }
+
+  if ((results[0]?.meta?.changes ?? 0) !== 1)
+    throw new StaleProductError({
+      name: product.name,
+      metadataVersion: product.metadata_version,
+    })
+
+  return readCategoryMutationResult(db, product.id)
 }
 
 /**

@@ -2776,6 +2776,10 @@
                           "itemCategoryVersion": {
                             "type": ["string", "null"]
                           },
+                          "itemCategorySource": {
+                            "type": ["string", "null"],
+                            "enum": ["pipeline", "human", null]
+                          },
                           "itemBrochureUrl": {
                             "type": ["string", "null"]
                           },
@@ -3284,6 +3288,10 @@
                                   "itemCategoryVersion": {
                                     "type": ["string", "null"]
                                   },
+                                  "itemCategorySource": {
+                                    "type": ["string", "null"],
+                                    "enum": ["pipeline", "human", null]
+                                  },
                                   "itemBrochureUrl": {
                                     "type": ["string", "null"]
                                   },
@@ -3515,6 +3523,10 @@
                         "itemCategoryVersion": {
                           "type": ["string", "null"]
                         },
+                        "itemCategorySource": {
+                          "type": ["string", "null"],
+                          "enum": ["pipeline", "human", null]
+                        },
                         "itemBrochureUrl": {
                           "type": ["string", "null"]
                         },
@@ -3702,6 +3714,10 @@
                         "itemCategoryVersion": {
                           "type": ["string", "null"]
                         },
+                        "itemCategorySource": {
+                          "type": ["string", "null"],
+                          "enum": ["pipeline", "human", null]
+                        },
                         "itemBrochureUrl": {
                           "type": ["string", "null"]
                         },
@@ -3873,6 +3889,290 @@
           },
           "403": {
             "description": "Not an admin"
+          }
+        }
+      }
+    },
+    "/api/admin/review/taxonomy/buckets": {
+      "get": {
+        "operationId": "getApiAdminReviewTaxonomyBuckets",
+        "description": "The sealed taxonomy vocabulary (admin-only): the bucket slugs a category override may set, verbatim from @rumaq/contract TAXONOMY_BUCKETS, plus the TAXONOMY_VERSION they were frozen at. StaleTime-forever server state — the list only changes with a taxonomy version bump.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "version": {
+                      "type": "string"
+                    },
+                    "buckets": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": ["version", "buckets"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        }
+      }
+    },
+    "/api/admin/review/{id}/category": {
+      "post": {
+        "operationId": "postApiAdminReviewByIdCategory",
+        "description": "Set the flagged product's category from the sealed bucket vocabulary (admin-only): writes price_products.category (+ category_version = the sealed TAXONOMY_VERSION, category_source = 'human'), appends one price_product_category_audit receipt, bumps the canonical index version once, and settles THIS flag approved with decided_source='human' when it is still pending (a decided flag keeps its decision — fixing the catalog there is legitimate). The choice must be in the sealed TAXONOMY_BUCKETS. Not settled: other pending flags for the same product.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["category"],
+                "properties": {
+                  "category": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 50
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK — the re-read review row (decided state on a settled flag)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "item": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "itemProductKey": {
+                          "type": "string"
+                        },
+                        "itemName": {
+                          "type": "string"
+                        },
+                        "itemBrand": {
+                          "type": ["string", "null"]
+                        },
+                        "itemUnit": {
+                          "type": ["string", "null"]
+                        },
+                        "itemPrice": {
+                          "type": "integer"
+                        },
+                        "itemEffectiveUnitPrice": {
+                          "type": ["number", "null"]
+                        },
+                        "itemStore": {
+                          "type": "string"
+                        },
+                        "itemCategory": {
+                          "type": ["string", "null"]
+                        },
+                        "itemCategoryVersion": {
+                          "type": ["string", "null"]
+                        },
+                        "itemCategorySource": {
+                          "type": ["string", "null"],
+                          "enum": ["pipeline", "human", null]
+                        },
+                        "itemBrochureUrl": {
+                          "type": ["string", "null"]
+                        },
+                        "itemSourceUrl": {
+                          "type": ["string", "null"]
+                        },
+                        "entryProductKey": {
+                          "type": "string"
+                        },
+                        "entryName": {
+                          "type": "string"
+                        },
+                        "entryBrand": {
+                          "type": ["string", "null"]
+                        },
+                        "entryUnit": {
+                          "type": ["string", "null"]
+                        },
+                        "entryPrice": {
+                          "type": "integer"
+                        },
+                        "entryEffectiveUnitPrice": {
+                          "type": ["number", "null"]
+                        },
+                        "entryStore": {
+                          "type": "string"
+                        },
+                        "entryBrochureUrl": {
+                          "type": ["string", "null"]
+                        },
+                        "entrySourceUrl": {
+                          "type": ["string", "null"]
+                        },
+                        "entryObservedAt": {
+                          "type": ["string", "null"]
+                        },
+                        "matchMethod": {
+                          "type": "string",
+                          "enum": ["exact", "embedding", "ai"]
+                        },
+                        "confidence": {
+                          "type": "number"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": ["price_ratio", "verifier_unresolved", "taxonomy"]
+                        },
+                        "kind": {
+                          "type": ["string", "null"],
+                          "enum": ["low_confidence", "disagreement", null]
+                        },
+                        "rulesCategory": {
+                          "type": ["string", "null"],
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["pending", "approved", "rejected"]
+                        },
+                        "decidedAt": {
+                          "type": ["string", "null"]
+                        },
+                        "decidedBy": {
+                          "type": ["string", "null"]
+                        },
+                        "decidedSource": {
+                          "type": ["string", "null"],
+                          "enum": ["human", "ai_assist", "ai_auto", null]
+                        },
+                        "aiVerdict": {
+                          "type": ["object", "null"],
+                          "properties": {
+                            "verdict": {
+                              "type": "string",
+                              "enum": ["same", "different"]
+                            },
+                            "confidence": {
+                              "type": "number"
+                            },
+                            "reason": {
+                              "type": ["string", "null"]
+                            },
+                            "model": {
+                              "type": ["string", "null"]
+                            },
+                            "humanAgreement": {
+                              "type": ["string", "null"],
+                              "enum": ["agreed", "disagreed", null]
+                            }
+                          }
+                        },
+                        "flagCount": {
+                          "type": "integer"
+                        },
+                        "firstFlaggedAt": {
+                          "type": "string"
+                        },
+                        "lastFlaggedAt": {
+                          "type": "string"
+                        },
+                        "runStartedAt": {
+                          "type": "string"
+                        },
+                        "runId": {
+                          "type": ["string", "null"]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "category_unknown (not in the sealed vocabulary) or category_unchanged (confirming is the ack path), or a validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Unknown review item (or unrenderable pair), or the product row is gone"
+          },
+          "409": {
+            "description": "stale_category: the category changed since the card was read (CAS lost)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -4143,6 +4443,16 @@
                           "type": "string",
                           "enum": ["canonical", "provisional", "needs_review"]
                         },
+                        "category": {
+                          "type": ["string", "null"]
+                        },
+                        "categoryVersion": {
+                          "type": ["string", "null"]
+                        },
+                        "categorySource": {
+                          "type": ["string", "null"],
+                          "enum": ["pipeline", "human", null]
+                        },
                         "metadataVersion": {
                           "type": "integer",
                           "minimum": 1
@@ -4223,6 +4533,54 @@
                           },
                           "actorUserId": {
                             "type": "string"
+                          },
+                          "metadataVersionBefore": {
+                            "type": "integer"
+                          },
+                          "metadataVersionAfter": {
+                            "type": "integer"
+                          },
+                          "revertsAuditId": {
+                            "type": ["string", "null"]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "categoryAudit": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string",
+                            "enum": ["set", "revert"]
+                          },
+                          "oldCategory": {
+                            "type": ["string", "null"]
+                          },
+                          "oldCategoryVersion": {
+                            "type": ["string", "null"]
+                          },
+                          "newCategory": {
+                            "type": ["string", "null"]
+                          },
+                          "newCategoryVersion": {
+                            "type": ["string", "null"]
+                          },
+                          "reason": {
+                            "type": ["string", "null"]
+                          },
+                          "actorUserId": {
+                            "type": "string"
+                          },
+                          "reviewItemId": {
+                            "type": ["string", "null"]
                           },
                           "metadataVersionBefore": {
                             "type": "integer"
@@ -4334,6 +4692,16 @@
                         "status": {
                           "type": "string",
                           "enum": ["canonical", "provisional", "needs_review"]
+                        },
+                        "category": {
+                          "type": ["string", "null"]
+                        },
+                        "categoryVersion": {
+                          "type": ["string", "null"]
+                        },
+                        "categorySource": {
+                          "type": ["string", "null"],
+                          "enum": ["pipeline", "human", null]
                         },
                         "metadataVersion": {
                           "type": "integer",
@@ -4570,6 +4938,16 @@
                           "type": "string",
                           "enum": ["canonical", "provisional", "needs_review"]
                         },
+                        "category": {
+                          "type": ["string", "null"]
+                        },
+                        "categoryVersion": {
+                          "type": ["string", "null"]
+                        },
+                        "categorySource": {
+                          "type": ["string", "null"],
+                          "enum": ["pipeline", "human", null]
+                        },
                         "metadataVersion": {
                           "type": "integer",
                           "minimum": 1
@@ -4666,6 +5044,184 @@
           },
           "409": {
             "description": "stale_revert: the audit row is not the latest rename, or it was already compensated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/products/{productKey}/category": {
+      "delete": {
+        "operationId": "deleteApiAdminProductsByProductKeyCategory",
+        "description": "Revert the LATEST unreverted category override (admin-only): restores the receipt's previous category (which may be NULL — the next publish's WHERE category IS NULL fill re-proposes by design), recomputes category_source (an earlier unreverted set keeps it 'human', else NULL), appends the compensating revert receipt, and bumps the canonical index version once. An expectedMetadataVersion mismatch is 409 stale_product; an older/already-compensated override is 409 stale_revert. Never touches flag rows.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "productKey",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["expectedMetadataVersion"],
+                "properties": {
+                  "expectedMetadataVersion": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "product": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "productKey": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "brand": {
+                          "type": ["string", "null"]
+                        },
+                        "unit": {
+                          "type": ["string", "null"]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["canonical", "provisional", "needs_review"]
+                        },
+                        "category": {
+                          "type": ["string", "null"]
+                        },
+                        "categoryVersion": {
+                          "type": ["string", "null"]
+                        },
+                        "categorySource": {
+                          "type": ["string", "null"],
+                          "enum": ["pipeline", "human", null]
+                        },
+                        "metadataVersion": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "firstSeenAt": {
+                          "type": ["string", "null"]
+                        },
+                        "lastSeenAt": {
+                          "type": ["string", "null"]
+                        },
+                        "updatedAt": {
+                          "type": ["string", "null"]
+                        }
+                      }
+                    },
+                    "categoryAudit": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string",
+                            "enum": ["set", "revert"]
+                          },
+                          "oldCategory": {
+                            "type": ["string", "null"]
+                          },
+                          "oldCategoryVersion": {
+                            "type": ["string", "null"]
+                          },
+                          "newCategory": {
+                            "type": ["string", "null"]
+                          },
+                          "newCategoryVersion": {
+                            "type": ["string", "null"]
+                          },
+                          "reason": {
+                            "type": ["string", "null"]
+                          },
+                          "actorUserId": {
+                            "type": "string"
+                          },
+                          "reviewItemId": {
+                            "type": ["string", "null"]
+                          },
+                          "metadataVersionBefore": {
+                            "type": "integer"
+                          },
+                          "metadataVersionAfter": {
+                            "type": "integer"
+                          },
+                          "revertsAuditId": {
+                            "type": ["string", "null"]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "indexVersion": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (invalid body or reason)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Unknown product"
+          },
+          "409": {
+            "description": "stale_product (CAS lost — re-read the identity) or stale_revert (the latest set was already compensated, or is no longer the latest)",
             "content": {
               "application/json": {
                 "schema": {
