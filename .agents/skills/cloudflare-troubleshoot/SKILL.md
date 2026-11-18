@@ -16,7 +16,7 @@ Self-serve production evidence for the `api` Worker and its D1 database (`rumaq`
 ## 1. Source the token (and why the naive way fails)
 
 ```bash
-set -a; source /dev/stdin <<< "$(grep -E 'CLOUDFLARE_API_TOKEN' ~/.bashrc)"; set +a
+set -a; source /dev/stdin <<< "$(grep -E '^export CLOUDFLARE_API_TOKEN=|^CLOUDFLARE_API_TOKEN=' ~/.bashrc)"; set +a
 curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   https://api.cloudflare.com/client/v4/user/tokens/verify | jq -c '{success, status: .result.status}'
 ```
@@ -134,7 +134,7 @@ Field notes:
 curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   -H "Content-Type: application/json" \
   -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/d1/database/$DB_ID/query" \
-  -d '{"sql":"SELECT status, count(*) AS n FROM review_items GROUP BY status"}'
+  -d '{"sql":"SELECT status, count(*) AS n FROM match_review_items GROUP BY status"}'
 ```
 
 (The SQL above is a shape example — list real table names via `SELECT name FROM sqlite_master WHERE type='table'` first; the production DB held 146 tables when this recipe was validated.)
@@ -146,9 +146,9 @@ Unblocks what is otherwise admin-gated (review-queue pending counts, publish out
 1. **Pin the window** first from existing evidence (run report, status.json, deploy timestamps) — never diagnose an unbounded window.
 2. **Invocations query** (§4) → status distribution per minute; look for `exceededResources`/`scriptThrewException` pairs and doubled counts.
 3. **D1 query** (§5) for the same window → before/during/after matrix from §5.
-4. **Interpret against known signatures**: double-dispatch (see §4) vs CPU ceiling. The 2026-11-17 chunk-9 case was the ceiling: a tail chunk full of new products (canonical creation is CPU-heavier per item) × doubled fallback work → 1101. Mitigations live in #719 (no double-dispatch) and #169 (per-store smaller invocations); the fallback lever is sub-400-item chunks for canonical-heavy stores.
-5. **Neither signature present?** Escalate to the owner for a dashboard read (Workers & Pages → `api` → Logs, live tail) — full stdout logs are the one thing GraphQL Analytics does not expose. Record it in MANUAL_ACTIONS like A-158-1 did.
+4. **Interpret against known signatures**: double-dispatch (see §4) vs CPU ceiling. The 2026-11-17 chunk-9 case was the ceiling: a tail chunk full of new products (canonical creation is CPU-heavier per item) × doubled fallback work → 1101. Mitigations live in RumaQ #719 (no double-dispatch) and pipeline #169 (per-store smaller invocations); the fallback lever is sub-400-item chunks for canonical-heavy stores.
+5. **Neither signature present?** Escalate to the owner for a dashboard read (Workers & Pages → `api` → Logs, live tail) — full stdout logs are the one thing GraphQL Analytics does not expose. Record it in MANUAL_ACTIONS with a numbered owner-action ID.
 
 ## 8. Dashboard fallback (when the token is missing or revoked)
 
-Route the owner to `dash.cloudflare.com/profile/api-tokens` (token creation per MANUAL_ACTIONS A-158-4 pattern) or have them read dash → Workers & Pages → api → Logs/Metrics and D1 → rumaq → Metrics directly. Never ask them for something §4–§6 already covers.
+Route the owner to `dash.cloudflare.com/profile/api-tokens` (create a custom token: Workers Observability Read + Workers Scripts Read + Account Analytics Read + D1 Edit, account-scoped, no zones) or have them read dash → Workers & Pages → api → Logs/Metrics and D1 → rumaq → Metrics directly. Never ask them for something §4–§6 already covers.
