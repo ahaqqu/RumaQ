@@ -147,7 +147,14 @@ export function BrochureViewerPage() {
           </div>
           <h1 className="flex-1 min-w-0 text-sm font-medium text-text truncate px-2">{title}</h1>
           {copied && (
-            <span role="status" className="shrink-0 text-xs text-text-muted">
+            // role="status" is the repo idiom (no toast library); the test id
+            // disambiguates it from BrochureReview's own live region (#718),
+            // which coexists on this page (#674/#716).
+            <span
+              role="status"
+              data-testid="viewer-share-status"
+              className="shrink-0 text-xs text-text-muted"
+            >
               {t('prices.viewerLinkCopied')}
             </span>
           )}
