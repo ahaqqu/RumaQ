@@ -325,7 +325,7 @@ describe('createScrapeCommand reaper (real SQL, silence semantics)', () => {
   })
 })
 
-describe('the lease (real SQL): claim, events renewal, finish-after-reap', () => {
+describe('the lease (real SQL): claim, events renewal, late-finish settlement', () => {
   it('claim stamps heartbeat_at alongside picked_up_at', async () => {
     const { sqlite, d1 } = createDb()
     const before = new Date().toISOString()
@@ -367,28 +367,67 @@ describe('the lease (real SQL): claim, events renewal, finish-after-reap', () =>
     expect(getCommand(sqlite, claimed.id).status).toBe('running')
   })
 
-  it('a finish after the reap answers 409 and the row stays reaped', async () => {
+  it('a claim that never reports is closed by the reaper alone; a late finish then settles it', async () => {
     const { sqlite, d1 } = createDb()
     await createScrapeCommand(d1, { stores: ['astro'], createdBy: 'user-1' })
     const claimed = (await claimNextScrapeCommand(d1))!
     // The agent goes silent past the ceiling; the next claim sweep reaps.
+    // NO finish was ever sent: the claim alone must not settle the row —
+    // a claim that never executes emits no finish, so the reaper stays the
+    // only closer of rows that never report.
     sqlite
       .prepare(`UPDATE scrape_commands SET picked_up_at = ?, heartbeat_at = ? WHERE id = ?`)
       .run(minutesAgo(STALE_SILENCE_AFTER_MS / 60000 + 5), null, claimed.id)
     await claimNextScrapeCommand(d1) // runs the silence reap in its sweep
-    const reaped = getCommand(sqlite, claimed.id)
-    expect(reaped.status).toBe('reaped')
-    expect(reaped.exit_code).toBeNull()
-
-    // The finish arriving after the reap is REFUSED, not silently ok'd —
-    // the pipeline agent reads any non-2xx as "this report never landed".
-    await expect(
-      finishScrapeCommand(d1, claimed.id, { status: 'success', exitCode: 0 })
-    ).rejects.toBeInstanceOf(ScrapeConflictError)
     expect(getCommand(sqlite, claimed.id)).toMatchObject({
       status: 'reaped',
       exit_code: null,
-      finished_at: reaped.finished_at,
+      error: RUNNING_REAP_ERROR,
+    })
+
+    // The finish arriving after the reap (#178): the report is proof the run
+    // actually completed, so it settles the record — the reap's named-cause
+    // error is overwritten with the real outcome, exit code included.
+    await finishScrapeCommand(d1, claimed.id, { status: 'success', exitCode: 0 })
+    const settled = getCommand(sqlite, claimed.id)
+    expect(settled).toMatchObject({
+      status: 'success',
+      exit_code: 0,
+      error: null,
+    })
+    expect(settled.finished_at).not.toBeNull()
+
+    // A repeat of the late finish (the agent's postJson retry) is a no-op:
+    // the settled outcome and its finish stamp are not overwritten.
+    await finishScrapeCommand(d1, claimed.id, { status: 'failed', exitCode: 2, error: 'late' })
+    expect(getCommand(sqlite, claimed.id)).toMatchObject({
+      status: 'success',
+      exit_code: 0,
+      error: null,
+      finished_at: settled.finished_at,
+    })
+  })
+
+  it('a late failed report settles a reaped row to failed with the report error', async () => {
+    const { sqlite, d1 } = createDb()
+    await createScrapeCommand(d1, { stores: ['astro'], createdBy: 'user-1' })
+    const claimed = (await claimNextScrapeCommand(d1))!
+    const stale = minutesAgo(STALE_SILENCE_AFTER_MS / 60000 + 5)
+    sqlite
+      .prepare(`UPDATE scrape_commands SET picked_up_at = ?, heartbeat_at = ? WHERE id = ?`)
+      .run(stale, null, claimed.id)
+    await claimNextScrapeCommand(d1) // runs the silence reap in its sweep
+    expect(getCommand(sqlite, claimed.id).status).toBe('reaped')
+
+    await finishScrapeCommand(d1, claimed.id, {
+      status: 'failed',
+      exitCode: 1,
+      error: 'ChainExhaustedError after heal',
+    })
+    expect(getCommand(sqlite, claimed.id)).toMatchObject({
+      status: 'failed',
+      exit_code: 1,
+      error: 'ChainExhaustedError after heal',
     })
   })
 
@@ -461,5 +500,67 @@ describe('the lease (real SQL): claim, events renewal, finish-after-reap', () =>
       status: 'reaped',
       heartbeat_at: heartbeatAtReap,
     })
+  })
+})
+
+describe('claim never re-serves a non-pending row (real SQL)', () => {
+  // The dedupe is structural — the claim's pick reads status='pending' only
+  // and no path returns a settled/running/reaped row to pending (RumaQ-pipeline
+  // #178 re-scope). An agent that re-polls after an outage heals must never be
+  // handed a command it already ran or that the reaper closed; pinned so it
+  // cannot regress.
+  it.each(['success', 'failed', 'reaped', 'running'] as const)(
+    'never re-serves a %s row',
+    async (status) => {
+      const { sqlite, d1 } = createDb()
+      const pickedUpAt = minutesAgo(9)
+      const finishedAt = minutesAgo(8)
+      seed(sqlite, { id: `no-reserve-${status}`, status, createdAt: minutesAgo(10), pickedUpAt })
+      if (status === 'success' || status === 'failed' || status === 'reaped') {
+        // Terminal rows carry a finish stamp; the reaped one keeps a NULL
+        // exit code (the run never finished — the reap is the only closer).
+        sqlite
+          .prepare(
+            `UPDATE scrape_commands SET finished_at = ?, exit_code = ?, error = ? WHERE id = ?`
+          )
+          .run(
+            finishedAt,
+            status === 'reaped' ? null : status === 'failed' ? 1 : 0,
+            status === 'reaped' ? RUNNING_REAP_ERROR : null,
+            `no-reserve-${status}`
+          )
+      }
+
+      expect(await claimNextScrapeCommand(d1)).toBeNull()
+      // Untouched: the lazy sweep must not flip or re-stamp the row either.
+      expect(getCommand(sqlite, `no-reserve-${status}`)).toMatchObject({
+        status,
+        picked_up_at: pickedUpAt,
+        finished_at: status === 'running' ? null : finishedAt,
+      })
+    }
+  )
+
+  it('serves the pending row when terminal ones share the table', async () => {
+    const { sqlite, d1 } = createDb()
+    seed(sqlite, {
+      id: 'old-success',
+      status: 'success',
+      createdAt: minutesAgo(30),
+      pickedUpAt: minutesAgo(29),
+    })
+    seed(sqlite, {
+      id: 'old-reaped',
+      status: 'reaped',
+      createdAt: minutesAgo(20),
+      pickedUpAt: minutesAgo(19),
+    })
+    seed(sqlite, { id: 'the-pending-one', status: 'pending', createdAt: minutesAgo(1) })
+
+    const claimed = await claimNextScrapeCommand(d1)
+    expect(claimed!.id).toBe('the-pending-one')
+    // The terminal rows are left exactly as they were.
+    expect(getCommand(sqlite, 'old-success').status).toBe('success')
+    expect(getCommand(sqlite, 'old-reaped').status).toBe('reaped')
   })
 })
