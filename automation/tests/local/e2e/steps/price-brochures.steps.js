@@ -332,7 +332,10 @@ When('I share the brochure without a native share sheet', async () => {
 Then(
   'the clipboard should hold the viewer link and the copied status should confirm it',
   async () => {
-    await expect(viewerPage.getByRole('status')).toHaveText('Link copied')
+    // The share confirmation is pinned by test id: the page's items panel
+    // (#718) also renders an aria-live role="status" ("Showing N of M"), so
+    // an unscoped role query is ambiguous under Playwright strict mode.
+    await expect(viewerPage.getByTestId('viewer-share-status')).toHaveText('Link copied')
     // The capturing clipboard stub (see the When step — the harness's plain-
     // http origin has no real async clipboard) holds the written link.
     const shared = await viewerPage.evaluate(() => window.__sharedLink)
