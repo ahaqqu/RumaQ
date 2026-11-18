@@ -26,6 +26,14 @@ vi.mock('../lib/queries/review.js', () => ({
   useReviewMode: vi.fn(),
   useSetReviewMode: vi.fn(),
   useEvaluateReview: vi.fn(),
+  // #728: the override panel's hooks (the panel mounts per-row; the page-level
+  // mocks keep the module surface complete so any render path is safe).
+  useTaxonomyBuckets: vi.fn(() => ({
+    data: { version: 'v0.4', buckets: ['beras', 'buah', 'snack'] },
+    isLoading: false,
+    isError: false,
+  })),
+  useSetReviewCategory: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }))
 
 vi.mock('../lib/api', async (importOriginal) => ({
@@ -37,6 +45,7 @@ vi.mock('../lib/queries/products.js', () => ({
   useProductIdentity: vi.fn(),
   useRenameProduct: vi.fn(),
   useRevertRename: vi.fn(),
+  useRevertProductCategory: vi.fn(),
   useDecideAlias: vi.fn(),
 }))
 
@@ -54,6 +63,7 @@ import {
   useProductIdentity,
   useRenameProduct,
   useRevertRename,
+  useRevertProductCategory,
   useDecideAlias,
 } from '../lib/queries/products.js'
 import { fetchReviewExport } from '../lib/api'
@@ -160,6 +170,11 @@ describe('AdminReview', () => {
       mutate: evaluateMutate,
       isPending: false,
       isError: false,
+    })
+    // #728: the override panel's revert block reads the same identity mock.
+    vi.mocked(useRevertProductCategory).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
     })
     vi.mocked(useProductIdentity).mockReturnValue({
       data: {
@@ -1121,6 +1136,143 @@ describe('AdminReview', () => {
         expect(container.textContent).not.toContain(key)
       }
       expect(evaluateMutate).not.toHaveBeenCalled()
+    })
+  })
+
+  // #728: the taxonomy card's category override affordance. The button lives
+  // on the catalog (entry) side beside Rename, taxonomy rows only, admin-only;
+  // the provenance marker keeps a re-flagged-after-override row legible; the
+  // per-row undo on an overridden row confirms (the category stays).
+  describe('issue #728 — category override affordance', () => {
+    const taxonomyItem = {
+      ...reviewItem,
+      reason: 'taxonomy',
+      kind: 'disagreement',
+      rulesCategory: 'beras',
+      itemCategory: 'snack',
+      itemCategoryVersion: 'v0.3',
+      itemCategorySource: null,
+    }
+
+    function entryActions(container) {
+      const entry = sideGroups(container)[1]
+      return [...entry.querySelectorAll('button')].map((button) => button.textContent)
+    }
+
+    it('offers Set category beside Rename on a taxonomy row (admin)', () => {
+      vi.mocked(useReviewItems).mockReturnValue(mockReviewData({ items: [taxonomyItem] }))
+      const { container } = renderAdmin()
+      const actions = entryActions(container)
+      expect(actions).toContain('rename.action')
+      expect(actions).toContain('override.action')
+    })
+
+    it('hides Set category on identity rows and for non-admins', () => {
+      // The default reviewItem is a price_ratio identity row.
+      const { container } = renderAdmin()
+      expect(entryActions(container)).toContain('rename.action')
+      expect(entryActions(container)).not.toContain('override.action')
+
+      vi.mocked(useMe).mockReturnValue({ data: { user: { isAdmin: false } } })
+      vi.mocked(useReviewItems).mockReturnValue(mockReviewData({ items: [taxonomyItem] }))
+      const { container: forbidden } = renderAdmin()
+      // The page returns the forbidden state before any row renders.
+      expect(forbidden.textContent).toContain('monitor.forbidden')
+    })
+
+    it('mounts the override panel with the flagged product when Set category is clicked', () => {
+      vi.mocked(useReviewItems).mockReturnValue(mockReviewData({ items: [taxonomyItem] }))
+      const { container } = renderAdmin()
+      fireEvent.click(
+        [...container.querySelectorAll('button')].find((b) => b.textContent === 'override.action')
+      )
+      expect(container.querySelector('[data-testid="category-override-form"]')).not.toBeNull()
+      // The product the flag names — the pair's item side — is the form's read.
+      expect(useProductIdentity).toHaveBeenCalledWith(taxonomyItem.itemProductKey, {
+        enabled: true,
+      })
+      // The toggle collapses back.
+      fireEvent.click(
+        [...container.querySelectorAll('button')].find((b) => b.textContent === 'override.close')
+      )
+      expect(container.querySelector('[data-testid="category-override-form"]')).toBeNull()
+    })
+
+    it('renders the Human override marker when the category was human-set', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({ items: [{ ...taxonomyItem, itemCategorySource: 'human' }] })
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('review.humanOverride')
+    })
+
+    it('shows the category-set hint on a decided overridden row', () => {
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            {
+              ...taxonomyItem,
+              status: 'approved',
+              decidedAt: '2026-11-19T06:00:00.000Z',
+              decidedBy: 'admin-1',
+              decidedSource: 'human',
+              itemCategorySource: 'human',
+              itemCategory: 'beras',
+            },
+          ],
+        })
+      )
+      const { container } = renderAdmin()
+      expect(container.textContent).toContain('review.categorySetHint')
+    })
+
+    it('confirms the undo on an overridden row (the category stays) and fires once', () => {
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            {
+              ...taxonomyItem,
+              status: 'approved',
+              decidedAt: '2026-11-19T06:00:00.000Z',
+              decidedBy: 'admin-1',
+              decidedSource: 'human',
+              itemCategorySource: 'human',
+            },
+          ],
+        })
+      )
+      const { container } = renderAdmin()
+      fireEvent.click(
+        [...container.querySelectorAll('button')].find((b) => b.textContent === 'review.undo')
+      )
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(undoMutate).toHaveBeenCalledTimes(1)
+      confirm.mockRestore()
+    })
+
+    it('keeps the plain undo one-click on a row without an override', () => {
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      vi.mocked(useReviewItems).mockReturnValue(
+        mockReviewData({
+          items: [
+            {
+              ...reviewItem,
+              status: 'approved',
+              decidedAt: '2026-11-19T06:00:00.000Z',
+              decidedBy: 'admin-1',
+              decidedSource: 'human',
+            },
+          ],
+        })
+      )
+      const { container } = renderAdmin()
+      fireEvent.click(
+        [...container.querySelectorAll('button')].find((b) => b.textContent === 'review.undo')
+      )
+      expect(confirm).not.toHaveBeenCalled()
+      expect(undoMutate).toHaveBeenCalledTimes(1)
+      confirm.mockRestore()
     })
   })
 })

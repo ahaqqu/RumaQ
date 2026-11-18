@@ -255,3 +255,95 @@ describe('CategoryPicker', () => {
     expect(screen.queryByRole('listbox')).toBeNull()
   })
 })
+
+// #728: the override form's additive variant — no reset row (an override must
+// NAME a slug; null is not a legal value) and per-surface copy. The defaults
+// above prove the ProductsView behavior is untouched; this block pins the
+// additive props alone.
+describe('CategoryPicker — override variant (additive props)', () => {
+  function Harness({ categories = CATEGORIES, ...props }) {
+    const [value, setValue] = useState(null)
+    return React.createElement(CategoryPicker, {
+      categories,
+      value,
+      onChange: setValue,
+      ...props,
+    })
+  }
+
+  function renderOverride(options = {}) {
+    return render(React.createElement(Harness, { ...options }))
+  }
+
+  it('omits the All categories reset row and offers no null option', () => {
+    const { container } = renderOverride({ resetOption: false })
+    fireEvent.click(trigger(container))
+
+    const options = screen.getAllByRole('option')
+    expect(options).toHaveLength(CATEGORIES.length)
+    expect(options.map((option) => option.textContent)).toEqual(CATEGORIES)
+    // Selecting the first row reports a slug, never null.
+    fireEvent.click(options[0])
+    expect(container.querySelector('[data-testid="category-picker"]').textContent).toContain(
+      CATEGORIES[0]
+    )
+  })
+
+  it('keeps keyboard navigation consistent without the reset row', () => {
+    const { container } = renderOverride({ resetOption: false })
+    fireEvent.keyDown(trigger(container), { key: 'ArrowDown' })
+    const input = screen.getByRole('combobox')
+
+    // No reset row above: Home is the first slug, and ArrowUp from it wraps
+    // to the last slug (the offset the pinned row used to add is gone).
+    expect(document.getElementById(input.getAttribute('aria-activedescendant')).textContent).toBe(
+      CATEGORIES[0]
+    )
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    expect(document.getElementById(input.getAttribute('aria-activedescendant')).textContent).toBe(
+      CATEGORIES[CATEGORIES.length - 1]
+    )
+    fireEvent.keyDown(input, { key: 'Home' })
+    expect(document.getElementById(input.getAttribute('aria-activedescendant')).textContent).toBe(
+      CATEGORIES[0]
+    )
+  })
+
+  it('speaks the override labels instead of the prices filter copy', () => {
+    const { container } = renderOverride({
+      resetOption: false,
+      labels: {
+        prefix: 'override.pickerPrefix',
+        all: 'override.pickPlaceholder',
+        close: 'override.pickerClose',
+        searchPlaceholder: 'override.pickerSearch',
+        searchClear: 'override.pickerClear',
+        noResults: 'override.pickerNoResults',
+        listboxLabel: 'override.pickerListbox',
+      },
+    })
+    const button = trigger(container)
+    // The null-value label doubles as the override's pick placeholder.
+    expect(button.textContent).toContain('override.pickPlaceholder')
+
+    fireEvent.click(button)
+    expect(screen.getByRole('listbox').getAttribute('aria-label')).toBe('override.pickerListbox')
+    expect(screen.getByRole('combobox').getAttribute('aria-label')).toBe('override.pickerSearch')
+    expect(screen.getByRole('button', { name: 'override.pickerClose' })).toBeTruthy()
+
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'tidak-ada' } })
+    expect(screen.getByRole('status').textContent).toBe('override.pickerNoResults')
+  })
+
+  it('falls back per key: a partial labels object keeps the defaults for the rest', () => {
+    const { container } = renderOverride({ labels: { prefix: 'override.pickerPrefix' } })
+    const button = trigger(container)
+    expect(button.textContent).toContain('prices.allCategories')
+    fireEvent.click(button)
+    expect(screen.getByRole('listbox').getAttribute('aria-label')).toBe(
+      'prices.categoryFilterLabel'
+    )
+    // The panel header prefix took the override.
+    expect(container.textContent).toContain('override.pickerPrefix')
+  })
+})

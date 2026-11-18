@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { productIdentityQueryKey } from './products.js'
 import {
   getReviewItems,
   decideReviewItem,
@@ -7,6 +8,8 @@ import {
   setReviewMode,
   evaluateReviewItems,
   acknowledgeTaxonomy,
+  getTaxonomyBuckets,
+  setReviewItemCategory,
 } from '../api'
 
 // Match review queue queries (issue #294). The list is a work queue that
@@ -134,8 +137,14 @@ function bumpPendingByReason(counts, reason, delta) {
  * `nextStatus` is the row's optimistic outcome ('approved' | 'rejected' for a
  * decide, 'pending' for an undo) — passed in because the two mutations
  * resolve it differently.
+ *
+ * `extraFields` (#728) merges fields the caller patches ON TOP of the
+ * decision fields for the matching row only — the category override stamps
+ * the item's category trio the same frame it flips the status, so the card's
+ * chip and the decision never contradict each other. The undo/decide
+ * mutations pass nothing and behave exactly as before.
  */
-export function patchReviewCaches(queryClient, vars, nextStatus) {
+export function patchReviewCaches(queryClient, vars, nextStatus, extraFields = {}) {
   const previous = new Map()
   // Provenance mirrors the server rule: an assisted decision is ai_assist, a
   // plain one is human, and an undone row has no source.
@@ -206,6 +215,7 @@ export function patchReviewCaches(queryClient, vars, nextStatus) {
                     decidedAt: nextDecidedAt,
                     decidedBy,
                     decidedSource: nextSource,
+                    ...extraFields,
                   }
                 : item
             ),
@@ -275,6 +285,70 @@ export function useAcknowledgeTaxonomy() {
     mutationFn: () => acknowledgeTaxonomy(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['review'] })
+    },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Human category override (ahaqqu/RumaQ#728).
+// ---------------------------------------------------------------------------
+
+// The sealed 49-bucket vocabulary (GET /api/admin/review/taxonomy/buckets).
+// Deliberately NOT keyed under the ['review'] prefix: the decision mutations
+// invalidate that prefix on every settle, and a staleTime-forever read that
+// is also invalidated-per-decision would re-request the list on every queue
+// action for no reason — the list changes only with a taxonomy version bump.
+export const TAXONOMY_BUCKETS_QUERY_KEY = ['review-taxonomy-buckets']
+
+// Admin-gated at the call site (enabled: isAdmin, like useReviewMode): a
+// non-admin view that renders the forbidden state must never fire the read.
+export function useTaxonomyBuckets({ enabled = true } = {}) {
+  return useQuery({
+    queryKey: TAXONOMY_BUCKETS_QUERY_KEY,
+    queryFn: ({ signal }) => getTaxonomyBuckets(signal),
+    enabled,
+    staleTime: Number.POSITIVE_INFINITY,
+  })
+}
+
+/**
+ * The category override (POST /api/admin/review/:id/category): flips the row
+ * to its settled state the same frame (patchReviewCaches, the decide/undo
+ * shared patch) AND stamps the category trio the card's chips read, then
+ * invalidates on settle: ['review'] (the queue re-read), ['prices'] (explorer
+ * rows + the meta filter domain move with the category), and the product
+ * identity key (the override panel's own source of truth) — the rename
+ * onSuccess invalidation set's precedent.
+ *
+ * `vars` carries `productKey` and `version` alongside the API body: the
+ * identity-key invalidation addresses the same product the flag names, and
+ * `version` (the sealed TAXONOMY_VERSION from the buckets read) is the
+ * itemCategoryVersion stamp the optimistic row shows until the settle
+ * refetch.
+ */
+export function useSetReviewCategory() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, category, reason }) => setReviewItemCategory(id, category, reason),
+    onMutate: async (vars) => {
+      await queryClient.cancelQueries({ queryKey: ['review'] })
+      const previous = patchReviewCaches(queryClient, vars, 'approved', {
+        itemCategory: vars.category,
+        itemCategoryVersion: vars.version ?? null,
+        itemCategorySource: 'human',
+      })
+      return { previous }
+    },
+    onError: (_error, _vars, context) => {
+      if (!context?.previous) return
+      for (const [key, value] of context.previous) {
+        queryClient.setQueryData(key, value)
+      }
+    },
+    onSettled: (_data, _error, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['review'] })
+      queryClient.invalidateQueries({ queryKey: ['prices'] })
+      queryClient.invalidateQueries({ queryKey: productIdentityQueryKey(vars.productKey) })
     },
   })
 }

@@ -19,8 +19,37 @@ import { IconCheck, IconChevronDown, IconClose, IconSearch } from './icons.jsx'
 // trigger, and a mousedown outside the picker closes it. A permanent
 // role="status" region carries the no-results announcement (#641). "All
 // categories" is pinned at the top of the list and clears the filter (null).
-export function CategoryPicker({ categories = [], value = null, onChange, className }) {
+//
+// #728 adds two ADDITIVE props (defaults preserve every ProductsView call
+// site byte-for-byte):
+//   `resetOption` (default true) — false hides the pinned "All categories"
+//     reset row. The category override must NAME a slug (null is not a legal
+//     value), so the reset row — and null itself — leave the option list.
+//   `labels` — per-key overrides for the picker's copy, so the override form
+//     speaks in its own i18n namespace instead of the prices filter's. Every
+//     key falls back to the prices.* original; the trigger's null-value label
+//     (`all`) doubles as the override form's "pick one" placeholder.
+const DEFAULT_LABEL_KEYS = {
+  prefix: 'prices.categoryFilterLabel',
+  all: 'prices.allCategories',
+  close: 'prices.categoryClose',
+  searchPlaceholder: 'prices.categorySearchPlaceholder',
+  searchClear: 'prices.categorySearchClear',
+  noResults: 'prices.categoryNoResults',
+  listboxLabel: 'prices.categoryFilterLabel',
+}
+
+export function CategoryPicker({
+  categories = [],
+  value = null,
+  onChange,
+  className,
+  resetOption = true,
+  labels = {},
+}) {
   const { t } = useTranslation()
+  const label = (key) => labels[key] ?? t(DEFAULT_LABEL_KEYS[key])
+  const hasReset = resetOption !== false
   const baseId = useId()
   const listId = `${baseId}-listbox`
   const optionId = (index) => `${baseId}-option-${index}`
@@ -46,8 +75,11 @@ export function CategoryPicker({ categories = [], value = null, onChange, classN
     [categories, normalizedQuery]
   )
   const options = useMemo(
-    () => [{ value: null }, ...matches.map((slug) => ({ value: slug }))],
-    [matches]
+    () =>
+      hasReset
+        ? [{ value: null }, ...matches.map((slug) => ({ value: slug }))]
+        : matches.map((slug) => ({ value: slug })),
+    [matches, hasReset]
   )
   const activeOption = options[activeIndex]
 
@@ -75,15 +107,17 @@ export function CategoryPicker({ categories = [], value = null, onChange, classN
   }, [open, activeIndex])
 
   // Index of the active row for a query: the selected category when the field
-  // is empty, else the first match (the pinned reset row occupies index 0).
+  // is empty, else the first match (the pinned reset row occupies index 0 —
+  // an offset the no-reset variant does not carry).
   const activeIndexForQuery = (nextQuery) => {
     const normalized = nextQuery.trim().toLowerCase()
+    const offset = hasReset ? 1 : 0
     if (!normalized) {
       const index = categories.indexOf(selected)
-      return index >= 0 ? index + 1 : 0
+      return index >= 0 ? index + offset : 0
     }
     const matchIndex = categories.findIndex((slug) => slug.toLowerCase().includes(normalized))
-    return matchIndex >= 0 ? matchIndex + 1 : 0
+    return matchIndex >= 0 ? matchIndex + offset : 0
   }
 
   const openPanel = () => {
@@ -184,8 +218,8 @@ export function CategoryPicker({ categories = [], value = null, onChange, classN
       >
         {/* The visible text is the value; the prefix names the control (the
             old chip group's aria-label had no equivalent on a single button). */}
-        <span className="sr-only">{t('prices.categoryFilterLabel')}: </span>
-        <span className="truncate">{selected ?? t('prices.allCategories')}</span>
+        <span className="sr-only">{label('prefix')}: </span>
+        <span className="truncate">{selected ?? label('all')}</span>
         <IconChevronDown
           size={14}
           aria-hidden="true"
@@ -200,11 +234,11 @@ export function CategoryPicker({ categories = [], value = null, onChange, classN
         >
           <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-              {t('prices.categoryFilterLabel')}
+              {label('prefix')}
             </span>
             <button
               type="button"
-              aria-label={t('prices.categoryClose')}
+              aria-label={label('close')}
               onClick={close}
               className="grid h-7 w-7 place-items-center rounded-md text-text-muted hover:bg-surface-sunken hover:text-text"
             >
@@ -227,17 +261,17 @@ export function CategoryPicker({ categories = [], value = null, onChange, classN
               aria-controls={listId}
               aria-autocomplete="list"
               aria-activedescendant={activeOption ? optionId(activeIndex) : undefined}
-              aria-label={t('prices.categorySearchPlaceholder')}
+              aria-label={label('searchPlaceholder')}
               value={query}
               onChange={changeQuery}
               onKeyDown={onSearchKeyDown}
-              placeholder={t('prices.categorySearchPlaceholder')}
+              placeholder={label('searchPlaceholder')}
               className="w-full rounded-md border border-border bg-surface py-2 pl-8 pr-8 text-sm outline-none focus:border-accent"
             />
             {query && (
               <button
                 type="button"
-                aria-label={t('prices.categorySearchClear')}
+                aria-label={label('searchClear')}
                 onClick={clearQuery}
                 className="absolute right-5 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-pill text-text-muted hover:bg-surface-sunken hover:text-text"
               >
@@ -249,7 +283,7 @@ export function CategoryPicker({ categories = [], value = null, onChange, classN
           <ul
             id={listId}
             role="listbox"
-            aria-label={t('prices.categoryFilterLabel')}
+            aria-label={label('listboxLabel')}
             className="max-h-[min(50dvh,18rem)] overflow-y-auto pb-1"
           >
             {options.map((option, index) => {
@@ -276,7 +310,7 @@ export function CategoryPicker({ categories = [], value = null, onChange, classN
                   <span className="grid h-4 w-4 shrink-0 place-items-center text-accent-hover">
                     {isSelected && <IconCheck size={14} aria-hidden="true" />}
                   </span>
-                  <span className="truncate">{option.value ?? t('prices.allCategories')}</span>
+                  <span className="truncate">{option.value ?? label('all')}</span>
                 </li>
               )
             })}
@@ -287,7 +321,7 @@ export function CategoryPicker({ categories = [], value = null, onChange, classN
             // always-mounted status region below, so this copy is hidden from
             // assistive tech to avoid a second, unannounced reading.
             <p aria-hidden="true" className="px-3 pb-3 text-sm text-text-muted">
-              {t('prices.categoryNoResults')}
+              {label('noResults')}
             </p>
           )}
         </div>
@@ -298,7 +332,7 @@ export function CategoryPicker({ categories = [], value = null, onChange, classN
           lifetime of the picker and only its text is swapped. While there are
           matches the text is empty, so typing does not announce on every key. */}
       <p role="status" aria-live="polite" className="sr-only">
-        {open && matches.length === 0 ? t('prices.categoryNoResults') : ''}
+        {open && matches.length === 0 ? label('noResults') : ''}
       </p>
     </div>
   )

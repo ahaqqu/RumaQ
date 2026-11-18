@@ -10,6 +10,11 @@ DELETE FROM price_product_aliases;
 -- has to clear them explicitly or a scenario's admin history leaks into the
 -- next one's product detail read.
 DELETE FROM price_product_audit;
+-- Category receipts (migration 0052) are the same receipt class: plain
+-- handles, no FK — reset must clear them explicitly or a scenario's override
+-- history leaks into the next one's product detail read (and its revert
+-- derivation, which is metadata-version based).
+DELETE FROM price_product_category_audit;
 DELETE FROM price_observations;
 DELETE FROM price_products;
 DELETE FROM price_sources;
