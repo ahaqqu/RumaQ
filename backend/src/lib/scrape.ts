@@ -10,9 +10,11 @@ import type { ScrapeEvent } from '@rumaq/contract'
 // heartbeat_at, every events POST renews it, and the reaper fires on SILENCE
 // — a run that keeps reporting is never reaped, however long it runs. A
 // silent run reaps to the named `reaped` state (never a `failed` — the run
-// did not fail, it vanished; exit_code stays NULL because no exit happened),
-// and a finish that lands after the reap answers 409: the report is dropped,
-// and the agent must know that instead of reading a phantom ok.
+// did not fail, it vanished; exit_code stays NULL because no exit happened).
+// A finish that lands after the reap still settles the record
+// (RumaQ-pipeline #178): the report is proof the run actually completed, so
+// the row takes the real outcome; only a row that never reports stays
+// reaped, closed by the reaper alone.
 
 /** The live command the queue is currently blocked by. */
 export type ActiveScrapeCommand = {
@@ -365,16 +367,21 @@ export type ScrapeFinishInput = {
 }
 
 /**
- * Only running→terminal, decided in ONE batch: the guarded UPDATE and the
- * follow-up SELECT share a transaction, so the classification below reads
+ * Only running|reaped→terminal, decided in ONE batch: the guarded UPDATE and
+ * the follow-up SELECT share a transaction, so the classification below reads
  * the post-UPDATE row — a reap that a concurrent create/claim sweep commits
  * can be neither straddled nor resurrected (D1 serializes batches against
- * the single SQLite writer). Either the UPDATE lands first (the report is
- * the finish) or the reap did (the SELECT reads 'reaped' and the caller
- * answers 409) — never a phantom ok. A repeat finish after success/failed
+ * the single SQLite writer). The CAS accepts two source states: the row was
+ * 'running' (this report IS the finish) or already 'reaped' — the agent went
+ * silent past the lease but the run DID complete, so the late report settles
+ * the record idempotently, overwriting the reap's named-cause error with the
+ * real outcome (RumaQ-pipeline #178; audit M1's finish-after-reap 409 was
+ * the reverse call and is retired). A repeat finish after success/failed
  * no-ops through the same path (the agent's postJson retries must stay
- * idempotent); the route maps the conflict to 409 and postJson gives up on
- * the 4xx immediately (audit M1's finish-after-reap row).
+ * idempotent). The report source stays exclusive — only the process holding
+ * the command id + ingest secret can settle, and a claim that never executes
+ * emits no finish — so the reaper stays the only closer of rows that never
+ * report.
  */
 export async function finishScrapeCommand(
   db: D1Database,
@@ -386,7 +393,7 @@ export async function finishScrapeCommand(
       .prepare(
         `UPDATE scrape_commands
          SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_truncated = ?
-         WHERE id = ? AND status = 'running'`
+         WHERE id = ? AND status IN ('running', 'reaped')`
       )
       .bind(
         body.status,
@@ -399,20 +406,15 @@ export async function finishScrapeCommand(
     db.prepare(`SELECT status FROM scrape_commands WHERE id = ?`).bind(commandId),
   ])
 
-  // The UPDATE matched a running row: this report IS the finish. (The guard
-  // also makes a repeated finish a zero-change no-op — handled below.)
+  // The UPDATE matched a running OR reaped row: this report settles it. (The
+  // guard also makes a repeated finish a zero-change no-op — handled below.)
   if (changesOf(results[0]) > 0) return
 
   const status = (results[1]?.results?.[0] as { status?: string } | undefined)?.status
   if (status === undefined) throw new ScrapeNotFoundError()
-  if (status === 'reaped') {
-    throw new ScrapeConflictError(
-      null,
-      'Command was reaped — the agent went silent and this finish is not accepted'
-    )
-  }
-  // 'pending'/'success'/'failed': nothing was running to finish — the same
-  // idempotent no-op the old read-first shape answered.
+  // 'pending'/'success'/'failed': nothing was running or reaped to finish —
+  // 'success'/'failed' is the idempotent no-op the agent's retries rely on;
+  // 'pending' was never claimed, so no agent can hold its id to report.
 }
 
 export async function listScrapeCommands(db: D1Database, limit = 20): Promise<ScrapeCommandRow[]> {

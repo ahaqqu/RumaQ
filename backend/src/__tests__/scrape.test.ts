@@ -192,7 +192,8 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
       return []
     }
     // The lease renewal rides the events batch (2 params: ts, id) — matched
-    // BEFORE the finish UPDATE below (same "AND status = 'running'" shape).
+    // BEFORE the finish UPDATE below: SET heartbeat_at + a bare 'running'
+    // guard is a distinct SQL shape from the finish's SET status + IN guard.
     if (sql.includes('SET heartbeat_at') && sql.includes("AND status = 'running'")) {
       const [renewedAt, id] = params as [string, string]
       const row = find(id)
@@ -200,7 +201,10 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
       row.heartbeat_at = renewedAt
       return []
     }
-    if (sql.includes('UPDATE scrape_commands') && sql.includes("AND status = 'running'")) {
+    if (
+      sql.includes('UPDATE scrape_commands') &&
+      sql.includes("AND status IN ('running', 'reaped')")
+    ) {
       const [status, finishedAt, exitCode, error, logTruncated, id] = params as [
         string,
         string,
@@ -210,7 +214,8 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
         string,
       ]
       const row = find(id)
-      if (!row || row.status !== 'running') return []
+      // The widened finish guard (#178): a late report settles a reaped row too.
+      if (!row || (row.status !== 'running' && row.status !== 'reaped')) return []
       row.status = status as CommandRow['status']
       row.finished_at = finishedAt
       row.exit_code = exitCode
@@ -270,8 +275,8 @@ function createScrapeDb(opts: { viewerEmail?: string | null; viewerIsAdmin?: num
         const before = commands.length
         // Real D1 reports per-statement changes; the writes whose counts the
         // lib reads are the guarded INSERT (0 = conflict) and the finish
-        // UPDATE (0 = the row was not running). An UPDATE's mutation is
-        // detected by row snapshot — the routes mutate rows in place.
+        // UPDATE (0 = the row was neither running nor reaped). An UPDATE's
+        // mutation is detected by row snapshot — the routes mutate rows in place.
         const rowsBefore = statement.sql.startsWith('UPDATE scrape_commands')
           ? JSON.stringify(commands)
           : ''
@@ -920,7 +925,7 @@ describe('internal scrape routes (bearer channel)', () => {
     expect(fake.commands[0]!.finished_at).toBeNull()
   })
 
-  it('a silent row reaps at the 45-minute silence boundary and a finish then answers 409', async () => {
+  it('a silent row reaps at the 45-minute silence boundary and a late finish then settles it', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     try {
       const now = new Date('2026-11-09T12:00:00.000Z')
@@ -944,17 +949,8 @@ describe('internal scrape routes (bearer channel)', () => {
       expect(fake.commands[0]!.status).toBe('reaped')
       expect(fake.commands[0]!.exit_code).toBeNull()
 
-      // The agent's finish arrives after the reap: 409 — the report is
-      // dropped, not silently ok'd (postJson gives up on the 4xx at once).
-      const finish = await apiApp.request(
-        `/api/internal/scrape/commands/${claimed.id}/finish`,
-        { method: 'POST', headers, body: JSON.stringify({ status: 'success', exitCode: 0 }) },
-        env
-      )
-      expect(finish.status).toBe(409)
-      expect(fake.commands[0]!.status).toBe('reaped')
-
-      // Late events are refused the same way.
+      // Late events are still refused while the row sits reaped — the
+      // terminal gate on events does not widen with the finish guard.
       const late = await apiApp.request(
         `/api/internal/scrape/commands/${claimed.id}/events`,
         {
@@ -967,6 +963,20 @@ describe('internal scrape routes (bearer channel)', () => {
         env
       )
       expect(late.status).toBe(409)
+
+      // The agent's finish arrives after the reap: it settles the record
+      // (#178) — the report is proof the run completed, so the route answers
+      // ok (no phantom-refusal 409) and the row takes the real outcome.
+      const finish = await apiApp.request(
+        `/api/internal/scrape/commands/${claimed.id}/finish`,
+        { method: 'POST', headers, body: JSON.stringify({ status: 'success', exitCode: 0 }) },
+        env
+      )
+      expect(finish.status).toBe(200)
+      expect(fake.commands[0]!.status).toBe('success')
+      expect(fake.commands[0]!.exit_code).toBe(0)
+      expect(fake.commands[0]!.error).toBeNull()
+      expect(fake.commands[0]!.finished_at).not.toBeNull()
     } finally {
       vi.useRealTimers()
     }
@@ -1060,7 +1070,7 @@ describe('internal scrape routes (bearer channel)', () => {
     expect(finish.status).toBe(404)
   })
 
-  it('guards finish: only running→terminal, repeats are no-ops', async () => {
+  it('guards finish: running|reaped→terminal, repeats are no-ops', async () => {
     const fake = createScrapeDb()
     await apiApp.request(
       '/api/admin/scrape',
@@ -1079,7 +1089,7 @@ describe('internal scrape routes (bearer channel)', () => {
     expect(done.status).toBe('success')
     expect(done.finished_at).not.toBeNull()
 
-    // A repeated (or conflicting) finish must not overwrite the outcome.
+    // A repeated finish must not overwrite the settled outcome.
     await finishScrapeCommand(fake.db, id, { status: 'failed', exitCode: 2, error: 'late' })
     expect(fake.commands[0]!.status).toBe('success')
     expect(fake.commands[0]!.exit_code).toBe(0)
