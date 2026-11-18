@@ -1216,3 +1216,72 @@ describe('consecutive failed runs (issue #536)', () => {
     })
   })
 })
+
+// Pipeline #177: the categorizer's search-grounded second pass, metered as
+// its own `ai.usage.research` stage. The proof mirrors the #537 shape: the
+// stage is additive-nullish (pre-research reports validate unchanged), a
+// present stage round-trips the real route into D1 as typed data, and the
+// usage object stays strict — a typo'd stage key is producer drift, not
+// extra data.
+describe('research usage stage (pipeline #177)', () => {
+  /** A research stage from a night where 3 flagged names went to the web pass. */
+  const research = {
+    calls: 3,
+    tokensIn: 5400,
+    tokensOut: 210,
+    cost: 0.000012,
+    costMissing: 0,
+  }
+
+  it('still accepts a pre-research report — additive, schemaVersion stays 1', () => {
+    // Every producer until the research pass ships posts the four base
+    // stages only; their REQUIRED status inside `ai.usage` is unchanged.
+    const parsed = parse(runReportSchema, { ...sampleReport(), ai: { usage } })
+    expect(parsed.schemaVersion).toBe(1)
+    expect(parsed.ai!.usage.research).toBeUndefined()
+    expect(parsed.ai!.usage.decision).toEqual(usage.decision)
+  })
+
+  it('accepts the research stage and reads it back through the monitor feed', async () => {
+    const report = { ...sampleReport(), ai: { usage: { ...usage, research } } }
+    const parsed = parse(runReportSchema, report)
+    expect(parsed.ai!.usage.research).toEqual(research)
+
+    const { d1 } = createDb()
+    const res = await apiApp.request(
+      '/api/internal/ingest/runs',
+      {
+        method: 'POST',
+        body: JSON.stringify(report),
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer s3cret' },
+      },
+      { HAQITA_INGEST_SECRET: 's3cret', DB: d1 } as never
+    )
+    expect(res.status).toBe(200)
+
+    // The blob stores exactly the validated usage (price-runs.ts stringifies
+    // the schema output verbatim), so the stage flows through as stored data
+    // — per-stage cost attribution without any consumer-side schema work.
+    const feed = await listPriceRuns(d1)
+    expect(feed.runs[0]!.ai).toEqual({ ...usage, research })
+  })
+
+  it('rejects a typo stage key and a malformed stage — strictObject all the way down', () => {
+    // An unknown key at the usage level is producer drift the contract must
+    // surface at ingest, not silently drop.
+    expect(
+      safeParse(runReportSchema, {
+        ...sampleReport(),
+        ai: { usage: { ...usage, researchh: research } },
+      }).success
+    ).toBe(false)
+    // A present research stage is held to the same stage shape as the rest:
+    // a negative cost is not a spend (#537).
+    expect(
+      safeParse(runReportSchema, {
+        ...sampleReport(),
+        ai: { usage: { ...usage, research: { ...research, cost: -1 } } },
+      }).success
+    ).toBe(false)
+  })
+})
