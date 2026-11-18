@@ -553,17 +553,29 @@ export type RunAiUsageStage = InferOutput<typeof runAiUsageStageSchema>
  * product name in every run and whose spend was invisible until now (a
  * ~1,412-call / ~$0.06 night had no surface anywhere).
  *
- * All four stages are REQUIRED inside a present `ai.usage` — the pipeline
- * builds them from one accumulator (`emptyAiUsage()`), so a report can never
- * legitimately carry three. `decision` is additive at the block level: an old
- * report simply has no `ai` object at all, which is why `ai` itself is
- * nullish.
+ * The four base stages are REQUIRED inside a present `ai.usage` — the
+ * pipeline builds them from one accumulator (`emptyAiUsage()`), so a report
+ * can never legitimately carry three. `decision` is additive at the block
+ * level: an old report simply has no `ai` object at all, which is why `ai`
+ * itself is nullish.
+ *
+ * `research` is the categorizer's search-grounded second pass (pipeline
+ * #177): the bounded web-search calls that reclassify the names the first
+ * pass flagged, metered as its own stage because per-stage cost attribution
+ * is the whole point of #537. ADDITIVE-NULLISH (#294 pattern): pre-research
+ * reports validate with the field absent; a NEW report on an OLD Worker fails
+ * loudly (strictObject — the Worker-first deploy order exists for exactly
+ * this).
  */
 export const runAiUsageSchema = strictObject({
   ocr: runAiUsageStageSchema,
   verifier: runAiUsageStageSchema,
   embedding: runAiUsageStageSchema,
   decision: runAiUsageStageSchema,
+  // Pipeline #177: nullish — the producer predates the stage (every report
+  // until the research pass ships carries four stages), so absence stays
+  // valid; presence of the key pins the shape (strictObject).
+  research: nullish(runAiUsageStageSchema),
 })
 
 export type RunAiUsage = InferOutput<typeof runAiUsageSchema>
