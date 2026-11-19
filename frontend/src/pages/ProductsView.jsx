@@ -9,6 +9,7 @@ import { CategoryPicker } from '../components/CategoryPicker.jsx'
 import { Badge } from '../components/Badge.jsx'
 import { Button } from '../components/Button.jsx'
 import { ProductRenameForm } from '../components/ProductRenameForm.jsx'
+import { CategoryRevertBlock } from '../components/CategoryRevertBlock.jsx'
 import { AliasCandidatesPanel } from '../components/AliasCandidatesPanel.jsx'
 import { DuplicateNamesPanel } from '../components/DuplicateNamesPanel.jsx'
 import { IconSearch, IconWarning, IconClock } from '../components/icons.jsx'
@@ -176,6 +177,15 @@ function PriceDetail({ productKey, isAdmin }) {
               />
             </div>
           )}
+          {/* #728: the category revert's home base — the compensating action
+              for an override lives wherever the override's effects are visible,
+              mirroring the rename revert riding the rename form. The SET
+              affordance stays review-tab-only (owner decision), so this
+              surface gets the revert block, not the picker. Renders nothing
+              while the identity read fails. */}
+          <div className="mt-2">
+            <CategoryRevertBlock productKey={productKey} isAdmin={isAdmin} />
+          </div>
         </div>
       )}
       <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">

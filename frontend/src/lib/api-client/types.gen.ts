@@ -1590,6 +1590,7 @@ export type GetApiAdminReviewResponses = {
             itemStore?: string;
             itemCategory?: string | null;
             itemCategoryVersion?: string | null;
+            itemCategorySource?: 'pipeline' | 'human' | null;
             itemBrochureUrl?: string | null;
             itemSourceUrl?: string | null;
             entryProductKey?: string;
@@ -1825,6 +1826,7 @@ export type GetApiAdminReviewQueueReportResponses = {
                 itemStore?: string;
                 itemCategory?: string | null;
                 itemCategoryVersion?: string | null;
+                itemCategorySource?: 'pipeline' | 'human' | null;
                 itemBrochureUrl?: string | null;
                 itemSourceUrl?: string | null;
                 entryProductKey?: string;
@@ -1934,6 +1936,7 @@ export type DeleteApiAdminReviewByIdDecisionResponses = {
             itemStore?: string;
             itemCategory?: string | null;
             itemCategoryVersion?: string | null;
+            itemCategorySource?: 'pipeline' | 'human' | null;
             itemBrochureUrl?: string | null;
             itemSourceUrl?: string | null;
             entryProductKey?: string;
@@ -2020,6 +2023,7 @@ export type PostApiAdminReviewByIdDecisionResponses = {
             itemStore?: string;
             itemCategory?: string | null;
             itemCategoryVersion?: string | null;
+            itemCategorySource?: 'pipeline' | 'human' | null;
             itemBrochureUrl?: string | null;
             itemSourceUrl?: string | null;
             entryProductKey?: string;
@@ -2088,6 +2092,133 @@ export type PostApiAdminReviewTaxonomyAcknowledgeResponses = {
 };
 
 export type PostApiAdminReviewTaxonomyAcknowledgeResponse = PostApiAdminReviewTaxonomyAcknowledgeResponses[keyof PostApiAdminReviewTaxonomyAcknowledgeResponses];
+
+export type GetApiAdminReviewTaxonomyBucketsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/admin/review/taxonomy/buckets';
+};
+
+export type GetApiAdminReviewTaxonomyBucketsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Not an admin
+     */
+    403: unknown;
+};
+
+export type GetApiAdminReviewTaxonomyBucketsResponses = {
+    /**
+     * OK
+     */
+    200: {
+        version: string;
+        buckets: Array<string>;
+    };
+};
+
+export type GetApiAdminReviewTaxonomyBucketsResponse = GetApiAdminReviewTaxonomyBucketsResponses[keyof GetApiAdminReviewTaxonomyBucketsResponses];
+
+export type PostApiAdminReviewByIdCategoryData = {
+    body: {
+        category: string;
+        reason?: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/admin/review/{id}/category';
+};
+
+export type PostApiAdminReviewByIdCategoryErrors = {
+    /**
+     * category_unknown (not in the sealed vocabulary) or category_unchanged (confirming is the ack path), or a validation error
+     */
+    400: {
+        error?: string;
+    };
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Not an admin
+     */
+    403: unknown;
+    /**
+     * Unknown review item (or unrenderable pair), or the product row is gone
+     */
+    404: unknown;
+    /**
+     * stale_category: the category changed since the card was read (CAS lost)
+     */
+    409: {
+        error?: string;
+    };
+};
+
+export type PostApiAdminReviewByIdCategoryError = PostApiAdminReviewByIdCategoryErrors[keyof PostApiAdminReviewByIdCategoryErrors];
+
+export type PostApiAdminReviewByIdCategoryResponses = {
+    /**
+     * OK — the re-read review row (decided state on a settled flag)
+     */
+    200: {
+        item?: {
+            id?: string;
+            itemProductKey?: string;
+            itemName?: string;
+            itemBrand?: string | null;
+            itemUnit?: string | null;
+            itemPrice?: number;
+            itemEffectiveUnitPrice?: number | null;
+            itemStore?: string;
+            itemCategory?: string | null;
+            itemCategoryVersion?: string | null;
+            itemCategorySource?: 'pipeline' | 'human' | null;
+            itemBrochureUrl?: string | null;
+            itemSourceUrl?: string | null;
+            entryProductKey?: string;
+            entryName?: string;
+            entryBrand?: string | null;
+            entryUnit?: string | null;
+            entryPrice?: number;
+            entryEffectiveUnitPrice?: number | null;
+            entryStore?: string;
+            entryBrochureUrl?: string | null;
+            entrySourceUrl?: string | null;
+            entryObservedAt?: string | null;
+            matchMethod?: 'exact' | 'embedding' | 'ai';
+            confidence?: number;
+            reason?: 'price_ratio' | 'verifier_unresolved' | 'taxonomy';
+            kind?: 'low_confidence' | 'disagreement' | null;
+            rulesCategory?: string | null;
+            status?: 'pending' | 'approved' | 'rejected';
+            decidedAt?: string | null;
+            decidedBy?: string | null;
+            decidedSource?: 'human' | 'ai_assist' | 'ai_auto' | null;
+            aiVerdict?: {
+                verdict?: 'same' | 'different';
+                confidence?: number;
+                reason?: string | null;
+                model?: string | null;
+                humanAgreement?: 'agreed' | 'disagreed' | null;
+            } | null;
+            flagCount?: number;
+            firstFlaggedAt?: string;
+            lastFlaggedAt?: string;
+            runStartedAt?: string;
+            runId?: string | null;
+        };
+    };
+};
+
+export type PostApiAdminReviewByIdCategoryResponse = PostApiAdminReviewByIdCategoryResponses[keyof PostApiAdminReviewByIdCategoryResponses];
 
 export type GetApiAdminProductsDuplicatesData = {
     body?: never;
@@ -2247,6 +2378,9 @@ export type GetApiAdminProductsByProductKeyResponses = {
             brand?: string | null;
             unit?: string | null;
             status?: 'canonical' | 'provisional' | 'needs_review';
+            category?: string | null;
+            categoryVersion?: string | null;
+            categorySource?: 'pipeline' | 'human' | null;
             metadataVersion?: number;
             firstSeenAt?: string | null;
             lastSeenAt?: string | null;
@@ -2272,6 +2406,21 @@ export type GetApiAdminProductsByProductKeyResponses = {
             newName?: string;
             reason?: string | null;
             actorUserId?: string;
+            metadataVersionBefore?: number;
+            metadataVersionAfter?: number;
+            revertsAuditId?: string | null;
+            createdAt?: string;
+        }>;
+        categoryAudit?: Array<{
+            id?: string;
+            action?: 'set' | 'revert';
+            oldCategory?: string | null;
+            oldCategoryVersion?: string | null;
+            newCategory?: string | null;
+            newCategoryVersion?: string | null;
+            reason?: string | null;
+            actorUserId?: string;
+            reviewItemId?: string | null;
             metadataVersionBefore?: number;
             metadataVersionAfter?: number;
             revertsAuditId?: string | null;
@@ -2349,6 +2498,9 @@ export type PostApiAdminProductsByProductKeyRenameResponses = {
             brand?: string | null;
             unit?: string | null;
             status?: 'canonical' | 'provisional' | 'needs_review';
+            category?: string | null;
+            categoryVersion?: string | null;
+            categorySource?: 'pipeline' | 'human' | null;
             metadataVersion?: number;
             firstSeenAt?: string | null;
             lastSeenAt?: string | null;
@@ -2428,6 +2580,9 @@ export type PostApiAdminProductsByProductKeyAuditByAuditIdRevertResponses = {
             brand?: string | null;
             unit?: string | null;
             status?: 'canonical' | 'provisional' | 'needs_review';
+            category?: string | null;
+            categoryVersion?: string | null;
+            categorySource?: 'pipeline' | 'human' | null;
             metadataVersion?: number;
             firstSeenAt?: string | null;
             lastSeenAt?: string | null;
@@ -2455,6 +2610,86 @@ export type PostApiAdminProductsByProductKeyAuditByAuditIdRevertResponses = {
 };
 
 export type PostApiAdminProductsByProductKeyAuditByAuditIdRevertResponse = PostApiAdminProductsByProductKeyAuditByAuditIdRevertResponses[keyof PostApiAdminProductsByProductKeyAuditByAuditIdRevertResponses];
+
+export type DeleteApiAdminProductsByProductKeyCategoryData = {
+    body: {
+        expectedMetadataVersion: number;
+        reason?: string;
+    };
+    path: {
+        productKey: string;
+    };
+    query?: never;
+    url: '/api/admin/products/{productKey}/category';
+};
+
+export type DeleteApiAdminProductsByProductKeyCategoryErrors = {
+    /**
+     * Validation error (invalid body or reason)
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Not an admin
+     */
+    403: unknown;
+    /**
+     * Unknown product
+     */
+    404: unknown;
+    /**
+     * stale_product (CAS lost — re-read the identity) or stale_revert (the latest set was already compensated, or is no longer the latest)
+     */
+    409: {
+        [key: string]: unknown;
+    };
+};
+
+export type DeleteApiAdminProductsByProductKeyCategoryError = DeleteApiAdminProductsByProductKeyCategoryErrors[keyof DeleteApiAdminProductsByProductKeyCategoryErrors];
+
+export type DeleteApiAdminProductsByProductKeyCategoryResponses = {
+    /**
+     * OK
+     */
+    200: {
+        product?: {
+            id?: string;
+            productKey?: string;
+            name?: string;
+            brand?: string | null;
+            unit?: string | null;
+            status?: 'canonical' | 'provisional' | 'needs_review';
+            category?: string | null;
+            categoryVersion?: string | null;
+            categorySource?: 'pipeline' | 'human' | null;
+            metadataVersion?: number;
+            firstSeenAt?: string | null;
+            lastSeenAt?: string | null;
+            updatedAt?: string | null;
+        };
+        categoryAudit?: Array<{
+            id?: string;
+            action?: 'set' | 'revert';
+            oldCategory?: string | null;
+            oldCategoryVersion?: string | null;
+            newCategory?: string | null;
+            newCategoryVersion?: string | null;
+            reason?: string | null;
+            actorUserId?: string;
+            reviewItemId?: string | null;
+            metadataVersionBefore?: number;
+            metadataVersionAfter?: number;
+            revertsAuditId?: string | null;
+            createdAt?: string;
+        }>;
+        indexVersion?: number;
+    };
+};
+
+export type DeleteApiAdminProductsByProductKeyCategoryResponse = DeleteApiAdminProductsByProductKeyCategoryResponses[keyof DeleteApiAdminProductsByProductKeyCategoryResponses];
 
 export type PostApiAdminProductsByProductKeyAliasesByAliasIdApproveData = {
     body?: never;

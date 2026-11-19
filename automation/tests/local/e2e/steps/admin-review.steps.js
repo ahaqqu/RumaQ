@@ -372,3 +372,139 @@ Then('the pair records AI-assisted provenance', async ({ page }) => {
   expect(body.items[0]).toMatchObject({ status: 'approved', decidedSource: 'ai_assist' })
   expect(body.items[0].aiVerdict).toMatchObject({ verdict: 'same', humanAgreement: 'agreed' })
 })
+
+// ---------------------------------------------------------------------------
+// Human category override (ahaqqu/RumaQ#728). A taxonomy flag is a self-pair,
+// so the override panel addresses the flagged product itself — which needs a
+// price_products row to resolve (the ingest creates review items without the
+// publish payload's catalog), and the harness-only direct-sql seed is the
+// honest way to put one there (the products-rename API-suite precedent).
+// The seeded row carries the model's WRONG answer ('snack'); the pair's
+// frozen rulesCategory is the rules head's right one ('alat-mandi') — the
+// exact "rules head was right, decision model wrong" story the panel exists
+// for. The picker's quick choices put both on top.
+// ---------------------------------------------------------------------------
+
+const overridePair = {
+  ...reviewPair,
+  itemProductKey: 'sabun-mandi-1pcs----1-pcs',
+  itemName: 'Sabun Mandi 1 pcs',
+  itemPrice: 15000,
+  entryProductKey: 'sabun-mandi-1pcs----1-pcs',
+  entryName: 'Sabun Mandi 1 pcs',
+  entryPrice: 15000,
+  matchMethod: 'exact',
+  confidence: 0.42,
+  reason: 'taxonomy',
+  kind: 'disagreement',
+  rulesCategory: 'alat-mandi',
+}
+
+const OVERRIDE_PRODUCT_KEY = overridePair.itemProductKey
+
+async function seedOverrideProduct() {
+  // One statement per line: Miniflare's D1 exec runs a statement per line.
+  const statements = [
+    `INSERT INTO price_products (id, product_key, name, brand, unit, status, category, category_version, metadata_version, first_seen_at, last_seen_at, updated_at) VALUES ('prod-e2e-sabun', '${OVERRIDE_PRODUCT_KEY}', 'Sabun Mandi 1 pcs', 'Lifebuoy', '1 pcs', 'provisional', 'snack', 'v0.3', 1, '2026-11-01T00:00:00Z', '2026-11-07T00:00:00Z', '2026-11-01T00:00:00Z');`,
+    `INSERT INTO price_sources (id, slug, name) VALUES ('src-lotte-e2e', 'lotte-mart', 'Lotte Mart');`,
+  ]
+  for (const sql of statements) {
+    const res = await fetch(`${TEST_BASE_URL}/api/__test/direct-sql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql }),
+    })
+    expect(res.status).toBe(200)
+  }
+}
+
+Given('the queue holds one taxonomy flag on a cataloged product', async () => {
+  await seedReviewPairs([overridePair])
+  await seedOverrideProduct()
+})
+
+When('I open Set category on the taxonomy row', async ({ page }) => {
+  // The affordance is the taxonomy card's catalog-side ghost button beside
+  // Rename; its toggle label swaps to Close while the panel is open.
+  await page.getByRole('button', { name: 'Set category', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Close', exact: true })).toBeVisible()
+})
+
+Then('the override panel shows the assigned category and the rules answer', async ({ page }) => {
+  // The identity read resolved: the current category is the model's answer,
+  // the provenance line names it pipeline-assigned. Scoped to the form
+  // header's own testid — the embedded revert block renders the SAME
+  // provenance line, so a bare getByText strict-violates.
+  const current = page.getByTestId('category-override-current')
+  await expect(current).toContainText('snack')
+  await expect(current).toContainText('Assigned by pipeline · v0.3')
+  // Open the picker: the two quick choices lead, the sealed list follows —
+  // and there is no "All categories" reset row (an override must name a slug).
+  await page.getByRole('button', { name: 'Pick a category…' }).click()
+  const options = page.getByRole('option')
+  await expect(options.first()).toHaveText('snack')
+  await expect(page.getByRole('option', { name: 'alat-mandi' })).toBeVisible()
+})
+
+When('I pick the rules answer and save', async ({ page }) => {
+  await page.getByRole('option', { name: 'alat-mandi' }).click()
+  await page.getByRole('button', { name: 'Save category' }).click()
+})
+
+Then(
+  'the taxonomy row settles approved as a human decision with the new category',
+  async ({ page }) => {
+    // The settle invalidates the queue and the settled row leaves the pending
+    // filter — the durable outcome is the row in the Approved queue (the
+    // decide-flow's idiom).
+    await page.getByText('Approved', { exact: true }).click()
+    await expect(page.getByText('Decided by human')).toBeVisible()
+    // The override's own record: what was set, and the provenance marker that
+    // keeps a re-flagged-after-override row legible.
+    await expect(page.getByText(/Category set to alat-mandi/)).toBeVisible()
+    await expect(page.getByText('Human override')).toBeVisible()
+
+    // D1-backed, not client decoration: the catalog row carries the human
+    // category and the receipt exists.
+    const identity = await page.request.get(
+      `${TEST_BASE_URL}/api/admin/products/${OVERRIDE_PRODUCT_KEY}`
+    )
+    expect(identity.status()).toBe(200)
+    const body = await identity.json()
+    expect(body.product).toMatchObject({
+      category: 'alat-mandi',
+      categoryVersion: 'v0.4',
+      categorySource: 'human',
+    })
+    expect(body.categoryAudit).toHaveLength(1)
+    expect(body.categoryAudit[0]).toMatchObject({
+      action: 'set',
+      oldCategory: 'snack',
+      newCategory: 'alat-mandi',
+    })
+  }
+)
+
+When('I undo the flag decision', async ({ page }) => {
+  // An overridden row's undo confirms — the category stays — so the confirm
+  // dialog must be accepted, not Playwright's default dismissal.
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Undo' }).click()
+})
+
+Then('the row is pending again with the category override marker', async ({ page }) => {
+  await page.getByText('Pending', { exact: true }).click()
+  // A taxonomy self-pair renders the SAME name on BOTH sides of the row, so
+  // a bare getByText strict-violates — scope to the matched-item group.
+  await expect(
+    page.getByRole('group', { name: 'Matched item' }).getByText('Sabun Mandi 1 pcs')
+  ).toBeVisible()
+  // The flag decision re-opened; the category the admin set STAYS on the
+  // product — the marker chip is what makes a pending flag sitting on a
+  // corrected category legible instead of looking like a fresh answer.
+  await expect(page.getByText('Human override')).toBeVisible()
+
+  const res = await page.request.get(`${TEST_BASE_URL}/api/admin/products/${OVERRIDE_PRODUCT_KEY}`)
+  const body = await res.json()
+  expect(body.product).toMatchObject({ category: 'alat-mandi', categorySource: 'human' })
+})

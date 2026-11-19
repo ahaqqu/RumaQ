@@ -7,6 +7,7 @@ import {
   getDuplicateProductNames,
   rejectProductAlias,
   renameProduct,
+  revertProductCategory,
   revertProductRename,
 } from '../api'
 
@@ -102,6 +103,32 @@ export function useRevertRename() {
     mutationFn: ({ productKey, auditId, ...body }) =>
       revertProductRename(productKey, auditId, body),
     onSuccess: (result, variables) => seed(variables.productKey, result),
+  })
+}
+
+// The category revert (ahaqqu/RumaQ#728): appends the compensating receipt for
+// the LATEST unreverted override and restores the previous category (which
+// may be NULL — the next publish re-proposes). The identity seed mirrors the
+// rename revert's (the product row moves, the categoryAudit tail gains the
+// compensating row), minus the audit swap — the result carries categoryAudit,
+// not audit. The flag rows are NEVER touched by the revert, but the review
+// card reads the live category join, so ['review'] re-reads to keep a card
+// that shows a pending flag on the restored category honest. The duplicate
+// report is NOT invalidated: a category write moves no name.
+export function useRevertProductCategory() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ productKey, ...body }) => revertProductCategory(productKey, body),
+    onSuccess: (result, variables) => {
+      queryClient.setQueryData(productIdentityQueryKey(variables.productKey), (previous) =>
+        previous?.product
+          ? { ...previous, product: result.product, categoryAudit: result.categoryAudit }
+          : previous
+      )
+      queryClient.invalidateQueries({ queryKey: ['prices'] })
+      queryClient.invalidateQueries({ queryKey: productIdentityQueryKey(variables.productKey) })
+      queryClient.invalidateQueries({ queryKey: ['review'] })
+    },
   })
 }
 

@@ -36,6 +36,7 @@ vi.mock('../lib/queries/products.js', () => ({
   useProductIdentity: vi.fn(),
   useRenameProduct: vi.fn(),
   useRevertRename: vi.fn(),
+  useRevertProductCategory: vi.fn(),
   useDecideAlias: vi.fn(),
   useDuplicateProductNames: vi.fn(),
   useAliasCandidateCounts: vi.fn(),
@@ -47,6 +48,7 @@ import {
   useProductIdentity,
   useRenameProduct,
   useRevertRename,
+  useRevertProductCategory,
   useDecideAlias,
   useDuplicateProductNames,
   useAliasCandidateCounts,
@@ -185,6 +187,7 @@ describe('ProductsView', () => {
     })
     vi.mocked(useRenameProduct).mockReturnValue({ mutate: vi.fn(), isPending: false })
     vi.mocked(useRevertRename).mockReturnValue({ mutate: vi.fn(), isPending: false })
+    vi.mocked(useRevertProductCategory).mockReturnValue({ mutate: vi.fn(), isPending: false })
     vi.mocked(useDecideAlias).mockReturnValue({ mutate: vi.fn(), isPending: false })
     vi.mocked(useDuplicateProductNames).mockReturnValue({
       data: { limit: 200, truncated: false, groups: [] },

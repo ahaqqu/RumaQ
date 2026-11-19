@@ -63,3 +63,15 @@ Feature: Admin review queue
     And I am logged in as a non-admin user
     When I navigate to "/admin/review"
     Then the review page shows the forbidden state
+
+  Scenario: Setting the category on a taxonomy flag settles it as a human decision
+    Given the queue holds one taxonomy flag on a cataloged product
+    And I am logged in as the seeded test user
+    When I navigate to "/admin/review"
+    And I filter the queue by the taxonomy reason
+    And I open Set category on the taxonomy row
+    Then the override panel shows the assigned category and the rules answer
+    When I pick the rules answer and save
+    Then the taxonomy row settles approved as a human decision with the new category
+    When I undo the flag decision
+    Then the row is pending again with the category override marker

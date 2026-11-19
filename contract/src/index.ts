@@ -445,6 +445,78 @@ export const backfillCategoriesPayloadSchema = strictObject({
 
 export type BackfillCategoriesPayload = InferOutput<typeof backfillCategoriesPayloadSchema>
 
+// The SEALED 49-bucket taxonomy vocabulary (ahaqqu/RumaQ#728). The pipeline's
+// classifier answers ONLY with these slugs (RumaQ-pipeline
+// groceries/scraper/src/categorize/taxonomy.ts `CRITERIA`/`BUCKETS`, sealed
+// v0.4) and RumaQ's human category override validates against the same closed
+// set: a stray slug would permanently pollute the explorer filter domain
+// (`SELECT DISTINCT category`) and can 500 the canonical index parse.
+//
+// PROVENANCE + SYNC EXPECTATION: the slugs below are copied VERBATIM from the
+// pipeline's `BUCKETS = Object.keys(CRITERIA)` in declaration order, and
+// `TAXONOMY_VERSION` mirrors its `TAXO_VERSION`. The pipeline keeps its own
+// copy (its hash-pinned verbatim suite pins the criteria text there); any
+// change here is a taxonomy version bump (v0.5+) shipped as a coordinated
+// contract change — RumaQ PR first, then `./scripts/sync-contract.sh <sha>` in
+// a pipeline PR — so both sides can never disagree on the vocabulary. The
+// pipeline consuming this export is a separate pipeline issue; today the two
+// lists drift-fail each side's tests instead of sharing one import.
+export const TAXONOMY_VERSION = 'v0.4' as const
+
+export const TAXONOMY_BUCKETS = [
+  'sayuran',
+  'buah',
+  'telur',
+  'susu-uht',
+  'susu-formula',
+  'makanan-bayi',
+  'popok-perlengkapan-bayi',
+  'ayam-unggas',
+  'sapi-beef',
+  'ikan-seafood',
+  'makanan-beku',
+  'makanan-siap-saji',
+  'makanan-hewan',
+  'beras',
+  'minyak-goreng',
+  'mi-instan-pasta',
+  'tepung-bahan-kue',
+  'kacang-bijian',
+  'bumbu-bahan-masak',
+  'saus-kecap',
+  'keju-yogurt',
+  'snack',
+  'es-krim-dessert',
+  'roti-bakery-cake',
+  'suplemen-herbal-obat',
+  'teh-kopi',
+  'minuman-lain',
+  'kosmetik',
+  'alat-mandi',
+  'parfum-deodoran',
+  'pewangi-ruangan',
+  'perawatan-mulut',
+  'pembalut',
+  'alat-tulis-kantor',
+  'tissue-towel',
+  'cuci-baju',
+  'cuci-piring',
+  'pembersih-rumah',
+  'elektronik',
+  'alat-makan',
+  'perlengkapan-rumah',
+  'pakaian',
+  'pakaian-dalam',
+  'alas-kaki',
+  'mainan',
+  'otomotif',
+  'cocok-tanam',
+  'pembasmi-serangga',
+  'lainnya',
+] as const
+
+export type TaxonomyBucket = (typeof TAXONOMY_BUCKETS)[number]
+
 // Issue #409: per-stage/per-store timing, so the monitor answers "which
 // process took long" (a nightly can run ~70 minutes) without journal
 // spelunking. Durations are wall-clock milliseconds, rounded integers.

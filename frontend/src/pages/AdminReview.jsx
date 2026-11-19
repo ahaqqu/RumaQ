@@ -17,6 +17,7 @@ import { Panel, PanelHead, PanelBody } from '../components/Panel.jsx'
 import { Chip } from '../components/Chip.jsx'
 import { Button } from '../components/Button.jsx'
 import { ProductRenameForm } from '../components/ProductRenameForm.jsx'
+import { CategoryOverrideForm } from '../components/CategoryOverrideForm.jsx'
 import { TaxonomyAckPanel } from '../components/TaxonomyAckPanel.jsx'
 import { formatPrice } from '../lib/pricesHelpers.js'
 import { errorKindKey } from '../lib/errorKind.js'
@@ -398,8 +399,10 @@ function ReviewRow({
 }) {
   const { t, i18n } = useTranslation()
   // #423: the rename form expands under the row that opened it, so each row
-  // owns its own open state.
+  // owns its own open state. #728 adds the sibling for the category override —
+  // the taxonomy card's second per-row panel.
   const [renameOpen, setRenameOpen] = useState(false)
+  const [categoryOpen, setCategoryOpen] = useState(false)
   const decided = item.status !== 'pending'
   const runTo = item.runId ? `/admin/prices?run=${encodeURIComponent(item.runId)}` : '/admin/prices'
   // Issue #380: per-side evidence — the page image only renders for the
@@ -440,16 +443,31 @@ function ReviewRow({
               // #423: the canonical entry side owns the rename action — the
               // pair's frozen labels are what the admin is looking at. The
               // page's admin gate above already returned for everyone else.
+              // #728: the taxonomy card's catalog side gains the "Set
+              // category" sibling — a taxonomy flag is a self-pair, so the
+              // entry side IS the flagged product. Owner decision: the picker
+              // affordance is review-tab-only, admin-only, taxonomy rows only.
               item.entryProductKey ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-2"
-                  aria-expanded={renameOpen}
-                  onClick={() => setRenameOpen((open) => !open)}
-                >
-                  {renameOpen ? t('rename.close') : t('rename.action')}
-                </Button>
+                <span className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-expanded={renameOpen}
+                    onClick={() => setRenameOpen((open) => !open)}
+                  >
+                    {renameOpen ? t('rename.close') : t('rename.action')}
+                  </Button>
+                  {isAdmin && item.reason === TAXONOMY_REASON && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-expanded={categoryOpen}
+                      onClick={() => setCategoryOpen((open) => !open)}
+                    >
+                      {categoryOpen ? t('override.close') : t('override.action')}
+                    </Button>
+                  )}
+                </span>
               ) : null
             }
           />
@@ -485,6 +503,15 @@ function ReviewRow({
                   version: item.itemCategoryVersion,
                 })
               : t('review.assignedCategoryNoVersion', { category: item.itemCategory })}
+          </Chip>
+        )}
+        {/* #728: the provenance marker — a pending flag sitting on a corrected
+            category is the confusing state (the nightly re-flag lands on the
+            overridden row); the chip makes it self-explaining instead of
+            silently looking like a fresh pipeline answer. */}
+        {item.reason === TAXONOMY_REASON && item.itemCategorySource === 'human' && (
+          <Chip variant="loc" title={t('review.humanOverrideHint')}>
+            {t('review.humanOverride')}
           </Chip>
         )}
         {/* #626 part 2: WHY the flag fired — kind is the authority ('Rules
@@ -552,7 +579,31 @@ function ReviewRow({
             {PROVENANCE_KEYS[item.decidedSource] && (
               <Chip variant="loc">{t(PROVENANCE_KEYS[item.decidedSource])}</Chip>
             )}
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => onUndo(item.id)}>
+            {/* #728: what the override did, said on the row it settled — and
+                the honest scope note (the settle is the opened flag only; any
+                other pending flag for this product stays in the queue). */}
+            {item.itemCategorySource === 'human' && (
+              <span className="text-xs text-text-muted">
+                {t('review.categorySetHint', { category: item.itemCategory })}
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                // #728: undoing a flag whose category was human-set must say
+                // so — the decision re-opens, the category stays. Only this
+                // case confirms; the plain undo keeps its one-click shape.
+                if (
+                  item.itemCategorySource === 'human' &&
+                  !window.confirm(t('review.undoKeepsCategoryConfirm'))
+                ) {
+                  return
+                }
+                onUndo(item.id)
+              }}
+            >
               {t('review.undo')}
             </Button>
           </>
@@ -587,6 +638,22 @@ function ReviewRow({
             productKey={item.entryProductKey}
             isAdmin={isAdmin}
             onClose={() => setRenameOpen(false)}
+          />
+        </div>
+      )}
+      {categoryOpen && item.reason === TAXONOMY_REASON && (
+        <div className="mt-3">
+          {/* #728: the override panel addresses the flagged product (the pair's
+              item side — for a taxonomy self-pair, the entry side too). The
+              card's assigned/rules categories are quick choices, not truth;
+              the identity read inside owns the current category. */}
+          <CategoryOverrideForm
+            reviewItemId={item.id}
+            productKey={item.itemProductKey ?? item.entryProductKey}
+            assignedCategory={item.itemCategory}
+            rulesCategory={item.rulesCategory}
+            isAdmin={isAdmin}
+            onClose={() => setCategoryOpen(false)}
           />
         </div>
       )}

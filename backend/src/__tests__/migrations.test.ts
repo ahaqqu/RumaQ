@@ -4392,3 +4392,249 @@ describe('migration 0051: purge cancelled state + receipt (audit M2/L4/C1)', () 
     expect(fk[0]).toMatchObject({ table: 'households', on_delete: 'CASCADE' })
   })
 })
+
+// Human category override (ahaqqu/RumaQ#728): the category_source provenance
+// column and the append-only price_product_category_audit receipt. The
+// interesting behaviors are the 0037-shaped ones — plain handles (no FK), the
+// closed action vocabulary, the revert-once partial index, the created_at
+// default — plus the two this receipt adds: the storage-level invariant that
+// only a 'revert' may carry a NULL new_category (a revert-to-uncategorized is
+// a legal receipt; a 'set' must name a slug), and the EXPLAIN pin on the
+// identity-read seek.
+describe('migration 0052: category override (#728)', () => {
+  // The migration is additive and D1 already holds price rows when it runs
+  // (the 0037 shape), so the case applies 0052 on TOP of the chain rather
+  // than on a fresh database.
+  function preOverrideDb(): Db {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0052')
+    )
+    return db
+  }
+
+  function apply0052(db: Db): void {
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0052_category_override.sql'), 'utf8'))
+  }
+
+  function insertReceipt(
+    db: Db,
+    id: string,
+    action = 'set',
+    over: { newCategory?: string | null } = {}
+  ): void {
+    db.prepare(
+      `INSERT INTO price_product_category_audit
+         (id, product_id, product_key, actor_user_id, action, old_category,
+          new_category, metadata_version_before, metadata_version_after)
+       VALUES (?, 'prod-1', 'beras--ramos--5-kg', 'u1', ?, 'snack', ?, 1, 2)`
+    ).run(id, action, over.newCategory === undefined ? 'beras' : over.newCategory)
+  }
+
+  it('adds the column + table on top of the existing chain and fills the INSERT defaults', () => {
+    const db = preOverrideDb()
+    // Nothing of this file exists beforehand — the shape assertions below
+    // must not be satisfied by another migration.
+    expect(
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master
+            WHERE name IN ('price_product_category_audit', 'idx_ppcat_audit_product',
+                           'idx_ppcat_audit_revert_once')`
+        )
+        .all()
+    ).toEqual([])
+    const preColumns = db.prepare('PRAGMA table_info(price_products)').all() as Array<
+      Record<string, unknown>
+    >
+    expect(preColumns.map((c) => c.name)).not.toContain('category_source')
+
+    apply0052(db)
+
+    // The provenance column lands nullable (NULL = pipeline-assigned): the
+    // nightly ingest never writes it, so every pre-0052 row stays honest.
+    const productColumns = db.prepare('PRAGMA table_info(price_products)').all() as Array<
+      Record<string, unknown>
+    >
+    const sourceColumn = productColumns.find((c) => c.name === 'category_source')
+    expect(sourceColumn).toMatchObject({ notnull: 0 })
+    expect(db.prepare('SELECT category_source FROM price_products LIMIT 1').all()).toEqual([])
+
+    // The column order and NOT NULL surface the batch INSERT writes against.
+    // id is declared NOT NULL explicitly: on a rowid table a TEXT PRIMARY KEY
+    // does not imply it (the 0021 note).
+    const columns = db.prepare('PRAGMA table_info(price_product_category_audit)').all() as Array<
+      Record<string, unknown>
+    >
+    expect(columns.map((c) => c.name)).toEqual([
+      'id',
+      'product_id',
+      'product_key',
+      'actor_user_id',
+      'action',
+      'old_category',
+      'old_category_version',
+      'new_category',
+      'new_category_version',
+      'reason',
+      'review_item_id',
+      'metadata_version_before',
+      'metadata_version_after',
+      'reverts_audit_id',
+      'created_at',
+    ])
+    const notNull = Object.fromEntries(
+      columns.map((c): [string, unknown] => [String(c.name), c.notnull])
+    )
+    expect(notNull).toMatchObject({
+      id: 1,
+      product_id: 1,
+      product_key: 1,
+      actor_user_id: 1,
+      action: 1,
+      metadata_version_before: 1,
+      metadata_version_after: 1,
+      old_category: 0,
+      new_category: 0,
+      reason: 0,
+      review_item_id: 0,
+      reverts_audit_id: 0,
+      created_at: 1,
+    })
+
+    insertReceipt(db, 'aud-1')
+    const row = db.prepare(`SELECT * FROM price_product_category_audit WHERE id = 'aud-1'`).get()
+    expect(row).toMatchObject({
+      product_id: 'prod-1',
+      product_key: 'beras--ramos--5-kg',
+      actor_user_id: 'u1',
+      action: 'set',
+      old_category: 'snack',
+      new_category: 'beras',
+      reason: null,
+      review_item_id: null,
+      reverts_audit_id: null,
+    })
+    expect(String(row?.created_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+
+    // A revert is its own appended receipt, naming the set it compensates.
+    // Plain TEXT, so there is no FK ordering to satisfy and no dangling
+    // reference can block pruning an old receipt.
+    db.prepare(
+      `INSERT INTO price_product_category_audit
+         (id, product_id, product_key, actor_user_id, action, old_category,
+          new_category, metadata_version_before, metadata_version_after, reverts_audit_id)
+       VALUES ('aud-2', 'prod-1', 'beras--ramos--5-kg', 'u1', 'revert', 'beras',
+               'snack', 2, 3, 'aud-1')`
+    ).run()
+    expect(
+      db.prepare(`SELECT * FROM price_product_category_audit WHERE id = 'aud-2'`).get()
+    ).toMatchObject({
+      action: 'revert',
+      old_category: 'beras',
+      new_category: 'snack',
+      reverts_audit_id: 'aud-1',
+      metadata_version_before: 2,
+      metadata_version_after: 3,
+    })
+  })
+
+  it('rejects any action outside the set/revert vocabulary', () => {
+    const db = preOverrideDb()
+    apply0052(db)
+
+    insertReceipt(db, 'aud-set')
+    // The closed domain (the 0001/0027/0037 CHECK pattern): a category trail
+    // only ever appends the override or its compensation — no
+    // 'create'/'delete'/'undo' event, and the vocabulary is case-sensitive.
+    for (const bogus of ['create', 'delete', 'setted', 'SET']) {
+      expect(() => insertReceipt(db, `aud-${bogus}`, bogus)).toThrow()
+    }
+    expect(db.prepare('SELECT id FROM price_product_category_audit ORDER BY id').all()).toEqual([
+      { id: 'aud-set' },
+    ])
+  })
+
+  it('accepts a revert whose new_category is NULL and refuses a set without one', () => {
+    const db = preOverrideDb()
+    apply0052(db)
+
+    // A revert-to-uncategorized is a legal receipt (the 'set' it compensates
+    // went from NULL to a slug).
+    db.prepare(
+      `INSERT INTO price_product_category_audit
+         (id, product_id, product_key, actor_user_id, action, old_category,
+          new_category, metadata_version_before, metadata_version_after)
+       VALUES ('aud-set', 'prod-1', 'beras--ramos--5-kg', 'u1', 'set', NULL, 'snack', 1, 2)`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_product_category_audit
+         (id, product_id, product_key, actor_user_id, action, old_category,
+          new_category, metadata_version_before, metadata_version_after, reverts_audit_id)
+       VALUES ('aud-revert', 'prod-1', 'beras--ramos--5-kg', 'u1', 'revert', 'snack',
+               NULL, 2, 3, 'aud-set')`
+    ).run()
+    expect(
+      db
+        .prepare("SELECT new_category FROM price_product_category_audit WHERE action = 'revert'")
+        .get()
+    ).toMatchObject({ new_category: null })
+
+    // The storage-level invariant: only a 'revert' may leave new_category
+    // empty — a 'set' must name a slug (an override's whole point).
+    expect(() => insertReceipt(db, 'aud-null-set', 'set', { newCategory: null })).toThrow()
+  })
+
+  it('rejects a second compensation for the same set (partial unique index)', () => {
+    const db = preOverrideDb()
+    apply0052(db)
+
+    // Every 'set' carries a NULL reverts_audit_id, so the partial index never
+    // sees them — any number of overrides coexist.
+    insertReceipt(db, 'aud-set-1')
+    insertReceipt(db, 'aud-set-2')
+    insertReceipt(db, 'aud-set-3')
+
+    const compensate = (id: string, target: string) =>
+      db
+        .prepare(
+          `INSERT INTO price_product_category_audit
+             (id, product_id, product_key, actor_user_id, action, old_category,
+              new_category, metadata_version_before, metadata_version_after, reverts_audit_id)
+           VALUES (?, 'prod-1', 'beras--ramos--5-kg', 'u1', 'revert', 'beras',
+                   'snack', 2, 3, ?)`
+        )
+        .run(id, target)
+
+    // Two different sets are each revertable once.
+    compensate('aud-revert-1', 'aud-set-1')
+    compensate('aud-revert-2', 'aud-set-2')
+    // The same set is not: the revert route's expectedMetadataVersion CAS
+    // stays the primary guard, and the partial unique index is the
+    // storage-level backstop for any writer that forgets it.
+    expect(() => compensate('aud-revert-1b', 'aud-set-1')).toThrow()
+
+    expect(
+      db
+        .prepare("SELECT id FROM price_product_category_audit WHERE action = 'revert' ORDER BY id")
+        .all()
+    ).toEqual([{ id: 'aud-revert-1' }, { id: 'aud-revert-2' }])
+  })
+
+  it('seeks the receipt history on the audit-feed index', () => {
+    const db = preOverrideDb()
+    apply0052(db)
+
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT * FROM price_product_category_audit
+         WHERE product_id = ? ORDER BY created_at DESC LIMIT 10`
+      )
+      .all('prod-1')
+      .map((r: Record<string, unknown>) => String(r.detail))
+      .join(' | ')
+    expect(plan).toContain('idx_ppcat_audit_product')
+    expect(plan).not.toMatch(/SCAN price_product_category_audit/i)
+  })
+})

@@ -15,6 +15,7 @@ import type {
   PostApiAdminScrapeData,
 } from './api-client/types.gen.js'
 import {
+  deleteApiAdminProductsByProductKeyCategory,
   deleteApiAdminReviewByIdDecision,
   deleteApiAiCapabilitiesByCapability,
   deleteApiAiProvidersById,
@@ -34,6 +35,7 @@ import {
   getApiAdminProductsDuplicates,
   getApiAdminReview,
   getApiAdminReviewMode,
+  getApiAdminReviewTaxonomyBuckets,
   getApiAdminScrapeCommands,
   getApiAdminScrapeCommandsByIdEvents,
   getApiAdminScrapeStores,
@@ -82,6 +84,7 @@ import {
   postApiAdminProductsByProductKeyAliasesByAliasIdReject,
   postApiAdminProductsByProductKeyAuditByAuditIdRevert,
   postApiAdminProductsByProductKeyRename,
+  postApiAdminReviewByIdCategory,
   postApiAdminReviewByIdDecision,
   postApiAdminReviewEvaluate,
   postApiAdminReviewTaxonomyAcknowledge,
@@ -826,6 +829,26 @@ export function acknowledgeTaxonomy(): Promise<unknown> {
   return unwrap(postApiAdminReviewTaxonomyAcknowledge())
 }
 
+// #728: the human category override — the act the ack is not. ONE round trip
+// writes the canonical category, appends the receipt, bumps the index and
+// settles THIS flag (approved, decided_source='human'); the response is the
+// re-read row, so the caller's optimistic state is replaced by the server's.
+// 400 category_unknown / category_unchanged and 409 stale_category are the
+// picker's pinned error states (CategoryOverrideForm maps them; no server
+// string is ever rendered).
+export function setReviewItemCategory(
+  id: string,
+  category: string,
+  reason?: string
+): Promise<{ item: unknown }> {
+  return unwrap(
+    postApiAdminReviewByIdCategory({
+      path: { id },
+      body: reason ? { category, reason } : { category },
+    })
+  )
+}
+
 // The export must bypass the typed client: it downloads a JSON attachment
 // (same-origin fetch → blob → anchor download, cookies ride automatically —
 // the R2/receipts streaming pattern), not a parsed JSON response.
@@ -851,6 +874,9 @@ export async function fetchReviewExport(): Promise<Blob> {
 export type ProductStatus = 'canonical' | 'provisional' | 'needs_review'
 export type ProductAliasStatus = 'candidate' | 'approved' | 'rejected'
 export type ProductAliasSource = 'ocr' | 'catalog' | 'admin'
+// #728: who wrote the category — 'human' is an admin override; null is
+// pipeline-assigned (every pre-0052 row included).
+export type CategorySource = 'pipeline' | 'human'
 
 export type CanonicalProduct = {
   id: string
@@ -859,6 +885,11 @@ export type CanonicalProduct = {
   brand: string | null
   unit: string | null
   status: ProductStatus
+  // #728: the assigned category, the taxonomy version it came from, and the
+  // provenance — additive on every payload that carries the product DTO.
+  category: string | null
+  categoryVersion: string | null
+  categorySource: CategorySource | null
   metadataVersion: number
   firstSeenAt: string | null
   lastSeenAt: string | null
@@ -890,11 +921,33 @@ export type ProductAuditEntry = {
   createdAt: string
 }
 
+// #728: one category receipt as the identity payload carries it — who set the
+// category and from what, newest first (mirrors the rename audit's role for
+// the revert affordance). `revertsAuditId` is set on a compensating 'revert'
+// row; only the LATEST unreverted 'set' is revertable.
+export type ProductCategoryAuditEntry = {
+  id: string
+  action: 'set' | 'revert'
+  oldCategory: string | null
+  oldCategoryVersion: string | null
+  newCategory: string | null
+  newCategoryVersion: string | null
+  reason: string | null
+  actorUserId: string
+  reviewItemId: string | null
+  metadataVersionBefore: number
+  metadataVersionAfter: number
+  revertsAuditId: string | null
+  createdAt: string
+}
+
 export type ProductIdentity = {
   product: CanonicalProduct
   aliases: ProductAlias[]
   stats: { observations: number; stores: number }
   audit: ProductAuditEntry[]
+  // #728: the category receipt tail, newest first.
+  categoryAudit: ProductCategoryAuditEntry[]
 }
 
 export type RenameProductBody = {
@@ -945,6 +998,41 @@ export function revertProductRename(
   return unwrap(
     postApiAdminProductsByProductKeyAuditByAuditIdRevert({ path: { productKey, auditId }, body })
   )
+}
+
+// ---------------------------------------------------------------------------
+// Human category override (ahaqqu/RumaQ#728). The override is ONE round trip:
+// the server writes price_products.category (+ category_source='human', the
+// sealed category_version), appends the audit receipt, bumps the canonical
+// index, and settles the addressed flag decided_source='human'. The revert is
+// the compensating receipt for the LATEST unreverted set. Both are
+// session-admin writes whose receipt names a human actor.
+// ---------------------------------------------------------------------------
+
+// The sealed 49-bucket vocabulary + the TAXONOMY_VERSION it was frozen at —
+// the override picker's only data source (the frontend never imports the
+// contract package; /api/prices/meta serves only ASSIGNED slugs, so an empty
+// bucket would be unpickable from there).
+export type TaxonomyBuckets = { version: string; buckets: string[] }
+
+export function getTaxonomyBuckets(signal?: AbortSignal): Promise<TaxonomyBuckets> {
+  return unwrap(getApiAdminReviewTaxonomyBuckets({ signal }))
+}
+
+// 200 body of the category revert: the restored product row, the receipt tail
+// (with the compensating row appended), and the index version the revert left
+// behind.
+export type CategoryMutationResult = {
+  product: CanonicalProduct
+  categoryAudit: ProductCategoryAuditEntry[]
+  indexVersion: number
+}
+
+export function revertProductCategory(
+  productKey: string,
+  body: { expectedMetadataVersion: number; reason?: string }
+): Promise<CategoryMutationResult> {
+  return unwrap(deleteApiAdminProductsByProductKeyCategory({ path: { productKey }, body }))
 }
 
 // Read-only duplicate-name report (ahaqqu/RumaQ#485). The admin surfaces the
