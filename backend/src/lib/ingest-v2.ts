@@ -432,15 +432,17 @@ export async function ingestPricesV2(
       db
         .prepare(
           `INSERT INTO price_observations
-             (id, product_id, source_id, observed_date, price, member_price, effective_unit_price,
+             (id, product_id, source_id, observed_date, price, member_price, original_price,
+              effective_unit_price,
               unit_qty, unit_qty_unit, unit_price,
               promo_type, promo_label, valid_from, valid_until, match_method,
               match_confidence, brochure_url, source_url, taxo_version,
               raw_name, raw_brand, raw_unit, page, ocr_model, scraped_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(product_id, source_id, observed_date) DO UPDATE SET
              price = excluded.price,
              member_price = excluded.member_price,
+             original_price = excluded.original_price,
              effective_unit_price = excluded.effective_unit_price,
              unit_qty = excluded.unit_qty,
              unit_qty_unit = excluded.unit_qty_unit,
@@ -470,6 +472,11 @@ export async function ingestPricesV2(
           // Issue #627: null when the payload predates the field or the
           // retailer prints no member price — never a zero.
           item.memberPrice ?? null,
+          // QA-07 (pipeline #160): the struck original price the source
+          // prints, persisted instead of dropped at the boundary. Null when
+          // the payload predates the field or the source prints no base
+          // price (alfamart/astro) — never a zero.
+          item.originalPrice ?? null,
           item.effectiveUnitPrice ?? null,
           item.unitQty ?? null,
           item.unitQtyUnit ?? null,

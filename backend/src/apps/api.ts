@@ -4649,6 +4649,11 @@ const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
     entryBrochureUrl: { type: ['string', 'null'] },
     entrySourceUrl: { type: ['string', 'null'] },
     entryObservedAt: { type: ['string', 'null'] },
+    // QA-07 (pipeline #160): the entry sighting's struck original price,
+    // read live from price_observations (never frozen in the pair blob) —
+    // null when the observation predates the column or the source prints
+    // no base price.
+    entryOriginalPrice: { type: ['integer', 'null'] },
     matchMethod: { type: 'string', enum: ['exact', 'embedding', 'ai'] },
     confidence: { type: 'number' },
     reason: { type: 'string', enum: [...REVIEW_REASONS] },

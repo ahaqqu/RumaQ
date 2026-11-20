@@ -2816,6 +2816,9 @@
                           "entryObservedAt": {
                             "type": ["string", "null"]
                           },
+                          "entryOriginalPrice": {
+                            "type": ["integer", "null"]
+                          },
                           "matchMethod": {
                             "type": "string",
                             "enum": ["exact", "embedding", "ai"]
@@ -3328,6 +3331,9 @@
                                   "entryObservedAt": {
                                     "type": ["string", "null"]
                                   },
+                                  "entryOriginalPrice": {
+                                    "type": ["integer", "null"]
+                                  },
                                   "matchMethod": {
                                     "type": "string",
                                     "enum": ["exact", "embedding", "ai"]
@@ -3563,6 +3569,9 @@
                         "entryObservedAt": {
                           "type": ["string", "null"]
                         },
+                        "entryOriginalPrice": {
+                          "type": ["integer", "null"]
+                        },
                         "matchMethod": {
                           "type": "string",
                           "enum": ["exact", "embedding", "ai"]
@@ -3753,6 +3762,9 @@
                         },
                         "entryObservedAt": {
                           "type": ["string", "null"]
+                        },
+                        "entryOriginalPrice": {
+                          "type": ["integer", "null"]
                         },
                         "matchMethod": {
                           "type": "string",
@@ -4056,6 +4068,9 @@
                         },
                         "entryObservedAt": {
                           "type": ["string", "null"]
+                        },
+                        "entryOriginalPrice": {
+                          "type": ["integer", "null"]
                         },
                         "matchMethod": {
                           "type": "string",

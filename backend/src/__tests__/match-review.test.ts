@@ -99,6 +99,8 @@ function createFakeDb(
       brochure_url: string | null
       source_url: string | null
       observed_date: string
+      /** QA-07: the sighting's struck original price (0052 column). */
+      original_price?: number | null
     }>
   } = {}
 ) {
@@ -667,6 +669,9 @@ describe('exportReviewDecisions', () => {
           brochure_url: '/api/brochures/superindo/20261028/page-3.jpg',
           source_url: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
           observed_date: '2026-10-28',
+          // QA-07: the sighting's struck original price rides the same
+          // lookup onto the export row.
+          original_price: 32000,
         },
       ],
     })
@@ -676,7 +681,37 @@ describe('exportReviewDecisions', () => {
       entryBrochureUrl: '/api/brochures/superindo/20261028/page-3.jpg',
       entrySourceUrl: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
       entryObservedAt: '2026-10-28',
+      entryOriginalPrice: 32000,
     })
+  })
+
+  it('carries a null original price when the observation has none (QA-07)', async () => {
+    const exportRows = [
+      {
+        id: 'rev-1',
+        pair_data: JSON.stringify(pair()),
+        status: 'approved',
+        decided_at: new Date(Date.UTC(2026, 9, 28, 0, 0, 0)).toISOString(),
+        decided_by: 'admin-1',
+        flag_count: 1,
+        run_started_at: '2026-10-28T23:00:05Z',
+      },
+    ]
+    const { db } = createFakeDb({
+      exportRows,
+      observationRows: [
+        {
+          product_key: 'beras-ramos-5kg--ramos--5-kg',
+          store_slug: 'superindo',
+          brochure_url: '/api/brochures/superindo/20261028/page-3.jpg',
+          source_url: 'https://www.superindo.co.id/promosi/katalog-super-hemat/',
+          observed_date: '2026-10-28',
+        },
+      ],
+    })
+    const text = await new Response(exportReviewDecisions(db)).text()
+    const parsed = JSON.parse(text) as { decisions: Array<Record<string, unknown>> }
+    expect(parsed.decisions[0]).toMatchObject({ entryOriginalPrice: null })
   })
 })
 
@@ -1236,6 +1271,28 @@ describe('fetchEntryEvidence — real-SQLite semantics (thermos A2 + store pinni
       entryBrochureUrl: '/api/brochures/superindo/20261026/a.jpg',
       entrySourceUrl: 'https://a.example/',
       entryObservedAt: '2026-10-26',
+      // QA-07: the latest sighting's struck original price rides the same
+      // lookup — null here, the seeded rows predate the column.
+      entryOriginalPrice: null,
+    })
+  })
+
+  it('carries the latest sighting original price — the newest observation wins (QA-07)', async () => {
+    const sqlite = new DatabaseSync(':memory:') as unknown as SqliteDb
+    await seedTwoStoreEntry(sqlite)
+    // Only the superindo store's NEWEST sighting (obs-superindo, 2026-10-26)
+    // prints a struck original price; its older one does not. The lookup
+    // must take the newest row's value, never an older sighting's.
+    sqlite
+      .prepare(`UPDATE price_observations SET original_price = 32000 WHERE id = 'obs-superindo'`)
+      .run()
+
+    const evidence = await fetchEntryEvidence(sqliteD1(sqlite), [
+      { productKey: 'beras--ramos--5-kg', storeSlug: 'superindo' },
+    ])
+    expect(evidence.get('beras--ramos--5-kg|superindo')).toMatchObject({
+      entryObservedAt: '2026-10-26',
+      entryOriginalPrice: 32000,
     })
   })
 
@@ -1366,6 +1423,24 @@ describe('frozen entry evidence — blob-first semantics (#691 RC3)', () => {
       entrySourceUrl: LIVE.entrySourceUrl, // null → live fills
       entryObservedAt: LIVE.entryObservedAt, // null → live fills
     })
+  })
+
+  it('a fully frozen blob still carries the live original price — it never freezes (QA-07)', async () => {
+    const sqlite = freshSqlite()
+    // The live (newest) sighting prints a struck original price; the frozen
+    // flag-time one does not. entryOriginalPrice has no blob counterpart, so
+    // even a fully-frozen row takes the live lookup's value — and the frozen
+    // fields must STILL win per field.
+    sqlite
+      .prepare(`UPDATE price_observations SET original_price = 32000 WHERE id = 'obs-live'`)
+      .run()
+    insertReviewRow(sqlite, 'rev-frozen', frozenPair(FROZEN))
+    const page = await listReviewItems(sqliteD1Batch(sqlite))
+    expect(page.items[0]).toMatchObject({
+      ...FROZEN, // the frozen sighting, untouched
+      entryOriginalPrice: 32000, // ...plus the live lookup's original price
+    })
+    expect(page.items[0]!.entryObservedAt).not.toBe(LIVE.entryObservedAt)
   })
 
   it('the decide re-read (hydrateReviewRows) applies the same frozen-first rule', async () => {

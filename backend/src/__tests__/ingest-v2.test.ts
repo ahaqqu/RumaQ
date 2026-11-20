@@ -252,6 +252,38 @@ describe('ingestPricesV2', () => {
     ).toBeNull()
   })
 
+  it('persists the original price beside the shelf price (QA-07, pipeline #160)', async () => {
+    const { sqlite, db } = setup()
+    // The shared fixture carries originalPrice: 39900 — the struck price the
+    // source prints beside the selling price.
+    await ingestPricesV2(db, payload())
+
+    expect(sqlite.prepare('SELECT price, original_price FROM price_observations').get()).toEqual({
+      price: 34500,
+      original_price: 39900,
+    })
+
+    // A repeated observation upserts the original price, not just the shelf one.
+    const changed = payload()
+    changed.items[0]!.originalPrice = 41000
+    await ingestPricesV2(db, changed)
+    expect(
+      sqlite.prepare('SELECT original_price FROM price_observations').get()?.original_price
+    ).toBe(41000)
+  })
+
+  it('leaves the original price null for a payload without it (QA-07)', async () => {
+    const { sqlite, db } = setup()
+    const input = payload()
+    // Sources that print no base price (alfamart/astro, F2) send the field
+    // absent/null; the row stays null (no zero, no backfill).
+    input.items[0]!.originalPrice = null
+    await ingestPricesV2(db, input)
+    expect(
+      sqlite.prepare('SELECT original_price FROM price_observations').get()?.original_price
+    ).toBeNull()
+  })
+
   it('is idempotent: a retry keeps the ID and reports existing', async () => {
     const { sqlite, db } = setup()
     const first = await ingestPricesV2(db, payload())

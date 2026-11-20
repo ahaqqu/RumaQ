@@ -1,0 +1,21 @@
+-- Original (strikethrough) price, QA-07 (RumaQ-pipeline#160, owner decision:
+-- persist, do not drop).
+--
+-- Stores whose sources print a struck "was" price beside the selling price
+-- (hypermart, superindo, indomaret, the yogya OCR path) carry
+-- `originalPrice` in the ingest contract (additive, item v2) — but the
+-- observation upsert had no column for it, so the value was dropped at the
+-- ingest boundary. It gets its own nullable column, mirroring `member_price`
+-- (0047): it is neither the shelf `price` nor the promo-basis
+-- `effective_unit_price` — it is the pre-promo reference the source prints,
+-- and what OCR extraction accuracy for struck prices is measured against.
+--
+-- Nullable with deliberately NO backfill: observations written before this
+-- migration genuinely have no persisted original price, and sources that do
+-- not print a base price (alfamart/astro, F2) stay null — null means "not
+-- printed", not zero.
+--
+-- Additive and Worker-first, same order as 0047: the ingest contract already
+-- accepts the field, so the Worker (which writes the column) deploys before
+-- the pipeline relies on the value surviving.
+ALTER TABLE price_observations ADD COLUMN original_price INTEGER;
