@@ -201,6 +201,13 @@ export type ReviewItem = ReviewItemPair & {
   entryBrochureUrl: string | null
   entrySourceUrl: string | null
   entryObservedAt: string | null
+  // QA-07 (pipeline #160): the entry sighting's struck original price, read
+  // from price_observations by the same store-pinned lookup. The pair blob
+  // does not freeze it (contract reviewItemPairSchema has no field), so this
+  // is ALWAYS the live lookup's value — the store's latest observation, not
+  // necessarily the flag-time sighting. Null when the observation predates
+  // the 0052 column or the source prints no base price.
+  entryOriginalPrice: number | null
 }
 
 export type ReviewCounts = {
@@ -291,6 +298,10 @@ function toReviewItem(row: ReviewRow): ReviewItem | null {
     entryBrochureUrl: pair.entryBrochureUrl ?? null,
     entrySourceUrl: pair.entrySourceUrl ?? null,
     entryObservedAt: pair.entryObservedAt ?? null,
+    // QA-07: the blob never freezes the original price (the contract pair
+    // schema has no field), so it starts null and only the live lookup fills
+    // it.
+    entryOriginalPrice: null,
   }
 }
 
@@ -329,12 +340,14 @@ type EntryEvidenceRow = {
   brochure_url: string | null
   source_url: string | null
   observed_date: string | null
+  original_price: number | null
 }
 
 type EntryEvidence = {
   entryBrochureUrl: string | null
   entrySourceUrl: string | null
   entryObservedAt: string | null
+  entryOriginalPrice: number | null
 }
 
 /** One (entry product, frozen store) lookup pair — the map is keyed on the
@@ -368,7 +381,8 @@ export async function fetchEntryEvidence(
         `SELECT p.product_key || '|' || s.slug AS evidence_key,
                 o.brochure_url AS brochure_url,
                 o.source_url AS source_url,
-                o.observed_date AS observed_date
+                o.observed_date AS observed_date,
+                o.original_price AS original_price
          FROM price_observations o
          JOIN price_products p ON p.id = o.product_id
          JOIN price_sources s ON s.id = o.source_id
@@ -395,13 +409,14 @@ export async function fetchEntryEvidence(
         entryBrochureUrl: row.brochure_url ?? null,
         entrySourceUrl: row.source_url ?? null,
         entryObservedAt: row.observed_date ?? null,
+        entryOriginalPrice: row.original_price ?? null,
       })
     }
   }
   return evidence
 }
 
-// Thermos B1 (issue #380): any row shape carrying the four evidence fields —
+// Thermos B1 (issue #380): any row shape carrying the evidence fields —
 // ReviewItem and ReviewExportRow both qualify structurally, so ONE loop serves
 // the queue list, the decide/undo responses, and the export pages alike; the
 // export rows cannot silently diverge from the card's evidence shape.
@@ -411,6 +426,7 @@ type EvidenceCarrier = {
   entryBrochureUrl: string | null
   entrySourceUrl: string | null
   entryObservedAt: string | null
+  entryOriginalPrice: number | null
 }
 
 function enrichEntryEvidence<T extends EvidenceCarrier>(
@@ -424,19 +440,26 @@ function enrichEntryEvidence<T extends EvidenceCarrier>(
     if (!found) continue
     // Per-field frozen-first (#691 RC3): a non-null field is the blob's
     // flag-time sighting and is NEVER overwritten by the live lookup — live
-    // fills only what an old blob does not carry.
+    // fills only what an old blob does not carry. entryOriginalPrice (QA-07)
+    // has no frozen counterpart, so the live lookup always fills it.
     if (item.entryBrochureUrl === null) item.entryBrochureUrl = found.entryBrochureUrl
     if (item.entrySourceUrl === null) item.entrySourceUrl = found.entrySourceUrl
     if (item.entryObservedAt === null) item.entryObservedAt = found.entryObservedAt
+    if (item.entryOriginalPrice === null) item.entryOriginalPrice = found.entryOriginalPrice
   }
 }
 
 /** True when at least one evidence field is still null and only the live
  * lookup can fill it — a fully-frozen item (#691 blob) skips its round trip
- * entirely (enrichment could not change it anyway). */
+ * entirely (enrichment could not change it anyway). entryOriginalPrice
+ * (QA-07) never freezes, so any item still needs the lookup until the
+ * observation itself has no original price to give. */
 function needsEntryEvidenceLookup(item: EvidenceCarrier): boolean {
   return (
-    item.entryBrochureUrl === null || item.entrySourceUrl === null || item.entryObservedAt === null
+    item.entryBrochureUrl === null ||
+    item.entrySourceUrl === null ||
+    item.entryObservedAt === null ||
+    item.entryOriginalPrice === null
   )
 }
 
@@ -1214,6 +1237,10 @@ export type ReviewExportRow = {
   entryBrochureUrl: string | null
   entrySourceUrl: string | null
   entryObservedAt: string | null
+  // QA-07 (pipeline #160): the entry sighting's struck original price —
+  // never frozen (the contract pair schema has no field), so always the
+  // live lookup's value from the store's latest observation.
+  entryOriginalPrice: number | null
 }
 
 const EXPORT_PAGE = 200
@@ -1253,6 +1280,8 @@ function toExportRow(row: ExportRow): ReviewExportRow | null {
     entryBrochureUrl: pair.entryBrochureUrl ?? null,
     entrySourceUrl: pair.entrySourceUrl ?? null,
     entryObservedAt: pair.entryObservedAt ?? null,
+    // QA-07: never frozen, only the live lookup fills it.
+    entryOriginalPrice: null,
   }
 }
 

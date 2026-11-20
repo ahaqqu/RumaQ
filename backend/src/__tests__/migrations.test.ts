@@ -4638,3 +4638,67 @@ describe('migration 0052: category override (#728)', () => {
     expect(plan).not.toMatch(/SCAN price_product_category_audit/i)
   })
 })
+
+// Original (strikethrough) price, QA-07 (RumaQ-pipeline#160, owner decision:
+// persist, do not drop): sources that print a struck "was" price beside the
+// selling price carry `originalPrice` in the ingest contract (additive, item
+// v2), but the observation upsert had no column for it — the value was
+// dropped at the ingest boundary. It gets its own nullable column, mirroring
+// `member_price` (0047), with deliberately NO backfill: observations written
+// before this migration genuinely have no persisted original price, and
+// sources that do not print a base price (alfamart/astro, F2) stay null —
+// null means "not printed", not zero.
+describe('migration 0053: price_observations.original_price (QA-07, pipeline #160)', () => {
+  it('adds the nullable original-price column on top of the pre-0053 schema; old rows stay null', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0053')
+    )
+
+    db.prepare(
+      `INSERT INTO price_sources (id, slug, name) VALUES ('src-1', 'superindo', 'Superindo')`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_products (id, product_key, name)
+       VALUES ('prod-1', 'minyak-goreng--filma--2-l', 'Minyak Goreng Filma 2L')`
+    ).run()
+    db.prepare(
+      `INSERT INTO price_observations
+         (id, product_id, source_id, observed_date, price, match_confidence, scraped_at)
+       VALUES ('obs-1', 'prod-1', 'src-1', '2026-11-05', 34500, 1.0, '2026-11-05T23:00:05Z')`
+    ).run()
+
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0053_price_observation_original_price.sql'), 'utf8'))
+
+    // The pre-existing row survives with original_price NULL — no backfill.
+    const old = db.prepare('SELECT * FROM price_observations WHERE id = ?').get('obs-1')
+    expect(old).toMatchObject({ id: 'obs-1', price: 34500, original_price: null })
+
+    // New rows carry the struck original price beside the shelf price —
+    // same INTEGER IDR convention as `price`/`member_price`.
+    db.prepare(
+      `INSERT INTO price_observations
+         (id, product_id, source_id, observed_date, price, original_price,
+          match_confidence, scraped_at)
+       VALUES ('obs-2', 'prod-1', 'src-1', '2026-11-06', 34500, 39900,
+               1.0, '2026-11-06T23:00:05Z')`
+    ).run()
+    const fresh = db.prepare('SELECT * FROM price_observations WHERE id = ?').get('obs-2')
+    expect(fresh).toMatchObject({ price: 34500, original_price: 39900 })
+
+    // The column is nullable with no default (null = "not printed", not zero).
+    const column = db
+      .prepare('PRAGMA table_info(price_observations)')
+      .all()
+      .find((c: Record<string, unknown>) => c.name === 'original_price')
+    expect(column).toMatchObject({ type: 'INTEGER', notnull: 0, dflt_value: null })
+  })
+
+  it('keeps the full chain green on a fresh database', () => {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    applyMigrations(db, migrationFiles())
+    const columns = db.prepare('PRAGMA table_info(price_observations)').all()
+    expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('original_price')
+  })
+})
