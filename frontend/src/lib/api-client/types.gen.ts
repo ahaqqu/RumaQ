@@ -2197,6 +2197,7 @@ export type PostApiAdminReviewByIdCategoryResponses = {
             entryBrochureUrl?: string | null;
             entrySourceUrl?: string | null;
             entryObservedAt?: string | null;
+            entryOriginalPrice?: number | null;
             matchMethod?: 'exact' | 'embedding' | 'ai';
             confidence?: number;
             reason?: 'price_ratio' | 'verifier_unresolved' | 'taxonomy';
