@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 480">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#f8e8c9"/><stop offset="1" stop-color="#e8cfa4"/>
+    </linearGradient>
+    <linearGradient id="bag" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fffdf5"/><stop offset="1" stop-color="#eee7d6"/>
+    </linearGradient>
+  </defs>
+  <rect width="720" height="480" fill="url(#bg)"/>
+  <circle cx="586" cy="86" r="120" fill="#fff" opacity=".25"/>
+  <circle cx="102" cy="416" r="150" fill="#ba8b54" opacity=".1"/>
+  <ellipse cx="361" cy="418" rx="208" ry="28" fill="#7b5b38" opacity=".15"/>
+  <path d="M214 75h292l-24 63 38 263c2 18-12 30-30 30H230c-18 0-32-12-30-30l38-263z" fill="url(#bag)" stroke="#d8c9aa" stroke-width="5"/>
+  <path d="M238 138h244" stroke="#cbb994" stroke-width="5" stroke-dasharray="9 8"/>
+  <path d="M214 75h292l-8 24H222z" fill="#4f7c62"/>
+  <rect x="245" y="180" width="230" height="136" rx="26" fill="#4f7c62"/>
+  <text x="360" y="242" text-anchor="middle" font-family="Arial,sans-serif" font-size="48" font-weight="700" fill="#fff">GULA</text>
+  <text x="360" y="282" text-anchor="middle" font-family="Arial,sans-serif" font-size="23" letter-spacing="4" fill="#e5f0df">PREMIUM • 1 KG</text>
+  <g fill="#fff" stroke="#ddd5c4" stroke-width="3">
+    <rect x="118" y="343" width="67" height="67" rx="9" transform="rotate(-12 118 343)"/>
+    <rect x="516" y="342" width="68" height="68" rx="9" transform="rotate(11 516 342)"/>
+    <rect x="555" y="303" width="61" height="61" rx="8" transform="rotate(-8 555 303)"/>
+  </g>
+</svg>

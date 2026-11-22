@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="RumaQ">
+  <defs>
+    <linearGradient id="rf-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#EE1B60"/><stop offset="1" stop-color="#B00D45"/>
+    </linearGradient>
+    <filter id="rf-sh" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="1.6" stdDeviation="1.7" flood-color="#B00D45" flood-opacity=".35"/>
+    </filter>
+    <clipPath id="rf-clip"><rect x="4" y="4" width="88" height="88" rx="27"/></clipPath>
+  </defs>
+  <!-- squircle app icon -->
+  <rect x="4" y="4" width="88" height="88" rx="27" fill="url(#rf-bg)"/>
+  <g clip-path="url(#rf-clip)">
+    <!-- cerobong asap, menyembul di kanan atap -->
+    <rect x="68.8" y="19.5" width="8.7" height="19" rx="2.6" fill="#FFF6F8" filter="url(#rf-sh)"/>
+    <!-- kaca pembesar = jendela bundar rumah -->
+    <g filter="url(#rf-sh)">
+      <circle cx="48" cy="53" r="22" fill="#FFF6F8"/>
+      <path d="M57.5 70 75.5 84" fill="none" stroke="#FFF6F8" stroke-width="8" stroke-linecap="round"/>
+    </g>
+    <!-- atap chevron membulat -->
+    <path d="M11 44 48 19.5 85 44" fill="none" stroke="#FFF6F8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" filter="url(#rf-sh)"/>
+    <!-- jendela 4 pintir -->
+    <g fill="#F5B01A">
+      <rect x="35.8" y="39.3" width="10.5" height="10.5" rx="2.2"/>
+      <rect x="49.8" y="39.3" width="10.5" height="10.5" rx="2.2"/>
+      <rect x="35.8" y="53.2" width="10.5" height="10.5" rx="2.2"/>
+      <rect x="49.8" y="53.2" width="10.5" height="10.5" rx="2.2"/>
+    </g>
+  </g>
+</svg>
