@@ -633,6 +633,7 @@ describe('GET /api/admin/scrape/stores', () => {
       'hari-hari',
       'yogya',
       'lotte-grosir',
+      'lotte-grosir-promosi',
     ])
   })
 })

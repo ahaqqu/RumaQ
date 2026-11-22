@@ -1083,6 +1083,9 @@ export const SCRAPE_STORE_SLUGS = [
   // Pipeline #25: lotte-grosir (wholesale catalog) — scraped as its own slug
   // while lotte-mart goes dormant.
   'lotte-grosir',
+  // Pipeline #204/#209: lotte catalog store re-sourced from corporate /promosi
+  // — replaces the dormant order-site slug.
+  'lotte-grosir-promosi',
 ] as const
 
 export const scrapeCommandCreateSchema = strictObject({
