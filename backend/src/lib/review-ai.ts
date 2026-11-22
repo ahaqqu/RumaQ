@@ -64,27 +64,36 @@ export const REVIEW_AUTO_MIN_CONFIDENCE = 0.8
 // merge, ride ONE db.batch per item — the atomicity unit is the item, because
 // the merge must commit inside its own decision's transaction (a grouped
 // cross-item batch cannot interleave per-item merges). The attempt's usage
-// rows still share ONE batch. The whole run is:
+// rows still share ONE batch. The whole run is (measured by the budget test):
 //
-//   fixed reads (mode, stored admin, AI settings, list, cached apply)  ≈ 5
-//   + 2 shared registry pre-reads (receipt edges + product rows, #744)
+//   fixed reads 9 — mode, stored admin, list, cached-apply select, household,
+//     capability resolve (2), and the 2 shared registry pre-reads (receipt
+//     edges + product rows, #744)
 //   + items × 2 (provider fetch + write batch)
 //   + 1 usage batch
 //
-//   10 items → ~28 (evaluate route, plus its auth/admin reads still < 50)
-//   20 items → ~48 (the cron tick, inside 50)
+//   10 items → 30 (evaluate route, plus its auth/admin reads still < 50)
+//   20 items → 50 — ZERO headroom at the cron tick. A multi-hop chain's
+//     follow-up planning read (or the cached-apply batches of a backlog)
+//     lands past 50: the platform kills the invocation mid-worklist. That is
+//     data-safe by construction — every item is one atomic batch, the
+//     decision's pending-CAS and the merge receipt's state gates make the
+//     next tick resume exactly where this one stopped, with nothing
+//     re-decided and nothing re-merged — but it caps how much one tick can
+//     do, and the sweep must never assume spare headroom.
 //
 // A tick that ALSO applies up to 20 already-cached verdicts (the assist →
-// auto backlog) can pass the cap: each applied item is one atomic batch, the
-// tick dies mid-worklist on the platform limit, and the next tick's
-// pending-CAS + receipt gates resume the remainder with nothing re-decided
-// and nothing re-merged.
+// auto backlog) passes the cap the same way: each applied item is one atomic
+// batch, the tick dies mid-worklist on the platform limit, and the next
+// tick's pending-CAS + receipt gates resume the remainder with nothing
+// re-decided and nothing re-merged.
 
 /** The on-demand evaluate route's per-request cap (a synchronous HTTP call). */
 export const REVIEW_EVALUATE_MAX = 10
 /** The bounded sweep a manual mode switch to `auto` kicks off (waitUntil). */
 export const REVIEW_SWITCH_SWEEP_LIMIT = 10
-/** The cron invocation's per-tick cap — its own 50-subrequest budget (~47). */
+/** The cron invocation's per-tick cap — a full tick measures 50 of the 50
+ * free-plan subrequests (zero headroom; see the accounting above). */
 export const REVIEW_CRON_LIMIT = 20
 /** Concurrent provider calls per sweep: below Workers' 6-connection limit. */
 export const REVIEW_AI_CONCURRENCY = 4

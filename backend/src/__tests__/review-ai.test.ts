@@ -820,7 +820,17 @@ describe('runReviewAiSweep (the cron tick)', () => {
     // usage batch.
     expect(batchSpy).toHaveBeenCalledTimes(21)
     const subrequests = 20 + batchSpy.mock.calls.length + unbatchedStatements
-    expect(subrequests).toBeLessThanOrEqual(50)
+    // ZERO headroom by measurement: 20 fetches + 21 batches + 9 fixed reads
+    // (mode, stored admin, list, cached-apply select, household, capability
+    // resolve ×2, and the 2 shared registry planning reads) = 50. This test
+    // pins the ceiling exactly so a new fixed read FAILS here instead of
+    // silently pushing a full tick past the platform cap — a multi-hop
+    // chain's follow-up planning read (or a cached-apply backlog) already
+    // lands past 50, which kills the invocation mid-worklist. That is
+    // data-safe by construction (per-item atomic batches; the pending-CAS +
+    // receipt gates make the next tick resume with nothing re-decided or
+    // re-merged — see lib/review-ai.ts's accounting) but it is a real cap.
+    expect(subrequests).toBe(50)
   })
 
   it('reads ONE capability row per run and writes the attempts in ONE batch (#523 P4)', async () => {
