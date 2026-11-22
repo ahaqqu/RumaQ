@@ -341,12 +341,12 @@ export const getApiAdminReviewQueueReport = <ThrowOnError extends boolean = fals
 export const getApiAdminReviewExport = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminReviewExportData, ThrowOnError>): RequestResult<GetApiAdminReviewExportResponses, GetApiAdminReviewExportErrors, ThrowOnError> => (options?.client ?? client).get<GetApiAdminReviewExportResponses, GetApiAdminReviewExportErrors, ThrowOnError>({ url: '/api/admin/review/export', ...options });
 
 /**
- * Undo a review verdict — the row returns to pending (admin-only). Idempotent on a pending row.
+ * Undo a review verdict — the row returns to pending (admin-only). Idempotent on a pending row. The registry merge an earlier approval performed is terminal and stands (#744); the response's registry block is always null here.
  */
 export const deleteApiAdminReviewByIdDecision = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminReviewByIdDecisionData, ThrowOnError>): RequestResult<DeleteApiAdminReviewByIdDecisionResponses, DeleteApiAdminReviewByIdDecisionErrors, ThrowOnError> => (options.client ?? client).delete<DeleteApiAdminReviewByIdDecisionResponses, DeleteApiAdminReviewByIdDecisionErrors, ThrowOnError>({ url: '/api/admin/review/{id}/decision', ...options });
 
 /**
- * Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins. Send agreement when the caller is accepting or rejecting the cached AI verdict (records ai_assist provenance).
+ * Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins. Send agreement when the caller is accepting or rejecting the cached AI verdict (records ai_assist provenance). An approval also merges the observation registry (#744): the entry-side product is absorbed into the item-side survivor in the same transaction — observations re-pointed, aliases moved, the absorbed product row deleted, one merge receipt, one canonical-index bump. The response's registry block carries that merge's counts (null when nothing was absorbed; the merge is terminal — undoing the verdict does not un-merge).
  */
 export const postApiAdminReviewByIdDecision = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminReviewByIdDecisionData, ThrowOnError>): RequestResult<PostApiAdminReviewByIdDecisionResponses, PostApiAdminReviewByIdDecisionErrors, ThrowOnError> => (options.client ?? client).post<PostApiAdminReviewByIdDecisionResponses, PostApiAdminReviewByIdDecisionErrors, ThrowOnError>({
     url: '/api/admin/review/{id}/decision',

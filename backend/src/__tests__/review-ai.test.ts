@@ -779,19 +779,58 @@ describe('runReviewAiSweep (the cron tick)', () => {
     }
     await setReviewMode(d1, 'auto', ADMIN)
     vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     const fetchMock = providerMock(() =>
       answer('{"choice":"same","confidence":0.9,"reason":"Same."}')
     )
-    // The free plan caps EVERY invocation at 50 subrequests, and a prepare() is
-    // at most one (statements inside one db.batch collapse to one), so the
-    // prepare count is a conservative budget check: 20 provider fetches + 20
-    // verdict INSERTs + 2 batched writes (usage, decisions) + the fixed reads.
-    // The unbatched per-item writes this replaced were 20 + 20 + 20 + reads.
-    const prepareSpy = vi.spyOn(d1, 'prepare')
+    // The free plan caps EVERY invocation at 50 subrequests: a db.batch is
+    // ONE subrequest however many statements it carries, and a statement
+    // executed OUTSIDE a batch is one. Count them for real: every statement
+    // executed through first/all/run (never batchResult) is unbatched.
+    let unbatchedStatements = 0
+    const realPrepare = d1.prepare.bind(d1)
+    const wrapStatement = (statement: unknown): unknown => {
+      const source = statement as Record<string, unknown>
+      const wrapped: Record<string, unknown> = { ...source }
+      for (const method of ['first', 'all', 'run'] as const) {
+        const original = source[method]
+        if (typeof original === 'function') {
+          wrapped[method] = (...args: unknown[]) => {
+            unbatchedStatements += 1
+            return (original as (...a: unknown[]) => unknown)(...args)
+          }
+        }
+      }
+      const doBind = source.bind
+      if (typeof doBind === 'function') {
+        wrapped.bind = (...args: unknown[]) => wrapStatement(doBind(...args))
+      }
+      return wrapped
+    }
+    vi.spyOn(d1, 'prepare').mockImplementation(
+      (sql: string) => wrapStatement(realPrepare(sql)) as never
+    )
+    const batchSpy = vi.spyOn(d1, 'batch')
+
     const outcome = await runReviewAiSweep(env())
     expect(outcome).toMatchObject({ mode: 'auto', evaluated: 20, applied: 20, failed: 0 })
     expect(fetchMock).toHaveBeenCalledTimes(20)
-    expect(prepareSpy.mock.calls.length).toBeLessThanOrEqual(50)
+    // 20 per-item write batches (verdict cache + decision + merge statements
+    // collapse into one subrequest per item — the #744 atomicity unit) + 1
+    // usage batch.
+    expect(batchSpy).toHaveBeenCalledTimes(21)
+    const subrequests = 20 + batchSpy.mock.calls.length + unbatchedStatements
+    // ZERO headroom by measurement: 20 fetches + 21 batches + 9 fixed reads
+    // (mode, stored admin, list, cached-apply select, household, capability
+    // resolve ×2, and the 2 shared registry planning reads) = 50. This test
+    // pins the ceiling exactly so a new fixed read FAILS here instead of
+    // silently pushing a full tick past the platform cap — a multi-hop
+    // chain's follow-up planning read (or a cached-apply backlog) already
+    // lands past 50, which kills the invocation mid-worklist. That is
+    // data-safe by construction (per-item atomic batches; the pending-CAS +
+    // receipt gates make the next tick resume with nothing re-decided or
+    // re-merged — see lib/review-ai.ts's accounting) but it is a real cap.
+    expect(subrequests).toBe(50)
   })
 
   it('reads ONE capability row per run and writes the attempts in ONE batch (#523 P4)', async () => {
@@ -816,9 +855,9 @@ describe('runReviewAiSweep (the cron tick)', () => {
       /FROM\s+ai_capabilities\s+c/i.test(String(sql))
     )
     expect(capabilityReads).toHaveLength(1)
-    // One usage batch for the whole run (assist applies nothing, so there is
-    // no second decision batch).
-    expect(batchSpy).toHaveBeenCalledTimes(1)
+    // Assist applies nothing: the run's writes are ONE usage batch and ONE
+    // shared cache batch for the three verdict INSERTs (nothing to gate on).
+    expect(batchSpy).toHaveBeenCalledTimes(2)
     expect(usageRows()).toHaveLength(3)
     for (const row of usageRows()) {
       expect(row).toMatchObject({
@@ -952,6 +991,263 @@ describe('runReviewAiSweep (the cron tick)', () => {
   })
 })
 
+// --- the registry merge rides the sweep (#744) -------------------------------
+// The unit + real-SQLite suites (product-merge.test.ts) pin the merge SQL's
+// semantics; these pin the WRITER side: the auto sweep's applied decision and
+// the cached-verdict apply commit their registry merge in the same batch as
+// the decision, with the receipt attributing the merge to the stored admin.
+
+describe('the auto sweep merges the registry (#744)', () => {
+  function seedCatalog(): { survivorId: string; absorbedId: string } {
+    sqlite
+      .prepare(
+        `INSERT INTO price_sources (id, slug, name) VALUES ('src-r', 'superindo', 'Superindo')`
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO price_products (id, product_key, name, status, first_seen_at, last_seen_at, updated_at)
+         VALUES ('prod-s', 'beras--ramos--5-kg', 'Beras Ramos 5 kg', 'provisional', 'x', 'x', 'x')`
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO price_products (id, product_key, name, status, first_seen_at, last_seen_at, updated_at)
+         VALUES ('prod-a', 'beras--ramos--5kg', 'Beras Ramos 5kg', 'provisional', 'x', 'x', 'x')`
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO price_observations (id, product_id, source_id, observed_date, price, match_method, match_confidence, scraped_at)
+         VALUES ('obs-a1', 'prod-a', 'src-r', '2026-11-09', 15500, 'exact', 0.9, 'x')`
+      )
+      .run()
+    return { survivorId: 'prod-s', absorbedId: 'prod-a' }
+  }
+
+  function seedCrossPair(id = 'r1'): void {
+    seedCrossPairAt(id, 'beras--ramos--5-kg', 'beras--ramos--5kg')
+  }
+
+  function seedCrossPairAt(
+    id: string,
+    itemProductKey: string,
+    entryProductKey: string,
+    lastFlaggedAt = '2026-11-18T23:00:05Z'
+  ): void {
+    const pairValue: ReviewItemPair = {
+      ...PAIR,
+      itemProductKey,
+      entryProductKey,
+    }
+    sqlite
+      .prepare(
+        `INSERT INTO match_review_items
+           (id, item_product_key, entry_product_key, pair_data, reason, match_method,
+            confidence, run_started_at, first_flagged_at, last_flagged_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        pairValue.itemProductKey,
+        pairValue.entryProductKey,
+        JSON.stringify(pairValue),
+        pairValue.reason,
+        pairValue.matchMethod,
+        pairValue.confidence,
+        '2026-11-18T23:00:05Z',
+        lastFlaggedAt,
+        lastFlaggedAt
+      )
+  }
+
+  function mergeReceipts(): Array<Record<string, unknown>> {
+    return sqlite.prepare('SELECT * FROM price_product_merge_audit').all()
+  }
+
+  function indexVersion(): number {
+    return (
+      sqlite.prepare('SELECT version FROM canonical_index_state WHERE id = 1').get() as {
+        version: number
+      }
+    ).version
+  }
+
+  it('an auto-applied approval merges the registry in the same batch — observations re-pointed, one receipt, one bump', async () => {
+    const { survivorId, absorbedId } = seedCatalog()
+    seedCrossPair()
+    await setReviewMode(d1, 'auto', ADMIN)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    providerMock(() => answer('{"choice":"same","confidence":0.9,"reason":"Same pack."}'))
+
+    const outcome = await runReviewAiSweep(env())
+    expect(outcome).toMatchObject({ mode: 'auto', evaluated: 1, applied: 1, failed: 0 })
+
+    // The decision landed with auto provenance...
+    expect(itemRow('r1')).toMatchObject({
+      status: 'approved',
+      decided_by: 'ai',
+      decided_source: 'ai_auto',
+    })
+    // ...and the merge committed WITH it: the observation moved, the absorbed
+    // row is gone, one receipt (attributed to the stored admin), one bump.
+    expect(
+      sqlite.prepare('SELECT id FROM price_observations WHERE product_id = ?').all(survivorId)
+    ).toEqual([{ id: 'obs-a1' }])
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS n FROM price_products WHERE id = ?').get(absorbedId)
+    ).toEqual({ n: 0 })
+    const receipts = mergeReceipts()
+    expect(receipts).toHaveLength(1)
+    expect(receipts[0]).toMatchObject({
+      review_item_id: 'r1',
+      from_product_id: absorbedId,
+      to_product_id: survivorId,
+      actor_user_id: ADMIN,
+      decided_source: 'ai_auto',
+      repointed_observations: 1,
+    })
+    expect(indexVersion()).toBe(1)
+  })
+
+  it('an auto-applied REJECT decides without touching the registry', async () => {
+    const { survivorId } = seedCatalog()
+    seedCrossPair()
+    await setReviewMode(d1, 'auto', ADMIN)
+    providerMock(() => answer('{"choice":"different","confidence":0.9,"reason":"Different."}'))
+
+    const outcome = await runReviewAiSweep(env())
+    expect(outcome).toMatchObject({ mode: 'auto', evaluated: 1, applied: 1, failed: 0 })
+    expect(itemRow('r1')).toMatchObject({ status: 'rejected' })
+    expect(mergeReceipts()).toEqual([])
+    expect(indexVersion()).toBe(0)
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS n FROM price_products WHERE product_key = ?')
+        .get('beras--ramos--5kg')
+    ).toEqual({ n: 1 })
+    expect(survivorId).toBe('prod-s')
+  })
+
+  it('the cached-verdict apply (mode switch path) merges too, attributing the receipt to the acting admin', async () => {
+    const { survivorId, absorbedId } = seedCatalog()
+    seedCrossPair()
+    // The verdict was cached earlier (assist probe); no provider needed now.
+    sqlite
+      .prepare(
+        `INSERT INTO review_ai_verdicts (id, review_item_id, verdict, confidence, mode)
+         VALUES ('v-cached', 'r1', 'same', 0.9, 'assist')`
+      )
+      .run()
+    await setReviewMode(d1, 'auto', ADMIN)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    expect(await applyCachedAutoVerdicts(d1, 10, new Date(), ADMIN)).toBe(1)
+    expect(itemRow('r1')).toMatchObject({
+      status: 'approved',
+      decided_by: 'ai',
+      decided_source: 'ai_auto',
+    })
+    expect(
+      sqlite.prepare('SELECT id FROM price_observations WHERE product_id = ?').all(survivorId)
+    ).toEqual([{ id: 'obs-a1' }])
+    const receipts = mergeReceipts()
+    expect(receipts).toHaveLength(1)
+    expect(receipts[0]).toMatchObject({
+      review_item_id: 'r1',
+      from_product_id: absorbedId,
+      to_product_id: survivorId,
+      actor_user_id: ADMIN,
+      decided_source: 'ai_auto',
+    })
+    expect(indexVersion()).toBe(1)
+  })
+
+  it('a merged item re-sweeping through the cached path is a no-op (the receipt gates re-merge)', async () => {
+    seedCatalog()
+    seedCrossPair()
+    sqlite
+      .prepare(
+        `INSERT INTO review_ai_verdicts (id, review_item_id, verdict, confidence, mode)
+         VALUES ('v-cached', 'r1', 'same', 0.9, 'assist')`
+      )
+      .run()
+    await setReviewMode(d1, 'auto', ADMIN)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    expect(await applyCachedAutoVerdicts(d1, 10, new Date(), ADMIN)).toBe(1)
+    // Undo to pending (the decision fields clear; the merge stands) and let
+    // the cached path apply again: nothing left to absorb, no second receipt.
+    sqlite
+      .prepare(
+        "UPDATE match_review_items SET status = 'pending', decided_at = NULL, decided_by = NULL, decided_source = NULL WHERE id = 'r1'"
+      )
+      .run()
+    expect(await applyCachedAutoVerdicts(d1, 10, new Date(), ADMIN)).toBe(1)
+    expect(itemRow('r1')).toMatchObject({ status: 'approved' })
+    expect(mergeReceipts()).toHaveLength(1)
+    expect(indexVersion()).toBe(1)
+  })
+
+  it('a shared-side pair in ONE tick never approves without its merge — the stale plan rolls back to pending and the retry succeeds (A1 pin)', async () => {
+    // Products A, B, C; C is observation-less and alias-less — the shape that
+    // made the shared pre-read's stale plan silent: item (A,B) absorbs B, and
+    // item (B,C)'s plan (resolved before any batch) still names B as survivor.
+    // With nothing on C to FK-fail, the old batch committed item (B,C)
+    // approved WITHOUT its merge, and a decided item is never re-processed.
+    // seedCatalog: 'beras--ramos--5-kg' (A, one observation) and
+    // 'beras--ramos--5kg' (B, one observation); C is added below with nothing
+    // on it.
+    seedCatalog()
+    sqlite
+      .prepare(
+        `INSERT INTO price_products (id, product_key, name, status, first_seen_at, last_seen_at, updated_at)
+         VALUES ('prod-c', 'key--c', 'C', 'provisional', 'x', 'x', 'x')`
+      )
+      .run()
+    // r1 = (A, B) sorts first; r2 = (B, C) shares B with r1's absorbed side.
+    seedCrossPairAt('r1', 'beras--ramos--5-kg', 'beras--ramos--5kg', '2026-11-20T01:00:00Z')
+    seedCrossPairAt('r2', 'beras--ramos--5kg', 'key--c', '2026-11-20T00:00:00Z')
+    await setReviewMode(d1, 'auto', ADMIN)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    providerMock(() => answer('{"choice":"same","confidence":0.9,"reason":"Same."}'))
+
+    const outcome = await runReviewAiSweep(env())
+    // Item (A,B) merged; item (B,C)'s decision was survivor-gated off (its
+    // plan named the just-absorbed B) and rolled back to pending.
+    expect(outcome).toMatchObject({ mode: 'auto', evaluated: 2, applied: 1, failed: 0 })
+    expect(itemRow('r1')).toMatchObject({ status: 'approved', decided_by: 'ai' })
+    expect(itemRow('r2')).toMatchObject({ status: 'pending', decided_by: null })
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS n FROM price_products WHERE product_key = ?').get('key--c')
+    ).toEqual({ n: 1 })
+    expect(mergeReceipts()).toHaveLength(1)
+    expect(indexVersion()).toBe(1)
+
+    // The retry — the item kept its cached verdict, so the next tick's
+    // cached-apply re-plans: B's receipt chain resolves to A and C merges
+    // under A. No approval ever stands without its merge.
+    expect(await applyCachedAutoVerdicts(d1, 10, new Date(), ADMIN)).toBe(1)
+    expect(itemRow('r2')).toMatchObject({ status: 'approved', decided_by: 'ai' })
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS n FROM price_products WHERE product_key = ?').get('key--c')
+    ).toEqual({ n: 0 })
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS n FROM price_products WHERE product_key = ?')
+        .get('beras--ramos--5-kg')
+    ).toEqual({ n: 1 })
+    const receipts = mergeReceipts()
+    expect(receipts).toHaveLength(2)
+    expect(receipts[1]).toMatchObject({
+      review_item_id: 'r2',
+      from_product_key: 'key--c',
+      to_product_key: 'beras--ramos--5-kg',
+    })
+    expect(indexVersion()).toBe(2)
+  })
+})
+
 // --- taxonomy self-pairs (issue #373) ---------------------------------------
 // A taxonomy flag is NOT a match question: both sides reference the same
 // catalog product and the confidence is the classifier's, so the identity
@@ -1046,7 +1342,7 @@ describe('decision provenance (agree / disagree)', () => {
   it('records ai_assist provenance and the agreement when the human agrees', async () => {
     insertItem('r1')
     cacheVerdict()
-    const item = await decideReviewItem(d1, 'r1', 'approved', ADMIN, 'agreed')
+    const { item } = await decideReviewItem(d1, 'r1', 'approved', ADMIN, 'agreed')
     expect(item).toMatchObject({
       id: 'r1',
       status: 'approved',
@@ -1060,7 +1356,7 @@ describe('decision provenance (agree / disagree)', () => {
   it('records disagreement when the human rejects the AI verdict', async () => {
     insertItem('r1')
     cacheVerdict()
-    const item = await decideReviewItem(d1, 'r1', 'rejected', ADMIN, 'disagreed')
+    const { item } = await decideReviewItem(d1, 'r1', 'rejected', ADMIN, 'disagreed')
     expect(item?.decidedSource).toBe('ai_assist')
     expect(item?.aiVerdict?.humanAgreement).toBe('disagreed')
     expect(verdictRows()[0]).toMatchObject({ human_agreement: 'disagreed' })
@@ -1069,7 +1365,7 @@ describe('decision provenance (agree / disagree)', () => {
   it('records plain human provenance when no agreement is sent', async () => {
     insertItem('r1')
     cacheVerdict()
-    const item = await decideReviewItem(d1, 'r1', 'approved', ADMIN)
+    const { item } = await decideReviewItem(d1, 'r1', 'approved', ADMIN)
     expect(item?.decidedSource).toBe('human')
     expect(item?.aiVerdict?.humanAgreement).toBeNull()
   })
@@ -1085,7 +1381,7 @@ describe('decision provenance (agree / disagree)', () => {
          VALUES ('v1', 'r1', 'different', 0.9, 'assist')`
       )
       .run()
-    const item = await decideReviewItem(d1, 'r1', 'approved', ADMIN, 'agreed')
+    const { item } = await decideReviewItem(d1, 'r1', 'approved', ADMIN, 'agreed')
     expect(item?.decidedSource).toBe('ai_assist')
     expect(item?.aiVerdict?.humanAgreement).toBe('disagreed')
     expect(verdictRows()[0]).toMatchObject({ human_agreement: 'disagreed' })
@@ -1095,7 +1391,7 @@ describe('decision provenance (agree / disagree)', () => {
     insertItem('r1')
     cacheVerdict()
     await decideReviewItem(d1, 'r1', 'approved', ADMIN, 'agreed')
-    const item = await decideReviewItem(d1, 'r1', 'rejected', ADMIN)
+    const { item } = await decideReviewItem(d1, 'r1', 'rejected', ADMIN)
     // The agreement belonged to the decision that was just replaced; a
     // human-provenance row must not carry a stale "agreed" next to the verdict.
     expect(item?.decidedSource).toBe('human')
@@ -1105,7 +1401,7 @@ describe('decision provenance (agree / disagree)', () => {
 
   it('ignores an agreement for an item with no verdict (human provenance)', async () => {
     insertItem('r1')
-    const item = await decideReviewItem(d1, 'r1', 'approved', ADMIN, 'agreed')
+    const { item } = await decideReviewItem(d1, 'r1', 'approved', ADMIN, 'agreed')
     expect(item?.decidedSource).toBe('human')
     expect(item?.aiVerdict).toBeNull()
     expect(verdictRows()).toEqual([])

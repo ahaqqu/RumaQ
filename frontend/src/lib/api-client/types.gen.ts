@@ -1974,6 +1974,11 @@ export type DeleteApiAdminReviewByIdDecisionResponses = {
             runStartedAt?: string;
             runId?: string | null;
         };
+        registry?: {
+            repointed?: number;
+            dropped?: number;
+            movedAliases?: number;
+        } | null;
     };
 };
 
@@ -2062,6 +2067,11 @@ export type PostApiAdminReviewByIdDecisionResponses = {
             runStartedAt?: string;
             runId?: string | null;
         };
+        registry?: {
+            repointed?: number;
+            dropped?: number;
+            movedAliases?: number;
+        } | null;
     };
 };
 

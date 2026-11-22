@@ -38,6 +38,7 @@ import {
 import { ACTIVE_HOUSEHOLD_SQL } from '../auth.js'
 import { buildAiUsageEventStatement } from './ai/usage.js'
 import { parseReviewPair, verdictDecision, type ReviewVerdictName } from './match-review.js'
+import { mergeStatements, planProductMerges } from './product-merge.js'
 
 // ---------------------------------------------------------------------------
 // Modes and limits (exported: the routes, the cron, and the tests share them).
@@ -58,22 +59,41 @@ export const REVIEW_AUTO_MIN_CONFIDENCE = 0.8
 // The three caps below are bounded by the Workers free plan's 50-subrequest
 // cap per invocation (each provider fetch, each D1 read and each D1 batch is
 // one subrequest — the lib/plugin-purge.ts accounting). One evaluated item
-// costs 1 provider fetch + 1 verdict INSERT; the attempt's usage row and the
-// (auto) decision ride ONE batched write at the end of the run (thermos A2),
-// so the whole run is:
+// costs 1 provider fetch + 1 write batch at the end of the run (thermos A2):
+// the verdict cache, and in auto mode the decision with its #744 registry
+// merge, ride ONE db.batch per item — the atomicity unit is the item, because
+// the merge must commit inside its own decision's transaction (a grouped
+// cross-item batch cannot interleave per-item merges). The attempt's usage
+// rows still share ONE batch. The whole run is (measured by the budget test):
 //
-//   fixed reads (mode, stored admin, AI settings, list, cached apply)  ≈ 5
-//   + items × 2 (fetch + verdict insert)
-//   + 1 usage batch + 1 apply batch
+//   fixed reads 9 — mode, stored admin, list, cached-apply select, household,
+//     capability resolve (2), and the 2 shared registry pre-reads (receipt
+//     edges + product rows, #744)
+//   + items × 2 (provider fetch + write batch)
+//   + 1 usage batch
 //
-//   10 items → ~27 (evaluate route, plus its auth/admin reads still < 50)
-//   20 items → ~47 (the cron tick, comfortably under 50)
+//   10 items → 30 (evaluate route, plus its auth/admin reads still < 50)
+//   20 items → 50 — ZERO headroom at the cron tick. A multi-hop chain's
+//     follow-up planning read (or the cached-apply batches of a backlog)
+//     lands past 50: the platform kills the invocation mid-worklist. That is
+//     data-safe by construction — every item is one atomic batch, the
+//     decision's pending-CAS and the merge receipt's state gates make the
+//     next tick resume exactly where this one stopped, with nothing
+//     re-decided and nothing re-merged — but it caps how much one tick can
+//     do, and the sweep must never assume spare headroom.
+//
+// A tick that ALSO applies up to 20 already-cached verdicts (the assist →
+// auto backlog) passes the cap the same way: each applied item is one atomic
+// batch, the tick dies mid-worklist on the platform limit, and the next
+// tick's pending-CAS + receipt gates resume the remainder with nothing
+// re-decided and nothing re-merged.
 
 /** The on-demand evaluate route's per-request cap (a synchronous HTTP call). */
 export const REVIEW_EVALUATE_MAX = 10
 /** The bounded sweep a manual mode switch to `auto` kicks off (waitUntil). */
 export const REVIEW_SWITCH_SWEEP_LIMIT = 10
-/** The cron invocation's per-tick cap — its own 50-subrequest budget (~47). */
+/** The cron invocation's per-tick cap — a full tick measures 50 of the 50
+ * free-plan subrequests (zero headroom; see the accounting above). */
 export const REVIEW_CRON_LIMIT = 20
 /** Concurrent provider calls per sweep: below Workers' 6-connection limit. */
 export const REVIEW_AI_CONCURRENCY = 4
@@ -460,10 +480,15 @@ export async function evaluateReviewPair(
 }
 
 /**
- * Cache one verdict (one per item, structurally). `false` means another
- * writer already cached this item — the caller must not apply its own copy.
+ * Cache one verdict (one per item, structurally), as a STATEMENT: since #744
+ * the cache INSERT rides the item's own write batch — in auto mode the same
+ * transaction also decides the item and merges the registry, so a verdict can
+ * never be cached-and-stranded without its decision, and the decision's
+ * cache-race gate names THIS insert's row id. `ON CONFLICT DO NOTHING` keeps
+ * the cache single-writer; a lost race surfaces as this statement's
+ * `changes() = 0` in the batch results.
  */
-async function cacheVerdict(
+function cacheVerdictStatement(
   db: D1Database,
   args: {
     itemId: string
@@ -471,9 +496,11 @@ async function cacheVerdict(
     access: AiAccessHandle
     mode: Exclude<ReviewMode, 'manual'>
     now: Date
+    /** The id the caller generated for this attempt's verdict row. */
+    verdictId: string
   }
-): Promise<boolean> {
-  const result = await db
+): Statement {
+  return db
     .prepare(
       `INSERT INTO review_ai_verdicts
          (id, review_item_id, verdict, confidence, reason, provider, model, mode, created_at)
@@ -481,7 +508,7 @@ async function cacheVerdict(
        ON CONFLICT(review_item_id) DO NOTHING`
     )
     .bind(
-      crypto.randomUUID(),
+      args.verdictId,
       args.itemId,
       args.verdict.verdict,
       args.verdict.confidence,
@@ -493,34 +520,56 @@ async function cacheVerdict(
       args.mode,
       args.now.toISOString()
     )
-    .run()
-  return (result.meta?.changes ?? 0) > 0
 }
 
 /**
- * One grouped apply statement: the ONLY writer of an AI decision, for every
- * item of one verdict at once (a sweep spends one subrequest on all its
- * decisions, not one per item — thermos A2). The `status = 'pending'`
- * predicate is the compare-and-set: a human (or a concurrent sweep) that
- * decided first is never overwritten, which is what keeps the sweep
- * idempotent.
+ * One apply statement for ONE item: the ONLY writer of an AI decision on that
+ * item. The `status = 'pending'` predicate is the compare-and-set: a human
+ * (or a concurrent sweep) that decided first is never overwritten, which is
+ * what keeps the sweep idempotent. `verdictId` (the evaluate path) adds the
+ * cache-race gate: the decision lands only when THIS run's verdict INSERT is
+ * the one that won the cache, so a losing concurrent run applies nothing —
+ * the same rule the old post-insert `if (!cached)` check enforced, moved into
+ * the batch because the INSERT now rides it (#744 restructure).
+ *
+ * `survivorId` (set only when THIS batch carries a merge, #744) gates the
+ * decision on the survivor's existence: the sweep's plans are resolved in one
+ * shared pre-read, so a sibling item's batch earlier in the same tick may
+ * have already absorbed this item's survivor — without the gate an
+ * observation-less absorbed side would let the decision commit with its
+ * merge no-op'd (the FK never fires, the receipt gate never sees the
+ * survivor) and a decided item is never re-processed. With the gate the
+ * whole item rolls back to pending and the next tick re-plans through the
+ * receipt chain — the same self-healing retry every other lost race here
+ * uses, chosen over mid-tick re-planning because the retry paths already
+ * exist and re-planning would duplicate the registry's resolution state
+ * inside the sweep.
  */
 function applyVerdictStatement(
   db: D1Database,
-  args: { itemIds: string[]; verdict: ReviewVerdictName; now: Date }
+  args: {
+    itemId: string
+    verdict: ReviewVerdictName
+    now: Date
+    verdictId?: string
+    survivorId?: string
+  }
 ): Statement {
-  const placeholders = args.itemIds.map(() => '?').join(', ')
   return db
     .prepare(
       `UPDATE match_review_items
        SET status = ?, decided_at = ?, decided_by = ?, decided_source = 'ai_auto'
-       WHERE id IN (${placeholders}) AND status = 'pending'`
+       WHERE id = ? AND status = 'pending'
+         ${args.verdictId ? 'AND EXISTS (SELECT 1 FROM review_ai_verdicts WHERE id = ?)' : ''}
+         ${args.survivorId ? 'AND EXISTS (SELECT 1 FROM price_products WHERE id = ?)' : ''}`
     )
     .bind(
       verdictDecision(args.verdict),
       args.now.toISOString(),
       REVIEW_AI_DECIDED_BY,
-      ...args.itemIds
+      args.itemId,
+      ...(args.verdictId ? [args.verdictId] : []),
+      ...(args.survivorId ? [args.survivorId] : [])
     )
 }
 
@@ -534,45 +583,107 @@ export async function applyVerdictsToItems(
   args: { itemIds: string[]; verdict: ReviewVerdictName; now: Date }
 ): Promise<number> {
   if (args.itemIds.length === 0) return 0
-  const result = await applyVerdictStatement(db, args).run()
-  return result.meta?.changes ?? 0
-}
-
-/**
- * Apply a run's decisions grouped by verdict: ONE db.batch (one subrequest)
- * for the whole set, however many items it decided.
- */
-async function applyDecisions(
-  db: D1Database,
-  decisions: Array<{ verdict: ReviewVerdictName; itemIds: string[] }>,
-  now: Date
-): Promise<number> {
-  const statements = decisions
-    .filter((decision) => decision.itemIds.length > 0)
-    .map((decision) => applyVerdictStatement(db, { ...decision, now }))
-  if (statements.length === 0) return 0
-  const results = await db.batch(statements)
+  const results = await db.batch(
+    args.itemIds.map((itemId) =>
+      applyVerdictStatement(db, { itemId, verdict: args.verdict, now: args.now })
+    )
+  )
   return results.reduce((total, result) => total + (result.meta?.changes ?? 0), 0)
 }
 
-/** Group rows by their verdict so the apply is one statement per direction. */
-function groupByVerdict(
-  rows: Array<{ id: string; verdict: ReviewVerdictName }>
-): Array<{ verdict: ReviewVerdictName; itemIds: string[] }> {
-  return (['same', 'different'] as const).map((verdict) => ({
-    verdict,
-    itemIds: rows.filter((row) => row.verdict === verdict).map((row) => row.id),
-  }))
+/**
+ * Apply a run's decisions — ONE db.batch per item (one subrequest each), the
+ * atomicity unit being the ITEM: the decision, and when it is an approval the
+ * #744 registry merge (receipt + observation re-point + alias move + absorbed
+ * row delete + index bump), commit or roll back together. The merge plans for
+ * every approved item resolve through two SHARED pre-reads, so a 20-item tick
+ * plans in 2 queries instead of 2 per item.
+ *
+ * Returns how many decisions this call applied and how many verdict rows this
+ * call's own cache INSERTs won (the evaluate path counts both from the same
+ * batches; the cached-apply path caches nothing and reads applied only).
+ */
+async function applyDecisions(
+  db: D1Database,
+  items: Array<{
+    itemId: string
+    verdict: ReviewVerdictName
+    itemProductKey: string
+    entryProductKey: string
+    /** The evaluate path's cache-race gate (see applyVerdictStatement). */
+    verdictId?: string
+    /** The evaluate path's verdict-cache INSERT — rides the item's batch so
+     * the cache race resolves in the same transaction as the decision. */
+    cacheStatement?: Statement
+  }>,
+  now: Date,
+  actorUserId: string | null
+): Promise<{ applied: number; cached: number }> {
+  if (items.length === 0) return { applied: 0, cached: 0 }
+  const decidedAt = now.toISOString()
+  const plans = await planProductMerges(
+    db,
+    items.map((item) => ({
+      itemId: item.itemId,
+      itemProductKey: item.itemProductKey,
+      entryProductKey: item.entryProductKey,
+    }))
+  )
+  let applied = 0
+  let cached = 0
+  for (const item of items) {
+    const statements: Statement[] = []
+    if (item.cacheStatement) statements.push(item.cacheStatement)
+    const decisionIndex = statements.length
+    const plan = plans.get(item.itemId)
+    statements.push(
+      applyVerdictStatement(db, {
+        itemId: item.itemId,
+        verdict: item.verdict,
+        now,
+        verdictId: item.verdictId,
+        // The survivor gate (see applyVerdictStatement): only when THIS batch
+        // carries a merge — a planned merge whose survivor a sibling batch
+        // just absorbed must roll the decision back to pending, never commit
+        // merge-less.
+        survivorId: plan?.kind === 'merge' ? plan.survivor.id : undefined,
+      })
+    )
+    if (verdictDecision(item.verdict) === 'approved' && plan?.kind === 'merge') {
+      statements.push(
+        ...mergeStatements(db, {
+          reviewItemId: item.itemId,
+          receiptId: crypto.randomUUID(),
+          survivor: plan.survivor,
+          absorbed: plan.absorbed,
+          // The auto sweep bills the stored admin's AI access; the receipt
+          // attributes the merge to the same admin (the usage-attribution
+          // precedent), falling back to the 'ai' handle when no admin is
+          // stored (the cached-apply path without a configured reviewer).
+          actorUserId: actorUserId ?? REVIEW_AI_DECIDED_BY,
+          decidedSource: 'ai_auto',
+          decidedAt,
+          decidedBy: REVIEW_AI_DECIDED_BY,
+        })
+      )
+    }
+    const results = await db.batch(statements)
+    applied += results[decisionIndex]?.meta?.changes ?? 0
+    if (item.cacheStatement) cached += results[0]?.meta?.changes ?? 0
+  }
+  return { applied, cached }
 }
 
 /** One item's contribution to an evaluation run; the run batches the writes. */
 type ItemOutcome = {
+  itemId: string
   /** The attempt's usage row, when there is an admin to attribute it to. */
   usage: Statement | null
-  /** A usable verdict for THIS item was cached by this run. */
-  evaluated: boolean
-  /** The verdict this run would apply (auto, at/above the floor, cache won). */
-  apply: { itemId: string; verdict: ReviewVerdictName } | null
+  /** A usable verdict for THIS item: the cache row id this attempt would
+   * insert, plus the verdict itself (the apply floor reads the confidence). */
+  verdict: { id: string; verdict: ReviewVerdict } | null
+  /** The pair the verdict answered — the merge planner's pair keys. */
+  pair: ReviewItemPair | null
   /** No verdict — the item stays pending for the next sweep. */
   failed: boolean
 }
@@ -604,7 +715,7 @@ export async function evaluatePendingReviews(
     REVIEW_AI_CONCURRENCY,
     async (row): Promise<ItemOutcome> => {
       const pair = parseReviewPair(row.pair_data)
-      if (!pair) return { usage: null, evaluated: false, apply: null, failed: true }
+      if (!pair) return { itemId: row.id, usage: null, verdict: null, pair: null, failed: true }
       const evaluation = await evaluateReviewPair(
         {
           env,
@@ -619,21 +730,16 @@ export async function evaluatePendingReviews(
         access: options.access,
         tokens: evaluation.tokens,
       })
-      if (!evaluation.verdict) return { usage, evaluated: false, apply: null, failed: true }
-      const cached = await cacheVerdict(env.DB, {
+      if (!evaluation.verdict) {
+        return { itemId: row.id, usage, verdict: null, pair: null, failed: true }
+      }
+      return {
         itemId: row.id,
-        verdict: evaluation.verdict,
-        access: options.access,
-        mode: options.mode,
-        now,
-      })
-      // A concurrent writer won the cache race: its verdict owns the item.
-      if (!cached) return { usage, evaluated: false, apply: null, failed: false }
-      const apply =
-        options.mode === 'auto' && evaluation.verdict.confidence >= REVIEW_AUTO_MIN_CONFIDENCE
-          ? { itemId: row.id, verdict: evaluation.verdict.verdict }
-          : null
-      return { usage, evaluated: true, apply, failed: false }
+        usage,
+        verdict: { id: crypto.randomUUID(), verdict: evaluation.verdict },
+        pair,
+        failed: false,
+      }
     }
   )
 
@@ -652,19 +758,57 @@ export async function evaluatePendingReviews(
     }
   }
 
-  // And every decision in ONE batch of grouped UPDATEs — same reason.
-  const toApply = outcomes
-    .map((outcome) => outcome.apply)
-    .filter((apply): apply is { itemId: string; verdict: ReviewVerdictName } => apply !== null)
-  const applied = await applyDecisions(
-    env.DB,
-    groupByVerdict(toApply.map((apply) => ({ id: apply.itemId, verdict: apply.verdict }))),
-    now
-  )
+  // The write phase, one atomic batch per item (#744): an auto-apply item's
+  // verdict cache, its decision and its registry merge commit (or roll back)
+  // TOGETHER; every other cached verdict — assist mode, or auto below the
+  // floor — has nothing to gate on and shares ONE plain cache batch.
+  const cacheOnlyStatements: Statement[] = []
+  const applyItems: Array<{
+    itemId: string
+    verdict: ReviewVerdictName
+    itemProductKey: string
+    entryProductKey: string
+    verdictId: string
+    cacheStatement: Statement
+  }> = []
+  for (const outcome of outcomes) {
+    if (!outcome.verdict || !outcome.pair) continue
+    const cacheStatement = cacheVerdictStatement(env.DB, {
+      itemId: outcome.itemId,
+      verdict: outcome.verdict.verdict,
+      access: options.access,
+      mode: options.mode,
+      now,
+      verdictId: outcome.verdict.id,
+    })
+    if (
+      options.mode === 'auto' &&
+      outcome.verdict.verdict.confidence >= REVIEW_AUTO_MIN_CONFIDENCE
+    ) {
+      applyItems.push({
+        itemId: outcome.itemId,
+        verdict: outcome.verdict.verdict.verdict,
+        itemProductKey: outcome.pair.itemProductKey,
+        entryProductKey: outcome.pair.entryProductKey,
+        verdictId: outcome.verdict.id,
+        cacheStatement,
+      })
+    } else {
+      cacheOnlyStatements.push(cacheStatement)
+    }
+  }
+
+  let evaluated = 0
+  if (cacheOnlyStatements.length > 0) {
+    const results = await env.DB.batch(cacheOnlyStatements)
+    evaluated = results.reduce((total, result) => total + (result.meta?.changes ?? 0), 0)
+  }
+  const appliedResult = await applyDecisions(env.DB, applyItems, now, options.userId)
+  evaluated += appliedResult.cached
 
   return {
-    evaluated: outcomes.filter((outcome) => outcome.evaluated).length,
-    applied,
+    evaluated,
+    applied: appliedResult.applied,
     failed: outcomes.filter((outcome) => outcome.failed).length,
   }
 }
@@ -676,15 +820,22 @@ export async function evaluatePendingReviews(
  * outside auto mode, because only `auto` may decide without a human. The
  * taxonomy predicate is repeated here on purpose: a verdict cached before the
  * rule existed must not auto-approve a taxonomy pair either.
+ *
+ * #744: each applied decision rides its own batch with its registry merge,
+ * and the pair keys ride the SELECT so the merge plans resolve in two shared
+ * pre-reads. `actorUserId` names the receipt's actor (the stored/acting
+ * admin); null attributes the merge to the 'ai' handle.
  */
 export async function applyCachedAutoVerdicts(
   db: D1Database,
   limit: number,
-  now: Date = new Date()
+  now: Date = new Date(),
+  actorUserId: string | null = null
 ): Promise<number> {
   const { results } = await db
     .prepare(
-      `SELECT v.review_item_id AS id, v.verdict AS verdict
+      `SELECT v.review_item_id AS itemId, v.verdict AS verdict,
+              r.item_product_key AS itemProductKey, r.entry_product_key AS entryProductKey
        FROM review_ai_verdicts v
        JOIN match_review_items r ON r.id = v.review_item_id
        WHERE r.status = 'pending' AND v.confidence >= ? AND ${AI_REVIEWABLE_ROW_SQL}
@@ -692,8 +843,14 @@ export async function applyCachedAutoVerdicts(
        LIMIT ?`
     )
     .bind(REVIEW_AUTO_MIN_CONFIDENCE, Math.max(1, limit))
-    .all<{ id: string; verdict: ReviewVerdictName }>()
-  return applyDecisions(db, groupByVerdict(results ?? []), now)
+    .all<{
+      itemId: string
+      verdict: ReviewVerdictName
+      itemProductKey: string
+      entryProductKey: string
+    }>()
+  const applied = await applyDecisions(db, results ?? [], now, actorUserId)
+  return applied.applied
 }
 
 export type ReviewSweepOutcome = ReviewEvaluation & { mode: ReviewMode }
@@ -726,8 +883,9 @@ export async function runReviewAiSweep(
   // run's ONE capability read: the handle is reused for every item below.
   const resolved = userId ? await resolveReviewAiAccess(env, userId) : null
   // Cached verdicts need no provider: apply those whether or not the admin's
-  // key is still configured.
-  let applied = await applyCachedAutoVerdicts(env.DB, limit, options.now)
+  // key is still configured. The stored admin (when there is one) is who the
+  // merges' receipts attribute (#744).
+  let applied = await applyCachedAutoVerdicts(env.DB, limit, options.now, userId)
   if (!resolved || !userId) {
     logSweep({ evaluated: 0, applied, failed: 0 })
     return { mode, evaluated: 0, applied, failed: 0 }

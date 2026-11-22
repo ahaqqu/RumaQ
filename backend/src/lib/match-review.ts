@@ -5,6 +5,12 @@ import {
   ProductNotFoundError,
   type CategorySource,
 } from './canonical-products.js'
+import {
+  mergeReceiptReadStatement,
+  mergeStatements,
+  planProductMerge,
+  type MergeReceiptCounts,
+} from './product-merge.js'
 
 // Storage + queries for the match review queue (issue #294, docs/294-design.md
 // §2/§3/§4). One row per flagged candidate pair; display fields ride the
@@ -886,13 +892,26 @@ async function getReviewRow(db: D1Database, id: string): Promise<ReviewItem | nu
 
 /**
  * Record a human verdict (last verdict wins — deciding twice overwrites).
- * Returns the updated row, or null for an unknown id (404 at the route).
+ * Returns the updated row plus the decision's registry outcome, or null for
+ * an unknown id (404 at the route).
  *
  * Issue #484: `agreement` is the AI-assist path — the human accepted or
  * rejected a CACHED AI verdict. It records the verdict's human_agreement and
  * the item's `decided_source='ai_assist'`; without it (or without a verdict
- * to agree with) the decision carries plain human provenance. Both writes are
- * one batch, so the decision and its agreement can never disagree.
+ * to agree with) the decision carries plain human provenance.
+ *
+ * Issue #744: an APPROVE decision also merges the registry — the entry-side
+ * product identity is absorbed into the item-side survivor (observations
+ * re-pointed, aliases moved, the absorbed row deleted, one merge receipt, one
+ * canonical-index bump) INSIDE the same batch as the verdict write, so an
+ * approval can never commit without its merge. The merge runs on EVERY
+ * approve (last-wins re-approval included); idempotency comes from the
+ * receipt's state gates, not from skipping — a re-approval of an
+ * already-absorbed pair plans nothing to absorb and writes nothing. A REJECT
+ * decides only: the batch stays exactly the pre-#744 two statements.
+ * `registry` is the receipt's counts when this batch merged, null otherwise;
+ * the merge itself is terminal (an undo resets the review row, never the
+ * catalog — the receipt is the record).
  */
 export async function decideReviewItem(
   db: D1Database,
@@ -900,7 +919,7 @@ export async function decideReviewItem(
   decision: ReviewDecision,
   userId: string,
   agreement?: HumanAgreement
-): Promise<ReviewItem | null> {
+): Promise<{ item: ReviewItem | null; registry: MergeReceiptCounts | null }> {
   const verdict = await db
     .prepare('SELECT verdict FROM review_ai_verdicts WHERE review_item_id = ?')
     .bind(id)
@@ -917,14 +936,49 @@ export async function decideReviewItem(
         ? 'agreed'
         : 'disagreed'
       : null
+  const decidedAt = new Date().toISOString()
+
+  // The registry merge rides THIS batch (#744), approvals only — a reject
+  // decides and touches no catalog row. The pair keys name the sides; an
+  // unknown id reads no keys and the merge planning is skipped — the verdict
+  // UPDATE below still matches nothing and the route 404s as before.
+  let registry: MergeReceiptCounts | null = null
+  let receiptReadAppended = false
+  let mergePlan: Awaited<ReturnType<typeof planProductMerge>> | null = null
+  if (decision === 'approved') {
+    const keys = await db
+      .prepare('SELECT item_product_key, entry_product_key FROM match_review_items WHERE id = ?')
+      .bind(id)
+      .first<{ item_product_key: string; entry_product_key: string }>()
+    mergePlan = keys
+      ? await planProductMerge(db, keys.item_product_key, keys.entry_product_key)
+      : null
+  }
+
+  // The verdict UPDATE is gated on the survivor's existence WHEN this batch
+  // carries a merge: the plan was read outside the batch, so a concurrent
+  // decide may have absorbed the survivor in between — a decided item is
+  // never re-processed, so the decision must not commit without its merge
+  // (lib/review-ai.ts applyVerdictStatement carries the same gate). With the
+  // gate the verdict lands nothing (the row stays pending, last-wins
+  // semantics intact) and the admin's retry re-plans through the receipt
+  // chain. Without a planned merge the verdict is never gated: a review
+  // verdict must never be blocked by registry state.
   const statements = [
     db
       .prepare(
         `UPDATE match_review_items
          SET status = ?, decided_at = ?, decided_by = ?, decided_source = ?
-         WHERE id = ?`
+         WHERE id = ?${mergePlan?.kind === 'merge' ? ' AND EXISTS (SELECT 1 FROM price_products WHERE id = ?)' : ''}`
       )
-      .bind(decision, new Date().toISOString(), userId, decidedSource, id),
+      .bind(
+        decision,
+        decidedAt,
+        userId,
+        decidedSource,
+        id,
+        ...(mergePlan?.kind === 'merge' ? [mergePlan.survivor.id] : [])
+      ),
   ]
   if (verdict) {
     // The agreement describes THIS decision (issue #484), so a plain decision
@@ -936,8 +990,36 @@ export async function decideReviewItem(
         .bind(humanAgreement, id)
     )
   }
-  await db.batch(statements)
-  return getReviewRow(db, id)
+  if (mergePlan?.kind === 'merge') {
+    const receiptId = crypto.randomUUID()
+    statements.push(
+      ...mergeStatements(db, {
+        reviewItemId: id,
+        receiptId,
+        survivor: mergePlan.survivor,
+        absorbed: mergePlan.absorbed,
+        actorUserId: userId,
+        decidedSource,
+        decidedAt,
+        decidedBy: userId,
+      }),
+      // The response's registry block reads back the receipt this batch
+      // (conditionally) wrote — a no-op merge returns no row.
+      mergeReceiptReadStatement(db, receiptId)
+    )
+    receiptReadAppended = true
+  }
+
+  const batchResults = await db.batch(statements)
+  if (receiptReadAppended) {
+    const read = batchResults[batchResults.length - 1] as
+      | { results?: Array<{ repointed: number; dropped: number; movedAliases: number }> }
+      | undefined
+    // No row = the receipt gate rejected (a no-op merge); the route answers
+    // `registry: null`.
+    registry = read?.results?.[0] ?? null
+  }
+  return { item: await getReviewRow(db, id), registry }
 }
 
 /**

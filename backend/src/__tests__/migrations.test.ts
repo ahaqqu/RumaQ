@@ -4702,3 +4702,155 @@ describe('migration 0053: price_observations.original_price (QA-07, pipeline #16
     expect(columns.map((c: Record<string, unknown>) => c.name)).toContain('original_price')
   })
 })
+
+describe('migration 0054: price_product_merge_audit (#744)', () => {
+  // Additive on the applied chain (the 0037 shape): the case applies 0054 on
+  // TOP of everything before it, with foreign keys ON — the merge receipts
+  // deliberately carry NO FK, and the assertions below prove the handles
+  // survive their rows.
+  function preMergeDb(): Db {
+    const db = new DatabaseSync(':memory:') as unknown as Db
+    db.exec('PRAGMA foreign_keys = ON')
+    applyMigrations(
+      db,
+      migrationFiles().filter((file: string) => file < '0054')
+    )
+    return db
+  }
+
+  function apply0054(db: Db): void {
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '0054_price_product_merge_audit.sql'), 'utf8'))
+  }
+
+  // The row the merge batch writes: every column except the DEFAULTed
+  // created_at and the nullable from_product_name.
+  function insertReceipt(db: Db, id: string, decidedSource = 'human'): void {
+    db.prepare(
+      `INSERT INTO price_product_merge_audit
+         (id, review_item_id, from_product_id, from_product_key, to_product_id, to_product_key,
+          actor_user_id, decided_source, repointed_observations, dropped_observations,
+          moved_aliases, observation_ids, dropped_observation_ids)
+       VALUES (?, 'rev-1', 'prod-a', 'beras--ramos--5kg', 'prod-s', 'beras--ramos--5-kg',
+               'u1', ?, 2, 1, 3, '["obs-1"]', '["obs-2"]')`
+    ).run(id, decidedSource)
+  }
+
+  it('adds the table on top of the existing chain and fills the INSERT defaults', () => {
+    const db = preMergeDb()
+    // Nothing of this file exists beforehand — the shape assertions below
+    // must not be satisfied by another migration.
+    expect(
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master
+            WHERE name IN ('price_product_merge_audit', 'idx_merge_audit_to',
+                           'idx_merge_audit_from', 'idx_merge_audit_review')`
+        )
+        .all()
+    ).toEqual([])
+
+    apply0054(db)
+
+    // The column order and NOT NULL surface the merge batch writes against.
+    // id is declared NOT NULL explicitly: on a rowid table a TEXT PRIMARY KEY
+    // does not imply it (the 0021 note).
+    const columns = db.prepare('PRAGMA table_info(price_product_merge_audit)').all()
+    expect(columns.map((c: Record<string, unknown>) => c.name)).toEqual([
+      'id',
+      'review_item_id',
+      'from_product_id',
+      'from_product_key',
+      'from_product_name',
+      'to_product_id',
+      'to_product_key',
+      'actor_user_id',
+      'decided_source',
+      'repointed_observations',
+      'dropped_observations',
+      'moved_aliases',
+      'observation_ids',
+      'dropped_observation_ids',
+      'created_at',
+    ])
+    const notNull = Object.fromEntries(
+      columns.map((c: Record<string, unknown>): [string, unknown] => [String(c.name), c.notnull])
+    )
+    expect(notNull).toMatchObject({
+      id: 1,
+      review_item_id: 1,
+      from_product_id: 1,
+      from_product_key: 1,
+      from_product_name: 0,
+      to_product_id: 1,
+      to_product_key: 1,
+      actor_user_id: 1,
+      decided_source: 1,
+      repointed_observations: 1,
+      dropped_observations: 1,
+      moved_aliases: 1,
+      observation_ids: 1,
+      dropped_observation_ids: 1,
+      created_at: 1,
+    })
+
+    insertReceipt(db, 'rec-1')
+    const row = db.prepare(`SELECT * FROM price_product_merge_audit WHERE id = 'rec-1'`).get()
+    expect(row).toMatchObject({
+      review_item_id: 'rev-1',
+      from_product_id: 'prod-a',
+      from_product_key: 'beras--ramos--5kg',
+      to_product_id: 'prod-s',
+      to_product_key: 'beras--ramos--5-kg',
+      actor_user_id: 'u1',
+      decided_source: 'human',
+      repointed_observations: 2,
+      dropped_observations: 1,
+      moved_aliases: 3,
+      observation_ids: '["obs-1"]',
+      dropped_observation_ids: '["obs-2"]',
+    })
+    expect(String(row?.created_at)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+
+    // The handles are PLAIN TEXT (the 0032/0037 receipt rule): the receipt
+    // survives the absorbed product row it deleted, the review row, and the
+    // acting account — nothing cascades into it.
+    db.prepare("DELETE FROM price_products WHERE id = 'prod-a'").run()
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM price_product_merge_audit`).get()).toEqual({
+      n: 1,
+    })
+  })
+
+  it('rejects any decided_source outside the review provenance vocabulary', () => {
+    const db = preMergeDb()
+    apply0054(db)
+
+    insertReceipt(db, 'rec-human')
+    // Same vocabulary as match_review_items.decided_source (0013/0038) — a
+    // receipt cannot claim a provenance the queue cannot produce.
+    for (const bogus of ['ai', 'AI', 'auto', 'system', '']) {
+      expect(() => insertReceipt(db, `rec-${bogus}`, bogus)).toThrow()
+    }
+    expect(db.prepare('SELECT decided_source FROM price_product_merge_audit').all()).toEqual([
+      { decided_source: 'human' },
+    ])
+  })
+
+  it('seeks the chain resolution and audit-feed reads on the two feed indexes', () => {
+    const db = preMergeDb()
+    apply0054(db)
+    insertReceipt(db, 'rec-1')
+
+    // The planner's edge read (resolveMergeRoot's union-find step): the
+    // from-product index must serve the seek.
+    const edgesSql =
+      'SELECT from_product_key, to_product_key FROM price_product_merge_audit WHERE from_product_key = ?'
+    const edgePlan = db.prepare(`EXPLAIN QUERY PLAN ${edgesSql}`).all('beras--ramos--5kg')
+    expect(JSON.stringify(edgePlan)).toContain('idx_merge_audit_from')
+
+    // The product detail surface's feed read (both endpoints of a merge).
+    const feedSql =
+      'SELECT * FROM price_product_merge_audit WHERE to_product_id = ? ORDER BY created_at'
+    const feedPlan = db.prepare(`EXPLAIN QUERY PLAN ${feedSql}`).all('prod-s')
+    expect(JSON.stringify(feedPlan)).toContain('idx_merge_audit_to')
+  })
+})
