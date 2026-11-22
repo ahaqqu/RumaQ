@@ -36,6 +36,8 @@ export function migrationFiles(): string[] {
 }
 
 export function createD1Adapter(sqlite: Db, guard?: (sql: string) => void): D1Database {
+  // The batch mutex's tail: every batch chains behind the previous one.
+  let batchTail: Promise<void> = Promise.resolve()
   const runBound = (sql: string, params: unknown[]) => {
     const info = sqlite.prepare(sql).run(...params)
     return { meta: { changes: info.changes } }
@@ -71,18 +73,29 @@ export function createD1Adapter(sqlite: Db, guard?: (sql: string) => void): D1Da
       }
     },
     batch: async (stmts: Array<{ batchResult: () => Promise<unknown> }>) => {
-      sqlite.exec('BEGIN')
-      try {
-        const results = []
-        for (const stmt of stmts) {
-          results.push(await stmt.batchResult())
+      // D1 serializes concurrent batches (one write lock per database); the
+      // single-connection adapter must too, or two overlapping batches — the
+      // review-sweep race, two decides in flight — interleave their BEGINs on
+      // the one transaction. A plain promise chain is the whole mutex.
+      const run = batchTail.then(async () => {
+        sqlite.exec('BEGIN')
+        try {
+          const results = []
+          for (const stmt of stmts) {
+            results.push(await stmt.batchResult())
+          }
+          sqlite.exec('COMMIT')
+          return results
+        } catch (err) {
+          sqlite.exec('ROLLBACK')
+          throw err
         }
-        sqlite.exec('COMMIT')
-        return results
-      } catch (err) {
-        sqlite.exec('ROLLBACK')
-        throw err
-      }
+      })
+      batchTail = run.then(
+        () => undefined,
+        () => undefined
+      )
+      return run
     },
   } as unknown as D1Database
 }

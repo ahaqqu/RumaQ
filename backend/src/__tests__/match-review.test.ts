@@ -102,9 +102,19 @@ function createFakeDb(
       /** QA-07: the sighting's struck original price (0052 column). */
       original_price?: number | null
     }>
+    /** #744: receipt-chain edges answering the merge planner's edge read. */
+    mergeEdges?: Array<{
+      from_product_key: string
+      to_product_key: string
+      created_at: string
+      id: string
+    }>
+    /** #744: live product rows answering the merge planner's row read. */
+    mergeProducts?: Array<{ id: string; product_key: string; name: string | null }>
   } = {}
 ) {
   const statements: FakeStatement[] = []
+  const batches: FakeStatement[] = []
   const db = {
     prepare(sql: string) {
       const stmt: FakeStatement & {
@@ -148,6 +158,26 @@ function createFakeDb(
                 .map((row) => ({ ...row, evidence_key: `${row.product_key}|${row.store_slug}` })),
             }
           }
+          // #744: the merge planner's two chunked reads — receipt edges, then
+          // live product rows (selectIn spreads the keys after any leading
+          // binds; both reads here are bare key lists).
+          if (
+            sql.includes('FROM price_product_merge_audit') &&
+            sql.includes('from_product_key IN')
+          ) {
+            const keys = stmt.params as string[]
+            return {
+              results: (config.mergeEdges ?? []).filter((edge) =>
+                keys.includes(edge.from_product_key)
+              ),
+            }
+          }
+          if (sql.includes('FROM price_products WHERE product_key IN')) {
+            const keys = stmt.params as string[]
+            return {
+              results: (config.mergeProducts ?? []).filter((row) => keys.includes(row.product_key)),
+            }
+          }
           return { results: [] }
         },
         async first() {
@@ -163,10 +193,11 @@ function createFakeDb(
     },
     async batch(bound: FakeStatement[]) {
       statements.push(...bound)
+      batches.push(...bound)
       return config.batchResults ?? []
     },
   }
-  return { db: db as unknown as D1Database, statements }
+  return { db: db as unknown as D1Database, statements, batches }
 }
 
 function pair(over: Partial<ReviewItemPair> = {}): ReviewItemPair {
@@ -498,7 +529,7 @@ describe('entry-side evidence enrichment (issue #380)', () => {
       decided_by: 'admin-1',
     })
     const { db } = createFakeDb({ firstRow: decidedRow, observationRows: [observation] })
-    const item = await decideReviewItem(db, 'rev-1', 'approved', 'admin-1')
+    const { item } = await decideReviewItem(db, 'rev-1', 'approved', 'admin-1')
     expect(item).toMatchObject({ status: 'approved', entryObservedAt: '2026-10-28' })
   })
 })
@@ -519,7 +550,7 @@ describe('decideReviewItem / undoReviewDecision', () => {
 
   it('records the verdict with the deciding admin and returns the updated row', async () => {
     const { db, statements } = createFakeDb({ firstRow: decidedRow })
-    const item = await decideReviewItem(db, 'rev-1', 'rejected', 'admin-9')
+    const { item } = await decideReviewItem(db, 'rev-1', 'rejected', 'admin-9')
     expect(item).toMatchObject({ id: 'rev-1', status: 'approved' }) // from the fake's row
     // #484: the verdict-existence read decides the provenance BEFORE the
     // write — no verdict + no agreement means plain human provenance.
@@ -548,7 +579,7 @@ describe('decideReviewItem / undoReviewDecision', () => {
 
   it('returns null for an unknown id (the route 404s)', async () => {
     const { db } = createFakeDb({ firstRow: null })
-    expect(await decideReviewItem(db, 'nope', 'approved', 'admin-1')).toBeNull()
+    expect((await decideReviewItem(db, 'nope', 'approved', 'admin-1')).item).toBeNull()
     expect(await undoReviewDecision(db, 'nope')).toBeNull()
   })
 
@@ -566,6 +597,139 @@ describe('decideReviewItem / undoReviewDecision', () => {
     // but its agreement described the decision that was just undone.
     expect(update.sql).toContain('decided_source = NULL')
     expect(statements.some((s) => s.sql.startsWith('UPDATE review_ai_verdicts'))).toBe(true)
+  })
+})
+
+// #744: an approval rides the registry merge in the SAME batch. The fake db
+// answers the planner's two reads so the statement sequence can be pinned
+// exactly; the real-SQLite suite (product-merge.test.ts) proves the SQL's
+// semantics.
+describe('decideReviewItem rides the registry merge (#744)', () => {
+  const decidedRow = {
+    id: 'rev-1',
+    pair_data: JSON.stringify(pair()),
+    status: 'pending',
+    decided_at: null,
+    decided_by: null,
+    flag_count: 1,
+    first_flagged_at: '2026-10-28T23:00:05Z',
+    last_flagged_at: '2026-10-28T23:00:05Z',
+    run_started_at: '2026-10-28T23:00:05Z',
+    run_id: null,
+  }
+  // The fake's .first() answers EVERY single-row read with firstRow — the
+  // keys read gets the same object (whose item/entry keys are the pair's, so
+  // the planner reads real keys).
+  const survivorKey = pair().itemProductKey
+  const absorbedKey = pair().entryProductKey
+
+  it('an approval batches the verdict write with the receipt, the six merge statements and the gated bump', async () => {
+    const { db, batches } = createFakeDb({
+      firstRow: { ...decidedRow, item_product_key: survivorKey, entry_product_key: absorbedKey },
+      mergeProducts: [
+        { id: 'prod-s', product_key: survivorKey, name: 'Beras Ramos 5 kg' },
+        { id: 'prod-a', product_key: absorbedKey, name: 'Beras Ramos 5kg' },
+      ],
+    })
+    const { registry } = await decideReviewItem(db, 'rev-1', 'approved', 'admin-1')
+    // The read-back rode the batch; the fake's batchResults default to [] so
+    // the merge plan's receipt read answers no row → registry null.
+    expect(registry).toBeNull()
+
+    // The ONE batch: the decision (+ its agreement), the receipt, the six
+    // merge statements, the gated bump, and the receipt read-back.
+    const batched = batches
+    const kinds = batched.map((s) => {
+      if (s.sql.startsWith('UPDATE match_review_items')) return 'decision'
+      if (s.sql.startsWith('UPDATE review_ai_verdicts')) return 'agreement'
+      if (s.sql.includes('INSERT INTO price_product_merge_audit')) return 'receipt'
+      if (s.sql.startsWith('UPDATE plan_items')) return 'p1'
+      if (s.sql.startsWith('DELETE FROM price_observations')) return 'p2'
+      if (s.sql.startsWith('UPDATE price_observations')) return 'p3'
+      if (s.sql.startsWith('DELETE FROM price_product_aliases')) return 'p4'
+      if (s.sql.startsWith('UPDATE price_product_aliases')) return 'p5'
+      if (s.sql.startsWith('DELETE FROM price_products')) return 'p6'
+      if (s.sql.includes('UPDATE canonical_index_state')) return 'bump'
+      if (
+        s.sql.includes('FROM price_product_merge_audit') &&
+        s.sql.includes('repointed_observations AS')
+      )
+        return 'read-back'
+      return `other:${s.sql.slice(0, 40)}`
+    })
+    expect(kinds).toEqual([
+      'decision',
+      // The fake's verdict read answers truthy, so the agreement write rides.
+      'agreement',
+      'receipt',
+      'p1',
+      'p2',
+      'p3',
+      'p4',
+      'p5',
+      'p6',
+      'bump',
+      'read-back',
+    ])
+
+    // The receipt's gates: the principal absorbed row, the survivor, and THIS
+    // batch's decision marker (the exact decided_at/decided_by the decision
+    // UPDATE bound — the CAS that makes a re-approval write nothing).
+    const receipt = batched.find((s) => s.sql.includes('INSERT INTO price_product_merge_audit'))!
+    expect(receipt.sql).toContain('WITH merge_absorbed(id) AS (VALUES (?)')
+    expect(receipt.sql).toContain('FROM price_products a')
+    expect(receipt.params).toContain('prod-a') // from_product_id (principal)
+    expect(receipt.params).toContain('prod-s') // to_product_id (survivor)
+    // The receipt's tail binds are the decision marker: the review item id
+    // plus the EXACT decided_at/decided_by the decision UPDATE bound — the
+    // CAS that makes a re-approval insert nothing.
+    const decision = batched[0]!
+    expect(receipt.params.slice(-3)).toEqual(['rev-1', decision.params[1], decision.params[2]])
+    // The bump is the receipt-gated indexBumpStatement naming the same receipt.
+    const bump = batched.find((s) => s.sql.includes('UPDATE canonical_index_state'))!
+    expect(bump.sql).toContain('price_product_merge_audit')
+  })
+
+  it('re-approval after the merge plans nothing to absorb — the batch is the decision alone', async () => {
+    // The first merge's receipt left an edge absorbed→survivor and the
+    // absorbed row is gone: the planner resolves the chain to the survivor
+    // and finds no live absorbed rows.
+    const { db, statements } = createFakeDb({
+      firstRow: decidedRow,
+      mergeEdges: [
+        {
+          from_product_key: absorbedKey,
+          to_product_key: survivorKey,
+          created_at: '2026-11-20 00:00:00',
+          id: 'rec-1',
+        },
+      ],
+      mergeProducts: [{ id: 'prod-s', product_key: survivorKey, name: 'Beras Ramos 5 kg' }],
+    })
+    const { registry } = await decideReviewItem(db, 'rev-1', 'approved', 'admin-1')
+    expect(registry).toBeNull()
+    expect(statements.some((s) => s.sql.includes('INSERT INTO price_product_merge_audit'))).toBe(
+      false
+    )
+    expect(statements.some((s) => s.sql.includes('UPDATE canonical_index_state'))).toBe(false)
+    // The verdict write still happened (last-wins) with no merge around it.
+    expect(statements.some((s) => s.sql.startsWith('UPDATE match_review_items'))).toBe(true)
+  })
+
+  it('a reject batches the decision alone and never touches the registry', async () => {
+    const { db, statements } = createFakeDb({
+      firstRow: decidedRow,
+      mergeProducts: [
+        { id: 'prod-s', product_key: survivorKey, name: 'Beras Ramos 5 kg' },
+        { id: 'prod-a', product_key: absorbedKey, name: 'Beras Ramos 5kg' },
+      ],
+    })
+    const { registry } = await decideReviewItem(db, 'rev-1', 'rejected', 'admin-1')
+    expect(registry).toBeNull()
+    expect(statements.some((s) => s.sql.includes('INSERT INTO price_product_merge_audit'))).toBe(
+      false
+    )
+    expect(statements.some((s) => s.sql.includes('UPDATE canonical_index_state'))).toBe(false)
   })
 })
 
@@ -1459,7 +1623,7 @@ describe('frozen entry evidence — blob-first semantics (#691 RC3)', () => {
       batch: async (statements: Array<{ all: () => Promise<unknown> }>) =>
         Promise.all(statements.map((statement) => statement.all())),
     } as unknown as D1Database
-    const item = await decideReviewItem(db, 'rev-frozen', 'approved', 'admin-1')
+    const { item } = await decideReviewItem(db, 'rev-frozen', 'approved', 'admin-1')
     expect(item).toMatchObject({ status: 'approved', ...FROZEN })
   })
 

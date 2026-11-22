@@ -181,11 +181,11 @@ describe('AdminReview — initialized i18n copy (issue #480)', () => {
     })
   })
 
-  it('renders the approve/reject rubric next to the record-only note', () => {
+  it('renders the approve/reject rubric next to the registry-merge note (#744)', () => {
     const { container } = renderAdmin()
     expect(container.textContent).toContain(EN_RUBRIC)
     expect(container.textContent).toContain(
-      'Decisions are recorded for future matcher improvements; they do not change current price data.'
+      'An approval also merges the observation registry: the flagged entry\u2019s product is absorbed into the item\u2019s product (terminal \u2014 undoing the verdict does not un-merge).'
     )
   })
 

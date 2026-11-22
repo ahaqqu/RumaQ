@@ -3462,7 +3462,7 @@
     "/api/admin/review/{id}/decision": {
       "post": {
         "operationId": "postApiAdminReviewByIdDecision",
-        "description": "Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins. Send agreement when the caller is accepting or rejecting the cached AI verdict (records ai_assist provenance).",
+        "description": "Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins. Send agreement when the caller is accepting or rejecting the cached AI verdict (records ai_assist provenance). An approval also merges the observation registry (#744): the entry-side product is absorbed into the item-side survivor in the same transaction — observations re-pointed, aliases moved, the absorbed product row deleted, one merge receipt, one canonical-index bump. The response's registry block carries that merge's counts (null when nothing was absorbed; the merge is terminal — undoing the verdict does not un-merge).",
         "security": [
           {
             "cookieAuth": []
@@ -3645,6 +3645,20 @@
                           "type": ["string", "null"]
                         }
                       }
+                    },
+                    "registry": {
+                      "type": ["object", "null"],
+                      "properties": {
+                        "repointed": {
+                          "type": "integer"
+                        },
+                        "dropped": {
+                          "type": "integer"
+                        },
+                        "movedAliases": {
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 }
@@ -3677,7 +3691,7 @@
       },
       "delete": {
         "operationId": "deleteApiAdminReviewByIdDecision",
-        "description": "Undo a review verdict — the row returns to pending (admin-only). Idempotent on a pending row.",
+        "description": "Undo a review verdict — the row returns to pending (admin-only). Idempotent on a pending row. The registry merge an earlier approval performed is terminal and stands (#744); the response's registry block is always null here.",
         "security": [
           {
             "cookieAuth": []
@@ -3837,6 +3851,20 @@
                         },
                         "runId": {
                           "type": ["string", "null"]
+                        }
+                      }
+                    },
+                    "registry": {
+                      "type": ["object", "null"],
+                      "properties": {
+                        "repointed": {
+                          "type": "integer"
+                        },
+                        "dropped": {
+                          "type": "integer"
+                        },
+                        "movedAliases": {
+                          "type": "integer"
                         }
                       }
                     }

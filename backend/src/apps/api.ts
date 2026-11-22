@@ -4612,6 +4612,20 @@ apiApp.get(
 // statics (/export, /mode, /evaluate) registered before the :id/decision
 // params. Issue #484 adds the AI mode/evaluate pair and the per-item cached
 // verdict + decided_source fields.
+
+// #744: the registry merge a decision performed, read back from its receipt.
+// Null when the batch merged nothing (a reject, a re-approval of an
+// already-absorbed pair, or a self-pair). Additive on the decide/undo
+// responses — schema:1 consumers read what they know.
+const REGISTRY_MERGE_SCHEMA: OpenAPIV3_1.SchemaObject = {
+  type: ['object', 'null'],
+  properties: {
+    repointed: { type: 'integer' },
+    dropped: { type: 'integer' },
+    movedAliases: { type: 'integer' },
+  },
+}
+
 const REVIEW_ITEM_SCHEMA: OpenAPIV3_1.SchemaObject = {
   type: 'object',
   properties: {
@@ -4965,7 +4979,9 @@ apiApp.post(
     }
     // Auto also applies verdicts the probe already cached (no re-billing):
     // switching assist → auto must act on them, not leave them stranded.
-    const alreadyApplied = mode === 'auto' ? await applyCachedAutoVerdicts(c.env.DB, limit) : 0
+    // The acting admin attributes the merges' receipts (#744).
+    const alreadyApplied =
+      mode === 'auto' ? await applyCachedAutoVerdicts(c.env.DB, limit, new Date(), userId) : 0
     const outcome = await evaluatePendingReviews(c.env, {
       mode,
       access: resolved.access,
@@ -5165,7 +5181,7 @@ apiApp.post(
   '/api/admin/review/:id/decision',
   describeRoute({
     description:
-      'Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins. Send agreement when the caller is accepting or rejecting the cached AI verdict (records ai_assist provenance).',
+      "Record a review verdict (approve/reject) for a flagged pair (admin-only). Last verdict wins. Send agreement when the caller is accepting or rejecting the cached AI verdict (records ai_assist provenance). An approval also merges the observation registry (#744): the entry-side product is absorbed into the item-side survivor in the same transaction — observations re-pointed, aliases moved, the absorbed product row deleted, one merge receipt, one canonical-index bump. The response's registry block carries that merge's counts (null when nothing was absorbed; the merge is terminal — undoing the verdict does not un-merge).",
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -5187,7 +5203,13 @@ apiApp.post(
         description: 'OK',
         content: {
           'application/json': {
-            schema: { type: 'object', properties: { item: REVIEW_ITEM_SCHEMA } },
+            schema: {
+              type: 'object',
+              properties: {
+                item: REVIEW_ITEM_SCHEMA,
+                registry: REGISTRY_MERGE_SCHEMA,
+              },
+            },
           },
         },
       },
@@ -5201,7 +5223,7 @@ apiApp.post(
   sValidator('json', reviewDecisionSchema),
   async (c) => {
     const { decision, agreement } = c.req.valid('json')
-    const item = await decideReviewItem(
+    const { item, registry } = await decideReviewItem(
       c.env.DB,
       c.req.param('id'),
       decision,
@@ -5211,7 +5233,7 @@ apiApp.post(
     if (!item) {
       return c.json({ error: 'Review item not found' }, 404)
     }
-    const res = c.json({ item })
+    const res = c.json({ item, registry })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }
@@ -5221,14 +5243,20 @@ apiApp.delete(
   '/api/admin/review/:id/decision',
   describeRoute({
     description:
-      'Undo a review verdict — the row returns to pending (admin-only). Idempotent on a pending row.',
+      "Undo a review verdict — the row returns to pending (admin-only). Idempotent on a pending row. The registry merge an earlier approval performed is terminal and stands (#744); the response's registry block is always null here.",
     security: [{ cookieAuth: [] }],
     responses: {
       200: {
         description: 'OK',
         content: {
           'application/json': {
-            schema: { type: 'object', properties: { item: REVIEW_ITEM_SCHEMA } },
+            schema: {
+              type: 'object',
+              properties: {
+                item: REVIEW_ITEM_SCHEMA,
+                registry: REGISTRY_MERGE_SCHEMA,
+              },
+            },
           },
         },
       },
@@ -5243,7 +5271,9 @@ apiApp.delete(
     if (!item) {
       return c.json({ error: 'Review item not found' }, 404)
     }
-    const res = c.json({ item })
+    // #744: the registry merge is terminal — an undo resets the review row,
+    // never the catalog, so the undo response's registry block is always null.
+    const res = c.json({ item, registry: null })
     res.headers.set('Cache-Control', 'private, no-cache')
     return res
   }

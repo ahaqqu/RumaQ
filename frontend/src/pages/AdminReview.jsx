@@ -26,8 +26,10 @@ import { IconWarning, IconReview, IconDownload, IconBolt } from '../components/i
 
 // Match review queue (issue #294): a triage work queue for pairs the matcher
 // flagged — see the actual candidates side by side, record a verdict, keep
-// the record. v1 decisions change nothing downstream; the muted note on the
-// page says so (docs/294-design-pm.md §4).
+// the record. Since #744 an approval is no longer record-only: the backend
+// merges the observation registry in the same transaction (the entry-side
+// product is absorbed into the item-side survivor, terminally); the muted
+// note says so and the decide response's registry block reports the counts.
 //
 // Issue #484 (frontend, PR 2 of 2) adds the AI layer on top: the global
 // manual/assist/auto mode switch, the cached verdict chips, assist-mode
@@ -786,6 +788,18 @@ export function AdminReview() {
           <p className="text-xs text-text-muted leading-snug mt-2">{t('review.whyReview')}</p>
           <p className="text-xs text-text leading-snug mt-2">{t('review.decisionRubric')}</p>
           <p className="text-xs text-text-muted mt-2">{t('review.decisionsNote')}</p>
+          {/* #744: the last approval's registry outcome — the decide response
+              carries the merge receipt's counts (absent on a reject or a
+              no-op re-approval). */}
+          {decide.isSuccess && decide.data?.registry && (
+            <p className="text-xs text-text mt-2" role="status">
+              {t('review.registryMerged', {
+                repointed: decide.data.registry.repointed,
+                dropped: decide.data.registry.dropped,
+                movedAliases: decide.data.registry.movedAliases,
+              })}
+            </p>
+          )}
         </div>
         <div className="flex flex-col items-end gap-1.5">
           <Button variant="secondary" size="sm" onClick={handleExport} disabled={exporting}>
