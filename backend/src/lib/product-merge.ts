@@ -244,6 +244,16 @@ export async function planProductMerges(
       if (entry.chain.length > 1) entryChain.push(...entry.chain.slice(1))
     }
   }
+  // The round budget is hop-exact: the worst case advances one hop per round
+  // (initial hop + MAX_CHAIN_HOPS - 1 follow-ups reach any chain walkChain
+  // permits), so anything still `missing` after a final queried-root filter
+  // is a trail the walk genuinely could not resolve — over-deep or cyclic.
+  // Without this second filter a legal chain whose ROOT was queried on the
+  // last round would wedge here: the root's edge-less page re-adds it to
+  // `missing` after the loop's own top-of-round filter has run.
+  for (const key of [...missing]) {
+    if (queried.has(key)) missing.delete(key)
+  }
   if (missing.size > 0) {
     // The follow-up rounds could not reach a root — a malformed trail. Never
     // merge across a chain whose survivor is unresolved.
@@ -445,10 +455,10 @@ export function mergeStatements(
     const a = absorbed.id
     // P1 — plan_items ride collision observations whose rows are about to be
     // deleted; they land on the survivor's same-(source, date) observation.
-    // Aliases are deliberately distinct per subquery (`ax`/`aw`/`s2`):
-    // reusing one name across the SET and WHERE subqueries silently matches
-    // zero rows on SQLite (name resolution bleeds across them) — pinned by
-    // the plan-item test.
+    // Subquery aliases are deliberately distinct (`s`/`ax`/`aw`/`s2`) —
+    // defensive separation of the SET and WHERE scopes so no future edit can
+    // make a name's resolution ambiguous; the plan-item test pins the
+    // statement's semantics.
     statements.push(
       db
         .prepare(

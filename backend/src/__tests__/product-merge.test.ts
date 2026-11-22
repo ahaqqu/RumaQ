@@ -440,6 +440,50 @@ describe('product-merge: idempotency (re-approval, double-merge)', () => {
     expect(counts('price_products')).toBe(2)
     expect(indexVersion()).toBe(0)
   })
+
+  it('the receipt gate keeps P6 from collapsing an identity no receipt records (B1 pin)', async () => {
+    seedSource()
+    seedProduct('beras--ramos--5-kg')
+    seedProduct('beras--ramos--5kg') // observation-less, alias-less absorbed side
+    seedReviewItem('rev-1', pair())
+    // The decision landed intact — the marker the merge statements carry
+    // matches — and THEN the survivor vanished (a concurrent merge's
+    // footprint). The load-bearing state for P6's receipt gate: every other
+    // statement no-ops naturally (nothing to re-point, nothing to move), so
+    // without the gate P6 would delete the absorbed row with NO receipt and
+    // NO index bump — an unrecorded identity collapse.
+    sqlite
+      .prepare(
+        `UPDATE match_review_items
+         SET status = 'approved', decided_at = '2026-11-22T00:00:00.000Z',
+             decided_by = 'admin-1', decided_source = 'human'
+         WHERE id = 'rev-1'`
+      )
+      .run()
+    sqlite.prepare(`DELETE FROM price_products WHERE product_key = 'beras--ramos--5-kg'`).run()
+
+    await d1.batch(
+      mergeStatements(d1, {
+        reviewItemId: 'rev-1',
+        receiptId: 'rec-b1',
+        survivor: { id: 'prod-beras--ramos--5-kg', productKey: 'beras--ramos--5-kg', name: 'x' },
+        absorbed: [{ id: 'prod-beras--ramos--5kg', productKey: 'beras--ramos--5kg', name: 'y' }],
+        actorUserId: 'admin-1',
+        decidedSource: 'human',
+        decidedAt: '2026-11-22T00:00:00.000Z',
+        decidedBy: 'admin-1',
+      })
+    )
+
+    // The absorbed row survives: the receipt gate failed (no survivor), so
+    // the identity collapse must not happen unrecorded.
+    expect(counts('price_products')).toBe(1)
+    expect(sqlite.prepare(`SELECT product_key FROM price_products`).get()).toEqual({
+      product_key: 'beras--ramos--5kg',
+    })
+    expect(counts('price_product_merge_audit')).toBe(0)
+    expect(indexVersion()).toBe(0)
+  })
 })
 
 // --- composition ------------------------------------------------------------
@@ -711,6 +755,61 @@ describe('product-merge: guards and failure semantics', () => {
         .run(`rec-${i}`, `rev-${i}`, `p-${previous}`, previous, `p-key--${i}`, `key--${i}`)
       previous = `key--${i}`
     }
+    await expect(planProductMerge(d1, 'key--0', 'key--z')).rejects.toThrow(MergeChainTooDeepError)
+  })
+
+  // The follow-up read loop's budget is hop-exact: a chain resolves if and
+  // only if walkChain would walk it (≤ MAX_CHAIN_HOPS hops). Both sides of
+  // the boundary are pinned — an off-by-one in the round budget would
+  // deterministically 500 every decide naming a legal 10-hop key (the current
+  // test above cannot see it: a 12-hop trail trips the same error through a
+  // different path).
+  function seedChain(hops: number): void {
+    let previous = 'key--0'
+    for (let i = 1; i <= hops; i += 1) {
+      sqlite
+        .prepare(
+          `INSERT INTO price_product_merge_audit
+             (id, review_item_id, from_product_id, from_product_key, to_product_id, to_product_key,
+              actor_user_id, decided_source, repointed_observations, dropped_observations,
+              moved_aliases, observation_ids, dropped_observation_ids)
+           VALUES (?, ?, ?, ?, ?, ?, 'u', 'human', 0, 0, 0, '[]', '[]')`
+        )
+        .run(`rec-${i}`, `rev-${i}`, `p-${previous}`, previous, `p-key--${i}`, `key--${i}`)
+      previous = `key--${i}`
+    }
+  }
+
+  it('resolves a chain of exactly MAX_CHAIN_HOPS hops (the loop-budget boundary)', async () => {
+    seedSource()
+    seedChain(10)
+    // The survivor lives at one end of the pair, the absorbed identity's
+    // chain root at the other; only the root has a live row.
+    const survivorId = seedProduct('key--z', { name: 'Z' })
+    const rootId = seedProduct('key--10', { name: 'Chain root' })
+    seedObservation(rootId, { id: 'obs-chain-root', price: 12000 })
+    seedReviewItem('rev-1', pair({ itemProductKey: 'key--z', entryProductKey: 'key--0' }))
+
+    const { registry } = await decideReviewItem(d1, 'rev-1', 'approved', 'admin-1')
+    expect(registry).toEqual({ repointed: 1, dropped: 0, movedAliases: 0 })
+    expect(
+      sqlite.prepare('SELECT id FROM price_observations WHERE product_id = ?').all(survivorId)
+    ).toEqual([{ id: 'obs-chain-root' }])
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS n FROM price_products WHERE id = ?').get(rootId)
+    ).toEqual({ n: 0 })
+    const receipts = receiptRows()
+    expect(receipts).toHaveLength(11)
+    expect(receipts[10]).toMatchObject({
+      review_item_id: 'rev-1',
+      from_product_key: 'key--10',
+      to_product_key: 'key--z',
+    })
+  })
+
+  it('throws at MAX_CHAIN_HOPS + 1 hops (one past the walk contract)', async () => {
+    seedSource()
+    seedChain(11)
     await expect(planProductMerge(d1, 'key--0', 'key--z')).rejects.toThrow(MergeChainTooDeepError)
   })
 

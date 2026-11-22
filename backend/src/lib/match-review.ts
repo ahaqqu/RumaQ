@@ -937,14 +937,48 @@ export async function decideReviewItem(
         : 'disagreed'
       : null
   const decidedAt = new Date().toISOString()
+
+  // The registry merge rides THIS batch (#744), approvals only — a reject
+  // decides and touches no catalog row. The pair keys name the sides; an
+  // unknown id reads no keys and the merge planning is skipped — the verdict
+  // UPDATE below still matches nothing and the route 404s as before.
+  let registry: MergeReceiptCounts | null = null
+  let receiptReadAppended = false
+  let mergePlan: Awaited<ReturnType<typeof planProductMerge>> | null = null
+  if (decision === 'approved') {
+    const keys = await db
+      .prepare('SELECT item_product_key, entry_product_key FROM match_review_items WHERE id = ?')
+      .bind(id)
+      .first<{ item_product_key: string; entry_product_key: string }>()
+    mergePlan = keys
+      ? await planProductMerge(db, keys.item_product_key, keys.entry_product_key)
+      : null
+  }
+
+  // The verdict UPDATE is gated on the survivor's existence WHEN this batch
+  // carries a merge: the plan was read outside the batch, so a concurrent
+  // decide may have absorbed the survivor in between — a decided item is
+  // never re-processed, so the decision must not commit without its merge
+  // (lib/review-ai.ts applyVerdictStatement carries the same gate). With the
+  // gate the verdict lands nothing (the row stays pending, last-wins
+  // semantics intact) and the admin's retry re-plans through the receipt
+  // chain. Without a planned merge the verdict is never gated: a review
+  // verdict must never be blocked by registry state.
   const statements = [
     db
       .prepare(
         `UPDATE match_review_items
          SET status = ?, decided_at = ?, decided_by = ?, decided_source = ?
-         WHERE id = ?`
+         WHERE id = ?${mergePlan?.kind === 'merge' ? ' AND EXISTS (SELECT 1 FROM price_products WHERE id = ?)' : ''}`
       )
-      .bind(decision, decidedAt, userId, decidedSource, id),
+      .bind(
+        decision,
+        decidedAt,
+        userId,
+        decidedSource,
+        id,
+        ...(mergePlan?.kind === 'merge' ? [mergePlan.survivor.id] : [])
+      ),
   ]
   if (verdict) {
     // The agreement describes THIS decision (issue #484), so a plain decision
@@ -956,40 +990,24 @@ export async function decideReviewItem(
         .bind(humanAgreement, id)
     )
   }
-
-  // The registry merge rides THIS batch (#744), approvals only — a reject
-  // decides and touches no catalog row. The pair keys name the sides; an
-  // unknown id reads no keys and the merge planning is skipped — the verdict
-  // UPDATE below still matches nothing and the route 404s as before.
-  let registry: MergeReceiptCounts | null = null
-  let receiptReadAppended = false
-  if (decision === 'approved') {
-    const keys = await db
-      .prepare('SELECT item_product_key, entry_product_key FROM match_review_items WHERE id = ?')
-      .bind(id)
-      .first<{ item_product_key: string; entry_product_key: string }>()
-    const plan = keys
-      ? await planProductMerge(db, keys.item_product_key, keys.entry_product_key)
-      : null
-    if (plan?.kind === 'merge') {
-      const receiptId = crypto.randomUUID()
-      statements.push(
-        ...mergeStatements(db, {
-          reviewItemId: id,
-          receiptId,
-          survivor: plan.survivor,
-          absorbed: plan.absorbed,
-          actorUserId: userId,
-          decidedSource,
-          decidedAt,
-          decidedBy: userId,
-        }),
-        // The response's registry block reads back the receipt this batch
-        // (conditionally) wrote — a no-op merge returns no row.
-        mergeReceiptReadStatement(db, receiptId)
-      )
-      receiptReadAppended = true
-    }
+  if (mergePlan?.kind === 'merge') {
+    const receiptId = crypto.randomUUID()
+    statements.push(
+      ...mergeStatements(db, {
+        reviewItemId: id,
+        receiptId,
+        survivor: mergePlan.survivor,
+        absorbed: mergePlan.absorbed,
+        actorUserId: userId,
+        decidedSource,
+        decidedAt,
+        decidedBy: userId,
+      }),
+      // The response's registry block reads back the receipt this batch
+      // (conditionally) wrote — a no-op merge returns no row.
+      mergeReceiptReadStatement(db, receiptId)
+    )
+    receiptReadAppended = true
   }
 
   const batchResults = await db.batch(statements)

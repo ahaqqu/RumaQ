@@ -1016,10 +1016,19 @@ describe('the auto sweep merges the registry (#744)', () => {
   }
 
   function seedCrossPair(id = 'r1'): void {
+    seedCrossPairAt(id, 'beras--ramos--5-kg', 'beras--ramos--5kg')
+  }
+
+  function seedCrossPairAt(
+    id: string,
+    itemProductKey: string,
+    entryProductKey: string,
+    lastFlaggedAt = '2026-11-18T23:00:05Z'
+  ): void {
     const pairValue: ReviewItemPair = {
       ...PAIR,
-      itemProductKey: 'beras--ramos--5-kg',
-      entryProductKey: 'beras--ramos--5kg',
+      itemProductKey,
+      entryProductKey,
     }
     sqlite
       .prepare(
@@ -1037,8 +1046,8 @@ describe('the auto sweep merges the registry (#744)', () => {
         pairValue.matchMethod,
         pairValue.confidence,
         '2026-11-18T23:00:05Z',
-        '2026-11-18T23:00:05Z',
-        '2026-11-18T23:00:05Z'
+        lastFlaggedAt,
+        lastFlaggedAt
       )
   }
 
@@ -1168,6 +1177,64 @@ describe('the auto sweep merges the registry (#744)', () => {
     expect(itemRow('r1')).toMatchObject({ status: 'approved' })
     expect(mergeReceipts()).toHaveLength(1)
     expect(indexVersion()).toBe(1)
+  })
+
+  it('a shared-side pair in ONE tick never approves without its merge — the stale plan rolls back to pending and the retry succeeds (A1 pin)', async () => {
+    // Products A, B, C; C is observation-less and alias-less — the shape that
+    // made the shared pre-read's stale plan silent: item (A,B) absorbs B, and
+    // item (B,C)'s plan (resolved before any batch) still names B as survivor.
+    // With nothing on C to FK-fail, the old batch committed item (B,C)
+    // approved WITHOUT its merge, and a decided item is never re-processed.
+    // seedCatalog: 'beras--ramos--5-kg' (A, one observation) and
+    // 'beras--ramos--5kg' (B, one observation); C is added below with nothing
+    // on it.
+    seedCatalog()
+    sqlite
+      .prepare(
+        `INSERT INTO price_products (id, product_key, name, status, first_seen_at, last_seen_at, updated_at)
+         VALUES ('prod-c', 'key--c', 'C', 'provisional', 'x', 'x', 'x')`
+      )
+      .run()
+    // r1 = (A, B) sorts first; r2 = (B, C) shares B with r1's absorbed side.
+    seedCrossPairAt('r1', 'beras--ramos--5-kg', 'beras--ramos--5kg', '2026-11-20T01:00:00Z')
+    seedCrossPairAt('r2', 'beras--ramos--5kg', 'key--c', '2026-11-20T00:00:00Z')
+    await setReviewMode(d1, 'auto', ADMIN)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    providerMock(() => answer('{"choice":"same","confidence":0.9,"reason":"Same."}'))
+
+    const outcome = await runReviewAiSweep(env())
+    // Item (A,B) merged; item (B,C)'s decision was survivor-gated off (its
+    // plan named the just-absorbed B) and rolled back to pending.
+    expect(outcome).toMatchObject({ mode: 'auto', evaluated: 2, applied: 1, failed: 0 })
+    expect(itemRow('r1')).toMatchObject({ status: 'approved', decided_by: 'ai' })
+    expect(itemRow('r2')).toMatchObject({ status: 'pending', decided_by: null })
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS n FROM price_products WHERE product_key = ?').get('key--c')
+    ).toEqual({ n: 1 })
+    expect(mergeReceipts()).toHaveLength(1)
+    expect(indexVersion()).toBe(1)
+
+    // The retry — the item kept its cached verdict, so the next tick's
+    // cached-apply re-plans: B's receipt chain resolves to A and C merges
+    // under A. No approval ever stands without its merge.
+    expect(await applyCachedAutoVerdicts(d1, 10, new Date(), ADMIN)).toBe(1)
+    expect(itemRow('r2')).toMatchObject({ status: 'approved', decided_by: 'ai' })
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS n FROM price_products WHERE product_key = ?').get('key--c')
+    ).toEqual({ n: 0 })
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS n FROM price_products WHERE product_key = ?')
+        .get('beras--ramos--5-kg')
+    ).toEqual({ n: 1 })
+    const receipts = mergeReceipts()
+    expect(receipts).toHaveLength(2)
+    expect(receipts[1]).toMatchObject({
+      review_item_id: 'r2',
+      from_product_key: 'key--c',
+      to_product_key: 'beras--ramos--5-kg',
+    })
+    expect(indexVersion()).toBe(2)
   })
 })
 

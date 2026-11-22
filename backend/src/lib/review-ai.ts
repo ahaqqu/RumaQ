@@ -522,24 +522,45 @@ function cacheVerdictStatement(
  * the one that won the cache, so a losing concurrent run applies nothing —
  * the same rule the old post-insert `if (!cached)` check enforced, moved into
  * the batch because the INSERT now rides it (#744 restructure).
+ *
+ * `survivorId` (set only when THIS batch carries a merge, #744) gates the
+ * decision on the survivor's existence: the sweep's plans are resolved in one
+ * shared pre-read, so a sibling item's batch earlier in the same tick may
+ * have already absorbed this item's survivor — without the gate an
+ * observation-less absorbed side would let the decision commit with its
+ * merge no-op'd (the FK never fires, the receipt gate never sees the
+ * survivor) and a decided item is never re-processed. With the gate the
+ * whole item rolls back to pending and the next tick re-plans through the
+ * receipt chain — the same self-healing retry every other lost race here
+ * uses, chosen over mid-tick re-planning because the retry paths already
+ * exist and re-planning would duplicate the registry's resolution state
+ * inside the sweep.
  */
 function applyVerdictStatement(
   db: D1Database,
-  args: { itemId: string; verdict: ReviewVerdictName; now: Date; verdictId?: string }
+  args: {
+    itemId: string
+    verdict: ReviewVerdictName
+    now: Date
+    verdictId?: string
+    survivorId?: string
+  }
 ): Statement {
   return db
     .prepare(
       `UPDATE match_review_items
        SET status = ?, decided_at = ?, decided_by = ?, decided_source = 'ai_auto'
        WHERE id = ? AND status = 'pending'
-         ${args.verdictId ? 'AND EXISTS (SELECT 1 FROM review_ai_verdicts WHERE id = ?)' : ''}`
+         ${args.verdictId ? 'AND EXISTS (SELECT 1 FROM review_ai_verdicts WHERE id = ?)' : ''}
+         ${args.survivorId ? 'AND EXISTS (SELECT 1 FROM price_products WHERE id = ?)' : ''}`
     )
     .bind(
       verdictDecision(args.verdict),
       args.now.toISOString(),
       REVIEW_AI_DECIDED_BY,
       args.itemId,
-      ...(args.verdictId ? [args.verdictId] : [])
+      ...(args.verdictId ? [args.verdictId] : []),
+      ...(args.survivorId ? [args.survivorId] : [])
     )
 }
 
@@ -605,15 +626,20 @@ async function applyDecisions(
     const statements: Statement[] = []
     if (item.cacheStatement) statements.push(item.cacheStatement)
     const decisionIndex = statements.length
+    const plan = plans.get(item.itemId)
     statements.push(
       applyVerdictStatement(db, {
         itemId: item.itemId,
         verdict: item.verdict,
         now,
         verdictId: item.verdictId,
+        // The survivor gate (see applyVerdictStatement): only when THIS batch
+        // carries a merge — a planned merge whose survivor a sibling batch
+        // just absorbed must roll the decision back to pending, never commit
+        // merge-less.
+        survivorId: plan?.kind === 'merge' ? plan.survivor.id : undefined,
       })
     )
-    const plan = plans.get(item.itemId)
     if (verdictDecision(item.verdict) === 'approved' && plan?.kind === 'merge') {
       statements.push(
         ...mergeStatements(db, {
