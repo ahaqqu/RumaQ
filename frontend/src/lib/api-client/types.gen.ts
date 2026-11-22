@@ -1415,7 +1415,7 @@ export type GetApiAdminScrapeStoresResponse = GetApiAdminScrapeStoresResponses[k
 
 export type PostApiAdminScrapeData = {
     body: {
-        stores: Array<'superindo' | 'lotte-mart' | 'astro' | 'hypermart' | 'indomaret' | 'alfamart' | 'tip-top' | 'hari-hari' | 'yogya' | 'lotte-grosir'>;
+        stores: Array<'superindo' | 'lotte-mart' | 'astro' | 'hypermart' | 'indomaret' | 'alfamart' | 'tip-top' | 'hari-hari' | 'yogya' | 'lotte-grosir' | 'lotte-grosir-promosi'>;
     };
     path?: never;
     query?: never;
