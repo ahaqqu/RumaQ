@@ -4189,6 +4189,8 @@ describe('migration 0050: scrape command lease — heartbeat_at + reaped (audit 
     const columns = db.prepare('PRAGMA table_info(scrape_commands)').all() as Array<{
       name: string
     }>
+    // 0056 (#753) appended the re-ingest flags to the lease shape — defaults
+    // 0, so pre-flag rows read as plain scrapes.
     expect(columns.map((c) => c.name)).toEqual([
       'id',
       'stores',
@@ -4201,6 +4203,8 @@ describe('migration 0050: scrape command lease — heartbeat_at + reaped (audit 
       'exit_code',
       'error',
       'log_truncated',
+      'reset_novelty',
+      'wipe_ingest',
     ])
     // The events FK still points at the rebuilt parent and still cascades.
     const fk = db.prepare('PRAGMA foreign_key_list(scrape_run_events)').all() as Array<{

@@ -1,6 +1,7 @@
 import {
   array,
   boolean,
+  check,
   gtValue,
   integer,
   literal,
@@ -10,6 +11,7 @@ import {
   minValue,
   number,
   nullish,
+  optional,
   picklist,
   pipe,
   record,
@@ -1088,9 +1090,47 @@ export const SCRAPE_STORE_SLUGS = [
   'lotte-grosir-promosi',
 ] as const
 
-export const scrapeCommandCreateSchema = strictObject({
-  stores: pipe(array(picklist(SCRAPE_STORE_SLUGS)), minLength(1)),
-})
+// Issue #753 (fill-phase toolkit): the two optional re-ingest flags. The owner
+// fills rumaq-v2 one brochure at a time — push → review → fix → re-push — and
+// the scraper's novelty gate blocks every re-push of a seen page, so a
+// re-ingest command must be able to say "reset the gate" (the pipeline purges
+// /var/lib/rumaq-scraper/<slug>/state.json + images/ pre-run) and "wipe this
+// store's ingest rows first" (the Worker deletes the store's observations and
+// their now-orphaned products BEFORE the command row is created, audited —
+// lib/ingest-wipe.ts is the only bulk DELETE surface in the product).
+//
+// Both flags are OPTIONAL and default-absent: an old payload parses exactly as
+// before (byte-identical semantics), and an old Worker seeing a new payload
+// fails loudly on the unknown key (strictObject) — the additive Worker-first
+// rollout this contract has always used. The pipeline consumes the flags on
+// the CLAIM (agent-side re-validation is slugs-only there), so this schema
+// only governs the create path both sides share.
+//
+// wipeIngest is single-store BY CONTRACT, not by convention: the wipe is the
+// first bulk DELETE surface, so the blast radius is one explicit slug — the
+// admin UI asks the operator to type that slug to confirm, and a multi-store
+// wipe request is a validation error, not a half-guarded footgun. Wildcards
+// are structurally impossible (picklist). resetNovelty is store-count
+// agnostic: purging novelty state is non-destructive and the plan's per-store
+// reset happens per-push.
+export const scrapeCommandCreateSchema = pipe(
+  strictObject({
+    stores: pipe(array(picklist(SCRAPE_STORE_SLUGS)), minLength(1)),
+    // Re-ingest flag: the agent purges the store's novelty state before the
+    // run, so already-seen pages are re-scraped (and re-OCR'd — spend is the
+    // known cost of the fill loop). Absent/false = the old gate stands.
+    resetNovelty: optional(boolean()),
+    // Destructive flag: the Worker wipes the named store's ingest rows
+    // (observations + orphaned products + nulled plan-item references, one
+    // transaction, receipt in ingest_wipe_audit) before queuing the command.
+    // Single store only — the check below makes that a schema-level rule.
+    wipeIngest: optional(boolean()),
+  }),
+  check(
+    (input) => !(input.wipeIngest === true && input.stores.length > 1),
+    'wipeIngest applies to a single store.'
+  )
+)
 
 export const scrapeEventSchema = strictObject({
   // Agent-assigned, monotonic per command — the (command_id, seq) upsert key.

@@ -100,7 +100,12 @@ in `assist`/`manual` — but in `auto` the server applies cached verdicts
 - The AI's input is only as good as the unit data: RumaQ-pipeline#119
   (present-but-unparsed sizes) is the main known gap; pipeline #117/#120/#122
   reduce bad pairs.
-- The script token is scoped to exactly the two review endpoints
-  (`queue-report` GET, `evaluate` POST) and acts as the deployment's admin
-  user — everything stays auditable through `decided_source`/`decided_by`.
-  Rotate with `REVIEW_SCRIPT_TOKEN_NEXT`, same rule as the ingest secret.
+- The script token is scoped to the two review endpoints (`queue-report` GET,
+  `evaluate` POST) and — since the fill-phase toolkit (#753) — the Scrape Now
+  surfaces the fill loop drives: create (POST `/api/admin/scrape`, the
+  resetNovelty/wipeIngest re-ingest flags included), the command list and the
+  per-command event log. The stores list stays session-only. The token acts as
+  the deployment's admin user, so every write it makes is attributable
+  (`decided_source`/`decided_by` on review, `ingest_wipe_audit.actor_user_id`
+  on a wipe). Rotate with `REVIEW_SCRIPT_TOKEN_NEXT`, same rule as the ingest
+  secret.

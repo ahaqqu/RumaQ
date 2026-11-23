@@ -919,8 +919,10 @@ async function findSimilarNames(
  * `auditTable` is a closed union, never caller text — rename/revert gate on
  * `price_product_audit`, an alias approval on `price_product_alias_audit`
  * (#489), the category override/revert on `price_product_category_audit`
- * (#728), and the review-approval merge on `price_product_merge_audit` (#744,
- * lib/product-merge.ts). The alias endpoint imports this helper instead of
+ * (#728), the review-approval merge on `price_product_merge_audit` (#744,
+ * lib/product-merge.ts), and the ingest wipe on `ingest_wipe_audit` (#753,
+ * lib/ingest-wipe.ts — deleted products and their cascaded aliases leave the
+ * cached index stale). The alias endpoint imports this helper instead of
  * inlining the SQL: an approved alias that lands without the pipeline seeing
  * the bumped version is invisible until some later canonical write happens to
  * bump it.
@@ -933,6 +935,7 @@ export function indexBumpStatement(
     | 'price_product_alias_audit'
     | 'price_product_category_audit'
     | 'price_product_merge_audit'
+    | 'ingest_wipe_audit'
 ): D1PreparedStatement {
   return db
     .prepare(

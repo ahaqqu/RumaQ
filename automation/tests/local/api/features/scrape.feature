@@ -56,3 +56,22 @@ Feature: Scrape Now command queue
     And a scrape command ran through the full agent lifecycle
     When the agent repeats the finish with a conflicting outcome
     Then the feed should still show the original successful outcome
+
+  Scenario: The re-ingest flags ride the command end to end (#753)
+    Given I am authenticated as an admin
+    When I queue a flagged scrape of the superindo store with resetNovelty and wipeIngest
+    Then the response status should be 201
+    And the response should carry the wipe receipt of an empty store
+    When the agent claims the next scrape command
+    Then the claimed command should carry the re-ingest flags
+
+  Scenario: A multi-store wipe is rejected at the schema (#753)
+    Given I am authenticated as an admin
+    When I queue a wipe scrape of the superindo and astro stores
+    Then the response status should be 400
+    And the command feed should still be empty
+
+  Scenario: The review script token can drive the flagged scrape (#753)
+    Given the API is running with the seeded admin
+    When I queue a flagged scrape with the review script token
+    Then the response status should be 201

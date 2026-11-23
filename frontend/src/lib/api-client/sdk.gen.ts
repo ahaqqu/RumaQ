@@ -275,7 +275,7 @@ export const getApiAdminPriceRuns = <ThrowOnError extends boolean = false>(optio
 export const getApiAdminScrapeStores = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminScrapeStoresData, ThrowOnError>): RequestResult<GetApiAdminScrapeStoresResponses, GetApiAdminScrapeStoresErrors, ThrowOnError> => (options?.client ?? client).get<GetApiAdminScrapeStoresResponses, GetApiAdminScrapeStoresErrors, ThrowOnError>({ url: '/api/admin/scrape/stores', ...options });
 
 /**
- * Queue an on-demand scrape of the given stores (admin-only). Stale commands are reaped first; 409 only when a fresh scrape is still pending or running — one run at a time.
+ * Queue an on-demand scrape of the given stores (admin session or #656 script token + admin). Stale commands are reaped first; 409 only when a fresh scrape is still pending or running — one run at a time. The #753 re-ingest flags: resetNovelty asks the agent to purge the store scraper novelty state pre-run; wipeIngest deletes the single named store’s ingest rows (observations + orphaned products, one transaction, receipt in ingest_wipe_audit) BEFORE the command row is created — single store only.
  */
 export const postApiAdminScrape = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminScrapeData, ThrowOnError>): RequestResult<PostApiAdminScrapeResponses, PostApiAdminScrapeErrors, ThrowOnError> => (options.client ?? client).post<PostApiAdminScrapeResponses, PostApiAdminScrapeErrors, ThrowOnError>({
     url: '/api/admin/scrape',

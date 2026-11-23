@@ -75,7 +75,11 @@ export function useTriggerScrape() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (stores) => createScrape(stores),
+    // The payload is the whole create body ({ stores, resetNovelty?,
+    // wipeIngest? }) so the panel's flags round-trip into the command (#753);
+    // the mutation resolves to the created command ({ id, wipe? }) — the id
+    // the panel shows right after queueing.
+    mutationFn: (payload) => createScrape(payload.stores, payload),
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['scrape', 'commands'] })
     },

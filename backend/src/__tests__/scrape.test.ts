@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vite-plus/test'
+import { safeParse } from 'valibot'
 import { apiApp } from '../apps/api.js'
+import { scrapeCommandCreateSchema } from '@rumaq/contract'
 import {
   appendScrapeEvents,
   claimNextScrapeCommand,
@@ -355,6 +357,44 @@ function postScrape(
     env
   )
 }
+
+// The #753 re-ingest flags (contract): additive-optional, so an absent flag
+// parses EXACTLY as before (byte-identical semantics) and the destructive
+// wipe is single-store at the SCHEMA level — a multi-store wipe request never
+// reaches the route, whatever future caller forgets the rule.
+describe('scrapeCommandCreateSchema flags (#753 contract)', () => {
+  const parse = (body: unknown) => safeParse(scrapeCommandCreateSchema, body)
+
+  it('absent flags: the old payload parses and the flags stay undefined', () => {
+    const result = parse({ stores: ['superindo', 'astro'] })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.output.resetNovelty).toBeUndefined()
+      expect(result.output.wipeIngest).toBeUndefined()
+    }
+  })
+
+  it('present flags validate as booleans, false included', () => {
+    expect(parse({ stores: ['superindo'], resetNovelty: true, wipeIngest: false }).success).toBe(
+      true
+    )
+    expect(parse({ stores: ['superindo'], resetNovelty: false, wipeIngest: true }).success).toBe(
+      true
+    )
+  })
+
+  it('rejects a non-boolean flag and an unknown key (strictObject unchanged)', () => {
+    expect(parse({ stores: ['superindo'], resetNovelty: 'yes' }).success).toBe(false)
+    expect(parse({ stores: ['superindo'], wipeIngest: 1 }).success).toBe(false)
+    expect(parse({ stores: ['superindo'], surprise: true }).success).toBe(false)
+  })
+
+  it('rejects the multi-store wipe; resetNovelty is store-count agnostic', () => {
+    expect(parse({ stores: ['superindo', 'astro'], wipeIngest: true }).success).toBe(false)
+    expect(parse({ stores: ['superindo'], wipeIngest: true }).success).toBe(true)
+    expect(parse({ stores: ['superindo', 'astro'], resetNovelty: true }).success).toBe(true)
+  })
+})
 
 describe('POST /api/admin/scrape (admin command queue)', () => {
   it('requires authentication', async () => {
