@@ -20,15 +20,47 @@
 // backend/src/__tests__/worker-global-scope.test.ts cannot see (indirect calls,
 // dependency code).
 
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Miniflare } from 'miniflare'
 
 const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 // Vite build output (Workers Build Output Specification): the plugin writes the
-// bundled worker to workers/default/bundle under the versioned output root.
-const OUTPUT_DIR = resolve(ROOT_DIR, 'backend/.cloudflare/output/v0/workers/default')
+// bundled worker to workers/default/bundle under a VERSIONED output root — v0
+// under the 2.0.0-beta plugin, v1 since 2.0.0-rc.2 — and each build prunes the
+// versions it no longer writes. Resolve the newest version that actually holds
+// a completed build instead of hardcoding one: a plugin bump must not red-line
+// this gate with a stale path, while a genuinely missing build still fails loud
+// right after this block, with the same run-`vp build backend` instruction.
+const OUTPUT_ROOT = resolve(ROOT_DIR, 'backend/.cloudflare/output')
+
+function resolveOutputDir() {
+  let versions
+  try {
+    versions = readdirSync(OUTPUT_ROOT, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^v\d+$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
+      .reverse()
+  } catch {
+    return undefined
+  }
+  // Newest first; worker.config.json is the marker of a COMPLETED build — a
+  // half-written version directory (config not yet emitted) is skipped, never
+  // booted.
+  for (const version of versions) {
+    const workerDir = resolve(OUTPUT_ROOT, version, 'workers', 'default')
+    if (existsSync(resolve(workerDir, 'worker.config.json'))) return workerDir
+  }
+  return undefined
+}
+
+const OUTPUT_DIR = resolveOutputDir()
+if (OUTPUT_DIR === undefined) {
+  console.error(`  ✗  no Worker build output under ${OUTPUT_ROOT} — run \`vp build backend\` first`)
+  process.exit(1)
+}
 const BUNDLE_DIR = resolve(OUTPUT_DIR, 'bundle')
 
 function collectJsModules(dir) {
