@@ -4406,7 +4406,7 @@ apiApp.post(
   '/api/admin/scrape',
   describeRoute({
     description:
-      'Queue an on-demand scrape of the given stores (admin session or #656 script token + admin). Stale commands are reaped first; 409 only when a fresh scrape is still pending or running — one run at a time. The #753 re-ingest flags: resetNovelty asks the agent to purge the store scraper novelty state pre-run; wipeIngest deletes the single named store\u2019s ingest rows (observations + orphaned products, one transaction, receipt in ingest_wipe_audit) BEFORE the command row is created — single store only.',
+      'Queue an on-demand scrape of the given stores (admin session or #656 script token + admin). Stale commands are reaped first; 409 only when a fresh scrape is still pending or running — one run at a time. The #753 re-ingest flags: resetNovelty asks the agent to purge the store scraper novelty state pre-run; wipeIngest deletes the single named store\u2019s ingest rows (observations + orphaned products, one transaction, receipt in ingest_wipe_audit) BEFORE the command row is created — single store only. On the wipe path the pre-wipe conflict check does not reap stale commands (unlike the plain create), so a stale pending/running command also 409s — conservative; recovery is one plain Scrape Now.',
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,

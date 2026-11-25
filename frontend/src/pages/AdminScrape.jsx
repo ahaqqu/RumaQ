@@ -114,16 +114,18 @@ function TriggerPanel({ activeCommand }) {
   const wipeConfirmed = Boolean(wipeIngest && wipeStore && wipeConfirm === wipeStore)
 
   const toggleStore = (slug, checked) => {
-    setSelected((prev) => {
-      const next = checked ? [...prev, slug] : prev.filter((entry) => entry !== slug)
-      // Leaving single-store selection disarms the wipe (its confirm target is
-      // gone); the confirm text never outlives its store.
-      if (next.length !== 1) {
-        setWipeIngest(false)
-        setWipeConfirm('')
-      }
-      return next
-    })
+    // Computed in the handler, not inside a setSelected updater: updaters must
+    // stay pure (StrictMode double-invokes them), so the disarm below lives
+    // here. A checkbox click is a discrete event — the current selection is
+    // already the freshest state the handler can see.
+    const next = checked ? [...selected, slug] : selected.filter((entry) => entry !== slug)
+    setSelected(next)
+    // Leaving single-store selection disarms the wipe (its confirm target is
+    // gone); the confirm text never outlives its store.
+    if (next.length !== 1) {
+      setWipeIngest(false)
+      setWipeConfirm('')
+    }
   }
 
   const toggleWipe = (checked) => {

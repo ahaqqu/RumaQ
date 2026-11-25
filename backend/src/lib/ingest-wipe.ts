@@ -32,10 +32,14 @@ import { indexBumpStatement } from './canonical-products.js'
 //      EXISTS re-check inside the statement. The re-check is the race guard —
 //      a concurrent ingest that added a non-store observation between the
 //      capture and this batch makes the product survive. Approved/candidate
-//      aliases cascade with their product (0030's ON DELETE CASCADE);
-//      match_review_items and its verdicts are NOT touched (plain-text keys,
-//      no FK — the 0054 receipt convention keeps review history readable even
-//      when the pair's rows are gone).
+//      aliases cascade with their product (0030's ON DELETE CASCADE), so
+//      alias approval does not survive a wipe — by schema design: the
+//      matcher re-proposes the spelling after re-ingest and a human
+//      re-approves (the 0039 decision receipts themselves are plain-text,
+//      no FK — they survive like 0037/0052/0054, recording that a decision
+//      happened but not restoring it). match_review_items and its verdicts
+//      are NOT touched (plain-text keys, no FK — the 0054 receipt convention
+//      keeps review history readable even when the pair's rows are gone).
 //   4. ingest_wipe_audit — the receipt (0055), SAME transaction: a wipe that
 //      half-ran must never be invisible.
 //   5. canonical_index_state — the family's receipt-gated bump: deleted
@@ -119,9 +123,12 @@ export async function wipeStoreIngest(
   // 3 — the newly-orphaned products, chunked under the bind limit. The NOT
   // EXISTS re-check means a captured id that gained a non-store observation
   // since the capture survives, and a product of ANOTHER store is never in
-  // the list in the first place.
-  for (let i = 0; i < productIds.length; i += ID_CHUNK_SIZE) {
-    const chunk = productIds.slice(i, i + ID_CHUNK_SIZE)
+  // the list in the first place. chunkCount is computed ONCE and drives both
+  // this loop and the result slice after the batch, so the slice tracks the
+  // statement array by the same constant the array was built with.
+  const chunkCount = Math.ceil(productIds.length / ID_CHUNK_SIZE)
+  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++) {
+    const chunk = productIds.slice(chunkIndex * ID_CHUNK_SIZE, (chunkIndex + 1) * ID_CHUNK_SIZE)
     const placeholders = chunk.map(() => '?').join(', ')
     statements.push(
       db
@@ -152,8 +159,9 @@ export async function wipeStoreIngest(
   statements.push(indexBumpStatement(db, receiptId, 'ingest_wipe_audit'))
 
   const results = await db.batch(statements)
-  // Statement offsets: 0 plan_items, 1 observations, then the product chunks.
-  const chunkResults = results.slice(2, 2 + Math.ceil(productIds.length / ID_CHUNK_SIZE))
+  // Statement offsets: 0 plan_items, 1 observations, then the product chunks
+  // (chunkCount of them — the same constant the build loop above ran on).
+  const chunkResults = results.slice(2, 2 + chunkCount)
   const productsDeleted = chunkResults.reduce((sum, result) => sum + changesOf(result), 0)
   const observationsDeleted = changesOf(results[1])
 

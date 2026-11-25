@@ -114,8 +114,10 @@ describe('AdminScrape', () => {
     expect(button.disabled).toBe(false)
 
     fireEvent.click(button)
-    // The payload is the whole create body — a plain scrape carries both flags
-    // false and the wire payload omits them (undefined), byte-identical.
+    // The payload is the whole create body — the panel always sends both flags
+    // as explicit false (harmless — UI and Worker ship in lockstep); the
+    // query/api layer omits undefined, so contract-parse byte-identity still
+    // holds for the agent/script paths.
     expect(mutate).toHaveBeenCalledWith(
       { stores: ['superindo'], resetNovelty: false, wipeIngest: false },
       expect.anything()
