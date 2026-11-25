@@ -35,6 +35,25 @@ async function queueScrape(ctx, stores, { session = true } = {}) {
   }
 }
 
+// The full-body variant (#753): the re-ingest flags ride the same create
+// endpoint; `bearer` swaps the session for the review-script token (the fill
+// loop's drive path).
+async function queueScrapeBody(ctx, body, { session = true, bearer } = {}) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (session) Object.assign(headers, authHeaders(ctx))
+  if (bearer) headers.Authorization = `Bearer ${bearer}`
+  ctx.response = await fetch(`${ctx.baseUrl}/api/admin/scrape`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  })
+  try {
+    ctx.responseBody = await ctx.response.json()
+  } catch {
+    ctx.responseBody = null
+  }
+}
+
 async function claimNext(ctx, bearer = INGEST_SECRET) {
   ctx.response = await fetch(`${ctx.baseUrl}/api/internal/scrape/next`, {
     headers: { Authorization: `Bearer ${bearer}` },
@@ -307,6 +326,103 @@ defineFeature(feature, (test) => {
       ctx.expectStatus(200)
       expect(ctx.responseBody.commands[0]).toMatchObject({ status: 'success', exitCode: 0 })
       expect(ctx.responseBody.commands[0].error).toBeNull()
+    })
+  })
+
+  // #753 (fill-phase toolkit): the re-ingest flags end to end. The seed has no
+  // price_sources rows, so a wipe of any store is the EMPTY-store no-op — the
+  // automation proves the route shape (receipt in the 201, flags on the claim),
+  // while the unit suite (ingest-wipe.test.ts) proves the deletes against a
+  // real-SQLite multi-store fixture.
+  test('The re-ingest flags ride the command end to end (#753)', ({ given, when, then, and }) => {
+    given('I am authenticated as an admin', async () => {
+      await ctx.resetAndSeed()
+      await ctx.authenticate()
+    })
+
+    when(
+      'I queue a flagged scrape of the superindo store with resetNovelty and wipeIngest',
+      async () => {
+        await queueScrapeBody(ctx, {
+          stores: ['superindo'],
+          resetNovelty: true,
+          wipeIngest: true,
+        })
+        ctx.commandId = ctx.responseBody.id
+      }
+    )
+
+    then('the response status should be 201', () => {
+      ctx.expectStatus(201)
+      expect(ctx.commandId).toBeDefined()
+    })
+
+    and('the response should carry the wipe receipt of an empty store', () => {
+      expect(ctx.responseBody.wipe).toMatchObject({
+        storeSlug: 'superindo',
+        observationsDeleted: 0,
+        productsDeleted: 0,
+      })
+      expect(ctx.responseBody.wipe.receiptId).toBeDefined()
+    })
+
+    when('the agent claims the next scrape command', async () => {
+      await claimNext(ctx)
+      ctx.claimed = ctx.responseBody.command
+      expect(ctx.claimed).not.toBeNull()
+    })
+
+    then('the claimed command should carry the re-ingest flags', () => {
+      expect(ctx.claimed).toMatchObject({
+        id: ctx.commandId,
+        stores: ['superindo'],
+        resetNovelty: true,
+        wipeIngest: true,
+      })
+    })
+  })
+
+  test('A multi-store wipe is rejected at the schema (#753)', ({ given, when, then, and }) => {
+    given('I am authenticated as an admin', async () => {
+      await ctx.resetAndSeed()
+      await ctx.authenticate()
+    })
+
+    when('I queue a wipe scrape of the superindo and astro stores', async () => {
+      await queueScrapeBody(ctx, {
+        stores: ['superindo', 'astro'],
+        wipeIngest: true,
+      })
+    })
+
+    then('the response status should be 400', () => {
+      ctx.expectStatus(400)
+    })
+
+    and('the command feed should still be empty', async () => {
+      await ctx.sendRequest('GET', '/api/admin/scrape/commands')
+      ctx.expectStatus(200)
+      expect(ctx.responseBody.commands).toHaveLength(0)
+    })
+  })
+
+  test('The review script token can drive the flagged scrape (#753)', ({ given, when, then }) => {
+    given('the API is running with the seeded admin', async () => {
+      // The token path needs the seeded admin + household to act as.
+      await ctx.resetAndSeed()
+    })
+
+    when('I queue a flagged scrape with the review script token', async () => {
+      await queueScrapeBody(
+        ctx,
+        { stores: ['superindo'], resetNovelty: true, wipeIngest: true },
+        { session: false, bearer: 'test-review-script-token' }
+      )
+    })
+
+    then('the response status should be 201', () => {
+      ctx.expectStatus(201)
+      expect(ctx.responseBody.id).toBeDefined()
     })
   })
 })

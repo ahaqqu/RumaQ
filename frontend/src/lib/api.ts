@@ -718,8 +718,14 @@ export function getScrapeStores(signal?: AbortSignal): Promise<unknown> {
   return unwrap(getApiAdminScrapeStores({ signal }))
 }
 
-export function createScrape(stores: ScrapeStoreSlug[]): Promise<unknown> {
-  return unwrap(postApiAdminScrape({ body: { stores } }))
+// The re-ingest flags (#753) ride the codegen'd body type; undefined omits
+// them from the wire entirely, so a plain create posts exactly the old
+// payload (byte-identical).
+export function createScrape(
+  stores: ScrapeStoreSlug[],
+  { resetNovelty, wipeIngest }: { resetNovelty?: boolean; wipeIngest?: boolean } = {}
+): Promise<unknown> {
+  return unwrap(postApiAdminScrape({ body: { stores, resetNovelty, wipeIngest } }))
 }
 
 export function getScrapeCommands(

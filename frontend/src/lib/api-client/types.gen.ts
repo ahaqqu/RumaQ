@@ -1416,6 +1416,14 @@ export type GetApiAdminScrapeStoresResponse = GetApiAdminScrapeStoresResponses[k
 export type PostApiAdminScrapeData = {
     body: {
         stores: Array<'superindo' | 'lotte-mart' | 'astro' | 'hypermart' | 'indomaret' | 'alfamart' | 'tip-top' | 'hari-hari' | 'yogya' | 'lotte-grosir' | 'lotte-grosir-promosi'>;
+        /**
+         * Agent purges the store novelty state before the run so seen pages re-scrape.
+         */
+        resetNovelty?: boolean;
+        /**
+         * Wipe this one store’s ingest rows before queuing the command. Rejected with 400 when stores carries more than one slug.
+         */
+        wipeIngest?: boolean;
     };
     path?: never;
     query?: never;
@@ -1424,7 +1432,7 @@ export type PostApiAdminScrapeData = {
 
 export type PostApiAdminScrapeErrors = {
     /**
-     * Validation error (unknown store slug)
+     * Validation error (unknown store slug; wipeIngest with more than one store)
      */
     400: unknown;
     /**
@@ -1436,7 +1444,7 @@ export type PostApiAdminScrapeErrors = {
      */
     403: unknown;
     /**
-     * A fresh scrape is already pending or running; activeCommand identifies the live command.
+     * A fresh scrape is already pending or running; activeCommand identifies the live command. With wipeIngest, the conflict is raised BEFORE any wipe runs.
      */
     409: {
         error?: string;
@@ -1457,6 +1465,15 @@ export type PostApiAdminScrapeResponses = {
      */
     201: {
         id?: string;
+        /**
+         * Present only when wipeIngest ran.
+         */
+        wipe?: {
+            receiptId?: string;
+            storeSlug?: string;
+            observationsDeleted?: number;
+            productsDeleted?: number;
+        };
     };
 };
 
@@ -1498,6 +1515,8 @@ export type GetApiAdminScrapeCommandsResponses = {
             exitCode?: number;
             error?: string;
             logTruncated?: boolean;
+            resetNovelty?: boolean;
+            wipeIngest?: boolean;
         }>;
     };
 };

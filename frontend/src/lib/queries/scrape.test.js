@@ -141,12 +141,37 @@ describe('useTriggerScrape', () => {
       wrapper: createWrapper(queryClient),
     })
 
+    // The payload is the create body; a plain scrape carries no flags — they
+    // stay undefined so the wire payload is the old shape, byte for byte.
     await act(async () => {
-      result.current.mutate(['superindo', 'astro'])
+      result.current.mutate({ stores: ['superindo', 'astro'] })
     })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(createScrape).toHaveBeenCalledWith(['superindo', 'astro'])
+    // The flags are absent from the payload (not merely false) — api.ts omits
+    // them from the wire, so a plain create posts the old body verbatim.
+    expect(createScrape).toHaveBeenCalledWith(['superindo', 'astro'], {
+      stores: ['superindo', 'astro'],
+    })
     expect(queryClient.getQueryState(COMMANDS_KEY).isInvalidated).toBe(true)
+  })
+
+  it('forwards the #753 flags into the create call', async () => {
+    createScrape.mockResolvedValue({ id: 'cmd-3' })
+
+    const { result } = renderHook(() => useTriggerScrape(), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await act(async () => {
+      result.current.mutate({ stores: ['superindo'], resetNovelty: true, wipeIngest: true })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(createScrape).toHaveBeenCalledWith(['superindo'], {
+      stores: ['superindo'],
+      resetNovelty: true,
+      wipeIngest: true,
+    })
   })
 })

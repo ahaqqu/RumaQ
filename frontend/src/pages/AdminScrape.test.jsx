@@ -114,7 +114,113 @@ describe('AdminScrape', () => {
     expect(button.disabled).toBe(false)
 
     fireEvent.click(button)
-    expect(mutate).toHaveBeenCalledWith(['superindo'], expect.anything())
+    // The payload is the whole create body — the panel always sends both flags
+    // as explicit false (harmless — UI and Worker ship in lockstep); the
+    // query/api layer omits undefined, so contract-parse byte-identity still
+    // holds for the agent/script paths.
+    expect(mutate).toHaveBeenCalledWith(
+      { stores: ['superindo'], resetNovelty: false, wipeIngest: false },
+      expect.anything()
+    )
+  })
+
+  it('renders the #753 re-ingest flag checkboxes', () => {
+    const { container } = renderAdmin()
+    expect(container.querySelector('[data-testid="scrape-reset-novelty"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="scrape-wipe-ingest"]')).toBeTruthy()
+    expect(container.textContent).toContain('scrape.resetNovelty')
+    expect(container.textContent).toContain('scrape.wipeIngest')
+    // The wipe hint names the single-store rule while the selection is empty.
+    expect(container.textContent).toContain('scrape.wipeSingleStore')
+  })
+
+  it('queues a plain create without flags riding the payload as false', () => {
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('input[type="checkbox"]'))
+    fireEvent.click(findButton(container, 'scrape.scrapeNow'))
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ resetNovelty: false, wipeIngest: false }),
+      expect.anything()
+    )
+  })
+
+  it('carries resetNovelty into the payload when the checkbox is armed', () => {
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('input[type="checkbox"]'))
+    fireEvent.click(container.querySelector('[data-testid="scrape-reset-novelty"]'))
+    fireEvent.click(findButton(container, 'scrape.scrapeNow'))
+    expect(mutate).toHaveBeenCalledWith(
+      { stores: ['superindo'], resetNovelty: true, wipeIngest: false },
+      expect.anything()
+    )
+  })
+
+  it('wipe requires a typed-slug confirm and blocks the queue until it matches', () => {
+    const { container } = renderAdmin()
+    fireEvent.click(container.querySelector('input[type="checkbox"]'))
+    fireEvent.click(container.querySelector('[data-testid="scrape-wipe-ingest"]'))
+    // The confirm gate appears and names the store to type.
+    expect(container.textContent).toContain('scrape.wipeConfirmLabel')
+    const confirm = container.querySelector('[data-testid="scrape-wipe-confirm"]')
+    expect(confirm).toBeTruthy()
+
+    const button = findButton(container, 'scrape.scrapeNow')
+    // Wipe armed but not confirmed: the queue stays locked.
+    expect(button.disabled).toBe(true)
+
+    fireEvent.change(confirm, { target: { value: 'wrong-slug' } })
+    expect(button.disabled).toBe(true)
+
+    fireEvent.change(confirm, { target: { value: 'superindo' } })
+    expect(button.disabled).toBe(false)
+
+    fireEvent.click(button)
+    expect(mutate).toHaveBeenCalledWith(
+      { stores: ['superindo'], resetNovelty: false, wipeIngest: true },
+      expect.anything()
+    )
+  })
+
+  it('disarms the wipe when the selection stops being a single store', () => {
+    const { container } = renderAdmin()
+    const [superindo, lotte] = container.querySelectorAll('input[type="checkbox"]')
+    fireEvent.click(superindo)
+    fireEvent.click(container.querySelector('[data-testid="scrape-wipe-ingest"]'))
+    expect(container.querySelector('[data-testid="scrape-wipe-confirm"]')).toBeTruthy()
+
+    // A second store joins: single-store rule kicks in — the wipe disarms and
+    // the confirm input disappears even if its text was already correct.
+    fireEvent.click(lotte)
+    expect(container.querySelector('[data-testid="scrape-wipe-confirm"]')).toBeNull()
+    expect(findButton(container, 'scrape.scrapeNow').disabled).toBe(false)
+    fireEvent.click(findButton(container, 'scrape.scrapeNow'))
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ wipeIngest: false }),
+      expect.anything()
+    )
+  })
+
+  it('shows the created command id and the wipe counts after a successful queue', () => {
+    const { container } = renderAdmin()
+    mutate.mockImplementation((_payload, opts) => {
+      opts?.onSuccess?.({
+        id: 'cmd-created-9',
+        wipe: {
+          receiptId: 'r1',
+          storeSlug: 'superindo',
+          observationsDeleted: 12,
+          productsDeleted: 3,
+        },
+      })
+    })
+    fireEvent.click(container.querySelector('input[type="checkbox"]'))
+    fireEvent.click(findButton(container, 'scrape.scrapeNow'))
+    const queued = container.querySelector('[data-testid="scrape-queued-command"]')
+    expect(queued).toBeTruthy()
+    // The suite's i18n mock returns raw keys (no interpolation), so the echo
+    // is pinned by its keys: the created-command line and the wipe counts.
+    expect(queued.textContent).toContain('scrape.queuedCommand')
+    expect(queued.textContent).toContain('scrape.queuedWipe')
   })
 
   it('blocks the trigger and shows the active-run card while a command runs', () => {
@@ -246,6 +352,22 @@ describe('AdminScrape', () => {
     const { container } = renderAdmin()
     expect(container.textContent).toContain('scrape.noCommands')
     expect(container.textContent).toContain('scrape.noCommandsDesc')
+  })
+
+  it('shows the command id and the #753 flags in the expanded detail', () => {
+    vi.mocked(useScrapeCommands).mockReturnValue({
+      data: { commands: [mockCommand({ resetNovelty: true, wipeIngest: true })] },
+      isLoading: false,
+      isError: false,
+    })
+    const { container } = renderAdmin()
+    // Collapsed: the flags are not rendered.
+    expect(container.textContent).not.toContain('scrape.flagWipeIngest')
+    fireEvent.click(container.querySelector('button[aria-expanded]'))
+    expect(container.textContent).toContain('scrape.commandId')
+    expect(container.textContent).toContain('cmd-1')
+    expect(container.textContent).toContain('scrape.flagResetNovelty')
+    expect(container.textContent).toContain('scrape.flagWipeIngest')
   })
 
   it('renders a dedicated error state when the command history fails to load', () => {

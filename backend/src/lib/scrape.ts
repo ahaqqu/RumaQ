@@ -92,6 +92,11 @@ export type ScrapeCommandRow = {
   exitCode: number | null
   error: string | null
   logTruncated: boolean
+  // The re-ingest flags (#753): what this command asked for, surfaced so the
+  // admin history and the agent both see the destructive pair. 0/absent — the
+  // pre-#753 rows and plain scrapes — reads as false, the old shape.
+  resetNovelty: boolean
+  wipeIngest: boolean
 }
 
 type ScrapeCommandSqlRow = {
@@ -105,6 +110,8 @@ type ScrapeCommandSqlRow = {
   exit_code: number | null
   error: string | null
   log_truncated: number
+  reset_novelty: number
+  wipe_ingest: number
 }
 
 /** The one JSON-parse guard for the stored stores blob (feed rows + claims). */
@@ -135,6 +142,8 @@ function toCommand(row: ScrapeCommandSqlRow): ScrapeCommandRow {
     exitCode: row.exit_code,
     error: row.error,
     logTruncated: row.log_truncated === 1,
+    resetNovelty: row.reset_novelty === 1,
+    wipeIngest: row.wipe_ingest === 1,
   }
 }
 
@@ -154,8 +163,9 @@ function toActiveCommand(row: ActiveScrapeCommandSqlRow): ActiveScrapeCommand {
   }
 }
 
-/** D1 reports per-statement `meta.changes`; a batch SELECT reports 0. */
-function changesOf(result: unknown): number {
+/** D1 reports per-statement `meta.changes`; a batch SELECT reports 0.
+ * Exported for the ingest wipe (#753), whose receipt counts read the same. */
+export function changesOf(result: unknown): number {
   const meta = (result as { meta?: { changes?: number } } | undefined)?.meta
   return meta?.changes ?? 0
 }
@@ -198,7 +208,19 @@ function staleReapStatements(db: D1Database, now: string): D1PreparedStatement[]
 
 export async function createScrapeCommand(
   db: D1Database,
-  { stores, createdBy }: { stores: string[]; createdBy: string }
+  {
+    stores,
+    createdBy,
+    resetNovelty = false,
+    wipeIngest = false,
+  }: {
+    stores: string[]
+    createdBy: string
+    // The re-ingest flags (#753): defaults keep a plain create's row exactly
+    // as before (the 0056 columns are NOT NULL DEFAULT 0).
+    resetNovelty?: boolean
+    wipeIngest?: boolean
+  }
 ): Promise<{ id: string }> {
   const id = crypto.randomUUID()
   const createdAt = new Date().toISOString()
@@ -224,13 +246,20 @@ export async function createScrapeCommand(
     ...reap,
     db
       .prepare(
-        `INSERT INTO scrape_commands (id, stores, status, created_by, created_at)
-         SELECT ?, ?, 'pending', ?, ?
+        `INSERT INTO scrape_commands (id, stores, status, created_by, created_at, reset_novelty, wipe_ingest)
+         SELECT ?, ?, 'pending', ?, ?, ?, ?
          WHERE NOT EXISTS (
            SELECT 1 FROM scrape_commands WHERE status IN ('pending', 'running')
          )`
       )
-      .bind(id, JSON.stringify(stores), createdBy, createdAt),
+      .bind(
+        id,
+        JSON.stringify(stores),
+        createdBy,
+        createdAt,
+        resetNovelty ? 1 : 0,
+        wipeIngest ? 1 : 0
+      ),
     db
       .prepare(
         `SELECT id, status, created_at, picked_up_at
@@ -276,6 +305,12 @@ export type ClaimedCommand = {
   id: string
   stores: string[]
   createdAt: string
+  // The re-ingest flags (#753): the agent honors reset_novelty by purging the
+  // store's novelty state pre-run; wipe_ingest is bookkeeping (the Worker
+  // already wiped the rows before the command existed) surfaced so the agent's
+  // log can say so. Pre-#753 columns read 0 → false, old shape.
+  resetNovelty: boolean
+  wipeIngest: boolean
 }
 
 export async function claimNextScrapeCommand(db: D1Database): Promise<ClaimedCommand | null> {
@@ -303,17 +338,47 @@ export async function claimNextScrapeCommand(db: D1Database): Promise<ClaimedCom
       `UPDATE scrape_commands
        SET status = 'running', picked_up_at = ?, heartbeat_at = ?
        WHERE id = ? AND status = 'pending'
-       RETURNING id, stores, created_at`
+       RETURNING id, stores, created_at, reset_novelty, wipe_ingest`
     )
     .bind(new Date().toISOString(), new Date().toISOString(), oldest.id)
-    .first<{ id: string; stores: string; created_at: string }>()
+    .first<{
+      id: string
+      stores: string
+      created_at: string
+      reset_novelty: number
+      wipe_ingest: number
+    }>()
   if (!claimed) return null
 
   return {
     id: claimed.id,
     stores: parseCommandStores(claimed.stores),
     createdAt: claimed.created_at,
+    resetNovelty: claimed.reset_novelty === 1,
+    wipeIngest: claimed.wipe_ingest === 1,
   }
+}
+
+/**
+ * The live pending/running command, if any — the same row the create path's
+ * guarded INSERT refuses on, read directly so the WIPE branch (#753) can 409
+ * BEFORE any destructive statement runs. The wipe still runs before the
+ * command row is created (issue wording), but never after a conflict was
+ * already knowable: a wipe that deleted rows and then hit a 409 would be a
+ * destruction with no run behind it.
+ */
+export async function findActiveScrapeCommand(db: D1Database): Promise<ActiveScrapeCommand | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, status, created_at, picked_up_at
+       FROM scrape_commands
+       WHERE status IN ('pending', 'running')
+       ORDER BY created_at, id
+       LIMIT 1`
+    )
+    .bind()
+    .first<ActiveScrapeCommandSqlRow>()
+  return row ? toActiveCommand(row) : null
 }
 
 export async function appendScrapeEvents(
@@ -421,7 +486,7 @@ export async function listScrapeCommands(db: D1Database, limit = 20): Promise<Sc
   const { results } = await db
     .prepare(
       `SELECT id, stores, status, created_by, created_at, picked_up_at, finished_at,
-              exit_code, error, log_truncated
+              exit_code, error, log_truncated, reset_novelty, wipe_ingest
        FROM scrape_commands
        ORDER BY created_at DESC, id DESC
        LIMIT ?`

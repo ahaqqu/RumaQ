@@ -72,12 +72,14 @@ import {
   appendScrapeEvents,
   claimNextScrapeCommand,
   createScrapeCommand,
+  findActiveScrapeCommand,
   finishScrapeCommand,
   listScrapeCommands,
   listScrapeEvents,
   ScrapeConflictError,
   ScrapeNotFoundError,
 } from '../lib/scrape.js'
+import { wipeStoreIngest } from '../lib/ingest-wipe.js'
 import { recordRunReport, listPriceRuns, readFailedRunStreak } from '../lib/price-runs.js'
 import {
   REVIEW_REASONS,
@@ -854,10 +856,17 @@ apiApp.use('/api/admin/price-runs', propsAuthMiddleware)
 // per-path discipline.
 apiApp.use('/api/admin/prices/promos/review', propsAuthMiddleware)
 apiApp.use('/api/admin/ai/usage', propsAuthMiddleware)
-apiApp.use('/api/admin/scrape', propsAuthMiddleware)
+// #753 (fill-phase toolkit): the scrape create path — the re-ingest surface
+// with the resetNovelty/wipeIngest flags, the wipe included — and the
+// command/event reads the script-driven fill loop polls accept the #656
+// review-script token too; propsOrReviewScriptAuth falls back to the cookie
+// path untouched (a cookie request is never widened) and requireAdmin still
+// runs in every chain, so an admin SESSION sees exactly the old behavior.
+// The stores list stays session-only: nothing in the loop needs it.
+apiApp.use('/api/admin/scrape', propsOrReviewScriptAuth)
 apiApp.use('/api/admin/scrape/stores', propsAuthMiddleware)
-apiApp.use('/api/admin/scrape/commands', propsAuthMiddleware)
-apiApp.use('/api/admin/scrape/commands/:id/events', propsAuthMiddleware)
+apiApp.use('/api/admin/scrape/commands', propsOrReviewScriptAuth)
+apiApp.use('/api/admin/scrape/commands/:id/events', propsOrReviewScriptAuth)
 // The review queue (issue #294): apiApp.use(path) does NOT cover subpaths
 // (#292 landmine) — every path gets its own line, statics before params.
 apiApp.use('/api/admin/review', propsAuthMiddleware)
@@ -4397,7 +4406,7 @@ apiApp.post(
   '/api/admin/scrape',
   describeRoute({
     description:
-      'Queue an on-demand scrape of the given stores (admin-only). Stale commands are reaped first; 409 only when a fresh scrape is still pending or running — one run at a time.',
+      'Queue an on-demand scrape of the given stores (admin session or #656 script token + admin). Stale commands are reaped first; 409 only when a fresh scrape is still pending or running — one run at a time. The #753 re-ingest flags: resetNovelty asks the agent to purge the store scraper novelty state pre-run; wipeIngest deletes the single named store\u2019s ingest rows (observations + orphaned products, one transaction, receipt in ingest_wipe_audit) BEFORE the command row is created — single store only. On the wipe path the pre-wipe conflict check does not reap stale commands (unlike the plain create), so a stale pending/running command also 409s — conservative; recovery is one plain Scrape Now.',
     security: [{ cookieAuth: [] }],
     requestBody: {
       required: true,
@@ -4412,6 +4421,16 @@ apiApp.post(
                 items: { type: 'string', enum: [...SCRAPE_STORE_SLUGS] },
                 minItems: 1,
               },
+              resetNovelty: {
+                type: 'boolean',
+                description:
+                  'Agent purges the store novelty state before the run so seen pages re-scrape.',
+              },
+              wipeIngest: {
+                type: 'boolean',
+                description:
+                  'Wipe this one store\u2019s ingest rows before queuing the command. Rejected with 400 when stores carries more than one slug.',
+              },
             },
           },
         },
@@ -4424,17 +4443,32 @@ apiApp.post(
           'application/json': {
             schema: {
               type: 'object',
-              properties: { id: { type: 'string' } },
+              properties: {
+                id: { type: 'string' },
+                wipe: {
+                  type: 'object',
+                  nullable: true,
+                  description: 'Present only when wipeIngest ran.',
+                  properties: {
+                    receiptId: { type: 'string' },
+                    storeSlug: { type: 'string' },
+                    observationsDeleted: { type: 'integer' },
+                    productsDeleted: { type: 'integer' },
+                  },
+                } as any,
+              },
             },
           },
         },
       },
-      400: { description: 'Validation error (unknown store slug)' },
+      400: {
+        description: 'Validation error (unknown store slug; wipeIngest with more than one store)',
+      },
       401: { description: 'Unauthorized' },
       403: { description: 'Not an admin' },
       409: {
         description:
-          'A fresh scrape is already pending or running; activeCommand identifies the live command.',
+          'A fresh scrape is already pending or running; activeCommand identifies the live command. With wipeIngest, the conflict is raised BEFORE any wipe runs.',
         content: {
           'application/json': {
             schema: {
@@ -4461,11 +4495,32 @@ apiApp.post(
   sValidator('json', scrapeCommandCreateSchema),
   async (c) => {
     try {
+      const { stores, resetNovelty, wipeIngest } = c.req.valid('json')
+      // The wipe runs BEFORE the command row is created (issue #753 wording),
+      // but never after a conflict was already knowable: the same live
+      // command the guarded INSERT would refuse is checked first, so a wipe
+      // cannot delete rows and then 409 with no run behind it. The race
+      // window between this read and createScrapeCommand's own guarded INSERT
+      // remains (D1 serializes batches, but they are two transactions) — a
+      // wipe that lands just before a 409 still wrote its receipt, and the
+      // next run refills the store.
+      let wipe: Awaited<ReturnType<typeof wipeStoreIngest>> | null = null
+      if (wipeIngest) {
+        const active = await findActiveScrapeCommand(c.env.DB)
+        if (active) throw new ScrapeConflictError(active)
+        // Single-store is a contract-level check; stores[0] is the named one.
+        wipe = await wipeStoreIngest(c.env.DB, {
+          storeSlug: stores[0]!,
+          actorUserId: c.get('userId'),
+        })
+      }
       const { id } = await createScrapeCommand(c.env.DB, {
-        stores: c.req.valid('json').stores,
+        stores,
         createdBy: c.get('userId'),
+        resetNovelty,
+        wipeIngest,
       })
-      const res = c.json({ id }, 201)
+      const res = c.json({ id, ...(wipe ? { wipe } : {}) }, 201)
       res.headers.set('Cache-Control', 'private, no-cache')
       return res
     } catch (error) {
@@ -4519,6 +4574,8 @@ apiApp.get(
                       exitCode: { type: 'integer', nullable: true } as any,
                       error: { type: 'string', nullable: true } as any,
                       logTruncated: { type: 'boolean' },
+                      resetNovelty: { type: 'boolean' },
+                      wipeIngest: { type: 'boolean' },
                     },
                   },
                 },
