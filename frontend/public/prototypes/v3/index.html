@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FAF6F0">
+<title>RumaQ v3 · Galeri 3 Konsep UX &amp; Logo Baru</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Fraunces:opsz,wght@9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:#FAF6F0;color:#211C19}
+a{color:inherit}
+h1,h2,h3,p{margin:0}
+.wrap{max-width:1080px;margin:0 auto;padding:36px 22px 64px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:36px}
+.brand{display:flex;align-items:center;gap:12px}
+.brand img{width:46px;height:46px;border-radius:13px;box-shadow:0 6px 16px rgba(194,14,86,.16)}
+.brand .wm{font-family:'Fraunces',serif;font-size:26px;font-weight:700;letter-spacing:-.6px;line-height:1}
+.brand small{display:block;margin-top:3px;font-size:12px;font-weight:600;color:#62564D}
+.back{padding:9px 14px;border:1px solid #DFD3C3;border-radius:12px;background:#fff;font-size:12.5px;font-weight:700;text-decoration:none}
+
+.kicker{display:inline-block;padding:5px 10px;border-radius:999px;background:#211C19;color:#F5A617;font-size:10.5px;font-weight:800;letter-spacing:1px}
+h1{margin-top:12px;font-family:'Fraunces',serif;font-size:clamp(28px,5vw,40px);line-height:1.1;letter-spacing:-.8px}
+.lede{margin-top:12px;max-width:680px;font-size:14.5px;line-height:1.68;color:#5E534A}
+
+section{margin-top:46px}
+h2{font-family:'Fraunces',serif;font-size:24px;letter-spacing:-.4px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+h2 small{font-family:'Plus Jakarta Sans',sans-serif;font-size:12.5px;font-weight:600;color:#8A7D72}
+
+/* Logo comparison */
+.logo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-top:16px}
+.lbox{padding:22px;border:1px solid #EBE2D6;border-radius:24px;background:#fff}
+.lbox.hi{border:2px solid #C20E56;box-shadow:0 12px 30px rgba(194,14,86,.08)}
+.tiles{display:flex;align-items:center;gap:14px}
+.tile{width:92px;height:92px;border-radius:22px;display:grid;place-items:center;background:#F3ECE2}
+.tile.dark{background:#211C19}
+.tile img{width:68px;height:68px;border-radius:17px}
+.mini{margin-left:auto;display:flex;flex-direction:column;align-items:center;gap:6px}
+.mini img{width:24px;height:24px;border-radius:6px}
+.mini span{font-size:10.5px;font-weight:700;color:#8A7D72}
+.lbox h3{margin-top:16px;font-size:17px;font-weight:800}
+.lbox p{margin-top:6px;font-size:13px;line-height:1.6;color:#62564D}
+
+/* Prototype cards */
+.pgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin-top:18px}
+.card{display:flex;flex-direction:column;padding:22px;border:1px solid #EBE2D6;border-radius:26px;background:#fff;box-shadow:0 10px 26px rgba(33,28,25,.05)}
+.swatch{height:76px;border-radius:16px;display:flex;align-items:flex-end;padding:12px;gap:6px}
+.swatch i{width:16px;height:16px;border-radius:50%;border:2px solid #fff}
+.tag{display:inline-block;margin-top:14px;font-size:11px;font-weight:800;letter-spacing:.7px;color:#C20E56}
+.card h3{margin-top:5px;font-size:21px;font-weight:800;letter-spacing:-.4px}
+.card p{margin-top:8px;font-size:13px;line-height:1.6;color:#62564D}
+.card ul{margin:12px 0 0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:7px}
+.card li{display:flex;gap:8px;font-size:12.5px;font-weight:600;color:#3E352E;line-height:1.45}
+.card li::before{content:"✓";color:#0E865B;font-weight:800}
+.cta-row{margin-top:auto;padding-top:18px;display:flex;gap:8px}
+.btn{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:12px 14px;border-radius:14px;background:#211C19;color:#fff;font-size:13px;font-weight:800;text-decoration:none}
+.btn.berry{background:#C20E56}
+.btn.green{background:#0E865B}
+.btn.ghost{flex:none;background:#F3ECE2;color:#211C19}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <img src="logo-rumaq-v3.svg" alt="Logo RumaQ v3">
+      <div><span class="wm">RumaQ</span><small>Eksplorasi Polish UX v3 · 3 Versi Interaktif</small></div>
+    </div>
+    <a class="back" href="../v2/konsep-final.html">Bandingkan dengan v2 →</a>
+  </header>
+
+  <span class="kicker">SENIOR UX REWRITE</span>
+  <h1>Tiga arah UX terpoles + logo baru<br>Rumah-Q &amp; Sparkle.</h1>
+  <p class="lede">Berdasarkan audit menyeluruh terhadap prototipe v2 (PR #748) dan referensi logo/mockup baru: memperbaiki bug navigasi 5-tab, menyatukan mental model Simpan/Pantau/Daftar, memperjelas keterbacaan angka harga, serta menghadirkan 3 arah pengalaman yang bisa dibandingkan langsung.</p>
+
+  <section>
+    <h2>Evolusi Logo <small>dari 5 elemen bertumpuk → 2 bentuk ikonik yang tajam di 16px</small></h2>
+    <div class="logo-grid">
+      <div class="lbox">
+        <div class="tiles">
+          <span class="tile"><img src="../v2/logo-rumaq.svg" alt="Logo v2"></span>
+          <span class="tile dark"><img src="../v2/logo-rumaq.svg" alt="Logo v2 gelap"></span>
+          <span class="mini"><img src="../v2/logo-rumaq.svg" alt=""><span>24px</span></span>
+        </div>
+        <h3>v2 (Sebelumnya)</h3>
+        <p>Cerobong + atap chevron + kaca pembesar bulat + 4 kotak jendela + drop shadow. Cukup padat ketika diperkecil ke ukuran favicon atau tab bar.</p>
+      </div>
+      <div class="lbox hi">
+        <div class="tiles">
+          <span class="tile"><img src="logo-rumaq-v3.svg" alt="Logo v3"></span>
+          <span class="tile dark"><img src="logo-rumaq-v3.svg" alt="Logo v3 gelap"></span>
+          <span class="mini"><img src="logo-rumaq-v3.svg" alt=""><span>24px</span></span>
+        </div>
+        <h3>v3 (Rumah-Q + Sparkle — Vektor SVG Transparan)</h3>
+        <p>Satu garis rumah sekaligus huruf <strong>Q / kaca pembesar</strong> berwarna berry-magenta dengan <strong>kilau emas 4-titik</strong> di tengah dan <strong>latar transparan</strong>. Menyatu mulus di atas permukaan krem, putih, maupun gelap.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Tiga Versi Prototipe HTML <small>semua interaktif · mendukung mode ponsel penuh (?app)</small></h2>
+    <div class="pgrid">
+      <article class="card">
+        <div class="swatch" style="background:linear-gradient(125deg,#211C19 0 38%,#FAF6F0 38% 66%,#C20E56 66% 85%,#F5A617 85%)">
+          <i style="background:#211C19"></i><i style="background:#FAF6F0"></i><i style="background:#C20E56"></i><i style="background:#F5A617"></i>
+        </div>
+        <span class="tag">VERSI 1 · ARAH FINAL TERPILIH</span>
+        <h3 style="font-family:'Fraunces',serif">Editorial Hangat + Ruma AI</h3>
+        <p>Arah final terpilih sesuai <code>docs/UX_DESIGN_SYSTEM.md</code> — ringkas tanpa kartu pantauan terpisah, produk langsung tampil di atas lipatan layar, ditemani asisten Nusantara <strong>Ruma</strong>.</p>
+        <ul>
+          <li>Karakter Nusantara terkunci: <strong>Ruma</strong> (Atap Gonjong + Syal Kawung) beranimasi</li>
+          <li>Pantauan harga terintegrasi rapi di pil kartu ringkasan (skalabel untuk puluhan barang)</li>
+          <li>Promo terpopuler (Top 10 horizontal) langsung di atas Promo untukmu (infinite scroll)</li>
+          <li>Wishlist auto-sink saat dicentang, logo transparan, merk besar, “Rp” kecil, hari lengkap</li>
+        </ul>
+        <div class="cta-row">
+          <a class="btn" href="v1-editorial-hangat.html">Buka Versi 1 →</a>
+          <a class="btn ghost" href="v1-editorial-hangat.html?app">Mobile</a>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="swatch" style="background:linear-gradient(125deg,#0E865B 0 38%,#F7F5F0 38% 68%,#C20E56 68% 86%,#F5A617 86%)">
+          <i style="background:#0E865B"></i><i style="background:#C20E56"></i><i style="background:#F5A617"></i><i style="background:#F7F5F0"></i>
+        </div>
+        <span class="tag" style="color:#0E865B">VERSI 2 · BANDINGKAN CEPAT</span>
+        <h3>Fokus Hemat</h3>
+        <p>Mengangkat diferensiator utama RumaQ (perbandingan harga antar toko) langsung ke halaman utama tanpa klik berlapis.</p>
+        <ul>
+          <li>Filter supermarket live di Beranda — pemenang berubah real-time</li>
+          <li>Tangga harga antar toko (price-ladder) langsung di tiap kartu</li>
+          <li>Optimizer Daftar: Split 2 Toko Termurah vs 1 Toko Praktis</li>
+          <li>Navigasi 4 tab berlabel jelas &amp; keterbacaan ekstra tinggi</li>
+        </ul>
+        <div class="cta-row">
+          <a class="btn green" href="v2-fokus-hemat.html">Buka Versi 2 →</a>
+          <a class="btn ghost" href="v2-fokus-hemat.html?app">Mobile</a>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="swatch" style="background:linear-gradient(125deg,#B80E52 0 42%,#FBF7F2 42% 72%,#F5A617 72% 88%,#0E7B55 88%)">
+          <i style="background:#B80E52"></i><i style="background:#F5A617"></i><i style="background:#0E7B55"></i><i style="background:#FBF7F2"></i>
+        </div>
+        <span class="tag">VERSI 3 · PENDAMPING MINGGUAN</span>
+        <h3 style="font-family:'Bricolage Grotesque',sans-serif">Asisten Belanja</h3>
+        <p>Alur berbasis hari belanja mingguan dari dapur sampai lorong supermarket — dilengkapi Mode Di Toko untuk ceklis satu tangan.</p>
+        <ul>
+          <li>Header berry melengkung dengan pemilih hari belanja &amp; pita tanggal</li>
+          <li>Peringatan otomatis untuk promo yang habis sebelum hari belanja</li>
+          <li>Mode Di Toko: filter toko + tombol ceklis besar + total berjalan</li>
+          <li>Pratinjau teks WhatsApp siap kirim ke keluarga</li>
+        </ul>
+        <div class="cta-row">
+          <a class="btn berry" href="v3-asisten-belanja.html">Buka Versi 3 →</a>
+          <a class="btn ghost" href="v3-asisten-belanja.html?app">Mobile</a>
+        </div>
+      </article>
+    </div>
+  </section>
+</div>
+</body>
+</html>

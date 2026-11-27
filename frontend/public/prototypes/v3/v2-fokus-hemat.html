@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F7F5F0">
+<meta name="color-scheme" content="light">
+<title>RumaQ v3.2 · Fokus Hemat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --berry:#C20E56;
+  --berry-deep:#9A0943;
+  --berry-soft:#FCE8F0;
+  --emerald:#0E865B;
+  --emerald-soft:#E7F6F0;
+  --emerald-ink:#095E3F;
+  --gold:#F5A617;
+  --gold-soft:#FEF4DC;
+  --gold-ink:#7C4E04;
+  --bg:#F7F5F0;
+  --surface:#FFFFFF;
+  --surface-2:#EFECE5;
+  --ink:#1D1A17;
+  --ink-2:#5E564E;
+  --ink-3:#8E857B;
+  --line:#E6E0D6;
+  --line-2:#D6CEC2;
+  --font:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font);background:#E7E2D9;color:var(--ink);font-feature-settings:"cv02","cv03","cv04","cv11"}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer;-webkit-tap-highlight-color:transparent}
+button:focus-visible,input:focus-visible{outline:2.5px solid var(--berry);outline-offset:2px}
+img,svg{display:block;max-width:100%}
+h1,h2,h3,p{margin:0}
+.num{font-variant-numeric:tabular-nums}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+
+/* ===== Desktop Stage ===== */
+.stage{min-height:100dvh;display:flex;gap:48px;align-items:center;justify-content:center;padding:28px;
+  background:radial-gradient(circle at 15% 15%,#F9F7F2 0,transparent 30rem),radial-gradient(circle at 85% 85%,#DCD5C9 0,transparent 32rem),#E7E2D9}
+.stage-card{width:320px;flex:none}
+.stage-brand{display:flex;align-items:center;gap:14px;padding:18px;border-radius:22px;background:var(--surface);border:1px solid var(--line);box-shadow:0 10px 26px rgba(29,26,23,.06)}
+.stage-brand .mark-box{width:60px;height:60px;flex:none;border-radius:16px;overflow:hidden;box-shadow:0 6px 16px rgba(194,14,86,.14)}
+.stage-brand .wm{font-size:26px;font-weight:800;letter-spacing:-.8px;line-height:1}
+.stage-brand small{display:block;margin-top:4px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.stage-kicker{display:inline-block;margin-top:20px;padding:5px 10px;border-radius:8px;background:var(--emerald-soft);color:var(--emerald-ink);font-size:10.5px;font-weight:800;letter-spacing:.9px}
+.stage-card h1{margin-top:11px;font-size:26px;font-weight:800;line-height:1.14;letter-spacing:-.6px}
+.stage-card>p{margin-top:10px;font-size:13px;line-height:1.65;color:var(--ink-2)}
+.palette{display:flex;gap:8px;margin-top:16px}
+.palette span{width:28px;height:28px;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 1px var(--line-2)}
+.stage-list{margin-top:18px;padding:16px;border-radius:18px;background:var(--bg);border:1px solid var(--line)}
+.stage-list strong{display:block;font-size:11px;font-weight:800;letter-spacing:1px;color:var(--emerald-ink)}
+.stage-list ul{margin:10px 0 0;padding-left:16px;display:flex;flex-direction:column;gap:7px;font-size:12.5px;line-height:1.5;color:var(--ink-2)}
+.stage-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.stage-links a{padding:8px 12px;border-radius:11px;background:var(--surface);border:1px solid var(--line);font-size:12px;font-weight:700;color:var(--ink);text-decoration:none}
+.stage-links a.active{background:var(--emerald);color:#fff;border-color:var(--emerald)}
+.stage-links a:hover{border-color:var(--berry)}
+
+.phone{position:relative;width:402px;height:min(856px,calc(100dvh - 48px));min-height:660px;padding:10px;flex:none;
+  border-radius:52px;background:#1A1816;box-shadow:0 36px 84px rgba(26,24,22,.32),0 6px 18px rgba(26,24,22,.16)}
+.phone::before{content:"";position:absolute;z-index:45;top:19px;left:50%;width:92px;height:24px;transform:translateX(-50%);border-radius:14px;background:#1A1816}
+.screen{position:relative;height:100%;display:flex;flex-direction:column;overflow:hidden;border-radius:42px;background:var(--bg)}
+
+.scroll{flex:1;min-height:0;padding:42px 16px 26px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
+.scroll::-webkit-scrollbar,.hscroll::-webkit-scrollbar{display:none}
+.view{animation:fade .18s ease}
+@keyframes fade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.icon{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* ===== Header & Search ===== */
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.brand{display:flex;align-items:center;gap:9px;padding:0;border:0;background:none;text-align:left}
+.brand svg{width:36px;height:36px;border-radius:10px}
+.brand b{display:block;font-size:19px;font-weight:800;letter-spacing:-.6px;line-height:1}
+.brand small{display:block;margin-top:2px;font-size:10.5px;font-weight:700;color:var(--emerald-ink)}
+.top-r{display:flex;gap:7px}
+.tbtn{position:relative;display:grid;place-items:center;width:38px;height:38px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink)}
+.tbtn .dot{position:absolute;top:7px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--berry);box-shadow:0 0 0 2px #fff}
+
+.searchbar{display:flex;align-items:center;gap:9px;height:46px;padding:0 8px 0 14px;border:1.5px solid var(--line-2);border-radius:14px;background:var(--surface)}
+.searchbar:focus-within{border-color:var(--berry);box-shadow:0 0 0 3px var(--berry-soft)}
+.searchbar .icon{width:18px;height:18px;color:var(--ink-3)}
+.searchbar input{min-width:0;flex:1;border:0;outline:0;background:transparent;font-size:13.5px;font-weight:600}
+.searchbar input::placeholder{color:var(--ink-3);font-weight:500}
+.searchbar .xbtn{display:grid;place-items:center;width:30px;height:30px;border:0;border-radius:9px;background:var(--surface-2);color:var(--ink-2)}
+
+/* ===== Live Store Filter Ribbon ===== */
+.store-ribbon{display:flex;gap:6px;margin:10px -16px 0;padding:0 16px 4px;overflow-x:auto}
+.spil{flex:none;display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1.5px solid var(--line);border-radius:999px;background:var(--surface);font-size:12px;font-weight:700;color:var(--ink-3)}
+.spil i{width:8px;height:8px;border-radius:50%;background:var(--c);opacity:.35}
+.spil.on{border-color:var(--ink);background:var(--ink);color:#fff}
+.spil.on i{opacity:1;box-shadow:0 0 0 2px rgba(255,255,255,.35)}
+
+/* ===== Bento Summary Module ===== */
+.bento{display:grid;grid-template-columns:1.35fr 1fr;gap:9px;margin-top:12px}
+.bcard-stat{padding:14px;border:1px solid var(--line);border-radius:18px;background:var(--surface);text-align:left}
+.bcard-stat.green{background:var(--emerald-soft);border-color:#B7E4D1}
+.bcard-stat .lbl{display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:800;color:var(--emerald-ink)}
+.bcard-stat .big{display:block;margin-top:6px;font-size:26px;font-weight:800;letter-spacing:-.8px;line-height:1;color:var(--emerald-ink)}
+.bcard-stat small{display:block;margin-top:5px;font-size:11.5px;font-weight:600;color:var(--ink-2);line-height:1.35}
+.bcard-stat.daybtn{display:flex;flex-direction:column;justify-content:space-between}
+.bcard-stat.daybtn strong{display:block;margin-top:4px;font-size:16px;font-weight:800;color:var(--ink)}
+.bcard-stat.daybtn .pill{align-self:flex-start;margin-top:8px;padding:4px 8px;border-radius:8px;background:var(--berry-soft);color:var(--berry-deep);font-size:11px;font-weight:800}
+
+/* ===== Section Header + Category Chips ===== */
+.hscroll{display:flex;gap:7px;margin:12px -16px 0;padding:0 16px 4px;overflow-x:auto}
+.chip{flex:none;padding:8px 13px;border:1px solid var(--line);border-radius:11px;background:var(--surface);font-size:12.5px;font-weight:700;color:var(--ink-2)}
+.chip.on{border-color:var(--berry);background:var(--berry);color:#fff}
+.sec{display:flex;align-items:center;justify-content:space-between;margin:18px 0 10px}
+.sec h2{font-size:16.5px;font-weight:800;letter-spacing:-.3px}
+.sec span{font-size:12px;font-weight:700;color:var(--ink-3)}
+.sec button{padding:0;border:0;background:none;font-size:12px;font-weight:800;color:var(--berry)}
+
+/* ===== Signature Feature: Inline Price-Ladder Comparison Cards ===== */
+.ladder-list{display:flex;flex-direction:column;gap:11px}
+.lcard{border:1px solid var(--line);border-radius:20px;background:var(--surface);overflow:hidden;box-shadow:0 4px 14px rgba(29,26,23,.04)}
+.lcard-top{display:flex;align-items:center;gap:12px;padding:12px 13px;border-bottom:1px solid var(--line)}
+.lcard-top .open{display:flex;align-items:center;gap:12px;flex:1;min-width:0;padding:0;border:0;background:none;text-align:left}
+.lthumb{position:relative;width:58px;height:58px;flex:none;border-radius:14px;overflow:hidden;background:var(--surface-2);display:grid;place-items:center}
+.lthumb img{width:100%;height:100%;object-fit:cover}
+.lthumb .em{font-size:28px}
+.lthumb .pct{position:absolute;left:4px;bottom:4px;padding:2px 5px;border-radius:6px;background:var(--gold);color:#2A1A02;font-size:10px;font-weight:800}
+.linfo{flex:1;min-width:0}
+.linfo .cat{font-size:11px;font-weight:700;color:var(--ink-3)}
+.linfo h3{margin-top:2px;font-size:14.5px;font-weight:800;line-height:1.25}
+.linfo .unit{margin-top:3px;font-size:11.5px;font-weight:600;color:var(--ink-2)}
+.ladd{display:inline-flex;align-items:center;gap:4px;padding:8px 11px;border:1.5px solid var(--line-2);border-radius:11px;background:var(--bg);font-size:12px;font-weight:800;color:var(--ink);flex:none}
+.ladd.on{border-color:var(--emerald);background:var(--emerald);color:#fff}
+.ladd .icon{width:14px;height:14px}
+.ladder{padding:9px 13px 11px;display:flex;flex-direction:column;gap:6px;background:#FCFBF8}
+.lbar-row{display:grid;grid-template-columns:92px 1fr auto;align-items:center;gap:8px;font-size:12px}
+.lbar-row .st{display:flex;align-items:center;gap:6px;font-weight:700;color:var(--ink-2)}
+.lbar-row .st i{width:8px;height:8px;border-radius:3px;background:var(--c);flex:none}
+.lbar-row.win .st{color:var(--ink);font-weight:800}
+.lbar-track{height:7px;border-radius:99px;background:var(--surface-2);overflow:hidden}
+.lbar-track span{display:block;height:100%;border-radius:99px;background:var(--line-2)}
+.lbar-row.win .lbar-track span{background:var(--emerald)}
+.lbar-price{text-align:right;white-space:nowrap}
+.lbar-price strong{font-size:13.5px;font-weight:800}
+.lbar-row.win .lbar-price strong{color:var(--emerald-ink);font-size:14.5px}
+.lbar-price small{margin-left:4px;font-size:11px;font-weight:700;color:var(--ink-3)}
+.win-pill{display:inline-block;margin-left:5px;padding:1.5px 6px;border-radius:6px;background:var(--emerald-soft);color:var(--emerald-ink);font-size:10px;font-weight:800}
+
+/* ===== Brosur Grid ===== */
+.vhead{margin-bottom:12px}
+.vhead h1{font-size:23px;font-weight:800;letter-spacing:-.5px}
+.vhead p{margin-top:4px;font-size:12.5px;line-height:1.5;color:var(--ink-2)}
+.bgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+.bcard{display:flex;flex-direction:column;overflow:hidden;padding:0;border:1px solid var(--line);border-radius:18px;background:var(--surface);text-align:left}
+.bcover{position:relative;height:132px;display:flex;flex-direction:column;justify-content:flex-end;padding:11px;background:var(--c)}
+.bcover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.bcover::after{content:"";position:absolute;inset:0;background:linear-gradient(transparent 18%,rgba(22,19,16,.84))}
+.bcover .cd{position:absolute;top:8px;right:8px;z-index:1;padding:3px 7px;border-radius:7px;background:rgba(22,19,16,.84);color:#fff;font-size:10.5px;font-weight:800}
+.bcover strong{position:relative;z-index:1;font-size:15px;font-weight:800;color:#fff;line-height:1.15}
+.bcover small{position:relative;z-index:1;margin-top:3px;font-size:11px;font-weight:600;color:#EAE2D8}
+.bfoot{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;font-size:11.5px;font-weight:700}
+
+/* ===== Pantau ===== */
+.panel{margin-top:16px}
+.panel h2{font-size:15.5px;font-weight:800;margin-bottom:9px}
+.adder{display:flex;gap:7px;padding:6px;border:1.5px solid var(--line-2);border-radius:14px;background:var(--surface)}
+.adder input{min-width:0;flex:1;padding:0 8px;border:0;outline:0;background:transparent;font-size:13.5px;font-weight:600}
+.adder button{padding:9px 14px;border:0;border-radius:10px;background:var(--berry);color:#fff;font-size:12px;font-weight:800}
+.kws{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.kw{display:inline-flex;align-items:center;gap:6px;padding:7px 8px 7px 12px;border:1px solid var(--line-2);border-radius:999px;background:var(--surface);font-size:12.5px;font-weight:700}
+.kw button{display:grid;place-items:center;width:20px;height:20px;border:0;border-radius:50%;background:var(--berry-soft);color:var(--berry-deep)}
+.kw button .icon{width:11px;height:11px}
+.kw-add{padding:7px 12px;border:1.5px dashed var(--line-2);border-radius:999px;background:none;font-size:12px;font-weight:700;color:var(--ink-2)}
+.sgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.scard{display:flex;flex-direction:column;overflow:hidden;padding:0;border:1.5px solid var(--line);border-radius:16px;background:var(--surface);text-align:left}
+.scard.on{border-color:var(--emerald);box-shadow:0 0 0 1px var(--emerald)}
+.scard .simg{position:relative;height:68px;display:grid;place-items:center;padding:12px;border-bottom:1px solid var(--line)}
+.scard .simg img{max-height:38px;object-fit:contain}
+.scard .chk{position:absolute;top:7px;right:7px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);color:transparent}
+.scard.on .chk{background:var(--emerald);color:#fff}
+.scard .chk .icon{width:12px;height:12px}
+.scard .sbar{display:flex;justify-content:space-between;padding:9px 11px;font-size:12.5px;font-weight:800}
+
+/* ===== Daftar Belanja + Route Optimizer (Signature Feature!) ===== */
+.route-switch{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:5px;border-radius:15px;background:var(--surface-2);margin-bottom:12px}
+.route-switch button{padding:10px 8px;border:0;border-radius:11px;background:transparent;text-align:center}
+.route-switch button b{display:block;font-size:12.5px;font-weight:800;color:var(--ink-2)}
+.route-switch button small{display:block;margin-top:2px;font-size:11px;font-weight:700;color:var(--ink-3)}
+.route-switch button.on{background:var(--surface);box-shadow:0 3px 10px rgba(29,26,23,.08)}
+.route-switch button.on b{color:var(--ink)}
+.route-switch button.on small{color:var(--emerald-ink)}
+
+.opt-banner{padding:14px 15px;border-radius:18px;background:var(--emerald-soft);border:1.5px solid #B7E4D1;margin-bottom:14px}
+.opt-banner .r1{display:flex;align-items:baseline;justify-content:space-between}
+.opt-banner strong{font-size:25px;font-weight:800;letter-spacing:-.7px;color:var(--emerald-ink)}
+.opt-banner .badge{padding:4px 9px;border-radius:8px;background:var(--emerald);color:#fff;font-size:11.5px;font-weight:800}
+.opt-banner p{margin-top:6px;font-size:12px;font-weight:600;color:var(--emerald-ink);line-height:1.45}
+
+.tgroup{margin-top:14px}
+.thead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.thead h3{display:flex;align-items:center;gap:7px;font-size:14.5px;font-weight:800}
+.thead i{width:10px;height:10px;border-radius:3px;background:var(--c)}
+.thead span{font-size:12px;font-weight:800;color:var(--ink-2)}
+.srow{display:flex;align-items:center;gap:10px;padding:10px;margin-bottom:8px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.srow.done{background:var(--surface-2);border-color:transparent;opacity:.72}
+.stick{display:grid;place-items:center;width:28px;height:28px;flex:none;border:2px solid var(--line-2);border-radius:9px;background:#fff;color:transparent;padding:0}
+.srow.done .stick{border-color:var(--emerald);background:var(--emerald);color:#fff}
+.stick .icon{width:15px;height:15px}
+.srow .open{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:1;min-width:0;padding:0;border:0;background:none;text-align:left}
+.srow .mid b{display:block;font-size:13.5px;font-weight:800}
+.srow.done .mid b{text-decoration:line-through;color:var(--ink-2)}
+.srow .mid small{display:block;margin-top:2px;font-size:11.5px;font-weight:600;color:var(--ink-2)}
+.srow .pr{text-align:right}
+.srow .pr b{display:block;font-size:14.5px;font-weight:800;color:var(--ink)}
+.srow .pr small{font-size:11px;font-weight:700;color:var(--emerald-ink)}
+.sdel{display:grid;place-items:center;width:30px;height:30px;border:0;border-radius:9px;background:transparent;color:var(--ink-3)}
+.sdel .icon{width:15px;height:15px}
+
+/* ===== Clean 4-Tab Labeled Nav ===== */
+.nav{flex:none;display:grid;grid-template-columns:repeat(4,1fr);padding:8px 8px 10px;border-top:1px solid var(--line);background:var(--surface)}
+.nav button{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:5px 0;border:0;background:none;color:var(--ink-3);font-size:11px;font-weight:700}
+.nav button .pill-ic{display:grid;place-items:center;width:48px;height:30px;border-radius:999px;transition:background .15s}
+.nav button.on{color:var(--berry-deep)}
+.nav button.on .pill-ic{background:var(--berry-soft);color:var(--berry)}
+.nav .bdg{position:absolute;top:2px;right:calc(50% - 22px);min-width:17px;height:17px;padding:0 4px;border-radius:99px;background:var(--berry);color:#fff;font-size:10px;font-weight:800;display:grid;place-items:center}
+
+/* ===== Modals ===== */
+.layer{position:absolute;z-index:60;inset:0;display:flex;align-items:flex-end}
+.scrim{position:absolute;inset:0;border:0;background:rgba(24,21,18,.52);backdrop-filter:blur(2px)}
+.sheet{position:relative;width:100%;max-height:92%;overflow-y:auto;border-radius:26px 26px 0 0;background:var(--bg);box-shadow:0 -18px 40px rgba(0,0,0,.22);scrollbar-width:none;animation:up .2s ease}
+.sheet::-webkit-scrollbar{display:none}
+@keyframes up{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:none}}
+.sclose{position:absolute;z-index:5;top:14px;right:14px;display:grid;place-items:center;width:36px;height:36px;border:0;border-radius:50%;background:rgba(29,26,23,.82);color:#fff}
+.sbody{padding:18px 16px 24px}
+.shero{position:relative;height:152px;background:var(--surface-2)}
+.shero img{width:100%;height:100%;object-fit:cover}
+.shero .em{display:grid;place-items:center;width:100%;height:100%;font-size:58px}
+.acts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:8px;margin-top:16px}
+.acts button{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:12px 8px;border:1.5px solid var(--line-2);border-radius:13px;background:var(--surface);font-size:12px;font-weight:800}
+.acts button.primary{border:0;background:var(--berry);color:#fff}
+.acts button.on-g{border-color:var(--emerald);background:var(--emerald-soft);color:var(--emerald-ink)}
+.acts button.on-w{border-color:var(--gold);background:var(--gold-soft);color:var(--gold-ink)}
+.acts .icon{width:15px;height:15px}
+.cal{padding:13px;border:1px solid var(--line);border-radius:18px;background:var(--surface)}
+.cal table{width:100%;border-collapse:collapse;margin-top:8px}
+.cal th{padding:5px 0;font-size:11px;font-weight:800;color:var(--ink-3)}
+.cal td{padding:2px;text-align:center}
+.cal td button{width:100%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:1.5px solid transparent;border-radius:11px;background:none;font-size:12.5px;font-weight:700}
+.cal td button.dim{opacity:.45}
+.cal td button.today{border-color:var(--gold)}
+.cal td button.sel{background:var(--emerald);color:#fff}
+.cal .dots{display:flex;gap:2px;height:4px}
+.cal .dots i{width:4px;height:4px;border-radius:50%;background:var(--berry)}
+.cal td button.sel .dots i{background:#fff}
+
+.empty{padding:28px 16px;border:1.5px dashed var(--line-2);border-radius:20px;background:var(--surface);text-align:center}
+.empty button{margin-top:12px;padding:10px 16px;border:0;border-radius:12px;background:var(--berry);color:#fff;font-size:12.5px;font-weight:800}
+.toast{position:absolute;left:50%;bottom:84px;z-index:80;transform:translateX(-50%);display:flex;align-items:center;gap:7px;padding:10px 15px;border-radius:13px;background:var(--ink);color:#fff;font-size:12px;font-weight:700;white-space:nowrap}
+
+@media(max-width:820px){
+  .stage{padding:0}.stage-card{display:none}
+  .phone{width:100%;height:100dvh;min-height:0;padding:0;border-radius:0;box-shadow:none}.phone::before{display:none}.screen{border-radius:0}.scroll{padding-top:14px}
+}
+html.app .stage{padding:0}html.app .stage-card{display:none}
+html.app .phone{width:100%;height:100dvh;min-height:0;padding:0;border-radius:0;box-shadow:none}html.app .phone::before{display:none}html.app .screen{border-radius:0}
+html.app .scroll{padding-top:14px;width:100%;max-width:480px;margin:0 auto}html.app .nav{width:100%;max-width:480px;margin:0 auto}
+</style>
+</head>
+<body>
+<script>if(new URLSearchParams(location.search).has('app'))document.documentElement.classList.add('app')</script>
+
+<div class="stage">
+  <aside class="stage-card">
+    <div class="stage-brand">
+      <div class="mark-box"><svg viewBox="0 0 96 96" role="img" aria-label="Logo RumaQ"><use href="#rq-logo"/></svg></div>
+      <div><span class="wm">RumaQ</span><small>Bandingkan harga dalam 1 detik</small></div>
+    </div>
+    <span class="stage-kicker">VERSI 2 · FOKUS HEMAT</span>
+    <h1>Perbandingan harga langsung di depan mata.</h1>
+    <p>Dirancang untuk Ibu yang ingin jawaban tercepat tanpa klik berlapis: setiap kartu barang langsung menampilkan tangga harga antar supermarket, plus tombol pintar "Split 2 Toko vs 1 Toko Praktis".</p>
+    <div class="palette" aria-label="Palet warna">
+      <span style="background:#F7F5F0"></span>
+      <span style="background:#0E865B"></span>
+      <span style="background:#C20E56"></span>
+      <span style="background:#F5A617"></span>
+      <span style="background:#1D1A17"></span>
+    </div>
+    <div class="stage-list">
+      <strong>KEUNGGULAN VERSI INI</strong>
+      <ul>
+        <li>Filter toko langsung di Beranda — nonaktifkan 1 toko, pemenang "Termurah" berubah real-time</li>
+        <li>Kartu tangga harga (price-ladder) memperlihatkan selisih antar toko tanpa buka modal</li>
+        <li>Optimizer Daftar Belanja: bandingkan rute Split Termurah vs 1 Toko Praktis (hemat bensin!)</li>
+        <li>Navigasi 4 tab berlabel jelas — ramah usia 30–55+</li>
+      </ul>
+    </div>
+    <div class="stage-links">
+      <a href="v1-editorial-hangat.html">v1 Editorial</a>
+      <a class="active" href="v2-fokus-hemat.html">v2 Fokus Hemat</a>
+      <a href="v3-asisten-belanja.html">v3 Asisten</a>
+      <a href="index.html">Galeri v3</a>
+    </div>
+  </aside>
+  <div class="phone"><div id="app" class="screen"></div></div>
+</div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <g id="rq-logo">
+    <defs>
+      <linearGradient id="rq-b2" x1="0.1" y1="0.05" x2="0.9" y2="0.95"><stop offset="0%" stop-color="#D4145A"/><stop offset="100%" stop-color="#A80A47"/></linearGradient>
+      <linearGradient id="rq-g2" x1="0.2" y1="0.1" x2="0.8" y2="0.9"><stop offset="0%" stop-color="#FBB924"/><stop offset="100%" stop-color="#EE960B"/></linearGradient>
+    </defs>
+    <rect x="2" y="2" width="92" height="92" rx="24" fill="#FAF6EE"/>
+    <path d="M42.8 20.6 Q48 16.2 53.2 20.6 L71.8 36.2 Q76.5 40.2 76.5 46.4 L76.5 57.5 Q76.5 75.5 58.5 75.5 L37.5 75.5 Q19.5 75.5 19.5 57.5 L19.5 46.4 Q19.5 40.2 24.2 36.2 Z" fill="none" stroke="url(#rq-b2)" stroke-width="9.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <rect x="67.5" y="71.6" width="20" height="9.8" rx="2.6" fill="url(#rq-b2)" transform="rotate(45 77.5 76.5)"/>
+    <path d="M46.2 35.8 Q48 32.2 49.8 35.8 Q52.7 45.6 62.6 48.6 Q66.2 50.4 62.6 52.2 Q52.7 55.2 49.8 65.0 Q48 68.6 46.2 65.0 Q43.3 55.2 33.4 52.2 Q29.8 50.4 33.4 48.6 Q43.3 45.6 46.2 35.8 Z" fill="url(#rq-g2)"/>
+  </g>
+</defs></svg>
+
+<script>
+const STORES=[
+  {id:'superindo',name:'Superindo',color:'#DA291C',logo:'../logo-superindo.png'},
+  {id:'alfamart',name:'Alfamart',color:'#E31E24',logo:'../logo-alfamart.png'},
+  {id:'indomaret',name:'Indomaret',color:'#1672B9',logo:'../logo-indomaret.png'},
+  {id:'hypermart',name:'Hypermart',color:'#00A551',logo:'../logo-hypermart.png'}
+];
+const CATS={all:'Semua',pokok:'Pokok',protein:'Protein',sayur:'Sayur',minuman:'Minuman'};
+const HIST={
+  beras:[79900,79900,78500,76000,74900,64900],minyak:[36900,37500,36500,37500,36500,31900],
+  telur:[28900,29500,28500,29900,28900,24900],gula:[18500,18900,18900,18200,18900,16700],
+  kentang:[16900,17500,17900,16900,17900,12900],sayur:[13900,14500,13900,14900,14500,9900],
+  mie:[14900,15500,15500,14900,15500,12900],tepung:[12900,13500,13500,13200,13500,11200],
+  susu:[19500,19900,19500,19900,19900,16500],kopi:[12500,12900,12500,12900,12900,9900]
+};
+const PRODUCTS=[
+  {id:'beras',name:'Beras Premium',brand:'Raja Platinum',unit:'5 kg',cat:'pokok',img:'../rice.jpg',normal:82900,ref:[5,'kg']},
+  {id:'minyak',name:'Minyak Goreng',brand:'Sania',unit:'2 liter',cat:'pokok',img:'../oil.jpg',normal:38500,ref:[2,'liter']},
+  {id:'telur',name:'Telur Ayam Segar',brand:'Ayam Negeri',unit:'1 kg',cat:'protein',img:'../eggs.jpg',normal:29900,ref:[1,'kg']},
+  {id:'gula',name:'Gula Pasir',brand:'Gulaku',unit:'1 kg',cat:'pokok',img:'../sugar.svg',normal:18900,ref:[1,'kg']},
+  {id:'kentang',name:'Kentang Dieng',brand:'Panen Lokal',unit:'1 kg',cat:'sayur',img:'../potatoes.jpg',normal:17900,ref:[1,'kg']},
+  {id:'sayur',name:'Paket Sayur Capcay',brand:'Kebun Segar',unit:'1 paket',cat:'sayur',img:'../vegetables.jpg',normal:14900},
+  {id:'mie',name:'Mie Instan Goreng',brand:'Indomie',unit:'5 pcs',cat:'pokok',emoji:'🍜',normal:15500},
+  {id:'tepung',name:'Tepung Serbaguna',brand:'Bogasari',unit:'1 kg',cat:'pokok',emoji:'🌾',normal:13500,ref:[1,'kg']},
+  {id:'susu',name:'Susu UHT Full Cream',brand:'Ultra',unit:'1 liter',cat:'minuman',emoji:'🥛',normal:19900,ref:[1,'liter']},
+  {id:'kopi',name:'Kopi Bubuk Spesial',brand:'Kapal Api',unit:'165 gr',cat:'minuman',emoji:'☕',normal:12900}
+];
+const BROCHURES=[
+  {id:'superindo',store:'superindo',title:'JSM Superindo',from:20,to:26,pages:12,cover:'../vegetables.jpg',
+    items:{beras:[2,64900],minyak:[5,34900],telur:[7,26900],kentang:[3,12900],gula:[4,16900],sayur:[1,9900],kopi:[6,9900],tepung:[8,11800]}},
+  {id:'alfamart',store:'alfamart',title:'Hemat Akhir Pekan',from:21,to:28,pages:8,cover:'../oil.jpg',
+    items:{minyak:[1,31900],telur:[2,25500],gula:[3,17500],beras:[3,72900],susu:[4,16500],mie:[5,13400]}},
+  {id:'indomaret',store:'indomaret',title:'Harga Hebat',from:20,to:24,pages:16,cover:'../eggs.jpg',
+    items:{telur:[1,24900],minyak:[2,32500],kentang:[6,15900],beras:[4,73500],mie:[7,12900],kopi:[9,10900],susu:[12,17200]}},
+  {id:'hypermart',store:'hypermart',title:'Fresh & Hemat',from:21,to:27,pages:20,cover:'../rice.jpg',
+    items:{beras:[5,67900],gula:[2,16700],sayur:[3,11500],telur:[8,27500],kopi:[10,11500],tepung:[11,11200],minyak:[6,35900],kentang:[4,13900]}}
+];
+const TODAY=21,PLAN=28;
+const NOTES=[
+  {emoji:'🫗',text:'<b>Minyak Goreng Sania 2L</b> paling murah di <b>Alfamart</b> Rp31.900',time:'2 jam lalu',pid:'minyak'},
+  {emoji:'🍚',text:'<b>Beras Raja Platinum 5kg</b> di <b>Superindo</b> Rp64.900 (hemat Rp18.000)',time:'Kemarin',pid:'beras'}
+];
+
+function loadLocal(){try{return JSON.parse(localStorage.getItem('rumaq-v3-2')||'{}')||{}}catch{return {}}}
+const local=loadLocal();
+const state={
+  view:'home',day:PLAN,cat:'all',bFilter:'',query:'',routeMode:'split',
+  watch:Array.isArray(local.watch)?local.watch:['beras','telur'],
+  stores:new Set(Array.isArray(local.stores)&&local.stores.length?local.stores:STORES.map(s=>s.id)),
+  saved:new Set(Array.isArray(local.saved)?local.saved:['beras','minyak','telur','gula']),
+  basket:new Set(Array.isArray(local.basket)?local.basket:[]),
+  modal:null,modalId:'',brosurMode:'parsed',bPage:1,toast:'',focusSearch:false,focusKw:false,unread:true
+};
+function persist(){try{localStorage.setItem('rumaq-v3-2',JSON.stringify({watch:state.watch,stores:[...state.stores],saved:[...state.saved],basket:[...state.basket]}))}catch{}}
+
+const money=v=>'Rp'+v.toLocaleString('id-ID');
+const esc=s=>String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const store=id=>STORES.find(s=>s.id===id);
+const product=id=>PRODUCTS.find(p=>p.id===id);
+const brochure=id=>BROCHURES.find(b=>b.id===id);
+const serialDate=s=>new Date(2026,10,s);
+const fmtShortDate=s=>{const d=serialDate(s);return d.getDate()+' '+d.toLocaleDateString('id-ID',{month:'short'})};
+const fmtFullDay=s=>{const d=serialDate(s);return d.toLocaleDateString('id-ID',{weekday:'short'})+', '+fmtShortDate(s)};
+const allOffers=p=>BROCHURES.filter(b=>b.items[p.id]).map(b=>({store:b.store,price:b.items[p.id][1],page:b.items[p.id][0],b})).sort((a,b)=>a.price-b.price);
+const activeOffers=p=>{const f=allOffers(p).filter(o=>state.stores.has(o.store));return f.length?f:allOffers(p)};
+const best=p=>activeOffers(p)[0];
+const disc=p=>Math.round((1-best(p).price/p.normal)*100);
+const pFrom=id=>Math.min(...BROCHURES.filter(b=>b.items[id]).map(b=>b.from));
+const pTo=id=>Math.max(...BROCHURES.filter(b=>b.items[id]).map(b=>b.to));
+const activeOn=(p,d)=>pFrom(p.id)<=d&&pTo(p.id)>=d;
+const countOn=d=>PRODUCTS.filter(p=>activeOn(p,d)).length;
+const isWatched=p=>state.watch.some(w=>(p.name+' '+p.brand).toLowerCase().includes(w.toLowerCase().trim()));
+
+const P={
+  search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+  home:'<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5.5v-6.5h-5V21H4a1 1 0 0 1-1-1z"/>',
+  book:'<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v18H6.5A2.5 2.5 0 0 1 4 18.5z"/><path d="M8 7h8M8 11h8M8 15h5"/>',
+  bell:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
+  list:'<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  check:'<path d="m5 12 4 4L19 6"/>',
+  close:'<path d="m6 6 12 12M18 6 6 18"/>',
+  cal:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4m8-4v4M3 10h18"/>',
+  trash:'<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>',
+  share:'<path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><path d="m16 6-4-4-4 4M12 2v13"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>'
+};
+const icon=n=>`<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
+
+function sparkline(p){
+  const h=HIST[p.id]||[p.normal,best(p).price],min=Math.min(...h),max=Math.max(...h),W=260,H=44,pad=5;
+  const pts=h.map((v,i)=>[pad+i*(W-2*pad)/(h.length-1),H-pad-(v-min)/(max-min||1)*(H-2*pad)]);
+  const line=pts.map(pt=>pt.map(n=>n.toFixed(1)).join(',')).join(' ');
+  const last=pts[pts.length-1];
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polyline points="${line}" fill="none" stroke="#0E865B" stroke-width="2.5" stroke-linecap="round"/><circle cx="${last[0]}" cy="${last[1]}" r="4.5" fill="#C20E56" stroke="#fff" stroke-width="2"/></svg>`;
+}
+
+function ladderCard(p){
+  const os=activeOffers(p),win=os[0],maxP=Math.max(...os.map(o=>o.price),p.normal),sv=state.saved.has(p.id);
+  const unitNote=p.ref?` · ${money(Math.round(win.price/p.ref[0]))}/${p.ref[1]}`:'';
+  return `<article class="lcard">
+    <div class="lcard-top">
+      <button class="open" data-action="item" data-id="${p.id}">
+        <span class="lthumb">${p.img?`<img src="${p.img}" alt="${p.name}">`:`<span class="em">${p.emoji}</span>`}<span class="pct num">-${disc(p)}%</span></span>
+        <span class="linfo">
+          <span class="cat">${p.brand} · ${p.unit}${unitNote}</span>
+          <h3>${p.name}</h3>
+          <div class="unit num">Normal <s>${money(p.normal)}</s> · Hemat <b style="color:var(--emerald-ink)">${money(p.normal-win.price)}</b></div>
+        </span>
+      </button>
+      <button class="ladd ${sv?'on':''}" data-action="simpan" data-id="${p.id}">${icon(sv?'check':'plus')}${sv?'Daftar':'Tambah'}</button>
+    </div>
+    <div class="ladder">
+      ${os.slice(0,3).map((o,idx)=>{
+        const st=store(o.store),pctW=Math.round((o.price/maxP)*100),diff=o.price-win.price;
+        return `<div class="lbar-row ${idx===0?'win':''}">
+          <span class="st" style="--c:${st.color}"><i></i>${st.name}</span>
+          <div class="lbar-track"><span style="width:${pctW}%"></span></div>
+          <span class="lbar-price num"><strong>${money(o.price)}</strong>${idx===0?'<span class="win-pill">Termurah</span>':`<small>+${Math.round(diff/1000)}rb</small>`}</span>
+        </div>`;
+      }).join('')}
+    </div>
+  </article>`;
+}
+
+function viewHome(){
+  const q=state.query.trim().toLowerCase();
+  let list=PRODUCTS.filter(p=>q?(p.name+' '+p.brand+' '+CATS[p.cat]).toLowerCase().includes(q):(state.cat==='all'||p.cat===state.cat));
+  list=[...list].sort((a,b)=>(isWatched(a)?0:1)-(isWatched(b)?0:1)||(b.normal-best(b).price)-(a.normal-best(a).price));
+  const potensi=PRODUCTS.slice(0,5).reduce((s,p)=>s+p.normal-best(p).price,0);
+
+  return `<div class="view">
+    <header class="topbar">
+      <button class="brand" data-action="view" data-view="home">
+        <svg viewBox="0 0 96 96" aria-hidden="true"><use href="#rq-logo"/></svg>
+        <div><b>RumaQ</b><small>${state.stores.size} supermarket dibandingkan</small></div>
+      </button>
+      <div class="top-r">
+        <button class="tbtn" data-action="notif" aria-label="Notifikasi">${icon('bell')}${state.unread?'<span class="dot"></span>':''}</button>
+        <button class="tbtn" data-action="profil" aria-label="Profil">${icon('user')}</button>
+      </div>
+    </header>
+
+    <label class="searchbar">${icon('search')}<span class="sr-only">Cari barang</span>
+      <input data-search type="search" value="${esc(state.query)}" placeholder="Cari barang untuk bandingkan harga…" autocomplete="off">
+      ${state.query?`<button class="xbtn" data-action="reset-cari" aria-label="Hapus">${icon('close')}</button>`:''}
+    </label>
+
+    <div class="store-ribbon" aria-label="Filter supermarket aktif">
+      ${STORES.map(s=>`<button class="spil ${state.stores.has(s.id)?'on':''}" style="--c:${s.color}" data-action="toko" data-id="${s.id}"><i></i>${s.name}</button>`).join('')}
+    </div>
+
+    ${!q?`<div class="bento">
+      <button class="bcard-stat green" data-action="view" data-view="daftar">
+        <span class="lbl"><span>POTENSI HEMAT</span><span>✓</span></span>
+        <strong class="big num">${money(potensi)}</strong>
+        <small>dari 5 kebutuhan pokok termurah antar toko</small>
+      </button>
+      <button class="bcard-stat daybtn" data-action="kalender">
+        <div><span style="font-size:10.5px;font-weight:800;color:var(--ink-3)">HARI BELANJA</span><strong>${fmtFullDay(state.day)}</strong></div>
+        <span class="pill num">${countOn(state.day)} promo · Ubah</span>
+      </button>
+    </div>
+    <div class="hscroll">
+      ${Object.entries(CATS).map(([k,v])=>`<button class="chip ${state.cat===k?'on':''}" data-action="cat" data-cat="${k}">${v}</button>`).join('')}
+    </div>`:''}
+
+    <div class="sec"><h2>${q?`Hasil “${esc(state.query)}”`:'Bandingkan harga langsung'}</h2><span>${list.length} barang</span></div>
+    ${list.length?`<div class="ladder-list">${list.map(ladderCard).join('')}</div>`
+      :`<div class="empty"><h3>Barang belum ditemukan</h3><p style="margin-top:6px;font-size:12.5px;color:var(--ink-2)">Tambahkan kata ini ke Pantau agar dikabari saat promonya terbit.</p><button data-action="pantau-kata" data-k="${esc(state.query)}">+ Pantau “${esc(state.query)}”</button></div>`}
+  </div>`;
+}
+
+function viewBrosur(){
+  const list=BROCHURES.filter(b=>!state.bFilter||b.store===state.bFilter);
+  return `<div class="view">
+    <div class="vhead"><h1>Katalog brosur resmi</h1><p>Semua harga sudah diekstrak dari brosur asli supaya mudah dibandingkan.</p></div>
+    <div class="hscroll" style="margin-top:0">
+      <button class="chip ${!state.bFilter?'on':''}" data-action="bfilter" data-store="">Semua</button>
+      ${STORES.map(s=>`<button class="chip ${state.bFilter===s.id?'on':''}" data-action="bfilter" data-store="${s.id}">${s.name}</button>`).join('')}
+    </div>
+    <div class="bgrid">${list.map(b=>{
+      const st=store(b.store);
+      return `<button class="bcard" data-action="brosur" data-id="${b.id}">
+        <span class="bcover" style="--c:${st.color}"><img src="${b.cover}" alt="">
+          <span class="cd">${Math.max(0,b.to-TODAY)} hr</span>
+          <strong>${b.title}</strong><small>${fmtShortDate(b.from)} – ${fmtShortDate(b.to)}</small></span>
+        <span class="bfoot"><span>${st.name}</span><span style="color:var(--ink-3)">${Object.keys(b.items).length} promo</span></span>
+      </button>`;
+    }).join('')}</div>
+  </div>`;
+}
+
+function viewPantau(){
+  return `<div class="view">
+    <div class="vhead"><h1>Pantau &amp; Toko</h1><p>Barang yang dipantau naik ke urutan teratas Beranda + notifikasi saat turun ≥10%.</p></div>
+    <section class="panel">
+      <h2>Kata pantauan</h2>
+      <div class="adder"><input data-kw type="text" placeholder="Ketik: beras, minyak, susu…"><button data-action="tambah-kw">Tambah</button></div>
+      <div class="kws">
+        ${state.watch.map((w,i)=>`<span class="kw">${esc(w)}<button data-action="hapus-kw" data-i="${i}" aria-label="Hapus">${icon('close')}</button></span>`).join('')}
+        ${['minyak','gula','kopi','kentang'].filter(k=>!state.watch.includes(k)).map(k=>`<button class="kw-add" data-action="saran" data-k="${k}">+ ${k}</button>`).join('')}
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Supermarket yang dibandingkan</h2>
+      <div class="sgrid">${STORES.map(s=>{
+        const on=state.stores.has(s.id);
+        return `<button class="scard ${on?'on':''}" data-action="toko" data-id="${s.id}">
+          <span class="simg"><img src="${s.logo}" alt="${s.name}"><i class="chk">${icon('check')}</i></span>
+          <span class="sbar"><span>${s.name}</span><small style="color:${on?'var(--emerald-ink)':'var(--ink-3)'}">${on?'Aktif':'Off'}</small></span>
+        </button>`;
+      }).join('')}</div>
+    </section>
+  </div>`;
+}
+
+function computeSingleStore(saved){
+  let bestSt=null,bestTotal=Infinity;
+  for(const s of STORES.filter(x=>state.stores.has(x.id))){
+    let tot=0,ok=true;
+    for(const p of saved){
+      const o=allOffers(p).find(x=>x.store===s.id);
+      if(!o){ok=false;break}
+      tot+=o.price;
+    }
+    if(ok&&tot<bestTotal){bestTotal=tot;bestSt=s}
+  }
+  return bestSt?{st:bestSt,total:bestTotal}:null;
+}
+
+function viewDaftar(){
+  const saved=[...state.saved].map(product).filter(Boolean);
+  if(!saved.length){
+    return `<div class="view"><div class="vhead"><h1>Daftar belanja</h1><p>Bandingkan rute paling hemat atau cukup mampir 1 supermarket.</p></div>
+      <div class="empty"><h3>Belum ada barang di daftar</h3><p style="margin-top:6px;font-size:12.5px;color:var(--ink-2)">Ketuk "+ Tambah" di barang mana pun untuk melihat rute belanja paling hemat.</p><button data-action="view" data-view="home">Lihat perbandingan harga</button></div></div>`;
+  }
+  const splitTotal=saved.reduce((s,p)=>s+best(p).price,0);
+  const normalTotal=saved.reduce((s,p)=>s+p.normal,0);
+  const splitStores=[...new Set(saved.map(p=>best(p).store))];
+  const single=computeSingleStore(saved);
+  const useSingle=state.routeMode==='single'&&single;
+  const shownTotal=useSingle?single.total:splitTotal;
+  const shownHemat=normalTotal-shownTotal;
+  const groups=useSingle
+    ?[{st:single.st,items:saved.map(p=>({p,price:allOffers(p).find(o=>o.store===single.st.id).price}))}]
+    :splitStores.map(sid=>{
+      const items=saved.filter(p=>best(p).store===sid).map(p=>({p,price:best(p).price}));
+      return {st:store(sid),items};
+    });
+
+  return `<div class="view">
+    <div class="vhead"><h1>Rute belanja pintar</h1><p>Pilih paling murah (pecah toko) atau paling praktis (1 supermarket saja).</p></div>
+    ${single?`<div class="route-switch">
+      <button class="${!useSingle?'on':''}" data-action="route" data-mode="split"><b>Split ${splitStores.length} toko</b><small class="num">${money(splitTotal)} (Termurah)</small></button>
+      <button class="${useSingle?'on':''}" data-action="route" data-mode="single"><b>1 toko (${single.st.name})</b><small class="num">${single.total===splitTotal?'Sama murah!':'+'+money(single.total-splitTotal)+' · Hemat waktu'}</small></button>
+    </div>`:''}
+    <div class="opt-banner">
+      <div class="r1"><strong class="num">${money(shownTotal)}</strong><span class="badge num">Hemat ${money(shownHemat)}</span></div>
+      <p>${useSingle?`Cukup mampir ke <b>${single.st.name}</b> untuk semua ${saved.length} barang — hemat bensin &amp; waktu!`:`Mampir ${splitStores.length} toko untuk harga terendah di setiap barang.`}</p>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button style="flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px;border:1px solid #B7E4D1;border-radius:12px;background:var(--emerald-soft);color:var(--emerald-ink);font-size:12px;font-weight:800" data-action="share-wa">${icon('share')} Bagikan ke WhatsApp</button>
+      <button style="padding:10px 13px;border:1px solid var(--line-2);border-radius:12px;background:var(--surface);font-size:12px;font-weight:800" data-action="kosongkan">${icon('trash')}</button>
+    </div>
+    ${groups.map(g=>`<section class="tgroup">
+      <div class="thead"><h3 style="--c:${g.st.color}"><i></i>${g.st.name}</h3><span class="num">${g.items.length} item · ${money(g.items.reduce((s,x)=>s+x.price,0))}</span></div>
+      ${g.items.map(({p,price})=>{
+        const ok=state.basket.has(p.id);
+        return `<div class="srow ${ok?'done':''}">
+          <button class="stick" data-action="basket" data-id="${p.id}" aria-label="Ceklis">${icon('check')}</button>
+          <button class="open" data-action="item" data-id="${p.id}">
+            <span class="mid"><b>${p.brand} ${p.name}</b><small>${p.unit} · s.d. ${fmtShortDate(pTo(p.id))}</small></span>
+            <span class="pr"><b class="num">${money(price)}</b><small class="num">hemat ${money(p.normal-price)}</small></span>
+          </button>
+          <button class="sdel" data-action="hapus-satu" data-id="${p.id}" aria-label="Hapus">${icon('trash')}</button>
+        </div>`;
+      }).join('')}
+    </section>`).join('')}
+  </div>`;
+}
+
+function modalWrap(inner,label){
+  return `<div class="layer"><button class="scrim" data-action="tutup" aria-label="Tutup"></button>
+    <section class="sheet" role="dialog" aria-modal="true" aria-label="${esc(label)}"><button class="sclose" data-action="tutup" aria-label="Tutup">${icon('close')}</button>${inner}</section></div>`;
+}
+
+function sheetItem(p){
+  const os=allOffers(p),b=best(p),maxP=Math.max(...os.map(o=>o.price),p.normal);
+  return modalWrap(`
+    <div class="shero">${p.img?`<img src="${p.img}" alt="${p.name}">`:`<span class="em">${p.emoji}</span>`}</div>
+    <div class="sbody">
+      <span style="font-size:11px;font-weight:800;color:var(--emerald-ink)">${CATS[p.cat].toUpperCase()} · ${p.brand}</span>
+      <h2 style="margin-top:3px;font-size:21px;font-weight:800">${p.name} (${p.unit})</h2>
+      <div style="margin-top:12px;padding:13px;border-radius:16px;background:var(--emerald-soft);border:1px solid #B7E4D1;display:flex;justify-content:space-between;align-items:center">
+        <div><small style="font-size:11px;font-weight:800;color:var(--emerald-ink)">TERMURAH DI ${store(b.store).name.toUpperCase()}</small><strong class="num" style="display:block;font-size:26px;color:var(--emerald-ink)">${money(b.price)}</strong></div>
+        <div style="text-align:right"><s class="num" style="font-size:12px;color:var(--ink-2)">${money(p.normal)}</s><div class="num" style="font-size:12px;font-weight:800;color:var(--berry-deep)">Hemat ${disc(p)}%</div></div>
+      </div>
+      <div class="sec" style="margin:15px 0 8px"><h2>Semua ${os.length} supermarket</h2></div>
+      <div class="ladder" style="border:1px solid var(--line);border-radius:16px;background:var(--surface)">
+        ${os.map(o=>{
+          const st=store(o.store),win=o.store===b.store;
+          return `<div class="lbar-row ${win?'win':''}"><span class="st" style="--c:${st.color}"><i></i>${st.name}</span><div class="lbar-track"><span style="width:${Math.round(o.price/maxP*100)}%"></span></div><span class="lbar-price num"><strong>${money(o.price)}</strong>${win?'<span class="win-pill">Terbaik</span>':`<small>+${Math.round((o.price-b.price)/1000)}rb</small>`}</span></div>`;
+        }).join('')}
+      </div>
+      <div class="sec" style="margin:15px 0 8px"><h2>Riwayat harga 3 bulan</h2></div>
+      <div style="padding:12px;border:1px solid var(--line);border-radius:16px;background:var(--surface)">${sparkline(p)}<div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;font-weight:700;color:var(--ink-2)"><span>Sep</span><b style="color:var(--emerald-ink)">Harga terendah 3 bulan ✓</b><span>Nov</span></div></div>
+      <div class="acts">
+        <button class="${isWatched(p)?'on-w':''}" data-action="pantau" data-id="${p.id}">${icon('bell')} ${isWatched(p)?'Dipantau':'Pantau'}</button>
+        <button class="${state.saved.has(p.id)?'on-g':''}" data-action="simpan" data-id="${p.id}">${icon(state.saved.has(p.id)?'check':'plus')} ${state.saved.has(p.id)?'Di Daftar':'Daftar'}</button>
+        <button class="primary" data-action="brosur" data-id="${b.b.id}">${icon('book')} Brosur Hal. ${b.page}</button>
+      </div>
+    </div>`,p.name);
+}
+
+function sheetBrosur(b){
+  const entries=Object.entries(b.items).map(([id,[page,price]])=>({p:product(id),page,price})).filter(x=>x.p);
+  const parsed=state.brosurMode==='parsed',st=store(b.store),shown=entries[(state.bPage-1)%entries.length];
+  return modalWrap(`<div class="sbody" style="padding-top:18px">
+    <span style="font-size:11px;font-weight:800;color:var(--berry)">${st.name.toUpperCase()}</span>
+    <h2 style="font-size:21px;font-weight:800;margin-top:2px">${b.title}</h2>
+    <p style="font-size:12px;color:var(--ink-2);margin-top:3px">${fmtShortDate(b.from)} – ${fmtShortDate(b.to)} 2026 · ${b.pages} hal</p>
+    <div class="route-switch" style="margin-top:12px">
+      <button class="${parsed?'on':''}" data-action="mode-brosur" data-mode="parsed"><b>Daftar rapi (${entries.length})</b></button>
+      <button class="${!parsed?'on':''}" data-action="mode-brosur" data-mode="original"><b>Brosur asli</b></button>
+    </div>
+    ${parsed?entries.map(({p,page,price})=>`<div class="srow"><button class="open" data-action="item" data-id="${p.id}"><span class="mid"><b>${p.brand} ${p.name}</b><small>${p.unit} · Hal. ${page}</small></span><span class="pr"><b class="num">${money(price)}</b><small>-${Math.round((1-price/p.normal)*100)}%</small></span></button></div>`).join('')
+    :`<div style="overflow:hidden;border:1px solid var(--line-2);border-radius:16px;background:var(--surface)"><img src="${b.cover}" style="width:100%;height:190px;object-fit:cover" alt=""><button style="display:flex;justify-content:space-between;align-items:center;width:calc(100% - 20px);margin:10px;padding:12px;border:2px dashed var(--emerald);border-radius:12px;background:var(--emerald-soft);text-align:left" data-action="item" data-id="${shown.p.id}"><div><small style="font-weight:800;color:var(--emerald-ink)">HALAMAN ${state.bPage} · KETUK BANDINGKAN</small><b style="display:block;font-size:14px">${shown.p.name}</b></div><strong class="num" style="font-size:19px;color:var(--emerald-ink)">${money(shown.price)}</strong></button></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><button style="padding:8px 12px;border:1px solid var(--line-2);border-radius:10px;background:var(--surface);font-weight:800;font-size:12px" data-action="page-brosur" data-step="-1" ${state.bPage<=1?'disabled':''}>← Hal. sblm</button><span style="font-size:12px;font-weight:700">${state.bPage} / ${b.pages}</span><button style="padding:8px 12px;border:1px solid var(--line-2);border-radius:10px;background:var(--surface);font-weight:800;font-size:12px" data-action="page-brosur" data-step="1" ${state.bPage>=b.pages?'disabled':''}>Hal. brkt →</button></div>`}
+  </div>`,b.title);
+}
+
+function sheetKalender(){
+  const weeks=[[15,16,17,18,19,20,21],[22,23,24,25,26,27,28],[29,30,31,32,33,34,35]];
+  return modalWrap(`<div class="sbody" style="padding-top:18px">
+    <h2 style="font-size:20px;font-weight:800">Pilih hari belanja</h2>
+    <p style="font-size:12.5px;color:var(--ink-2);margin:4px 0 12px">Promo aktif otomatis disesuaikan dengan tanggal pilihanmu.</p>
+    <div class="cal"><strong style="font-size:14px">November – Desember 2026</strong>
+      <table><thead><tr>${['Min','Sen','Sel','Rab','Kam','Jum','Sab'].map(d=>`<th>${d}</th>`).join('')}</tr></thead>
+      <tbody>${weeks.map(w=>`<tr>${w.map(s=>{const n=countOn(s),d=serialDate(s);return `<td><button class="${s===state.day?'sel':''} ${s===TODAY?'today':''} ${n?'':'dim'}" data-action="kal" data-day="${s}">${d.getDate()}<span class="dots">${n?'<i></i>'.repeat(n>6?3:2):''}</span></button></td>`}).join('')}</tr>`).join('')}</tbody></table>
+    </div>
+  </div>`,'Kalender');
+}
+
+function sheetNotif(){
+  return modalWrap(`<div class="sbody" style="padding-top:18px"><h2 style="font-size:20px;font-weight:800;margin-bottom:12px">Kabar harga turun</h2>
+    ${NOTES.map(n=>`<button class="srow" style="width:100%;text-align:left" data-action="item" data-id="${n.pid}"><span style="font-size:22px">${n.emoji}</span><div><div style="font-size:12.5px;line-height:1.4">${n.text}</div><small style="color:var(--ink-3);font-weight:600">${n.time}</small></div></button>`).join('')}</div>`,'Notifikasi');
+}
+
+function sheetProfil(){
+  return modalWrap(`<div class="sbody" style="padding-top:18px"><h2 style="font-size:20px;font-weight:800">Ibu Rina</h2><p style="font-size:12.5px;color:var(--ink-2);margin-top:4px">Profil lokal tanpa daftar · ${state.stores.size} toko aktif · ${state.watch.length} pantauan.</p>
+    <div style="margin-top:14px;padding:14px;border-radius:15px;background:var(--surface);border:1px solid var(--line);font-size:12.5px;line-height:1.55;color:var(--ink-2)"><b>RumaQ bukan toko online.</b> Semua data harga bersumber dari brosur resmi supermarket untuk membantu keluarga Indonesia berbelanja lebih hemat.</div></div>`,'Profil');
+}
+
+function nav(){
+  const items=[['home','home','Beranda',0],['brosur','book','Brosur',0],['pantau','bell','Pantau',state.watch.length],['daftar','list','Daftar',state.saved.size]];
+  return `<nav class="nav" aria-label="Navigasi">${items.map(([v,ic,lb,n])=>`<button class="${state.view===v?'on':''}" data-action="view" data-view="${v}"><span class="pill-ic">${icon(ic)}</span><span>${lb}</span>${n?`<i class="bdg">${n}</i>`:''}</button>`).join('')}</nav>`;
+}
+
+function render(scrollTop=false){
+  const app=document.getElementById('app');
+  const content=({home:viewHome,brosur:viewBrosur,pantau:viewPantau,daftar:viewDaftar})[state.view]();
+  let modal='';
+  if(state.modal==='item')modal=sheetItem(product(state.modalId));
+  else if(state.modal==='brosur')modal=sheetBrosur(brochure(state.modalId));
+  else if(state.modal==='kalender')modal=sheetKalender();
+  else if(state.modal==='notif')modal=sheetNotif();
+  else if(state.modal==='profil')modal=sheetProfil();
+  app.innerHTML=`<main class="scroll">${content}</main>${nav()}${modal}${state.toast?`<div class="toast">${state.toast}</div>`:''}`;
+  if(scrollTop)app.querySelector('.scroll').scrollTop=0;
+  const si=app.querySelector('[data-search]');if(si&&state.focusSearch){si.focus();si.setSelectionRange(si.value.length,si.value.length);state.focusSearch=false}
+  const kw=app.querySelector('[data-kw]');if(kw&&state.focusKw){kw.focus();state.focusKw=false}
+}
+const toast=msg=>{state.toast=msg;render();clearTimeout(render._t);render._t=setTimeout(()=>{state.toast='';render()},1800)};
+
+document.addEventListener('click',e=>{
+  const el=e.target.closest('[data-action]');if(!el)return;
+  const a=el.dataset.action,id=el.dataset.id;
+  if(a==='view'){state.view=el.dataset.view;state.modal=null;render(true)}
+  else if(a==='cat'){state.cat=el.dataset.cat;render()}
+  else if(a==='bfilter'){state.bFilter=el.dataset.store;render()}
+  else if(a==='route'){state.routeMode=el.dataset.mode;render()}
+  else if(a==='toko'){if(state.stores.has(id)&&state.stores.size===1){toast('Minimal 1 supermarket aktif');return}state.stores.has(id)?state.stores.delete(id):state.stores.add(id);persist();render()}
+  else if(a==='item'){state.modal='item';state.modalId=id;render()}
+  else if(a==='brosur'){const fp=state.modal==='item'?best(product(state.modalId)).page:1;state.modal='brosur';state.modalId=id;state.brosurMode='parsed';state.bPage=fp;render()}
+  else if(a==='mode-brosur'){state.brosurMode=el.dataset.mode;render()}
+  else if(a==='page-brosur'){const b=brochure(state.modalId);state.bPage=Math.max(1,Math.min(b.pages,state.bPage+Number(el.dataset.step)));render()}
+  else if(a==='kalender'){state.modal='kalender';render()}
+  else if(a==='kal'){state.day=+el.dataset.day;state.modal=null;render()}
+  else if(a==='notif'){state.unread=false;state.modal='notif';render()}
+  else if(a==='profil'){state.modal='profil';render()}
+  else if(a==='tutup'){state.modal=null;render()}
+  else if(a==='simpan'){if(state.saved.has(id)){state.saved.delete(id);state.basket.delete(id);toast('Dihapus dari daftar')}else{state.saved.add(id);toast('Masuk daftar belanja ✓')}persist()}
+  else if(a==='basket'){state.basket.has(id)?state.basket.delete(id):state.basket.add(id);persist();render()}
+  else if(a==='hapus-satu'){state.saved.delete(id);state.basket.delete(id);persist();toast('Barang dihapus')}
+  else if(a==='kosongkan'){state.saved.clear();state.basket.clear();persist();toast('Daftar dikosongkan')}
+  else if(a==='share-wa'){toast('Daftar rute disalin untuk WhatsApp ✓')}
+  else if(a==='pantau'){const p=product(id),ix=state.watch.findIndex(w=>(p.name+' '+p.brand).toLowerCase().includes(w.toLowerCase()));if(ix<0){state.watch.push(p.id);toast('Dipantau ✓')}else{state.watch.splice(ix,1);toast('Berhenti pantau')}persist()}
+  else if(a==='pantau-kata'){const k=el.dataset.k.trim();if(k&&!state.watch.includes(k)){state.watch.push(k);persist()}state.query='';state.view='pantau';toast(`“${k}” dipantau ✓`)}
+  else if(a==='tambah-kw'){const v=document.querySelector('[data-kw]').value.trim();if(v&&!state.watch.includes(v)){state.watch.push(v);persist();state.focusKw=true;toast(`“${v}” dipantau ✓`)}}
+  else if(a==='saran'){const k=el.dataset.k;if(!state.watch.includes(k)){state.watch.push(k);persist();toast(`“${k}” dipantau ✓`)}}
+  else if(a==='hapus-kw'){state.watch.splice(+el.dataset.i,1);persist();render()}
+  else if(a==='reset-cari'){state.query='';render()}
+});
+document.addEventListener('input',e=>{if(e.target.matches('[data-search]')){state.query=e.target.value;state.focusSearch=true;render()}});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&state.modal){state.modal=null;render()}
+  if(e.key==='Enter'&&e.target.matches('[data-kw]')){e.preventDefault();document.querySelector('[data-action="tambah-kw"]')?.click()}
+});
+render();
+</script>
+</body>
+</html>

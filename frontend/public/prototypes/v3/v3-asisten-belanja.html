@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#B80E52">
+<meta name="color-scheme" content="light">
+<title>RumaQ v3.3 · Asisten Belanja</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --berry:#B80E52;
+  --berry-hi:#D4145A;
+  --berry-deep:#8C083D;
+  --berry-soft:#FCE7F0;
+  --gold:#F5A617;
+  --gold-soft:#FEF3D6;
+  --gold-ink:#7A4D04;
+  --sage:#0E7B55;
+  --sage-soft:#E8F6F0;
+  --bg:#FBF7F2;
+  --surface:#FFFFFF;
+  --surface-2:#F2EAE0;
+  --ink:#261E1A;
+  --ink-2:#65584E;
+  --ink-3:#9A8C80;
+  --line:#ECE2D7;
+  --line-2:#DFD2C3;
+  --font-display:'Bricolage Grotesque',system-ui,sans-serif;
+  --font-sans:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:#ECE3D7;color:var(--ink)}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer;-webkit-tap-highlight-color:transparent}
+button:focus-visible,input:focus-visible{outline:2.5px solid var(--berry);outline-offset:2px}
+img,svg{display:block;max-width:100%}
+h1,h2,h3,p{margin:0}
+.num{font-variant-numeric:tabular-nums}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+
+/* ===== Desktop Stage ===== */
+.stage{min-height:100dvh;display:flex;gap:48px;align-items:center;justify-content:center;padding:28px;
+  background:radial-gradient(circle at 14% 16%,#FFF9F2 0,transparent 30rem),radial-gradient(circle at 86% 84%,#E5D4C8 0,transparent 32rem),#ECE3D7}
+.stage-card{width:320px;flex:none}
+.stage-brand{display:flex;align-items:center;gap:14px;padding:18px;border-radius:24px;background:var(--surface);border:1px solid var(--line);box-shadow:0 10px 26px rgba(38,30,26,.06)}
+.stage-brand .mark-box{width:60px;height:60px;flex:none;border-radius:16px;overflow:hidden;box-shadow:0 6px 16px rgba(184,14,82,.16)}
+.stage-brand .wm{font-family:var(--font-display);font-size:28px;font-weight:800;letter-spacing:-.8px;line-height:1}
+.stage-brand small{display:block;margin-top:4px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.stage-kicker{display:inline-block;margin-top:20px;padding:5px 10px;border-radius:999px;background:var(--berry-soft);color:var(--berry-deep);font-size:10.5px;font-weight:800;letter-spacing:.9px}
+.stage-card h1{margin-top:11px;font-family:var(--font-display);font-size:28px;font-weight:800;line-height:1.1;letter-spacing:-.6px}
+.stage-card>p{margin-top:10px;font-size:13px;line-height:1.65;color:var(--ink-2)}
+.palette{display:flex;gap:8px;margin-top:16px}
+.palette span{width:28px;height:28px;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 1px var(--line-2)}
+.stage-list{margin-top:18px;padding:16px;border-radius:20px;background:var(--bg);border:1px solid var(--line)}
+.stage-list strong{display:block;font-size:11px;font-weight:800;letter-spacing:1px;color:var(--berry-deep)}
+.stage-list ul{margin:10px 0 0;padding-left:16px;display:flex;flex-direction:column;gap:7px;font-size:12.5px;line-height:1.5;color:var(--ink-2)}
+.stage-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.stage-links a{padding:8px 12px;border-radius:11px;background:var(--surface);border:1px solid var(--line);font-size:12px;font-weight:700;color:var(--ink);text-decoration:none}
+.stage-links a.active{background:var(--berry);color:#fff;border-color:var(--berry)}
+
+.phone{position:relative;width:402px;height:min(856px,calc(100dvh - 48px));min-height:660px;padding:10px;flex:none;
+  border-radius:52px;background:#211916;box-shadow:0 36px 84px rgba(33,25,22,.34),0 6px 18px rgba(33,25,22,.16)}
+.phone::before{content:"";position:absolute;z-index:45;top:19px;left:50%;width:92px;height:24px;transform:translateX(-50%);border-radius:14px;background:#211916}
+.screen{position:relative;height:100%;display:flex;flex-direction:column;overflow:hidden;border-radius:42px;background:var(--bg)}
+
+.scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;padding-bottom:26px}
+.scroll::-webkit-scrollbar,.hscroll::-webkit-scrollbar{display:none}
+.view{animation:fade .18s ease}
+@keyframes fade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.icon{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* ===== Curved Berry Companion Header ===== */
+.hero-header{position:relative;padding:42px 18px 26px;background:linear-gradient(155deg,var(--berry-hi),var(--berry-deep));color:#fff;border-radius:0 0 28px 28px}
+.hh-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.hh-brand{display:flex;align-items:center;gap:10px;border:0;padding:0;background:none;color:#fff;text-align:left}
+.hh-brand svg{width:38px;height:38px;border-radius:11px;box-shadow:0 4px 12px rgba(0,0,0,.18)}
+.hh-brand b{display:block;font-family:var(--font-display);font-size:21px;font-weight:800;letter-spacing:-.5px;line-height:1}
+.hh-brand small{display:block;margin-top:2px;font-size:11px;font-weight:600;color:#FCD4E3}
+.hh-acts{display:flex;gap:8px}
+.hh-btn{position:relative;display:grid;place-items:center;width:38px;height:38px;border:1px solid rgba(255,255,255,.22);border-radius:12px;background:rgba(255,255,255,.12);color:#fff}
+.hh-btn .dot{position:absolute;top:7px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 2px var(--berry)}
+
+.trip-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:16px;padding:12px 14px;border-radius:18px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.18);width:100%;text-align:left;color:#fff}
+.trip-bar small{display:block;font-size:10.5px;font-weight:700;color:#FCD4E3}
+.trip-bar strong{display:block;margin-top:2px;font-family:var(--font-display);font-size:18px;font-weight:800}
+.trip-pill{padding:7px 11px;border-radius:11px;background:var(--gold);color:#2A1902;font-size:11.5px;font-weight:800;white-space:nowrap}
+
+.search-float{position:relative;z-index:5;margin:-18px 18px 0;display:flex;align-items:center;gap:9px;height:48px;padding:0 10px 0 15px;border:1px solid var(--line);border-radius:16px;background:var(--surface);box-shadow:0 10px 24px rgba(38,30,26,.1)}
+.search-float .icon{width:18px;height:18px;color:var(--berry)}
+.search-float input{min-width:0;flex:1;border:0;outline:0;background:transparent;font-size:13.5px;font-weight:600}
+.search-float input::placeholder{color:var(--ink-3)}
+.pad{padding:16px 18px 0}
+
+/* ===== Scrollable Day Ribbon (No Clipping!) ===== */
+.hscroll{display:flex;gap:8px;margin:0 -18px;padding:4px 18px 6px;overflow-x:auto}
+.day-chip{flex:none;min-width:62px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:9px 10px;border:1.5px solid var(--line);border-radius:16px;background:var(--surface)}
+.day-chip small{font-size:11px;font-weight:700;color:var(--ink-3)}
+.day-chip strong{font-family:var(--font-display);font-size:18px;font-weight:800;line-height:1.1}
+.day-chip em{font-style:normal;font-size:9.5px;font-weight:800;color:var(--berry);margin-top:1px}
+.day-chip.on{border-color:var(--berry);background:var(--berry);color:#fff;box-shadow:0 8px 16px rgba(184,14,82,.22)}
+.day-chip.on small,.day-chip.on em{color:#FCE7F0}
+
+/* ===== Trip Readiness Card ===== */
+.ready-card{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding:14px 15px;border-radius:20px;background:var(--sage-soft);border:1.5px solid #BCE3D3;width:100%;text-align:left}
+.ready-card small{display:block;font-size:11px;font-weight:800;color:var(--sage)}
+.ready-card strong{display:block;margin-top:2px;font-family:var(--font-display);font-size:18px;color:var(--ink)}
+.ready-card p{margin-top:3px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.ready-go{padding:9px 12px;border-radius:12px;background:var(--sage);color:#fff;font-size:12px;font-weight:800;white-space:nowrap}
+
+.sec{display:flex;align-items:baseline;justify-content:space-between;margin:20px 0 10px}
+.sec h2{font-family:var(--font-display);font-size:19px;font-weight:800;letter-spacing:-.3px}
+.sec button{padding:0;border:0;background:none;font-size:12px;font-weight:800;color:var(--berry)}
+
+/* ===== Friendly Product Cards ===== */
+.pgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}
+.pcard{position:relative;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--line);border-radius:20px;background:var(--surface);box-shadow:0 5px 14px rgba(38,30,26,.04)}
+.pcard .open{display:flex;flex-direction:column;flex:1;padding:0;border:0;background:none;text-align:left}
+.pimg{position:relative;aspect-ratio:1.2/1;background:var(--surface-2);overflow:hidden}
+.pimg img{width:100%;height:100%;object-fit:cover}
+.pimg .em{display:grid;place-items:center;width:100%;height:100%;font-size:40px}
+.pimg .pct{position:absolute;left:8px;top:8px;padding:4px 8px;border-radius:8px;background:var(--gold);color:#2A1902;font-size:11px;font-weight:800}
+.pimg .warn{position:absolute;left:8px;bottom:8px;padding:3px 7px;border-radius:7px;background:rgba(38,30,26,.82);color:#fff;font-size:10px;font-weight:700}
+.pbody{display:flex;flex-direction:column;flex:1;padding:11px}
+.pbody .name{font-size:13.5px;font-weight:800;line-height:1.25;min-height:2.5em}
+.pbody .unit{margin-top:2px;font-size:11px;font-weight:600;color:var(--ink-3)}
+.pbody .pr{display:flex;align-items:baseline;gap:5px;margin-top:7px}
+.pbody .pr strong{font-family:var(--font-display);font-size:19px;font-weight:800;color:var(--berry-deep)}
+.pbody .pr s{font-size:11px;color:var(--ink-3)}
+.pbody .st{margin-top:8px;display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800;color:var(--ink-2)}
+.pbody .st i{width:8px;height:8px;border-radius:3px;background:var(--c)}
+.padd{position:absolute;right:8px;top:8px;z-index:2;display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:11px;background:rgba(255,255,255,.94);color:var(--ink);box-shadow:0 3px 10px rgba(0,0,0,.14)}
+.padd.on{background:var(--sage);color:#fff}
+.padd .icon{width:17px;height:17px}
+
+/* ===== In-Store Checklist Mode (Signature Feature!) ===== */
+.mode-tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:4px;border-radius:14px;background:var(--surface-2);margin-bottom:14px}
+.mode-tabs button{padding:10px;border:0;border-radius:11px;background:transparent;font-size:12.5px;font-weight:800;color:var(--ink-2)}
+.mode-tabs button.on{background:var(--surface);color:var(--berry-deep);box-shadow:0 3px 10px rgba(38,30,26,.08)}
+
+.aisle-card{display:flex;align-items:center;gap:12px;width:100%;padding:14px;margin-bottom:9px;border:1.5px solid var(--line);border-radius:20px;background:var(--surface);text-align:left;transition:all .15s}
+.aisle-card.done{background:var(--sage-soft);border-color:#BCE3D3}
+.aisle-chk{display:grid;place-items:center;width:36px;height:36px;flex:none;border:2.5px solid var(--line-2);border-radius:12px;background:#fff;color:transparent}
+.aisle-card.done .aisle-chk{border-color:var(--sage);background:var(--sage);color:#fff}
+.aisle-mid{flex:1;min-width:0}
+.aisle-mid b{display:block;font-size:15px;font-weight:800}
+.aisle-card.done .aisle-mid b{text-decoration:line-through;color:var(--ink-2)}
+.aisle-mid small{display:block;margin-top:3px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.aisle-pr{text-align:right;flex:none}
+.aisle-pr strong{display:block;font-family:var(--font-display);font-size:18px;font-weight:800;color:var(--berry-deep)}
+.aisle-card.done .aisle-pr strong{color:var(--sage)}
+
+.sticky-total{position:sticky;bottom:0;margin:14px -18px -26px;padding:13px 18px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.sticky-total small{display:block;font-size:11px;color:#CFC3B8}
+.sticky-total strong{font-family:var(--font-display);font-size:21px}
+.sticky-total button{padding:10px 14px;border:0;border-radius:12px;background:var(--gold);color:#2A1902;font-size:12px;font-weight:800}
+
+/* ===== Simple Shared Blocks ===== */
+.vtop{padding:42px 18px 14px}
+.vtop h1{font-family:var(--font-display);font-size:25px;font-weight:800;letter-spacing:-.5px}
+.vtop p{margin-top:4px;font-size:12.5px;color:var(--ink-2);line-height:1.5}
+.chip{flex:none;padding:8px 13px;border:1px solid var(--line);border-radius:999px;background:var(--surface);font-size:12.5px;font-weight:700;color:var(--ink-2)}
+.chip.on{border-color:var(--berry);background:var(--berry);color:#fff}
+.bgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;margin-top:12px}
+.bcard{display:flex;flex-direction:column;overflow:hidden;padding:0;border:1px solid var(--line);border-radius:20px;background:var(--surface);text-align:left}
+.bcover{position:relative;height:136px;display:flex;flex-direction:column;justify-content:flex-end;padding:11px;background:var(--c)}
+.bcover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.bcover::after{content:"";position:absolute;inset:0;background:linear-gradient(transparent 20%,rgba(28,20,18,.84))}
+.bcover strong{position:relative;z-index:1;font-family:var(--font-display);font-size:16px;color:#fff}
+.bcover small{position:relative;z-index:1;font-size:11px;color:#ECE0D6;margin-top:2px}
+.bfoot{display:flex;justify-content:space-between;padding:9px 11px;font-size:11.5px;font-weight:700}
+
+.adder{display:flex;gap:7px;padding:6px;border:1.5px solid var(--line-2);border-radius:15px;background:var(--surface)}
+.adder input{min-width:0;flex:1;padding:0 8px;border:0;outline:0;background:transparent;font-size:13.5px;font-weight:600}
+.adder button{padding:9px 14px;border:0;border-radius:11px;background:var(--berry);color:#fff;font-size:12px;font-weight:800}
+.kws{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.kw{display:inline-flex;align-items:center;gap:6px;padding:7px 8px 7px 12px;border:1px solid var(--line-2);border-radius:999px;background:var(--surface);font-size:12.5px;font-weight:700}
+.kw button{display:grid;place-items:center;width:20px;height:20px;border:0;border-radius:50%;background:var(--berry-soft);color:var(--berry-deep)}
+.kw button .icon{width:11px;height:11px}
+.sgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px}
+.scard{display:flex;flex-direction:column;overflow:hidden;padding:0;border:1.5px solid var(--line);border-radius:16px;background:var(--surface);text-align:left}
+.scard.on{border-color:var(--berry);box-shadow:0 0 0 1px var(--berry)}
+.scard .simg{position:relative;height:66px;display:grid;place-items:center;padding:12px;border-bottom:1px solid var(--line)}
+.scard .simg img{max-height:36px;object-fit:contain}
+.scard .chk{position:absolute;top:7px;right:7px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);color:transparent}
+.scard.on .chk{background:var(--berry);color:#fff}
+.scard .chk .icon{width:12px;height:12px}
+.scard .sbar{display:flex;justify-content:space-between;padding:9px 11px;font-size:12.5px;font-weight:800}
+
+/* ===== 4-Tab Nav ===== */
+.nav{flex:none;display:grid;grid-template-columns:repeat(4,1fr);padding:8px 8px 10px;border-top:1px solid var(--line);background:var(--surface)}
+.nav button{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px 0;border:0;background:none;color:var(--ink-3);font-size:11px;font-weight:700}
+.nav button .ic{display:grid;place-items:center;width:48px;height:30px;border-radius:12px}
+.nav button.on{color:var(--berry)}
+.nav button.on .ic{background:var(--berry);color:#fff;box-shadow:0 5px 12px rgba(184,14,82,.24)}
+.nav .bdg{position:absolute;top:1px;right:calc(50% - 22px);min-width:17px;height:17px;padding:0 4px;border-radius:99px;background:var(--gold);color:#2A1902;font-size:10px;font-weight:800;display:grid;place-items:center}
+
+/* ===== Sheets ===== */
+.layer{position:absolute;z-index:60;inset:0;display:flex;align-items:flex-end}
+.scrim{position:absolute;inset:0;border:0;background:rgba(30,22,18,.52);backdrop-filter:blur(2px)}
+.sheet{position:relative;width:100%;max-height:92%;overflow-y:auto;border-radius:26px 26px 0 0;background:var(--bg);scrollbar-width:none;animation:up .2s ease}
+.sheet::-webkit-scrollbar{display:none}
+@keyframes up{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:none}}
+.sclose{position:absolute;z-index:5;top:14px;right:14px;display:grid;place-items:center;width:36px;height:36px;border:0;border-radius:50%;background:rgba(38,30,26,.82);color:#fff}
+.sbody{padding:18px 18px 24px}
+.shero{height:152px;background:var(--surface-2)}
+.shero img{width:100%;height:100%;object-fit:cover}
+.shero .em{display:grid;place-items:center;width:100%;height:100%;font-size:58px}
+.offers{margin-top:10px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden}
+.offer{display:flex;align-items:center;justify-content:space-between;padding:12px 13px;border-bottom:1px solid var(--line);font-size:13px}
+.offer:last-child{border-bottom:0}
+.offer.top{background:var(--sage-soft)}
+.acts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:8px;margin-top:15px}
+.acts button{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:12px 8px;border:1.5px solid var(--line-2);border-radius:13px;background:var(--surface);font-size:12px;font-weight:800}
+.acts button.primary{border:0;background:var(--berry);color:#fff}
+.acts button.on-s{border-color:var(--sage);background:var(--sage-soft);color:var(--sage)}
+.acts button.on-w{border-color:var(--gold);background:var(--gold-soft);color:var(--gold-ink)}
+.acts .icon{width:15px;height:15px}
+
+.cal{padding:13px;border:1px solid var(--line);border-radius:18px;background:var(--surface)}
+.cal table{width:100%;border-collapse:collapse;margin-top:8px}
+.cal th{padding:5px 0;font-size:11px;font-weight:800;color:var(--ink-3)}
+.cal td{padding:2px;text-align:center}
+.cal td button{width:100%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:1.5px solid transparent;border-radius:11px;background:none;font-size:12.5px;font-weight:700}
+.cal td button.dim{opacity:.45}
+.cal td button.today{border-color:var(--gold)}
+.cal td button.sel{background:var(--berry);color:#fff}
+.cal .dots{display:flex;gap:2px;height:4px}
+.cal .dots i{width:4px;height:4px;border-radius:50%;background:var(--berry)}
+.cal td button.sel .dots i{background:var(--gold)}
+
+.wa-preview{padding:14px;border-radius:16px;background:#E7F8EE;border:1px solid #B5E4CA;font-family:monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;color:#123824}
+.toast{position:absolute;left:50%;bottom:84px;z-index:80;transform:translateX(-50%);padding:10px 15px;border-radius:13px;background:var(--ink);color:#fff;font-size:12px;font-weight:700;white-space:nowrap}
+
+@media(max-width:820px){
+  .stage{padding:0}.stage-card{display:none}
+  .phone{width:100%;height:100dvh;min-height:0;padding:0;border-radius:0;box-shadow:none}.phone::before{display:none}.screen{border-radius:0}.hero-header,.vtop{padding-top:16px}
+}
+html.app .stage{padding:0}html.app .stage-card{display:none}
+html.app .phone{width:100%;height:100dvh;min-height:0;padding:0;border-radius:0;box-shadow:none}html.app .phone::before{display:none}html.app .screen{border-radius:0}
+html.app .scroll{width:100%;max-width:480px;margin:0 auto}html.app .nav{width:100%;max-width:480px;margin:0 auto}html.app .hero-header,html.app .vtop{padding-top:16px}
+</style>
+</head>
+<body>
+<script>if(new URLSearchParams(location.search).has('app'))document.documentElement.classList.add('app')</script>
+
+<div class="stage">
+  <aside class="stage-card">
+    <div class="stage-brand">
+      <div class="mark-box"><svg viewBox="0 0 96 96" role="img" aria-label="Logo RumaQ"><use href="#rq-logo"/></svg></div>
+      <div><span class="wm">RumaQ</span><small>Asisten belanja mingguan Ibu</small></div>
+    </div>
+    <span class="stage-kicker">VERSI 3 · ASISTEN BELANJA</span>
+    <h1>Dari rencana di dapur sampai lorong supermarket.</h1>
+    <p>Mengubah RumaQ menjadi pendamping belanja mingguan yang hangat dan terarah: mulai dari pilih tanggal belanja di header berry, cek barang aman untuk hari itu, hingga <strong>Mode Di Toko</strong> saat mendorong troli.</p>
+    <div class="palette" aria-label="Palet warna">
+      <span style="background:#B80E52"></span>
+      <span style="background:#F5A617"></span>
+      <span style="background:#0E7B55"></span>
+      <span style="background:#FBF7F2"></span>
+      <span style="background:#261E1A"></span>
+    </div>
+    <div class="stage-list">
+      <strong>KEUNGGULAN VERSI INI</strong>
+      <ul>
+        <li>Alur berbasis hari belanja — langsung memperingatkan promo yang keburu habis sebelum hari H</li>
+        <li><strong>Mode Di Toko</strong> di tab Belanja: filter per supermarket + tombol ceklis ekstra besar + total berjalan di bawah</li>
+        <li>Pratinjau pesan WhatsApp siap kirim ke pasangan/keluarga</li>
+        <li>Tipografi Bricolage Grotesque yang ramah, modern, dan hangat</li>
+      </ul>
+    </div>
+    <div class="stage-links">
+      <a href="v1-editorial-hangat.html">v1 Editorial</a>
+      <a href="v2-fokus-hemat.html">v2 Fokus Hemat</a>
+      <a class="active" href="v3-asisten-belanja.html">v3 Asisten</a>
+      <a href="index.html">Galeri v3</a>
+    </div>
+  </aside>
+  <div class="phone"><div id="app" class="screen"></div></div>
+</div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <g id="rq-logo">
+    <defs>
+      <linearGradient id="rq-b3" x1="0.1" y1="0.05" x2="0.9" y2="0.95"><stop offset="0%" stop-color="#D4145A"/><stop offset="100%" stop-color="#A80A47"/></linearGradient>
+      <linearGradient id="rq-g3" x1="0.2" y1="0.1" x2="0.8" y2="0.9"><stop offset="0%" stop-color="#FBB924"/><stop offset="100%" stop-color="#EE960B"/></linearGradient>
+    </defs>
+    <rect x="2" y="2" width="92" height="92" rx="24" fill="#FAF6EE"/>
+    <path d="M42.8 20.6 Q48 16.2 53.2 20.6 L71.8 36.2 Q76.5 40.2 76.5 46.4 L76.5 57.5 Q76.5 75.5 58.5 75.5 L37.5 75.5 Q19.5 75.5 19.5 57.5 L19.5 46.4 Q19.5 40.2 24.2 36.2 Z" fill="none" stroke="url(#rq-b3)" stroke-width="9.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <rect x="67.5" y="71.6" width="20" height="9.8" rx="2.6" fill="url(#rq-b3)" transform="rotate(45 77.5 76.5)"/>
+    <path d="M46.2 35.8 Q48 32.2 49.8 35.8 Q52.7 45.6 62.6 48.6 Q66.2 50.4 62.6 52.2 Q52.7 55.2 49.8 65.0 Q48 68.6 46.2 65.0 Q43.3 55.2 33.4 52.2 Q29.8 50.4 33.4 48.6 Q43.3 45.6 46.2 35.8 Z" fill="url(#rq-g3)"/>
+  </g>
+</defs></svg>
+
+<script>
+const STORES=[
+  {id:'superindo',name:'Superindo',color:'#DA291C',logo:'../logo-superindo.png'},
+  {id:'alfamart',name:'Alfamart',color:'#E31E24',logo:'../logo-alfamart.png'},
+  {id:'indomaret',name:'Indomaret',color:'#1672B9',logo:'../logo-indomaret.png'},
+  {id:'hypermart',name:'Hypermart',color:'#00A551',logo:'../logo-hypermart.png'}
+];
+const CATS={pokok:'Makanan Pokok',protein:'Protein',sayur:'Sayur & Buah',minuman:'Minuman'};
+const PRODUCTS=[
+  {id:'beras',name:'Beras Premium',brand:'Raja Platinum',unit:'5 kg',cat:'pokok',img:'../rice.jpg',normal:82900,ref:[5,'kg']},
+  {id:'minyak',name:'Minyak Goreng',brand:'Sania',unit:'2 liter',cat:'pokok',img:'../oil.jpg',normal:38500,ref:[2,'liter']},
+  {id:'telur',name:'Telur Ayam Segar',brand:'Ayam Negeri',unit:'1 kg',cat:'protein',img:'../eggs.jpg',normal:29900,ref:[1,'kg']},
+  {id:'gula',name:'Gula Pasir',brand:'Gulaku',unit:'1 kg',cat:'pokok',img:'../sugar.svg',normal:18900,ref:[1,'kg']},
+  {id:'kentang',name:'Kentang Dieng',brand:'Panen Lokal',unit:'1 kg',cat:'sayur',img:'../potatoes.jpg',normal:17900,ref:[1,'kg']},
+  {id:'sayur',name:'Paket Sayur Capcay',brand:'Kebun Segar',unit:'1 paket',cat:'sayur',img:'../vegetables.jpg',normal:14900},
+  {id:'mie',name:'Mie Instan Goreng',brand:'Indomie',unit:'5 pcs',cat:'pokok',emoji:'🍜',normal:15500},
+  {id:'susu',name:'Susu UHT Full Cream',brand:'Ultra',unit:'1 liter',cat:'minuman',emoji:'🥛',normal:19900},
+  {id:'kopi',name:'Kopi Bubuk Spesial',brand:'Kapal Api',unit:'165 gr',cat:'minuman',emoji:'☕',normal:12900},
+  {id:'jeruk',name:'Jeruk Manis',brand:'Kebun Segar',unit:'1 kg',cat:'sayur',emoji:'🍊',normal:28900}
+];
+const BROCHURES=[
+  {id:'superindo',store:'superindo',title:'JSM Superindo',from:20,to:26,pages:12,cover:'../vegetables.jpg',
+    items:{beras:[2,64900],minyak:[5,34900],telur:[7,26900],kentang:[3,12900],gula:[4,16900],sayur:[1,9900],kopi:[6,9900]}},
+  {id:'alfamart',store:'alfamart',title:'Hemat Akhir Pekan',from:21,to:28,pages:8,cover:'../oil.jpg',
+    items:{minyak:[1,31900],telur:[2,25500],gula:[3,17500],beras:[3,72900],susu:[4,16500],mie:[5,13400]}},
+  {id:'indomaret',store:'indomaret',title:'Harga Hebat',from:20,to:24,pages:16,cover:'../eggs.jpg',
+    items:{telur:[1,24900],minyak:[2,32500],kentang:[6,15900],beras:[4,73500],mie:[7,12900],kopi:[9,10900],susu:[12,17200]}},
+  {id:'hypermart',store:'hypermart',title:'Fresh & Hemat',from:21,to:27,pages:20,cover:'../rice.jpg',
+    items:{beras:[5,67900],gula:[2,16700],sayur:[3,11500],telur:[8,27500],kopi:[10,11500],minyak:[6,35900],kentang:[4,13900]}},
+  {id:'superindo-des',store:'superindo',title:'Promo Awal Desember',from:27,to:34,pages:16,cover:'../vegetables.jpg',
+    items:{jeruk:[1,24900],beras:[2,66900]}}
+];
+const TODAY=21,PLAN=28,DAYS=[21,22,23,24,25,26,27,28];
+
+function loadLocal(){try{return JSON.parse(localStorage.getItem('rumaq-v3-3')||'{}')||{}}catch{return {}}}
+const local=loadLocal();
+const state={
+  view:'home',day:PLAN,bFilter:'',query:'',shopMode:'aisle',aisleStore:'',
+  watch:Array.isArray(local.watch)?local.watch:['beras','minyak'],
+  stores:new Set(Array.isArray(local.stores)&&local.stores.length?local.stores:STORES.map(s=>s.id)),
+  saved:new Set(Array.isArray(local.saved)?local.saved:['beras','minyak','telur','sayur']),
+  basket:new Set(Array.isArray(local.basket)?local.basket:['telur']),
+  modal:null,modalId:'',brosurMode:'parsed',bPage:1,toast:'',focusSearch:false,focusKw:false,unread:true
+};
+function persist(){try{localStorage.setItem('rumaq-v3-3',JSON.stringify({watch:state.watch,stores:[...state.stores],saved:[...state.saved],basket:[...state.basket]}))}catch{}}
+
+const money=v=>'Rp'+v.toLocaleString('id-ID');
+const esc=s=>String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const store=id=>STORES.find(s=>s.id===id);
+const product=id=>PRODUCTS.find(p=>p.id===id);
+const brochure=id=>BROCHURES.find(b=>b.id===id);
+const serialDate=s=>new Date(2026,10,s);
+const fmtShortDate=s=>{const d=serialDate(s);return d.getDate()+' '+d.toLocaleDateString('id-ID',{month:'short'})};
+const fmtFullDay=s=>{const d=serialDate(s);return d.toLocaleDateString('id-ID',{weekday:'short'})+', '+fmtShortDate(s)};
+const offers=p=>BROCHURES.filter(b=>b.items[p.id]).map(b=>({store:b.store,price:b.items[p.id][1],page:b.items[p.id][0],b})).sort((a,b)=>a.price-b.price);
+const best=p=>offers(p).find(o=>state.stores.has(o.store))||offers(p)[0];
+const disc=p=>Math.round((1-best(p).price/p.normal)*100);
+const pFrom=id=>Math.min(...BROCHURES.filter(b=>b.items[id]).map(b=>b.from));
+const pTo=id=>Math.max(...BROCHURES.filter(b=>b.items[id]).map(b=>b.to));
+const activeOn=(p,d)=>pFrom(p.id)<=d&&pTo(p.id)>=d;
+const countOn=d=>PRODUCTS.filter(p=>activeOn(p,d)).length;
+const isWatched=p=>state.watch.some(w=>(p.name+' '+p.brand).toLowerCase().includes(w.toLowerCase().trim()));
+
+const P={
+  search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+  home:'<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5.5v-6.5h-5V21H4a1 1 0 0 1-1-1z"/>',
+  book:'<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v18H6.5A2.5 2.5 0 0 1 4 18.5z"/><path d="M8 7h8M8 11h8M8 15h5"/>',
+  bell:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
+  cart:'<circle cx="9" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/><path d="M3 4h2l2.4 11a2 2 0 0 0 2 1.5h7.8a2 2 0 0 0 2-1.6L21 8H7"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  check:'<path d="m5 12 4 4L19 6"/>',
+  close:'<path d="m6 6 12 12M18 6 6 18"/>',
+  cal:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4m8-4v4M3 10h18"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
+  trash:'<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>'
+};
+const icon=n=>`<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
+
+function productCard(p){
+  const b=best(p),st=store(b.store),sv=state.saved.has(p.id),expBefore=pTo(p.id)<state.day;
+  return `<article class="pcard">
+    <button class="padd ${sv?'on':''}" data-action="simpan" data-id="${p.id}" aria-label="Simpan">${icon(sv?'check':'plus')}</button>
+    <button class="open" data-action="item" data-id="${p.id}">
+      <div class="pimg">
+        ${p.img?`<img src="${p.img}" alt="${p.name}">`:`<span class="em">${p.emoji}</span>`}
+        <span class="pct num">-${disc(p)}%</span>
+        ${expBefore?`<span class="warn">Habis ${fmtShortDate(pTo(p.id))}</span>`:''}
+      </div>
+      <div class="pbody">
+        <strong class="name">${p.brand} ${p.name}</strong>
+        <span class="unit">${p.unit}</span>
+        <div class="pr"><strong class="num">${money(b.price)}</strong><s class="num">${money(p.normal)}</s></div>
+        <span class="st" style="--c:${st.color}"><i></i>${st.name}</span>
+      </div>
+    </button>
+  </article>`;
+}
+
+function viewHome(){
+  const q=state.query.trim().toLowerCase();
+  const saved=[...state.saved].map(product).filter(Boolean);
+  const savedHemat=saved.reduce((s,p)=>s+p.normal-best(p).price,0);
+  let list=q?PRODUCTS.filter(p=>(p.name+' '+p.brand+' '+CATS[p.cat]).toLowerCase().includes(q)):PRODUCTS.filter(p=>activeOn(p,state.day));
+  if(!list.length&&!q)list=PRODUCTS;
+  list=[...list].sort((a,b)=>(isWatched(a)?0:1)-(isWatched(b)?0:1)||disc(b)-disc(a));
+
+  return `<div class="view">
+    <header class="hero-header">
+      <div class="hh-top">
+        <button class="hh-brand" data-action="view" data-view="home">
+          <svg viewBox="0 0 96 96" aria-hidden="true"><use href="#rq-logo"/></svg>
+          <div><b>RumaQ</b><small>Asisten belanja mingguan Ibu</small></div>
+        </button>
+        <div class="hh-acts">
+          <button class="hh-btn" data-action="notif" aria-label="Notifikasi">${icon('bell')}${state.unread?'<span class="dot"></span>':''}</button>
+          <button class="hh-btn" data-action="profil" aria-label="Profil">${icon('user')}</button>
+        </div>
+      </div>
+      <button class="trip-bar" data-action="kalender">
+        <div><small>RENCANA BELANJA BERIKUTNYA</small><strong>${fmtFullDay(state.day)}</strong></div>
+        <span class="trip-pill num">${countOn(state.day)} promo ▾</span>
+      </button>
+    </header>
+
+    <label class="search-float">${icon('search')}<span class="sr-only">Cari barang</span>
+      <input data-search type="search" value="${esc(state.query)}" placeholder="Mau beli apa minggu ini? (beras, telur…)" autocomplete="off">
+      ${state.query?`<button style="border:0;background:none;padding:4px" data-action="reset-cari" aria-label="Hapus">${icon('close')}</button>`:''}
+    </label>
+
+    <div class="pad">
+      ${!q?`
+        <div class="hscroll" aria-label="Pilih hari belanja">
+          ${DAYS.map(d=>{
+            const dt=serialDate(d),dow=dt.toLocaleDateString('id-ID',{weekday:'short'});
+            return `<button class="day-chip ${state.day===d?'on':''}" data-action="hari" data-day="${d}">
+              <small>${dow}</small><strong class="num">${dt.getDate()}</strong>
+              <em>${d===PLAN?'★ Rencana':d===TODAY?'Hari ini':countOn(d)+' promo'}</em>
+            </button>`;
+          }).join('')}
+        </div>
+
+        <button class="ready-card" data-action="view" data-view="belanja">
+          <div>
+            <small>SIAP KE SUPERMARKET</small>
+            <strong class="num">${saved.length} barang · Hemat ${money(savedHemat)}</strong>
+            <p>Buka Mode Di Toko untuk ceklis cepat per lorong</p>
+          </div>
+          <span class="ready-go">Buka →</span>
+        </button>
+      `:''}
+
+      <div class="sec"><h2>${q?`Hasil “${esc(state.query)}”`:`Promo aktif ${fmtShortDate(state.day)}`}</h2><button data-action="view" data-view="brosur">Lihat brosur →</button></div>
+      <div class="pgrid">${list.map(productCard).join('')}</div>
+    </div>
+  </div>`;
+}
+
+function viewBrosur(){
+  const list=BROCHURES.filter(b=>!state.bFilter||b.store===state.bFilter);
+  return `<div class="view"><div class="vtop"><h1>Katalog brosur</h1><p>Semua brosur supermarket dirapikan jadi kartu harga — cek aslinya kapan saja.</p></div>
+    <div class="pad" style="padding-top:0">
+      <div class="hscroll">
+        <button class="chip ${!state.bFilter?'on':''}" data-action="bfilter" data-store="">Semua toko</button>
+        ${STORES.map(s=>`<button class="chip ${state.bFilter===s.id?'on':''}" data-action="bfilter" data-store="${s.id}">${s.name}</button>`).join('')}
+      </div>
+      <div class="bgrid">${list.map(b=>{const st=store(b.store);return `<button class="bcard" data-action="brosur" data-id="${b.id}">
+        <span class="bcover" style="--c:${st.color}"><img src="${b.cover}" alt=""><strong>${b.title}</strong><small>${fmtShortDate(b.from)} – ${fmtShortDate(b.to)}</small></span>
+        <span class="bfoot"><span>${st.name}</span><span style="color:var(--ink-3)">${Object.keys(b.items).length} barang</span></span>
+      </button>`}).join('')}</div>
+    </div></div>`;
+}
+
+function viewPantau(){
+  return `<div class="view"><div class="vtop"><h1>Pantau kebutuhan</h1><p>Tambahkan kata kunci belanja rutin agar RumaQ menyorot promonya lebih dulu.</p></div>
+    <div class="pad" style="padding-top:0">
+      <div class="adder"><input data-kw type="text" placeholder="Ketik: beras, minyak, telur…"><button data-action="tambah-kw">Pantau</button></div>
+      <div class="kws">${state.watch.map((w,i)=>`<span class="kw">${esc(w)}<button data-action="hapus-kw" data-i="${i}" aria-label="Hapus">${icon('close')}</button></span>`).join('')}</div>
+      <div class="sec"><h2>Supermarket langganan</h2></div>
+      <div class="sgrid">${STORES.map(s=>{const on=state.stores.has(s.id);return `<button class="scard ${on?'on':''}" data-action="toko" data-id="${s.id}">
+        <span class="simg"><img src="${s.logo}" alt="${s.name}"><i class="chk">${icon('check')}</i></span>
+        <span class="sbar"><span>${s.name}</span><small style="color:${on?'var(--berry)':'var(--ink-3)'}">${on?'Aktif':'Off'}</small></span>
+      </button>`}).join('')}</div>
+    </div></div>`;
+}
+
+function viewBelanja(){
+  const saved=[...state.saved].map(product).filter(Boolean);
+  if(!saved.length){
+    return `<div class="view"><div class="vtop"><h1>Daftar belanja</h1><p>Tambahkan promo favorit untuk memulai ceklis belanja.</p></div>
+      <div class="pad"><div style="padding:26px;border:1.5px dashed var(--line-2);border-radius:20px;background:var(--surface);text-align:center"><h3 style="font-family:var(--font-display)">Daftar masih kosong</h3><button style="margin-top:12px;padding:11px 18px;border:0;border-radius:12px;background:var(--berry);color:#fff;font-weight:800" data-action="view" data-view="home">Cari promo dulu</button></div></div></div>`;
+  }
+  const storesInList=[...new Set(saved.map(p=>best(p).store))];
+  const shown=state.aisleStore?saved.filter(p=>best(p).store===state.aisleStore):saved;
+  const inCartVal=saved.filter(p=>state.basket.has(p.id)).reduce((s,p)=>s+best(p).price,0);
+  const remainVal=saved.filter(p=>!state.basket.has(p.id)).reduce((s,p)=>s+best(p).price,0);
+  const doneN=saved.filter(p=>state.basket.has(p.id)).length;
+
+  return `<div class="view"><div class="vtop"><h1>Belanja di toko</h1><p>${doneN} dari ${saved.length} barang sudah masuk troli · ketuk baris untuk ceklis cepat.</p></div>
+    <div class="pad" style="padding-top:0">
+      <div class="mode-tabs">
+        <button class="${state.shopMode==='aisle'?'on':''}" data-action="shopmode" data-mode="aisle">🛒 Mode Di Toko</button>
+        <button class="${state.shopMode==='manage'?'on':''}" data-action="shopmode" data-mode="manage">✏️ Edit Daftar</button>
+      </div>
+      <div class="hscroll" style="margin-bottom:10px">
+        <button class="chip ${!state.aisleStore?'on':''}" data-action="aislestore" data-store="">Semua (${saved.length})</button>
+        ${storesInList.map(sid=>{const st=store(sid),cnt=saved.filter(p=>best(p).store===sid).length;return `<button class="chip ${state.aisleStore===sid?'on':''}" data-action="aislestore" data-store="${sid}">${st.name} (${cnt})</button>`}).join('')}
+      </div>
+      ${shown.map(p=>{
+        const ok=state.basket.has(p.id),b=best(p),st=store(b.store);
+        if(state.shopMode==='aisle'){
+          return `<button class="aisle-card ${ok?'done':''}" data-action="basket" data-id="${p.id}">
+            <span class="aisle-chk">${icon('check')}</span>
+            <span class="aisle-mid"><b>${p.brand} ${p.name}</b><small>${p.unit} · ${st.name}</small></span>
+            <span class="aisle-pr"><strong class="num">${money(b.price)}</strong><small style="font-size:11px;color:var(--sage);font-weight:700">hemat ${Math.round((p.normal-b.price)/1000)}rb</small></span>
+          </button>`;
+        }
+        return `<div class="aisle-card" style="padding:11px 12px">
+          <button style="flex:1;display:flex;justify-content:space-between;align-items:center;border:0;background:none;text-align:left;padding:0" data-action="item" data-id="${p.id}">
+            <span class="aisle-mid"><b>${p.brand} ${p.name}</b><small>${st.name} · s.d. ${fmtShortDate(pTo(p.id))}</small></span>
+            <span class="aisle-pr"><strong class="num">${money(b.price)}</strong></span>
+          </button>
+          <button style="display:grid;place-items:center;width:36px;height:36px;border:0;border-radius:10px;background:var(--berry-soft);color:var(--berry-deep)" data-action="hapus-satu" data-id="${p.id}" aria-label="Hapus">${icon('trash')}</button>
+        </div>`;
+      }).join('')}
+      <div class="sticky-total">
+        <div><small class="num">Di troli: ${money(inCartVal)} · Sisa: ${money(remainVal)}</small><strong class="num">${money(inCartVal+remainVal)}</strong></div>
+        <button data-action="wa-modal">Kirim WA</button>
+      </div>
+    </div></div>`;
+}
+
+function modalWrap(inner,label){
+  return `<div class="layer"><button class="scrim" data-action="tutup" aria-label="Tutup"></button>
+    <section class="sheet" role="dialog" aria-modal="true" aria-label="${esc(label)}"><button class="sclose" data-action="tutup" aria-label="Tutup">${icon('close')}</button>${inner}</section></div>`;
+}
+
+function sheetItem(p){
+  const os=offers(p),b=best(p);
+  return modalWrap(`<div class="shero">${p.img?`<img src="${p.img}" alt="">`:`<span class="em">${p.emoji}</span>`}</div>
+    <div class="sbody">
+      <span style="font-size:11px;font-weight:800;color:var(--berry)">${CATS[p.cat].toUpperCase()}</span>
+      <h2 style="font-family:var(--font-display);font-size:23px;margin-top:2px">${p.name}</h2>
+      <p style="font-size:12.5px;color:var(--ink-2)">${p.brand} · ${p.unit} · Berlaku ${fmtShortDate(pFrom(p.id))} – ${fmtShortDate(pTo(p.id))}</p>
+      <div class="offers">${os.map(o=>`<div class="offer ${o.store===b.store?'top':''}"><b>${store(o.store).name}</b><span style="font-size:12px;font-weight:700;color:${o.store===b.store?'var(--sage)':'var(--ink-3)'}">${o.store===b.store?'Termurah ✓':'+'+money(o.price-b.price)}</span><strong class="num">${money(o.price)}</strong></div>`).join('')}</div>
+      <div class="acts">
+        <button class="${isWatched(p)?'on-w':''}" data-action="pantau" data-id="${p.id}">${icon('bell')} ${isWatched(p)?'Dipantau':'Pantau'}</button>
+        <button class="${state.saved.has(p.id)?'on-s':''}" data-action="simpan" data-id="${p.id}">${icon(state.saved.has(p.id)?'check':'plus')} ${state.saved.has(p.id)?'Di Daftar':'Daftar'}</button>
+        <button class="primary" data-action="brosur" data-id="${b.b.id}">${icon('book')} Brosur Hal. ${b.page}</button>
+      </div>
+    </div>`,p.name);
+}
+
+function sheetBrosur(b){
+  const entries=Object.entries(b.items).map(([id,[page,price]])=>({p:product(id),page,price})).filter(x=>x.p);
+  const parsed=state.brosurMode==='parsed',st=store(b.store),shown=entries[(state.bPage-1)%entries.length];
+  return modalWrap(`<div class="sbody" style="padding-top:18px">
+    <h2 style="font-family:var(--font-display);font-size:22px">${b.title}</h2>
+    <p style="font-size:12px;color:var(--ink-2);margin:3px 0 12px">${st.name} · ${fmtShortDate(b.from)} – ${fmtShortDate(b.to)}</p>
+    <div class="mode-tabs"><button class="${parsed?'on':''}" data-action="mode-brosur" data-mode="parsed">Daftar rapi</button><button class="${!parsed?'on':''}" data-action="mode-brosur" data-mode="original">Brosur asli</button></div>
+    ${parsed?`<div class="offers">${entries.map(({p,page,price})=>`<button class="offer" style="width:100%;border-left:0;border-right:0;border-top:0;background:none" data-action="item" data-id="${p.id}"><span><b>${p.name}</b> <small style="color:var(--ink-3)">Hal.${page}</small></span><strong class="num" style="color:var(--berry-deep)">${money(price)}</strong></button>`).join('')}</div>`
+    :`<img src="${b.cover}" style="width:100%;height:190px;object-fit:cover;border-radius:16px" alt=""><button style="margin-top:10px;width:100%;display:flex;justify-content:space-between;align-items:center;padding:12px;border:2px dashed var(--berry);border-radius:14px;background:var(--berry-soft);text-align:left" data-action="item" data-id="${shown.p.id}"><div><small style="font-weight:800;color:var(--berry-deep)">HALAMAN ${state.bPage}</small><b style="display:block">${shown.p.name}</b></div><strong class="num" style="font-size:19px;color:var(--berry-deep)">${money(shown.price)}</strong></button>
+      <div style="display:flex;justify-content:space-between;margin-top:10px"><button style="padding:8px 12px;border:1px solid var(--line-2);border-radius:10px;background:var(--surface);font-weight:800" data-action="page-brosur" data-step="-1" ${state.bPage<=1?'disabled':''}>← Sblm</button><span>Hal. ${state.bPage}/${b.pages}</span><button style="padding:8px 12px;border:1px solid var(--line-2);border-radius:10px;background:var(--surface);font-weight:800" data-action="page-brosur" data-step="1" ${state.bPage>=b.pages?'disabled':''}>Brkt →</button></div>`}
+  </div>`,b.title);
+}
+
+function sheetKalender(){
+  const weeks=[[15,16,17,18,19,20,21],[22,23,24,25,26,27,28],[29,30,31,32,33,34,35]];
+  return modalWrap(`<div class="sbody" style="padding-top:18px"><h2 style="font-family:var(--font-display);font-size:21px;margin-bottom:10px">Pilih hari belanja</h2>
+    <div class="cal"><strong>Nov – Des 2026</strong><table><thead><tr>${['Min','Sen','Sel','Rab','Kam','Jum','Sab'].map(d=>`<th>${d}</th>`).join('')}</tr></thead>
+    <tbody>${weeks.map(w=>`<tr>${w.map(s=>{const n=countOn(s),d=serialDate(s);return `<td><button class="${s===state.day?'sel':''} ${s===TODAY?'today':''} ${n?'':'dim'}" data-action="kal" data-day="${s}">${d.getDate()}<span class="dots">${n?'<i></i>'.repeat(n>6?3:2):''}</span></button></td>`}).join('')}</tr>`).join('')}</tbody></table></div></div>`,'Kalender');
+}
+
+function sheetWA(){
+  const saved=[...state.saved].map(product).filter(Boolean);
+  const txt=`🛒 *Daftar Belanja RumaQ (${fmtShortDate(state.day)})*\n\n`+saved.map(p=>`• ${p.brand} ${p.name} (${p.unit})\n  ${store(best(p).store).name} — ${money(best(p).price)}`).join('\n')+`\n\nTotal: ${money(saved.reduce((s,p)=>s+best(p).price,0))}`;
+  return modalWrap(`<div class="sbody" style="padding-top:18px"><h2 style="font-family:var(--font-display);font-size:21px;margin-bottom:10px">Kirim ke WhatsApp</h2>
+    <div class="wa-preview">${esc(txt)}</div>
+    <button style="margin-top:12px;width:100%;padding:13px;border:0;border-radius:14px;background:var(--sage);color:#fff;font-size:13px;font-weight:800" data-action="copy-wa">Salin teks daftar belanja ✓</button></div>`,'Kirim WhatsApp');
+}
+
+function sheetNotif(){
+  return modalWrap(`<div class="sbody" style="padding-top:18px"><h2 style="font-family:var(--font-display);font-size:21px;margin-bottom:10px">Kabar harga</h2>
+    <div class="offers"><button class="offer" style="width:100%;background:none;border-left:0;border-right:0;border-top:0;text-align:left" data-action="item" data-id="minyak"><span>🫗 <b>Minyak Sania 2L</b> turun 17% di Alfamart</span><strong class="num">Rp31.900</strong></button>
+    <button class="offer" style="width:100%;background:none;border-left:0;border-right:0;border-top:0;text-align:left" data-action="item" data-id="beras"><span>🍚 <b>Beras 5kg</b> termurah di Superindo</span><strong class="num">Rp64.900</strong></button></div></div>`,'Notifikasi');
+}
+
+function sheetProfil(){
+  return modalWrap(`<div class="sbody" style="padding-top:18px"><h2 style="font-family:var(--font-display);font-size:21px">Ibu Rina</h2><p style="font-size:12.5px;color:var(--ink-2);margin-top:4px">Tanpa login · data disimpan lokal di HP ini.</p>
+    <div style="margin-top:14px;padding:13px;border-radius:15px;background:var(--surface);border:1px solid var(--line);font-size:12.5px;color:var(--ink-2);line-height:1.55">RumaQ membaca brosur supermarket resmi agar Ibu bisa merencanakan belanja mingguan dengan tenang dan hemat.</div></div>`,'Profil');
+}
+
+function nav(){
+  const items=[['home','home','Beranda',0],['brosur','book','Brosur',0],['pantau','bell','Pantau',state.watch.length],['belanja','cart','Belanja',state.saved.size]];
+  return `<nav class="nav" aria-label="Navigasi">${items.map(([v,ic,lb,n])=>`<button class="${state.view===v?'on':''}" data-action="view" data-view="${v}"><span class="ic">${icon(ic)}</span><span>${lb}</span>${n?`<i class="bdg">${n}</i>`:''}</button>`).join('')}</nav>`;
+}
+
+function render(scrollTop=false){
+  const app=document.getElementById('app');
+  const content=({home:viewHome,brosur:viewBrosur,pantau:viewPantau,belanja:viewBelanja})[state.view]();
+  let modal='';
+  if(state.modal==='item')modal=sheetItem(product(state.modalId));
+  else if(state.modal==='brosur')modal=sheetBrosur(brochure(state.modalId));
+  else if(state.modal==='kalender')modal=sheetKalender();
+  else if(state.modal==='wa')modal=sheetWA();
+  else if(state.modal==='notif')modal=sheetNotif();
+  else if(state.modal==='profil')modal=sheetProfil();
+  app.innerHTML=`<main class="scroll">${content}</main>${nav()}${modal}${state.toast?`<div class="toast">${state.toast}</div>`:''}`;
+  if(scrollTop)app.querySelector('.scroll').scrollTop=0;
+  const si=app.querySelector('[data-search]');if(si&&state.focusSearch){si.focus();si.setSelectionRange(si.value.length,si.value.length);state.focusSearch=false}
+  const kw=app.querySelector('[data-kw]');if(kw&&state.focusKw){kw.focus();state.focusKw=false}
+}
+const toast=msg=>{state.toast=msg;render();clearTimeout(render._t);render._t=setTimeout(()=>{state.toast='';render()},1800)};
+
+document.addEventListener('click',e=>{
+  const el=e.target.closest('[data-action]');if(!el)return;
+  const a=el.dataset.action,id=el.dataset.id;
+  if(a==='view'){state.view=el.dataset.view;state.modal=null;render(true)}
+  else if(a==='hari'){state.day=+el.dataset.day;render()}
+  else if(a==='bfilter'){state.bFilter=el.dataset.store;render()}
+  else if(a==='shopmode'){state.shopMode=el.dataset.mode;render()}
+  else if(a==='aislestore'){state.aisleStore=el.dataset.store;render()}
+  else if(a==='item'){state.modal='item';state.modalId=id;render()}
+  else if(a==='brosur'){const fp=state.modal==='item'?best(product(state.modalId)).page:1;state.modal='brosur';state.modalId=id;state.brosurMode='parsed';state.bPage=fp;render()}
+  else if(a==='mode-brosur'){state.brosurMode=el.dataset.mode;render()}
+  else if(a==='page-brosur'){const b=brochure(state.modalId);state.bPage=Math.max(1,Math.min(b.pages,state.bPage+Number(el.dataset.step)));render()}
+  else if(a==='kalender'){state.modal='kalender';render()}
+  else if(a==='kal'){state.day=+el.dataset.day;state.modal=null;render()}
+  else if(a==='wa-modal'){state.modal='wa';render()}
+  else if(a==='copy-wa'){state.modal=null;toast('Teks WhatsApp disalin ✓')}
+  else if(a==='notif'){state.unread=false;state.modal='notif';render()}
+  else if(a==='profil'){state.modal='profil';render()}
+  else if(a==='tutup'){state.modal=null;render()}
+  else if(a==='simpan'){if(state.saved.has(id)){state.saved.delete(id);state.basket.delete(id);toast('Dihapus dari daftar')}else{state.saved.add(id);toast('Masuk daftar belanja ✓')}persist()}
+  else if(a==='basket'){state.basket.has(id)?state.basket.delete(id):state.basket.add(id);persist();render()}
+  else if(a==='hapus-satu'){state.saved.delete(id);state.basket.delete(id);persist();toast('Dihapus dari daftar')}
+  else if(a==='pantau'){const p=product(id),ix=state.watch.findIndex(w=>(p.name+' '+p.brand).toLowerCase().includes(w.toLowerCase()));if(ix<0){state.watch.push(p.id);toast('Dipantau ✓')}else{state.watch.splice(ix,1);toast('Berhenti pantau')}persist()}
+  else if(a==='tambah-kw'){const v=document.querySelector('[data-kw]').value.trim();if(v&&!state.watch.includes(v)){state.watch.push(v);persist();state.focusKw=true;toast(`“${v}” dipantau ✓`)}}
+  else if(a==='hapus-kw'){state.watch.splice(+el.dataset.i,1);persist();render()}
+  else if(a==='toko'){if(state.stores.has(id)&&state.stores.size===1){toast('Minimal 1 toko aktif');return}state.stores.has(id)?state.stores.delete(id):state.stores.add(id);persist();render()}
+  else if(a==='reset-cari'){state.query='';render()}
+});
+document.addEventListener('input',e=>{if(e.target.matches('[data-search]')){state.query=e.target.value;state.focusSearch=true;render()}});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&state.modal){state.modal=null;render()}
+  if(e.key==='Enter'&&e.target.matches('[data-kw]')){e.preventDefault();document.querySelector('[data-action="tambah-kw"]')?.click()}
+});
+render();
+</script>
+</body>
+</html>
