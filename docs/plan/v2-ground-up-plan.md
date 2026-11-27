@@ -2,7 +2,7 @@
 
 > Parent: [#758](https://github.com/ahaqqu/RumaQ/issues/758). Design: [v2-design.md](v2-design.md). Evidence: [pipeline audit](v2-pipeline-audit.md), [Actions audit](v2-actions-audit.md), and [infrastructure evaluation](v2-infrastructure-evaluation.md).
 >
-> **Status: awaiting plan approval.** Active checkpoints remain in force. No implementation, paid evaluation, workflow disablement, deployment, or live scrape is authorized by this document alone.
+> **Status: awaiting plan approval.** Program state and the cross-harness resume point: [v2-program-state.md](v2-program-state.md). Docs PR [#759](https://github.com/ahaqqu/RumaQ/pull/759) is open, rebased on `main`, and green. Active checkpoints remain in force. No implementation, paid evaluation, workflow disablement, deployment, or live scrape is authorized by this document alone.
 
 ## 1. Locked scope
 
@@ -52,7 +52,7 @@ Phases 2–5 contain ordered PRs below. Phase 6 does not wait for a second campa
 
 ## 4. Phase 0 — approval, tracking, and safety
 
-1. Open a docs-only PR containing the five v2 research/design/plan documents; link every research/design/plan comment to the PR.
+1. Docs-only PR with the five research/design/plan documents and the program state file: [#759](https://github.com/ahaqqu/RumaQ/pull/759). Link every research/design/plan comment to it.
 2. Create child issues under #758 for the phases below, with entry step `Plan` and dependencies recorded. Move only the active issue to `In Progress` after approval.
 3. Freeze legacy with an annotated tag/commit record. Its Worker remains deployed for the v1 hostname; no ongoing feature work is planned there.
 4. Stop legacy scheduled scraping through the controlled VPS/config path before fresh collection. Do not delete old data.
@@ -282,9 +282,9 @@ The program is not done when the new UI merely renders. It is done when:
 
 ## 16. Immediate next checkpoint
 
-On **“approve plan”**:
+On **“approve plan”** (the docs are already open and green as [#759](https://github.com/ahaqqu/RumaQ/pull/759), linked from #758; the open item is the owner's sign-off, including the disclosure decision):
 
-1. Open the docs-only PR and link it from #758.
+1. Merge [#759](https://github.com/ahaqqu/RumaQ/pull/759); it carries the five documents and the program state file.
 2. Create the phased child issues and dependency chain on Delivery Kanban.
 3. Execute Actions Wave 1A as the first independent implementation wave.
 4. Start legacy-hostname preparation and the fresh platform contract/schema design implementation.
