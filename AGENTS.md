@@ -21,7 +21,7 @@
 - Before creating a PR, follow the `pr-creation` skill.
 - When implementing a complex or unclear plan from a file, follow the `guided-implementation` skill.
 - When data or behaviour has no live users (unshipped features, internal-only tables), prefer the simplest destructive change — no backward-compatibility migration, dual-write window, or compatibility shim; breaking changes are acceptable.
-- When asked to implement a phase or feature, read the matching `docs/plan/*.md` first and check open GitHub Issues and the Delivery Kanban board for current status.
+- When asked to implement a feature or plan, read the matching `docs/plan/*.md` first and check open GitHub Issues and the Delivery Kanban board for current status.
 - Before merging a PR, ensure the GitHub Action succeeds.
 - When creating new shell scripts, add them to `.gitattributes` with `mode=755` and commit the executable bit (`git update-index --chmod=+x` — the attribute alone does not set it): a missing bit fails a direct `./script.sh` run with `Permission denied`, while `bash script.sh` callers still work.
 - When asked to update this file, use format: "When <condition>, <action>", keep it concise and clear.

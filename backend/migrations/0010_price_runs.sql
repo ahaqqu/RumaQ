@@ -1,5 +1,5 @@
--- Pipeline run reports pushed by the rumaq-scraper (haqita integration,
--- docs/plan/haqita-integration.md §7.1): one row per finished live run so the
+-- Pipeline run reports pushed by the rumaq-scraper (haqita price-data
+-- integration): one row per finished live run so the
 -- admin scraping monitor can show history, per-run detail, and last-success
 -- age without reading journald on the VPS. Global (non-household) table.
 

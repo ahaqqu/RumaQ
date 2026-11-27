@@ -478,8 +478,8 @@ apiApp.get(
   })
 )
 
-// Internal price-data routes for the rumaq-scraper pipeline
-// (docs/plan/haqita-integration.md §5.2/§7.1). Service-to-service:
+// Internal price-data routes for the rumaq-scraper pipeline.
+// Service-to-service:
 // bearer-secret auth instead of a session, exempt from the per-IP rate
 // limiter above, and excluded from the generated OpenAPI/docs surface.
 const requireIngestSecret: MiddlewareHandler<Env> = async (c, next) => {
@@ -4250,8 +4250,8 @@ apiApp.delete(
   }
 )
 
-// Price explorer over the scraper-fed global price tables
-// (docs/plan/haqita-integration.md §5.3). Observations below the ingest
+// Price explorer over the scraper-fed global price tables.
+// Observations below the ingest
 // confidence floor are hidden; 0.55–0.85 rows are returned flagged. The
 // confidence floor and the latest-observation predicate are shared with the
 // promo catalog via lib/prices.ts (issue #292).
