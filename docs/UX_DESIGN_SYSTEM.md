@@ -25,7 +25,7 @@ RumaQ is **not an online store** (no checkout, no cart payment). RumaQ reads off
 
 ## 2. Brand Identity & Logo Rules
 
-- **Wordmark**: `RumaQ` in **Fraunces** (Bold `700`, tight tracking `-0.6px`), paired with tagline **`Asisten anti boncos in this economy`** (Plus Jakarta Sans `700`, `--berry`).
+- **Wordmark**: `RumaQ` in **Fraunces** (Bold `700`, tight tracking `-0.6px`), paired with tagline **`Anti boncos in this economy`** (Plus Jakarta Sans `700`, `--berry`).
 - **Logo Mark**: Unified **House + Letter Q / Magnifying Glass** continuous rounded stroke in Berry-Magenta gradient (`#D4145A → #A80A47`) enclosing an optically centered **4-point Golden Sparkle** (`#FBB924 → #EE960B`).
 - **Transparency Rule (CRITICAL)**:
   - In-app and web header logos MUST use a **transparent background** ([`logo-rumaq-v3.svg`](../frontend/public/prototypes/v3/logo-rumaq-v3.svg)) so the mark floats cleanly on `#FAF6F0`, `#FFFFFF`, or dark surfaces without a mismatched square box.
@@ -94,7 +94,7 @@ Warm porcelain surfaces with deep espresso contrast anchors. **Berry-Magenta** a
 
 ### 4.1 Top App Bar (Home)
 
-- **Left**: Transparent `RumaQ` SVG mark (`36px`) + `RumaQ` wordmark + `"Asisten anti boncos in this economy"`.
+- **Left**: Transparent `RumaQ` SVG mark (`36px`) + `RumaQ` wordmark + `"Anti boncos in this economy"`.
 - **Right**:
   1. **Notifikasi / Pantauan Bell** (`40×40px`, unread `--berry` dot) → Opens **Notifikasi Harga** drawer (with direct shortcut to `"Kelola Pantauan Harga →"`).
   2. **Profil Avatar** (`40×40px`) → Opens **Profil & Pengaturan** sheet (local profile, notification toggles, store settings, about RumaQ).
@@ -119,7 +119,7 @@ Icons are **`26×26px`** with `aria-label` + `title` for accessibility and a cri
 2. **Dark Espresso Search Bar** (`Cari merk atau barang…`)
 3. **Hero Savings Card** (`--dark` espresso — the single high-contrast hero anchor on Home):
    - Top: Single full-weekday shopping date trigger (`Sabtu, 28 Nov ▾` → Calendar sheet)
-   - Middle: Big savings figure (`Rp` small + tabular digits) + Animated **Ruma** character on right (tappable to chat)
+   - Middle: Big savings figure (`Rp` small + tabular digits) + Animated **Qila** character on right (tappable to chat)
    - Bottom: Actionable jewel pills folding key personal status into one place:
      - **Pantauan** (`N pantauan diskon` or `+ Pantau harga` when empty, `--berry` → opens Pantau tab)
      - **Top Discount** (`Diskon -X%`, `--gold` → opens biggest-discount item)
@@ -207,7 +207,7 @@ Used identically across **Promo terpopuler (Top 10 horizontal)**, **Promo untukm
 
 | Avoid (Cringe / Inaccurate / Verbose / Brittle) | Use Instead                                                       |
 | ----------------------------------------------- | ----------------------------------------------------------------- |
-| `"Belanja hemat, keluarga senang"`              | `"Asisten anti boncos in this economy"`                           |
+| `"Belanja hemat, keluarga senang"`              | `"Anti boncos in this economy"`                                   |
 | `"Selamat pagi 👋 Rangkuman promo hari ini..."` | _(Omit greeting; show data directly)_                             |
 | `"5 kebutuhan dapur"`                           | `"5 promo pilihan"` / `"barang harian"`                           |
 | `"Pilihan pantauan"`                            | `"Promo untukmu"`                                                 |
@@ -220,34 +220,46 @@ Used identically across **Promo terpopuler (Top 10 horizontal)**, **Promo untukm
 
 ---
 
-## 8. AI Virtual Assistant Character Spec — **Ruma** (Locked)
+## 8. AI Virtual Assistant Character Spec — **Qila** (Locked)
 
-**Ruma** is RumaQ's official Nusantara AI shopping companion — a direct, cohesive evolution of the RumaQ House-Q + Golden Sparkle logo.
+**Qila** is RumaQ's official minimalist **Kakatua Monokel** (Cockatoo with Berry Q-Monocle) AI companion — designed around _"funny, elegant, and smart"_ with **strict 4-color theme discipline** and **≤ 5 bold geometric shapes** so Qila stays razor-sharp even inside the `42–46px` bottom-nav button.
 
-### 8.1 Visual Identity (Nusantara Elements)
+### 8.1 Visual Identity (100% Theme Palette — Zero Outside Colors)
 
-- **Body**: Warm golden-amber rounded sparkle spirit (`#FFD464 → #F59E0B`), echoing the golden sparkle inside the RumaQ logo.
-- **Headpiece**: Berry-Magenta (`#E01B68 → #A80A47`) curved **Atap Gonjong Nusantara** traditional roof hat crowned with a 4-point golden sparkle ornament.
-- **Scarf**: Berry-Magenta neck scarf accented with golden **Batik Kawung** dots.
-- **Scale & Placement**:
-  - `76–78px` inside the Hero Savings Card (right side, tappable to open AI Chat).
+- **Head**: Pure **Warm Porcelain (`#FAF6F0`)** rounded silhouette.
+- **Crest & Sparkle**: Sweeping 3-feather **Gold (`#F5A617` / `#FFD464`)** crest that animates subtly + golden sparkle glint.
+- **Eyes & Curved Beak**: Crisp **Espresso (`#211C19`)** expressive eyes and curved cockatoo beak.
+- **Signature Monocle**: **Berry-Magenta (`#C20E56`)** round monocle over the right eye with a diagonal **Q-handle** & delicate chain echoing the RumaQ House-Q logo.
+- **Placement**:
+  - `76–78px` inside the Hero Savings Card (right side, tappable to chat).
   - `46px` inside the center elevated bottom-nav button (launches AI Chat from any screen).
-  - `58px` inside the AI Chat sheet header.
+  - `58–68px` inside the AI Chat header and RumaQ Auth Entry screen.
 
 ### 8.2 Reactive Animation State Machine
 
-Ruma implements 4 lightweight CSS/SVG states (all disabled cleanly under `prefers-reduced-motion: reduce`):
+Qila implements 4 lightweight CSS/SVG states (disabled cleanly under `prefers-reduced-motion: reduce`):
 
-| State    | Trigger                                                                  | Motion                                         | Expression                            |
-| -------- | ------------------------------------------------------------------------ | ---------------------------------------------- | ------------------------------------- |
-| `idle`   | Default resting state                                                    | Gentle float (`3.2s`) + natural blink (`4.4s`) | Friendly eyes, warm smile             |
-| `happy`  | User adds item to Daftar, ticks basket, sets watch, or Ruma finds a deal | Joyful double-hop (`0.55s`) + sparkle burst    | Happy crescent eyes `^ ^`, open smile |
-| `search` | User types in Search input                                               | Curious side-to-side peek tilt (`1.1s`)        | Focused eyes leaning toward query     |
-| `alert`  | User opens a big-discount product or expiring deal                       | Quick playful wiggle (`0.5s`)                  | Wide excited eyes                     |
+| State    | Trigger                                                                | Motion                                         | Expression                             |
+| -------- | ---------------------------------------------------------------------- | ---------------------------------------------- | -------------------------------------- |
+| `idle`   | Default resting state                                                  | Gentle float (`3.2s`) + natural blink (`4.4s`) | Friendly / witty eyes, gentle crest    |
+| `happy`  | User adds item to Daftar, ticks basket, sets watch, or AI finds a deal | Joyful double-hop (`0.55s`)                    | Happy crescent eyes `^ ^`, open smile  |
+| `search` | User types in Search input                                             | Curious side-to-side peek tilt (`1.1s`)        | Pupils shift sideways looking at query |
+| `alert`  | User opens a big-discount product or expiring deal                     | Quick playful wiggle (`0.5s`)                  | Wide attentive eyes                    |
 
 ---
 
-## 9. Agent Pre-PR UX Verification Checklist
+## 9. Authentication & Login UX (RumaQ + AutQ Split)
+
+**Rule**: Once **AutQ** (central OIDC IdP for all `*-Q` apps) is live, **credential & OAuth login UI lives in AutQ**, NOT inside RumaQ — never collect passwords directly in client apps.
+
+| Surface                                                                             | Owner     | Responsibility                                                                                                                                                                                                            |
+| ----------------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **RumaQ Auth Entry Screen** (`/login` or from Profil → _"Masuk / Sinkronkan akun"_) | **RumaQ** | Warm on-brand value proposition (_why_ sign in: cross-device sync, watchlist backup, household sharing), single primary CTA **`Masuk dengan AutQ`** (`--berry`), plus **`Lanjut tanpa akun`** (zero-friction guest mode). |
+| **OIDC Hosted Sign-In Page** (`auth.autq.id`)                                       | **AutQ**  | Handles Google OAuth, optional Email/Password, sessions, rate limiting, and CSP, then redirects back to RumaQ seamlessly.                                                                                                 |
+
+---
+
+## 10. Agent Pre-PR UX Verification Checklist
 
 Before opening or approving any frontend UI PR, agents MUST verify:
 

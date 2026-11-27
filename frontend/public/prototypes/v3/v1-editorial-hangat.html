@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#FAF6F0">
 <meta name="color-scheme" content="light">
-<title>RumaQ · Asisten Anti Boncos in This Economy</title>
+<title>RumaQ · Anti Boncos in This Economy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -59,11 +59,12 @@ h1,h2,h3,p{margin:0}
 .stage-card h1{margin-top:10px;font-family:var(--font-serif);font-size:24px;font-weight:700;line-height:1.15;letter-spacing:-.4px}
 .stage-card>p{margin-top:8px;font-size:12.5px;line-height:1.6;color:var(--ink-2)}
 
-/* Ruma Mascot Preview on Desktop Stage */
-.ruma-card{display:flex;align-items:center;gap:12px;margin-top:14px;padding:13px 15px;border-radius:20px;background:var(--dark);color:#FAF6F0;box-shadow:0 10px 24px rgba(33,28,25,.14)}
-.ruma-card svg{width:60px;height:60px;flex:none;overflow:visible}
-.ruma-card b{display:block;font-family:var(--font-serif);font-size:17px;color:#fff}
-.ruma-card small{display:block;margin-top:3px;font-size:11.5px;line-height:1.45;color:#CFC3B8}
+/* Locked Qila Mascot Card on Desktop Stage */
+.qila-card{display:flex;align-items:center;gap:12px;margin-top:14px;padding:13px 15px;border-radius:20px;background:var(--dark);color:#FAF6F0;box-shadow:0 10px 24px rgba(33,28,25,.14)}
+.qila-card svg{width:62px;height:62px;flex:none;overflow:visible}
+.qila-card b{display:block;font-family:var(--font-serif);font-size:17px;color:#fff}
+.qila-card small{display:block;margin-top:3px;font-size:11.5px;line-height:1.45;color:#CFC3B8}
+.stage-login-btn{margin-top:10px;width:100%;padding:10px 12px;border:1.5px solid var(--berry);border-radius:13px;background:var(--berry-soft);color:var(--berry-deep);font-size:12px;font-weight:800}
 
 .stage-list{margin-top:14px;padding:14px;border-radius:18px;background:var(--bg);border:1px solid var(--line)}
 .stage-list strong{display:block;font-size:10.5px;font-weight:800;letter-spacing:1px;color:var(--berry-deep)}
@@ -398,6 +399,39 @@ h1,h2,h3,p{margin:0}
 .empty h3{font-family:var(--font-serif);font-size:19px;margin-top:10px}
 .empty p{margin-top:6px;font-size:12.5px;line-height:1.55;color:var(--ink-2)}
 .empty button{margin-top:14px;padding:11px 18px;border:0;border-radius:13px;background:var(--berry);color:#fff;font-size:12.5px;font-weight:800}
+
+/* ===== Login Screen (RumaQ Entry + AutQ OIDC Handoff) ===== */
+.login-screen{min-height:100%;display:flex;flex-direction:column;justify-content:space-between;padding:48px 22px 28px;background:var(--bg);animation:fadeUp .2s ease}
+.login-brand{display:flex;flex-direction:column;align-items:center;text-align:center}
+.login-brand .logo-lg{width:54px;height:54px}
+.login-brand h1{margin-top:10px;font-family:var(--font-serif);font-size:32px;font-weight:700;letter-spacing:-.8px;line-height:1;color:var(--dark)}
+.login-brand small{margin-top:5px;font-size:12.5px;font-weight:700;color:var(--berry)}
+.login-hero{margin:20px 0;padding:18px;border-radius:24px;background:var(--dark);color:#FAF6F0;display:flex;align-items:center;gap:14px;box-shadow:0 16px 32px rgba(33,28,25,.16)}
+.login-hero svg{width:68px;height:68px;flex:none;overflow:visible}
+.login-hero b{display:block;font-family:var(--font-serif);font-size:17px;color:#fff;line-height:1.2}
+.login-hero p{margin-top:4px;font-size:12px;color:#CFC3B8;line-height:1.45}
+.login-perks{display:flex;flex-direction:column;gap:9px;margin-bottom:22px}
+.perk{display:flex;align-items:center;gap:10px;padding:11px 13px;border:1px solid var(--line);border-radius:16px;background:var(--surface);font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.perk span{display:grid;place-items:center;width:30px;height:30px;flex:none;border-radius:10px;background:var(--berry-soft);color:var(--berry-deep);font-size:14px}
+.perk b{color:var(--ink)}
+.login-cta{display:flex;flex-direction:column;gap:9px}
+.btn-autq{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:50px;border:0;border-radius:16px;background:var(--berry);color:#fff;font-size:14px;font-weight:800;box-shadow:0 10px 22px rgba(194,14,86,.26)}
+.btn-autq small{padding:2px 7px;border-radius:6px;background:rgba(255,255,255,.18);font-size:10px;font-weight:800}
+.btn-guest{width:100%;height:46px;border:1px solid var(--line-2);border-radius:15px;background:var(--surface);color:var(--ink-2);font-size:13px;font-weight:700}
+
+/* AutQ Hosted OIDC Preview */
+.autq-bar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:14px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--ink-2);margin-bottom:16px}
+.autq-card{padding:20px;border:1px solid var(--line);border-radius:24px;background:var(--surface);box-shadow:0 10px 26px rgba(33,28,25,.06)}
+.autq-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--dark);color:#fff;font-size:11px;font-weight:800}
+.autq-card h2{margin-top:12px;font-family:var(--font-serif);font-size:23px;line-height:1.15}
+.autq-card>p{margin-top:4px;font-size:12.5px;color:var(--ink-2)}
+.btn-google{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;height:48px;margin-top:16px;border:1.5px solid var(--line-2);border-radius:14px;background:#fff;font-size:13.5px;font-weight:800;color:var(--ink)}
+.or-line{display:flex;align-items:center;gap:10px;margin:14px 0;font-size:11.5px;font-weight:700;color:var(--ink-3)}
+.or-line::before,.or-line::after{content:"";flex:1;height:1px;background:var(--line)}
+.fgroup{margin-bottom:10px}
+.fgroup label{display:block;font-size:11.5px;font-weight:700;color:var(--ink-2);margin-bottom:5px}
+.fgroup input{width:100%;height:44px;padding:0 13px;border:1.5px solid var(--line-2);border-radius:12px;background:var(--bg);font-size:13px;font-weight:600;outline:0}
+.fgroup input:focus{border-color:var(--berry);background:#fff}
 .toast{position:absolute;left:50%;bottom:86px;z-index:80;transform:translateX(-50%);display:flex;align-items:center;gap:8px;padding:11px 16px;border-radius:14px;background:var(--dark);color:#fff;font-size:12.5px;font-weight:700;white-space:nowrap;box-shadow:0 12px 28px rgba(0,0,0,.28)}
 .toast .icon{width:16px;height:16px;color:#34D399}
 
@@ -418,24 +452,25 @@ html.app .scroll{padding-top:16px;width:100%;max-width:480px;margin:0 auto}html.
   <aside class="stage-card">
     <div class="stage-brand">
       <div class="mark-box"><svg viewBox="0 0 96 96" role="img" aria-label="Logo RumaQ"><use href="#rq-logo"/></svg></div>
-      <div><span class="wm">RumaQ</span><small>Asisten anti boncos in this economy</small></div>
+      <div><span class="wm">RumaQ</span><small>Anti boncos in this economy</small></div>
     </div>
-    <span class="stage-kicker">V1 FINAL · EDITORIAL + RUMA AI</span>
-    <h1>Satu kartu ringkasan, langsung ke promo terbaik.</h1>
-    <p>Kartu pantauan terpisah dilebur rapi ke dalam pil kartu ringkasan — jauh lebih skalabel untuk banyak pantauan, dan produk Top 10 langsung tampil di atas lipatan layar.</p>
+    <span class="stage-kicker">V1 FINAL · EDITORIAL + QILA AI</span>
+    <h1>Simpel, tajam di ukuran kecil, &amp; siap SSO AutQ.</h1>
+    <p>Arah final terkunci: logo transparan, slogan ringkas, filter tanggal/rentang 3 mode, alur SSO AutQ, dan asisten AI <strong>Qila</strong>.</p>
 
-    <div class="ruma-card">
-      <div id="stageRuma"></div>
-      <div><b>Ruma · Asisten AI Nusantara</b><small>Roh kilau emas bertopi Atap Gonjong &amp; syal Kawung. Bereaksi saat kamu cari, simpan, dan ceklis belanja.</small></div>
+    <div class="qila-card">
+      <div id="stageQila"></div>
+      <div><b>Qila · Kakatua Monokel</b><small>Funny, elegant, &amp; smart — 100% warna tema RumaQ, tajam hingga ukuran ikon kecil.</small></div>
     </div>
+
+    <button class="stage-login-btn" data-action="open-login">Pratinjau Halaman Login (RumaQ → AutQ) →</button>
 
     <div class="stage-list">
-      <strong>YANG SUDAH DIKUNCI</strong>
+      <strong>FITUR TERKUNCI</strong>
       <ul>
-        <li>Karakter <strong>Ruma</strong> terkunci di Hero &amp; tombol tengah navigasi bawah</li>
-        <li>Pantauan harga masuk ke pil berry di kartu ringkasan (bukan kartu terpisah)</li>
-        <li><strong>Promo terpopuler (Top 10)</strong> horizontal → <strong>Promo untukmu</strong> infinite scroll vertikal</li>
-        <li>Item tercentang di Daftar otomatis turun ke bawah</li>
+        <li>Karakter AI <strong>Qila</strong> (Kakatua Monokel Berry Q) di Hero &amp; nav tengah</li>
+        <li>Slogan ringkas: <strong>Anti boncos in this economy</strong></li>
+        <li>Alur Login RumaQ → AutQ SSO (tetap bisa lanjut tanpa akun)</li>
       </ul>
     </div>
     <div class="stage-links">
@@ -522,10 +557,11 @@ const NOTES=[
   {emoji:'🍚',text:'<b>Raja Platinum 5kg</b> di <b>Superindo</b> → Rp64.900 (hemat Rp18.000)',time:'Kemarin',pid:'beras'}
 ];
 
-function loadLocal(){try{return JSON.parse(localStorage.getItem('rumaq-v3-1c')||'{}')||{}}catch{return {}}}
+function loadLocal(){try{return JSON.parse(localStorage.getItem('rumaq-v3-1e')||'{}')||{}}catch{return {}}}
 const local=loadLocal();
 const state={
   view:'home',dayStart:PLAN,dayEnd:PLAN,cat:'all',bFilter:'',query:'',
+  loggedIn:Boolean(local.loggedIn),
   watch:Array.isArray(local.watch)?local.watch:['beras','minyak','rinso'],
   stores:new Set(Array.isArray(local.stores)&&local.stores.length?local.stores:STORES.map(s=>s.id)),
   saved:new Set(Array.isArray(local.saved)?local.saved:['beras','minyak','deterjen','popok']),
@@ -533,10 +569,10 @@ const state={
   prefs:{turun:true,rencana:true,...local.prefs},
   modal:null,modalId:'',brosurMode:'parsed',bPage:1,toast:'',focusSearch:false,focusKw:false,unread:true,
   feedCount:6,
-  mascotMood:'idle',mascotText:'Tanya Ruma ✨',
-  chat:[{role:'bot',text:'Hai! Aku <b>Ruma</b>, asisten promo RumaQ. Mau cari merk termurah atau rekomendasi belanja hari ini?'}]
+  mascotMood:'idle',mascotText:'Tanya Qila ✨',
+  chat:[{role:'bot',text:'Hai! Aku <b>Qila</b>. Biar aku bantu cari harga paling masuk akal hari ini — lagi mau beli apa?'}]
 };
-function persist(){try{localStorage.setItem('rumaq-v3-1c',JSON.stringify({watch:state.watch,stores:[...state.stores],saved:[...state.saved],basket:[...state.basket],prefs:state.prefs}))}catch{}}
+function persist(){try{localStorage.setItem('rumaq-v3-1e',JSON.stringify({loggedIn:state.loggedIn,watch:state.watch,stores:[...state.stores],saved:[...state.saved],basket:[...state.basket],prefs:state.prefs}))}catch{}}
 
 const money=v=>'Rp'+v.toLocaleString('id-ID');
 const moneyHtml=v=>`<span class="rp">Rp</span>${v.toLocaleString('id-ID')}`;
@@ -564,35 +600,33 @@ const isWatched=p=>watchedProducts().some(w=>w.id===p.id);
 function setMascot(mood,text){
   state.mascotMood=mood;state.mascotText=text;
   clearTimeout(setMascot._t);
-  if(mood!=='idle'){setMascot._t=setTimeout(()=>{state.mascotMood='idle';state.mascotText='Tanya Ruma ✨';render()},2500)}
+  if(mood!=='idle'){setMascot._t=setTimeout(()=>{state.mascotMood='idle';state.mascotText='Tanya Qila ✨';render()},2500)}
 }
 
-/* ===== Official Nusantara AI Mascot: Ruma (Atap Gonjong + Syal Kawung) ===== */
-function rumaSvg(mood=state.mascotMood,cls='qia-svg'){
-  const happy=mood==='happy',search=mood==='search',alert=mood==='alert';
+/* ===== Official RumaQ AI Character: Qila (Kakatua Monokel — 100% theme palette) ===== */
+function qilaSvg(mood=state.mascotMood,cls='qia-svg'){
+  const happy=mood==='happy',search=mood==='search';
   const eyes=happy
-    ?`<path d="M35 50 Q39 45 43 50" fill="none" stroke="#211C19" stroke-width="3" stroke-linecap="round"/><path d="M53 50 Q57 45 61 50" fill="none" stroke="#211C19" stroke-width="3" stroke-linecap="round"/>`
+    ?`<path d="M31 50 Q36.5 43.5 42 50" fill="none" stroke="#211C19" stroke-width="3.8" stroke-linecap="round"/><path d="M54 50 Q59.5 43.5 65 50" fill="none" stroke="#211C19" stroke-width="3.8" stroke-linecap="round"/>`
     :search
-    ?`<circle cx="38" cy="50" r="3.6" fill="#211C19"/><circle cx="56" cy="50" r="3.6" fill="#211C19"/><circle cx="36.8" cy="48.8" r="1.2" fill="#fff"/><circle cx="54.8" cy="48.8" r="1.2" fill="#fff"/>`
-    :`<circle cx="39" cy="50" r="3.7" fill="#211C19"/><circle cx="57" cy="50" r="3.7" fill="#211C19"/><circle cx="40.2" cy="48.7" r="1.3" fill="#fff"/><circle cx="58.2" cy="48.7" r="1.3" fill="#fff"/>`;
-  const mouth=happy
-    ?`<path d="M43 57 Q48 64 53 57 Z" fill="#C20E56"/>`
-    :alert
-    ?`<circle cx="48" cy="59" r="3.1" fill="#C20E56"/>`
-    :`<path d="M44 58 Q48 62 52 58" fill="none" stroke="#211C19" stroke-width="2.5" stroke-linecap="round"/>`;
+    ?`<circle cx="34.5" cy="49.5" r="4.6" fill="#211C19"/><circle cx="57.5" cy="49.5" r="4.6" fill="#211C19"/><circle cx="33.2" cy="48" r="1.5" fill="#FAF6F0"/><circle cx="56.2" cy="48" r="1.5" fill="#FAF6F0"/>`
+    :`<circle cx="36.5" cy="49.5" r="4.8" fill="#211C19"/><circle cx="59.5" cy="49.5" r="4.8" fill="#211C19"/><circle cx="38" cy="47.8" r="1.6" fill="#FAF6F0"/><circle cx="61" cy="47.8" r="1.6" fill="#FAF6F0"/>`;
   return `<svg class="${cls}" viewBox="0 0 96 96" aria-hidden="true"><g class="m-body">
-    <path class="m-spark" d="M79 13 Q80.2 17.5 85 19 Q80.2 20.5 79 25 Q77.8 20.5 73 19 Q77.8 17.5 79 13 Z" fill="#FFD464"/>
-    <ellipse cx="22" cy="59" rx="6" ry="4.5" fill="#F5A617" transform="rotate(-22 22 59)"/>
-    <ellipse class="m-wing-r" cx="74" cy="57" rx="6" ry="4.5" fill="#F5A617" transform="rotate(24 74 57)"/>
-    <rect x="24" y="34" width="48" height="44" rx="22" fill="url(#mGold)"/>
-    <path d="M29 68 Q48 76 67 68 L64 75 Q48 82 32 75 Z" fill="url(#mBerry)"/>
-    <circle cx="40" cy="73.5" r="2" fill="#FFD464"/><circle cx="48" cy="75.5" r="2.2" fill="#FFD464"/><circle cx="56" cy="73.5" r="2" fill="#FFD464"/>
-    <path d="M16 32 Q24 40 48 21 Q72 40 80 32 Q72 44 48 39 Q24 44 16 32 Z" fill="url(#mBerry)"/>
-    <path d="M48 15 Q49.3 19.5 53.5 21 Q49.3 22.5 48 27 Q46.7 22.5 42.5 21 Q46.7 19.5 48 15 Z" fill="#FFD464"/>
-    <ellipse cx="32.5" cy="55.5" rx="4" ry="2.4" fill="#F472B6" opacity=".55"/>
-    <ellipse cx="63.5" cy="55.5" rx="4" ry="2.4" fill="#F472B6" opacity=".55"/>
+    <g class="m-ear">
+      <path d="M44 33 Q33 12 22 17 Q32 23 36 35 Z" fill="#F5A617"/>
+      <path d="M49 31 Q46 7 35 10 Q42 19 42 33 Z" fill="url(#mGold)"/>
+      <path d="M55 32 Q58 11 49 12 Q52 21 49 33 Z" fill="#F5A617"/>
+    </g>
+    <ellipse cx="48" cy="56" rx="25" ry="26" fill="#FAF6F0"/>
+    <ellipse cx="30" cy="58" rx="4.2" ry="2.4" fill="#F5A617" opacity=".32"/>
+    <ellipse cx="66" cy="58" rx="4.2" ry="2.4" fill="#F5A617" opacity=".32"/>
     <g class="m-eyes">${eyes}</g>
-    ${mouth}
+    <path d="M42.5 58 Q48 54.5 53.5 58 Q53 68 48 70.5 Q43 68 42.5 58 Z" fill="#211C19"/>
+    ${happy?`<path d="M44.5 64 Q48 68.5 51.5 64 Z" fill="#C20E56"/>`:`<path d="M44.5 62.5 Q48 64.5 51.5 62" fill="none" stroke="#FAF6F0" stroke-width="1.6" stroke-linecap="round" opacity=".55"/>`}
+    <circle cx="59.5" cy="49.5" r="11.5" fill="none" stroke="url(#mBerry)" stroke-width="3.8"/>
+    <path d="M68 58 L74.5 64.5" fill="none" stroke="url(#mBerry)" stroke-width="4" stroke-linecap="round"/>
+    <path d="M73 63 Q76.5 70 72 77" fill="none" stroke="#C20E56" stroke-width="2" stroke-linecap="round" opacity=".85"/>
+    <path class="m-spark" d="M74 29 Q75.2 33 79 34.2 Q75.2 35.4 74 39.2 Q72.8 35.4 69 34.2 Q72.8 33 74 29 Z" fill="#F5A617"/>
   </g></svg>`;
 }
 
@@ -664,11 +698,11 @@ function viewHome(){
     <header class="topbar">
       <button class="brand-lockup" data-action="view" data-view="home">
         <svg class="logo-svg" viewBox="0 0 96 96" aria-hidden="true"><use href="#rq-logo"/></svg>
-        <div><span class="wm">RumaQ</span><small>Asisten anti boncos in this economy</small></div>
+        <div><span class="wm">RumaQ</span><small>Anti boncos in this economy</small></div>
       </button>
       <div class="top-actions">
         <button class="bell-tile" data-action="notif" aria-label="Notifikasi & pantauan">${icon('bell')}${state.unread?'<span class="dot"></span>':''}</button>
-        <button class="avatar-btn" data-action="profil" aria-label="Profil Rina">R</button>
+        <button class="avatar-btn" data-action="profil" aria-label="Profil">${state.loggedIn?'R':'?'}</button>
       </div>
     </header>
 
@@ -687,9 +721,9 @@ function viewHome(){
           <strong class="hero-val num">${moneyHtml(potensi)}</strong>
           <div class="hero-sub">potensi hemat dari 5 promo pilihan · ${state.stores.size} toko aktif</div>
         </div>
-        <button class="qia-stage mood-${state.mascotMood}" data-action="ai" aria-label="Buka asisten AI Ruma">
+        <button class="qia-stage mood-${state.mascotMood}" data-action="ai" aria-label="Buka asisten AI Qila">
           <span class="qia-bubble">${state.mascotText}</span>
-          ${rumaSvg(state.mascotMood)}
+          ${qilaSvg(state.mascotMood)}
         </button>
       </div>
       <div class="hero-pills">
@@ -722,7 +756,7 @@ function viewSearch(){
     </label>
     <div class="sec"><h2>${list.length} hasil untuk “${esc(state.query)}”</h2></div>
     ${list.length?`<div class="cards-grid">${list.map(p=>productCard(p)).join('')}</div>`
-      :`<div class="empty"><h3>Belum ketemu</h3><p>Coba cari merk seperti “Rinso”, “Sania”, “MamyPoko”, atau pantau kata ini biar Ruma kabari saat promo muncul.</p>
+      :`<div class="empty"><h3>Belum ketemu</h3><p>Coba cari merk seperti “Rinso”, “Sania”, “MamyPoko”, atau pantau kata ini biar Qila kabari saat promo muncul.</p>
         <button data-action="pantau-kata" data-k="${esc(state.query)}">+ Pantau “${esc(state.query)}”</button></div>`}
   </div>`;
 }
@@ -749,7 +783,7 @@ function viewBrosur(){
 
 function viewPantau(){
   return `<div class="view">
-    <div class="vhead"><h1>Pantau harga</h1><p>Pilih merk atau barang harian &amp; toko langganan. Ruma langsung kasih kabar begitu ada promo menarik.</p></div>
+    <div class="vhead"><h1>Pantau harga</h1><p>Pilih merk atau barang harian &amp; toko langganan. Qila langsung kasih kabar begitu ada promo menarik.</p></div>
     <section class="panel">
       <h2>Barang yang dipantau</h2>
       <div class="adder">
@@ -872,8 +906,8 @@ function sheetAI(){
   return modalWrap(`
     <div class="ai-head">
       <div class="ai-head-row">
-        ${rumaSvg(state.mascotMood,'')}
-        <div><h2>Ruma · Asisten AI</h2><p>Bisa bantu bandingin merk, cari promo, &amp; bikin daftar anti boncos.</p></div>
+        ${qilaSvg(state.mascotMood,'')}
+        <div><h2>Qila · Asisten AI</h2><p>Bisa bantu bandingin merk, cari promo, &amp; bikin daftar anti boncos.</p></div>
       </div>
     </div>
     <div class="chat-log" id="chatLog">
@@ -885,9 +919,9 @@ function sheetAI(){
       <button data-action="ai-ask" data-q="Promo apa yang cepat habis?">⏰ Hampir berakhir</button>
     </div>
     <div class="ai-input">
-      <input data-ai-input type="text" placeholder="Tanya Ruma… (mis. Pantene, Sania)" autocomplete="off">
+      <input data-ai-input type="text" placeholder="Tanya Qila… (mis. Pantene, Sania)" autocomplete="off">
       <button data-action="ai-send">Kirim</button>
-    </div>`,'Asisten AI Ruma');
+    </div>`,'Asisten AI Qila');
 }
 
 function answerAI(q){
@@ -973,17 +1007,76 @@ function sheetKalender(){
 
 function sheetNotif(){
   return modalWrap(`<div class="sbody" style="padding-top:20px">
-    <div class="shead"><h2>Notifikasi harga</h2><p>Langsung dikabari Ruma saat merk pantauanmu diskon.</p></div>
+    <div class="shead"><h2>Notifikasi harga</h2><p>Langsung dikabari Qila saat merk pantauanmu diskon.</p></div>
     <div style="height:14px"></div>
     ${NOTES.map(n=>`<button class="note-item" data-action="item" data-id="${n.pid}"><span class="note-ic">${n.emoji}</span><div><p>${n.text}</p><small>${n.time}</small></div></button>`).join('')}
     <button style="margin-top:6px;width:100%;padding:12px;border:1px solid var(--line-2);border-radius:14px;background:var(--surface);font-size:12.5px;font-weight:800;color:var(--berry-deep)" data-action="view" data-view="pantau">Kelola Pantauan Harga →</button>
   </div>`,'Notifikasi');
 }
 
+function viewLogin(){
+  return `<div class="login-screen">
+    <div>
+      <div class="login-brand">
+        <svg class="logo-lg" viewBox="0 0 96 96" aria-hidden="true"><use href="#rq-logo"/></svg>
+        <h1>RumaQ</h1>
+        <small>Anti boncos in this economy</small>
+      </div>
+
+      <div class="login-hero">
+        ${qilaSvg('happy','')}
+        <div>
+          <b>Biar hematnya nyangkut di semua HP.</b>
+          <p>Masuk sekali pakai AutQ, daftar belanja &amp; pantauanmu otomatis tersinkron.</p>
+        </div>
+      </div>
+
+      <div class="login-perks">
+        <div class="perk"><span>🔄</span><div><b>Sinkron lintas perangkat</b> — buka daftar di HP pasangan atau keluarga.</div></div>
+        <div class="perk"><span>🔔</span><div><b>Pantauan tetap aman</b> — tidak hilang meski ganti browser atau HP.</div></div>
+        <div class="perk"><span>🔐</span><div><b>Satu akun untuk semua *-Q</b> — login aman lewat <b>AutQ SSO</b>.</div></div>
+      </div>
+    </div>
+
+    <div class="login-cta">
+      <button class="btn-autq" data-action="goto-autq">Masuk dengan AutQ <small>SSO</small></button>
+      <button class="btn-guest" data-action="view" data-view="home">Lanjut tanpa akun</button>
+    </div>
+  </div>`;
+}
+
+function viewAutQ(){
+  return `<div class="login-screen" style="justify-content:flex-start">
+    <div class="autq-bar">
+      <span>🔒 auth.autq.id · OIDC SSO</span>
+      <button style="border:0;background:none;font-weight:800;color:var(--berry-deep)" data-action="open-login">← Kembali</button>
+    </div>
+    <div class="autq-card">
+      <span class="autq-badge">AutQ · Akun Terpusat</span>
+      <h2>Masuk ke RumaQ</h2>
+      <p>Gunakan akun AutQ agar langsung terhubung ke RumaQ, DokumenQ, dan layanan Q lainnya.</p>
+
+      <button class="btn-google" data-action="complete-login">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Lanjutkan dengan Google
+      </button>
+
+      <div class="or-line">atau email</div>
+
+      <div class="fgroup"><label for="aq-email">Email</label><input id="aq-email" type="email" value="rina@keluarga.id" autocomplete="email"></div>
+      <div class="fgroup"><label for="aq-pass">Kata sandi</label><input id="aq-pass" type="password" value="••••••••" autocomplete="current-password"></div>
+
+      <button class="btn-autq" style="margin-top:8px;height:46px" data-action="complete-login">Masuk &amp; kembali ke RumaQ</button>
+    </div>
+    <p style="margin-top:14px;text-align:center;font-size:11.5px;line-height:1.5;color:var(--ink-3)">RumaQ tidak pernah melihat kata sandimu. Autentikasi ditangani penuh oleh <b>AutQ</b>.</p>
+  </div>`;
+}
+
 function sheetProfil(){
   return modalWrap(`<div class="sbody" style="padding-top:20px">
-    <div class="shead"><h2>Rina</h2><p>Profil lokal tanpa login — preferensi tersimpan di perangkat ini.</p></div>
+    <div class="shead"><h2>${state.loggedIn?'Rina':'Tamu (Lokal)'}</h2><p>${state.loggedIn?'Tersinkron lewat AutQ SSO · rina@keluarga.id':'Preferensi tersimpan lokal di perangkat ini.'}</p></div>
     <div style="height:14px"></div>
+    <button class="btn-autq" style="height:46px;margin-bottom:14px;font-size:13px" data-action="${state.loggedIn?'logout':'open-login'}">${state.loggedIn?'Keluar dari akun AutQ':'Masuk / Sinkronkan akun (AutQ)'}</button>
     <div style="overflow:hidden;border:1px solid var(--line);border-radius:18px">
       <div class="prow"><div><b style="display:block;font-size:13.5px">Kabar promo &amp; turun harga</b><small style="color:var(--ink-2)">Untuk merk dan barang yang kamu pantau</small></div><button class="sw ${state.prefs.turun?'on':''}" data-action="pref" data-k="turun" aria-label="Toggle notifikasi"></button></div>
       <div class="prow"><div><b style="display:block;font-size:13.5px">Pengingat hari belanja</b><small style="color:var(--ink-2)">Ringkasan promo setiap Sabtu pagi</small></div><button class="sw ${state.prefs.rencana?'on':''}" data-action="pref" data-k="rencana" aria-label="Toggle pengingat"></button></div>
@@ -1009,15 +1102,15 @@ function nav(){
   return `<nav class="nav" aria-label="Navigasi utama">
     <button class="tab ${state.view==='home'&&!state.query?'on':''}" data-action="view" data-view="home" aria-label="Beranda" title="Beranda">${icon('home')}</button>
     <button class="tab ${state.view==='brosur'?'on':''}" data-action="view" data-view="brosur" aria-label="Brosur" title="Brosur">${icon('book')}</button>
-    <div class="fab-wrap"><button class="fab-qia mood-${state.mascotMood} ${state.modal==='ai'?'active':''}" data-action="ai" aria-label="Tanya asisten AI Ruma" title="Tanya Ruma (AI)">${rumaSvg(state.mascotMood,'')}</button></div>
+    <div class="fab-wrap"><button class="fab-qia mood-${state.mascotMood} ${state.modal==='ai'?'active':''}" data-action="ai" aria-label="Tanya Qila (AI)" title="Tanya Qila (AI)">${qilaSvg(state.mascotMood,'')}</button></div>
     <button class="tab ${state.view==='pantau'?'on':''}" data-action="view" data-view="pantau" aria-label="Pantau harga" title="Pantau">${icon('bell')}</button>
     <button class="tab ${state.view==='daftar'?'on':''}" data-action="view" data-view="daftar" aria-label="Daftar belanja" title="Daftar">${icon('list')}${remaining?`<span class="bdg num">${remaining}</span>`:''}</button>
   </nav>`;
 }
 
-function renderStageRuma(){
-  const box=document.getElementById('stageRuma');
-  if(box&&!box.innerHTML)box.innerHTML=rumaSvg('idle','');
+function renderStageQila(){
+  const box=document.getElementById('stageQila');
+  if(box&&!box.innerHTML)box.innerHTML=qilaSvg('idle','');
 }
 
 /* Infinite scroll handler for vertical Pilihan Pantauan feed */
@@ -1041,22 +1134,25 @@ function wireInfiniteScroll(){
 function render(scrollTop=false){
   const app=document.getElementById('app');
   const prevScroll=app.querySelector('.scroll')?.scrollTop||0;
-  const content=state.query.trim()?viewSearch():({home:viewHome,brosur:viewBrosur,pantau:viewPantau,daftar:viewDaftar})[state.view]();
+  const isAuthView=state.view==='login'||state.view==='autq';
+  const content=isAuthView?(state.view==='login'?viewLogin():viewAutQ()):state.query.trim()?viewSearch():({home:viewHome,brosur:viewBrosur,pantau:viewPantau,daftar:viewDaftar})[state.view]();
   let modal='';
-  if(state.modal==='item')modal=sheetItem(product(state.modalId));
-  else if(state.modal==='brosur')modal=sheetBrosur(brochure(state.modalId));
-  else if(state.modal==='kalender')modal=sheetKalender();
-  else if(state.modal==='notif')modal=sheetNotif();
-  else if(state.modal==='profil')modal=sheetProfil();
-  else if(state.modal==='all')modal=sheetAll();
-  else if(state.modal==='ai')modal=sheetAI();
-  app.innerHTML=`<main class="scroll">${content}</main>${nav()}${modal}${state.toast?`<div class="toast" role="status">${icon('check')} ${state.toast}</div>`:''}`;
+  if(!isAuthView){
+    if(state.modal==='item')modal=sheetItem(product(state.modalId));
+    else if(state.modal==='brosur')modal=sheetBrosur(brochure(state.modalId));
+    else if(state.modal==='kalender')modal=sheetKalender();
+    else if(state.modal==='notif')modal=sheetNotif();
+    else if(state.modal==='profil')modal=sheetProfil();
+    else if(state.modal==='all')modal=sheetAll();
+    else if(state.modal==='ai')modal=sheetAI();
+  }
+  app.innerHTML=`<main class="scroll" style="${isAuthView?'padding:0':''}">${content}</main>${isAuthView?'':nav()}${modal}${state.toast?`<div class="toast" role="status">${icon('check')} ${state.toast}</div>`:''}`;
   const sc=app.querySelector('.scroll');
   if(sc)sc.scrollTop=scrollTop?0:prevScroll;
   const log=app.querySelector('#chatLog');if(log)log.scrollTop=log.scrollHeight;
   const si=app.querySelector('[data-search]');if(si&&state.focusSearch){si.focus();si.setSelectionRange(si.value.length,si.value.length);state.focusSearch=false}
   const kw=app.querySelector('[data-kw]');if(kw&&state.focusKw){kw.focus();state.focusKw=false}
-  renderStageRuma();
+  renderStageQila();
   wireInfiniteScroll();
 }
 const toast=msg=>{state.toast=msg;render();clearTimeout(render._t);render._t=setTimeout(()=>{state.toast='';render()},1900)};
@@ -1065,6 +1161,10 @@ document.addEventListener('click',e=>{
   const el=e.target.closest('[data-action]');if(!el)return;
   const a=el.dataset.action,id=el.dataset.id;
   if(a==='view'){state.view=el.dataset.view;state.query='';state.modal=null;render(true)}
+  else if(a==='open-login'){state.view='login';state.modal=null;render(true)}
+  else if(a==='goto-autq'){state.view='autq';render(true)}
+  else if(a==='complete-login'){state.loggedIn=true;state.view='home';persist();setMascot('happy','Welcome back! ✨');toast('Berhasil masuk lewat AutQ ✓')}
+  else if(a==='logout'){state.loggedIn=false;state.modal=null;persist();toast('Keluar dari akun — mode lokal aktif')}
   else if(a==='ai'){state.modal='ai';setMascot('happy','Halo! ✨');render()}
   else if(a==='ai-ask'){answerAI(el.dataset.q);render()}
   else if(a==='ai-send'){const inp=document.querySelector('[data-ai-input]');if(inp&&inp.value.trim()){answerAI(inp.value.trim());render()}}
@@ -1093,7 +1193,7 @@ document.addEventListener('click',e=>{
   else if(a==='hapus-satu'){state.saved.delete(id);state.basket.delete(id);persist();toast('Dihapus dari daftar')}
   else if(a==='kosongkan'){state.saved.clear();state.basket.clear();persist();toast('Daftar belanja dikosongkan')}
   else if(a==='share-wa'){const items=[...state.saved].map(product).map(p=>`• ${p.brand} ${p.name} (${store(best(p).store).name} ${money(best(p).price)})`).join('\n');navigator.clipboard?.writeText(`Daftar Belanja RumaQ:\n${items}`).catch(()=>{});toast('Ringkasan disalin — siap kirim ke WhatsApp ✓')}
-  else if(a==='pantau'){const p=product(id),ix=state.watch.findIndex(w=>(p.name+' '+p.brand).toLowerCase().includes(w.toLowerCase()));if(ix<0){state.watch.push(p.brand.toLowerCase());setMascot('happy','Dipantau! ✨');toast('Dipantau — Ruma kabari saat ada promo menarik')}else{state.watch.splice(ix,1);toast('Berhenti memantau '+p.brand)}persist()}
+  else if(a==='pantau'){const p=product(id),ix=state.watch.findIndex(w=>(p.name+' '+p.brand).toLowerCase().includes(w.toLowerCase()));if(ix<0){state.watch.push(p.brand.toLowerCase());setMascot('happy','Dipantau! ✨');toast('Dipantau — Qila kabari saat ada promo menarik')}else{state.watch.splice(ix,1);toast('Berhenti memantau '+p.brand)}persist()}
   else if(a==='pantau-kata'){const k=el.dataset.k.trim();if(k&&!state.watch.includes(k)){state.watch.push(k);persist()}state.query='';state.view='pantau';setMascot('happy','Dipantau! ✨');toast(`“${k}” ditambahkan ke Pantau ✓`)}
   else if(a==='tambah-kw'){const inp=document.querySelector('[data-kw]');const v=inp.value.trim();if(v&&!state.watch.includes(v)){state.watch.push(v);persist();state.focusKw=true;setMascot('happy','Dipantau!');toast(`“${v}” dipantau ✓`)}}
   else if(a==='saran'){const k=el.dataset.k;if(!state.watch.includes(k)){state.watch.push(k);persist();setMascot('happy','Dipantau!');toast(`“${k}” dipantau ✓`)}}
@@ -1106,7 +1206,7 @@ document.addEventListener('input',e=>{
   if(e.target.matches('[data-search]')){
     state.query=e.target.value;state.focusSearch=true;
     state.mascotMood=state.query?'search':'idle';
-    state.mascotText=state.query?'Lagi cari…':'Tanya Ruma ✨';
+    state.mascotText=state.query?'Lagi cari…':'Tanya Qila ✨';
     render();
   }
 });
