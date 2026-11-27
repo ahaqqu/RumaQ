@@ -17,7 +17,7 @@ Working state lives in git and GitHub. Harness-local state (`~/.agents/manager/.
 
 **C0 — owner plan approval: pending.** The five documents are complete and green. The owner must say "approve plan" and explicitly accept that the audits publish selected private-repository Actions metadata and private-pipeline operational details in this public repository.
 
-No implementation, merge, deploy, paid evaluation, workflow disablement, or live scrape until C0.
+No implementation PR, deploy, paid evaluation, workflow disablement, or live scrape until C0.
 
 ## Gates
 
@@ -29,7 +29,7 @@ No implementation, merge, deploy, paid evaluation, workflow disablement, or live
 | C3   | New site on `rumaq.ahaqqu.com` plus Campaign A publication            | After C2 |
 | C4   | Superindo `scheduled` mode and manual enablement of one next store    | After C3 |
 | C5   | Next-store certification (repeat the whole program per store)         | After C4 |
-| C6   | Each optional household module, approved one at a time                | After C0 |
+| C6   | Each optional household module, approved one at a time                | After C3 |
 
 ## Next action
 
