@@ -1,5 +1,5 @@
 -- Global (non-household) price data pushed by the rumaq-scraper pipeline
--- (haqita integration, docs/plan/haqita-integration.md §5.1).
+-- (haqita price-data integration).
 
 CREATE TABLE IF NOT EXISTS price_sources (
   id TEXT PRIMARY KEY,

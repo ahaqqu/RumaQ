@@ -7,7 +7,6 @@
 *.lock
 *.log
 *.min.*
-.commandcode
 .github
 backend/.wrangler
 backend/coverage

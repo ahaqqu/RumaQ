@@ -6,7 +6,7 @@
 
 ## Decision
 
-Push notifications for expiry/run-out reminders are **not implemented in Phase 08**. They remain a P2 feature to be picked up after MVP.
+Push notifications for expiry/run-out reminders are **not implemented**. They remain a P2 feature to be picked up after MVP.
 
 ## Why deferred
 
@@ -35,7 +35,7 @@ Push notifications for expiry/run-out reminders are **not implemented in Phase 0
 
 ## Implementation checklist
 
-- [ ] Add `push_subscriptions` D1 table per `docs/plan/phase-08-frontend-modernization.md` schema.
+- [ ] Add `push_subscriptions` D1 table for subscriptions.
 - [ ] Add `POST /api/push/subscribe` to store subscriptions keyed by user.
 - [ ] Add `DELETE /api/push/subscribe` for unsubscribe/invalid subscriptions.
 - [ ] Implement service worker handlers:

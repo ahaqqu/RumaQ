@@ -1,7 +1,7 @@
 import type { GroundingMatch } from './plans.js'
 import { escapeLike } from './sql.js'
 
-// Deterministic plan price grounding (haqita-integration.md §5.4): fuzzy-match
+// Deterministic plan price grounding (haqita price-data): fuzzy-match
 // a plan item's name against `price_products`, and on a confident match carry
 // the latest observed store price NEXT TO the plan item's LLM estimate — the
 // estimate is never overwritten; the observation rides its own price_grounded

@@ -1,4 +1,4 @@
-# D1 Backup / Export Strategy (ahaqqu/RumaQ#342 — Phase 11 residual)
+# D1 Backup / Export Strategy (ahaqqu/RumaQ#342)
 
 **Status:** Design + implementation — restore tooling tested against the real migration chain (`backend/src/__tests__/d1-restore.test.ts`), backup workflow armed (first scheduled run is the proof)
 **Entry phase:** Design — backup strategy is architectural (export target, schedule, restore path).
@@ -390,7 +390,7 @@ CPU, no VPS, no new bucket.
 The third Phase-11 item stays design-only here (no route/runtime changes in
 this PR): D1's dashboard exposes query insights and per-database metrics, and
 the nightly export run now logs `file_size` — the first cheap signal. Next
-increment, if warranted: an owner-only `/api/admin/db-stats` (phase-11 §6)
+increment, if warranted: an owner-only `/api/admin/db-stats`
 plus a monthly `cf d1 insights` review item on the ops checklist.
 
 ---

@@ -2,7 +2,7 @@
 
 ## What changed & why
 
-<!-- One or two paragraphs. Link the plan doc / issue, e.g. docs/plan/phase-NN-*.md -->
+<!-- One or two paragraphs. Link the plan doc / issue, e.g. docs/plan/feature-name.md -->
 
 ## How to test
 

@@ -7,7 +7,7 @@ import type {
   RunVerifierPrompt,
 } from '@rumaq/contract'
 
-// Storage for scraper run reports (haqita-integration.md §7.1). One row per
+// Storage for scraper run reports (haqita price-data). One row per
 // finished live run; the monitor reads these instead of journald. Detail
 // objects are stored as JSON blobs — the monitor renders them as-is and the
 // schema is owned by @rumaq/contract, so columns would only duplicate it.

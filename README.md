@@ -10,7 +10,7 @@ Household shopping & inventory assistant. Snap a receipt — stock updates. Know
 - **Home dashboard** — items nearing expiry or running out within 3 days.
 - **Shopping plans** — AI groups needs by store; check off as you buy.
 - **Assistant** — ask for plans, recipes, or store recommendations.
-- **Persona** — set roles ("I am the king, you are the warrior") and the app's tone and colour adapt. See [`docs/features/persona.md`](docs/features/persona.md).
+- **Persona** — set roles ("I am the king, you are the warrior") and the app's tone and colour adapt.
 
 ### Quick start
 
@@ -137,7 +137,7 @@ Use for security questions, focused reviews, vulnerability research, or a full c
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, testing, and PR process, and [`docs/ONBOARDING.md`](docs/ONBOARDING.md) for a first-time setup walkthrough. Agent instructions live in [`AGENTS.md`](AGENTS.md).
+See [`docs/ONBOARDING.md`](docs/ONBOARDING.md) for a first-time setup walkthrough, [`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md) for testing, and [`AGENTS.md`](AGENTS.md) for agent instructions.
 
 ---
 
@@ -149,7 +149,5 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, testing, and PR pr
 - [`docs/SECURITY.md`](docs/SECURITY.md) — security model, secrets, rotation
 - [`docs/ONBOARDING.md`](docs/ONBOARDING.md) — first-time setup
 - [Delivery Kanban](https://github.com/users/ahaqqu/projects/4) — work items and status (GitHub Issues)
-- [`docs/plan/`](docs/plan/) — per-phase implementation plans
-- [`docs/features/persona.md`](docs/features/persona.md) — persona personalisation
-- [`docs/features/internationalisation.md`](docs/features/internationalisation.md) — i18n
+- [`docs/plan/`](docs/plan/) — implementation and design plans
 - [`backend/migrations/0001_schema.sql`](backend/migrations/0001_schema.sql) — D1 schema

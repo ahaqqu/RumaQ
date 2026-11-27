@@ -6,7 +6,7 @@
 
 ## Decision
 
-RumaQ ships as a **Progressive Web App (PWA)** for MVP. No native mobile wrapper is implemented in Phase 08.
+RumaQ ships as a **Progressive Web App (PWA)**. No native mobile wrapper is implemented in the MVP.
 
 If a native store wrapper is ever needed, the recommended choice is **Capacitor**.
 

@@ -23,8 +23,8 @@ import {
   type InferOutput,
 } from 'valibot'
 
-// Shared ingest contract between the rumaq-scraper (VPS) and the Worker
-// (docs/plan/haqita-integration.md §5.2), exposed as a workspace package so
+// Shared ingest contract between the rumaq-scraper (VPS) and the Worker,
+// exposed as a workspace package so
 // both sides depend on it explicitly instead of reaching into each other's
 // source tree. Additive changes only; bump schemaVersion for breaking ones.
 // This module is intentionally free of any runtime-specific types (no
@@ -789,7 +789,7 @@ export const runFailureSchema = strictObject({
 
 export type RunFailure = InferOutput<typeof runFailureSchema>
 
-// Run report (haqita-integration.md §7.1): the scraper reports each live run
+// Run report (haqita price-data): the scraper reports each live run
 // to the backend so the admin scraping monitor can show run history without
 // reading journald. One POST per finished run — including failed runs, which
 // are exactly the ones the monitor exists to surface. Reporting failures are

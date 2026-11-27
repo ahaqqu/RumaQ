@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ============================================================
 # scripts/github/check-price-freshness.sh — price-data staleness
-# gate for the 6-hourly smoke workflow (haqita-integration §7.1)
+# gate for the 6-hourly smoke workflow (price-run reports)
 # ============================================================
 # Reads GET /api/internal/prices/status on production with the
 # scraper's bearer secret and fails when the latest observation is
