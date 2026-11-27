@@ -9,7 +9,7 @@ description: |
 ## Workflow
 
 1. **Read the inputs.**
-   - Read the plan file specified by the user (e.g., `docs/plans/*.md`).
+   - Read the plan file specified by the user (e.g., `docs/plan/*.md`).
    - Read `docs/ARCHITECTURE.md` as the architecture guideline.
    - Read `docs/TEST_STRATEGY.md` as the test strategy.
 

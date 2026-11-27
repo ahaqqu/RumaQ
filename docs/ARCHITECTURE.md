@@ -4,8 +4,6 @@ This document describes the production architecture for RumaQ on Cloudflare's fr
 
 > **Testing strategy has moved** → [`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md)
 
-> **API caching plan (recently implemented)** → [`docs/plans/workers-cache-plan.md`](plans/workers-cache-plan.md)
-
 ## 1. Goals & constraints
 
 - **Low friction.** Users photograph receipts; the system infers stock. Manual logging is a fallback, never the default.
@@ -137,14 +135,7 @@ rumaq/
     ├── BACKEND_CONVENTIONS.md  # Backend coding conventions
     ├── FRONTEND_CONVENTIONS.md # Frontend coding conventions
     ├── TEST_STRATEGY.md    # Testing approach and acceptance criteria
-    ├── features/           # Feature deep-dives
-    │   ├── internationalisation.md
-    │   └── persona.md
-    └── plans/              # ADRs and implementation plans
-        ├── frontend-refactor-plan.md
-        ├── phase-01-settings-and-preferences.md
-        ├── pr-2-settings-plan.md
-        └── workers-cache-plan.md
+    └── plan/               # Implementation and design plans
 ```
 
 ## 4. Request flow

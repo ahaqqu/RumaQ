@@ -24,8 +24,7 @@
 - **RumaQ** (`/home/ahaqqu/Projects/RumaQ`): household grocery inventory assistant.
   Cloudflare Worker (Hono) + D1 (`rumaq`) + R2 (receipts) + Pages (React 19 SPA).
   Has **no external price data model today**; docs already anticipate haqita integration
-  (`docs/PROJECT_PLAN.md` "Cheapest-store recommendation", `docs/plan/phase-10-ai-feature-expansion.md`,
-  `.commandcode/design/brief.md`).
+  (`docs/plan/phase-10-ai-feature-expansion.md`).
 - **haqita** (`/home/ahaqqu/Projects/haqita`, github.com/ahaqqu/haqita): Jakarta grocery
   price comparison, ~23k lines. Pipeline: scrape promo **brochure images** from 2 stores
   (Lotte Mart, Superindo) → Gemini vision OCR → 7-gate cross-store product matching →

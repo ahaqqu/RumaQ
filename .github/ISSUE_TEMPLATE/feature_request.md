@@ -18,4 +18,4 @@ labels: enhancement
 
 ## Scope notes
 
-<!-- Relevant phase in docs/plan/ or a related GitHub issue, if any; backend/frontend/database impact -->
+<!-- Relevant plan in docs/plan/ or a related GitHub issue, if any; backend/frontend/database impact -->

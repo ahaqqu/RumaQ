@@ -87,8 +87,7 @@
 
 :root,
 [data-theme='rumaq'] {
-  /* Surfaces: warm off-white canvas with white cards and sage-green tints,
-     per the Figma redesign (docs/design/tokens.md). */
+  /* Surfaces: warm off-white canvas with white cards and sage-green tints. */
   --surface: #f7f7f0;
   --surface-raised: #ffffff;
   --surface-sunken: #edeee3;
@@ -98,8 +97,8 @@
   --border: #e2e6dc;
   --border-strong: #c9d0c0;
 
-  /* Text. --text-muted is darkened one step from the Figma value (#69756c)
-     so it clears 4.5:1 on every surface incl. inset/sunken (WCAG AA). */
+  /* Text. --text-muted is darkened one step from the original muted value
+     (#69756c) so it clears 4.5:1 on every surface incl. inset/sunken (WCAG AA). */
   --text: #20352c;
   --text-muted: #5f6b62;
   --text-faint: #98a297;

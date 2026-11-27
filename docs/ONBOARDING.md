@@ -1,6 +1,6 @@
 # Onboarding — first-time setup
 
-A walkthrough from clean clone to running app. For day-to-day workflow see [`CONTRIBUTING.md`](../CONTRIBUTING.md).
+A walkthrough from clean clone to running app. For the test strategy see [`TEST_STRATEGY.md`](TEST_STRATEGY.md).
 
 ## 1. Install prerequisites
 
@@ -54,7 +54,7 @@ Default seed data (locations + stores) is created with the first household on si
 | `scripts/`                     | `deploy.sh`, `test.sh`, `docs.sh`, `style.sh` entrypoints                              |
 | `tools/codegen/`               | hey-api typed API client codegen, pinned to the TS 5 compiler API                      |
 | `frontend/src/lib/api-client/` | generated typed client — never hand-edit; change `src/lib/api.ts` or the backend route |
-| `docs/plan/`                   | Phase plans; GitHub Issues + Delivery Kanban for status                                |
+| `docs/plan/`                   | Implementation plans; GitHub Issues + Delivery Kanban for status                       |
 
 ## Common issues
 
