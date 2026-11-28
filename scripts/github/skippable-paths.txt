@@ -11,13 +11,18 @@
 # never a regression that merges green, so a suite skips only when EVERY
 # changed path matches a skip row.
 #
-# Targets: unit/frontend and unit/backend (unit-test-scope.sh), lighthouse
+# Targets: unit/frontend, unit/backend and unit/server (unit-test-scope.sh), lighthouse
 # (lighthouse-scope.sh), worker-smoke (worker-smoke-scope.sh), e2e-smoke
 # (e2e-smoke-scope.sh). The policy rationale lives in each gate's header; the
 # offline guard suites (./scripts/test.sh unit-test-scope, lighthouse-scope,
 # smoke-scope, e2e-smoke-scope) pin this table through the gates. reaches.sh
 # keeps its own policy: it triggers on positive generator inputs, not on a
 # skip set.
+# server/ is the v2 package (Phase 2, #763): no v1 suite, bundle, audit or
+# generator reads it, so every v1 target below has a `skip ^server/` row. The
+# v2 suite (unit/server) is fed by server/, the shared test plumbing under
+# scripts/, root manifests and anything unknown; it has no `run` row because a
+# path matching no row already runs (fail safe).
 
 # unit-test-scope — the frontend suite tests frontend/src (and
 # frontend-dom); the backend suite tests backend/src with contract/.
@@ -29,6 +34,7 @@ unit/frontend skip  \.md$
 unit/frontend skip  ^backend/
 unit/frontend skip  ^contract/
 unit/frontend skip  ^tools/
+unit/frontend skip  ^server/
 
 unit/backend skip   ^docs/
 unit/backend skip   ^\.agents/
@@ -36,6 +42,19 @@ unit/backend skip   ^automation/
 unit/backend skip   \.md$
 unit/backend skip   ^frontend/
 unit/backend skip   ^tools/
+unit/backend skip   ^server/
+
+# unit-test-scope — the v2 suite runs `bun test` from server/ (wired in R2);
+# it shares the test plumbing under scripts/ with v1, so scripts/, root
+# manifests and unknown paths run it.
+unit/server skip    ^docs/
+unit/server skip    ^\.agents/
+unit/server skip    ^automation/
+unit/server skip    \.md$
+unit/server skip    ^backend/
+unit/server skip    ^frontend/
+unit/server skip    ^contract/
+unit/server skip    ^tools/
 
 # lighthouse-scope — Lighthouse audits frontend/dist, built by
 # scripts/build.sh (the exception inside scripts/).
@@ -48,6 +67,7 @@ lighthouse skip     ^backend/
 lighthouse skip     ^tools/
 lighthouse skip     ^contract/
 lighthouse skip     ^scripts/
+lighthouse skip     ^server/
 
 # worker-smoke-scope — the Worker bundle is built by `vp build backend`;
 # docs, a skill, an automation test or Markdown cannot change it.
@@ -55,6 +75,7 @@ worker-smoke skip   ^docs/
 worker-smoke skip   ^\.agents/
 worker-smoke skip   ^automation/
 worker-smoke skip   \.md$
+worker-smoke skip   ^server/
 
 # e2e-smoke-scope — narrower than worker-smoke: the automation harness IS
 # under test here, and repo meta beyond .md files runs (fail safe).
@@ -65,3 +86,4 @@ e2e-smoke skip      ^LICENSE$
 e2e-smoke skip      ^\.gitignore$
 e2e-smoke skip      ^\.github/ISSUE_TEMPLATE/
 e2e-smoke skip      ^\.github/PULL_REQUEST_TEMPLATE
+e2e-smoke skip      ^server/

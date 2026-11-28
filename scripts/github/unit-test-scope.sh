@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Decides whether a unit-test suite is worth running.
 #
-# Usage: unit-test-scope.sh <frontend|backend> [--from-stdin]
+# Usage: unit-test-scope.sh <frontend|backend|server> [--from-stdin]
 #
 # The frontend suite (the `frontend` and `frontend-dom` vitest projects) tests
 # frontend/src; the backend suite tests backend/src with contract/. Skip only
@@ -19,6 +19,9 @@
 #     test) nor contract.
 #   - scripts/ runs both suites: the test plumbing (scripts/test.sh,
 #     scripts/test/) lives there.
+#   - The v2 suite (server) runs `bun test` from server/: server/, the shared
+#     test plumbing under scripts/, root manifests and anything unknown run it;
+#     the v1 workspaces and docs cannot reach it.
 #
 # --from-stdin takes the path list from stdin, which the offline guard test
 # uses and a shell can use to check a hypothetical change set. Without it the
@@ -30,9 +33,9 @@ set -uo pipefail
 
 suite=${1:-}
 case "$suite" in
-  frontend | backend) ;;
+  frontend | backend | server) ;;
   *)
-    echo "unit-test-scope: suite must be 'frontend' or 'backend'" >&2
+    echo "unit-test-scope: suite must be 'frontend', 'backend' or 'server'" >&2
     exit 2
     ;;
 esac
