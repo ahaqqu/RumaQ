@@ -13,15 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'ahaqqu/RumaQ'
     steps:
-      # Alert lookup needs a PAT or App token with read-only Dependabot alerts (the default
-      # token cannot read alerts); until DEPENDABOT_ALERT_LOOKUP_TOKEN exists the workflow
-      # behaves as patch-only (fail-safe), and an expired or revoked token fails the job.
+      # Alert lookup is on only while DEPENDABOT_ALERT_LOOKUP_TOKEN is set: the action
+      # reads `alert-lookup` as a string (empty = off, any other value = on) and, with it
+      # on, a lookup using the default token fails the whole action. Without the secret
+      # the workflow is patch-only; an expired or revoked token fails the action.
       - name: Fetch Dependabot metadata
         id: metadata
         uses: dependabot/fetch-metadata@v3
         with:
           github-token: ${{ secrets.DEPENDABOT_ALERT_LOOKUP_TOKEN || secrets.GITHUB_TOKEN }}
-          alert-lookup: true
+          alert-lookup: ${{ secrets.DEPENDABOT_ALERT_LOOKUP_TOKEN && 'true' }}
 
       # Phase 2 of the v2 program freezes the legacy v1 Worker (RumaQ#763); every
       # auto-merged dependency PR redeploys it unattended, so patch and security
