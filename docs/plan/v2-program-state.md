@@ -33,30 +33,33 @@ Post-C0 implementation may proceed only within the approved phase gates. Paid Su
 
 ## Next action
 
-C0 is approved and [#761](https://github.com/ahaqqu/RumaQ/issues/761) (Phase 0) is the active issue. Continue the post-approval checkpoint:
+C0 is approved and [#761](https://github.com/ahaqqu/RumaQ/issues/761) (Phase 0) is the active issue. Phase 0 work is prepared and waiting on human merges plus the private-repo Actions quota:
 
-1. Prepare and verify `rumaq-v1.ahaqqu.com` on the existing legacy Worker before touching the main deployment path. Google sign-in requires the v1 callback owner action recorded on #761.
-2. Stop legacy scheduled and on-demand scraping through the controlled VPS/config path; keep the old code and data available for v1.
-3. Run Phase 1 Actions reduction (Wave 1A) under [#762](https://github.com/ahaqqu/RumaQ/issues/762) as the first independent implementation work.
+1. Merge [RumaQ #772](https://github.com/ahaqqu/RumaQ/pull/772) to attach `rumaq-v1.ahaqqu.com` to the existing legacy Worker; `ci`/`smoke` are green and the thermos review found nothing. Owner action X (Google OAuth callback for the v1 host) is required before v1 sign-in can be verified.
+2. Merge [vps #52](https://github.com/ahaqqu/vps/pull/52) to stop legacy scraping through the applier's new `disable_now` action; all 27 applier test files and 661 documentation checks pass locally, but the private-repo Actions quota wall blocks CI, so it must not merge until a real run executes (owner action V, quota resets 2026-12-01).
+3. Complete Phase 1 (Wave 1A) under [#762](https://github.com/ahaqqu/RumaQ/issues/762): [agentic-project-template #178](https://github.com/ahaqqu/agentic-project-template/pull/178) is green and reviewed; after it merges, forks inherit the event-driven auto-merge through `template-sync`. BayiQ's polling and failing sync are disabled by workflow settings until that sync lands.
 4. Remove the stale prepared `rumaq-v2` D1 manual action (MANUAL_ACTIONS T) only once the PostgreSQL gate is exercised.
 
-Completed: #759 merged; phase issues #761–#771 are linked with dependencies and Kanban status; annotated tag `rumaq-v1-freeze` points to `10ea2629713a73a53eb17295421b8d78049557e3`.
+Completed: #759 merged; phase issues #761–#771 linked with dependencies and Kanban status; annotated tag `rumaq-v1-freeze` at `10ea2629713a73a53eb17295421b8d78049557e3`; dormant-fork Actions disabled on `no-mistakes` and `laradock-sidemaya`; `wni-series` deploy left as a guarded `workflow_dispatch` scaffold because it consumes no runs.
 
 ## Artifacts
 
-| Artifact                                                           | What it is                                                 |
-| ------------------------------------------------------------------ | ---------------------------------------------------------- |
-| [v2-ground-up-plan.md](v2-ground-up-plan.md)                       | 10 phases, gates C0–C6, PR order, test policy              |
-| [v2-design.md](v2-design.md)                                       | Reconciled product + PostgreSQL/Bun/Hono architecture      |
-| [v2-pipeline-audit.md](v2-pipeline-audit.md)                       | Pipeline, prompt/model, accuracy, and cost evidence        |
-| [v2-actions-audit.md](v2-actions-audit.md)                         | Portfolio Actions inventory and retain/consolidate/disable |
-| [v2-infrastructure-evaluation.md](v2-infrastructure-evaluation.md) | Cloudflare/D1 vs VPS/PostgreSQL decision record            |
-| [#759](https://github.com/ahaqqu/RumaQ/pull/759)                   | Merged docs PR carrying this program                       |
-| [#761–#771](https://github.com/ahaqqu/RumaQ/issues/761)            | Phase issues and dependency chain; #761 is active          |
-| Tag `rumaq-v1-freeze`                                              | Legacy freeze at `10ea262`                                 |
-| [#748](https://github.com/ahaqqu/RumaQ/pull/748)                   | v2 mobile concept prototype (visual reference only)        |
-| Pipeline #219 / PR #223                                            | Reset/pause work to reconcile, not to finish               |
-| RumaQ #753 / PR #754                                               | Legacy fill-loop reset/wipe (merged; not the v2 loop)      |
+| Artifact                                                                     | What it is                                                  |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| [v2-ground-up-plan.md](v2-ground-up-plan.md)                                 | 10 phases, gates C0–C6, PR order, test policy               |
+| [v2-design.md](v2-design.md)                                                 | Reconciled product + PostgreSQL/Bun/Hono architecture       |
+| [v2-pipeline-audit.md](v2-pipeline-audit.md)                                 | Pipeline, prompt/model, accuracy, and cost evidence         |
+| [v2-actions-audit.md](v2-actions-audit.md)                                   | Portfolio Actions inventory and retain/consolidate/disable  |
+| [v2-infrastructure-evaluation.md](v2-infrastructure-evaluation.md)           | Cloudflare/D1 vs VPS/PostgreSQL decision record             |
+| [#759](https://github.com/ahaqqu/RumaQ/pull/759)                             | Merged docs PR carrying this program                        |
+| [#761–#771](https://github.com/ahaqqu/RumaQ/issues/761)                      | Phase issues and dependency chain; #761 is active           |
+| [#772](https://github.com/ahaqqu/RumaQ/pull/772)                             | v1 coexistence hostname (green, awaiting merge)             |
+| [vps #52](https://github.com/ahaqqu/vps/pull/52)                             | Declarative `disable_now` scraping pause (CI quota-blocked) |
+| [template #178](https://github.com/ahaqqu/agentic-project-template/pull/178) | Event-driven dependency auto-merge (green)                  |
+| Tag `rumaq-v1-freeze`                                                        | Legacy freeze at `10ea262`                                  |
+| [#748](https://github.com/ahaqqu/RumaQ/pull/748)                             | v2 mobile concept prototype (visual reference only)         |
+| Pipeline #219 / PR #223                                                      | Reset/pause work to reconcile, not to finish                |
+| RumaQ #753 / PR #754                                                         | Legacy fill-loop reset/wipe (merged; not the v2 loop)       |
 
 Owner inbox note: `docs/MANUAL_ACTIONS.md` is gitignored and does not travel, so every open owner action must also be named on #758.
 
@@ -66,3 +69,4 @@ Owner inbox note: `docs/MANUAL_ACTIONS.md` is gitignored and does not travel, so
 - 2026-11-27 — Branch rebased onto `main` after #760 pruned obsolete docs (removes the stale `docs/plan/phase-*`, `docs/features/*`, `docs/design/*` tree). Added this state file as the cross-harness resume point.
 - 2026-11-28 — Owner approved C0, including explicit acceptance of the audit disclosure scope. The approved next checkpoint is docs merge, child-issue tracking, legacy freeze/safety, and Actions Wave 1A; C2–C6 remain separately gated.
 - 2026-11-28 — #759 merged and its main deploy succeeded. Created phase issues #761–#771 with dependencies; only Phase 0 (#761) is In Progress. Published annotated legacy freeze tag `rumaq-v1-freeze` at `10ea262`. Preparing the v1 Worker hostname without changing the canonical main hostname.
+- 2026-11-28 — Phase 0 prepared end to end. RumaQ #772 (v1 hostname) is green with a clean thermos review; vps #52 adds a journaled `disable_now` applier action that disables **and stops** the nightly timer and Scrape Now agent (27 test files, 661 doc checks green locally) but its private-repo CI cannot start — jobs fail with zero executed steps, the account-wide quota wall. Wave 1A: template #178 replaces scheduled polling with event-driven auto-merge while keeping grouped-update parity (green, C1 noted); BayiQ polling and Template Sync disabled by settings; Actions disabled on two dormant forks; wni's guarded deploy scaffold left alone. No merge, deploy, or paid run was performed.
