@@ -33,33 +33,32 @@ Post-C0 implementation may proceed only within the approved phase gates. Paid Su
 
 ## Next action
 
-C0 is approved and [#761](https://github.com/ahaqqu/RumaQ/issues/761) (Phase 0) is the active issue. Phase 0 work is prepared and waiting on human merges plus the private-repo Actions quota:
+Phase 0 (safety) is complete and [#762](https://github.com/ahaqqu/RumaQ/issues/762) (Phase 1, Actions spend stop) is the active issue.
 
-1. Merge [RumaQ #772](https://github.com/ahaqqu/RumaQ/pull/772) to attach `rumaq-v1.ahaqqu.com` to the existing legacy Worker; `ci`/`smoke` are green and the thermos review found nothing. Owner action X (Google OAuth callback for the v1 host) is required before v1 sign-in can be verified.
-2. Merge [vps #52](https://github.com/ahaqqu/vps/pull/52) to stop legacy scraping through the applier's new `disable_now` action; all 27 applier test files and 661 documentation checks pass locally, but the private-repo Actions quota wall blocks CI, so it must not merge until a real run executes (owner action V, quota resets 2026-12-01).
-3. Complete Phase 1 (Wave 1A) under [#762](https://github.com/ahaqqu/RumaQ/issues/762): [agentic-project-template #178](https://github.com/ahaqqu/agentic-project-template/pull/178) is green and reviewed; after it merges, forks inherit the event-driven auto-merge through `template-sync`. BayiQ's polling and failing sync are disabled by workflow settings until that sync lands.
-4. Remove the stale prepared `rumaq-v2` D1 manual action (MANUAL_ACTIONS T) only once the PostgreSQL gate is exercised.
+1. Finish Phase 1 under [#762](https://github.com/ahaqqu/RumaQ/issues/762): Wave 1A is merged into the source template; the remaining work is Wave 1B+ (CI dedupe, security-scanner consolidation). BayiQ still needs a scoped template migration before it can inherit the event-driven auto-merge (its template-owned files drifted from the last synced ref; a full sync is 61 overwrite-path files).
+2. Owner action X: add `https://rumaq-v1.ahaqqu.com/api/auth/callback` to the Google OAuth client, then verify v1 sign-in. The hostname itself is live and serving.
+3. Remove the stale prepared `rumaq-v2` D1 manual action (MANUAL_ACTIONS T) only once the PostgreSQL gate is exercised.
 
-Completed: #759 merged; phase issues #761–#771 linked with dependencies and Kanban status; annotated tag `rumaq-v1-freeze` at `10ea2629713a73a53eb17295421b8d78049557e3`; dormant-fork Actions disabled on `no-mistakes` and `laradock-sidemaya`; `wni-series` deploy left as a guarded `workflow_dispatch` scaffold because it consumes no runs.
+Completed: #759 merged; phase issues #761–#771 linked with dependencies and Kanban status; annotated tag `rumaq-v1-freeze` at `10ea2629713a73a53eb17295421b8d78049557e3`; `rumaq-v1.ahaqqu.com` attached to the legacy Worker and answering (`/api/health` → 200, TLS valid) with the canonical host unchanged; legacy scraping paused on the box (`rumaq-scraper.timer` disabled + inactive, no NEXT, agent inactive) by the applier's declarative `disable_now` action; event-driven dependency auto-merge merged into the source template; dormant-fork Actions disabled on `no-mistakes` and `laradock-sidemaya`; `wni-series` deploy left as a guarded `workflow_dispatch` scaffold because it consumes no runs.
 
 ## Artifacts
 
-| Artifact                                                                     | What it is                                                  |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| [v2-ground-up-plan.md](v2-ground-up-plan.md)                                 | 10 phases, gates C0–C6, PR order, test policy               |
-| [v2-design.md](v2-design.md)                                                 | Reconciled product + PostgreSQL/Bun/Hono architecture       |
-| [v2-pipeline-audit.md](v2-pipeline-audit.md)                                 | Pipeline, prompt/model, accuracy, and cost evidence         |
-| [v2-actions-audit.md](v2-actions-audit.md)                                   | Portfolio Actions inventory and retain/consolidate/disable  |
-| [v2-infrastructure-evaluation.md](v2-infrastructure-evaluation.md)           | Cloudflare/D1 vs VPS/PostgreSQL decision record             |
-| [#759](https://github.com/ahaqqu/RumaQ/pull/759)                             | Merged docs PR carrying this program                        |
-| [#761–#771](https://github.com/ahaqqu/RumaQ/issues/761)                      | Phase issues and dependency chain; #761 is active           |
-| [#772](https://github.com/ahaqqu/RumaQ/pull/772)                             | v1 coexistence hostname (green, awaiting merge)             |
-| [vps #52](https://github.com/ahaqqu/vps/pull/52)                             | Declarative `disable_now` scraping pause (CI quota-blocked) |
-| [template #178](https://github.com/ahaqqu/agentic-project-template/pull/178) | Event-driven dependency auto-merge (green)                  |
-| Tag `rumaq-v1-freeze`                                                        | Legacy freeze at `10ea262`                                  |
-| [#748](https://github.com/ahaqqu/RumaQ/pull/748)                             | v2 mobile concept prototype (visual reference only)         |
-| Pipeline #219 / PR #223                                                      | Reset/pause work to reconcile, not to finish                |
-| RumaQ #753 / PR #754                                                         | Legacy fill-loop reset/wipe (merged; not the v2 loop)       |
+| Artifact                                                                     | What it is                                                 |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| [v2-ground-up-plan.md](v2-ground-up-plan.md)                                 | 10 phases, gates C0–C6, PR order, test policy              |
+| [v2-design.md](v2-design.md)                                                 | Reconciled product + PostgreSQL/Bun/Hono architecture      |
+| [v2-pipeline-audit.md](v2-pipeline-audit.md)                                 | Pipeline, prompt/model, accuracy, and cost evidence        |
+| [v2-actions-audit.md](v2-actions-audit.md)                                   | Portfolio Actions inventory and retain/consolidate/disable |
+| [v2-infrastructure-evaluation.md](v2-infrastructure-evaluation.md)           | Cloudflare/D1 vs VPS/PostgreSQL decision record            |
+| [#759](https://github.com/ahaqqu/RumaQ/pull/759)                             | Merged docs PR carrying this program                       |
+| [#761–#771](https://github.com/ahaqqu/RumaQ/issues/761)                      | Phase issues and dependency chain; #761 is active          |
+| [#772](https://github.com/ahaqqu/RumaQ/pull/772)                             | v1 coexistence hostname (merged; host live)                |
+| [vps #52](https://github.com/ahaqqu/vps/pull/52)                             | Declarative `disable_now` scraping pause (merged; applied) |
+| [template #178](https://github.com/ahaqqu/agentic-project-template/pull/178) | Event-driven dependency auto-merge (merged)                |
+| Tag `rumaq-v1-freeze`                                                        | Legacy freeze at `10ea262`                                 |
+| [#748](https://github.com/ahaqqu/RumaQ/pull/748)                             | v2 mobile concept prototype (visual reference only)        |
+| Pipeline #219 / PR #223                                                      | Reset/pause work to reconcile, not to finish               |
+| RumaQ #753 / PR #754                                                         | Legacy fill-loop reset/wipe (merged; not the v2 loop)      |
 
 Owner inbox note: `docs/MANUAL_ACTIONS.md` is gitignored and does not travel, so every open owner action must also be named on #758.
 
@@ -70,3 +69,4 @@ Owner inbox note: `docs/MANUAL_ACTIONS.md` is gitignored and does not travel, so
 - 2026-11-28 — Owner approved C0, including explicit acceptance of the audit disclosure scope. The approved next checkpoint is docs merge, child-issue tracking, legacy freeze/safety, and Actions Wave 1A; C2–C6 remain separately gated.
 - 2026-11-28 — #759 merged and its main deploy succeeded. Created phase issues #761–#771 with dependencies; only Phase 0 (#761) is In Progress. Published annotated legacy freeze tag `rumaq-v1-freeze` at `10ea262`. Preparing the v1 Worker hostname without changing the canonical main hostname.
 - 2026-11-28 — Phase 0 prepared end to end. RumaQ #772 (v1 hostname) is green with a clean thermos review; vps #52 adds a journaled `disable_now` applier action that disables **and stops** the nightly timer and Scrape Now agent (27 test files, 661 doc checks green locally) but its private-repo CI cannot start — jobs fail with zero executed steps, the account-wide quota wall. Wave 1A: template #178 replaces scheduled polling with event-driven auto-merge while keeping grouped-update parity (green, C1 noted); BayiQ polling and Template Sync disabled by settings; Actions disabled on two dormant forks; wni's guarded deploy scaffold left alone. No merge, deploy, or paid run was performed.
+- 2026-11-28 — Owner made the repositories public, which retired the private-repo Actions quota wall; CI now executes real steps. Phase 0 closed: RumaQ #772 (88bbdc4) deployed both Worker custom domains — `rumaq-v1.ahaqqu.com` answers `/api/health` 200 with a valid certificate and the canonical host is unchanged; vps #52 (41fc408) merged on green CI and the applier applied the pause at 07:30 CET (`rumaq-scraper.timer` disabled + inactive with no NEXT, `rumaq-scraper-agent.service` inactive, `vps-apply.service` `Result=success`); template #178 (899ef48) merged. Verified the auto-merge workflow live by reopening Dependabot PR #175: `pull_request_target` fired, metadata resolved `semver-minor`, auto-merge was armed, and the merge correctly stayed blocked because that PR breaks the build (`zod/v4/core`, `zod-to-json-schema` unresolvable). No paid model call, data deletion, or main-hostname change.
