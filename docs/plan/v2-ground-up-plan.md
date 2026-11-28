@@ -2,7 +2,7 @@
 
 > Parent: [#758](https://github.com/ahaqqu/RumaQ/issues/758). Design: [v2-design.md](v2-design.md). Evidence: [pipeline audit](v2-pipeline-audit.md), [Actions audit](v2-actions-audit.md), and [infrastructure evaluation](v2-infrastructure-evaluation.md).
 >
-> **Status: awaiting plan approval.** Program state and the cross-harness resume point: [v2-program-state.md](v2-program-state.md). Docs PR [#759](https://github.com/ahaqqu/RumaQ/pull/759) is open, rebased on `main`, and green. Active checkpoints remain in force. No implementation, paid evaluation, workflow disablement, deployment, or live scrape is authorized by this document alone.
+> **Status: approved — C0 signed by the owner on 2026-11-28** (docs PR [#759](https://github.com/ahaqqu/RumaQ/pull/759), merged). Program state and the cross-harness resume point: [v2-program-state.md](v2-program-state.md). Gates C1–C6 remain unsigned, so no work outside Phase 2, paid evaluation, workflow disablement, deployment, or live scrape is authorized by this document alone.
 
 ## 1. Locked scope
 
@@ -104,6 +104,8 @@ RumaQ PR CI/scoped smoke/full automation/production smoke/backup/preview/test im
 
 ### RumaQ PR sequence
 
+> **Amended 2026-11-28** by the [#763 design review](https://github.com/ahaqqu/RumaQ/issues/763#issuecomment-7237282839). Step 1 is the domain vocabulary kernel, not the wire major; the wire contract is cut once, as a projection of the real schema, before Phase 4. v2 code lives in a new top-level `server/` workspace. A first slice (`server/` scaffold, CI and deploy scope guards) comes before step 1. Where the legacy contract ends up is being re-decided on #763: the first choice, a frozen private copy inside v1, was re-opened after the coexistence research priced it. The detailed slice sequence is set by the Phase 2 design addendum on #763; until the owner confirms it, [v2-program-state.md](v2-program-state.md) governs.
+
 1. **Contract/domain vocabulary:** create the next clean ingest major for campaign/revision/page/evidence/extraction/candidate/review/publication artifacts. No v1/v2 adapter. Update the contract tests and generated API artifacts.
 2. **PostgreSQL baseline:** new initial schema and migration runner; no translation/import of the 54 D1 migrations. Add PG17 + pgvector/pg_trgm to local automation. Use a trusted PG client/migration library and explicit SQL for critical publication queries.
 3. **Application skeleton:** split public, account, household, admin, internal, and worker modules. Replace the monolithic route-file pattern. Keep Valibot boundary validation and generated OpenAPI.
@@ -124,7 +126,7 @@ RumaQ PR CI/scoped smoke/full automation/production smoke/backup/preview/test im
 
 ### Required gates
 
-- `./scripts/test.sh unit backend` and relevant automation-local suites use real PostgreSQL, not a D1 mock.
+- `./scripts/test.sh unit server` and relevant automation-local suites use real PostgreSQL, not a D1 mock. (Amended 2026-11-28: the plan first named `unit backend`, which runs only `backend/src/**/*.test.ts` and cannot reach v2 code under the `server/` workspace; the change is pending the owner's confirmation on #763.)
 - Idempotency replay, same-key/different-body 409, in-flight retry, and crash-after-external-effect tests pass.
 - Cross-household composite-FK/RLS/IDOR tests pass; application role cannot bypass RLS.
 - API + worker + PG + pipeline + resident-apps load stays inside the host resource envelope.
@@ -258,7 +260,7 @@ No PR merges with red relevant checks. The private billing wall must be resolved
 
 ## 14. Test and verification policy
 
-- RumaQ: `./scripts/test.sh unit backend`, `./scripts/test.sh unit frontend`, scoped/full automation-local as the slice requires, style/check/docs gates, PR smoke, and post-deploy smoke.
+- RumaQ: `./scripts/test.sh unit backend`, `./scripts/test.sh unit frontend`, `./scripts/test.sh unit server` (the v2 PostgreSQL gate; amended 2026-11-28 and pending the owner's confirmation on #763 — see §6), scoped/full automation-local as the slice requires, style/check/docs gates, PR smoke, and post-deploy smoke.
 - Pipeline: `./scripts/test.sh unit groceries-scraper`, contract-sync/parity, style, deterministic frozen-byte replay, and no network/paid calls in ordinary CI.
 - VPS: `bash tests/run.sh`, `bin/check-secrets`, `bin/plan`, and the applicable dry-run/container gates.
 - Live model evaluations are manual, owner-authorized, versioned, and separately reported—not hidden in PR CI.

@@ -1,6 +1,6 @@
 # RumaQ v2 — reconciled product and architecture design
 
-> Status: **design for owner approval**, tracked by [#758](https://github.com/ahaqqu/RumaQ/issues/758). This reconciles independent product-manager and product-architect passes with the owner's decisions. It authorizes no implementation, paid run, deployment, or workflow change by itself.
+> Status: **approved with the plan (C0, 2026-11-28)**, tracked by [#758](https://github.com/ahaqqu/RumaQ/issues/758). This reconciles independent product-manager and product-architect passes with the owner's decisions. Phase 2's code topology and core data model are refined by the design addendum on [#763](https://github.com/ahaqqu/RumaQ/issues/763). It authorizes no implementation, paid run, deployment, or workflow change by itself.
 
 ## 1. Product definition
 
