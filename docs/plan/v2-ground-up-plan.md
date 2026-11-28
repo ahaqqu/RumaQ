@@ -104,7 +104,7 @@ RumaQ PR CI/scoped smoke/full automation/production smoke/backup/preview/test im
 
 ### RumaQ PR sequence
 
-> **Amended 2026-11-28** by the [#763 design review](https://github.com/ahaqqu/RumaQ/issues/763#issuecomment-7237282839). Step 1 is the domain vocabulary kernel, not the wire major; the wire contract is cut once, as a projection of the real schema, before Phase 4. v2 code lives in a new top-level `server/` workspace, and v1 keeps a frozen private copy of the legacy contract schemas. A coexistence slice (frozen v1 copy, `server/` scaffold, CI and deploy scope guards) comes before step 1. The detailed slice sequence is set by the Phase 2 design addendum on #763; until the owner confirms it, [v2-program-state.md](v2-program-state.md) governs.
+> **Amended 2026-11-28** by the [#763 design review](https://github.com/ahaqqu/RumaQ/issues/763#issuecomment-7237282839). Step 1 is the domain vocabulary kernel, not the wire major; the wire contract is cut once, as a projection of the real schema, before Phase 4. v2 code lives in a new top-level `server/` workspace. A first slice (`server/` scaffold, CI and deploy scope guards) comes before step 1. Where the legacy contract ends up is being re-decided on #763: the first choice, a frozen private copy inside v1, was re-opened after the coexistence research priced it. The detailed slice sequence is set by the Phase 2 design addendum on #763; until the owner confirms it, [v2-program-state.md](v2-program-state.md) governs.
 
 1. **Contract/domain vocabulary:** create the next clean ingest major for campaign/revision/page/evidence/extraction/candidate/review/publication artifacts. No v1/v2 adapter. Update the contract tests and generated API artifacts.
 2. **PostgreSQL baseline:** new initial schema and migration runner; no translation/import of the 54 D1 migrations. Add PG17 + pgvector/pg_trgm to local automation. Use a trusted PG client/migration library and explicit SQL for critical publication queries.
@@ -126,7 +126,7 @@ RumaQ PR CI/scoped smoke/full automation/production smoke/backup/preview/test im
 
 ### Required gates
 
-- `./scripts/test.sh unit backend` and relevant automation-local suites use real PostgreSQL, not a D1 mock.
+- `./scripts/test.sh unit server` and relevant automation-local suites use real PostgreSQL, not a D1 mock. (Amended 2026-11-28: the plan first named `unit backend`, which runs only `backend/src/**/*.test.ts` and cannot reach v2 code under the `server/` workspace; the change is pending the owner's confirmation on #763.)
 - Idempotency replay, same-key/different-body 409, in-flight retry, and crash-after-external-effect tests pass.
 - Cross-household composite-FK/RLS/IDOR tests pass; application role cannot bypass RLS.
 - API + worker + PG + pipeline + resident-apps load stays inside the host resource envelope.
