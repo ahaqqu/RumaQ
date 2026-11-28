@@ -3,6 +3,8 @@
 > Parent: [#758](https://github.com/ahaqqu/RumaQ/issues/758). Design: [v2-design.md](v2-design.md). Evidence: [pipeline audit](v2-pipeline-audit.md), [Actions audit](v2-actions-audit.md), and [infrastructure evaluation](v2-infrastructure-evaluation.md).
 >
 > **Status: approved — C0 signed by the owner on 2026-11-28** (docs PR [#759](https://github.com/ahaqqu/RumaQ/pull/759), merged). Program state and the cross-harness resume point: [v2-program-state.md](v2-program-state.md). Gates C1–C6 remain unsigned, so no work outside Phase 2, paid evaluation, workflow disablement, deployment, or live scrape is authorized by this document alone.
+>
+> **Phase 2 amended 2026-11-28:** the owner-confirmed [design addendum](v2-phase2-design-addendum.md) governs Phase 2 wherever this plan differs from it: topology, data model, slice order, the test and scope gates, held-merge sequencing, backup scope and the v1 safety contract. §6 carries the amended sequence.
 
 ## 1. Locked scope
 
@@ -34,19 +36,19 @@ The lanes join at real contract fixtures. No production UI reads pipeline-local 
 
 ## 3. Phases and blocking gates
 
-| Phase                                | Deliverable                                                                                                                    | Blocking gate                                                                                                                                         |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **0. Plan and safety**               | Approved docs, child issues, legacy freeze tag, scraping paused, billing blocker assigned.                                     | **C0:** owner approves design/plan. No destructive action or paid run.                                                                                |
-| **1. Actions spend stop**            | Highest-value schedule/trigger reductions across the portfolio.                                                                | Active deploy/test/security paths still work; no direct-to-main edits.                                                                                |
-| **2. Fresh platform core**           | PG schema/roles, Hono module skeleton, R2 storage, sessions, idempotent ingest, outbox, VPS service contracts.                 | Concurrent replay, crash recovery, IDOR/RLS, artifact rollback, isolated restore, and capacity tests pass.                                            |
-| **3. Public design foundation**      | Responsive tokens/components, selective SSR proof, guest/public shell, honest empty/error/stale states.                        | **C1:** owner approves responsive screens/copy; SSR/accessibility/cache tests pass.                                                                   |
-| **4. Superindo discovery**           | Complete campaign/page manifest, immutable evidence, explicit region/validity/coverage, replay from frozen bytes.              | Both hubs and all in-scope pages accounted; zero/overflow/drift fail closed; no OCR/publish implied.                                                  |
-| **5. Extraction and review core**    | Structured extraction, prompt/model registry, gold dataset, cost ledger, identity/review/publication admin.                    | **C2:** owner authorizes paid pilot. Offline tests prove no auto-solo/unresolved attach, null category, atomic publish, and corrupt-spool quarantine. |
-| **6. New-site release + Campaign A** | Main hostname serves v2; legacy serves v1 subdomain; first complete Superindo campaign reviewed and approved offers published. | **C3:** owner signs Campaign A quality/cost/UX report. Main may show empty before approval; scheduling and next store stay disabled.                  |
-| **7. Campaign B and scheduling**     | Distinct fresh campaign, expiry/freshness rollover, regression/cost comparison, final capacity/restore proof.                  | **C4:** owner signs Campaign B. Only now enable Superindo schedule and unlock one next store.                                                         |
-| **8. Accounts and household value**  | Synced watch/list and explicit import; optional modules one at a time.                                                         | **C6 per module:** privacy, permissions, retention/export/purge, cost, navigation, and accessibility approved.                                        |
-| **9. Next-store certification**      | One deliberately selected store repeats the complete program.                                                                  | **C5:** prior store remains healthy; new store passes two complete campaigns before another follows.                                                  |
-| **10. Legacy retirement**            | Remove unused D1/Worker paths and obsolete workflows/docs after owner chooses deletion.                                        | New backup/restore/deploy/rollback evidence is current; no runtime v2 dependency on legacy remains.                                                   |
+| Phase                                | Deliverable                                                                                                                    | Blocking gate                                                                                                                                                                                      |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0. Plan and safety**               | Approved docs, child issues, legacy freeze tag, scraping paused, billing blocker assigned.                                     | **C0:** owner approves design/plan. No destructive action or paid run.                                                                                                                             |
+| **1. Actions spend stop**            | Highest-value schedule/trigger reductions across the portfolio.                                                                | Active deploy/test/security paths still work; no direct-to-main edits.                                                                                                                             |
+| **2. Fresh platform core**           | PG schema/roles, Hono module skeleton, R2 storage, sessions, idempotent ingest, outbox, VPS service contracts.                 | Concurrent replay, crash recovery, IDOR/RLS, artifact rollback, isolated restore, and a bounded capacity baseline pass (amended 2026-11-28: the combined stress test moves to Phases 6–7; see §6). |
+| **3. Public design foundation**      | Responsive tokens/components, selective SSR proof, guest/public shell, honest empty/error/stale states.                        | **C1:** owner approves responsive screens/copy; SSR/accessibility/cache tests pass.                                                                                                                |
+| **4. Superindo discovery**           | Complete campaign/page manifest, immutable evidence, explicit region/validity/coverage, replay from frozen bytes.              | Both hubs and all in-scope pages accounted; zero/overflow/drift fail closed; no OCR/publish implied.                                                                                               |
+| **5. Extraction and review core**    | Structured extraction, prompt/model registry, gold dataset, cost ledger, identity/review/publication admin.                    | **C2:** owner authorizes paid pilot. Offline tests prove no auto-solo/unresolved attach, null category, atomic publish, and corrupt-spool quarantine.                                              |
+| **6. New-site release + Campaign A** | Main hostname serves v2; legacy serves v1 subdomain; first complete Superindo campaign reviewed and approved offers published. | **C3:** owner signs Campaign A quality/cost/UX report. Main may show empty before approval; scheduling and next store stay disabled.                                                               |
+| **7. Campaign B and scheduling**     | Distinct fresh campaign, expiry/freshness rollover, regression/cost comparison, final capacity/restore proof.                  | **C4:** owner signs Campaign B. Only now enable Superindo schedule and unlock one next store.                                                                                                      |
+| **8. Accounts and household value**  | Synced watch/list and explicit import; optional modules one at a time.                                                         | **C6 per module:** privacy, permissions, retention/export/purge, cost, navigation, and accessibility approved.                                                                                     |
+| **9. Next-store certification**      | One deliberately selected store repeats the complete program.                                                                  | **C5:** prior store remains healthy; new store passes two complete campaigns before another follows.                                                                                               |
+| **10. Legacy retirement**            | Remove unused D1/Worker paths and obsolete workflows/docs after owner chooses deletion.                                        | New backup/restore/deploy/rollback evidence is current; no runtime v2 dependency on legacy remains.                                                                                                |
 
 Phases 2–5 contain ordered PRs below. Phase 6 does not wait for a second campaign merely to keep the old UI on the main hostname.
 
@@ -61,7 +63,7 @@ Phases 2–5 contain ordered PRs below. Phase 6 does not wait for a second campa
    - PR #748 remains the visual prototype; incorporate the uncommitted Belanja iteration only through its own reviewed PR.
    - Pipeline #219/#223 reset/pause work is held or reshaped into discover/extract/reprocess/publish controls.
    - RumaQ #753/#754 remains legacy history; destructive wipe is not the routine v2 quality loop.
-   - The prepared `rumaq-v2` D1 cutover action is superseded if the PostgreSQL gate passes; remove the stale manual action when the new plan PR lands.
+   - The prepared `rumaq-v2` D1 cutover action was closed by the owner on 2026-11-28: its entry is removed and the database is unused. Deleting it is a separate Phase 10 decision.
 
 **Exit:** owner says “approve plan”; docs PR and active child issues are visible; no scrape/deploy has occurred.
 
@@ -102,34 +104,49 @@ RumaQ PR CI/scoped smoke/full automation/production smoke/backup/preview/test im
 
 ## 6. Phase 2 — fresh platform core
 
-### RumaQ PR sequence
+> **Amended 2026-11-28 (owner-confirmed; see [v2-phase2-design-addendum.md](v2-phase2-design-addendum.md)).** The sequences below replace the plan's original Phase 2 list — eight RumaQ PRs starting with the contract vocabulary major, then six `ahaqqu/vps` PRs at the tail. The addendum governs wherever the two differ. What changed: the first work is no longer the contract major — v2 starts with its scope rule and its `server/` home, the domain vocabulary kernel comes third, and the pipeline-facing wire contract is cut once, after R9 and before Phase 4, as a projection of the real schema; `server/` is a standalone Bun package with its own lockfile, not a root workspace member, and legacy `contract/` stays untouched; the PostgreSQL gate is `./scripts/test.sh unit server`; the host-side slices come forward so the deploy path is proven with a health-only artifact instead of at the tail, and their open points are decided (a one-time runbook bootstrap, a new DNS-only v2 hostname, a nightly encrypted dump with an isolated restore drill); and Dependabot auto-merges patch-level and security updates only during the freeze.
 
-> **Amended 2026-11-28** by the [#763 design review](https://github.com/ahaqqu/RumaQ/issues/763#issuecomment-7237282839). Step 1 is the domain vocabulary kernel, not the wire major; the wire contract is cut once, as a projection of the real schema, before Phase 4. v2 code lives in a new top-level `server/` workspace. A first slice (`server/` scaffold, CI and deploy scope guards) comes before step 1. Where the legacy contract ends up is being re-decided on #763: the first choice, a frozen private copy inside v1, was re-opened after the coexistence research priced it. The detailed slice sequence is set by the Phase 2 design addendum on #763; until the owner confirms it, [v2-program-state.md](v2-program-state.md) governs.
+### RumaQ slices
 
-1. **Contract/domain vocabulary:** create the next clean ingest major for campaign/revision/page/evidence/extraction/candidate/review/publication artifacts. No v1/v2 adapter. Update the contract tests and generated API artifacts.
-2. **PostgreSQL baseline:** new initial schema and migration runner; no translation/import of the 54 D1 migrations. Add PG17 + pgvector/pg_trgm to local automation. Use a trusted PG client/migration library and explicit SQL for critical publication queries.
-3. **Application skeleton:** split public, account, household, admin, internal, and worker modules. Replace the monolithic route-file pattern. Keep Valibot boundary validation and generated OpenAPI.
-4. **Identity/sessions:** run the AutQ OIDC client/lifecycle spike. Use AutQ if it supports the required fresh client and revocation/session behavior; otherwise direct Google OIDC behind the same interface. Add opaque hashed sessions, server roles, CSRF/Origin, and account cache isolation.
-5. **Evidence storage:** content-addressed R2 service with public brochure and private artifact namespaces, hash/byte verification, no overwrite, and pin-aware retention. Public pages always rehost; retain official source URL and attribution.
-6. **Ingest/outbox:** stable run UUIDs, idempotency key + canonical request hash, transactional artifacts/receipts/outbox, leased worker delivery, corrupt-spool quarantine, and crash-point tests.
-7. **Source registry/publication:** store run modes/certification, review decisions, offer versions, publication batches/current pointers, and public visibility kill switch.
-8. **Public read repositories:** implement the single current-offer query and history/as-of semantics before consumer UI. Test null/expired/future/withdrawn/incomplete/overlapping/WIB-boundary cases.
+| Wave | Slice                              | Issue                                              | Delivers                                                                                                                                                     | v1 Worker deploy on merge |
+| ---- | ---------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| A    | R1 — scope rule                    | [#781](https://github.com/ahaqqu/RumaQ/issues/781) | `server/**` becomes a known path: it runs the v2 suite, skips v1-only suites, and never deploys the v1 Worker                                                | yes, once                 |
+| A    | R2 — `server/` + real-PG gate      | [#782](https://github.com/ahaqqu/RumaQ/issues/782) | v2's home as a standalone package; `unit server` from day one; health-only entrypoints; architecture test; OpenAPI wiring                                    | yes, once                 |
+| B    | R3 — vocabulary kernel             | [#783](https://github.com/ahaqqu/RumaQ/issues/783) | The truth contract as code: run, campaign-revision, offer-version and publication state machines, source modes, price bases and disposition codes            | no                        |
+| B    | R4a — runner, roles, enums         | [#784](https://github.com/ahaqqu/RumaQ/issues/784) | Migration runner inside the artifact, first migrations, the enum sync test, the append-only guard                                                            | no                        |
+| B    | R4b — tenancy core                 | [#785](https://github.com/ahaqqu/RumaQ/issues/785) | `users`, `auth_identities`, `households`, `household_members` with composite keys and RLS; structural tenancy tests                                          | no                        |
+| C    | R5 — identity + sessions           | [#786](https://github.com/ahaqqu/RumaQ/issues/786) | Opaque hashed sessions, `(issuer, subject)` identity, expiry, revocation, server-resolved roles, Origin/CSRF; the OIDC adapter is its own PR after the spike | no                        |
+| C    | R6 — evidence storage              | [#787](https://github.com/ahaqqu/RumaQ/issues/787) | Content-addressed storage with public and private namespaces, no overwrite, verify-then-record, pin-aware retention                                          | no                        |
+| D    | R7 — runs, ingest, outbox          | [#788](https://github.com/ahaqqu/RumaQ/issues/788) | Durable, replayable ingest; leased at-least-once delivery with exactly-once effects; crash-point tests                                                       | no                        |
+| D    | R8 — source registry + publication | [#789](https://github.com/ahaqqu/RumaQ/issues/789) | What may be published, who approved it, and what is current — without publishing anything                                                                    | no                        |
+| D    | R9 — public read repositories      | [#790](https://github.com/ahaqqu/RumaQ/issues/790) | One query decides what is publicly current; history and as-of; the full case matrix                                                                          | no                        |
+| B    | R10 — v2 deploy entrypoint         | [#791](https://github.com/ahaqqu/RumaQ/issues/791) | One way to ship v2 to the host through `scripts/deploy.sh`, manual-only in Phase 2                                                                           | yes, once                 |
+| —    | Wire-contract cut                  | issue at Phase 2 exit                              | The kernel is promoted to a package; the tested internal schemas are frozen with fixtures. The first item after Phase 2 exit                                 | no                        |
 
-### `ahaqqu/vps` PR sequence
+Order: R1 → R2 → R3 → R4a → R4b → R5 and R6 (either order) → R7 → R8 → R9. R1 and R2 are approved as a pair and merged back to back. R10 starts as soon as R2 is merged, on its own branch from R2, so the deploy path is proven early with a health-only artifact; its rollback rehearsal is repeated after R9 with real migrations. Every slice pull request is held for the owner's approval before it merges (addendum §8).
 
-1. Add the RumaQ PostgreSQL database and least-privilege migrator/app/readonly roles; no other app receives credentials.
-2. Add separate `rumaq-web-api` and `rumaq-worker` units with memory/CPU budgets, loopback listeners, log rotation, and bounded PG pools.
-3. Add nginx public app/API routing while keeping internal ingest loopback-only. Configure/test trusted Cloudflare client-IP propagation before origin rate limits.
-4. Add the app artifact/swap/health/rollback deploy contract through RumaQ's single `scripts/deploy.sh` entrypoint. No second host writer.
-5. Add encrypted nightly PG dump + WAL/restic backup, retention, monitoring, and isolated restore automation.
-6. Prepare `rumaq-v1.ahaqqu.com` legacy routing and the future main-host cutover as separate reviewed changes.
+Outside the slice sequence, one small workflow PR, [#792](https://github.com/ahaqqu/RumaQ/pull/792), narrows Dependabot auto-merge to patch-level and security updates for the frozen v1 — minor and major bumps wait for the owner. It touches only `.github/` and `docs/`, both in the deploy skip set, so merging it does not deploy the v1 Worker (addendum §7).
+
+### `ahaqqu/vps` slices
+
+Host-side work belongs in `ahaqqu/vps`, never in this repository. Its issues are cited by number only: a merge to that repository's `main` is a host change within 15 minutes, so there is never more than one vps pull request per approval.
+
+| Slice | Issue | Delivers                                                                                                            | Wave                        |
+| ----- | ----- | ------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| V1    | #53   | Database and roles — a one-time runbook step, run once by the owner                                                 | B: starts when R2 is merged |
+| V2    | #54   | Three units with ceilings                                                                                           | B: follows V1               |
+| V3    | #55   | nginx routing for a new, DNS-only v2 hostname; the trusted-client-IP rule is rehearsed before the main-host cutover | D: after V4                 |
+| V4    | #56   | Deploy contract with rollback                                                                                       | B: with R10                 |
+| V5    | #57   | Nightly encrypted dump and isolated restore drill; WAL archiving is a separate decision before Phase 6              | E: after V4                 |
+
+The `rumaq-v1.ahaqqu.com` legacy hostname has been live since Phase 0 (#772); the main-host cutover stays a separate reviewed change in Phase 6.
 
 ### Required gates
 
-- `./scripts/test.sh unit server` and relevant automation-local suites use real PostgreSQL, not a D1 mock. (Amended 2026-11-28: the plan first named `unit backend`, which runs only `backend/src/**/*.test.ts` and cannot reach v2 code under the `server/` workspace; the change is pending the owner's confirmation on #763.)
+- `./scripts/test.sh unit server` and relevant automation-local suites use real PostgreSQL 17 with pgvector and pg_trgm — connected as the real `rumaq_app` and `rumaq_migrator` roles — not a D1 mock. The gate fails rather than skips without a database and runs inside the required `ci` check. (Confirmed by the owner on 2026-11-28: the plan first named `unit backend`, which runs only `backend/src/**/*.test.ts` and cannot reach v2 code under `server/`. The suite exists from R2.)
 - Idempotency replay, same-key/different-body 409, in-flight retry, and crash-after-external-effect tests pass.
 - Cross-household composite-FK/RLS/IDOR tests pass; application role cannot bypass RLS.
-- API + worker + PG + pipeline + resident-apps load stays inside the host resource envelope.
+- API + worker + PG + pipeline + resident-apps load stays inside the host resource envelope (Amended 2026-11-28: Phase 2 proves a bounded synthetic-load baseline on the host; the combined stress test runs in Phases 6–7, where this plan repeats it.)
 - A fresh backup restores into isolation; representative public/account/admin reads and evidence hashes verify.
 - Previous application artifact rollback is rehearsed.
 
@@ -243,24 +260,24 @@ After owner approval and a verified new backup/restore/deploy chain:
 
 ## 13. Cross-repo PR order
 
-| Order | Repository                             | Work                                                                                            |
-| ----- | -------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 1     | RumaQ                                  | Docs-only research/design/plan PR.                                                              |
-| 2     | BayiQ/template/forks/AutQ/other owners | Independent Actions reduction PRs/settings checks; no dependency on app rewrite.                |
-| 3     | RumaQ + vps                            | Freeze legacy and prepare `rumaq-v1` hostname before changing the main deployment path.         |
-| 4     | RumaQ                                  | Contract + PG baseline + module/test skeleton.                                                  |
-| 5     | vps                                    | DB roles, web/worker units, nginx, backup, resource limits.                                     |
-| 6     | RumaQ                                  | Storage, auth, ingest/outbox, source registry, publication/read primitives in small PRs.        |
-| 7     | RumaQ-pipeline                         | Sync contract; Superindo discovery/evidence first, then extraction/registry/review integration. |
-| 8     | RumaQ                                  | Responsive public shell and admin review vertical slices against contract fixtures.             |
-| 9     | RumaQ + vps                            | Main/v1 hostname release after QA; Campaign A approved publication.                             |
-| 10    | RumaQ-pipeline + RumaQ                 | Campaign B, schedule/next-store gate, then repeat per store.                                    |
+| Order | Repository                             | Work                                                                                                                               |
+| ----- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | RumaQ                                  | Docs-only research/design/plan PR.                                                                                                 |
+| 2     | BayiQ/template/forks/AutQ/other owners | Independent Actions reduction PRs/settings checks; no dependency on app rewrite.                                                   |
+| 3     | RumaQ + vps                            | Freeze legacy and prepare `rumaq-v1` hostname before changing the main deployment path.                                            |
+| 4     | RumaQ                                  | Scope rule, `server/` + PG test gate, vocabulary kernel, PG migrations (§6).                                                       |
+| 5     | vps                                    | Interleaved with the RumaQ slices (§6): database and roles, the three units and the deploy contract early; nginx and backup later. |
+| 6     | RumaQ                                  | Storage, auth, ingest/outbox, source registry, publication/read primitives in small PRs; the v2 deploy entrypoint early (R10).     |
+| 7     | RumaQ-pipeline                         | Sync contract; Superindo discovery/evidence first, then extraction/registry/review integration.                                    |
+| 8     | RumaQ                                  | Responsive public shell and admin review vertical slices against contract fixtures.                                                |
+| 9     | RumaQ + vps                            | Main/v1 hostname release after QA; Campaign A approved publication.                                                                |
+| 10    | RumaQ-pipeline + RumaQ                 | Campaign B, schedule/next-store gate, then repeat per store.                                                                       |
 
 No PR merges with red relevant checks. The private billing wall must be resolved or explicitly worked around through a trustworthy existing CI path; disabling required checks is not an option.
 
 ## 14. Test and verification policy
 
-- RumaQ: `./scripts/test.sh unit backend`, `./scripts/test.sh unit frontend`, `./scripts/test.sh unit server` (the v2 PostgreSQL gate; amended 2026-11-28 and pending the owner's confirmation on #763 — see §6), scoped/full automation-local as the slice requires, style/check/docs gates, PR smoke, and post-deploy smoke.
+- RumaQ: `./scripts/test.sh unit backend`, `./scripts/test.sh unit frontend`, `./scripts/test.sh unit server` (the v2 PostgreSQL gate; confirmed by the owner on 2026-11-28 — see §6; the suite exists from R2), scoped/full automation-local as the slice requires, style/check/docs gates, PR smoke, and post-deploy smoke.
 - Pipeline: `./scripts/test.sh unit groceries-scraper`, contract-sync/parity, style, deterministic frozen-byte replay, and no network/paid calls in ordinary CI.
 - VPS: `bash tests/run.sh`, `bin/check-secrets`, `bin/plan`, and the applicable dry-run/container gates.
 - Live model evaluations are manual, owner-authorized, versioned, and separately reported—not hidden in PR CI.
@@ -284,10 +301,8 @@ The program is not done when the new UI merely renders. It is done when:
 
 ## 16. Immediate next checkpoint
 
-On **“approve plan”** (the docs are already open and green as [#759](https://github.com/ahaqqu/RumaQ/pull/759), linked from #758; the open item is the owner's sign-off, including the disclosure decision):
+The plan is approved (C0, 2026-11-28) and Phases 0–1 are closed. The current checkpoint is Phase 2 (§6), tracked in [v2-program-state.md](v2-program-state.md) and on Delivery Kanban under [#763](https://github.com/ahaqqu/RumaQ/issues/763):
 
-1. Merge [#759](https://github.com/ahaqqu/RumaQ/pull/759); it carries the five documents and the program state file.
-2. Create the phased child issues and dependency chain on Delivery Kanban.
-3. Execute Actions Wave 1A as the first independent implementation wave.
-4. Start legacy-hostname preparation and the fresh platform contract/schema design implementation.
-5. Keep all scraping disabled and make no paid model calls until C2.
+1. Wave A: R1 (the scope rule) and R2 (`server/` and the real-PostgreSQL gate) are implemented, reviewed and held for approval as a pair.
+2. Then waves B–E per §6 and addendum §12. Every slice pull request is held for the owner's approval before it merges.
+3. Keep all scraping disabled and make no paid model calls until C2.

@@ -1,6 +1,8 @@
 # RumaQ v2 — reconciled product and architecture design
 
 > Status: **approved with the plan (C0, 2026-11-28)**, tracked by [#758](https://github.com/ahaqqu/RumaQ/issues/758). This reconciles independent product-manager and product-architect passes with the owner's decisions. Phase 2's code topology and core data model are refined by the design addendum on [#763](https://github.com/ahaqqu/RumaQ/issues/763). It authorizes no implementation, paid run, deployment, or workflow change by itself.
+>
+> **Phase 2 amendment:** the owner-confirmed [Phase 2 design addendum](v2-phase2-design-addendum.md) (2026-11-28) governs Phase 2 wherever this design or the plan differ: code topology, core data model, slice order, the test and scope gates, held-merge sequencing, backup scope and the v1 safety contract.
 
 ## 1. Product definition
 
