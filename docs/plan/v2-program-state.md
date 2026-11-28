@@ -1,7 +1,7 @@
 # RumaQ v2 — program state
 
 > Resume point for the v2 program ([#758](https://github.com/ahaqqu/RumaQ/issues/758)). Read this file first, in any session, with any harness or model.
-> Branch: `docs/v2-ground-up-plan` · PR: [#759](https://github.com/ahaqqu/RumaQ/pull/759) · Last updated: 2026-11-27
+> Branch: `docs/v2-ground-up-plan` · PR: [#759](https://github.com/ahaqqu/RumaQ/pull/759) · Last updated: 2026-11-28
 
 ## Resume protocol
 
@@ -15,15 +15,15 @@ Working state lives in git and GitHub. Harness-local state (`~/.agents/manager/.
 
 ## Current gate
 
-**C0 — owner plan approval: pending.** The five documents are complete and green. The owner must say "approve plan" and explicitly accept that the audits publish selected private-repository Actions metadata and private-pipeline operational details in this public repository.
+**C0 — owner plan approval: approved.** On 2026-11-28 the owner approved C0, including the plan and the disclosure of selected private-repository Actions metadata and private-pipeline operational details in this public repository.
 
-No implementation PR, deploy, paid evaluation, workflow disablement, or live scrape until C0.
+Post-C0 implementation may proceed only within the approved phase gates. Paid Superindo evaluation still requires C2; production publication, scheduling, next-store enablement, and household modules retain their separate gates.
 
 ## Gates
 
 | Gate | Unlocks                                                               | Status   |
 | ---- | --------------------------------------------------------------------- | -------- |
-| C0   | Plan approval; child issues; legacy freeze; Phase 1 Actions reduction | Pending  |
+| C0   | Plan approval; child issues; legacy freeze; Phase 1 Actions reduction | Approved |
 | C1   | Responsive public design foundation                                   | After C0 |
 | C2   | Paid Superindo extraction/OCR pilot                                   | After C0 |
 | C3   | New site on `rumaq.ahaqqu.com` plus Campaign A publication            | After C2 |
@@ -33,15 +33,16 @@ No implementation PR, deploy, paid evaluation, workflow disablement, or live scr
 
 ## Next action
 
-Waiting on C0. On approval, in order (plan §4 and §16):
+C0 is approved. Execute the post-approval checkpoint in order (plan §4 and §16):
 
-1. Create child issues under #758, one per phase, with dependencies recorded and `Plan` as entry step; move only the active one to `In Progress`.
-2. Freeze legacy with an annotated tag and prepare `rumaq-v1.ahaqqu.com` before touching the main deployment path.
-3. Stop legacy scheduled scraping through the controlled VPS/config path; keep the old data.
-4. Remove the stale prepared `rumaq-v2` D1 manual action (MANUAL_ACTIONS T) once the PostgreSQL gate is exercised.
+1. Merge #759 after its final checks pass.
+2. Create child issues under #758, one per phase, with dependencies recorded and `Plan` as entry step; move only the active one to `In Progress`.
+3. Freeze legacy with an annotated tag and prepare `rumaq-v1.ahaqqu.com` before touching the main deployment path.
+4. Stop legacy scheduled scraping through the controlled VPS/config path; keep the old data.
 5. Run Phase 1 Actions reduction (Wave 1A) as the first independent implementation work.
+6. Remove the stale prepared `rumaq-v2` D1 manual action (MANUAL_ACTIONS T) only once the PostgreSQL gate is exercised.
 
-Do not open a second docs PR; extend #759.
+After #759 merges, update the branch/resume references above to `main`; do not open a second docs PR for the same program.
 
 ## Artifacts
 
@@ -63,3 +64,4 @@ Owner inbox note: `docs/MANUAL_ACTIONS.md` is gitignored and does not travel, so
 
 - 2026-11-26 — Five v2 research/design/plan documents committed and PR #759 opened; `ci` and `smoke` green, normal docs review posted no findings. Awaiting C0 including the disclosure decision.
 - 2026-11-27 — Branch rebased onto `main` after #760 pruned obsolete docs (removes the stale `docs/plan/phase-*`, `docs/features/*`, `docs/design/*` tree). Added this state file as the cross-harness resume point.
+- 2026-11-28 — Owner approved C0, including explicit acceptance of the audit disclosure scope. The approved next checkpoint is docs merge, child-issue tracking, legacy freeze/safety, and Actions Wave 1A; C2–C6 remain separately gated.
