@@ -113,7 +113,7 @@ Decided earlier the same day (§1): D1, the domain vocabulary first and the wire
 
 ## 10. Deviations from the written plan, all covered above
 
-`unit backend` → `unit server` (decided) · capacity gate split (decided) · contract major first → kernel first, cut once later (decided) · standalone lockfile (§9.2) · custom migration runner and a third unit (§9.3) · v2 OpenAPI generated from R2 rather than at the first real routes · V1, V2, V4 and R10 brought forward instead of the plan's tail-heavy order · database bootstrap owned by `ahaqqu/vps` and run once by the owner, because the pgvector extension is not trusted and the applier cannot run SQL · the test database comes from `server/compose.yaml`, not the v1 compose stack · WAL archiving and off-box restic are not in Phase 2 unless the host research changes the picture (§1, G3).
+`unit backend` → `unit server` (decided) · capacity gate split (decided) · contract major first → kernel first, cut once later (decided) · standalone lockfile (§9.2) · custom migration runner and a third unit (§9.3) · v2 OpenAPI generated from R2 rather than at the first real routes · V1, V2, V4 and R10 brought forward instead of the plan's tail-heavy order · database bootstrap owned by `ahaqqu/vps` and run once by the owner, because the pgvector extension is not trusted and the applier cannot run SQL · the test database comes from `server/compose.yaml`, not the v1 compose stack · WAL archiving is not in Phase 2: the owner decided a nightly dump and an isolated restore drill now, and WAL archiving as a separate decision before Phase 6 (§11).
 
 ## 11. Still open, not blocking the first slices
 
@@ -121,7 +121,7 @@ Decided after the host research (owner, 2026-11-28) — open in the review copy:
 
 - **Backup scope** (`ahaqqu/vps` V5): a nightly encrypted dump and an isolated restore drill in Phase 2. WAL archiving is a separate decision before Phase 6, when scheduled operation gives it a real recovery-point objective. No cluster-wide PostgreSQL change in Phase 2.
 - **Database bootstrap** (`ahaqqu/vps` V1): a one-time runbook step — a reviewed, idempotent SQL file in `ahaqqu/vps`, a runbook section and a CI test on a throwaway database — run once by the owner. No applier feature. This is a confirmed deviation from "host config in a manifest row".
-- **v2 API hostname for Phase 2** (`ahaqqu/vps` V3): a new DNS-only name (working name `rumaq-v2.ahaqqu.com`; the owner may still rename it before V3's plan). Neither existing RumaQ hostname changes in Phase 2. It is not Cloudflare-proxied in Phase 2, so the real-client-IP rule is not deployed by V3; it is rehearsed before the main-host cutover in Phase 3.
+- **v2 API hostname for Phase 2** (`ahaqqu/vps` V3): a new DNS-only name (working name `rumaq-v2.ahaqqu.com`; the owner may still rename it before V3's plan). Neither existing RumaQ hostname changes in Phase 2. It is not Cloudflare-proxied in Phase 2, so the real-client-IP rule is not deployed by V3; it is rehearsed before the main-host cutover, which the plan places in Phase 6.
 - **Dependabot during the freeze:** auto-merge only patch-level updates — security and patch bumps keep flowing; minor and major bumps of the frozen v1 wait for the owner's approval. Shipped as its own small workflow PR, which touches only `.github/` — in the deploy skip set, so merging it does not deploy the v1 Worker (§7).
 
 Still open — do not act unilaterally:
@@ -144,28 +144,28 @@ Closed since the review copy, by the research:
 
 Every RumaQ slice is a sub-issue of [#763](https://github.com/ahaqqu/RumaQ/issues/763). The `ahaqqu/vps` slices are cited by issue number only: a merge to that repository's `main` is a host change within 15 minutes, so there is never more than one vps pull request per approval (§3).
 
-| Slice                                        | Issue                                              | Wave                        |
-| -------------------------------------------- | -------------------------------------------------- | --------------------------- |
-| R1 — scope rule                              | [#781](https://github.com/ahaqqu/RumaQ/issues/781) | A                           |
-| R2 — `server/` + real-PG gate                | [#782](https://github.com/ahaqqu/RumaQ/issues/782) | A                           |
-| R3 — vocabulary kernel                       | [#783](https://github.com/ahaqqu/RumaQ/issues/783) | B                           |
-| R4a — runner, roles, enums                   | [#784](https://github.com/ahaqqu/RumaQ/issues/784) | B                           |
-| R4b — tenancy core                           | [#785](https://github.com/ahaqqu/RumaQ/issues/785) | B                           |
-| R5 — identity + sessions                     | [#786](https://github.com/ahaqqu/RumaQ/issues/786) | C                           |
-| R6 — evidence storage                        | [#787](https://github.com/ahaqqu/RumaQ/issues/787) | C                           |
-| R7 — runs, ingest, outbox                    | [#788](https://github.com/ahaqqu/RumaQ/issues/788) | D                           |
-| R8 — source registry + publication           | [#789](https://github.com/ahaqqu/RumaQ/issues/789) | D                           |
-| R9 — public read repositories                | [#790](https://github.com/ahaqqu/RumaQ/issues/790) | D                           |
-| R10 — v2 deploy entrypoint                   | [#791](https://github.com/ahaqqu/RumaQ/issues/791) | E                           |
-| Wire-contract cut                            | issue at Phase 2 exit                              | first item after E          |
-| vps V1 — database and roles                  | `ahaqqu/vps` #53                                   | B: starts when R2 is merged |
-| vps V2 — three units with ceilings           | `ahaqqu/vps` #54                                   | B–C: follows V1             |
-| vps V3 — nginx routing and trusted client IP | `ahaqqu/vps` #55                                   | C–D: before R10             |
-| vps V4 — deploy contract with rollback       | `ahaqqu/vps` #56                                   | E: with R10                 |
-| vps V5 — backup and isolated restore         | `ahaqqu/vps` #57                                   | E: after V4                 |
+| Slice                                        | Issue                                              | Wave                                                                                          |
+| -------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| R1 — scope rule                              | [#781](https://github.com/ahaqqu/RumaQ/issues/781) | A                                                                                             |
+| R2 — `server/` + real-PG gate                | [#782](https://github.com/ahaqqu/RumaQ/issues/782) | A                                                                                             |
+| R3 — vocabulary kernel                       | [#783](https://github.com/ahaqqu/RumaQ/issues/783) | B                                                                                             |
+| R4a — runner, roles, enums                   | [#784](https://github.com/ahaqqu/RumaQ/issues/784) | B                                                                                             |
+| R4b — tenancy core                           | [#785](https://github.com/ahaqqu/RumaQ/issues/785) | B                                                                                             |
+| R5 — identity + sessions                     | [#786](https://github.com/ahaqqu/RumaQ/issues/786) | C                                                                                             |
+| R6 — evidence storage                        | [#787](https://github.com/ahaqqu/RumaQ/issues/787) | C                                                                                             |
+| R7 — runs, ingest, outbox                    | [#788](https://github.com/ahaqqu/RumaQ/issues/788) | D                                                                                             |
+| R8 — source registry + publication           | [#789](https://github.com/ahaqqu/RumaQ/issues/789) | D                                                                                             |
+| R9 — public read repositories                | [#790](https://github.com/ahaqqu/RumaQ/issues/790) | D                                                                                             |
+| R10 — v2 deploy entrypoint                   | [#791](https://github.com/ahaqqu/RumaQ/issues/791) | B: starts when R2 is merged; its rollback rehearsal is repeated after R9 with real migrations |
+| Wire-contract cut                            | issue at Phase 2 exit                              | first item after E                                                                            |
+| vps V1 — database and roles                  | `ahaqqu/vps` #53                                   | B: starts when R2 is merged                                                                   |
+| vps V2 — three units with ceilings           | `ahaqqu/vps` #54                                   | B–C: follows V1                                                                               |
+| vps V3 — nginx routing and trusted client IP | \1C–D: after V4\2                                  |
+| vps V4 — deploy contract with rollback       | \1B: starts when R2 is merged, with R10\2          |
+| vps V5 — backup and isolated restore         | `ahaqqu/vps` #57                                   | E: after V4                                                                                   |
 
 - **A** — R1 and R2. Approved as a pair and merged back to back.
-- **B** — R3, R4a, R4b. vps V1 starts when R2 is merged; V2 follows.
+- **B** — R3, R4a, R4b. Once R2 is merged, the host side starts so the deploy path is proven early with a health-only artifact (§3): vps V1, then V2, then V4 together with R10.
 - **C** — R5 and R6.
-- **D** — R7, R8, R9. vps V3 lands before R10.
-- **E** — R10 with vps V4; then V5.
+- **D** — R7, R8, R9. vps V3 lands once V4 is applied and the v2 hostname and certificate exist.
+- **E** — the exit evidence: the rollback rehearsal N → N+1 → N is repeated with real migrations, then vps V5.

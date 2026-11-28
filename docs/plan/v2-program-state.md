@@ -35,16 +35,16 @@ Working state lives in git and GitHub. Harness-local state (`~/.agents/manager/.
 
 Phase 0 (safety) and Phase 1 (Actions spend stop) are complete and closed. Phase 2 is the only active work: [#763](https://github.com/ahaqqu/RumaQ/issues/763) (fresh platform core), now at entry step **Plan**. Its design is settled: the owner confirmed the [Phase 2 design addendum](v2-phase2-design-addendum.md) on 2026-11-28. Read the addendum before any Phase 2 work — it governs wherever it differs from the plan.
 
-**Resume here: Wave A is in progress.** The plans for R1 ([#781](https://github.com/ahaqqu/RumaQ/issues/781) — the scope rule) and R2 ([#782](https://github.com/ahaqqu/RumaQ/issues/782) — `server/` and the real-PostgreSQL gate) are being written. R1 is then implemented, reviewed and **held**, together with R2, for the owner's approval: the pair is approved as one and merged back to back, R1 first. **No Phase 2 code PR is merged yet.** Phase 2 code PRs may be opened; each one stays unmerged, and nothing deploys, until the owner approves it.
+**Resume here: Wave A is in progress.** The plans for R1 ([#781](https://github.com/ahaqqu/RumaQ/issues/781) — the scope rule) and R2 ([#782](https://github.com/ahaqqu/RumaQ/issues/782) — `server/` and the real-PostgreSQL gate) are written. They are working documents in the manager's session state, not in this repository: the durable record of each slice is its pull request. R1 is being implemented, then reviewed and **held**, together with R2, for the owner's approval: the pair is approved as one and merged back to back, R1 first. **No Phase 2 code PR is merged yet.** Phase 2 code PRs may be opened; each one stays unmerged, and nothing deploys, until the owner approves it.
 
 Two docs PRs are open and wait for the owner's merge: [#779](https://github.com/ahaqqu/RumaQ/pull/779) (the Phase 2 design review, which carries this state file) and the addendum PR stacked on it, [#793](https://github.com/ahaqqu/RumaQ/pull/793). Merge #779 first; GitHub retargets the stacked PR to `main` when that branch is deleted.
 
 **Waves after A** — the full slice table is addendum §12:
 
-- **B** — R3 [#783](https://github.com/ahaqqu/RumaQ/issues/783), R4a [#784](https://github.com/ahaqqu/RumaQ/issues/784), R4b [#785](https://github.com/ahaqqu/RumaQ/issues/785). The `ahaqqu/vps` slice V1 starts when R2 is merged; V2 follows.
+- **B** — R3 [#783](https://github.com/ahaqqu/RumaQ/issues/783), R4a [#784](https://github.com/ahaqqu/RumaQ/issues/784), R4b [#785](https://github.com/ahaqqu/RumaQ/issues/785). The `ahaqqu/vps` slice V1 starts when R2 is merged; V2 follows, then V4 with R10, so the deploy path is proven early with a health-only artifact.
 - **C** — R5 [#786](https://github.com/ahaqqu/RumaQ/issues/786), R6 [#787](https://github.com/ahaqqu/RumaQ/issues/787).
-- **D** — R7 [#788](https://github.com/ahaqqu/RumaQ/issues/788), R8 [#789](https://github.com/ahaqqu/RumaQ/issues/789), R9 [#790](https://github.com/ahaqqu/RumaQ/issues/790). `ahaqqu/vps` V3 lands before R10.
-- **E** — R10 [#791](https://github.com/ahaqqu/RumaQ/issues/791) with `ahaqqu/vps` V4, then V5.
+- **D** — R7 [#788](https://github.com/ahaqqu/RumaQ/issues/788), R8 [#789](https://github.com/ahaqqu/RumaQ/issues/789), R9 [#790](https://github.com/ahaqqu/RumaQ/issues/790). `ahaqqu/vps` V3 lands once V4 is applied and the v2 hostname and certificate exist.
+- **E** — the exit evidence: the rollback rehearsal is repeated with real migrations, then `ahaqqu/vps` V5.
 
 The wire-contract cut gets its issue at Phase 2 exit.
 
@@ -57,7 +57,7 @@ The wire-contract cut gets its issue at Phase 2 exit.
 - **Capacity gate.** A bounded synthetic-load baseline on the host in Phase 2; the combined stress test moves to Phases 6–7.
 - **Backup scope (vps V5).** A nightly encrypted dump and an isolated restore drill in Phase 2; WAL archiving is a separate decision before Phase 6, when scheduled operation gives it a real recovery-point objective. No cluster-wide PostgreSQL change in Phase 2.
 - **Database bootstrap (vps V1).** A one-time runbook step — a reviewed, idempotent SQL file in `ahaqqu/vps`, a runbook section and a CI test on a throwaway database — run once by the owner. No applier feature; a confirmed deviation from "host config in a manifest row".
-- **v2 API hostname for Phase 2 (vps V3).** A new DNS-only name (working name `rumaq-v2.ahaqqu.com`; the owner may still rename it before V3's plan). Neither existing RumaQ hostname changes in Phase 2. Not Cloudflare-proxied in Phase 2, so the real-client-IP rule is not deployed by V3; it is rehearsed before the main-host cutover in Phase 3.
+- **v2 API hostname for Phase 2 (vps V3).** A new DNS-only name (working name `rumaq-v2.ahaqqu.com`; the owner may still rename it before V3's plan). Neither existing RumaQ hostname changes in Phase 2. Not Cloudflare-proxied in Phase 2, so the real-client-IP rule is not deployed by V3; it is rehearsed before the main-host cutover, which the plan places in Phase 6.
 - **Dependabot during the freeze.** Auto-merge only patch-level updates — security and patch bumps keep flowing; minor and major bumps of the frozen v1 wait for the owner's approval. Its own small workflow PR: `.github/` only, which is in the deploy skip set, so merging it does not deploy the v1 Worker.
 - **Data model.** `source_tiles` is a table. `published_current` is a pointer table whose primary key is `offer_id`. `offers` are keyed by source lineage `(source_tile_id, source_line)` — the same product at the same store in two overlapping campaigns is two offers and two cards, and the product page shows both.
 - **Migrations.** A migration runner inside the server artifact (not a library), run by a third one-shot unit, `rumaq-migrate`, with its own OS user and env file.
