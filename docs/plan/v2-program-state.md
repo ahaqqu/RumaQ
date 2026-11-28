@@ -37,7 +37,7 @@ Phase 0 (safety) and Phase 1 (Actions spend stop) are complete and closed. Phase
 
 **Resume here: Wave A is in progress.** The plans for R1 ([#781](https://github.com/ahaqqu/RumaQ/issues/781) — the scope rule) and R2 ([#782](https://github.com/ahaqqu/RumaQ/issues/782) — `server/` and the real-PostgreSQL gate) are being written. R1 is then implemented, reviewed and **held**, together with R2, for the owner's approval: the pair is approved as one and merged back to back, R1 first. **No Phase 2 code PR is merged yet.** Phase 2 code PRs may be opened; each one stays unmerged, and nothing deploys, until the owner approves it.
 
-Two docs PRs are open and wait for the owner's merge: [#779](https://github.com/ahaqqu/RumaQ/pull/779) (the Phase 2 design review, which carries this state file) and the addendum PR stacked on it (branch `docs/v2-phase2-addendum`). Merge #779 first; GitHub retargets the stacked PR to `main` when that branch is deleted.
+Two docs PRs are open and wait for the owner's merge: [#779](https://github.com/ahaqqu/RumaQ/pull/779) (the Phase 2 design review, which carries this state file) and the addendum PR stacked on it, [#793](https://github.com/ahaqqu/RumaQ/pull/793). Merge #779 first; GitHub retargets the stacked PR to `main` when that branch is deleted.
 
 **Waves after A** — the full slice table is addendum §12:
 
