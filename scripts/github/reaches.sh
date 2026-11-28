@@ -27,18 +27,24 @@ cd "$root" || {
 target=${1:-}
 shift || true
 
+# blind — the paths this target does not see: they are left out of the paths
+# tested against `inputs` (the skip-set test still reads every path). The v1
+# targets are blind to server/, the v2 package: it cannot reach a v1 artifact,
+# and its manifest and lockfile belong to api-server and deps-server.
+blind=''
+
 case "$target" in
   api)
     # Paths the generator reads: backend routes, the contract, the codegen
     # tool, their manifests, and the generated file itself (a hand edit must
-    # fail the drift check, not skip it). The manifest and lockfile patterns
-    # are root-anchored: server/ has its own (api-server, deps-server).
-    inputs='^(backend/|contract/|tools/codegen/|docs/API\.md$|scripts/docs\.sh$|package\.json$|frontend/package\.json$|bun\.lock$|\.npmrc$)'
+    # fail the drift check, not skip it).
+    inputs='^(backend/|contract/|tools/codegen/|docs/API\.md$|scripts/docs\.sh$|.*package\.json$|bun\.lock$|\.npmrc$)'
     # Workspaces that cannot feed the generator. Anything outside them
     # (backend/, contract/, tools/, a new top-level directory) runs — except
     # server/, the v2 package: it cannot reach a v1 artifact.
     skippable='^(frontend/|docs/|automation/|\.agents/|\.github/|scripts/|server/|.*\.md$|LICENSE$|\.gitignore$|\.gitattributes$)'
     label='the API docs or the typed client'
+    blind='^server/'
     ;;
   api-server)
     # The v2 OpenAPI documents are generated inside server/ through
@@ -50,11 +56,12 @@ case "$target" in
     label='the v2 OpenAPI documents'
     ;;
   deps)
-    # Root-anchored like `api`: server/bun.lock and server/package.json belong
-    # to deps-server.
-    inputs='^(bun\.lock$|package\.json$|(frontend|backend|contract|tools/codegen)/package\.json$|\.npmrc$|patches/)'
+    # Blind to server/ like `api`: server/bun.lock and server/package.json
+    # belong to deps-server.
+    inputs='^(bun\.lock$|.*package\.json$|\.npmrc$|patches/)'
     skippable=''
     label='the dependency tree'
+    blind='^server/'
     ;;
   deps-server)
     inputs='^(server/(bun\.lock|package\.json)$)'
@@ -83,7 +90,11 @@ if [ -z "$paths" ]; then
   exit 0
 fi
 
-if printf '%s\n' "$paths" | grep -qE "$inputs"; then
+# A blind path is never an input; the skip-set test below still reads every
+# path.
+visible=$paths
+[ -n "$blind" ] && visible=$(printf '%s\n' "$paths" | grep -vE "$blind")
+if printf '%s\n' "$visible" | grep -qE "$inputs"; then
   echo "run reach($target): a changed path can reach $label"
   exit 0
 fi

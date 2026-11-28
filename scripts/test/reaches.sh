@@ -12,8 +12,8 @@ set -euo pipefail
 #
 # `api-server` regenerates the v2 OpenAPI documents for `server/` and
 # `scripts/docs.sh` only; `deps-server` audits `server/` for its own manifest
-# and lockfile only; the v1 `api`/`deps` inputs are root-anchored, so nothing
-# under `server/` runs them.
+# and lockfile only; the v1 `api`/`deps` targets do not see `server/`, so
+# nothing under it runs them.
 #
 # Offline only: the rule is exercised through --from-stdin, no git, no network.
 
@@ -94,6 +94,9 @@ expect 'api: frontend manifest runs'         api run  frontend/package.json
 expect 'api: backend manifest runs'          api run  backend/package.json
 expect 'api: contract manifest runs'         api run  contract/package.json
 expect 'api: codegen manifest runs'          api run  tools/codegen/package.json
+# An unknown workspace's manifest still runs the v1 targets (fail safe): the
+# v1 input patterns are unchanged, server/ is excluded on the input side.
+expect 'api: unknown workspace manifest runs' api run  web/package.json
 expect 'api-server: server source runs'      api-server run  server/src/entrypoints/openapi.ts
 expect 'api-server: docs script runs'        api-server run  scripts/docs.sh
 expect 'api-server: server manifest runs'    api-server run  server/package.json
@@ -106,6 +109,7 @@ expect 'deps: server manifest skips'         deps skip server/package.json
 expect 'deps: frontend manifest runs'        deps run  frontend/package.json
 expect 'deps: contract manifest runs'        deps run  contract/package.json
 expect 'deps: codegen manifest runs'         deps run  tools/codegen/package.json
+expect 'deps: unknown workspace manifest runs' deps run  web/package.json
 expect 'deps-server: server lockfile runs'   deps-server run  server/bun.lock
 expect 'deps-server: server manifest runs'   deps-server run  server/package.json
 expect 'deps-server: server source skips'    deps-server skip server/src/index.ts
