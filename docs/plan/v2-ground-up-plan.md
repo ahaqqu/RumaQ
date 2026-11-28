@@ -2,7 +2,7 @@
 
 > Parent: [#758](https://github.com/ahaqqu/RumaQ/issues/758). Design: [v2-design.md](v2-design.md). Evidence: [pipeline audit](v2-pipeline-audit.md), [Actions audit](v2-actions-audit.md), and [infrastructure evaluation](v2-infrastructure-evaluation.md).
 >
-> **Status: awaiting plan approval.** Program state and the cross-harness resume point: [v2-program-state.md](v2-program-state.md). Docs PR [#759](https://github.com/ahaqqu/RumaQ/pull/759) is open, rebased on `main`, and green. Active checkpoints remain in force. No implementation, paid evaluation, workflow disablement, deployment, or live scrape is authorized by this document alone.
+> **Status: approved — C0 signed by the owner on 2026-11-28** (docs PR [#759](https://github.com/ahaqqu/RumaQ/pull/759), merged). Program state and the cross-harness resume point: [v2-program-state.md](v2-program-state.md). Gates C1–C6 remain unsigned, so no work outside Phase 2, paid evaluation, workflow disablement, deployment, or live scrape is authorized by this document alone.
 
 ## 1. Locked scope
 
@@ -103,6 +103,8 @@ RumaQ PR CI/scoped smoke/full automation/production smoke/backup/preview/test im
 ## 6. Phase 2 — fresh platform core
 
 ### RumaQ PR sequence
+
+> **Amended 2026-11-28** by the [#763 design review](https://github.com/ahaqqu/RumaQ/issues/763#issuecomment-7237282839). Step 1 is the domain vocabulary kernel, not the wire major; the wire contract is cut once, as a projection of the real schema, before Phase 4. v2 code lives in a new top-level `server/` workspace, and v1 keeps a frozen private copy of the legacy contract schemas. A coexistence slice (frozen v1 copy, `server/` scaffold, CI and deploy scope guards) comes before step 1. The detailed slice sequence is set by the Phase 2 design addendum on #763; until the owner confirms it, [v2-program-state.md](v2-program-state.md) governs.
 
 1. **Contract/domain vocabulary:** create the next clean ingest major for campaign/revision/page/evidence/extraction/candidate/review/publication artifacts. No v1/v2 adapter. Update the contract tests and generated API artifacts.
 2. **PostgreSQL baseline:** new initial schema and migration runner; no translation/import of the 54 D1 migrations. Add PG17 + pgvector/pg_trgm to local automation. Use a trusted PG client/migration library and explicit SQL for critical publication queries.
