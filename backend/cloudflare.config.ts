@@ -51,12 +51,14 @@ export default defineConfig({
     compatibilityDate: '2026-07-10',
     compatibilityFlags: ['nodejs_compat'],
     entrypoint: 'src/index.ts',
-    // Canonical production hostname, attached as a Worker Custom Domain at
-    // deploy time (branch deploys keep their *.workers.dev URL only). This
-    // requires the ahaqqu.com zone to stay in this Cloudflare account — the
+    // Canonical and legacy hostnames, attached as Worker Custom Domains at
+    // deploy time (branch deploys keep their *.workers.dev URL only). The v1
+    // hostname keeps the existing Worker/D1/R2 app available while v2 is built;
+    // it does not change the canonical hostname or create a second deployment.
+    // Both require the ahaqqu.com zone to stay in this Cloudflare account — the
     // zone was migrated from registrar DNS (mysrsx) for exactly this purpose;
     // if the zone is ever removed again, deploys fail on zone inference.
-    domains: isProduction ? ['rumaq.ahaqqu.com'] : undefined,
+    domains: isProduction ? ['rumaq.ahaqqu.com', 'rumaq-v1.ahaqqu.com'] : undefined,
     // Single-deploy topology: the Worker serves both the SPA (frontend build,
     // wired in via publicDir in vite.config.ts) and the API. API requests must
     // always reach the user worker; unknown paths fall back to index.html.

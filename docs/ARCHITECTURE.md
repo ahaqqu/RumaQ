@@ -415,7 +415,9 @@ Branch Workers are cleaned up automatically via `.github/workflows/cleanup-branc
 
 ### Custom domain
 
-The canonical production URL is `https://rumaq.ahaqqu.com`, attached as a **Worker Custom Domain** on the `api` Worker (declared via `worker.domains` in `backend/cloudflare.config.ts`; `cf deploy` creates the DNS record and certificate automatically on production deploys). Attaching a custom domain disables the Worker's `*.workers.dev` route — `api.rumaq.workers.dev` no longer serves traffic, and nothing references it in docs, smoke tests, or the scraper ingest config.
+The canonical production URL is `https://rumaq.ahaqqu.com`, attached as a **Worker Custom Domain** on the `api` Worker (declared via `worker.domains` in `backend/cloudflare.config.ts`; `cf deploy` creates the DNS record and certificate automatically on production deploys). `https://rumaq-v1.ahaqqu.com` is attached to the same Worker as the legacy-v1 coexistence hostname: it serves the same existing D1/R2 data and deployment artifact, with separate origin-scoped cookies, PWA caches, and service workers. It does not change the canonical hostname or create another deployment path. Attaching a custom domain disables the Worker's `*.workers.dev` route — `api.rumaq.workers.dev` no longer serves traffic, and nothing references it in docs, smoke tests, or the scraper ingest config.
+
+The v1 hostname requires its own Google OAuth authorized redirect URI, `https://rumaq-v1.ahaqqu.com/api/auth/callback`, before Google sign-in can be verified there. The later v2 cutover moves only `rumaq.ahaqqu.com` to the new VPS application; `rumaq-v1.ahaqqu.com` remains on this legacy Worker until the separately gated legacy-retirement phase.
 
 One-time cutover steps (already performed):
 
