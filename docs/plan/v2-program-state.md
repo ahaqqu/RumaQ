@@ -8,7 +8,7 @@
 1. Branch from `main` into a dedicated worktree for each implementation slice; never commit directly to `main`.
 2. Read this file, then [v2-ground-up-plan.md](v2-ground-up-plan.md), and the [design](v2-design.md) before any implementation.
 3. `gh pr view 759 --comments` and `gh issue view 758 --comments` hold the planning record; the active phase issue holds implementation decisions.
-4. Execute only the **Next action** below, and only once the **Current gate** is signed. No implementation, deploy, paid model call, or live scrape before C0.
+4. Execute only the **Next action** below. C0 is signed, so Phase 2 implementation may proceed; C1 and later gates are **not** signed, so do not start Phase 3 design work, any paid model call, publication, scheduling, or household module early.
 5. Before stopping: commit, push, and update **Current gate**, **Next action**, and **Log** in this file.
 
 Working state lives in git and GitHub. Harness-local state (`~/.agents/manager/...`, chat history, local inboxes) does not travel between harnesses, models, or machines.
@@ -17,51 +17,62 @@ Working state lives in git and GitHub. Harness-local state (`~/.agents/manager/.
 
 **C0 — owner plan approval: approved.** On 2026-11-28 the owner approved C0, including the plan and the disclosure of selected private-repository Actions metadata and private-pipeline operational details in this public repository.
 
-Post-C0 implementation may proceed only within the approved phase gates. Paid Superindo evaluation still requires C2; production publication, scheduling, next-store enablement, and household modules retain their separate gates.
+**Next gate: C1** — owner review of the responsive public design foundation, which sits at the start of Phase 3. Until then, work stays inside Phase 2 (fresh platform core). Paid Superindo evaluation still requires **C2**; production publication, scheduled runs, next-store enablement and household modules keep their own gates. Legacy scraping is already stopped (Phase 0), so no live scrape is authorized at any point in Phase 2.
 
 ## Gates
 
-| Gate | Unlocks                                                               | Status   |
-| ---- | --------------------------------------------------------------------- | -------- |
-| C0   | Plan approval; child issues; legacy freeze; Phase 1 Actions reduction | Approved |
-| C1   | Responsive public design foundation                                   | After C0 |
-| C2   | Paid Superindo extraction/OCR pilot                                   | After C0 |
-| C3   | New site on `rumaq.ahaqqu.com` plus Campaign A publication            | After C2 |
-| C4   | Superindo `scheduled` mode and manual enablement of one next store    | After C3 |
-| C5   | Next-store certification (repeat the whole program per store)         | After C4 |
-| C6   | Each optional household module, approved one at a time                | After C3 |
+| Gate | Unlocks                                                               | Status                        |
+| ---- | --------------------------------------------------------------------- | ----------------------------- |
+| C0   | Plan approval; child issues; legacy freeze; Phase 1 Actions reduction | Approved                      |
+| C1   | Responsive public design foundation                                   | Next gate (Phase 3)           |
+| C2   | Paid Superindo extraction/OCR pilot                                   | Before any paid run (Phase 5) |
+| C3   | New site on `rumaq.ahaqqu.com` plus Campaign A publication            | After C2                      |
+| C4   | Superindo `scheduled` mode and manual enablement of one next store    | After C3                      |
+| C5   | Next-store certification (repeat the whole program per store)         | After C4                      |
+| C6   | Each optional household module, approved one at a time                | After C3                      |
 
 ## Next action
 
-Phase 0 (safety) and Phase 1 (Actions spend stop) are complete. [#763](https://github.com/ahaqqu/RumaQ/issues/763) (Phase 2, fresh platform core) is the active issue and has no owner gate in front of it.
+Phase 0 (safety) and Phase 1 (Actions spend stop) are complete and closed. Phase 2 is the only active work: [#763](https://github.com/ahaqqu/RumaQ/issues/763) (fresh platform core), whose only recorded blocker (#761) is closed.
 
-1. Phase 2 PR order (plan §6): contract vocabulary major → PostgreSQL 17 baseline → module skeleton → AutQ OIDC spike → evidence/R2 → ingest+outbox → source registry/publication → public read repositories. Host work stays in `ahaqqu/vps`.
-2. Remove the stale prepared `rumaq-v2` D1 manual action (MANUAL_ACTIONS T) only once the PostgreSQL gate is exercised.
+**Start here:** Phase 2 PR 1 — the contract vocabulary major in `contract/` (currently `0.4.0`). The entity set is already designed in [v2-design.md](v2-design.md) §4.2, so this is transcription, not invention. No v1→v2 adapter: the plan forbids one and nothing has live users. Two calls are genuinely open and should be settled in the PR description:
 
-**Retired repositories:** BayiQ (application) and `agentic-project-template` (the source template) are archived. Both had their scheduled runs removed before archiving, so neither generates runs, red checks or dependency PRs by itself; archive keeps history intact and is reversible. The template's remaining open issues are frozen inside it.
+1. `source_tiles` — a table (current design) versus a JSON manifest column on `campaign_pages`.
+2. `published_current` — a pointer table (current design) versus a partial unique index on `publication_items`.
 
-**Visibility constraint:** the public switch is temporary. AutQ, DokumenQ, RumaQ-pipeline and vps return to private, so their spend matters again. Measured after Phase 1: ≈1,125 billed min/month against the 2,000 ceiling (vps ~490 at 4.4 min/run, AutQ ~340, DokumenQ ~215, pipeline ~80), and none of the four has a sub-daily scheduled workflow. RumaQ, the template, KajianQ and BayiQ stay public and do not bill.
+Then, in order (plan §6): PostgreSQL 17 baseline → module skeleton → AutQ OIDC spike → evidence/R2 → ingest+outbox → source registry/publication → public read repositories. Host-side work (PG roles, `rumaq-web-api` and `rumaq-worker` units, nginx, deploy contract, PG backups) belongs in `ahaqqu/vps`, never here.
 
-Completed: #759 merged; phase issues #761–#771 linked with dependencies and Kanban status; annotated tag `rumaq-v1-freeze` at `10ea2629713a73a53eb17295421b8d78049557e3`; `rumaq-v1.ahaqqu.com` attached to the legacy Worker and answering (`/api/health` → 200, TLS valid) with the canonical host unchanged; legacy scraping paused on the box (`rumaq-scraper.timer` disabled + inactive, no NEXT, agent inactive) by the applier's declarative `disable_now` action; event-driven dependency auto-merge merged into the source template and verified live; Actions spend trimmed in all four private-bound repositories; event-driven dependency merge shipped to the template and KajianQ, so no scheduled Dependabot poll remains anywhere; BayiQ retired and archived; dormant-fork Actions disabled on `no-mistakes` and `laradock-sidemaya`; `wni-series` deploy left as a guarded `workflow_dispatch` scaffold; owner action X closed (v1 Google sign-in confirmed working).
+**Open owner decisions (do not act unilaterally):**
+
+- BayiQ is archived but its deployed app is still live — `bayiq.ahaqqu.com` answers 200 with Worker, D1 and R2 in place. Retirement of the code did not retire the service. Teardown needs an explicit go, and the D1/R2 data question must be answered before anything destructive.
+- `agentic-project-template` is archived with 7 open issues frozen inside it. Closing them requires unarchive → close → re-archive.
+- `docs/MANUAL_ACTIONS.md` action T (stale prepared `rumaq-v2` D1) should be removed only once the PostgreSQL gate is exercised.
+
+**Retired repositories:** BayiQ (application) and `agentic-project-template` (the source template) are archived **and** have Actions disabled. Both had their scheduled triggers removed first, so neither generates runs, red checks or dependency PRs by itself; archive keeps history intact and is reversible.
+
+**Visibility constraint:** the public switch is temporary. AutQ, DokumenQ, RumaQ-pipeline and vps return to private, so their spend matters again. Measured after Phase 1: ≈1,125 billed min/month against the 2,000 ceiling (vps ~490 at 4.4 min/run, AutQ ~340, DokumenQ ~215, pipeline ~80), and none of the four has a sub-daily scheduled workflow. RumaQ and KajianQ stay public and do not bill.
 
 ## Artifacts
 
-| Artifact                                                                     | What it is                                                 |
-| ---------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [v2-ground-up-plan.md](v2-ground-up-plan.md)                                 | 10 phases, gates C0–C6, PR order, test policy              |
-| [v2-design.md](v2-design.md)                                                 | Reconciled product + PostgreSQL/Bun/Hono architecture      |
-| [v2-pipeline-audit.md](v2-pipeline-audit.md)                                 | Pipeline, prompt/model, accuracy, and cost evidence        |
-| [v2-actions-audit.md](v2-actions-audit.md)                                   | Portfolio Actions inventory and retain/consolidate/disable |
-| [v2-infrastructure-evaluation.md](v2-infrastructure-evaluation.md)           | Cloudflare/D1 vs VPS/PostgreSQL decision record            |
-| [#759](https://github.com/ahaqqu/RumaQ/pull/759)                             | Merged docs PR carrying this program                       |
-| [#761–#771](https://github.com/ahaqqu/RumaQ/issues/761)                      | Phase issues and dependency chain; #761 is active          |
-| [#772](https://github.com/ahaqqu/RumaQ/pull/772)                             | v1 coexistence hostname (merged; host live)                |
-| [vps #52](https://github.com/ahaqqu/vps/pull/52)                             | Declarative `disable_now` scraping pause (merged; applied) |
-| [template #178](https://github.com/ahaqqu/agentic-project-template/pull/178) | Event-driven dependency auto-merge (merged)                |
-| Tag `rumaq-v1-freeze`                                                        | Legacy freeze at `10ea262`                                 |
-| [#748](https://github.com/ahaqqu/RumaQ/pull/748)                             | v2 mobile concept prototype (visual reference only)        |
-| Pipeline #219 / PR #223                                                      | Reset/pause work to reconcile, not to finish               |
-| RumaQ #753 / PR #754                                                         | Legacy fill-loop reset/wipe (merged; not the v2 loop)      |
+| Artifact                                                                                                                                                                                                  | What it is                                                 |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| [v2-ground-up-plan.md](v2-ground-up-plan.md)                                                                                                                                                              | 10 phases, gates C0–C6, PR order, test policy              |
+| [v2-design.md](v2-design.md)                                                                                                                                                                              | Reconciled product + PostgreSQL/Bun/Hono architecture      |
+| [v2-pipeline-audit.md](v2-pipeline-audit.md)                                                                                                                                                              | Pipeline, prompt/model, accuracy, and cost evidence        |
+| [v2-actions-audit.md](v2-actions-audit.md)                                                                                                                                                                | Portfolio Actions inventory and retain/consolidate/disable |
+| [v2-infrastructure-evaluation.md](v2-infrastructure-evaluation.md)                                                                                                                                        | Cloudflare/D1 vs VPS/PostgreSQL decision record            |
+| [#759](https://github.com/ahaqqu/RumaQ/pull/759)                                                                                                                                                          | Merged docs PR carrying this program                       |
+| [#761–#771](https://github.com/ahaqqu/RumaQ/issues/761)                                                                                                                                                   | Phase issues and dependency chain; #763 is active          |
+| [#772](https://github.com/ahaqqu/RumaQ/pull/772)                                                                                                                                                          | v1 coexistence hostname (merged; host live)                |
+| [vps #52](https://github.com/ahaqqu/vps/pull/52)                                                                                                                                                          | Declarative `disable_now` scraping pause (merged; applied) |
+| [template #178](https://github.com/ahaqqu/agentic-project-template/pull/178)                                                                                                                              | Event-driven dependency auto-merge (merged; repo archived) |
+| [template #180](https://github.com/ahaqqu/agentic-project-template/pull/180)                                                                                                                              | Scheduled triggers removed before archiving                |
+| Tag `rumaq-v1-freeze`                                                                                                                                                                                     | Legacy freeze at `10ea262`                                 |
+| [#773](https://github.com/ahaqqu/RumaQ/pull/773) / [#774](https://github.com/ahaqqu/RumaQ/pull/774) / [#775](https://github.com/ahaqqu/RumaQ/pull/775) / [#776](https://github.com/ahaqqu/RumaQ/pull/776) | Phase 0–1 closure and retirement records                   |
+| [#750](https://github.com/ahaqqu/KajianQ/pull/750) / [#224](https://github.com/ahaqqu/RumaQ-pipeline/pull/224)                                                                                            | KajianQ event-driven merge; pipeline weekly Dependabot     |
+| [#748](https://github.com/ahaqqu/RumaQ/pull/748)                                                                                                                                                          | v2 mobile concept prototype (visual reference only)        |
+| Pipeline #219 / PR #223                                                                                                                                                                                   | Reset/pause work to reconcile, not to finish               |
+| RumaQ #753 / PR #754                                                                                                                                                                                      | Legacy fill-loop reset/wipe (merged; not the v2 loop)      |
 
 Owner inbox note: `docs/MANUAL_ACTIONS.md` is gitignored and does not travel, so every open owner action must also be named on #758.
 
@@ -76,3 +87,4 @@ Owner inbox note: `docs/MANUAL_ACTIONS.md` is gitignored and does not travel, so
 - 2026-11-28 — Phase 1 closed with measured numbers rather than estimates: vps CI fell from 8–10 to 4.4 job-min per run after the parallel fixture diet, AutQ runs `push` on `main` only with cancel-in-progress, DokumenQ skips every lane for docs-only changes, and RumaQ-pipeline's Dependabot moved from daily to weekly (#224). The four private-bound repositories total ≈1,125 billed min/month against the 2,000 ceiling; vps, AutQ and DokumenQ have no scheduled workflows at all. Security-cadence work was deliberately not done: the scanners fail on real advisories, so the fix is dependency repair, not a quieter schedule.
 - 2026-11-28 — Phase 1 finished to the last item. KajianQ's daily Dependabot poll was replaced by the event-driven `pull_request_target` workflow from the template (#750), so no scheduled Dependabot poll remains in the portfolio; the remaining crons are daily-or-slower and every one of them sits on a public repository that does not bill. BayiQ was formally retired: its stale Dependabot PR was closed and the repository archived, which freezes its schedules without deleting history. The v1 Google callback is confirmed working end to end (owner sign-in on `rumaq-v1.ahaqqu.com`), closing owner action X. The failing vulnerability scan was triaged into a tracked issue rather than a quieter cadence: `agentic-project-template#179` records the 23 advisories and why the obvious grouped bump breaks the build.
 - 2026-11-28 — Both retired repositories were shut down cleanly. `agentic-project-template` merged #180 (8c43f77) first: the daily OSV sweep and the weekly self-sync dropped to `workflow_dispatch`, and `.github/dependabot.yml` was deleted so scheduled version PRs stop; its five open Dependabot PRs were closed with the reason, and the advisory backlog (#179) was closed as not planned with the reproduction kept on the record. The repository was then archived. BayiQ was archived earlier after closing its stale PR. Neither has a scheduled trigger, and no run can start while archived.
+- 2026-11-28 — Handoff consolidation before Phase 2 starts in a separate session. This file now names the current gate position (C0 signed; **C1 is the next unsigned gate**, so Phase 2 only), the exact first PR (contract vocabulary, with the two open design calls listed), the Phase 2 order, and the three owner decisions that must not be taken unilaterally (BayiQ's still-live deployment, the template's frozen issues, MANUAL_ACTIONS T). Retired repositories are stated as archived **and** Actions-disabled.
