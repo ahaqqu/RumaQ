@@ -260,7 +260,7 @@ No PR merges with red relevant checks. The private billing wall must be resolved
 
 ## 14. Test and verification policy
 
-- RumaQ: `./scripts/test.sh unit backend`, `./scripts/test.sh unit frontend`, scoped/full automation-local as the slice requires, style/check/docs gates, PR smoke, and post-deploy smoke.
+- RumaQ: `./scripts/test.sh unit backend`, `./scripts/test.sh unit frontend`, `./scripts/test.sh unit server` (the v2 PostgreSQL gate; amended 2026-11-28 and pending the owner's confirmation on #763 — see §6), scoped/full automation-local as the slice requires, style/check/docs gates, PR smoke, and post-deploy smoke.
 - Pipeline: `./scripts/test.sh unit groceries-scraper`, contract-sync/parity, style, deterministic frozen-byte replay, and no network/paid calls in ordinary CI.
 - VPS: `bash tests/run.sh`, `bin/check-secrets`, `bin/plan`, and the applicable dry-run/container gates.
 - Live model evaluations are manual, owner-authorized, versioned, and separately reported—not hidden in PR CI.
