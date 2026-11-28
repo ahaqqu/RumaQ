@@ -10,8 +10,10 @@ set -euo pipefail
 # Usage:
 #   needs-deploy.sh <base_ref> <head_ref>
 #
-# Anything outside NO_DEPLOY_PATHSPECS (docs, workflows, ...) deploys the
-# Worker. The scraper box is deployed by the private RumaQ-pipeline repo.
+# Anything outside NO_DEPLOY_PATHSPECS (docs, workflows, server/, ...) deploys
+# the Worker. server/ is the v2 package: a server/**-only push never deploys
+# v1; a mixed push (server/ beside anything else) still does.
+# The scraper box is deployed by the private RumaQ-pipeline repo.
 #
 # Prints "true" or "false".
 # ============================================================
@@ -34,6 +36,7 @@ NO_DEPLOY_PATHSPECS=(
   ':!LICENSE'
   ':!.gitignore'
   ':!.gitattributes'
+  ':!server'
 )
 changed=$(git diff --name-only "$BASE" "$HEAD" -- . "${NO_DEPLOY_PATHSPECS[@]}")
 

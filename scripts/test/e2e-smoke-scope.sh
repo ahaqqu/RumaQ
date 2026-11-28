@@ -5,12 +5,12 @@ set -euo pipefail
 #
 # The smoke costs a stack start plus the three @smoke scenarios (a pull is
 # ~2-2.5 min, a cold build ~5.5). Docs, a skill, Markdown, LICENSE,
-# .gitignore and issue/PR templates cannot change what the smoke exercises,
-# so those change sets skip. Anything else — frontend, backend, contract,
-# the automation harness itself, a lockfile, .gitattributes, the workflow,
-# or any unknown path — runs it, and an empty or unavailable change set runs
-# it too (fail safe: a wasted few minutes, never a missed regression, and a
-# required check always reports).
+# .gitignore, issue/PR templates and server/ cannot change what the smoke
+# exercises, so those change sets skip. Anything else — frontend, backend,
+# contract, the automation harness itself, a lockfile, .gitattributes, the
+# workflow, or any unknown path — runs it, and an empty or unavailable change
+# set runs it too (fail safe: a wasted few minutes, never a missed regression,
+# and a required check always reports).
 #
 # Offline only: the rule is exercised through --from-stdin, no git, no network.
 
@@ -86,6 +86,8 @@ expect 'dockerignore runs'      run  .dockerignore
 expect 'unknown path runs'      run  some/new/dir/file.xyz
 expect 'mixed docs+code runs'   run  docs/API.md backend/src/lib/scrape.ts
 expect 'markdown beside code'   run  backend/src/lib/README.md backend/src/lib/scrape.ts
+expect 'server skips'                skip server/src/index.ts server/compose.yaml
+expect 'server beside test entrypoint runs' run server/src/index.ts scripts/test.sh
 expect 'empty set runs'         run  ''
 
 # --- the verdict protocol itself (audit M1) ---
