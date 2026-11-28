@@ -13,11 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'ahaqqu/RumaQ'
     steps:
+      # Alert lookup needs a PAT or App token with read-only Dependabot alerts (the default
+      # token cannot read alerts); until DEPENDABOT_ALERT_LOOKUP_TOKEN exists the workflow
+      # behaves as patch-only (fail-safe), and an expired or revoked token fails the job.
       - name: Fetch Dependabot metadata
         id: metadata
         uses: dependabot/fetch-metadata@v3
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.DEPENDABOT_ALERT_LOOKUP_TOKEN || secrets.GITHUB_TOKEN }}
           alert-lookup: true
 
       # Phase 2 of the v2 program freezes the legacy v1 Worker (RumaQ#763); every
