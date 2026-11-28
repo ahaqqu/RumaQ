@@ -4,7 +4,7 @@
 >
 > **Status: approved — C0 signed by the owner on 2026-11-28** (docs PR [#759](https://github.com/ahaqqu/RumaQ/pull/759), merged). Program state and the cross-harness resume point: [v2-program-state.md](v2-program-state.md). Gates C1–C6 remain unsigned, so no work outside Phase 2, paid evaluation, workflow disablement, deployment, or live scrape is authorized by this document alone.
 >
-> **Phase 2 amended 2026-11-28:** the owner-confirmed [design addendum](v2-phase2-design-addendum.md) governs Phase 2 — topology, data model, slice order — wherever this plan differs from it. §6 carries the amended sequence.
+> **Phase 2 amended 2026-11-28:** the owner-confirmed [design addendum](v2-phase2-design-addendum.md) governs Phase 2 wherever this plan differs from it: topology, data model, slice order, the test and scope gates, held-merge sequencing, backup scope and the v1 safety contract. §6 carries the amended sequence.
 
 ## 1. Locked scope
 
