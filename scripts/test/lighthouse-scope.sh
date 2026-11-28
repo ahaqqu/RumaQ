@@ -5,12 +5,12 @@ set -euo pipefail
 #
 # Lighthouse audits frontend/dist, built from frontend/ plus the root
 # toolchain. Docs, a skill, an automation test, Markdown, backend/, contract/,
-# codegen tools, and scripts/ except scripts/build.sh cannot reach that
-# bundle, so the audit skips those change sets. Anything else — a frontend
-# file, a dependency, a workflow step, scripts/build.sh — runs it, and an
-# empty or unavailable change set runs it too (the failure mode must be a
-# wasted half-minute, never a performance or accessibility regression that
-# merges green).
+# codegen tools, server/ (the v2 package), and scripts/ except
+# scripts/build.sh cannot reach that bundle, so the audit skips those change
+# sets. Anything else — a frontend file, a dependency, a workflow step,
+# scripts/build.sh — runs it, and an empty or unavailable change set runs it
+# too (the failure mode must be a wasted half-minute, never a performance or
+# accessibility regression that merges green).
 #
 # Offline only: the rule is exercised through --from-stdin, no git, no network.
 
@@ -85,6 +85,8 @@ expect 'lighthouse config runs' run  .lighthouserc.json
 expect 'unknown path runs'      run  LICENSE
 expect 'frontend beside docs runs' run docs/API.md frontend/src/App.tsx
 expect 'mixed runs'             run  docs/API.md scripts/build.sh
+expect 'server source skips'   skip server/src/entrypoints/web-api/main.ts
+expect 'server beside build script runs' run server/package.json scripts/build.sh
 expect 'empty set runs'         run  ''
 
 # --- the verdict protocol itself (audit M1) ---

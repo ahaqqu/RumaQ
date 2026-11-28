@@ -15,6 +15,10 @@ set -euo pipefail
 # backend's plugins/manifests.js (plugin parity, plan §4.3), so
 # backend/src/plugins/ always runs the frontend suite.
 #
+# The v2 suite (`server`) runs `bun test` from `server/`: `server/`,
+# `scripts/`, root manifests and unknown paths run it; docs, the v1 workspaces
+# and codegen tools skip it. `server/` itself skips the two v1 suites.
+#
 # Offline only: the rule is exercised through --from-stdin, no git, no network.
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -88,6 +92,10 @@ expect frontend 'workflow runs'          run  .github/workflows/ci.yml
 expect frontend 'test runner runs'       run  scripts/test/unit.sh
 expect frontend 'unknown path runs'      run  LICENSE
 expect frontend 'frontend beside docs runs' run docs/API.md frontend/src/App.tsx
+expect frontend 'server source skips'      skip server/src/entrypoints/web-api/main.ts
+expect frontend 'server beside docs skips' skip docs/API.md server/package.json
+expect frontend 'server beside frontend source runs' \
+  run server/src/index.ts frontend/src/App.tsx
 expect frontend 'empty set runs'         run  ''
 
 # --- backend suite ---
@@ -103,7 +111,29 @@ expect backend 'contract source runs'   run  contract/src/index.ts
 expect backend 'lockfile runs'          run  bun.lock
 expect backend 'test config runs'       run  vite.config.ts
 expect backend 'test runner runs'       run  scripts/test/unit.sh
+expect backend 'server source skips'       skip server/src/platform/db/sql.ts
+expect backend 'server beside backend source runs' \
+  run server/src/index.ts backend/src/apps/api.ts
 expect backend 'empty set runs'         run  ''
+
+# --- server suite (v2): server/, scripts/, root manifests and unknown paths
+# run it; docs, the v1 workspaces and codegen tools cannot reach it ---
+expect server 'server source runs'         run  server/src/index.ts
+expect server 'server lockfile runs'       run  server/bun.lock
+expect server 'test runner runs'           run  scripts/test/unit.sh
+expect server 'workflow runs'              run  .github/workflows/ci.yml
+expect server 'root manifest runs'         run  package.json
+expect server 'unknown path runs'          run  LICENSE
+expect server 'docs page skips'            skip docs/API.md
+expect server 'skill skips'                skip .agents/skills/code-audit/SKILL.md
+expect server 'automation skips'           skip automation/docker-compose.yml
+expect server 'root markdown skips'        skip README.md
+expect server 'backend source skips'       skip backend/src/apps/api.ts
+expect server 'frontend source skips'      skip frontend/src/App.tsx
+expect server 'contract source skips'      skip contract/src/index.ts
+expect server 'codegen tool skips'         skip tools/codegen/src/main.ts
+expect server 'docs beside server runs'    run  docs/API.md server/src/index.ts
+expect server 'empty set runs'             run  ''
 
 # --- the verdict protocol itself (audit M1) ---
 expect_error 'bad suite errors' bad-suite

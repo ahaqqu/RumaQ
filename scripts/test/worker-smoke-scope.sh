@@ -4,11 +4,12 @@ set -euo pipefail
 # Offline guard for the worker-smoke scope rule (ahaqqu/RumaQ#534).
 #
 # The Worker boot smoke costs a bundle build plus two workerd boots. Docs, a
-# skill, an automation test, or Markdown cannot change the bundle built by
-# `vp build backend`, so the smoke skips those change sets. Anything else — a
-# backend file, a dependency, a workflow step — runs it, and an empty or
-# unavailable change set runs it too (the failure mode must be a wasted minute,
-# never a broken bundle that merges green).
+# skill, an automation test, Markdown, or the v2 package under `server/`
+# cannot change the bundle built by `vp build backend`, so the smoke skips
+# those change sets. Anything else — a backend file, a dependency, a workflow
+# step — runs it, and an empty or unavailable change set runs it too (the
+# failure mode must be a wasted minute, never a broken bundle that merges
+# green).
 #
 # Offline only: the rule is exercised through --from-stdin, no git, no network.
 
@@ -73,6 +74,8 @@ expect 'workflow runs'        run  .github/workflows/ci.yml
 expect 'deploy script runs'   run  scripts/deploy.sh
 expect 'mixed runs'           run  docs/API.md backend/src/lib/scrape.ts
 expect 'markdown beside code' run  backend/src/lib/README.md backend/src/lib/scrape.ts
+expect 'server skips'         skip server/src/index.ts server/bun.lock server/package.json
+expect 'server beside backend runs' run server/src/index.ts backend/src/apps/api.ts
 expect 'empty set runs'       run  ''
 
 # --- the verdict protocol itself (audit M1) ---
