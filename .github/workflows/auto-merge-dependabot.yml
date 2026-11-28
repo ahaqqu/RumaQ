@@ -19,10 +19,14 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Phase 2 of the v2 program freezes the legacy v1 Worker (RumaQ#763); every
+      # auto-merged dependency PR redeploys it unattended, so only patch updates
+      # flow and minor/major wait for the owner. Revisit at Phase 2 exit (2026-11-28).
+      #
       # The main ruleset requires the `ci` check and zero approvals, so auto-merge
       # queues the squash merge and waits for CI without approving the PR.
       - name: Enable auto-merge
-        if: steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        if: steps.metadata.outputs.update-type == 'version-update:semver-patch'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
