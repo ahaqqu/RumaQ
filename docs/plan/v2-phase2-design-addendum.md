@@ -161,8 +161,8 @@ Every RumaQ slice is a sub-issue of [#763](https://github.com/ahaqqu/RumaQ/issue
 | Wire-contract cut                            | issue at Phase 2 exit                              | first item after E                                                                            |
 | vps V1 — database and roles                  | `ahaqqu/vps` #53                                   | B: starts when R2 is merged                                                                   |
 | vps V2 — three units with ceilings           | `ahaqqu/vps` #54                                   | B: follows V1                                                                                 |
-| vps V3 — nginx routing and trusted client IP | \1D: after V4\2                                    |
-| vps V4 — deploy contract with rollback       | \1B: starts when R2 is merged, with R10\2          |
+| vps V3 — nginx routing and trusted client IP | `ahaqqu/vps` #55                                   | D: after V4                                                                                   |
+| vps V4 — deploy contract with rollback       | `ahaqqu/vps` #56                                   | B: starts when R2 is merged, with R10                                                         |
 | vps V5 — backup and isolated restore         | `ahaqqu/vps` #57                                   | E: after V4                                                                                   |
 
 - **A** — R1 and R2. Approved as a pair and merged back to back.

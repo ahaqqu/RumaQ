@@ -108,20 +108,20 @@ RumaQ PR CI/scoped smoke/full automation/production smoke/backup/preview/test im
 
 ### RumaQ slices
 
-| Wave | Slice                                              | Issue                                                                              | Delivers                                                                                                                                                     | v1 Worker deploy on merge |
-| ---- | -------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
-| A    | R1 — scope rule                                    | [#781](https://github.com/ahaqqu/RumaQ/issues/781)                                 | `server/**` becomes a known path: it runs the v2 suite, skips v1-only suites, and never deploys the v1 Worker                                                | yes, once                 |
-| A    | R2 — `server/` + real-PG gate                      | [#782](https://github.com/ahaqqu/RumaQ/issues/782)                                 | v2's home as a standalone package; `unit server` from day one; health-only entrypoints; architecture test; OpenAPI wiring                                    | yes, once                 |
-| B    | R3 — vocabulary kernel                             | [#783](https://github.com/ahaqqu/RumaQ/issues/783)                                 | The truth contract as code: run, campaign-revision, offer-version and publication state machines, source modes, price bases and disposition codes            | no                        |
-| B    | R4a — runner, roles, enums                         | [#784](https://github.com/ahaqqu/RumaQ/issues/784)                                 | Migration runner inside the artifact, first migrations, the enum sync test, the append-only guard                                                            | no                        |
-| B    | R4b — tenancy core                                 | [#785](https://github.com/ahaqqu/RumaQ/issues/785)                                 | `users`, `auth_identities`, `households`, `household_members` with composite keys and RLS; structural tenancy tests                                          | no                        |
-| C    | R5 — identity + sessions                           | [#786](https://github.com/ahaqqu/RumaQ/issues/786)                                 | Opaque hashed sessions, `(issuer, subject)` identity, expiry, revocation, server-resolved roles, Origin/CSRF; the OIDC adapter is its own PR after the spike | no                        |
-| C    | R6 — evidence storage                              | [#787](https://github.com/ahaqqu/RumaQ/issues/787)                                 | Content-addressed storage with public and private namespaces, no overwrite, verify-then-record, pin-aware retention                                          | no                        |
-| D    | R7 — runs, ingest, outbox                          | [#788](https://github.com/ahaqqu/RumaQ/issues/788)                                 | Durable, replayable ingest; leased at-least-once delivery with exactly-once effects; crash-point tests                                                       | no                        |
-| D    | R8 — source registry + publication                 | [#789](https://github.com/ahaqqu/RumaQ/issues/789)                                 | What may be published, who approved it, and what is current — without publishing anything                                                                    | no                        |
-| D    | R9 — public read repositories                      | [#790](https://github.com/ahaqqu/RumaQ/issues/790)                                 | One query decides what is publicly current; history and as-of; the full case matrix                                                                          | no                        |
-| B\1  | [#791](https://github.com/ahaqqu/RumaQ/issues/791) | One way to ship v2 to the host through `scripts/deploy.sh`, manual-only in Phase 2 | yes, once                                                                                                                                                    |
-| —    | Wire-contract cut                                  | issue at Phase 2 exit                                                              | The kernel is promoted to a package; the tested internal schemas are frozen with fixtures. The first item after Phase 2 exit                                 | no                        |
+| Wave | Slice                              | Issue                                              | Delivers                                                                                                                                                     | v1 Worker deploy on merge |
+| ---- | ---------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| A    | R1 — scope rule                    | [#781](https://github.com/ahaqqu/RumaQ/issues/781) | `server/**` becomes a known path: it runs the v2 suite, skips v1-only suites, and never deploys the v1 Worker                                                | yes, once                 |
+| A    | R2 — `server/` + real-PG gate      | [#782](https://github.com/ahaqqu/RumaQ/issues/782) | v2's home as a standalone package; `unit server` from day one; health-only entrypoints; architecture test; OpenAPI wiring                                    | yes, once                 |
+| B    | R3 — vocabulary kernel             | [#783](https://github.com/ahaqqu/RumaQ/issues/783) | The truth contract as code: run, campaign-revision, offer-version and publication state machines, source modes, price bases and disposition codes            | no                        |
+| B    | R4a — runner, roles, enums         | [#784](https://github.com/ahaqqu/RumaQ/issues/784) | Migration runner inside the artifact, first migrations, the enum sync test, the append-only guard                                                            | no                        |
+| B    | R4b — tenancy core                 | [#785](https://github.com/ahaqqu/RumaQ/issues/785) | `users`, `auth_identities`, `households`, `household_members` with composite keys and RLS; structural tenancy tests                                          | no                        |
+| C    | R5 — identity + sessions           | [#786](https://github.com/ahaqqu/RumaQ/issues/786) | Opaque hashed sessions, `(issuer, subject)` identity, expiry, revocation, server-resolved roles, Origin/CSRF; the OIDC adapter is its own PR after the spike | no                        |
+| C    | R6 — evidence storage              | [#787](https://github.com/ahaqqu/RumaQ/issues/787) | Content-addressed storage with public and private namespaces, no overwrite, verify-then-record, pin-aware retention                                          | no                        |
+| D    | R7 — runs, ingest, outbox          | [#788](https://github.com/ahaqqu/RumaQ/issues/788) | Durable, replayable ingest; leased at-least-once delivery with exactly-once effects; crash-point tests                                                       | no                        |
+| D    | R8 — source registry + publication | [#789](https://github.com/ahaqqu/RumaQ/issues/789) | What may be published, who approved it, and what is current — without publishing anything                                                                    | no                        |
+| D    | R9 — public read repositories      | [#790](https://github.com/ahaqqu/RumaQ/issues/790) | One query decides what is publicly current; history and as-of; the full case matrix                                                                          | no                        |
+| B    | R10 — v2 deploy entrypoint         | [#791](https://github.com/ahaqqu/RumaQ/issues/791) | One way to ship v2 to the host through `scripts/deploy.sh`, manual-only in Phase 2                                                                           | yes, once                 |
+| —    | Wire-contract cut                  | issue at Phase 2 exit                              | The kernel is promoted to a package; the tested internal schemas are frozen with fixtures. The first item after Phase 2 exit                                 | no                        |
 
 Order: R1 → R2 → R3 → R4a → R4b → R5 and R6 (either order) → R7 → R8 → R9. R1 and R2 are approved as a pair and merged back to back. R10 starts as soon as R2 is merged, on its own branch from R2, so the deploy path is proven early with a health-only artifact; its rollback rehearsal is repeated after R9 with real migrations. Every slice pull request is held for the owner's approval before it merges (addendum §8).
 
@@ -131,13 +131,13 @@ Outside the slice sequence, one small workflow PR, [#792](https://github.com/aha
 
 Host-side work belongs in `ahaqqu/vps`, never in this repository. Its issues are cited by number only: a merge to that repository's `main` is a host change within 15 minutes, so there is never more than one vps pull request per approval.
 
-| Slice             | Issue | Delivers                                                                                               | Wave                        |
-| ----------------- | ----- | ------------------------------------------------------------------------------------------------------ | --------------------------- |
-| V1                | #53   | Database and roles — a one-time runbook step, run once by the owner                                    | B: starts when R2 is merged |
-| \1B: follows V1\2 |
-| \1D: after V4\2   |
-| \1B: with R10\2   |
-| V5                | #57   | Nightly encrypted dump and isolated restore drill; WAL archiving is a separate decision before Phase 6 | E: after V4                 |
+| Slice | Issue | Delivers                                                                                                            | Wave                        |
+| ----- | ----- | ------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| V1    | #53   | Database and roles — a one-time runbook step, run once by the owner                                                 | B: starts when R2 is merged |
+| V2    | #54   | Three units with ceilings                                                                                           | B: follows V1               |
+| V3    | #55   | nginx routing for a new, DNS-only v2 hostname; the trusted-client-IP rule is rehearsed before the main-host cutover | D: after V4                 |
+| V4    | #56   | Deploy contract with rollback                                                                                       | B: with R10                 |
+| V5    | #57   | Nightly encrypted dump and isolated restore drill; WAL archiving is a separate decision before Phase 6              | E: after V4                 |
 
 The `rumaq-v1.ahaqqu.com` legacy hostname has been live since Phase 0 (#772); the main-host cutover stays a separate reviewed change in Phase 6.
 
@@ -260,18 +260,18 @@ After owner approval and a verified new backup/restore/deploy chain:
 
 ## 13. Cross-repo PR order
 
-| Order                                                                                                                                   | Repository                             | Work                                                                                            |
-| --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 1                                                                                                                                       | RumaQ                                  | Docs-only research/design/plan PR.                                                              |
-| 2                                                                                                                                       | BayiQ/template/forks/AutQ/other owners | Independent Actions reduction PRs/settings checks; no dependency on app rewrite.                |
-| 3                                                                                                                                       | RumaQ + vps                            | Freeze legacy and prepare `rumaq-v1` hostname before changing the main deployment path.         |
-| 4                                                                                                                                       | RumaQ                                  | Scope rule, `server/` + PG test gate, vocabulary kernel, PG migrations (§6).                    |
-| 5\1Interleaved with the RumaQ slices (§6): database and roles, the three units and the deploy contract early; nginx and backup later.\2 |
-| \1; the v2 deploy entrypoint early (R10).\3                                                                                             |
-| 7                                                                                                                                       | RumaQ-pipeline                         | Sync contract; Superindo discovery/evidence first, then extraction/registry/review integration. |
-| 8                                                                                                                                       | RumaQ                                  | Responsive public shell and admin review vertical slices against contract fixtures.             |
-| 9                                                                                                                                       | RumaQ + vps                            | Main/v1 hostname release after QA; Campaign A approved publication.                             |
-| 10                                                                                                                                      | RumaQ-pipeline + RumaQ                 | Campaign B, schedule/next-store gate, then repeat per store.                                    |
+| Order | Repository                             | Work                                                                                                                               |
+| ----- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | RumaQ                                  | Docs-only research/design/plan PR.                                                                                                 |
+| 2     | BayiQ/template/forks/AutQ/other owners | Independent Actions reduction PRs/settings checks; no dependency on app rewrite.                                                   |
+| 3     | RumaQ + vps                            | Freeze legacy and prepare `rumaq-v1` hostname before changing the main deployment path.                                            |
+| 4     | RumaQ                                  | Scope rule, `server/` + PG test gate, vocabulary kernel, PG migrations (§6).                                                       |
+| 5     | vps                                    | Interleaved with the RumaQ slices (§6): database and roles, the three units and the deploy contract early; nginx and backup later. |
+| 6     | RumaQ                                  | Storage, auth, ingest/outbox, source registry, publication/read primitives in small PRs; the v2 deploy entrypoint early (R10).     |
+| 7     | RumaQ-pipeline                         | Sync contract; Superindo discovery/evidence first, then extraction/registry/review integration.                                    |
+| 8     | RumaQ                                  | Responsive public shell and admin review vertical slices against contract fixtures.                                                |
+| 9     | RumaQ + vps                            | Main/v1 hostname release after QA; Campaign A approved publication.                                                                |
+| 10    | RumaQ-pipeline + RumaQ                 | Campaign B, schedule/next-store gate, then repeat per store.                                                                       |
 
 No PR merges with red relevant checks. The private billing wall must be resolved or explicitly worked around through a trustworthy existing CI path; disabling required checks is not an option.
 
