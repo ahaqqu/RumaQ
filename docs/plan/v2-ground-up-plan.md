@@ -104,7 +104,7 @@ RumaQ PR CI/scoped smoke/full automation/production smoke/backup/preview/test im
 
 ## 6. Phase 2 — fresh platform core
 
-> **Amended 2026-11-28 (owner-confirmed; see [v2-phase2-design-addendum.md](v2-phase2-design-addendum.md)).** The sequences below replace the plan's original Phase 2 list — eight RumaQ PRs starting with the contract vocabulary major, then six `ahaqqu/vps` PRs at the tail. The addendum governs wherever the two differ. What changed: the first work is no longer the contract major — v2 starts with its scope rule and its `server/` home, the domain vocabulary kernel comes third, and the pipeline-facing wire contract is cut once, after R9 and before Phase 4, as a projection of the real schema; `server/` is a standalone Bun package with its own lockfile, not a root workspace member, and legacy `contract/` stays untouched; the PostgreSQL gate is `./scripts/test.sh unit server`; the host-side slices come forward so the deploy path is proven with a health-only artifact instead of at the tail, and their open points are decided (a one-time runbook bootstrap, a new DNS-only v2 hostname, a nightly encrypted dump with an isolated restore drill); and Dependabot auto-merges patch-level updates only during the freeze.
+> **Amended 2026-11-28 (owner-confirmed; see [v2-phase2-design-addendum.md](v2-phase2-design-addendum.md)).** The sequences below replace the plan's original Phase 2 list — eight RumaQ PRs starting with the contract vocabulary major, then six `ahaqqu/vps` PRs at the tail. The addendum governs wherever the two differ. What changed: the first work is no longer the contract major — v2 starts with its scope rule and its `server/` home, the domain vocabulary kernel comes third, and the pipeline-facing wire contract is cut once, after R9 and before Phase 4, as a projection of the real schema; `server/` is a standalone Bun package with its own lockfile, not a root workspace member, and legacy `contract/` stays untouched; the PostgreSQL gate is `./scripts/test.sh unit server`; the host-side slices come forward so the deploy path is proven with a health-only artifact instead of at the tail, and their open points are decided (a one-time runbook bootstrap, a new DNS-only v2 hostname, a nightly encrypted dump with an isolated restore drill); and Dependabot auto-merges patch-level and security updates only during the freeze.
 
 ### RumaQ slices
 
@@ -125,7 +125,7 @@ RumaQ PR CI/scoped smoke/full automation/production smoke/backup/preview/test im
 
 Order: R1 → R2 → R3 → R4a → R4b → R5 and R6 (either order) → R7 → R8 → R9. R1 and R2 are approved as a pair and merged back to back. R10 starts as soon as R2 is merged, on its own branch from R2, so the deploy path is proven early with a health-only artifact; its rollback rehearsal is repeated after R9 with real migrations. Every slice pull request is held for the owner's approval before it merges (addendum §8).
 
-Outside the slice sequence, one small workflow PR narrows Dependabot auto-merge to patch-level updates for the frozen v1 — minor and major bumps wait for the owner. It touches only `.github/`, which is in the deploy skip set, so merging it does not deploy the v1 Worker (addendum §7).
+Outside the slice sequence, one small workflow PR, [#792](https://github.com/ahaqqu/RumaQ/pull/792), narrows Dependabot auto-merge to patch-level and security updates for the frozen v1 — minor and major bumps wait for the owner. It touches only `.github/` and `docs/`, both in the deploy skip set, so merging it does not deploy the v1 Worker (addendum §7).
 
 ### `ahaqqu/vps` slices
 
@@ -135,7 +135,7 @@ Host-side work belongs in `ahaqqu/vps`, never in this repository. Its issues are
 | ----------------- | ----- | ------------------------------------------------------------------------------------------------------ | --------------------------- |
 | V1                | #53   | Database and roles — a one-time runbook step, run once by the owner                                    | B: starts when R2 is merged |
 | \1B: follows V1\2 |
-| \1C–D: after V4\2 |
+| \1D: after V4\2   |
 | \1B: with R10\2   |
 | V5                | #57   | Nightly encrypted dump and isolated restore drill; WAL archiving is a separate decision before Phase 6 | E: after V4                 |
 

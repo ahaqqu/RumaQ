@@ -4,7 +4,7 @@
 >
 > **Status: confirmed by the owner on 2026-11-28.** The addendum was [posted for review on #763](https://github.com/ahaqqu/RumaQ/issues/763#issuecomment-7238118165) and confirmed by the owner the same day. It governs Phase 2 wherever it differs from the plan or the design.
 
-This reconciles a product pass and an architecture pass, each written after the two read-only research passes. §1 and §9 record the owner's decisions, §10 the deviations from the written plan that they cover, §11 what is still open, and §12 the slice issues and waves.
+This reconciles a product pass and an architecture pass, each written after the two read-only research passes. §1 and §9 record the owner's decisions, §10 the deviations from the written plan that they cover, §11 the decisions taken after the host research, the owner actions and what is still open, and §12 the slice issues and waves.
 
 ## 1. Already decided by the owner (2026-11-28)
 
@@ -89,7 +89,7 @@ Close #763 only with: every slice merged with the owner's approval or deferred i
 
 - **Off-limits for the whole phase:** `backend/**`, `frontend/**`, `contract/**`, `frontend/openapi.json`, `frontend/src/lib/api-client/**`, `docs/API.md`.
 - **Merges that redeploy v1, and why each is boring:** R1, R2 and R10 each once (CI plumbing, the workspace bootstrap, a new deploy target); any later change to `scripts/**` or root files. A `server/**`-only merge does not deploy v1. A mixed pull request runs both suites and deploys v1.
-- **Deploy inputs frozen:** the Cloudflare GitHub secrets and the Worker's managed secrets do not change. **Dependency updates during the freeze:** Dependabot auto-merges patch-level updates only — security and patch bumps keep flowing; minor and major bumps of the frozen v1 wait for the owner's approval (§11). **Action T is closed** (§9.4): the prepared `rumaq-v2` D1 (`f1b4a711-f4a2-4dc9-8550-2b12f37ca6d7`) is unused; deleting that empty database is a separate, later decision (Phase 10).
+- **Deploy inputs frozen:** the Cloudflare GitHub secrets and the Worker's managed secrets do not change. **Dependency updates during the freeze:** Dependabot auto-merges patch-level and security updates; minor and major bumps of the frozen v1 wait for the owner's approval (§11). **Action T is closed** (§9.4): the prepared `rumaq-v2` D1 (`f1b4a711-f4a2-4dc9-8550-2b12f37ca6d7`) is unused; deleting that empty database is a separate, later decision (Phase 10).
 - **No DNS change for either RumaQ hostname, no new Worker, new bucket names, tokens scoped to the v2 buckets.** Legacy D1 `rumaq` and `rumaq-v2` are neither read nor deleted before Phase 10. The v2 API gets one new, DNS-only name in Phase 2 (§11).
 - **After every v1 deploy of the phase:** check both health URLs at once, run the smoke workflow, post the links on #763. Record a ref for every approved v1 deploy; a bad one is reverted through a pull request or by dispatching the deploy workflow on that ref, or immediately through the Worker's own rollback: Cloudflare dashboard → Workers & Pages → the Worker → Deployments → Rollback (CLI equivalent `wrangler rollback`; the repository's deploy CLI (`cf`) has no Workers rollback command). A rollback restores code only and leaves bindings untouched. No Phase 2 merge adds a D1 migration, so a code rollback is lossless.
 - **Adjacent invariants:** the scraper timer stays disabled after every vps apply; the v2 session cookie has a different name from v1's `rumaq_session`; no provider key and no provider-client dependency in any Phase 2 slice.
@@ -100,7 +100,7 @@ One stack per repository: slice N+1 branches from N and targets N's branch, so e
 
 ## 9. Decisions (owner, 2026-11-28)
 
-Every decision in this addendum is the owner's, taken on 2026-11-28. The first four were requested by the review copy of this addendum and confirmed the same day; each keeps the reason it was asked and ends with its outcome. The rest were decided earlier that day and are stated in §1.
+Every decision in this addendum is the owner's, taken on 2026-11-28, except the test database image (§2), a refinement decided by the manager. The first four were requested by the review copy of this addendum and confirmed the same day; each keeps the reason it was asked and ends with its outcome. The rest were decided the same day and are stated in §1 and §11.
 
 1. **The three data-model calls and the rules of §4** — they had to be settled before any migration is written, so they gated R4a. **Confirmed:** `source_tiles` is a table; `published_current` is a pointer table whose primary key is `offer_id`; `offers` are keyed by source lineage `(source_tile_id, source_line)`. The visible consequence is accepted: the same product at the same store in two overlapping campaigns is two offers and two cards, and the product page shows both.
 2. **Install topology** — it stood against the word "workspace" in D2 and the one-lockfile convention, and it shapes R1 and R2. **Confirmed:** `server/` is a standalone Bun package with its own `bun.lock`; the root `workspaces` list does not change (§2). R2 is the gate, with the root-workspace-member fallback.
@@ -115,14 +115,14 @@ Decided earlier the same day (§1): D1, the domain vocabulary first and the wire
 
 `unit backend` → `unit server` (decided) · capacity gate split (decided) · contract major first → kernel first, cut once later (decided) · standalone lockfile (§9.2) · custom migration runner and a third unit (§9.3) · v2 OpenAPI generated from R2 rather than at the first real routes · V1, V2, V4 and R10 brought forward instead of the plan's tail-heavy order · database bootstrap owned by `ahaqqu/vps` and run once by the owner, because the pgvector extension is not trusted and the applier cannot run SQL · the test database comes from `server/compose.yaml`, not the v1 compose stack · WAL archiving is not in Phase 2: the owner decided a nightly dump and an isolated restore drill now, and WAL archiving as a separate decision before Phase 6 (§11).
 
-## 11. Still open, not blocking the first slices
+## 11. After the host research: decisions, owner actions, and what is still open
 
 Decided after the host research (owner, 2026-11-28) — open in the review copy:
 
 - **Backup scope** (`ahaqqu/vps` V5): a nightly encrypted dump and an isolated restore drill in Phase 2. WAL archiving is a separate decision before Phase 6, when scheduled operation gives it a real recovery-point objective. No cluster-wide PostgreSQL change in Phase 2.
 - **Database bootstrap** (`ahaqqu/vps` V1): a one-time runbook step — a reviewed, idempotent SQL file in `ahaqqu/vps`, a runbook section and a CI test on a throwaway database — run once by the owner. No applier feature. This is a confirmed deviation from "host config in a manifest row".
 - **v2 API hostname for Phase 2** (`ahaqqu/vps` V3): a new DNS-only name (working name `rumaq-v2.ahaqqu.com`; the owner may still rename it before V3's plan). Neither existing RumaQ hostname changes in Phase 2. It is not Cloudflare-proxied in Phase 2, so the real-client-IP rule is not deployed by V3; it is rehearsed before the main-host cutover, which the plan places in Phase 6.
-- **Dependabot during the freeze:** auto-merge only patch-level updates — security and patch bumps keep flowing; minor and major bumps of the frozen v1 wait for the owner's approval. Shipped as its own small workflow PR, which touches only `.github/` — in the deploy skip set, so merging it does not deploy the v1 Worker (§7).
+- **Dependabot during the freeze:** auto-merge for patch-level and security updates only; minor and major bumps of the frozen v1 wait for the owner's approval. Its own small workflow PR, [#792](https://github.com/ahaqqu/RumaQ/pull/792), touches only `.github/` and `docs/` — both in the deploy skip set, so merging it does not deploy the v1 Worker (§7). The security half needs the repository secret `DEPENDABOT_ALERT_LOOKUP_TOKEN`; until the owner creates it, the workflow is patch-only (fail-safe).
 
 Still open — do not act unilaterally:
 
@@ -133,6 +133,7 @@ Owner actions ahead (not design decisions):
 - **The AutQ staging client** — one owner step on the host, before R5's real-provider run.
 - **The v2 deploy key and its Actions secret** — before R10, with `ahaqqu/vps` V4.
 - **Approving R1 and R2 as a pair** — wave A.
+- **The `DEPENDABOT_ALERT_LOOKUP_TOKEN` repository secret** — optional; without it Dependabot is patch-only during the freeze.
 
 Closed since the review copy, by the research:
 
@@ -159,8 +160,8 @@ Every RumaQ slice is a sub-issue of [#763](https://github.com/ahaqqu/RumaQ/issue
 | R10 — v2 deploy entrypoint                   | [#791](https://github.com/ahaqqu/RumaQ/issues/791) | B: starts when R2 is merged; its rollback rehearsal is repeated after R9 with real migrations |
 | Wire-contract cut                            | issue at Phase 2 exit                              | first item after E                                                                            |
 | vps V1 — database and roles                  | `ahaqqu/vps` #53                                   | B: starts when R2 is merged                                                                   |
-| vps V2 — three units with ceilings           | `ahaqqu/vps` #54                                   | B–C: follows V1                                                                               |
-| vps V3 — nginx routing and trusted client IP | \1C–D: after V4\2                                  |
+| vps V2 — three units with ceilings           | `ahaqqu/vps` #54                                   | B: follows V1                                                                                 |
+| vps V3 — nginx routing and trusted client IP | \1D: after V4\2                                    |
 | vps V4 — deploy contract with rollback       | \1B: starts when R2 is merged, with R10\2          |
 | vps V5 — backup and isolated restore         | `ahaqqu/vps` #57                                   | E: after V4                                                                                   |
 
